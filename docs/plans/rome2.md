@@ -47,6 +47,13 @@ Status legend: **done**, **partial**, **todo**.
 
 ## Phase 2: Rome 2's renderer — partial
 
+- **done** The graphics options (2026-11-01, static analysis of its engine; docs/re/graphics_options.md, "Rome 2"): shadows (none at 0,
+  two to four cascades by level, their lengths, the baked map 2048 / 4096), water (low to 2, medium, high, ultra for the water planes
+  at 5, high for the sea; the planar reflection from 3), sky (512 / 1024), effects, texture filtering, MLAA, god rays, tessellation, alpha
+  blending (alpha test at every level, as the game). Not: MSAA, building / unit detail (LOD distance multipliers), trees, grass, terrain,
+  texture quality. Script command `gfx <shadow_quality|water_quality|sky_quality|effects_quality|aa|texture_filtering> <level>`.
+  To check in game: shadow levels 1 .. 3 leave a gap between the last cascade (151 / 176 units) and the baked shadows (from 239);
+  the medium sea shader draws no shadows.
 - **done** Shaders of Rome 2's containers (rpfm); tone mapping in log Y; the S-curve's single biases; the weather from folders.
 - **done** The terrain (surface, blend, composite, resolve; shadows). The composite is the game's DX11 one (2026-10-28): the index map's
   variations, a repeat per group (RENDER_PARAMS' 9 m where the climate lists none, not 40.1), a gloss per layer. Open: the channel

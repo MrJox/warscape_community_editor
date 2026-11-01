@@ -155,7 +155,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "gfx", "gfx <shadows|ssao|fog|clouds|lens_flare|vignette|depth_of_field|distortion> on|off | gfx lod_scale <x> | gfx min_pixels <x> | gfx view <final|hdr|albedo|normal|specular|depth|ao>",
+        "gfx", "gfx <shadows|ssao|fog|clouds|lens_flare|vignette|depth_of_field|distortion|god_rays> on|off | gfx lod_scale <x> | gfx min_pixels <x> | gfx <shadow_quality|water_quality|sky_quality|effects_quality|aa|texture_filtering> <level> | gfx view <final|hdr|albedo|normal|specular|depth|ao>",
         "renderer features and the detail settings of the tile views (speed against quality)", |e, a| {
             let Some(r) = e.renderer() else { return fail("no renderer") };
             if a.len() != 2 {
@@ -166,6 +166,13 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                 "lod_scale" => r.settings.lod_scale = atof(&a[1]) as f32,
                 "min_pixels" => r.settings.min_pixels = atof(&a[1]) as f32,
                 "shadow_min_texels" => r.settings.shadow_min_texels = atof(&a[1]) as f32,
+                // The game's graphics options' levels until the settings apply again (scripted comparisons of the levels).
+                "shadow_quality" => r.settings.shadow_quality = atof(&a[1]) as i32,
+                "water_quality" => r.settings.water_quality = atof(&a[1]) as i32,
+                "sky_quality" => r.settings.sky_quality = atof(&a[1]) as i32,
+                "effects_quality" => r.settings.effects_quality = atof(&a[1]) as i32,
+                "aa" => r.settings.aa = atof(&a[1]) as i32,
+                "texture_filtering" => r.settings.texture_filtering = atof(&a[1]) as i32,
                 "view" => {
                     use wce_render::renderer::View;
                     r.settings.view = match a[1].as_str() {
@@ -191,6 +198,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                         "vignette" => &mut r.settings.vignette,
                         "depth_of_field" => &mut r.settings.depth_of_field,
                         "distortion" => &mut r.settings.distortion,
+                        "god_rays" => &mut r.settings.god_rays,
                         _ => return fail(format!("unknown feature '{}'", a[0])),
                     };
 

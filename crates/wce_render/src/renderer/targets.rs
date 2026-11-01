@@ -306,7 +306,7 @@ pub(crate) struct ShadowMap {
     pub dsv: Option<ID3D11DepthStencilView>,
     pub srv: Option<ID3D11ShaderResourceView>,
 
-    /// Its side: SHADOW_SIZE (Attila's dump), Rome 2's ROME2_SHADOW_SIZE.
+    /// Its side: SHADOW_SIZE (Attila's dump), Rome 2's twice its level's tile (`rome2_cascades`).
     pub size: u32,
 }
 

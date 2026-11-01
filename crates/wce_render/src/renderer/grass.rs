@@ -273,7 +273,7 @@ impl Renderer {
     /// blade faces the light, against the dissolve map) into the shadow cascades: the patches near the camera, every cascade. The game draws
     /// them there (FUN_118900c0: the shadow pass picks the grass shader's `shadowmap` technique, as the leaves').
     /// `light_vp`: the cascades of positions relative to the render origin.
-    pub(crate) fn draw_grass_shadows(&mut self, scene: &RenderScene, light_vp: &[Float4x4; 4], eye: Float3) {
+    pub(crate) fn draw_grass_shadows(&mut self, scene: &RenderScene, light_vp: &[Float4x4], eye: Float3) {
         self.collect_grass(scene);
         if self.grass.sets.is_empty() {
             return;

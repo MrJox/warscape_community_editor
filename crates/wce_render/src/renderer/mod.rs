@@ -184,6 +184,10 @@ pub(crate) const MLAA_BLEND_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_ble
 pub(crate) const TESS_VS: &str = "dx11_sm_5_0_rigidcommon.hlsl_vs_vs30_displacement";
 pub(crate) const TESS_HS: &str = "dx11_sm_5_0_rigidcommon.hlsl_hs_hs_main_sm5";
 pub(crate) const TESS_DS: &str = "dx11_sm_5_0_rigidcommon.hlsl_ds_ds_main_sm5";
+
+/// Rome 2's hull and domain shaders (the same stages, compiled without a shader model in their names; its rule is Attila's, fn 0x11560510).
+pub(crate) const TESS_HS_ROME2: &str = "dx11_default_rigidcommon.hlsl_hs_hs_main_sm5";
+pub(crate) const TESS_DS_ROME2: &str = "dx11_default_rigidcommon.hlsl_ds_ds_main_sm5";
 pub(crate) const TESS_FACTOR: f32 = 5.0;
 pub(crate) const TESS_DISPLACEMENT_SCALE: f32 = 0.4;
 
@@ -285,9 +289,40 @@ pub(crate) const SKY_CUBE: u32 = 256;
 /// The cascaded shadow atlas: 2048^2, four 1024^2 quadrants (the layout of the game's g_split_uv_texture_bounds).
 pub(crate) const SHADOW_SIZE: u32 = 2048;
 
-/// Rome 2's cascaded shadow atlas at the highest shadow quality (a RenderDoc capture of a battle: 2048 x 2048 quadrants). (Its roofs
-/// came out shadowed at first: the casters' culling, fixed since.)
-pub(crate) const ROME2_SHADOW_SIZE: u32 = 4096;
+/// Rome 2's cascades at a gfx_shadow_quality (ShadowMapView fn 0x11456060, docs/re/graphics_options.md): the tile's side, how many, and
+/// their lengths (game units, from the camera's near; table 0x118ff698's battle rows, fn 0x114765e0). None at 0: no shadows (nor the
+/// baked map). Levels 1 and 2 are the game's 2048 x 1024 atlas of two tiles, 3 its 2048 x 2048 with one tile unused; the editor keeps
+/// the 2 x 2 layout at the tile's size (the same texels a cascade).
+pub(crate) fn rome2_cascades(level: i32) -> Option<(u32, usize, [f32; 4])> {
+    match level {
+        ..=0 => None,
+        1 | 2 => Some((1024, 2, [30.0, 120.0, 160.0, 160.0])),
+        3 => Some((1024, 3, [15.0, 40.0, 120.0, 160.0])),
+        _ => Some((2048, 4, [15.0, 35.0, 90.0, 200.0])),
+    }
+}
+
+/// Rome 2's water technique (0 low, 1 medium, 2 high, 3 ultra) at a gfx_water_quality: low to level 2, then medium, high and ultra (the
+/// water planes, fn 0x1147db20). The sea (fn 0x1147dbf0) takes ultra at 5 only with its coast amplitude mask in place, else high (a
+/// capture at Extreme drew high).
+pub(crate) fn rome2_water(level: i32, sea: bool) -> i32 {
+    match level {
+        ..=2 => 0,
+        3 => 1,
+        4 => 2,
+        _ => if sea { 2 } else { 3 },
+    }
+}
+
+/// Rome 2's planar water reflection is drawn from gfx_water_quality 3 (fn 0x11455f10: its view only above 2).
+pub(crate) const ROME2_REFLECTION_LEVEL: i32 = 3;
+
+impl Renderer {
+    /// Rome 2's sun shadows are drawn (the editor's switch, and gfx_shadow_quality above 0).
+    pub(crate) fn rome2_shadows_on(&self) -> bool {
+        self.settings.shadows && rome2_cascades(self.settings.shadow_quality).is_some()
+    }
+}
 pub(crate) const READBACK_RING: usize = 4;
 
 /// Compiles a helper shader.
@@ -1378,14 +1413,19 @@ impl Renderer {
         self.kinds.refresh(scene);
         cam.znear = self.near_plane(scene, &cam);
 
-        // Rome 2's filtering levels are not mapped yet (docs/re/graphics_options.md): anisotropic 8x, as before.
-        let filtering = if self.game == game::RenderGame::Rome2 { 3 } else { self.settings.texture_filtering.clamp(0, 4) };
+        // The same in the three games (Rome 2's fn 0x1142b590, Attila's 0x1177f410): trilinear at 0, anisotropic 2^n.
+        let filtering = self.settings.texture_filtering.clamp(0, 4);
         if self.states.filtering != filtering {
             self.states.set_filtering(&self.dev, filtering);
         }
 
-        // gfx_effects_quality: the effects' quality variant (not Rome 2's, whose levels are not mapped); a change reads them again.
-        let effects = if self.game == game::RenderGame::Rome2 { 3 } else { self.settings.effects_quality };
+        // gfx_effects_quality: the effects' quality variant; a change reads them again. Rome 2's six levels give the same variants at other
+        // thresholds (fns 0x115b2130, 0x115be0d0, 0x115d9ca0: 2 at 0 .. 2, 1 at 3, 0 at 4 and 5; Attila's 2 at 0 and 1, 1 at 2, 0 at 3): the
+        // Attila level of the same variant. ASSUMPTION: the particle pool follows the variant as Attila's does (not traced in Rome 2).
+        let effects = match self.game {
+            game::RenderGame::Rome2 => match self.settings.effects_quality { ..=2 => 0, 3 => 2, _ => 3 },
+            _ => self.settings.effects_quality,
+        };
         if self.effects_applied != Some(effects) {
             wce_assets::vfx_def::set_quality(effects);
             self.particles.set_limit(effects);
@@ -1646,7 +1686,7 @@ impl Renderer {
                 self.pass_lens_flare(&env, (cam.eye - o) * self.camera.units, time_s);
             }
 
-            if self.settings.aa == 1 && self.game != game::RenderGame::Rome2 {
+            if self.settings.aa == 1 {
                 self.pass_mlaa();
             }
         }

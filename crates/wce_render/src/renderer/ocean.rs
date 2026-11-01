@@ -45,10 +45,6 @@ fn ocean_ps(quality: i32, rome2: bool) -> String {
     format!("dx11_sm_{}_0_ocean.hlsl_ps_ps30_main_{}_water_quality", if rome2 { 3 } else { 4 }, super::water::water_level(quality))
 }
 
-/// The technique Rome 2's sea takes at its highest water quality (5, "extreme"): `high` (2), not `ultra`, whose whitecaps (combined_foam's
-/// red over the deep sea) the game does not draw (a RenderDoc capture of a battle at Carthage, 2026-11-01: ps30_main_high_water_quality's
-/// code). Rome 2's six levels are not mapped to the four techniques yet.
-pub(crate) const ROME2_WATER: i32 = 2;
 
 /// Rome 2's sea with the sun's shadows, the variant its lighting uses (hardware gather, shader model 5): the plain one's inputs plus
 /// `shadowmap_PS`, `g_tShadowBuffer_SM50` and the baked shadows (out of reach: `g_vBakedShadowmapParams`).
@@ -482,9 +478,10 @@ impl Renderer {
         // Rome 2's ocean (sm_3_0 ocean.hlsl) is a forward pass: the lit colour only, its constants and textures named otherwise
         // (docs/re/rome2_renderer.md, "Sea"); the same chunks and surfaces.
         let rome2 = self.game == super::game::RenderGame::Rome2;
-        let ocean_ps = ocean_ps(if rome2 { ROME2_WATER } else { self.settings.water_quality }, rome2);
-        let ps = match rome2 && self.settings.shadows {
-            true => self.shader(&r2_ocean_ps_shadows(ROME2_WATER)).or_else(|| self.shader(&ocean_ps)),
+        let quality = if rome2 { super::rome2_water(self.settings.water_quality, true) } else { self.settings.water_quality };
+        let ocean_ps = ocean_ps(quality, rome2);
+        let ps = match rome2 && self.rome2_shadows_on() {
+            true => self.shader(&r2_ocean_ps_shadows(quality)).or_else(|| self.shader(&ocean_ps)),
             false => self.shader(&ocean_ps),
         };
         let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), ps) else { return false };
