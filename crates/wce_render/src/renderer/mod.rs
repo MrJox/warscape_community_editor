@@ -45,6 +45,7 @@ mod terrain_rome2;
 mod water;
 mod ocean;
 mod reflection;
+mod dof;
 mod shadow_baked;
 mod nis;
 mod oit;
@@ -837,6 +838,7 @@ pub struct Renderer {
     pub(crate) post: PostTargets,
     pub(crate) shadow_map: ShadowMap,
     pub(crate) baked: shadow_baked::BakedShadow,
+    pub(crate) dof: dof::DofTargets,
 
     /// The scene's climate, lower case (`rome_med`).
     pub(crate) climate: String,
@@ -984,6 +986,7 @@ impl Renderer {
             post: PostTargets::default(),
             shadow_map: ShadowMap::new(dev, SHADOW_SIZE),
             baked: shadow_baked::BakedShadow::default(),
+            dof: dof::DofTargets::default(),
             climate: String::new(),
             draw_lists: SceneDraws::default(),
             camera: CameraState::default(),
