@@ -790,6 +790,9 @@ pub struct RenderScene {
     /// the plain ones.
     pub vegetation_season: String,
 
+    /// The ground's climate (`ROME_Med` ...): Rome 2's buildings draw its texture variants (`<name>_<climate>_diffuse...`) where there are.
+    pub climate: String,
+
     /// How the battle's frame is turned in this scene (degrees about the vertical; the battle's +z, its north, is the scene's (sin, cos) of
     /// it): the environment's world directions (the sun, the wind, the ambient cube's sides) are turned by it. 0 for a tile alone; a tile
     /// at a map placement is turned as the map turns it (in-game captures: 180 degrees at a coast placement).
@@ -856,6 +859,7 @@ impl Default for RenderScene {
             structure_base: 0,
             environment: EnvironmentSlot::default(),
             vegetation_season: String::new(),
+            climate: String::new(),
             world_yaw: 0.0,
             game_units: 1.0,
             sea_level: 0.0,

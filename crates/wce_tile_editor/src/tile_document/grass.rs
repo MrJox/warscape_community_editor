@@ -165,6 +165,10 @@ impl Tile {
             scene.vegetation_season.clone_from(&self.look.season);
         }
 
+        if scene.climate != self.look.climate {
+            scene.climate.clone_from(&self.look.climate);
+        }
+
         // The game draws the tile in its units: the scene's times unit_scale.
         scene.game_units = self.unit() as f32;
         scene.battle_centre = [(self.project.extent_x() / 2.0) as f32, (self.project.extent_z() / 2.0) as f32];

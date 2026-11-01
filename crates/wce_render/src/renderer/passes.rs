@@ -299,8 +299,15 @@ impl Renderer {
 
         for (t, slot) in slots.iter().enumerate().take(TEX_SLOTS) {
             let Some(slot) = slot else { continue };
+            let climate = match t {
+                crate::model_cache::TEX_DIFFUSE if !m.kind.is_tree() => self.climate_variant(&m.diffuse_path, "_diffuse"),
+                crate::model_cache::TEX_NORMAL if !m.kind.is_tree() => self.climate_variant(&m.normal_path, "_normal"),
+                _ => None,
+            };
             let srv = if t == crate::model_cache::TEX_DIFFUSE && seasonal.is_some() {
                 seasonal.clone()
+            } else if climate.is_some() {
+                climate
             } else {
                 m.tex[t].read().ok().and_then(|tex| tex.srv.clone())
             };
