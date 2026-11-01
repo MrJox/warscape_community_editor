@@ -65,8 +65,14 @@ Status legend: **done**, **partial**, **todo**.
   it around the camera on a 128-unit grid. ASSUMPTION: the capture's constants (span, height range, fades) hold for every battle.
 - **done** Grass and ground brightness (2026-11-01, the capture; user report: grass too bright): ps_height_map_cb's noise on (albedo times
   0.3 + 0.7 x `terrain_noise` at world xz / 1000) and the mid-distance detail at (20, 400) game units (it was off, and at doubled
-  distances); Rome 2's grass_PS constants (g_alpha (1, 0.75), normal decode (2, -1), lod distance 200). Open: sand still about 15 %
-  brighter at the beach view.
+  distances); Rome 2's grass_PS constants (g_alpha (1, 0.75), normal decode (2, -1), lod distance 200). Then (user report: dark grass
+  patches at mid distance): the game resolves the ground with `ps30_terrain_to_gbuffer_ts`, from finished maps (albedo, normal * 0.5 +
+  0.5, gloss) its virtual texture path writes; `_ss` (the editor's) reads the composite's sums and divides the noise back out, so the
+  ground stayed bright while the grass (which reads the maps as `_ts` does, and takes the ground's colour from 100 units) came out dark,
+  and read signed normals as encoded ones. The editor converts its composite into those maps (shared.rs `ts_maps_ps`, an editor helper)
+  and resolves with `_ts`; the grass draws with the game's `ps30_gbuffer_no_clip_grass` (one pass, the blade's colour divided by its
+  alpha). The beach view: sand and grass within 5 % of the game's.
+- **done** Roof stripes in the baked shadows (user report): casters stored 1 unit lower, drawn at the view's levels of detail.
 - **todo** Seen in the capture, not done: the game's depth of field blurs the distant city (the editor draws it sharp); with the bright
   `day_dry_01` weather the editor's image is washed out since the grain variant (not compared with the game: the capture is
   `day_dry_05`).

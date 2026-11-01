@@ -23,6 +23,23 @@ VSOut2 fs_vs2(uint id : SV_VertexID) {
     o.pos = float4(o.uv * float2(2, -2) + float2(-1, 1), 0, 1);
     return o;
 }
+// Rome 2's terrain composite (weighted sums, signed normals: what ps30_terrain_to_gbuffer_ss reads) as the maps the game's virtual
+// texture path gives ps30_terrain_to_gbuffer_ts and the grass: albedo (alpha 1), normal * 0.5 + 0.5, gloss, divided by the weights.
+Texture2D comp_albedo : register(t0);
+Texture2D comp_normal : register(t1);
+Texture2D comp_gloss : register(t2);
+struct TsMaps { float4 albedo : SV_Target0; float4 normal : SV_Target1; float4 gloss : SV_Target2; };
+TsMaps ts_maps_ps(VSOut i) {
+    int3 p = int3(i.pos.xy, 0);
+    float4 a = comp_albedo.Load(p);
+    TsMaps o;
+    if (a.a <= 1e-4) { o.albedo = 0; o.normal = 0; o.gloss = 0; return o; }
+    float w = 1 / a.a;
+    o.albedo = float4(saturate(a.rgb * w), 1);
+    o.normal = float4(saturate(comp_normal.Load(p).xyz * w * 0.5 + 0.5), 0);
+    o.gloss = saturate(comp_gloss.Load(p) * w);
+    return o;
+}
 cbuffer display : register(b0) { int mode; float exposure; float2 pad; };
 Texture2D src : register(t0);
 TextureCube cube : register(t1);
@@ -52,6 +69,7 @@ pub(crate) struct SharedResources {
 
     /// The debug display pass and its constants.
     pub display_ps: Option<ID3D11PixelShader>,
+    pub ts_maps_ps: Option<ID3D11PixelShader>,
     pub display_cb: Option<ID3D11Buffer>,
     pub cube_vb: Option<ID3D11Buffer>,
     pub cube_ib: Option<ID3D11Buffer>,
@@ -82,11 +100,13 @@ impl SharedResources {
         let vs = compile(HELPER_HLSL, "helpers", "fs_vs", "vs_5_0")?;
         let vs2 = compile(HELPER_HLSL, "helpers", "fs_vs2", "vs_5_0")?;
         let ps = compile(HELPER_HLSL, "helpers", "display_ps", "ps_5_0")?;
+        let ts = compile(HELPER_HLSL, "helpers", "ts_maps_ps", "ps_5_0")?;
         let cb = D3D11_BUFFER_DESC { ByteWidth: 16, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32, CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0 };
         let mut r = Self {
             fs_vs: dev.create_vertex_shader(&vs).ok(),
             fs_vs2: dev.create_vertex_shader(&vs2).ok(),
             display_ps: dev.create_pixel_shader(&ps).ok(),
+            ts_maps_ps: dev.create_pixel_shader(&ts).ok(),
             display_cb: dev.create_buffer(&cb, None).ok(),
             ..Default::default()
         };
