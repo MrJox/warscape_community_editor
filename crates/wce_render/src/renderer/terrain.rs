@@ -424,7 +424,7 @@ pub(crate) struct TerrainGpuState {
     pub(crate) inst_vb: Option<ID3D11Buffer>,
     pub(crate) ds_depth: Option<ID3D11DepthStencilState>,
     pub(crate) ds_equal: Option<ID3D11DepthStencilState>,
-    ds_lequal: Option<ID3D11DepthStencilState>,
+    pub(crate) ds_lequal: Option<ID3D11DepthStencilState>,
     pub(crate) ds_stencil: Option<ID3D11DepthStencilState>,
     pub(crate) ds_resolve: Option<ID3D11DepthStencilState>,
 
@@ -432,6 +432,9 @@ pub(crate) struct TerrainGpuState {
     ds_stencil_snow: Option<ID3D11DepthStencilState>,
     ds_resolve_snow: Option<ID3D11DepthStencilState>,
     pub(crate) bs_add: Option<ID3D11BlendState>,
+
+    /// Rome 2's terrain-blend meshes over the resolved ground: colour blended by the source's alpha (their vertex alpha), alpha kept.
+    pub(crate) bs_r2_overlay: Option<ID3D11BlendState>,
     pub(crate) rs_front_cull: Option<ID3D11RasterizerState>,
 
     /// Rome 2's composite targets (albedo + alpha, normal, gloss) and their size.
@@ -522,6 +525,12 @@ impl Renderer {
         t.bs_add = crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
             BlendEnable: true.into(), SrcBlend: D3D11_BLEND_ONE, DestBlend: D3D11_BLEND_ONE, BlendOp: D3D11_BLEND_OP_ADD, SrcBlendAlpha: D3D11_BLEND_ONE,
             DestBlendAlpha: D3D11_BLEND_ONE, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
+        });
+
+        t.bs_r2_overlay = crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
+            BlendEnable: true.into(), SrcBlend: D3D11_BLEND_SRC_ALPHA, DestBlend: D3D11_BLEND_INV_SRC_ALPHA, BlendOp: D3D11_BLEND_OP_ADD, SrcBlendAlpha: D3D11_BLEND_ZERO,
+            DestBlendAlpha: D3D11_BLEND_ONE, BlendOpAlpha: D3D11_BLEND_OP_ADD,
+            RenderTargetWriteMask: (D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE) as u8,
         });
 
         // The blend boxes: their back faces cover the pixels once, also from inside the box. Not clipped by depth (clamped instead): the
