@@ -1660,6 +1660,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("create_filter", "create_filter [words]", "the Create panel's search (no words: clear it); its folders open while it has words", |e, a| {
+        let words = a.join(" ");
+        with_tile(e, |t, _| {
+            t.set_create_filter(&words);
+            ok(String::new())
+        })
+    });
+
     c.add("prefab_rescan", "prefab_rescan", "scan the prefab folders again", |e, _| with_tile(e, |t, e| ok(format!("{} prefabs", t.rescan_prefabs(e)))));
 
     c.add("keys", "keys <type> [filter]", "the valid keys of a type in the open tile's files (the Create and Placement pickers' lists): the count and the first 20 matching", |e, a| {
