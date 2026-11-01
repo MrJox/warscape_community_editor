@@ -138,15 +138,30 @@ whitecaps: `combined_foam`'s red at the sea uv, faded over 1000 units, sharpened
 1.6 m of water; all of it times `saturate(-ground * 1.667)` of the sea bed: no foam where the sea bed info reads 0, as everywhere outside
 its square (x, z in [-1024, 1024] around the world origin, the battle's centre; the vertex shader's flattening likewise).
 
-The editor (`renderer/reflection.rs`, `ocean.rs`): the reflection is the mirrored sky and cloud planes at half the screen's size, in the
-light buffer's units. ASSUMPTION: the game renders the mirrored scene itself (it has `_reflection` techniques of the directional light
-and the terrain); the land and buildings are not reflected here. The sea is drawn around the battle's centre (its camera and cascade
-constants moved to that frame for the draw, `Renderer::shift_camera_constants`), so the sea bed square, and with it the foam, stays on
-the battle as the game's; around the render origin it followed the camera and showed as a straight edge across the sea. Far from the
-battle (8192 game units) it falls back to the render origin.
-
-Open (needs a capture of the game: RenderDoc on Windows captures Rome 2, 32-bit): the open sea's whitecaps, strong in the editor within
-the battle square, none in the user's screenshots; the sea's colour (turquoise in the game, grey-blue here); what the reflection holds.
+**Settled by a RenderDoc capture (2026-11-01)** of a battle at Carthage (`D:\renderdoc\rome2_carthage.rdc`, and a beach view
+`rome2_carthage_beach.rdc`; the tile `settlement_greek_ports/greek_carthage/medium` (not large: no round harbour), weather
+`rome_med/su/land/day/dry/day_dry_05`, Rome 2 on Windows with RenderDoc 1.46, MSAA off, water quality 5):
+- The sea at water quality 5 (Extreme) is `ps30_main_high_water_quality` (the shadowed gather 5_0 variant), not ultra: no whitecap
+  sample, so no whitecaps over the open sea (`ocean::ROME2_WATER`).
+- The reflection (R11G11B10, half size): a mirrored camera (its eye under the water, its projection oblique at the water) draws a fog
+  pass (fog_VS_PS, the sky cube, alpha blended), the sky dome and the cloud planes, before the G-buffer; after the lights, the water's
+  refraction copy (half size, RGBA16F) and then `helpers.hlsl` `scree_space_reflections_ps` (screen_space_refl_params: the camera's
+  view_projection and its inverse, camera_position_and_reflection_height (eye, 0), min / max water height 0 / 1, tiles_per_dim 256,
+  playable_area_size 2048, quality_factor 0.8; textures: scene_tex = the refraction copy, depth_tex = the depth, water_height_tex 256 x
+  256 RGBA8) blend the scene's reflection over it (SRC_ALPHA / INV_SRC_ALPHA). Then the sea, before the sky.
+- The sea bed info texture (1024 x 1024 B8G8R8A8, `r * 25 - 20`) holds the tiles' own heights: at the shore the ground is drawn 0.6 m under
+  the texture's value (the LF's share), so the water there is deeper than the texture says, and the shore foam is a wide band.
+- The editor's values for that weather equal the game's (sun direction and colour, the deep water colour, the fog, the ambient cube, the
+  tone mapper's limits, the S-curve, the black and white points); the light buffer before the tone mapper within a few per cent.
+- The editor (`renderer/reflection.rs`, `ocean.rs`): the mirrored sky and clouds (not the fog pass, no oblique plane), then the game's
+  SSR over them; its water height map is one texel (water at 0 everywhere: the game's only skips the pixels with no water under them). The
+  sea is drawn around the battle's centre (its camera and cascade constants moved to that frame for the draw,
+  `Renderer::shift_camera_constants`), so the sea bed square, and the foam, stays on the battle as the game's. The sea bed leaves the
+  terrains' LF out.
+- Open: the shore foam band is still narrower than the game's at Carthage: the game's ground there is 0.6 m under its sea bed, the
+  editor's 0.07 m. The game's land LF is a 256 x 256 window over 16384 units (64 units a texel, `LF * 3000 - 20`; the sea tiles' the sea
+  LF, 4064 x 2874, at `LF * 400 - 20`); the editor samples the campaign's 8128 x 5748 LF: the two differ by about 0.5 m at that coast. To
+  compare the window texture with the campaign LF there.
 
 ## Rivers and water planes (`water.rs`)
 

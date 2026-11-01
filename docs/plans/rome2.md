@@ -55,12 +55,18 @@ Status legend: **done**, **partial**, **todo**.
   which its light pass cannot read: no shadows at all). **todo** The cloud shade and baked shadows: check against a frame of the game.
 - **done** The sea (the forward ocean). 2026-11-01, against the user's screenshots of Carthage (`greek_carthage/large`, its campaign
   placement, ROME_Med, summer, day, dry): the planar reflection (the mirrored sky; ASSUMPTION: the game's reflects the scene too), the
-  shadowed variant, the sea around the battle's centre (docs/re/rome2_renderer.md, "Sea"). Open: the whitecaps and the colour (to
-  capture the game).
+  shadowed variant, the sea around the battle's centre (docs/re/rome2_renderer.md, "Sea"). 2026-11-01, against a RenderDoc capture of
+  the game (`D:\renderdoc\rome2_carthage.rdc`): the high water technique (no whitecaps), the game's screen-space reflection over the
+  mirrored sky, the sea bed without the LF; at the same camera and weather the image is within a few per cent of the game's. Open: the
+  shore foam band (the LF at the coast, docs/re/rome2_renderer.md); the land LF's window texture and the sea LF's `* 400` for sea tiles.
+- **done** The output (2026-11-01, the capture): `hdr_to_screen`'s grain variants with gfx_grain (the image 1.7 x brighter before gamma
+  with it); the vignette is the tone mapper's `vignette_buffer` (gfx_vignette; no lens-flare vignette). Gamma and brightness were the
+  game's already.
 - **done** The terrain-blend meshes (2026-11-01; the settlements' cliff faces, `cliff`, `cliff02`): Rome 2's `rigidterrainblend` has no
   terrain-material entry (ps30_gbuffer, ps30_null_gbuffer, shadow). ps30_gbuffer writes the vertex alpha (0 on the plateau, 1 on the
   faces) into the normal's and the albedo's alpha: drawn after the terrain resolve and blended by it (`terrain_rome2.rs`, step 4) over the
-  ground the resolve gave them. ASSUMPTION: the game blends it over ps30_null_gbuffer's (the terrain's virtual texture). Not applied: the
+  ground the resolve gave them. Confirmed by the capture: ps30_null_gbuffer first (the terrain's virtual texture), then ps30_gbuffer with
+  SRC_ALPHA / INV_SRC_ALPHA on colour (write mask RGB) into the three G-buffer targets. Not applied: the
   climate's variants of their textures (`cliff_rome_med_diffuse.dds`, `rock01_rome_med_*`, `rockstraight_*`), which the engine picks
   as it does the custom meshes' (`<name>_<climate>_diffuse.dds`; not traced for buildings).
 - **partial** The effects (docs/re/rome2_vfx.md): the billboard emitters (`continuous_mesh`, `burst_mesh`) are a port of the game's
