@@ -1,8 +1,9 @@
 //! What the tile tool needs to know about a building from the `battlefield_buildings` table: its category, which decides whether TEd shows
 //! `weak_wall`, `ai_breachable` and `dockable` for an instance (`fort_wall`: all three, `unbreachable_fort_wall`: `dockable`).
 //!
-//! The table is read from the assembly kit's export next to the tile (`<kit>/raw_data/db/battlefield_buildings.xml`, and the mod's
-//! `TWaD_battlefield_buildings.xml` beside it); without the kit the category is unknown and the grid shows those properties for the instances
+//! The table is read from the Assembly Kits' exports (`<kit>/raw_data/db/battlefield_buildings.xml`, and the mod's
+//! `TWaD_battlefield_buildings.xml` beside it): the kit next to the tile first, then the projects' kit layout and the settings' kits
+//! ([`BuildingDb::load_for_tile`]); without a kit the category is unknown and the grid shows those properties for the instances
 //! that already have them in the file (TEd writes them for exactly those buildings).
 
 use std::collections::HashMap;
@@ -16,23 +17,25 @@ pub struct BuildingDb {
 impl BuildingDb {
     /// The tables of the kit that holds `tile_dir` (any folder below its `raw_data`); empty when there is none.
     pub fn load_near(tile_dir: &Path) -> Self {
-        let mut db = Self::default();
-        for dir in tile_dir.ancestors() {
-            let tables = dir.join("raw_data").join("db");
-            if !tables.is_dir() {
-                continue;
-            }
+        Self::load_raw_dirs(&Self::raw_dir_near(tile_dir).into_iter().collect::<Vec<_>>())
+    }
 
-            for name in ["battlefield_buildings.xml", "TWaD_battlefield_buildings.xml"] {
-                if let Ok(bytes) = std::fs::read(tables.join(name)) {
-                    db.add_xml(&String::from_utf8_lossy(&bytes));
-                }
-            }
+    /// The raw_data folder with tables (`raw_data/db`) of the kit that holds `tile_dir`, if there is one.
+    pub fn raw_dir_near(tile_dir: &Path) -> Option<std::path::PathBuf> {
+        tile_dir.ancestors().map(|dir| dir.join("raw_data")).find(|raw| raw.join("db").is_dir())
+    }
 
-            break;
+    /// The tables of a tile: its own kit's (a kit's tile), then those of `raw_dirs` (the projects' kit layout, the Assembly Kits in the
+    /// settings' order), the first ones' records winning.
+    pub fn load_for_tile(tile_dir: &Path, raw_dirs: &[std::path::PathBuf]) -> Self {
+        let mut raws = Self::raw_dir_near(tile_dir).into_iter().collect::<Vec<_>>();
+        for raw in raw_dirs {
+            if !raws.contains(raw) {
+                raws.push(raw.clone());
+            }
         }
 
-        db
+        Self::load_raw_dirs(&raws)
     }
 
     /// The tables of these raw_data folders (`<raw_data>/db`), the first ones' records winning: the projects' kit layout, then the Assembly
@@ -106,5 +109,29 @@ mod tests {
         assert_eq!(db.category("nope"), None);
         db.add_xml("<battlefield_buildings x=\"1\"><category>gate</category><key>wall_a</key></battlefield_buildings>");
         assert_eq!(db.category("wall_a"), Some("gate"));
+    }
+
+    #[test]
+    fn a_tile_reads_its_kit_then_the_others() {
+        let table = |raw: &Path, key: &str, category: &str| {
+            std::fs::create_dir_all(raw.join("db")).unwrap();
+            let xml = format!("<battlefield_buildings x=\"1\"><category>{category}</category><key>{key}</key></battlefield_buildings>");
+            std::fs::write(raw.join("db").join("battlefield_buildings.xml"), xml).unwrap();
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let (own, projects, kit) = (dir.path().join("own/raw_data"), dir.path().join("projects/raw_data"), dir.path().join("kit/raw_data"));
+        table(&own, "a", "gate");
+        table(&projects, "a", "generic");
+        table(&kit, "b", "fort_wall");
+        let tile = own.join("terrain/tiles/battle/x/aa");
+        std::fs::create_dir_all(&tile).unwrap();
+
+        let db = BuildingDb::load_for_tile(&tile, &[projects.clone(), kit.clone()]);
+        assert_eq!((db.category("a"), db.category("b")), (Some("gate"), Some("fort_wall")));
+
+        // A project tile (no kit of its own): the projects' table, then the kits'.
+        let project_tile = dir.path().join("elsewhere/aa");
+        let db = BuildingDb::load_for_tile(&project_tile, &[projects, kit]);
+        assert_eq!((db.category("a"), db.category("b")), (Some("generic"), Some("fort_wall")));
     }
 }

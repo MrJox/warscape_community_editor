@@ -3975,6 +3975,9 @@ impl Tool for TileTool {
         }
 
         let mut doc = TileDocument::new(project, e.files());
+        let mut tables = vec![projects.join("raw_data")];
+        tables.extend(e.settings_ref().assembly_kit_raw_dirs());
+        doc.set_building_tables(tables);
         doc.set_projects_root(Some(projects));
         if let Some(w) = doc.exclusion_warning() {
             log::error(format!("{}: {w}", doc.title()));

@@ -323,10 +323,15 @@ impl Tile {
         vegetation_model(self.files.as_deref(), &converted).or_else(|| self.model_of(elem).filter(|m| m.ok).and_then(|m| m.pieces.first().cloned()))
     }
 
-    /// The category of a building key in the kit's `battlefield_buildings` (`fort_wall`, `gate`, `generic` ...); `None` without the kit.
+    /// The kits' `battlefield_buildings` tables: the tile's own kit's (a kit's tile), then the projects' kit layout's and the Assembly Kits'
+    /// (`TileDocument::set_building_tables`), read on first use.
+    pub fn building_db(&self) -> &BuildingDb {
+        self.building_db.get_or_init(|| BuildingDb::load_for_tile(&self.project.dir, &self.building_tables))
+    }
+
+    /// The category of a building key in the kits' `battlefield_buildings` (`fort_wall`, `gate`, `generic` ...); `None` without a kit.
     pub fn building_category(&self, key: &str) -> Option<String> {
-        let db = self.building_db.get_or_init(|| BuildingDb::load_near(&self.project.dir));
-        db.category(key).map(str::to_owned)
+        self.building_db().category(key).map(str::to_owned)
     }
 
     /// TEd hands the properties of a building on to its pieces (`BUILDING_INSTANCE::set_property` loops over them): the pieces take the new value.

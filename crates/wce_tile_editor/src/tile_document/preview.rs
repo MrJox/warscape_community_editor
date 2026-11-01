@@ -47,7 +47,7 @@ impl Tile {
                     let slash = p.rfind('/')?;
                     p.get(prefix.len()..slash).filter(|f| !f.is_empty()).map(str::to_owned)
                 }).collect::<Vec<_>>();
-                keys.extend(self.building_db.get_or_init(|| wce_tile::building_db::BuildingDb::load_near(&self.project.dir)).keys().map(str::to_owned));
+                keys.extend(self.building_db().keys().map(str::to_owned));
                 keys
             }
 
