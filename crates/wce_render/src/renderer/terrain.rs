@@ -439,6 +439,9 @@ pub(crate) struct TerrainGpuState {
 
     /// Rome 2's composite targets (albedo + alpha, normal, gloss) and their size.
     pub(crate) r2_comp: [Target; 3],
+
+    /// The composite as the maps the game's resolve (`_ts`) and grass read (shared.rs `ts_maps_ps`).
+    pub(crate) r2_ts: [Target; 3],
     pub(crate) r2_w: u32,
     pub(crate) r2_h: u32,
 

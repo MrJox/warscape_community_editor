@@ -35,6 +35,10 @@ const BAKED_DEPTH_OFFSET: f32 = 0.946_718;
 /// `g_vBakedShadowmapParams` (the capture's): the far fade, the start, the near fade's slope and intercept.
 const BAKED_PARAMS: [f32; 4] = [0.000_520_183, 238.7, -0.020_946_795, 6.0];
 
+/// The casters are stored this much lower (game units of height) than they are: a surface compared with itself across the map's 1-unit
+/// texels (linear, five taps) otherwise shades itself in stripes (the flat roofs flickered as the camera moved).
+const BAKED_HEIGHT_BIAS: f32 = 1.0;
+
 /// The camera moves this far (game units) before the map is made again around it.
 const BAKED_CELL: f32 = 128.0;
 
@@ -144,7 +148,7 @@ impl Renderer {
         let mut g = Float4x4::IDENTITY;
         g.m[0] = [2.0 * scale[0], 2.0 * shear[0], 0.0, 2.0 * offset[0] - 1.0];
         g.m[1] = [0.0, -2.0 * shear[1], -2.0 * scale[1], 1.0 - 2.0 * offset[1]];
-        g.m[2] = [0.0, scale[2], 0.0, offset[2]];
+        g.m[2] = [0.0, scale[2], 0.0, offset[2] - scale[2] * BAKED_HEIGHT_BIAS];
         g.m[3] = [0.0, 0.0, 0.0, 1.0];
 
         // In scene units (as the cascades' `light_rel`), and absolute for culling.
@@ -178,7 +182,8 @@ impl Renderer {
             frustum: Frustum::from_view_projection(&abs),
             eye: cam.eye,
             shadow: true,
-            coarser: 3,
+            // The view's own levels of detail: coarser casters than the surfaces they are compared with shade them.
+            coarser: 0,
             lod_scale: self.settings.lod_scale,
             min_radius: texel * self.settings.shadow_min_texels,
             quality: self.lod_quality(),

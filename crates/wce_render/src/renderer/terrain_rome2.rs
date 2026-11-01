@@ -33,7 +33,10 @@ const R2_COMPOSITE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_com
 const R2_COMPOSITE50_VS: &str = "dx11_sm_5_0_rigidterrain.hlsl_vs_vs30_terrain_composite";
 const R2_COMPOSITE50_PS: &str = "dx11_sm_5_0_rigidterrain.hlsl_ps_ps50_terrain_composite";
 const R2_RESOLVE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_to_gbuffer";
-const R2_RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss";
+/// The game's resolve (a capture of a battle): `_ts`, which reads finished maps (albedo, normal * 0.5 + 0.5, gloss) and darkens the
+/// albedo by the terrain noise. `_ss` reads the composite's weighted sums and divides the noise back out (the ground came out brighter
+/// than the grass, which reads the maps as `_ts` does and darkens them by the noise: the grass's dark patches).
+const R2_RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ts";
 
 /// ps_height_map_cb's mid-distance detail and noise of a Rome 2 battle (a RenderDoc capture, 2026-11-01).
 pub(crate) const ROME2_DETAIL: [f32; 4] = [20.0, 400.0, 3.0, 0.6];
@@ -86,6 +89,7 @@ impl Renderer {
         if self.terrain.r2_comp[0].tex.is_none() || self.terrain.r2_w != self.gbuffer.w || self.terrain.r2_h != self.gbuffer.h {
             for i in 0..3 {
                 self.terrain.r2_comp[i] = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R16G16B16A16_FLOAT);
+                self.terrain.r2_ts[i] = make_target(&self.dev, self.gbuffer.w, self.gbuffer.h, DXGI_FORMAT_R8G8B8A8_UNORM);
             }
 
             self.terrain.r2_w = self.gbuffer.w;
@@ -266,6 +270,24 @@ impl Renderer {
             null_ps_srvs(&ctx, 16);
         }
 
+        // ---- 2b. The composite as the game's maps (its virtual texture path writes these directly).
+        {
+            let rtvs = self.terrain.r2_ts.iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
+            ctx.set_render_targets(&rtvs, None);
+            ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
+            ctx.set_blend_state(self.states.bs_opaque.as_ref());
+            ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+            ctx.set_input_layout(None);
+            ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            ctx.vs_set_shader(self.res.fs_vs.as_ref());
+            ctx.ps_set_shader(self.res.ts_maps_ps.as_ref());
+            let srvs = self.terrain.r2_comp.iter().map(|t| t.srv.clone()).collect::<Vec<_>>();
+            ctx.ps_set_shader_resources(0, &srvs);
+            ctx.draw(3, 0);
+            self.draw_stats.draw_calls += 1;
+            null_ps_srvs(&ctx, 16);
+        }
+
         // ---- 3. The resolve: the terrain pixels into the G-buffer.
         let Some(m) = ents.iter().find_map(|e| match &e.payload {
             Payload::Terrain(Terrain { material: Some(m), .. }) => Some(m.clone()),
@@ -312,9 +334,9 @@ impl Renderer {
         }
 
         bind_sampler(&ctx, &res_ps, "s_shroud", self.states.s_clamp_linear.as_ref());
-        bind_srv(&ctx, &res_ps, "s_albedo_map", self.terrain.r2_comp[0].srv.as_ref());
-        bind_srv(&ctx, &res_ps, "s_terrain_normal_map", self.terrain.r2_comp[1].srv.as_ref());
-        bind_srv(&ctx, &res_ps, "s_terrain_gloss_map", self.terrain.r2_comp[2].srv.as_ref());
+        bind_srv(&ctx, &res_ps, "s_albedo_map", self.terrain.r2_ts[0].srv.as_ref());
+        bind_srv(&ctx, &res_ps, "s_terrain_normal_map", self.terrain.r2_ts[1].srv.as_ref());
+        bind_srv(&ctx, &res_ps, "s_terrain_gloss_map", self.terrain.r2_ts[2].srv.as_ref());
         bind_srv(&ctx, &res_ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
         bind_srv(&ctx, &res_ps, "s_mid_distance_detail_map", detail.as_ref());
         bind_srv(&ctx, &res_ps, "s_noise_map", noise.as_ref());

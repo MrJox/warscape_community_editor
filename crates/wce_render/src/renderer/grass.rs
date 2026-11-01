@@ -30,6 +30,9 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 
 const GRASS_VS: &str = "dx11_sm_3_0_rigidgrass.hlsl_vs_vs30_main_grass";
 const GRASS_PS: &str = "dx11_sm_3_0_rigidgrass.hlsl_ps_ps30_gbuffer_grass";
+
+/// Rome 2's (a capture of a battle: one pass with it, no depth prefill): the blade's colour divided by its filtered alpha.
+const R2_GRASS_PS: &str = "dx11_sm_3_0_rigidgrass.hlsl_ps_ps30_gbuffer_no_clip_grass";
 const GRASS_MS_PS: &str = "dx11_sm_5_0_rigidgrass.hlsl_ps_ps50_gbuffer_grass_ms";
 const GRASS_SHADOW_VS: &str = "dx11_sm_3_0_rigidgrass.hlsl_vs_vs30_shadow_grass";
 const GRASS_SHADOW_PS: &str = "dx11_sm_3_0_rigidgrass.hlsl_ps_ps30_shadow_grass";
@@ -302,7 +305,7 @@ impl Renderer {
 
         // With MSAA the coverage technique (`ps50_gbuffer_grass_ms`).
         let ms_ps = if self.gbuffer.ms.is_some() { self.shader(GRASS_MS_PS) } else { None };
-        let (Some(vs), Some(ps)) = (self.shader(GRASS_VS), ms_ps.or_else(|| self.shader(GRASS_PS))) else { return };
+        let (Some(vs), Some(ps)) = (self.shader(GRASS_VS), ms_ps.or_else(|| self.shader(if self.game == super::game::RenderGame::Rome2 { R2_GRASS_PS } else { GRASS_PS }))) else { return };
         let Some(layout) = self.grass_layout(&vs) else { return };
         let frustum = Frustum::from_view_projection(&self.camera.view_proj);
         // gfx_alpha_blend: the near patches are the order-independent transparency's (`pass_oit`).
@@ -441,9 +444,9 @@ impl Renderer {
             }
 
             bind_sampler(ctx, ps, "s_shroud", self.states.s_clamp_linear.as_ref());
-            bind_srv(ctx, ps, "s_albedo_map", self.terrain.r2_comp[0].srv.as_ref());
-            bind_srv(ctx, ps, "s_terrain_normal_map", self.terrain.r2_comp[1].srv.as_ref());
-            bind_srv(ctx, ps, "s_terrain_gloss_map", self.terrain.r2_comp[2].srv.as_ref());
+            bind_srv(ctx, ps, "s_albedo_map", self.terrain.r2_ts[0].srv.as_ref());
+            bind_srv(ctx, ps, "s_terrain_normal_map", self.terrain.r2_ts[1].srv.as_ref());
+            bind_srv(ctx, ps, "s_terrain_gloss_map", self.terrain.r2_ts[2].srv.as_ref());
             bind_srv(ctx, ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
             bind_srv(ctx, ps, "s_mid_distance_detail_map", self.terrain.r2_detail.as_ref().or(detail_normal.as_ref()));
             bind_srv(ctx, ps, "s_noise_map", noise.as_ref().or(self.res.white_srv.as_ref()));
