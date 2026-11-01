@@ -37,6 +37,8 @@ pub struct GameShader {
     pub ps: Option<ID3D11PixelShader>,
     pub gs: Option<ID3D11GeometryShader>,
     pub cs: Option<ID3D11ComputeShader>,
+    pub hs: Option<ID3D11HullShader>,
+    pub ds: Option<ID3D11DomainShader>,
     pub cbuffers: BTreeMap<String, u32>,
     pub textures: BTreeMap<String, u32>,
     pub samplers: BTreeMap<String, u32>,
@@ -118,6 +120,16 @@ impl ShaderLibrary {
                     Stage::Cs
                 }),
 
+                3 => self.dev.create_hull_shader(code).map(|hs| {
+                    s.hs = Some(hs);
+                    Stage::Hs
+                }),
+
+                4 => self.dev.create_domain_shader(code).map(|ds| {
+                    s.ds = Some(ds);
+                    Stage::Ds
+                }),
+
                 _ => return Err(RenderError(format!("unsupported shader stage: {name}"))),
             };
 
@@ -185,7 +197,8 @@ pub fn bind_shader(ctx: &ID3D11DeviceContext, s: &GameShader, cbs: &ConstantBuff
         Stage::Ps => ctx.ps_set_shader(s.ps.as_ref()),
         Stage::Gs => ctx.gs_set_shader(s.gs.as_ref()),
         Stage::Cs => ctx.cs_set_shader(s.cs.as_ref()),
-        Stage::Hs | Stage::Ds => {}
+        Stage::Hs => ctx.hs_set_shader(s.hs.as_ref()),
+        Stage::Ds => ctx.ds_set_shader(s.ds.as_ref()),
     }
 
     for (name, &slot) in &s.cbuffers {
@@ -196,7 +209,8 @@ pub fn bind_shader(ctx: &ID3D11DeviceContext, s: &GameShader, cbs: &ConstantBuff
             Stage::Ps => ctx.ps_set_constant_buffers(slot, &buffers),
             Stage::Gs => ctx.gs_set_constant_buffers(slot, &buffers),
             Stage::Cs => ctx.cs_set_constant_buffers(slot, &buffers),
-            Stage::Hs | Stage::Ds => {}
+            Stage::Hs => ctx.hs_set_constant_buffers(slot, &buffers),
+            Stage::Ds => ctx.ds_set_constant_buffers(slot, &buffers),
         }
     }
 }
@@ -210,7 +224,8 @@ pub fn bind_srv(ctx: &ID3D11DeviceContext, s: &GameShader, name: &str, srv: Opti
         Stage::Ps => ctx.ps_set_shader_resources(slot, &views),
         Stage::Gs => ctx.gs_set_shader_resources(slot, &views),
         Stage::Cs => ctx.cs_set_shader_resources(slot, &views),
-        Stage::Hs | Stage::Ds => {}
+        Stage::Hs => ctx.hs_set_shader_resources(slot, &views),
+        Stage::Ds => ctx.ds_set_shader_resources(slot, &views),
     }
 }
 
@@ -223,6 +238,7 @@ pub fn bind_sampler(ctx: &ID3D11DeviceContext, s: &GameShader, name: &str, smp: 
         Stage::Ps => ctx.ps_set_samplers(slot, &samplers),
         Stage::Gs => ctx.gs_set_samplers(slot, &samplers),
         Stage::Cs => ctx.cs_set_samplers(slot, &samplers),
-        Stage::Hs | Stage::Ds => {}
+        Stage::Hs => ctx.hs_set_samplers(slot, &samplers),
+        Stage::Ds => ctx.ds_set_samplers(slot, &samplers),
     }
 }

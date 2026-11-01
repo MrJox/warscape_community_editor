@@ -25,6 +25,10 @@ the battle river shader has no fade at the ends and no foam, `g_refraction_depth
 
 ## To check in game
 
+- Alpha blending (gfx_alpha_blend, docs/re/graphics_options.md): the near leaves and grass the order-independent transparency draws
+  (forward lit) come out lighter than the same leaves through the G-buffer. Compare a forest edge within 25 m in game with alpha
+  blending on and off (Attila or ToB), at the same camera and time, and against the editor's: whether the game shows the same step at
+  25 m, and which brightness is right.
 - Building collapses: the dust emission mesh and box, the effect group size, the debris, the bursts' timing, `.meta` effects on bones,
   the playback speed (docs/re/buildings.md, "Collapses between levels"). Not done: `SOUND_BUILDING` (the editor has no audio).
 - TDD's dead tree bark is near black: `tdd_pack6_weather_1.0.0.pack` ships dark 512 x 2048 `dead_tree_{dry,wet}_diffuse` (and `_ab`)

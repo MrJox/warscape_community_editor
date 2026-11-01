@@ -176,6 +176,14 @@ pub(crate) const MLAA_EDGES_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_pix
 pub(crate) const MLAA_LINE_LENGTH_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_computelinelength_ps";
 pub(crate) const MLAA_BLEND_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_blend_ps";
 
+/// Tessellation (gfx_tesselation): rigidcommon's `gbuffer_displacement_sm5` technique (fn 0x116e80f0) before the material's ps30_gbuffer, and
+/// the tweakers rigid_tesselation_factor and rigid_tesselation_displacement_scale (their defaults).
+pub(crate) const TESS_VS: &str = "dx11_sm_5_0_rigidcommon.hlsl_vs_vs30_displacement";
+pub(crate) const TESS_HS: &str = "dx11_sm_5_0_rigidcommon.hlsl_hs_hs_main_sm5";
+pub(crate) const TESS_DS: &str = "dx11_sm_5_0_rigidcommon.hlsl_ds_ds_main_sm5";
+pub(crate) const TESS_FACTOR: f32 = 5.0;
+pub(crate) const TESS_DISPLACEMENT_SCALE: f32 = 0.4;
+
 /// Order-independent transparency (gfx_alpha_blend 1): the leaves' and the grass's forward-lit OIT shaders (the shadowed variants, as the
 /// directional light's), and the resolve.
 pub(crate) const OIT_LEAF_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidleaf_v3.hlsl_ps_ps30_forward_lit_oit";
@@ -448,6 +456,9 @@ pub struct RenderSettings {
     /// standard OIT (1).
     pub alpha_blend: i32,
 
+    /// gfx_tesselation: the meshes with a displacement map are drawn tessellated in the G-buffer pass.
+    pub tessellation: bool,
+
     /// gfx_effects_quality: the effects' quality variant (0 best .. 2) and the particles' capacity (`particles`).
     pub effects_quality: i32,
 
@@ -527,6 +538,7 @@ impl Default for RenderSettings {
             god_rays: false,
             aa: 0,
             alpha_blend: 0,
+            tessellation: false,
             texture_filtering: 3,
             render_scale: 1.0,
             sharpness: 0.5,
@@ -569,6 +581,7 @@ impl RenderSettings {
         self.god_rays = o.god_rays;
         self.aa = o.aa;
         self.alpha_blend = o.alpha_blend;
+        self.tessellation = o.tessellation;
         self.texture_filtering = o.texture_filtering;
     }
 }
