@@ -319,8 +319,28 @@ impl Renderer {
         ctx.draw(6, 0);
         self.draw_stats.draw_calls += 1;
         null_ps_srvs(&ctx, 16);
-        ctx.set_rasterizer_state(self.states.rs_back.as_ref());
-        ctx.set_blend_state(self.states.bs_opaque.as_ref());
+
+        // ---- 4. The terrain-blend meshes (the settlements' cliff faces) over the ground the resolve gave them. Rome 2's
+        // rigidterrainblend has no terrain-material entry: ps30_null_gbuffer draws a mesh with the terrain's virtual texture, and
+        // ps30_gbuffer writes its own material with the vertex alpha in the normal's and the albedo's alpha (0 on the plateau, 1 on the
+        // faces): a blend weight. ASSUMPTION (no capture of the game): the second is blended over the first by that alpha; the editor's
+        // first is the resolve's ground (the meshes are terrain pixels), so the faces show their rock and the tops the ground.
+        let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
+        let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
+        let d = super::blend_mesh::BlendDraw {
+            dsv: self.gbuffer.dsv.clone(),
+            vs: super::blend_mesh::BLEND_VS, ps: super::blend_mesh::BLEND_GBUFFER_PS, targets: self.gbuffer.channels[..2].iter().map(|t| t.rtv.clone()).collect(),
+            depth_stencil: self.terrain.ds_lequal.clone(), stencil_ref: 0, blend: self.terrain.bs_r2_overlay.clone(),
+        };
+
+        let firsts = self.draw_lists.gbuffer_firsts;
+        self.draw_blend_meshes([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, &d);
+        self.draw_lists.terrain_draws = terrain_draws;
+        self.draw_lists.draws = draws;
+        self.draw_lists.vis_terrain = vis_terrain;
+        self.draw_lists.vis = vis;
+        self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
     }
 }
 
