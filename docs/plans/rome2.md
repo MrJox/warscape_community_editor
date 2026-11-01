@@ -57,8 +57,7 @@ Status legend: **done**, **partial**, **todo**.
   placement, ROME_Med, summer, day, dry): the planar reflection (the mirrored sky; ASSUMPTION: the game's reflects the scene too), the
   shadowed variant, the sea around the battle's centre (docs/re/rome2_renderer.md, "Sea"). 2026-11-01, against a RenderDoc capture of
   the game (`D:\renderdoc\rome2_carthage.rdc`): the high water technique (no whitecaps), the game's screen-space reflection over the
-  mirrored sky, the sea bed without the LF; at the same camera and weather the image is within a few per cent of the game's. Open: the
-  shore foam band (the LF at the coast, docs/re/rome2_renderer.md); the land LF's window texture and the sea LF's `* 400` for sea tiles.
+  mirrored sky; at the same camera and weather the image is within a few per cent of the game's.
 - **done** Distant shadows (2026-11-01, the capture; user report: shadows ended at a distance): the baked shadow map past the
   cascades (`renderer/shadow_baked.rs`): the casters seen along the sun, depth = height, 4272 units over 4096 texels, faded in from
   238.7 units (the cascades end at 341) and out towards 1922. The game scrolls one map toroidally around the camera; the editor renders
@@ -81,14 +80,17 @@ Status legend: **done**, **partial**, **todo**.
   custom meshes' are).
 - **checked, nothing to do** The sea tiles' LF scale (400 in the game): the sea LF is 0 around Carthage (5246 non-zero pixels on the whole
   map, as Attila's), so `LF * 400 - 20` is the editor's -20.
-- **done** A bright weather against the game (2026-11-01, `D:enderdocome2_carthage_bright.rdc` / `_bright_close.rdc`; the game
+- **done** A bright weather against the game (2026-11-01, `D:\renderdoc\rome2_carthage_bright.rdc` / `_bright_close.rdc`; the game
   picked `rome_med/su/land/day/dry/day_dry_04`, matched by its sun direction and colour): the editor's sunlit ground was 10 .. 20 %
   brighter; Rome 2's light pass applies the cloud shade (`cloud_shade.dds`, as Thrones of Britannia), which the editor had off. With it:
   within 2 .. 12 % (the shade's drifting offset differs). `day_dry_01`'s far haze looking into the sun is the weather's own (the same
   pipeline matches the game's `day_dry_04` and `day_dry_05`); not compared with the game in that file.
-- **todo** The shore foam band: the game's land LF is a 256 x 256 window of the campaign LF around the battle (64 game units a texel,
-  whole-texel aligned with `lf_height_map.dds`, 0.26 m mean difference); at Carthage's shore the game's ground is 0.6 m under its sea bed,
-  the editor's 0.07 m. Not traced further (the editor's sub-texel placement of the open tile on the LF, its `bias_y`).
+- **done** The shore foam band (2026-11-01, the capture; it was a thin line where the game's is a wide band): the game draws its terrain
+  surface with a slope-scaled depth bias (DepthBias 1, SlopeScaledDepthBias 2, the shadows' state), so where the camera grazes the beach
+  the ground's depth lies 1.7 units behind it and the sea covers the shore's edge further up (`States::rs_terrain_rome2`). The sea bed
+  holds the ground as drawn, the LF in (the texture within its 8-bit step of the terrain's vertices at the shore); the "0.6 m under its
+  sea bed" measured before was that bias read back from the depth, and leaving the LF out of the sea bed (done for it) is undone. The
+  game's terrain is a decimated mesh (vertices 2 to 16 units apart), the editor's the full height grid: equal at the vertices.
 - **done** The output (2026-11-01, the capture): `hdr_to_screen`'s grain variants with gfx_grain (the image 1.7 x brighter before gamma
   with it); the vignette is the tone mapper's `vignette_buffer` (gfx_vignette; no lens-flare vignette). Gamma and brightness were the
   game's already.
