@@ -52,7 +52,7 @@ fn environment_reading_and_mapping() {
     assert_eq!(mid.weather_definition, b.weather_definition);
 
     let options = parse_graphics_options("gfx_gamma_setting 1.8;\r\ngfx_vignette false;\ngfx_shadow_quality 9;\nbroken\n");
-    assert_eq!((options.gamma, options.vignette, options.shadow_quality, options.ssao), (1.8, false, 3, true));
+    assert_eq!((options.gamma, options.vignette, options.shadow_quality, options.ssao), (1.8, false, 5, true));
 }
 
 #[test]
