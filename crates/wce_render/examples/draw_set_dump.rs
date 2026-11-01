@@ -123,6 +123,7 @@ fn main() {
             min_radius: if v == 2 { 3.0 } else { 0.0 },
             max_distance: 0.0,
             quality: Default::default(),
+            no_context: false,
         };
 
         println!("frustum {:016x}", floats(view.frustum.p.iter().flat_map(|p| p.n.iter().chain(std::iter::once(&p.d)))));

@@ -483,7 +483,7 @@ impl ContextUi {
                 e.scene.remove_layer(self.layer);
             }
 
-            self.layer = e.scene.add_layer(id, "map context");
+            self.layer = e.scene.add_layer(id, wce_scene::render_scene::CONTEXT_LAYER);
             self.doc = id;
         } else {
             e.scene.clear_layer(self.layer);

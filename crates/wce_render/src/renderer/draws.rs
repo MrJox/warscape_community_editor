@@ -489,6 +489,9 @@ impl Renderer {
             }
 
             let item = self.draw_lists.draws.add_burning(&m, &e.world, Some(&params), mi.casts_shadow, mi.lod, mi.burning, e.id);
+            if scene.layer(e.layer).is_some_and(|l| l.name == wce_scene::render_scene::CONTEXT_LAYER) {
+                self.draw_lists.draws.mark_context(item);
+            }
             if let Some(slot) = self.draw_lists.item_of_entity.get_mut(e.id as usize) {
                 *slot = item;
             }

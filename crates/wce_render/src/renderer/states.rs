@@ -157,7 +157,7 @@ impl States {
         let r2 = D3D11_RASTERIZER_DESC { DepthBias: 1, SlopeScaledDepthBias: 2.0, ..rd };
         st.rs_shadow_rome2 = dev.create_rasterizer_state(&r2).ok();
         st.rs_shadow_rome2_front = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { CullMode: D3D11_CULL_FRONT, ..r2 }).ok();
-        st.rs_shadow_baked = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { CullMode: D3D11_CULL_BACK, DepthBias: 0, SlopeScaledDepthBias: 4.0, DepthClipEnable: false.into(), ..rd }).ok();
+        st.rs_shadow_baked = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { CullMode: D3D11_CULL_BACK, DepthBias: 0, SlopeScaledDepthBias: 4.0, DepthClipEnable: true.into(), ..rd }).ok();
         st.rs_shadow_terrain_rome2 = dev.create_rasterizer_state(&D3D11_RASTERIZER_DESC { CullMode: D3D11_CULL_BACK, ..r2 }).ok();
         let sm = D3D11_SAMPLER_DESC {
             Filter: D3D11_FILTER_MIN_MAG_MIP_POINT, AddressU: D3D11_TEXTURE_ADDRESS_WRAP, AddressV: D3D11_TEXTURE_ADDRESS_WRAP, AddressW: D3D11_TEXTURE_ADDRESS_WRAP,

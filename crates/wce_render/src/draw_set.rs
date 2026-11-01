@@ -76,6 +76,9 @@ const PARAMS: u8 = 4;
 /// An item whose entity went: culling skips it, `add` fills its slot again.
 const DEAD: u8 = 8;
 
+/// The item is a map context's (the neighbour tiles around the open one), not the battle's own.
+const CONTEXT: u8 = 16;
+
 /// Cull chunk size.
 const GRAIN: usize = 2048;
 
@@ -138,6 +141,9 @@ pub struct View {
 
     /// The quality options' levels that switch LODs off.
     pub quality: LodQuality,
+
+    /// Skip the map context's items (`mark_context`).
+    pub no_context: bool,
 }
 
 /// The quality options' levels that switch a model's first LODs off in battle (docs/re/graphics_options.md: Attila's fn 0x1180c370 and
@@ -174,7 +180,7 @@ impl Default for View {
     fn default() -> Self {
         Self {
             frustum: Frustum::default(), eye: Float3::default(), shadow: false, lod_scale: 1.0, coarser: 0, min_ratio: 0.0, min_radius: 0.0, max_distance: 0.0,
-            quality: LodQuality::default(),
+            quality: LodQuality::default(), no_context: false,
         }
     }
 }
@@ -471,6 +477,13 @@ impl DrawSet {
     }
 
     /// Culls the items for a view and groups the survivors by batch. The same culled set always gives the same draw order.
+    /// Marks an item as the map context's.
+    pub fn mark_context(&mut self, item: u32) {
+        if let Some(f) = self.flags.get_mut(item as usize) {
+            *f |= CONTEXT;
+        }
+    }
+
     pub fn cull(&self, v: &View, out: &mut Visible) {
         self.cull_split(v, out, None);
     }
@@ -486,7 +499,7 @@ impl DrawSet {
             let mut pairs = vec![];
             for i in chunk * GRAIN..((chunk + 1) * GRAIN).min(n) {
                 let f = self.flags[i];
-                if f & DEAD != 0 || (v.shadow && f & CASTS_SHADOW == 0) {
+                if f & DEAD != 0 || (v.shadow && f & CASTS_SHADOW == 0) || (v.no_context && f & CONTEXT != 0) {
                     continue;
                 }
 
