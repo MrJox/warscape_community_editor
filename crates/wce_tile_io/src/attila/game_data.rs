@@ -82,7 +82,7 @@ impl GameData {
             None => None,
         };
         if schema.is_none() {
-            warnings.push("no rpfm schema: the buildings' categories and destruction thresholds are not known".to_owned());
+            warnings.push("no rpfm schema (Help > Update Manager downloads it): the buildings' categories and destruction thresholds are not known".to_owned());
         }
 
         let is_mod = |path: &str| vfs.owner(path).is_some_and(|p| vfs.packs()[p].is_mod);

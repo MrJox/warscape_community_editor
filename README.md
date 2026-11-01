@@ -59,10 +59,16 @@ Pushing a tag `vX.Y.Z` that matches the workspace version (`[workspace.package] 
 `.github/workflows/release.yml`: it builds `wce.exe` for Windows and publishes a GitHub release with `wce-X.Y.Z-windows-x64.zip`. A tag with a
 pre-release part (`v0.2.0-beta.1`) is published as a pre-release.
 
-The editor looks for a newer release when an interactive session starts (release builds; Settings > General > Updates turns it off or
-includes pre-releases) and from Help > Check for updates. On Windows it downloads the zip with a progress bar, puts its files over the
-running build (the replaced files are renamed `*.wce-old` and deleted on the next start) and offers to restart. Elsewhere it links to the
-release page.
+Help > Update Manager manages the editor's updates and rpfm's schemas. It looks for a newer release when an interactive session starts
+(release builds; Settings > General > Updates turns it off or includes pre-releases). On Windows it downloads the zip with a progress bar,
+puts its files over the running build (the replaced files are renamed `*.wce-old` and deleted on the next start) and offers to restart.
+Elsewhere it links to the release page.
+
+rpfm's schemas (`schema_att.ron`...) are needed to read the games' db tables (the buildings' data, the climate phases, the procedural
+walls). The Update Manager compares the schemas in use with the newest commit of `Frodo45127/rpfm-schemas` and downloads every supported
+game's schema into the editor's own schemas folder (`<data folder>/schemas`, with the commit in `.wce-schemas-version`). A schema is read
+from `$WCE_RPFM_SCHEMA`, then Settings > General > DB schemas, then that folder, then rpfm's own. Without the current game's schema the
+window opens at start, even with the start check turned off.
 
 ## Gates
 

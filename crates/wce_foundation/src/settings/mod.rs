@@ -57,13 +57,23 @@ pub fn default_rpfm_schema_path(game: &crate::game::GameProfile) -> Option<PathB
 /// Settings window put it here, so that the readers of db tables need no settings.
 static DB_SCHEMAS: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
 
+/// The editor's own schemas folder ([`Paths::schemas_dir`]: what the Update Manager downloads), for [`rpfm_schema_path`]; set by
+/// [`Settings::load`].
+static DOWNLOADED_SCHEMAS: std::sync::RwLock<Option<PathBuf>> = std::sync::RwLock::new(None);
+
+/// The editor's own schemas folder (the Update Manager's downloads), once the settings are loaded.
+pub fn downloaded_schemas_dir() -> Option<PathBuf> {
+    DOWNLOADED_SCHEMAS.read().ok().and_then(|d| d.clone())
+}
+
 /// The DB schemas folder: `$WCE_DB_SCHEMAS`, else the settings' (the last [`Settings::load`] or [`Settings::publish_db_schemas`]).
 pub fn db_schemas_dir() -> Option<PathBuf> {
     env_value("WCE_DB_SCHEMAS").map(PathBuf::from).or_else(|| DB_SCHEMAS.read().ok().and_then(|d| d.clone()))
 }
 
 /// rpfm's schema of a game's db tables: `$WCE_RPFM_SCHEMA` (a file), else the game's schema (like `schema_att.ron`) in the DB schemas
-/// folder ([`db_schemas_dir`]), else in rpfm's own ([`default_rpfm_schema_path`]). None when none of them has it.
+/// folder ([`db_schemas_dir`]), else in the editor's own (the Update Manager's downloads, [`downloaded_schemas_dir`]), else in rpfm's own
+/// ([`default_rpfm_schema_path`]). None when none of them has it.
 pub fn rpfm_schema_path(game: &crate::game::GameProfile) -> Option<PathBuf> {
     rpfm_schema_path_in(game, db_schemas_dir().as_deref())
 }
@@ -73,6 +83,7 @@ pub fn rpfm_schema_path_in(game: &crate::game::GameProfile, schemas: Option<&Pat
     env_value("WCE_RPFM_SCHEMA")
         .map(PathBuf::from)
         .or_else(|| schemas.map(|dir| dir.join(game.rpfm_schema)).filter(|p| p.is_file()))
+        .or_else(|| downloaded_schemas_dir().map(|dir| dir.join(game.rpfm_schema)).filter(|p| p.is_file()))
         .or_else(|| default_rpfm_schema_path(game))
 }
 
@@ -130,6 +141,11 @@ impl Paths {
     /// The user's files the editor makes (the Tile tool's workspace of decompiled tiles): not to be deleted like a cache.
     pub fn data_dir(&self) -> &Path {
         &self.data
+    }
+
+    /// The rpfm schemas the Update Manager downloads ([`downloaded_schemas_dir`]).
+    pub fn schemas_dir(&self) -> PathBuf {
+        self.data.join("schemas")
     }
 
     /// Files the editor can rebuild (indices, the map context's terrain).
@@ -299,7 +315,7 @@ impl Default for CameraSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UpdateSettings {
-    /// An interactive session looks for a newer release when it starts.
+    /// An interactive session looks for a newer release and newer rpfm schemas when it starts.
     pub check_on_start: bool,
 
     /// Pre-releases (betas) count as updates.
@@ -441,6 +457,10 @@ impl Settings {
             } else {
                 log::warn(format!("the Tile settings' rpfm schema {} is not used any more: set the DB schemas folder (Settings > General)", old.display()));
             }
+        }
+
+        if let Ok(mut dir) = DOWNLOADED_SCHEMAS.write() {
+            *dir = Some(paths.schemas_dir());
         }
 
         settings.paths = paths;

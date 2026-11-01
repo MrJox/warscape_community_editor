@@ -4011,7 +4011,7 @@ fn walls_schema(e: &Editor) -> Result<rpfm_lib::schema::Schema, String> {
 fn walls_schema_path(e: &Editor) -> Result<PathBuf, String> {
     let game = e.game();
     wce_foundation::settings::rpfm_schema_path(game)
-        .ok_or_else(|| format!("the walls' database rows need rpfm's {} schema: {} in the DB schemas folder (Settings > General) or rpfm's", game.display_name, game.rpfm_schema))
+        .ok_or_else(|| format!("the walls' database rows need rpfm's {} schema: {} in the DB schemas folder (Settings > General) or rpfm's; Help > Update Manager downloads it", game.display_name, game.rpfm_schema))
 }
 
 /// A wall's layout in one line: base, length, corners, runs, steps, attached ends (scene units).
