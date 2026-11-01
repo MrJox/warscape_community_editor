@@ -705,3 +705,20 @@ fn a_wall_is_drawn_as_the_create_panel_draws_it() {
     assert_eq!((get("wall_base").as_str(), get("polygon_closed").as_str(), get("wall_tolerance").as_str()), ("roman_fort_straight", "0", "0.5"));
     assert!(t.wall_layout(wall).is_some(), "the wall has a layout");
 }
+
+#[test]
+fn a_building_copied_from_an_earlier_layer_goes_into_a_later_one() {
+    use wce_tile_editor::tile_document::Placement;
+
+    let (_dir, mut d) = open();
+    let graph = d.tile().tscene().scene_graph();
+    let later = d.add_layer(graph, "Later").unwrap();
+    let template = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+
+    // The copy goes in after its template, before the later layer: the layer's index moves under it.
+    let added = d.add_building_in("tower", Some(template), Some(Float3::new(20.0, 0.0, 20.0)), Placement::Landscape, Some(later)).unwrap();
+    let sc = d.tile().tscene();
+    assert_eq!(sc.layer_path(added), "Later");
+    assert_eq!(sc.doc().get(added, "key").as_deref(), Some("tower"));
+    assert_eq!(sc.layer_path(template), "Buildings");
+}
