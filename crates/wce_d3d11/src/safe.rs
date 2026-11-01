@@ -475,6 +475,10 @@ impl Drop for Mapped<'_> {
 /// Safe immediate context calls. Slices replace pointer + count pairs; `None` unbinds.
 pub trait ContextExt {
     fn set_render_targets(&self, rtvs: &[Option<ID3D11RenderTargetView>], dsv: Option<&ID3D11DepthStencilView>);
+    /// The render targets and the pixel shader's UAVs (slots from `rtvs.len()`); `counts` sets the append / counter buffers' counters
+    /// (one per UAV; u32::MAX keeps a counter).
+    fn set_render_targets_and_uavs(&self, rtvs: &[Option<ID3D11RenderTargetView>], dsv: Option<&ID3D11DepthStencilView>, uavs: &[Option<ID3D11UnorderedAccessView>], counts: &[u32]);
+    fn clear_unordered_access_view_uint(&self, uav: &ID3D11UnorderedAccessView, values: [u32; 4]);
     fn set_viewports(&self, viewports: &[D3D11_VIEWPORT]);
     fn set_scissor_rects(&self, rects: &[D3D11_RECT]);
 
@@ -556,6 +560,21 @@ impl ContextExt for ID3D11DeviceContext {
     fn set_render_targets(&self, rtvs: &[Option<ID3D11RenderTargetView>], dsv: Option<&ID3D11DepthStencilView>) {
         // SAFETY: a binding call with a slice.
         unsafe { self.OMSetRenderTargets((!rtvs.is_empty()).then_some(rtvs), dsv) };
+    }
+
+    fn set_render_targets_and_uavs(&self, rtvs: &[Option<ID3D11RenderTargetView>], dsv: Option<&ID3D11DepthStencilView>, uavs: &[Option<ID3D11UnorderedAccessView>], counts: &[u32]) {
+        assert_eq!(uavs.len(), counts.len(), "one initial count per UAV");
+        // SAFETY: a binding call with slices; the UAVs and their counts have the same length (checked above).
+        unsafe {
+            self.OMSetRenderTargetsAndUnorderedAccessViews(
+                (!rtvs.is_empty()).then_some(rtvs), dsv, rtvs.len() as u32, uavs.len() as u32, Some(uavs.as_ptr()), Some(counts.as_ptr()),
+            );
+        };
+    }
+
+    fn clear_unordered_access_view_uint(&self, uav: &ID3D11UnorderedAccessView, values: [u32; 4]) {
+        // SAFETY: a clear call with a view and four values.
+        unsafe { self.ClearUnorderedAccessViewUint(uav, &values) };
     }
 
     fn set_viewports(&self, viewports: &[D3D11_VIEWPORT]) {

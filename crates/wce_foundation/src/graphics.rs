@@ -144,6 +144,9 @@ const AA_MLAA: &[&str] = &["Off", "MLAA", "MSAA 2x (not applied yet)", "MSAA 4x 
 const FILTERING: &[&str] = &["Trilinear", "Anisotropic 2x", "Anisotropic 4x", "Anisotropic 8x", "Anisotropic 16x"];
 const REFLECTIONS: &[&str] = &["Off", "Half resolution", "Full resolution"];
 const ALPHA_BLEND: &[&str] = &["Alpha test", "Standard OIT", "Accelerated AOIT"];
+/// Attila's and Thrones of Britannia's: the editor draws the standard OIT for both (AOIT orders its fragments with Intel's pixel
+/// synchronisation, `g_IntelExt`).
+const ALPHA_BLEND_OIT: &[&str] = &["Alpha test", "Standard OIT", "Accelerated AOIT (drawn as standard OIT)"];
 
 const fn opt(key: &'static str, label: &'static str, kind: GfxKind, default: &'static str, applied: bool) -> GfxOption {
     GfxOption { key, label, kind, default, applied }
@@ -168,7 +171,7 @@ const ATTILA_OPTIONS: &[GfxOption] = &[
     opt("gfx_depth_of_field", "Depth of field", GfxKind::Switch, "1", true),
     opt("gfx_distortion", "Distortion effects", GfxKind::Toggle, "true", true),
     opt("gfx_vignette", "Vignette", GfxKind::Toggle, "true", true),
-    opt("gfx_alpha_blend", "Alpha blending", GfxKind::Levels(ALPHA_BLEND), "0", false),
+    opt("gfx_alpha_blend", "Alpha blending", GfxKind::Levels(ALPHA_BLEND_OIT), "0", true),
     opt("gfx_tesselation", "Tessellation", GfxKind::Toggle, "false", false),
     opt("gfx_gamma_setting", "Gamma", GfxKind::Float { min: 1.0, max: 3.0 }, "2.2", true),
     opt("gfx_brightness_setting", "Brightness", GfxKind::Float { min: 0.5, max: 2.0 }, "1", true),
@@ -196,7 +199,7 @@ const THRONES_OPTIONS: &[GfxOption] = &[
     opt("gfx_grain", "Film grain", GfxKind::Toggle, "false", true),
     opt("gfx_cloud_shadows", "Cloud shadows", GfxKind::Toggle, "false", true),
     opt("gfx_god_rays", "God rays", GfxKind::Toggle, "false", true),
-    opt("gfx_alpha_blend", "Alpha blending", GfxKind::Levels(ALPHA_BLEND), "0", false),
+    opt("gfx_alpha_blend", "Alpha blending", GfxKind::Levels(ALPHA_BLEND_OIT), "0", true),
     opt("gfx_tesselation", "Tessellation", GfxKind::Toggle, "false", false),
     opt("gfx_gamma_setting", "Gamma", GfxKind::Float { min: 1.0, max: 3.0 }, "2.2", true),
     opt("gfx_brightness_setting", "Brightness", GfxKind::Float { min: 0.5, max: 2.0 }, "1", true),

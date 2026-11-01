@@ -11,7 +11,7 @@ use wce_foundation::math::{Float3, Float4x4, length};
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{DEFAULT_INSTANCE_PARAMS, EntityId};
 
-use crate::model_cache::{GpuMesh, GpuModel, RigidInstance};
+use crate::model_cache::{GpuMesh, GpuModel, MeshKind, RigidInstance};
 
 /// A plane; inside is dot(n, p) + d >= 0.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -472,7 +472,14 @@ impl DrawSet {
 
     /// Culls the items for a view and groups the survivors by batch. The same culled set always gives the same draw order.
     pub fn cull(&self, v: &View, out: &mut Visible) {
+        self.cull_split(v, out, None);
+    }
+
+    /// As [`DrawSet::cull`], with the leaves (TreeLeaf batches) of the items whose centre is within a range of the eye (squared distances
+    /// in the view's units, from `.1.0` to `.1.1`) grouped into `near.0` instead: the order-independent transparency's (gfx_alpha_blend).
+    pub fn cull_split(&self, v: &View, out: &mut Visible, mut near: Option<(&mut Visible, (f32, f32))>) {
         wce_prof!("drawset.cull");
+        let range = near.as_ref().map(|n| n.1);
         let (n, nb) = (self.slots(), self.batches());
         let inv_scale = 1.0 / v.lod_scale.max(1e-3);
         let chunk_pairs = (0..n.div_ceil(GRAIN)).into_par_iter().map(|chunk| {
@@ -520,20 +527,36 @@ impl DrawSet {
                     lod = (lod as i32 + v.coarser).min(last as i32) as usize;
                 }
 
+                // Bit 63 files the pair under `near`.
+                let close = range.is_some_and(|(lo, hi)| {
+                    let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
+                    let d = dx * dx + dy * dy + dz * dz;
+                    lo <= d && d <= hi
+                });
+
                 for k in me.lod_first[lod]..me.lod_first[lod + 1] {
-                    pairs.push((u64::from(me.lod_batch[k as usize]) << 32) | i as u64);
+                    let b = me.lod_batch[k as usize];
+                    let to_near = close && self.batch_mesh(b).kind == MeshKind::TreeLeaf;
+                    pairs.push((u64::from(to_near) << 63) | (u64::from(b) << 32) | i as u64);
                 }
             }
 
             pairs
         }).collect::<Vec<_>>();
 
-        // A counting sort by batch, chunks in order.
+        Self::group(&chunk_pairs, nb, out, false);
+        if let Some((near, _)) = near.as_mut() {
+            Self::group(&chunk_pairs, nb, near, true);
+        }
+    }
+
+    /// Groups the culled (batch, item) pairs filed under `near` (bit 63) or not by batch: a counting sort, chunks in order.
+    fn group(chunk_pairs: &[Vec<u64>], nb: usize, out: &mut Visible, near: bool) {
+        let mine = |p: &&u64| (**p >> 63 == 1) == near;
+        let batch = |p: u64| ((p >> 32) & 0x7fff_ffff) as usize;
         out.count = vec![0; nb];
-        for pairs in &chunk_pairs {
-            for p in pairs {
-                out.count[(p >> 32) as usize] += 1;
-            }
+        for p in chunk_pairs.iter().flatten().filter(mine) {
+            out.count[batch(*p)] += 1;
         }
 
         out.start = vec![0; nb];
@@ -550,8 +573,8 @@ impl DrawSet {
         let mut cursor = out.start.clone();
         out.order = vec![0; at as usize];
         out.batch_of = vec![0; at as usize];
-        for p in chunk_pairs.iter().flatten() {
-            let b = (p >> 32) as usize;
+        for p in chunk_pairs.iter().flatten().filter(mine) {
+            let b = batch(*p);
             let pos = cursor[b] as usize;
             cursor[b] += 1;
             out.order[pos] = *p as u32;

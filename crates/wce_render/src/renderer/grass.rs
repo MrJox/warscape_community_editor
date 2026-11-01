@@ -102,12 +102,38 @@ impl Renderer {
     }
 
     /// A vegetation mesh's diffuse: its season's variant (the game's texture resolver FUN_1186c880, with seasons:
-    /// `<prefix>_<season>_diffuse<rest>` where that file exists), else its own.
+    /// `<prefix>_<season>_diffuse<rest>` where that file exists), else its own. With alpha blending (gfx_alpha_blend above 0) the resolver
+    /// loads the leaves', billboards' and grass's `<name>_ab.dds` instead (texture slots 0 and 0x11 of the mesh categories 0x5c and 0x40;
+    /// the bark has none): taken where it exists.
     pub(crate) fn vegetation_diffuse(&mut self, mesh: &crate::model_cache::GpuMesh) -> Option<ID3D11ShaderResourceView> {
+        use crate::model_cache::MeshKind;
         let srv = |t: Option<crate::model_cache::SharedTexture>| t.and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
         let season = self.grass.season.clone();
         let seasonal = (!season.is_empty()).then(|| self.diffuse_variant(mesh, &season)).flatten();
+        let blended = self.settings.alpha_blend > 0 && self.game != super::game::RenderGame::Rome2;
+        if blended && matches!(mesh.kind, MeshKind::TreeLeaf | MeshKind::TreeBillboard | MeshKind::Grass) {
+            let base = seasonal.clone().unwrap_or_else(|| mesh.diffuse_path.clone());
+            if let Some(ab) = self.ab_variant(&base)
+                && let Some(view) = srv(self.textures.get(&ab, true))
+            {
+                return Some(view);
+            }
+        }
+
         seasonal.and_then(|p| srv(self.textures.get(&p, true))).or_else(|| srv(Some(mesh.tex[crate::model_cache::TEX_DIFFUSE].clone())))
+    }
+
+    /// The resolver's `<name>_ab.dds` of a texture, if that file exists (looked up once).
+    fn ab_variant(&mut self, path: &str) -> Option<String> {
+        let stem = path.len().checked_sub(4).filter(|&n| path.get(n..).is_some_and(|e| e.eq_ignore_ascii_case(".dds")))?;
+        let ab = format!("{}_ab.dds", &path[..stem]);
+        if let Some(found) = self.grass.variants.get(&ab) {
+            return found.then_some(ab);
+        }
+
+        let found = self.files.exists(&ab);
+        self.grass.variants.insert(ab.clone(), found);
+        found.then_some(ab)
     }
 
     /// The resolver's `<prefix>_<tag>_diffuse<rest>` of the mesh's diffuse, if that file exists (looked up once).
@@ -148,8 +174,9 @@ impl Renderer {
     }
 
     /// The patches within [`GRASS_DISTANCE`] (game units) of `eye` (and in the frustum, if any): their instances per model mesh (the pivot
-    /// goes into the translation) in game units, in runs of (model, mesh, count).
-    fn gather_grass(&self, eye: Float3, frustum: Option<&Frustum>) -> (Vec<f32>, Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>) {
+    /// goes into the translation) in game units, in runs of (model, mesh, count). With `oit` (squared distances in scene units, and which
+    /// side to keep), only the patches within the order-independent transparency's range (true) or only the others (false).
+    pub(crate) fn gather_grass(&self, eye: Float3, frustum: Option<&Frustum>, oit: Option<((f32, f32), bool)>) -> (Vec<f32>, Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>) {
         let units = self.camera.units;
         let reach = GRASS_DISTANCE / units + PATCH_RADIUS;
         let (c0, c1) = (cell_of(eye.x - reach, eye.z - reach), cell_of(eye.x + reach, eye.z + reach));
@@ -164,7 +191,9 @@ impl Renderer {
                     for &k in list {
                         let m = &set.instances[k as usize];
                         let (dx, dy, dz) = (m[3] - eye.x, m[7] - eye.y, m[11] - eye.z);
-                        if dx * dx + dy * dy + dz * dz <= reach * reach && !frustum.is_some_and(|f| f.outside(&[m[3], m[7], m[11]], PATCH_RADIUS)) {
+                        let d = dx * dx + dy * dy + dz * dz;
+                        let side = oit.is_none_or(|((lo, hi), near)| (lo <= d && d <= hi) == near);
+                        if d <= reach * reach && side && !frustum.is_some_and(|f| f.outside(&[m[3], m[7], m[11]], PATCH_RADIUS)) {
                             near.push(k);
                         }
                     }
@@ -226,7 +255,7 @@ impl Renderer {
 
         let (Some(vs), Some(ps)) = (self.shader(GRASS_SHADOW_VS), self.shader(GRASS_SHADOW_PS)) else { return };
         let Some(layout) = self.grass_layout(&vs) else { return };
-        let (all, runs) = self.gather_grass(eye, None);
+        let (all, runs) = self.gather_grass(eye, None, None);
         let Some(inst_vb) = self.upload_grass(&all) else { return };
         let dissolve = self.textures.get(DISSOLVE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.white_srv.clone());
         self.ctx.set_input_layout(Some(&layout));
@@ -273,7 +302,9 @@ impl Renderer {
         let (Some(vs), Some(ps)) = (self.shader(GRASS_VS), self.shader(GRASS_PS)) else { return };
         let Some(layout) = self.grass_layout(&vs) else { return };
         let frustum = Frustum::from_view_projection(&self.camera.view_proj);
-        let (all, runs) = self.gather_grass(self.camera.eye, Some(&frustum));
+        // gfx_alpha_blend: the near patches are the order-independent transparency's (`pass_oit`).
+        let oit = self.oit_range().map(|range| (range, false));
+        let (all, runs) = self.gather_grass(self.camera.eye, Some(&frustum), oit);
         let Some(inst_vb) = self.upload_grass(&all) else { return };
 
         if self.grass.bs.is_none() {
@@ -289,10 +320,54 @@ impl Renderer {
             self.grass.bs = self.dev.create_blend_state(&desc).ok();
         }
 
-        // grass_PS as the grass draw (FUN_118858a0) sets it: g_alpha = the grass_alpha_mul / grass_alpha_add tweakers (2.5, 0: the roots blend
-        // into the ground), g_normal_scale_bias (1, 0) for a normal map without the flag, g_inv_lod_distance 1 / a distance setting (the shaders
-        // hard-code 100 m); the rest as the shader object's constructor leaves them. ps_height_map_cb as the terrain pass left it (or its
-        // values without one).
+        self.grass_constants();
+        let rtvs = self.gbuffer.channels[..4].iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
+        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
+        self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 1);
+        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
+        self.ctx.set_blend_state(if rome2 { self.states.bs_opaque.as_ref() } else { self.grass.bs.as_ref() });
+        self.ctx.set_input_layout(Some(&layout));
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.bind(&vs);
+        self.bind(&ps);
+        self.bind_grass_inputs(&ps, scene);
+        self.draw_grass_runs(&ps, runs, &inst_vb);
+        null_ps_srvs(&self.ctx, 16);
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
+    }
+
+    /// The near grass (`gather_grass` within the order-independent transparency's squared `range`) with `ps` (the OIT grass shader, bound
+    /// with its forward inputs and UAVs by `pass_oit`); the same vertex shader, constants and inputs as the G-buffer grass.
+    pub(crate) fn draw_oit_grass(&mut self, scene: &RenderScene, ps: &Rc<GameShader>, range: (f32, f32)) {
+        if self.grass.sets.is_empty() {
+            return;
+        }
+
+        let Some(vs) = self.shader(GRASS_VS) else { return };
+        let Some(layout) = self.grass_layout(&vs) else { return };
+        let frustum = Frustum::from_view_projection(&self.camera.view_proj);
+        let (all, runs) = self.gather_grass(self.camera.eye, Some(&frustum), Some((range, true)));
+        if runs.is_empty() {
+            return;
+        }
+
+        let Some(inst_vb) = self.upload_grass(&all) else { return };
+        self.grass_constants();
+        self.ctx.set_input_layout(Some(&layout));
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.bind(&vs);
+        self.bind(ps);
+        self.bind_grass_inputs(ps, scene);
+        self.bind_forward_inputs(ps);
+        self.draw_grass_runs(ps, runs, &inst_vb);
+    }
+
+    /// grass_PS as the grass draw (FUN_118858a0) sets it: g_alpha = the grass_alpha_mul / grass_alpha_add tweakers (2.5, 0: the roots blend
+    /// into the ground), g_normal_scale_bias (1, 0) for a normal map without the flag, g_inv_lod_distance 1 / a distance setting (the shaders
+    /// hard-code 100 m); the rest as the shader object's constructor leaves them. ps_height_map_cb as the terrain pass left it (or its
+    /// values without one).
+    pub(crate) fn grass_constants(&mut self) {
         let cbs = &mut self.cbs;
         cbs.set_f("grass_PS", "g_inv_lod_distance", &[1.0 / GRASS_DISTANCE]);
         cbs.set_f("grass_PS", "g_alpha", &[2.5, 0.0]);
@@ -306,6 +381,12 @@ impl Renderer {
         }
 
         self.upload();
+    }
+
+    /// The grass pixel shader's textures and samplers but the diffuse and burn (per mesh, `draw_grass_runs`): the terrain's detail maps,
+    /// the dissolve map, the snow normals, the terrain's view depth; Rome 2's composite maps. After `bind(ps)`.
+    pub(crate) fn bind_grass_inputs(&mut self, ps: &Rc<GameShader>, scene: &RenderScene) {
+        let rome2 = self.game == super::game::RenderGame::Rome2;
 
         // The terrain's detail maps.
         let material = scene.entities().iter().find_map(|e| match &e.payload {
@@ -321,56 +402,50 @@ impl Renderer {
         let snow = self.snow_normals_srv();
         let depth = if self.terrain.active { self.terrain.viewz.srv.clone() } else { self.res.white_srv.clone() };
 
-        let rtvs = self.gbuffer.channels[..4].iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
-        self.ctx.set_render_targets(&rtvs, self.gbuffer.dsv.as_ref());
-        self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 1);
-        self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
-        self.ctx.set_blend_state(if rome2 { self.states.bs_opaque.as_ref() } else { self.grass.bs.as_ref() });
-        self.ctx.set_input_layout(Some(&layout));
-        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        self.bind(&vs);
-        self.bind(&ps);
         null_ps_srvs(&self.ctx, 16);
         {
             let ctx = &self.ctx;
-            ps_samplers(ctx, &ps, &self.states.s_wrap_aniso);
-            bind_srv(ctx, &ps, "burn_sampler", self.res.black_srv.as_ref());
-            bind_srv(ctx, &ps, "s_fire_map", self.res.black_srv.as_ref());
-            bind_srv(ctx, &ps, "s_dissolve_map", dissolve.as_ref());
-            bind_srv(ctx, &ps, "s_depth_map", depth.as_ref());
-            bind_srv(ctx, &ps, "s_far_diffuse_map", self.res.black_srv.as_ref());
-            bind_srv(ctx, &ps, "s_mid_distance_detail_map_colour", detail_colour.as_ref());
-            bind_srv(ctx, &ps, "s_mid_distance_detail_map_normal", detail_normal.as_ref());
-            bind_srv(ctx, &ps, "s_near_distance_detail_map_colour", self.res.white_srv.as_ref());
-            bind_srv(ctx, &ps, "s_snow_normals", snow.as_ref());
-            bind_sampler(ctx, &ps, "s_depth_map", self.states.s_clamp_point.as_ref());
-            bind_sampler(ctx, &ps, "s_far_diffuse_map", self.states.s_clamp_linear.as_ref());
+            ps_samplers(ctx, ps, &self.states.s_wrap_aniso);
+            bind_srv(ctx, ps, "burn_sampler", self.res.black_srv.as_ref());
+            bind_srv(ctx, ps, "s_fire_map", self.res.black_srv.as_ref());
+            bind_srv(ctx, ps, "s_dissolve_map", dissolve.as_ref());
+            bind_srv(ctx, ps, "s_depth_map", depth.as_ref());
+            bind_srv(ctx, ps, "s_far_diffuse_map", self.res.black_srv.as_ref());
+            bind_srv(ctx, ps, "s_mid_distance_detail_map_colour", detail_colour.as_ref());
+            bind_srv(ctx, ps, "s_mid_distance_detail_map_normal", detail_normal.as_ref());
+            bind_srv(ctx, ps, "s_near_distance_detail_map_colour", self.res.white_srv.as_ref());
+            bind_srv(ctx, ps, "s_snow_normals", snow.as_ref());
+            bind_sampler(ctx, ps, "s_depth_map", self.states.s_clamp_point.as_ref());
+            bind_sampler(ctx, ps, "s_far_diffuse_map", self.states.s_clamp_linear.as_ref());
         }
 
         if rome2 {
             let ctx = &self.ctx;
             let noise = self.textures.get(super::terrain_rome2::NOISE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
             for n in ["s_albedo_map", "s_terrain_normal_map", "s_terrain_gloss_map", "s_depth_map"] {
-                bind_sampler(ctx, &ps, n, self.states.s_clamp_point.as_ref());
+                bind_sampler(ctx, ps, n, self.states.s_clamp_point.as_ref());
             }
 
-            bind_sampler(ctx, &ps, "s_shroud", self.states.s_clamp_linear.as_ref());
-            bind_srv(ctx, &ps, "s_albedo_map", self.terrain.r2_comp[0].srv.as_ref());
-            bind_srv(ctx, &ps, "s_terrain_normal_map", self.terrain.r2_comp[1].srv.as_ref());
-            bind_srv(ctx, &ps, "s_terrain_gloss_map", self.terrain.r2_comp[2].srv.as_ref());
-            bind_srv(ctx, &ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
-            bind_srv(ctx, &ps, "s_mid_distance_detail_map", self.terrain.r2_detail.as_ref().or(detail_normal.as_ref()));
-            bind_srv(ctx, &ps, "s_noise_map", noise.as_ref().or(self.res.white_srv.as_ref()));
-            bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+            bind_sampler(ctx, ps, "s_shroud", self.states.s_clamp_linear.as_ref());
+            bind_srv(ctx, ps, "s_albedo_map", self.terrain.r2_comp[0].srv.as_ref());
+            bind_srv(ctx, ps, "s_terrain_normal_map", self.terrain.r2_comp[1].srv.as_ref());
+            bind_srv(ctx, ps, "s_terrain_gloss_map", self.terrain.r2_comp[2].srv.as_ref());
+            bind_srv(ctx, ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
+            bind_srv(ctx, ps, "s_mid_distance_detail_map", self.terrain.r2_detail.as_ref().or(detail_normal.as_ref()));
+            bind_srv(ctx, ps, "s_noise_map", noise.as_ref().or(self.res.white_srv.as_ref()));
+            bind_srv(ctx, ps, "s_shroud", self.res.white_srv.as_ref());
         }
+    }
 
+    /// Draws the gathered grass (`gather_grass`'s runs, their instances in `inst_vb`) with each mesh's diffuse and burn.
+    pub(crate) fn draw_grass_runs(&mut self, ps: &Rc<GameShader>, runs: Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>, inst_vb: &ID3D11Buffer) {
         let mut first = 0u32;
         for (model, mi, count) in runs {
             let mesh = &model.meshes[mi];
             let diffuse = self.vegetation_diffuse(mesh);
-            bind_srv(&self.ctx, &ps, "s_diffuse_map", diffuse.as_ref());
+            bind_srv(&self.ctx, ps, "s_diffuse_map", diffuse.as_ref());
             let burn = self.grass_burn(mesh);
-            bind_srv(&self.ctx, &ps, "burn_sampler", burn.as_ref());
+            bind_srv(&self.ctx, ps, "burn_sampler", burn.as_ref());
             self.ctx.set_vertex_buffers(0, &[mesh.vb.clone(), Some(inst_vb.clone())], &[mesh.stride, (INSTANCE_FLOATS * 4) as u32], &[0, 0]);
             self.ctx.set_index_buffer(mesh.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
             self.ctx.draw_indexed_instanced(mesh.index_count, count, 0, 0, first);
@@ -379,9 +454,5 @@ impl Renderer {
             self.draw_stats.triangles += u64::from(mesh.index_count / 3) * u64::from(count);
             first += count;
         }
-
-        null_ps_srvs(&self.ctx, 16);
-        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
-        self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
     }
 }

@@ -191,8 +191,30 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   0x11765d60, 0x11765e60: TTF_R8_UINT, else TTF_R16F / TTF_G16R16F). The sm_4_0 shaders (mlaa_pass*_sm4). Same in ToB (its pass 1
   0.1, pass 2 3 iterations). Applied (`Renderer::pass_mlaa`; the editor blends into a target of its own, copied back). The MSAA
   levels (2..4) are not: drawn without anti-aliasing. Rome 2 has the same shaders; its engine is not checked: not applied.
-- Alpha blending (+0x70, 2 = AOIT, fn 0x11725c20): OIT / AOIT passes for leaves and grass within distance ranges (OIT_TREE_MIN_DISTANCE
-  ...). Not applied (a new rendering path).
+- Alpha blending (+0x70; 1 standard OIT, fn 0x11763cc0: with feature level above 2; 2 Intel's AOIT, fn 0x11725c20; the automatic
+  downgrade "Disabled Alpha-blending" sets 0, fn 0x1173da30):
+  - Which geometry (fn 0x117f3780 the grass, fn 0x117f3a74 the leaves): a renderable whose squared distance (+0xbc) is within
+    OIT_GRASS_MIN / MAX_DISTANCE (or the TREE ones; AOIT_* for AOIT; tweakers, defaults 0 and 25) goes to the OIT pass (render list
+    0x10) only; the rest to lists 0x14 and 0x15 (the G-buffer's).
+  - Textures: the material resolver (fn 0x1186c880) loads `<name>_ab.dds` for the diffuse (slots 0 and 0x11) of mesh categories 0x5c
+    and 0x40 with either on, for every pass. The packs have them for the leaves, billboards and grass, not the bark.
+  - Buffers (fn 0x11766000): per pixel a head index (raw, TTF_R32_TYPELESS), and 10 fragments per pixel of 12 bytes with a counter.
+  - OIT_PARENT (fn 0x116e24e0, filed after the deferred lights, before the DEFERRED_ALPHA views, fn 0x11736a90):
+    OIT_STORE_ALPHA_FRAGMENTS (fn 0x116e2910) clears the heads to 0xffffffff (fn 0x11729000) and draws `ps30_forward_lit_OIT`
+    (rigidleaf_v3) / `ps30_forward_lit_OIT_grass` (rigidgrass): lit forward, each fragment (colour in 6.4/6.5 bits a channel, alpha,
+    depth) appended with an atomic exchange of the head (0xfffffffe there when the list is full).
+  - The depth-stencil states "first pass" / "post first pass" (fns 0x116e2470, 0x116e2580): LESS_EQUAL without depth writes; stencil
+    ALWAYS / REPLACE, then EQUAL (`oit_multi_pass` off).
+  - OIT_SORT_ALPHA_FRAGMENTS_RESOLVE_COLOUR (fns 0x116e25f0, 0x116e2690) draws `ps50_sort_alpha_fragments_resolve_colour`: sorts up to
+    64 fragments by depth, composites them front to back (stopping at 0.99), blended ONE / INV_SRC_ALPHA over the light buffer;
+    pixels without fragments (or full lists) discarded.
+  - AOIT's (`ps30_forward_lit_AOIT*`, aoit.hlsl) orders its fragments through `g_IntelExt` (Intel's pixel synchronisation).
+  - Applied (Attila, ToB; `Renderer::pass_oit`, after the fog, before the faded meshes; the near leaves are split off in the draw set's
+    cull, `cull_split`, by the item's bounding sphere centre; the grass by the patch). AOIT is drawn as the standard OIT.
+  - Not done: the stencil marks (the editor's stencil bits mean other things; the resolve discards empty pixels anyway); the shadow
+    pass's diffuse stays the plain one.
+  - Open: the forward-lit leaves come out lighter than the same leaves through the G-buffer (not SSAO; shadows reach them). Which one
+    the game's look is was not checked in game.
 - Tessellation: displacement tessellation of rigid meshes (`rigid_tesselation_factor`, `t_tesselation_displacement_map`); needs hull and
   domain shaders. Not applied.
 
@@ -207,12 +229,12 @@ Readers of the live struct (by offset, or the vtable's getters: +0x114 texture a
   lower levels draw the plain one. Not Rome 2's (its levels' mapping is not known): ultra.
 - Texture filtering: the "quality" samplers, trilinear at 0, anisotropic 2^n (fn 0x1177f410; docs/re/terrain.md). Not Rome 2's (not
   checked in its engine): anisotropic 8x.
-- Sky, screen space reflections (0 off, 1 half resolution), particle effects, MLAA (Attila, ToB): above.
+- Sky, screen space reflections (0 off, 1 half resolution), particle effects, MLAA, alpha blending (Attila, ToB): above.
 - ToB's film grain, cloud shadows and god rays: above.
 - SSAO, depth of field, distortion, vignette, gamma, brightness: as before.
 
 Not applied yet (drawn at the highest level, or off for the effects the editor does not draw): MSAA (and Rome 2's MLAA), texture
-quality, trees, grass, terrain, alpha blending, tessellation, Rome 2's grain, cloud shadows, god rays, lightning and foliage hiding.
+quality, trees, grass, terrain, tessellation, Rome 2's alpha blending, grain, cloud shadows, god rays, lightning and foliage hiding.
 
 ## Editor only: the render scale
 

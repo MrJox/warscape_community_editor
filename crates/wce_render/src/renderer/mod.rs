@@ -45,6 +45,7 @@ mod terrain_rome2;
 mod water;
 mod ocean;
 mod nis;
+mod oit;
 mod nis_coef;
 
 pub(crate) use draws::SceneDraws;
@@ -174,6 +175,17 @@ pub(crate) const GOD_RAYS_BLUR_Y_PS: &str = "dx11_sm_3_0_gaussianblur.hlsl_ps_ps
 pub(crate) const MLAA_EDGES_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_pixelshader_seperatinglines";
 pub(crate) const MLAA_LINE_LENGTH_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_computelinelength_ps";
 pub(crate) const MLAA_BLEND_PS: &str = "dx11_sm_4_0_mlaa_ps_4_0.hlsl_ps_mlaa_blend_ps";
+
+/// Order-independent transparency (gfx_alpha_blend 1): the leaves' and the grass's forward-lit OIT shaders (the shadowed variants, as the
+/// directional light's), and the resolve.
+pub(crate) const OIT_LEAF_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidleaf_v3.hlsl_ps_ps30_forward_lit_oit";
+pub(crate) const OIT_GRASS_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidgrass.hlsl_ps_ps30_forward_lit_oit_grass";
+pub(crate) const OIT_RESOLVE_PS: &str = "dx11_sm_5_0_oit.hlsl_ps_ps50_sort_alpha_fragments_resolve_colour";
+/// The tweakers OIT_TREE_MIN / MAX_DISTANCE and OIT_GRASS_MIN / MAX_DISTANCE (the same defaults): the leaves and the grass whose distance
+/// is within them are the OIT's, the rest the G-buffer's (fn 0x117f3780; game units).
+pub(crate) const OIT_RANGE: (f32, f32) = (0.0, 25.0);
+/// The fragments the OIT's list holds, per pixel of the view (fn 0x11766000).
+pub(crate) const OIT_FRAGMENTS_PER_PIXEL: u32 = 10;
 
 /// The film grain's state: the generator, the time since its last move, its offset (`hdr_to_screen_PS.grain_tex_offset`).
 #[derive(Clone, Copy, Debug, Default)]
@@ -432,6 +444,10 @@ pub struct RenderSettings {
     /// gfx_aa: 1 is MLAA (`pass_mlaa`); the MSAA levels (2..4) are drawn without anti-aliasing yet.
     pub aa: i32,
 
+    /// gfx_alpha_blend: above 0 the near leaves and grass are drawn with order-independent transparency (`pass_oit`); AOIT (2) as the
+    /// standard OIT (1).
+    pub alpha_blend: i32,
+
     /// gfx_effects_quality: the effects' quality variant (0 best .. 2) and the particles' capacity (`particles`).
     pub effects_quality: i32,
 
@@ -510,6 +526,7 @@ impl Default for RenderSettings {
             cloud_shadows: false,
             god_rays: false,
             aa: 0,
+            alpha_blend: 0,
             texture_filtering: 3,
             render_scale: 1.0,
             sharpness: 0.5,
@@ -551,6 +568,7 @@ impl RenderSettings {
         self.cloud_shadows = o.cloud_shadows;
         self.god_rays = o.god_rays;
         self.aa = o.aa;
+        self.alpha_blend = o.alpha_blend;
         self.texture_filtering = o.texture_filtering;
     }
 }
@@ -1412,6 +1430,8 @@ impl Renderer {
         }
 
         // The faded instances, lit and fogged by their own shaders, over the finished light buffer.
+        self.gpu_timer.mark("oit");
+        self.pass_oit(scene);
         self.gpu_timer.mark("faded");
         self.pass_faded();
 
