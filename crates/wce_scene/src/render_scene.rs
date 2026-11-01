@@ -699,6 +699,10 @@ impl Entity {
     }
 }
 
+/// The name of the layer a map context's neighbours are put on (the renderer leaves them out of what only the battle has: Rome 2's
+/// baked shadows).
+pub const CONTEXT_LAYER: &str = "map context";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layer {
     pub id: LayerId,

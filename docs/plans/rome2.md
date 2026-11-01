@@ -124,9 +124,12 @@ Status legend: **done**, **partial**, **todo**.
 
 - **done** The tile's weather follows its climate (2026-11-01): a map context gives the tile its placement's climate after the tile picked
   its weather; a weather of another climate's folder gives way to the new climate's first dry one (`WeatherUi::follow_climate`).
-- **known** In a map context, the first frames after the camera jumps far can show dark rectangles in the sky and dark patches on the
-  ground (seen on Rome 2's Carthage, also with the sea in its old frame); 20 frames later they are gone. Not traced (the LF window and
-  the streamed chunks' level changes are the suspects). Scripted captures wait 30 frames after `map_context_settle`.
+- **done** The dark slabs after camera jumps in a map context (2026-11-01): the baked shadow map (4 km wide) took the map context's
+  streamed neighbours as casters, whose tall and far models under the low sun shaded the battle and the hazy distance in slabs, and
+  which chunks were on the scene when the map was made depended on the streaming. The map takes the battle's own models alone (as the
+  game's, made at the battle's load of its tile): draw items on the `CONTEXT_LAYER` are marked (`DrawSet::mark_context`) and the baked
+  view skips them (`View::no_context`); never the terrain's patches; depth-clipped, as the game's shadow passes. Fifteen jump views clean
+  where every hill view had them.
 
 - **done** The game selector in the top bar: the toolbar's first item, a combo of the games (as File > Game).
 - **done** The map context in Rome 2 (user report 2026-10-26, Carthage): a tile the map names without a variation is found as any of its

@@ -71,6 +71,7 @@ impl BakedShadow {
         sd.Anonymous.Texture2D.MipLevels = 1;
         self.dsv = dev.create_depth_stencil_view(&tex, Some(&dd)).ok();
         self.srv = dev.create_shader_resource_view(&tex, Some(&sd)).ok();
+
     }
 }
 
@@ -122,7 +123,9 @@ impl Renderer {
             [o.x.to_bits(), o.y.to_bits(), o.z.to_bits()], u.to_bits(), self.draw_lists.waiting,
         );
 
-        if self.baked.valid && self.baked.key == Some(key) {
+        // Kept while the terrain's material is not ready (a map context's chunks still uploading after the camera jumped): the draw lists
+        // then hold the terrain's own patches, and a map made of them shaded the ground in slabs until it was made again.
+        if self.baked.valid && (self.baked.key == Some(key)) {
             self.set_baked_constants(Float3::default());
             return;
         }
@@ -187,16 +190,17 @@ impl Renderer {
             lod_scale: self.settings.lod_scale,
             min_radius: texel * self.settings.shadow_min_texels,
             quality: self.lod_quality(),
+            // The battle's own models: the game's map is made at its load, of the battle's tile; the map context's neighbours (none in a
+            // game battle) shaded the battle in slabs after the camera moved (their streamed chunks' tall and far casters, the low sun).
+            no_context: true,
             ..Default::default()
         };
 
         terrain_draws.cull(&view, &mut vis_terrain);
         draws.cull(&view, &mut vis);
 
-        // Not the ground (the terrain's own patches): the capture's map holds the models alone.
-        if self.terrain.active {
-            vis_terrain = Visible::default();
-        }
+        // Never the ground (the terrain's own patches): the capture's map holds the models alone.
+        vis_terrain = Visible::default();
 
         let firsts = self.upload_instances([&terrain_draws, &draws], [&vis_terrain, &vis]);
         self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
