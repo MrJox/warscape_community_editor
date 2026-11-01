@@ -477,7 +477,9 @@ impl TileTool {
     /// the tile alone; with a note when the placement can't be used (the kit's maps are not in the game's packs).
     fn launch_position(&self, game: &GameProfile, location: &str, cells: (u32, u32), mode: LaunchMap) -> (Option<BattleMap>, String) {
         let (map, mut note) = self.launch_map_position(game, location, cells, mode);
-        if map.is_none() && launch::coastal_set(location.split('/').nth(3).unwrap_or_default()) {
+        if map.is_none() && game.key == GameProfile::ROME_2.key {
+            note.push_str(launch::ROME_2_ALONE_NOTE);
+        } else if map.is_none() && launch::coastal_set(location.split('/').nth(3).unwrap_or_default()) {
             note.push_str(launch::COAST_ALONE_NOTE);
         }
 

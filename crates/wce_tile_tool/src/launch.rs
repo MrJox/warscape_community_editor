@@ -90,6 +90,11 @@ impl BattleWeather {
 pub const COAST_ALONE_NOTE: &str = " (a coast tile alone: the game draws it without its sea level, dry ground to the tile's edges and its sea-bed \
      plants in the air; launch it at a placement: Settings > Tile, The Map context's placement)";
 
+/// Rome 2 with the tile alone (user report 2026-11-01: only water across the map): its battles all name a battle map's folder
+/// (`terrain/battles/<map>/`, `BattleTerrain/presets/<preset>/`), and its battle map loader (fn 0x114e8a40) reads the folder's
+/// `tile_map.index` / `tile_map.tiles` (fns 0x115ba230, 0x115baa10); no path for a lone tile was found (static analysis only).
+pub const ROME_2_ALONE_NOTE: &str = " (Rome 2 loads a battle on a battle map: the tile alone came up as open sea in game; launch it at a      placement: Settings > Tile, The Map context's placement)";
+
 /// The climate a tile launched alone has in game: the battle map's cell climate, and a lone tile has no cells (index 0 of the tile
 /// database's climates; checked in game, 2026-10-30). The game reads no `<Climate>` in the battle XML.
 pub const ALONE_CLIMATE: &str = "default";
