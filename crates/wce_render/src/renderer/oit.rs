@@ -22,6 +22,7 @@ impl Renderer {
         bind_srv(ctx, ps, "s_environment", env.as_ref());
         bind_srv(ctx, ps, "s_sky", self.sky.cube.srv.as_ref());
         bind_srv(ctx, ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
+        self.bind_baked_shadow(ps);
         bind_srv(ctx, ps, "s_snow_normals", snow.as_ref());
         bind_sampler(ctx, ps, "s_environment", self.states.s_clamp_linear.as_ref());
         bind_sampler(ctx, ps, "s_sky", self.states.s_clamp_linear.as_ref());

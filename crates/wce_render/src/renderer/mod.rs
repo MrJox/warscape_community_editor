@@ -45,6 +45,7 @@ mod terrain_rome2;
 mod water;
 mod ocean;
 mod reflection;
+mod shadow_baked;
 mod nis;
 mod oit;
 mod nis_coef;
@@ -831,6 +832,7 @@ pub struct Renderer {
     pub(crate) gbuffer_samples: u32,
     pub(crate) post: PostTargets,
     pub(crate) shadow_map: ShadowMap,
+    pub(crate) baked: shadow_baked::BakedShadow,
     pub(crate) draw_lists: SceneDraws,
     pub(crate) camera: CameraState,
     pub(crate) clock: FrameClock,
@@ -974,6 +976,7 @@ impl Renderer {
             gbuffer_samples: 1,
             post: PostTargets::default(),
             shadow_map: ShadowMap::new(dev),
+            baked: shadow_baked::BakedShadow::default(),
             draw_lists: SceneDraws::default(),
             camera: CameraState::default(),
             clock: FrameClock::default(),
@@ -1260,6 +1263,7 @@ impl Renderer {
         }
 
         self.cbs.set_f("shadowmap_PS", "g_amHardSplit", &splits);
+        self.set_baked_constants(shift);
     }
 
     /// The full-screen triangle with a pixel shader.

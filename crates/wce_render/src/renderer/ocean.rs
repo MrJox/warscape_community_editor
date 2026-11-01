@@ -720,8 +720,7 @@ impl Renderer {
         bind_srv(ctx, &ps, "sea_bed_info_texture_sampler", o.sea_bed.as_ref());
         bind_srv(ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
         bind_sampler(ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
-        bind_srv(ctx, &ps, "g_tBakedShadowBuffer", self.res.white_srv.as_ref());
-        bind_sampler(ctx, &ps, "sBakedShadowBuffer", self.states.s_shadow_cmp.as_ref());
+        self.bind_baked_shadow(&ps);
 
         // The camera (and the cascades) in the sea's frame for its draws, the view's again after.
         let shift = self.ocean_origin(scene) - self.camera.origin;
