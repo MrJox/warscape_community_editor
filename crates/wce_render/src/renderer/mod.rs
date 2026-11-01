@@ -184,6 +184,22 @@ pub(crate) const TESS_DS: &str = "dx11_sm_5_0_rigidcommon.hlsl_ds_ds_main_sm5";
 pub(crate) const TESS_FACTOR: f32 = 5.0;
 pub(crate) const TESS_DISPLACEMENT_SCALE: f32 = 0.4;
 
+/// The game's per-sample (`_ms`) variant of a one-sample pixel shader: shader model 4.1 (the shadow-filtered sm_5_0 ones keep theirs),
+/// `ps30_` techniques as `ps41_`, and the `_ms` suffix (e.g. `dx11_sm_3_0_battlefog.hlsl_ps_ps30_main` ->
+/// `dx11_sm_4_1_battlefog.hlsl_ps_ps41_main_ms`).
+pub(crate) fn ms_name(name: &str) -> String {
+    format!("{}_ms", name.replace("_sm_3_0_", "_sm_4_1_").replace("_sm_4_0_", "_sm_4_1_").replace(".hlsl_ps_ps30_", ".hlsl_ps_ps41_"))
+}
+
+/// MSAA's depth helpers (resolve_depth_buffer.hlsl, DEPTH_BUFFER_RESOLVE_SHADER): the one-sample depth into the MS one where the stencil is
+/// set, and the MS depth resolved to its farthest sample (per sample count).
+pub(crate) const ANTIRESOLVE_DEPTH_PS: &str = "dx11_sm_3_0_resolve_depth_buffer.hlsl_ps_ps_antiresolve_with_fixed_stencil";
+pub(crate) const RESOLVE_DEPTH_PS: [&str; 3] = [
+    "dx11_sm_5_0_resolve_depth_buffer.hlsl_ps_ps_resolve_2x",
+    "dx11_sm_5_0_resolve_depth_buffer.hlsl_ps_ps_resolve_4x",
+    "dx11_sm_5_0_resolve_depth_buffer.hlsl_ps_ps_resolve_8x",
+];
+
 /// Order-independent transparency (gfx_alpha_blend 1): the leaves' and the grass's forward-lit OIT shaders (the shadowed variants, as the
 /// directional light's), and the resolve.
 pub(crate) const OIT_LEAF_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidleaf_v3.hlsl_ps_ps30_forward_lit_oit";
@@ -795,6 +811,8 @@ pub struct Renderer {
 
     /// The main view's targets (the environment cube's while its faces render), and the post-processing ones.
     pub(crate) gbuffer: GBuffer,
+    /// The sample count `gbuffer` was made with (the MSAA setting asks for it; 1 when the device refused).
+    pub(crate) gbuffer_samples: u32,
     pub(crate) post: PostTargets,
     pub(crate) shadow_map: ShadowMap,
     pub(crate) draw_lists: SceneDraws,
@@ -936,6 +954,7 @@ impl Renderer {
             nis_failed: false,
             res: SharedResources::new(dev)?,
             gbuffer: GBuffer::default(),
+            gbuffer_samples: 1,
             post: PostTargets::default(),
             shadow_map: ShadowMap::new(dev),
             draw_lists: SceneDraws::default(),
@@ -1100,13 +1119,52 @@ impl Renderer {
         bind_shader(&self.ctx, s, &self.cbs);
     }
 
+    /// With MSAA the multisampled G-buffer for an `_ms` shader: `gbuffer_channel_1..3_texture_ms` the MS channels, `..._4_...` the MS
+    /// depth (the game's channel 4 is its depth buffer).
+    pub(crate) fn bind_gbuffer_ms(&self, ps: &GameShader) {
+        let Some(ms) = &self.gbuffer.ms else { return };
+        for (k, t) in ms.channels.iter().enumerate() {
+            crate::shader_lib::bind_srv(&self.ctx, ps, &format!("gbuffer_channel_{}_texture_ms", k + 1), t.srv.as_ref());
+        }
+
+        crate::shader_lib::bind_srv(&self.ctx, ps, "gbuffer_channel_4_texture_ms", ms.depth.depth_srv.as_ref());
+    }
+
+    /// A pass's shader with MSAA: the game's per-sample `_ms` variant of a one-sample pixel shader name, else the name itself.
+    pub(crate) fn scene_shader(&mut self, name: &str) -> Option<Rc<GameShader>> {
+        if self.gbuffer.ms.is_some() {
+            return self.shader(&ms_name(name));
+        }
+
+        self.shader(name)
+    }
+
     fn resize(&mut self, w: u32, h: u32) {
-        if w == self.gbuffer.w && h == self.gbuffer.h {
+        let samples = self.msaa_samples();
+        if w == self.gbuffer.w && h == self.gbuffer.h && samples == self.gbuffer_samples {
             return;
         }
 
-        self.gbuffer = GBuffer::new(&self.dev, w, h);
-        self.post.resize(&self.dev, w, h);
+        if w != self.gbuffer.w || h != self.gbuffer.h {
+            self.post.resize(&self.dev, w, h);
+        }
+
+        self.gbuffer = GBuffer::with_samples(&self.dev, w, h, samples);
+        self.gbuffer_samples = samples;
+    }
+
+    /// gfx_aa 2..4: MSAA 2x, 4x, 8x (docs/plans/msaa.md); not Rome 2's (its engine not checked).
+    pub(crate) fn msaa_samples(&self) -> u32 {
+        if self.game == game::RenderGame::Rome2 {
+            return 1;
+        }
+
+        match self.settings.aa {
+            2 => 2,
+            3 => 4,
+            4 => 8,
+            _ => 1,
+        }
     }
 
     /// The near plane for a camera (see NEAR_FRACTION): from its clearance over the scene's terrains (their highest ground under the eye).
@@ -1150,7 +1208,9 @@ impl Renderer {
         cbs.set_f("camera_VS_PS", "g_vpos_texel_offset", &[0.0]);
         cbs.set_f("camera_VS_PS", "g_viewport_dimensions", &[fw, fh, 1.0 / fw, 1.0 / fh]);
         cbs.set_f("camera_VS_PS", "g_render_target_dimensions", &[fw, fh, 1.0 / fw, 1.0 / fh]);
-        cbs.set_i("camera_VS_PS", "g_num_of_samples", 1);
+        let samples = self.gbuffer.samples();
+        let cbs = &mut self.cbs;
+        cbs.set_i("camera_VS_PS", "g_num_of_samples", samples as i32);
 
         // The forward shaders discard outside this rectangle (in normalized device coordinates); the game's is the whole view.
         cbs.set_f("camera_VS_PS", "g_clip_rect", &[-1.0, -1.0, 1.0, 1.0]);
@@ -1409,6 +1469,7 @@ impl Renderer {
         self.pass_grass(scene);
         self.gpu_timer.mark("decals");
         self.pass_decals(scene);
+        self.resolve_scene_depth();
 
         self.gpu_timer.mark("depth + ssao");
         self.analyse_depth(&cam);
@@ -1461,7 +1522,7 @@ impl Renderer {
             wind_variance: self.wind.vfx_variance,
             target: self.gbuffer.scene_hdr_rtv(),
             depth: self.gbuffer.scene_dsv(),
-            depth_zw: self.gbuffer.channels[3].srv.clone(),
+            depth_zw: self.gbuffer.depth_srv(),
             sky: self.sky.cube.srv.clone(),
             width,
             height,

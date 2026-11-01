@@ -46,9 +46,14 @@ fn sized_target(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT) -> SizedTa
 pub(crate) struct DepthStencil {
     pub tex: Option<ID3D11Texture2D>,
     pub dsv: Option<ID3D11DepthStencilView>,
+    /// The same with the depth read-only: bound while a pass reads the depth (`depth_srv`) and tests the stencil.
+    pub dsv_read_depth: Option<ID3D11DepthStencilView>,
     pub depth_srv: Option<ID3D11ShaderResourceView>,
     pub stencil_srv: Option<ID3D11ShaderResourceView>,
 }
+
+/// D3D11_DSV_READ_ONLY_DEPTH (not in the generated bindings).
+const DSV_READ_ONLY_DEPTH: u32 = 1;
 
 impl DepthStencil {
     pub fn new(dev: &ID3D11Device, w: u32, h: u32, samples: u32) -> Self {
@@ -74,6 +79,7 @@ impl DepthStencil {
 
         Self {
             dsv: dev.create_depth_stencil_view(&tex, Some(&dd)).ok(),
+            dsv_read_depth: dev.create_depth_stencil_view(&tex, Some(&D3D11_DEPTH_STENCIL_VIEW_DESC { Flags: DSV_READ_ONLY_DEPTH, ..dd })).ok(),
             depth_srv: srv(DXGI_FORMAT_R24_UNORM_X8_TYPELESS),
             stencil_srv: srv(DXGI_FORMAT_X24_TYPELESS_G8_UINT),
             tex: Some(tex),
@@ -132,12 +138,13 @@ impl GBuffer {
     /// With `samples` above 1, the multisampled targets too (gfx_aa 2..4).
     pub fn with_samples(dev: &ID3D11Device, w: u32, h: u32, samples: u32) -> Self {
         let depth = DepthStencil::new(dev, w, h, 1);
+        // A device that refuses a count draws without MSAA.
         let ms = (samples > 1).then(|| MsTargets {
             samples,
             channels: std::array::from_fn(|_| make_target_ms(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, samples)),
             hdr: make_target_ms(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, samples),
             depth: DepthStencil::new(dev, w, h, samples),
-        });
+        }).filter(|m| m.channels.iter().chain([&m.hdr]).all(|t| t.rtv.is_some() && t.srv.is_some()) && m.depth.dsv.is_some() && m.depth.depth_srv.is_some());
 
         Self {
             w,
@@ -169,6 +176,12 @@ impl GBuffer {
     /// The depth-stencil the scene is drawn with: the multisampled one with MSAA.
     pub fn scene_dsv(&self) -> Option<ID3D11DepthStencilView> {
         self.ms.as_ref().map_or_else(|| self.dsv.clone(), |m| m.depth.dsv.clone())
+    }
+
+    /// The depth-stencil a pass reading the scene's MS depth (`gbuffer_channel_4_texture_ms`) tests the stencil with: with MSAA the
+    /// MS one read-only in depth (as the game's lights, fog and decals bind it), else the scene's.
+    pub fn scene_dsv_read_depth(&self) -> Option<ID3D11DepthStencilView> {
+        self.ms.as_ref().map_or_else(|| self.dsv.clone(), |m| m.depth.dsv_read_depth.clone())
     }
 
     /// The geometry's colour targets: with MSAA the multisampled channels 1..3 (channel 4 is the depth, the id is not drawn).

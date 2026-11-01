@@ -36,6 +36,8 @@ pub(crate) fn water_level(quality: i32) -> &'static str {
     ["low", "medium", "high", "ultra"][quality.clamp(0, 3) as usize]
 }
 const REFRACTION_PS: &str = "dx11_sm_3_0_waterrefraction.hlsl_ps_ps30_main_3_channel";
+/// With MSAA: the MS light buffer's (`t_light_accumulation_buffer_ms`; its technique keeps the ps30 name).
+const REFRACTION_MS_PS: &str = "dx11_sm_4_1_waterrefraction.hlsl_ps_ps30_main_3_channel_ms";
 
 /// water_refraction_PS.g_refraction_depth (and directional_light_PS's, which writes the same weight into the light buffer's alpha): the weight of
 /// the refraction is saturate(-ground_y * this) below the water level. 0.75 is the value the engine's constructors of both cbuffers store
@@ -85,7 +87,7 @@ impl Renderer {
             self.water.refr_h = th;
         }
 
-        let Some(ps) = self.shader(REFRACTION_PS) else { return };
+        let Some(ps) = self.shader(if self.gbuffer.ms.is_some() { REFRACTION_MS_PS } else { REFRACTION_PS }) else { return };
         self.cbs.set_f("water_refraction_PS", "g_refraction_depth", &[REFRACTION_DEPTH]);
         null_ps_srvs(&self.ctx, 16);
         self.ctx.set_render_targets(std::slice::from_ref(&self.water.refr.rtv), None);
@@ -96,8 +98,12 @@ impl Renderer {
 
         ps_samplers(&self.ctx, &ps, &self.states.s_clamp_linear);
         bind_sampler(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.states.s_clamp_point.as_ref());
-        bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(&self.ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(&self.ctx, &ps, "s_light_accumulation_buffer", self.gbuffer.hdr.srv.as_ref());
+        if let Some(ms) = &self.gbuffer.ms {
+            bind_srv(&self.ctx, &ps, "t_light_accumulation_buffer_ms", ms.hdr.srv.as_ref());
+        }
+
         self.upload();
         self.fullscreen(&ps);
         null_ps_srvs(&self.ctx, 16);
@@ -262,7 +268,7 @@ impl Renderer {
         bind_srv(ctx, &ps, "s_environment", if self.env.valid { self.env.cube.srv.as_ref() } else { self.sky.cube.srv.as_ref() });
         bind_srv(ctx, &ps, "s_sky", self.sky.cube.srv.as_ref());
         bind_srv(ctx, &ps, "s_terrain_refraction", self.water.refr.srv.as_ref());
-        bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.channels[3].srv.as_ref());
+        bind_srv(ctx, &ps, "gbuffer_channel_4_sampler", self.gbuffer.depth_srv().as_ref());
         bind_srv(ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
         bind_sampler(ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
         // Rome 2's planar reflection is not made (as the sea's): black.

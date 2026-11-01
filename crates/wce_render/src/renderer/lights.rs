@@ -135,7 +135,7 @@ impl Renderer {
 
         self.cbs.set_f("point_light_PS", "g_viewport_offset_scale", &[0.0, 0.0, 1.0, 1.0]);
         self.upload();
-        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv().as_ref());
+        self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv_read_depth().as_ref());
         self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), 1);
         self.ctx.set_rasterizer_state(self.lights.rs.as_ref());
         self.ctx.set_blend_state(self.lights.bs.as_ref());
@@ -153,7 +153,7 @@ impl Renderer {
                 continue;
             }
 
-            let (Some(vs), Some(ps)) = (self.shader(vs), self.shader(ps)) else { continue };
+            let (Some(vs), Some(ps)) = (self.shader(vs), self.scene_shader(ps)) else { continue };
             let Some(layout) = self.layout(&vs, "point_light", &el) else { continue };
             self.ctx.set_input_layout(Some(&layout));
             self.bind(&vs);
@@ -163,6 +163,9 @@ impl Renderer {
             for i in 0..4 {
                 bind_srv(ctx, &ps, &format!("gbuffer_channel_{}_sampler", i + 1), self.gbuffer.channels[i].srv.as_ref());
             }
+
+            self.bind_gbuffer_ms(&ps);
+            let ctx = &self.ctx;
 
             bind_srv(ctx, &ps, "s_ssao", self.post.ao_result.as_ref().or(self.res.white_srv.as_ref()));
             ps_samplers(ctx, &ps, &self.states.s_clamp_point);

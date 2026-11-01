@@ -21,6 +21,8 @@ pub(crate) struct States {
     pub ds_sky: Option<ID3D11DepthStencilState>,
     pub ds_light: Option<ID3D11DepthStencilState>,
     pub ds_off: Option<ID3D11DepthStencilState>,
+    /// Depth written whatever is there (the MSAA depth resolve).
+    pub ds_depth_write: Option<ID3D11DepthStencilState>,
     pub rs_back: Option<ID3D11RasterizerState>,
     pub rs_none: Option<ID3D11RasterizerState>,
     pub rs_shadow: Option<ID3D11RasterizerState>,
@@ -101,6 +103,9 @@ impl States {
         d.StencilReadMask = 0xFF;
         d.StencilEnable = false.into();
         st.ds_off = dev.create_depth_stencil_state(&d).ok();
+        st.ds_depth_write = dev.create_depth_stencil_state(&D3D11_DEPTH_STENCIL_DESC {
+            DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ALL, DepthFunc: D3D11_COMPARISON_ALWAYS, ..Default::default()
+        }).ok();
 
         let mut r = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_BACK, DepthClipEnable: true.into(), ..Default::default() };
         st.rs_back = dev.create_rasterizer_state(&r).ok();
