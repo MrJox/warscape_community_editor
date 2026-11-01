@@ -1160,6 +1160,11 @@ impl Renderer {
         self.draw_lists.vis_terrain = vis_terrain;
         self.draw_lists.vis = vis;
 
+        // With MSAA the terrain's depth and mark are expanded into the MS depth now: the snowy boxes below mark it too.
+        if self.gbuffer.ms.is_some() {
+            self.terrain_depth_to_ms();
+        }
+
         // ---- 2. The blend boxes.
         let el = [
             element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
@@ -1286,6 +1291,19 @@ impl Renderer {
 
         ctx.set_vertex_buffers(0, &[self.terrain.box_vb.clone(), Some(inst_vb.clone())], &[12, 64], &[0, 0]);
         ctx.set_index_buffer(self.terrain.box_ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+
+        // With MSAA a snowy tile's boxes draw again into the MS depth-stencil alone, so that their mark (bit 0) reaches its samples
+        // (the snowy resolve tests it there); the same shader decides which pixels (it discards outside the tile and below the alpha).
+        let ms_dsv = self.gbuffer.ms.as_ref().and_then(|m| m.depth.dsv.clone());
+        let s1_dsv = self.gbuffer.dsv.clone();
+        let draw_boxes = |ctx: &ID3D11DeviceContext, count: u32, first: u32, mark_ms: bool| {
+            ctx.draw_indexed_instanced(36, count, 0, 0, first);
+            if let (true, Some(dsv)) = (mark_ms, &ms_dsv) {
+                ctx.set_render_targets(&[], Some(dsv));
+                ctx.draw_indexed_instanced(36, count, 0, 0, first);
+                ctx.set_render_targets(&acc, s1_dsv.as_ref());
+            }
+        };
         for (k, (m, lf, boxes, snow)) in by_material.into_iter().enumerate() {
             let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
             if snow {
@@ -1318,7 +1336,7 @@ impl Renderer {
             bind_srv(ctx, &blend_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
             bind_srv(ctx, &blend_ps, "t_normal_array", g.normals.srv.as_ref());
             if let Some(first) = box_first[k] {
-                ctx.draw_indexed_instanced(36, (boxes.len() / 16) as u32, 0, 0, first);
+                draw_boxes(ctx, (boxes.len() / 16) as u32, first, snow);
                 self.draw_stats.draw_calls += 1;
                 continue;
             }
@@ -1328,7 +1346,7 @@ impl Renderer {
                     continue;
                 }
 
-                ctx.draw_indexed_instanced(36, (chunk.len() / 16) as u32, 0, 0, 0);
+                draw_boxes(ctx, (chunk.len() / 16) as u32, 0, snow);
                 self.draw_stats.draw_calls += 1;
             }
         }
@@ -1338,7 +1356,7 @@ impl Renderer {
             let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
             let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
             let d = blend_mesh::BlendDraw {
-            dsv: self.gbuffer.dsv.clone(),
+                dsv: self.gbuffer.dsv.clone(),
                 vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_MATERIAL_PS, targets: self.terrain.acc.iter().map(|a| a.rtv.clone()).collect(),
                 depth_stencil: self.terrain.ds_equal.clone(), stencil_ref: 0, blend: self.terrain.bs_add.clone(),
             };
@@ -1353,11 +1371,7 @@ impl Renderer {
         // ---- 2c. The custom meshes' own material (`custom_geometry`).
         self.draw_custom_material(&ents);
 
-        // ---- 3. The resolve: the terrain pixels into the G-buffer (with MSAA its depth and mark expanded into the MS depth first).
-        if self.gbuffer.ms.is_some() {
-            self.terrain_depth_to_ms();
-        }
-
+        // ---- 3. The resolve: the terrain pixels into the G-buffer.
         let Payload::Terrain(first) = &ents[0].payload else { return };
         let Some(m) = first.material.clone() else { return };
         let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();

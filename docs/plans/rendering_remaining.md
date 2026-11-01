@@ -40,7 +40,10 @@ the battle river shader has no fade at the ends and no foam, `g_refraction_depth
   - Tessellation: no vanilla model has a displacement map (RMV2 texture type 6), so a mod's model is needed (or one with a type 6
     texture added) to see the game's displacement against the editor's.
   - MSAA 2x / 4x / 8x: the coverage edges of the trees and grass, the brightness change from the resolve (the tone mapper's white point),
-    snowy terrain tiles, OIT with MSAA; and a RenderDoc capture at 4x / 8x against the 2x one the port follows.
+    snowy terrain tiles, OIT with MSAA, depth of field and distortion with MSAA; and a RenderDoc capture at 4x / 8x against the 2x one
+    the port follows.
+  - Texture quality (not applied: the mesh textures' category is a run-time value, docs/re/graphics_options.md): a game frame at each
+    level shows which textures drop mips, to settle the category.
 - Building collapses: the dust emission mesh and box, the effect group size, the debris, the bursts' timing, `.meta` effects on bones,
   the playback speed (docs/re/buildings.md, "Collapses between levels"). Not done: `SOUND_BUILDING` (the editor has no audio).
 - TDD's dead tree bark is near black: `tdd_pack6_weather_1.0.0.pack` ships dark 512 x 2048 `dead_tree_{dry,wet}_diffuse` (and `_ab`)
