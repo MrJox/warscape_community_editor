@@ -537,8 +537,12 @@ pub struct Tile {
     pub(crate) terrain_note: String,
     pub(crate) climates: OnceCell<ClimateList>,
 
-    /// The kit's `battlefield_buildings` (categories), read on first use.
+    /// The kits' `battlefield_buildings` (categories), read on first use (`Tile::building_db`).
     pub(crate) building_db: OnceCell<BuildingDb>,
+
+    /// The raw_data folders whose tables count after the tile's own kit's: the projects' kit layout, then the Assembly Kits
+    /// (`TileDocument::set_building_tables`).
+    pub(crate) building_tables: Vec<std::path::PathBuf>,
 
     /// The kit's tile set names (the link sets), read once.
     pub(crate) tile_sets: OnceCell<Vec<String>>,
@@ -728,7 +732,7 @@ impl TileDocument {
             grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false,
             stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, saved_blend_depth: 0, blend_on_disk_edited: false, saved_ground_depth: 0, ground_on_disk_edited: false, water_depth: None, auto_nogos: None, nogo_entity: 0, nogo_dirty: true, water_entities: vec![], columns: columns::ColumnState::default(), tech: tech::TechState::default(), collapses: collapse::CollapseState::default(), fire: fire::FirePreview::default(), links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
-            skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), tile_sets: OnceCell::new(), logic_summaries: RefCell::default(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None, normal_image: None, heights_changed: None, terrain_grid: None,
+            skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), building_tables: vec![], tile_sets: OnceCell::new(), logic_summaries: RefCell::default(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None, normal_image: None, heights_changed: None, terrain_grid: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
             last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
             clip_to_tile: false, material_clip_id: 0, clip_alpha: None, context_lf: None, prefab_cache: HashMap::new(), unlocked_reference: None,

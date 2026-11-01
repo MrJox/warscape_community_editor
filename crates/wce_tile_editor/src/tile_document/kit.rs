@@ -60,6 +60,14 @@ impl TileDocument {
         self.tile_mut().projects_root = root;
     }
 
+    /// The raw_data folders whose `battlefield_buildings` count after the tile's own kit's (the projects' kit layout, then the Assembly Kits in
+    /// the settings' order): a project tile has no kit of its own.
+    pub fn set_building_tables(&mut self, raw_dirs: Vec<PathBuf>) {
+        let tile = self.tile_mut();
+        tile.building_tables = raw_dirs;
+        tile.building_db = std::cell::OnceCell::new();
+    }
+
     pub fn projects_root(&self) -> Option<&Path> {
         self.tile().projects_root.as_deref()
     }

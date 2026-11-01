@@ -4,8 +4,8 @@
 //! mouse; R / Shift+R turn it, Esc stops) or drawing it (clicks, Enter finishes). While it is placed or drawn, the Inspector shows its
 //! properties (`Draft`), which every copy takes; they are kept per type until reset.
 //!
-//! As in TEd, the buildings and the prefabs are in folders: a building in its `battlefield_buildings` category (the projects' kit layout's
-//! table, then the Assembly Kits'), a prefab in its folder below `art/prefabs`; the folders come first, then the entries without one. The
+//! As in TEd, the buildings and the prefabs are in folders: a building in its `battlefield_buildings` category (`Tile::building_db`: the
+//! tile's own kit's table, then the projects' kit layout's and the Assembly Kits'), a prefab in its folder below `art/prefabs`; the folders come first, then the entries without one. The
 //! prefabs of the projects folder (the editor's, whose prefabs placed inside stay references) are marked.
 
 use std::sync::Arc;
@@ -130,9 +130,6 @@ pub struct CreateUi {
     filter: String,
     shown: Vec<Vec<usize>>,
     folders: Vec<FolderRows>,
-
-    /// The buildings' categories (`battlefield_buildings` of the projects' kit layout and the Assembly Kits), read once.
-    building_db: Option<Arc<wce_tile::building_db::BuildingDb>>,
     shown_for: String,
     marks: Option<(Vec<String>, Vec<String>)>,
     quick_filter: String,
@@ -196,12 +193,6 @@ impl TileTool {
             return entries.clone();
         }
 
-        let db = self.create.building_db.get_or_insert_with(|| {
-            let mut raws = vec![e.settings_ref().kit_projects_dir().join("raw_data")];
-            raws.extend(e.settings_ref().assembly_kit_raw_dirs());
-            Arc::new(wce_tile::building_db::BuildingDb::load_raw_dirs(&raws))
-        }).clone();
-
         let mut out = vec![];
         let entry = |category: usize, label: String, make: Make, extra: &str| {
             let search = format!("{label} {extra}").to_lowercase();
@@ -225,7 +216,7 @@ impl TileTool {
 
                 let mut en = entry(category, label, Make::Place { kind: kind.to_owned(), key: key.clone() }, kind);
                 if kind == "BUILDING_INSTANCE"
-                    && let Some(c) = db.category(key)
+                    && let Some(c) = document(e).and_then(|d| d.tile().building_category(key))
                 {
                     en.search.push_str(&format!(" {}", c.to_lowercase()));
                     en.folder = c.to_owned();
