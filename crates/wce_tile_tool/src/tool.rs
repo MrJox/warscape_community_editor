@@ -3005,6 +3005,10 @@ impl Tool for TileTool {
         }
 
         settings_window::help("The placement works in the game's campaign map only (the kit's maps are not in the game's packs); without one the tile alone is used.");
+        if !cfg!(windows) {
+            settings_window::folder_field("Proton", &mut s.launch.proton, "the one Steam runs the game with");
+            settings_window::help("The game's Windows build runs through Proton, in the game's prefix (start the game once from Steam first) and the Steam Linux Runtime the Proton asks for. A native Linux build is not launched.");
+        }
 
         // The armies are the game's (Settings > Game shows which): empty keys are its vanilla ones, shown as the hints.
         let game = draft.game_profile();

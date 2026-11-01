@@ -2509,6 +2509,7 @@ dependencies = [
  "rayon",
  "rpfm_lib",
  "serde",
+ "tempfile",
  "wce_editor",
  "wce_editor_core",
  "wce_formats",

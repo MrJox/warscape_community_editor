@@ -120,6 +120,10 @@ pub struct LaunchSettings {
     pub delivery: LaunchDelivery,
     pub map: LaunchMap,
 
+    /// Outside Windows: the Proton folder the game's Windows build runs with (none: the one Steam runs the game with).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proton: Option<std::path::PathBuf>,
+
     /// How long each step of the last launch took (seconds, by the step's key): the next launch's estimate.
     pub step_seconds: BTreeMap<String, f32>,
 }

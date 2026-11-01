@@ -24,3 +24,4 @@ wce_vfs = { path = "../wce_vfs" }
 
 [dev-dependencies]
 rayon = "1"
+tempfile = "3"

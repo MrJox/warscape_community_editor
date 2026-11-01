@@ -11,7 +11,7 @@ fn home_dir() -> Option<PathBuf> {
 }
 
 /// The Steam install folders that exist: the native client, its ~/.steam link and the Flatpak one (Windows: the usual install folder).
-fn steam_roots() -> Vec<PathBuf> {
+pub fn steam_roots() -> Vec<PathBuf> {
     let candidates = if cfg!(windows) {
         let pf = std::env::var_os("ProgramFiles(x86)").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\Program Files (x86)"));
         vec![pf.join("Steam")]

@@ -260,8 +260,10 @@ pub fn command_line(delivery: &Delivery, mods: &[String]) -> String {
     }
 
     if let Delivery::Loose(dir) = delivery {
-        // As the launcher writes its own: forward slashes, a trailing one.
-        c.push(format!("add_working_directory \"{}/\";", dir.to_string_lossy().replace('\\', "/").trim_end_matches('/')));
+        // As the launcher writes its own: forward slashes, a trailing one. A Linux path is the game's under Proton: `Z:` is `/`.
+        let dir = dir.to_string_lossy().replace('\\', "/");
+        let drive = if dir.starts_with('/') { "Z:" } else { "" };
+        c.push(format!("add_working_directory \"{drive}{}/\";", dir.trim_end_matches('/')));
     }
 
     c.push(format!("show_frontend_movies false; game_startup_mode battle {BATTLE_XML};"));
@@ -489,12 +491,13 @@ pub fn remove_launch_pack(data: &Path, game: &str) -> Result<Option<String>, Str
     Ok(Some(format!("removed {}", path.display())))
 }
 
-/// Whether a process of that executable runs (`None`: unknown, outside Windows or when `tasklist` fails).
+/// Whether a process of that executable runs (`None`: unknown, when the process list can't be read).
 pub fn process_running(exe: &str) -> Option<bool> {
     processes_running(&[exe]).map(|r| r[0])
 }
 
-/// [`process_running`] for several executables from one process list (`tasklist` takes about 0.2 s).
+/// [`process_running`] for several executables from one process list (`tasklist` takes about 0.2 s; elsewhere `/proc`, where a game run
+/// through Proton shows its Windows executable and Steam is its Linux client: `proton::processes_running`).
 pub fn processes_running(exes: &[&str]) -> Option<Vec<bool>> {
     #[cfg(windows)]
     {
@@ -507,29 +510,36 @@ pub fn processes_running(exes: &[&str]) -> Option<Vec<bool>> {
 
     #[cfg(not(windows))]
     {
-        let _ = exes;
-        None
+        crate::proton::processes_running(exes)
     }
 }
 
-/// Starts the game with the command line, from its folder.
+/// Starts the game with the command line, from its folder: on Windows its executable; elsewhere its Windows build through Proton
+/// (`proton::start`: Steam's Proton for the game, else the settings' `proton` folder; `scratch` takes the batch file). Returns what was
+/// started, for the log.
 ///
 /// # Errors
 ///
-/// Not on Windows, or the game can't be started.
-pub fn start(game_dir: &Path, exe: &str, command_line: &str) -> Result<Child, String> {
+/// The game can't be started (elsewhere than Windows: a native Linux build, or no Proton or prefix).
+pub fn start(game_dir: &Path, game: &wce_vfs::GameProfile, command_line: &str, proton: Option<&Path>, scratch: &Path) -> Result<(Child, String), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        let path = game_dir.join(exe);
+        let _ = (proton, scratch);
+        let path = game_dir.join(game.exe);
         // As one raw string: the game parses `name "arg";` itself, and Rust's quoting would escape the quotes.
-        std::process::Command::new(&path).current_dir(game_dir).raw_arg(command_line).spawn().map_err(|e| format!("{}: {e}", path.display()))
+        let child = std::process::Command::new(&path).current_dir(game_dir).raw_arg(command_line).spawn().map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok((child, path.display().to_string()))
     }
 
     #[cfg(not(windows))]
     {
-        let _ = (game_dir, exe, command_line);
-        Err("Launch in game runs the game on Windows only".to_owned())
+        if crate::proton::build_of(game_dir, game.exe) == crate::proton::Build::Linux {
+            return Err(format!("{} has no {}: a native Linux build, which Launch in game does not start (it starts the Windows build through Proton)", game_dir.display(), game.exe));
+        }
+
+        let (child, launcher) = crate::proton::start(game_dir, game.exe, command_line, game.steam_app_id, proton, scratch)?;
+        Ok((child, format!("{} through {}", game.exe, launcher.proton.display())))
     }
 }
 
@@ -655,6 +665,12 @@ mod tests {
             c,
             "mod \"tdd_pack4_models_v1.1.0.pack\"; add_working_directory \"C:/out/launch/a1/game/\"; show_frontend_movies false; game_startup_mode battle script/wce/wce_launch.xml;"
         );
+    }
+
+    #[test]
+    fn command_line_of_loose_files_under_proton() {
+        let c = command_line(&Delivery::Loose(PathBuf::from("/home/u/out/launch/a1/game/")), &[]);
+        assert!(c.contains("add_working_directory \"Z:/home/u/out/launch/a1/game/\";"));
     }
 
     #[test]
