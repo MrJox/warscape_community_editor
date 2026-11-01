@@ -89,7 +89,7 @@ fn mesh() -> GpuMesh {
     let tex = Arc::new(RwLock::new(Texture::default()));
     GpuMesh {
         vb: None, ib: None, index_count: 0, alpha_mode: 0, stride: 32, kind: Default::default(), uv2_tile: [0.0; 2], tint: [1.0; 12], offset: Float3::default(), has_offset: false, tex: std::array::from_fn(|_| tex.clone()), diffuse_path: String::new(),
-        bmin: Float3::default(), bmax: Float3::default(), snow: false,
+        displacement: None, bmin: Float3::default(), bmax: Float3::default(), snow: false,
     }
 }
 

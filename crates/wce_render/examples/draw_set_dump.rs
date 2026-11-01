@@ -57,6 +57,7 @@ fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
         has_offset,
         tex: std::array::from_fn(|_| tex.clone()),
         diffuse_path: String::new(),
+        displacement: None,
         bmin: Float3::default(),
         bmax: Float3::default(),
         snow: false,
@@ -83,7 +84,7 @@ fn main() {
             GpuLod { meshes: (0..count).map(|_| mesh(&mut rng, false)).collect(), distance }
         }).collect();
 
-        models.push(Arc::new(GpuModel { path: String::new(), meshes, distance, lods, bmin, bmax, decals: vec![], top: None }));
+        models.push(Arc::new(GpuModel { path: String::new(), meshes, distance, lods, bmin, bmax, decals: vec![], top: None, ..Default::default() }));
     }
 
     let mut ds = DrawSet::default();
@@ -120,6 +121,7 @@ fn main() {
             min_ratio: if v == 4 { 0.01 } else { 0.0 },
             min_radius: if v == 2 { 3.0 } else { 0.0 },
             max_distance: 0.0,
+            quality: Default::default(),
         };
 
         println!("frustum {:016x}", floats(view.frustum.p.iter().flat_map(|p| p.n.iter().chain(std::iter::once(&p.d)))));
