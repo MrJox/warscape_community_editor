@@ -1216,7 +1216,8 @@ impl Tile {
     }
 
     /// Puts the tile into `layer`. `keep_terrain`: the heights did not change (a structural edit of the instances): the terrain entity stays,
-    /// so its patches are not built again.
+    /// so its patches are not built again; its ground is still brought up to date (a paint stroke in the same frame as a structural edit
+    /// is republished through here, and its maps were left out).
     pub(crate) fn publish_items(&mut self, scene: &mut RenderScene, layer: LayerId, keep_terrain: bool) {
         wce_prof!("tile.publish");
         let keep_terrain = keep_terrain && self.scene_key == scene_key(scene) && self.terrain_entity != 0 && scene.find(self.terrain_entity).is_some();
@@ -1249,9 +1250,7 @@ impl Tile {
         self.last_highlight = None;
         let pieces = self.instances.iter().filter_map(|&e| self.model_of(e).filter(|m| m.ok)).map(|m| m.pieces.len()).sum::<usize>();
         scene.reserve(pieces + self.instances.len() / 16 + 64);
-        if !keep_terrain {
-            self.update_terrain(scene, true);
-        }
+        self.update_terrain(scene, !keep_terrain);
 
         {
             wce_prof!("tile.publish_items");
