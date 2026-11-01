@@ -209,6 +209,16 @@ impl Renderer {
         bind_srv(&self.ctx, &tm, "g_hdr_rgb_texture_sampler", self.gbuffer.hdr.srv.as_ref());
         bind_srv(&self.ctx, &tm, "g_hdr_rgb_bloom_texture_sampler", bloom_a.t.srv.as_ref());
         bind_srv(&self.ctx, &tm, "g_scurve_texture_sampler", self.tonemap.scurve_srv.as_ref());
+
+        // Rome 2's vignette is the tone mapper's (a capture of a battle: vignette_buffer, enabled by gfx_vignette, over half the screen's
+        // diagonal; no lens-flare vignette is drawn).
+        if rome2 {
+            let (w, h) = (self.post.ldr.w as f32, self.post.ldr.h as f32);
+            let half_diagonal = 0.5 * (w * w + h * h).sqrt();
+            self.cbs.set_f("vignette_buffer", "g_recip_half_screen_diag", &[1.0 / half_diagonal.max(1.0)]);
+            self.cbs.set_f("vignette_buffer", "g_vignette_enable", &[if self.settings.vignette { 1.0 } else { 0.0 }]);
+        }
+
         let ldr = self.post.ldr.clone();
         self.fullscreen_to(&ldr.t.rtv, ldr.w, ldr.h, &tm);
     }
@@ -236,8 +246,9 @@ impl Renderer {
         let dof = env.use_dof && self.settings.depth_of_field;
         let mut ps = None;
 
-        // gfx_grain (Thrones of Britannia): the shaders' ENABLE_GRAIN variants (Attila has none; Rome 2's are not checked).
-        let mut grain = self.settings.grain && self.game != super::game::RenderGame::Rome2;
+        // gfx_grain (Thrones of Britannia, Rome 2: a capture of a Rome 2 battle draws the same variant): the shaders' ENABLE_GRAIN
+        // variants (Attila has none).
+        let mut grain = self.settings.grain;
         if grain {
             let name = format!(
                 "dx11_{}{}enable_grain_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high",
@@ -542,7 +553,14 @@ impl Renderer {
             }
         }
 
-        // The vignette (blend object +0x71f: SRC_ALPHA / INV_SRC_ALPHA, black with alpha = saturate(2 r - 0.9)^1.7).
+        // The vignette (blend object +0x71f: SRC_ALPHA / INV_SRC_ALPHA, black with alpha = saturate(2 r - 0.9)^1.7). Not Rome 2's: its
+        // tone mapper has the vignette.
+        if self.game == super::game::RenderGame::Rome2 {
+            self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+            null_ps_srvs(&self.ctx, 4);
+            return;
+        }
+
         let Some(layout) = self.layout(&main_vs, "flare", &el) else { return };
         self.ctx.set_blend_state(self.states.bs_alpha.as_ref());
         self.ctx.set_input_layout(Some(&layout));
