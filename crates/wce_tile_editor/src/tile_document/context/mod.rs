@@ -553,6 +553,18 @@ impl Frame {
         (Float4x4::IDENTITY, Payload::Water(sea))
     }
 
+    /// A floor under the open tile (its cells, off the LF, no lower than the sea tiles' bed or `deepest` m, whichever is lower, less a metre),
+    /// as a custom-mesh tile's (`place`). Its sea edges stand over the sea tiles' bed (Rome 2's Carthage: -20 m against their -40 m), and
+    /// through that gap the views under the tile reached the sky, which the sea refracted as a bright strip along the edges. A skirt on
+    /// the tile's grid closed it but showed on its land edges, a dotted line where a neighbour's ground lay a little lower than the edge.
+    pub fn open_floor(&self, deepest: f64) -> Option<(Float4x4, Payload)> {
+        let depth = FLOOR_DEPTH.max(1.0 - deepest);
+        let (mut world, ground) = self.ground(self.open, false, NO_CLIMATE);
+        let Payload::Terrain(t) = ground else { return None };
+        world.m[1][3] = self.sea_y() - (depth / self.unit) as f32;
+        Some((world, Payload::Terrain(Terrain { lf: None, ..t })))
+    }
+
     /// A placement drawn from its tile at a level: its terrain (the tile's heights buffer and material, turned and moved), then its entities
     /// moved into the frame and lifted by the LF at their position.
     fn place(&self, i: usize, t: &Template, lod: Lod, out: &mut Vec<(Float4x4, Payload)>) {

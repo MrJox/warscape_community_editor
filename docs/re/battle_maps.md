@@ -225,9 +225,11 @@ plains (aa .. ad) elsewhere.
     sea = 1, pass 0x15; techniques `sea_geometry_30(_new)`, `ps_sea_geom`). The editor draws the `sea` set's tiles on that LF (taken as 0:
     -20 m) in every ring; drawn so, the matched view agrees with the game's screenshot. ASSUMPTION: that pass is what draws the sea tiles
     (which patches it draws was not traced); the sea LF's few non-zero pixels are not read. Side effect: at a beach the sea tiles sit a
-    few metres lower than on the land's LF, and the open tile's seaward edge stands over them. The open tile has a skirt in a map context
-    since 2026-11-01 (`view.rs` `skirted`, 40 scene units): without one, at Carthage (its sea edges 2 .. 20 m under the sea, the sea tiles
-    beside it at 40 m) the views through the gap ran under the tile to the sky, which the sea refracted as a bright strip along its edges.
+    few metres lower than on the land's LF, and the open tile's seaward edge stands over them (Carthage: -20 m against -40 m). Since
+    2026-11-01 a floor lies under the open tile (`Frame::open_floor`: its cells, off the LF, at the sea tiles' bed or under the tile's
+    lowest height), as under the custom-mesh tiles: without it the views through that gap ran under the tile to the sky, which the sea
+    refracted as a bright strip along its edges. A skirt on the open tile's grid closed the gap too, but showed along its land edges (a
+    dotted dark line wherever a neighbour's ground lay a little lower than the edge, and a seam where it shifted the normal map).
     Only where the land LF under the tile is at or under the sea (the median of its quarter-cell samples at most 10 m above 0;
     `Frame::on_sea_lf`): TDD builds the Long Lake of `rom_third_age_map` from `sea` tiles on a flat 626 m LF, and its battle sea LF is
     -20 m there; on it the lake's tiles sank 646 m into pits between their coast tiles.
@@ -304,7 +306,11 @@ border, 1 m a pixel; 900 of the kit's 915 tiles have them, the 15 without are ne
 - **The map context's heights at seams** (2026-10-31): a neighbour is drawn from its `final_heights.dds` when that is still the tile's (90 %
   of the samples more than 70 m from the edges within 0.25 m or 2 % of the height scale: the export equals the editing heights there; the
   files' times are useless, the kit's height maps are often minutes newer than their exports); the open tile from its editing heights
-  with the export's fade (`TileProject::faded_height_at`, `edge_fade`), live. Measured fade (`final_fade_check`, western_city_rome/small,
+  with the export's fade (`TileProject::faded_height_at`, `edge_fade`), live; a tile decompiled from the packs (its `decompiled_terrain`
+  folder) without it, its heights being the game's final ones already (faded again, Carthage's sea edges, -20 m in the packs, rose to the
+  surface as a strip of land along the sea; 2026-11-01). Its material in a map context is the neighbours' kind (2026-11-01): over the
+  tile with its border, faded out by the game's alpha (`template::game_alpha`), its normal map from the whole height map; cut at the
+  tile's edge with no alpha, it met the neighbours' faded ground in a seam. Measured fade (`final_fade_check`, western_city_rome/small,
   plains/2x2/2x2_aa): 0 to 2 m, `1 - exp(-(d - 2)^2 / 930)` to 16 m, then 0.4087 (24), 0.6253 (32), 0.7959 (40), 0.9067 (48), 0.9674 (56),
   0.9933 (63), 1 from 64. Corners fade more than the product of their edges' weights (0.10 against 0.38 at (32, 32) of plains/2x2): the
   editor's open tile takes the product (ASSUMPTION), and does not tell sea-linked edges (-20 in the export) apart.

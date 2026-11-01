@@ -589,6 +589,10 @@ pub struct Tile {
     /// The material id of the clipped maps (0: none yet).
     pub(crate) material_clip_id: u64,
 
+    /// The game's alpha of the tile in a map context (`context::template::game_alpha`), read with the material: none yet, or what it
+    /// gave.
+    pub(crate) clip_alpha: Option<Option<wce_scene::render_scene::TerrainImage>>,
+
     /// The map context's LF map: the terrain is drawn on it.
     pub(crate) context_lf: Option<Arc<LfMap>>,
 }
@@ -726,7 +730,7 @@ impl TileDocument {
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), building_db: OnceCell::new(), tile_sets: OnceCell::new(), logic_summaries: RefCell::default(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None, normal_image: None, heights_changed: None, terrain_grid: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
             last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
-            clip_to_tile: false, material_clip_id: 0, context_lf: None, prefab_cache: HashMap::new(), unlocked_reference: None,
+            clip_to_tile: false, material_clip_id: 0, clip_alpha: None, context_lf: None, prefab_cache: HashMap::new(), unlocked_reference: None,
         };
 
         tile.build_index();

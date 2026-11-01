@@ -114,21 +114,8 @@ fn empty_overlay() -> Payload {
     Payload::Overlay(Overlay { pickable: false, ..Default::default() })
 }
 
-/// How far the skirt of the open tile's ground goes down in a map context (scene units).
-const CONTEXT_SKIRT: f32 = 40.0;
-
-/// The terrain grid with a ring of vertices one step outside it, CONTEXT_SKIRT below its edge: in a map context the open tile's edge
-/// stands over its neighbours' ground where they are lower (Rome 2's Carthage: its sea edges 2 .. 20 m under the sea, the sea tiles
-/// beside it at 40 m), and through that gap the views under the tile reached the sky, which the sea refracted as a bright strip along
-/// the edge. The neighbours' templates have theirs (`context::template`).
-fn skirted(t: Terrain) -> Terrain {
-    let (nx, nz) = (t.nx + 2, t.nz + 2);
-    let heights = (0..nz).flat_map(|j| (0..nx).map(move |i| (i, j))).map(|(i, j)| {
-        let h = t.heights[((j - 1).clamp(0, t.nz - 1) * t.nx + (i - 1).clamp(0, t.nx - 1)) as usize];
-        if i == 0 || j == 0 || i == nx - 1 || j == nz - 1 { h - CONTEXT_SKIRT } else { h }
-    }).collect();
-    Terrain { nx, nz, origin_x: t.origin_x - t.step, origin_z: t.origin_z - t.step, heights: Arc::new(heights), ..t }
-}
+/// The folder of a decompiled project its tile's packed terrain is carried in (`wce_tile_io::attila::stage_b::CARRIED_DIR`).
+const TERRAIN_CARRIED_DIR: &str = "decompiled_terrain";
 
 impl Tile {
 
@@ -393,6 +380,7 @@ impl Tile {
         if self.material_base.is_none() || self.material_look != self.look {
             self.material_base = None;
             self.material_clip_id = 0;
+            self.clip_alpha = None;
             self.material_look = self.look.clone();
             if !self.has_blend_area() {
                 self.terrain_note = "plain tiled texture (the tile has no database entry or no height map: no blend map area)".to_owned();
@@ -457,8 +445,23 @@ impl Tile {
         self.ground_info = self.ground_info_base.clone();
         let mut m = (**self.material_base.as_ref()?).clone();
         if self.clip_to_tile {
+            // As the neighbours' (`context::template`): the material over the tile with its border, faded out past the tile's edges by
+            // the game's alpha, so the open tile and its neighbours crossfade (the resolve divides by the weights' sum); cut at the edge,
+            // with no alpha, the open tile's ground met the neighbours' faded one in a seam. Cut to the tile when the game has no alpha.
+            if self.clip_alpha.is_none() {
+                let cells = (self.project.info.cells_x.max(1), self.project.info.cells_y.max(1));
+                let alpha = self.files.as_deref().zip(self.project.entry.as_ref()).and_then(|(f, e)| super::context::template::game_alpha(e, cells, f));
+                self.clip_alpha = Some(alpha);
+            }
+
+            let (b, ex, ez) = (128.0, self.extent_x(), self.extent_z());
+            let bordered = (m.x0 + b).abs() < 1e-6 && (m.z0 + b).abs() < 1e-6 && (m.x1 - ex - b).abs() < 1e-6 && (m.z1 - ez - b).abs() < 1e-6;
+            match self.clip_alpha.clone().flatten().filter(|_| bordered) {
+                Some(alpha) => m.alpha = alpha,
+                None => crop_material(&mut m, 0.0, 0.0, ex, ez),
+            }
+
             // Other maps: another material for the renderer (it keeps a material's maps by its id).
-            crop_material(&mut m, 0.0, 0.0, self.extent_x(), self.extent_z());
             if self.material_clip_id == 0 {
                 self.material_clip_id = next_id(&MATERIAL_IDS);
             }
@@ -496,7 +499,16 @@ impl Tile {
             None => {
                 wce_prof!("tile.normal_map");
                 let k = self.project.mpp_z() / self.project.mpp_x();
-                m.normal = terrain_normal_image(&t.heights, t.nx, t.nz, f64::from(t.step), f64::from(t.step) * k, m.blend.w, m.blend.h);
+                // In a map context the grid is the tile's own cells, the material (with the game's alpha) the tile with its border: the
+                // normals from the heights over the whole height map (the image lays the grid over the material's rectangle).
+                m.normal = match self.project.height.as_ref().filter(|_| self.clip_to_tile && m.x0 < 0.0) {
+                    Some(hf) => {
+                        let (w, h, unit) = (hf.width(), hf.height(), self.project.unit_scale);
+                        let all: Vec<f32> = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).map(|(x, y)| (hf.metres(x, y) / unit) as f32).collect();
+                        terrain_normal_image(&all, w as i32, h as i32, self.project.mpp_x(), self.project.mpp_z(), m.blend.w, m.blend.h)
+                    }
+                    None => terrain_normal_image(&t.heights, t.nx, t.nz, f64::from(t.step), f64::from(t.step) * k, m.blend.w, m.blend.h),
+                };
                 self.normal_id = next_id(&NORMAL_IDS);
                 self.normal_image = Some((m.blend.w, m.blend.h, m.normal.clone()));
             }
@@ -834,8 +846,11 @@ impl Tile {
         // The heights as they were the last time: the grid and the normal map are kept (a paint stroke changes only the ground's maps;
         // making the grid, the normal map and the water again cost a frame each dab on a city).
         // In a map context the tile's own heights fade to the LF at its edges as the export's do (`faded_height_at`), as the game would
-        // draw it: a step to the neighbours' faded edges cast a long shadow line.
-        let faded = self.clip_to_tile && self.context_lf.is_some();
+        // draw it: a step to the neighbours' faded edges cast a long shadow line. Not a tile decompiled from the packs: its heights are
+        // the game's final ones already (faded, and blended to its links: Rome 2's Carthage keeps -20 m along its sea edges, which the
+        // fade to 0 lifted out of the sea), and faded again they dipped along every edge.
+        let decompiled = self.project.dir.join(TERRAIN_CARRIED_DIR).is_dir();
+        let faded = self.clip_to_tile && self.context_lf.is_some() && !decompiled;
         let heights = (self.project.height.as_ref().map(HeightField::version), self.clip_to_tile, faded);
         let same_heights = !first && self.terrain_entity != 0 && self.terrain_grid.as_ref().is_some_and(|(k, _, _)| *k == heights);
 
@@ -905,10 +920,6 @@ impl Tile {
             });
 
             t.heights = Arc::new(heights);
-            if self.clip_to_tile {
-                t = skirted(t);
-            }
-
             t.lod = true;
             let mut w = Float4x4::IDENTITY;
             w.m[2][2] = k;
