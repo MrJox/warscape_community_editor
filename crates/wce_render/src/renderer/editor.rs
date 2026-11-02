@@ -271,6 +271,10 @@ pub(crate) struct EditorGpu {
     ovl_cb: Option<ID3D11Buffer>,
     pick_cb: Option<ID3D11Buffer>,
 
+    /// The overlay entities, as of a scene (address) and its overlay revision: the selection outline looks at them alone (it went over
+    /// every entity a frame: a map view's 300 000, 0.8 ms).
+    outline_overlays: ((usize, u64), Vec<wce_scene::render_scene::EntityId>),
+
     /// The scene and its overlay revision the overlay cache (`ovl_gpu_cache`) is of.
     ovl_cache_scene: usize,
     ovl_cache_rev: u64,
@@ -817,7 +821,12 @@ impl Renderer {
         // overlays that stand for selected items.
         let selected = self.settings.selection.iter().copied().filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e))).collect::<std::collections::HashSet<_>>();
         let (mut tris, mut lines) = (vec![], vec![]);
-        for e in scene.entities() {
+        let key = (std::ptr::from_ref(scene) as usize, scene.overlay_revision());
+        if self.editor.outline_overlays.0 != key {
+            self.editor.outline_overlays = (key, scene.entities().iter().filter(|e| matches!(e.payload, Payload::Overlay(_))).map(|e| e.id).collect());
+        }
+
+        for e in self.editor.outline_overlays.1.iter().filter_map(|&id| scene.find(id)) {
             let Payload::Overlay(o) = &e.payload else { continue };
             if (o.selection_mask || selected.contains(&e.id)) && scene.drawable(e) {
                 tris.extend(o.triangles.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));

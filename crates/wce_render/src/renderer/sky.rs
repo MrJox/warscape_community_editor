@@ -89,6 +89,10 @@ pub(crate) struct EnvCube {
     pub ambient_faces: [[f32; 3]; 6],
     pub ambient_valid: bool,
     pub ambient_frame: u64,
+
+    /// The ground under the battle's centre the cube is drawn above, as of a scene (address, revision) and the centre: found by going
+    /// over the scene's terrains (a map view's 300 000 entities: 3 ms every fourth frame).
+    pub ground: Option<((usize, u64, u32, u32), f32)>,
 }
 
 impl EnvCube {
@@ -205,13 +209,21 @@ impl Renderer {
 
         // 50 game metres above the ground at the battle's centre (the sea when no terrain covers it).
         let [cx, cz] = scene.battle_centre;
-        let ground = scene.entities().iter()
-            .filter(|e| scene.drawable(e))
-            .find_map(|e| match &e.payload {
-                wce_scene::render_scene::Payload::Terrain(t) => t.ground_at(&e.world, cx, cz),
-                _ => None,
-            })
-            .unwrap_or(scene.sea_level);
+        let key = (std::ptr::from_ref(scene) as usize, scene.revision(), cx.to_bits(), cz.to_bits());
+        let ground = match self.env.ground {
+            Some((k, g)) if k == key => g,
+            _ => {
+                let g = scene.entities().iter()
+                    .filter(|e| scene.drawable(e))
+                    .find_map(|e| match &e.payload {
+                        wce_scene::render_scene::Payload::Terrain(t) => t.ground_at(&e.world, cx, cz),
+                        _ => None,
+                    })
+                    .unwrap_or(scene.sea_level);
+                self.env.ground = Some((key, g));
+                g
+            }
+        };
         let eye = Float3::new(cx, ground + 50.0 / self.camera.units, cz);
         for f in 0..6 {
             let view = face_view(f) * translation(-(eye - self.camera.origin));

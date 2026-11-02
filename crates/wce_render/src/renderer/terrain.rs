@@ -389,7 +389,7 @@ pub(crate) struct TerrainGpuState {
     hf_pending: std::collections::HashSet<usize>,
     hf_made: HashMap<usize, u64>,
     mat_pending: std::collections::HashSet<u64>,
-    pub(crate) placed: BTreeMap<EntityId, Placed>,
+    pub(crate) placed: HashMap<EntityId, Placed>,
     pub(crate) mat: BTreeMap<u64, TerrainMatGpu>,
 
     /// The custom meshes by id (`terrain_custom`).

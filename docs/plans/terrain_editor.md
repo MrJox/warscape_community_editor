@@ -184,8 +184,21 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    the view follows the active map document (each map keeps its camera); scripts `terrain_open`, `terrain_settle`, `terrain_view`. The
    campaign battle map from the packs at its centre: 15.2 ms a frame (p95 17.4), CPU-bound, 100 251 draw items (RX 7900 XTX).
    DEVIATION (for now): the map is lit by the first day, dry weather of the climate at its centre (`weather/<climate>/`), not the Tile
-   tool's weather choice. Left: the culling by area (the p95 and Rome's 297 k items), the Map panel (2D), the overlays, the LF picking
-   pyramid, an editor option to thin the fog for high views (the weather's fog washes out the map from 9 km up).
+   tool's weather choice. Left: the Map panel (2D), the overlays, the LF picking pyramid, an editor option to thin the fog for high views
+   (the weather's fog washes out the map from 9 km up).
+   **Frame time (2026-11-02).** CPU-bound (half the render scale changed nothing). Where it went and what was done, the Terrain tool on
+   the campaign battle map, default rings, game view distance, RX 7900 XTX:
+   - the terrain's ~5 500 entities (mostly far LF ground) made ready per view (5 times a frame, 0.46 ms each) and every patch tested in
+     every view (49 600 tests): now once a frame, each entity's box before its patches (5 400 tests), no map of the entities built per
+     draw, the placements in a hash map;
+   - the sea bed's update went over every scene entity each frame (325 k around Rome): skipped while the scene's revision and the sea's
+     origin stand;
+   - the selection outline went over every entity each frame looking for overlays: a list of the overlays per overlay revision;
+   - the environment cube looked for the ground under the battle's centre over every entity (3 ms every 4th frame, the p95): cached by
+     the scene's revision.
+   Map centre: 14.6 -> 10.4 ms (p95 15.5 -> 11.8). Around Rome (325 508 draw items): 15.5 -> 11.0 ms (p95 18.1 -> 11.9); the Tile tool's
+   map context there was 19.8 ms in Phase 0. The Tile tool's map context captures are unchanged. Left on the CPU around Rome: shadows
+   2.7 ms, terrain 2.0, the sea 1.5 (its chunks' waves 0.8), the G-buffer 1.2, view culling 1.8 (10 views).
 3. **LF editing**: the paged field, the brushes, the page undo, the GPU updates in parts, the normals, the sea LF, the LF patches, saving
    the TIFFs, `Heights & Normals` against BOB.
 4. **Tile map editing**: the cell layers, explicit tiles, the fill on a worker and the partial rebuild, validation; `Tilemap` against BOB.
