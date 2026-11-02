@@ -34,7 +34,8 @@ Each open item lives in one plan; the others point to it.
 | [weather.md](docs/plans/weather.md) | the Weather tool's leftovers: a VFX editor, campaign mode | open |
 | [weather_current_state.md](docs/plans/weather_current_state.md) | the particle and VFX engine items still approximated | open |
 | [editor_todo.md](docs/plans/editor_todo.md) | editor-wide ideas: a minimap with views, siege AI problems on save, autosave | open |
-| [tile.md](docs/plans/tile.md) | tilemaps and the map pipeline (a later scope) | not started |
+| [tile.md](docs/plans/tile.md) | tilemaps and the map pipeline (a later scope) | not started; its map-level items go to terrain_editor.md |
+| [terrain_editor.md](docs/plans/terrain_editor.md) | the Terrain tool, Terry's replacement: map documents, LF and tile map painting, the `.terry` scene, BCA generation, BOB_Terrain's outputs | plan; decisions taken (2026-11-02), Phase 0 next |
 
 ## Project-level open items
 
