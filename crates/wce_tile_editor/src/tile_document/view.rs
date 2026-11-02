@@ -1089,6 +1089,17 @@ impl Tile {
         wce_prof!("tile.publish_polygon");
         let solids = self.cover_solids(scene);
         self.rebuild_polygon_over(scene, layer, elem, &solids);
+
+        // A deployment zone's other polygons: one of them may be the hole of another's fill.
+        let sc = self.tscene();
+        if sc.type_of(elem) == "DEPLOYMENT_ZONE_POLYGON_INSTANCE" {
+            let els = sc.doc().elements();
+            let others = els[elem].parent.and_then(|w| els[w].parent).map(|g| sc.children(g)).unwrap_or_default();
+            let others = others.into_iter().filter(|&e| e != elem && self.is_polygon(e) && self.shown(e)).collect::<Vec<_>>();
+            for e in others {
+                self.rebuild_polygon_over(scene, layer, e, &solids);
+            }
+        }
     }
 
     /// What the snapping's edges and corners are (scene units, as `polygon_world_points`): each shown polygon's or line's points (a spline:
@@ -1119,6 +1130,26 @@ impl Tile {
         out
     }
 
+    /// What a polygon's fill leaves out: a deployment zone's standard additive polygon is less the subtractive ones of its zone (CA's
+    /// attacker zone is the map less a hole around the settlement); `None`: not filled (a zone's subtractive and guerrilla exclusion
+    /// polygons are lines, filled they hid the zone's hole).
+    fn zone_holes(&self, elem: usize) -> Option<Vec<Vec<Float3>>> {
+        let sc = self.tscene();
+        if sc.type_of(elem) != "DEPLOYMENT_ZONE_POLYGON_INSTANCE" {
+            return Some(vec![]);
+        }
+
+        let kind = |e: usize| sc.doc().get(e, "deployment_polygon_type").unwrap_or_default();
+        if kind(elem) != "DZPT_ADDITIVE" {
+            return None;
+        }
+
+        // The zone: the group above the polygon's `children` wrapper.
+        let els = sc.doc().elements();
+        let Some(group) = els[elem].parent.and_then(|w| els[w].parent) else { return Some(vec![]) };
+        Some(sc.children(group).into_iter().filter(|&e| e != elem && kind(e) == "DZPT_SUBSTRACTIVE").map(|e| self.polygon_world_points(e)).collect())
+    }
+
     /// The polygon (or line) on its cover: filled when it is a closed polygon, its edges as ribbons, in its type's colour.
     fn rebuild_polygon_over(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, solids: &[Solid]) {
         let mut o = Overlay { pickable: false, ..Default::default() };
@@ -1140,15 +1171,17 @@ impl Tile {
             let over = if self.is_wall(elem) { &[][..] } else { solids };
             let mut cover = self.cover_for(lo, hi, over);
             let [r, g, b] = polygon_colour(&ty);
-            let fill = self.display.polygon_fill;
+            let holes = self.zone_holes(elem);
+            let fill = if holes.is_some() { self.display.polygon_fill } else { 0.0 };
+            let holes = holes.unwrap_or_default();
             let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
             let look = [r, g, b, fill].iter().fold(mix(u64::from(closed) << 1 | u64::from(spline), points.len() as u64), |h, v| mix(h, u64::from(v.to_bits())));
-            let look = points.iter().fold(look, |h, p| mix(mix(mix(h, u64::from(p.x.to_bits())), u64::from(p.y.to_bits())), u64::from(p.z.to_bits())));
+            let look = points.iter().chain(holes.iter().flatten()).fold(look, |h, p| mix(mix(mix(h, u64::from(p.x.to_bits())), u64::from(p.y.to_bits())), u64::from(p.z.to_bits())));
             match &cover.drawn {
                 Some((k, drawn)) if *k == look => o.clone_from(drawn),
                 _ => {
                     if closed && points.len() > 2 && fill > 0.0 {
-                        cover.fill(&points, overlay_colour(r, g, b, fill), &mut o);
+                        cover.fill(&points, &holes, overlay_colour(r, g, b, fill), &mut o);
                     }
 
                     cover.edges(&points, closed, !spline, overlay_colour(r, g, b, 0.85), &mut o);

@@ -171,9 +171,10 @@ impl Cover {
         ([self.x0, self.z0], [self.x0 + (self.nx - 1) as f32 * self.cell, self.z0 + (self.nz - 1) as f32 * self.cell])
     }
 
-    /// The fill of a closed polygon (x, z of `points`) as triangles on the cover, cut at the grid's cells so they follow it.
-    pub fn fill(&self, points: &[Float3], rgba: u32, o: &mut Overlay) {
-        let pts = points.iter().map(|p| [p.x, p.z]).collect::<Vec<_>>();
+    /// The fill of a closed polygon (x, z of `points`) less its `holes` as triangles on the cover, cut at the grid's cells so they follow it.
+    pub fn fill(&self, points: &[Float3], holes: &[Vec<Float3>], rgba: u32, o: &mut Overlay) {
+        let flat = |ps: &[Float3]| ps.iter().map(|p| [p.x, p.z]).collect::<Vec<_>>();
+        let pts = bridge_holes(&flat(points), &holes.iter().map(|h| flat(h)).collect::<Vec<_>>());
         let mut piece = Vec::with_capacity(8);
         let mut next = Vec::with_capacity(8);
         for t in ear_clip(&pts) {
@@ -291,6 +292,55 @@ fn cross(o: [f32; 2], a: [f32; 2], b: [f32; 2]) -> f32 {
 
 /// Triangles of a simple polygon (either winding) by ear clipping. A self-crossing polygon stops where no ear is left: what was cut so far
 /// is returned.
+/// One outline of a polygon with holes, for [`ear_clip`]: each hole joined to the outline (or to a hole joined before) by a cut from its
+/// rightmost point to the nearest point it sees, walked the other way round from the outline. Holes are taken rightmost first.
+pub(crate) fn bridge_holes(outer: &[[f32; 2]], holes: &[Vec<[f32; 2]>]) -> Vec<[f32; 2]> {
+    let signed = |ps: &[[f32; 2]]| (0..ps.len()).map(|k| cross([0.0, 0.0], ps[k], ps[(k + 1) % ps.len()])).sum::<f32>();
+    let mut merged = outer.to_vec();
+    if signed(&merged) < 0.0 {
+        merged.reverse();
+    }
+
+    let mut holes = holes.iter().filter(|h| h.len() >= 3).map(|h| {
+        let mut h = h.clone();
+        if signed(&h) > 0.0 {
+            h.reverse();
+        }
+        h
+    }).collect::<Vec<_>>();
+    let right = |h: &[[f32; 2]]| (0..h.len()).max_by(|&a, &b| h[a][0].total_cmp(&h[b][0])).unwrap_or(0);
+    holes.sort_by(|a, b| b[right(b)][0].total_cmp(&a[right(a)][0]));
+
+    let crosses = |p: [f32; 2], q: [f32; 2], ring: &[[f32; 2]]| (0..ring.len()).any(|k| {
+        let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+        if a == p || a == q || b == p || b == q {
+            return false;
+        }
+
+        let (d1, d2) = (cross(p, q, a), cross(p, q, b));
+        let (d3, d4) = (cross(a, b, p), cross(a, b, q));
+        d1 * d2 < 0.0 && d3 * d4 < 0.0
+    });
+
+    for i in 0..holes.len() {
+        let h = &holes[i];
+        let m = right(h);
+        let hm = h[m];
+        let mut order = (0..merged.len()).collect::<Vec<_>>();
+        let d2 = |p: [f32; 2]| (p[0] - hm[0]).powi(2) + (p[1] - hm[1]).powi(2);
+        order.sort_by(|&a, &b| d2(merged[a]).total_cmp(&d2(merged[b])));
+        let sees = |v: usize| !crosses(hm, merged[v], &merged) && holes.iter().all(|o| !crosses(hm, merged[v], o));
+        let Some(v) = order.into_iter().find(|&v| sees(v)) else { continue };
+        let mut spliced = merged[..=v].to_vec();
+        spliced.extend((0..=h.len()).map(|k| h[(m + k) % h.len()]));
+        spliced.push(merged[v]);
+        spliced.extend_from_slice(&merged[v + 1..]);
+        merged = spliced;
+    }
+
+    merged
+}
+
 pub(crate) fn ear_clip(points: &[[f32; 2]]) -> Vec<[[f32; 2]; 3]> {
     let mut idx = (0..points.len()).collect::<Vec<_>>();
     idx.dedup_by(|a, b| points[*a] == points[*b]);
@@ -316,8 +366,9 @@ pub(crate) fn ear_clip(points: &[[f32; 2]]) -> Vec<[[f32; 2]; 3]> {
                 return true;
             }
 
+            // A copy of a corner (a hole's bridge doubles two points) is not in the ear.
             let p = points[j];
-            !(cross(a, b, p) * sign >= 0.0 && cross(b, c, p) * sign >= 0.0 && cross(c, a, p) * sign >= 0.0)
+            p == a || p == b || p == c || !(cross(a, b, p) * sign >= 0.0 && cross(b, c, p) * sign >= 0.0 && cross(c, a, p) * sign >= 0.0)
         });
 
         if empty {
@@ -494,6 +545,24 @@ mod tests {
 
     fn area(t: &[[f32; 2]; 3]) -> f32 {
         cross(t[0], t[1], t[2]).abs() * 0.5
+    }
+
+    #[test]
+    fn a_hole_is_left_out_of_the_fill() {
+        // 10 x 10 less a 4 x 4 hole in the middle (area 84), and two holes (area 100 - 2 x 4); the holes either way round.
+        let outer = vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        let hole = vec![[3.0, 3.0], [7.0, 3.0], [7.0, 7.0], [3.0, 7.0]];
+        let tris = ear_clip(&bridge_holes(&outer, std::slice::from_ref(&hole)));
+        assert!((tris.iter().map(area).sum::<f32>() - 84.0).abs() < 1e-3, "{}", tris.iter().map(area).sum::<f32>());
+        let centre_in = |t: &[[f32; 2]; 3]| {
+            let c = [(t[0][0] + t[1][0] + t[2][0]) / 3.0, (t[0][1] + t[1][1] + t[2][1]) / 3.0];
+            (3.0..7.0).contains(&c[0]) && (3.0..7.0).contains(&c[1])
+        };
+        assert!(!tris.iter().any(centre_in));
+
+        let two = [vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]], vec![[8.0, 8.0], [6.0, 8.0], [6.0, 6.0], [8.0, 6.0]]];
+        let tris = ear_clip(&bridge_holes(&outer, &two));
+        assert!((tris.iter().map(area).sum::<f32>() - 92.0).abs() < 1e-3, "{}", tris.iter().map(area).sum::<f32>());
     }
 
     #[test]
