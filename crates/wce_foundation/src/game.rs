@@ -55,6 +55,9 @@ pub struct GameProfile {
 
     /// The game's graphics options and presets.
     pub graphics: &'static crate::graphics::GraphicsCatalogue,
+
+    /// The battle maps' files (the Terrain tool).
+    pub map: MapFacts,
 }
 
 /// How the game's own packs are found.
@@ -104,6 +107,24 @@ pub struct LaunchFacts {
 
     /// `tile_upgrade` (tile_upgrades.xml keys) in the map definition of a settlement battle.
     pub tile_upgrades: bool,
+}
+
+/// What the Terrain tool needs to know of a game's battle maps (docs/plans/terrain_editor.md, docs/re/terry.md): the versions of the
+/// built files its BOB writes and its game reads, and what its Assembly Kit has. Per-map values (sizes, the LF's pixels per cell, the
+/// tile database's `lf_height` and `vertical_offset`) are read from the map and the tile database, not kept here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MapFacts {
+    /// World units a side of a map cell (`.terry` positions; a settlement tile of 8 x 8 cells spans 2048).
+    pub cell_units: u32,
+
+    /// `tile_map.index` / `.tiles`, `terrain.tile_list`, `locations.blm`.
+    pub tile_map_version: u32,
+    pub tile_list_version: u32,
+    pub blm_version: u32,
+
+    /// The kit's Terry projects (`raw_data/terrain/<battles|campaigns>/<map>/<map>.terry`) and the BCA generator's rules
+    /// (`editor_working_data/Terry/bca_generation_spec.xml`); Rome 2's kit has no Terry.
+    pub kit_terry: bool,
 }
 
 /// A pack in the priority order.
@@ -157,6 +178,7 @@ impl GameProfile {
             tile_upgrades: true,
         },
         graphics: &crate::graphics::ATTILA,
+        map: MapFacts { cell_units: 256, tile_map_version: 9, tile_list_version: 11, blm_version: 8, kit_terry: true },
     };
 
     /// Total War: Rome II. Its manifest lists neither the patch packs (`*_rome2.pack`) nor the right sizes, so the packs are rpfm's list.
@@ -194,6 +216,7 @@ impl GameProfile {
             tile_upgrades: false,
         },
         graphics: &crate::graphics::ROME_2,
+        map: MapFacts { cell_units: 256, tile_map_version: 6, tile_list_version: 9, blm_version: 7, kit_terry: false },
     };
 
     /// Total War Saga: Thrones of Britannia: Attila's engine and Assembly Kit, other builds (docs/re/thrones_renderer.md). Its manifest
@@ -224,6 +247,7 @@ impl GameProfile {
             tile_upgrades: true,
         },
         graphics: &crate::graphics::THRONES_OF_BRITANNIA,
+        map: MapFacts { cell_units: 256, tile_map_version: 9, tile_list_version: 11, blm_version: 8, kit_terry: true },
     };
 
     /// Every supported game, the default first.

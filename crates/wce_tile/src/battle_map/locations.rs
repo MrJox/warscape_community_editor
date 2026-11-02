@@ -5,7 +5,9 @@
 //! - per type: u16 length + name (`land_normal`, `settlement_unfortified`, `land_ambush`, `naval_normal`, `port_assault`, `coastal_battle`,
 //!   `settlement_standard`, `unfortified_port`, `land_bridge`), u32 count, then per location 9 x i32: the cell rectangle (x0, y0, x1, y1,
 //!   inclusive), its centre (x, y), an id (-1, or 0xffff0000 + n for the coastal and bridge battles), 0, 0;
-//! - then (version 8) u32 cell count and a climate table (u32 count, per climate a name and two u16), not read here.
+//! - then (version 8) u32 cell count and a climate table (u32 count, per climate a name and two u16), kept as bytes (`tail`).
+//!
+//! [`BattleLocations::write`] gives the bytes back (byte for byte for a file read by [`BattleLocations::parse`]).
 //!
 //! `locations.blm.mask0` (version 8; `.mask1` for version 7) is one u16 per cell (meaning open).
 
@@ -15,6 +17,9 @@ pub struct Location {
     pub rect: [i32; 4],
     pub centre: [i32; 2],
     pub id: i32,
+
+    /// The record's last two values (0, 0 in every file seen).
+    pub extra: [i32; 2],
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -25,6 +30,9 @@ pub struct BattleLocations {
 
     /// (battle type, its locations), in the file's order.
     pub types: Vec<(String, Vec<Location>)>,
+
+    /// What follows the types (version 8: the cell count and the climate table), as it was.
+    pub tail: Vec<u8>,
 }
 
 impl BattleLocations {
@@ -38,7 +46,7 @@ impl BattleLocations {
             return Err("locations.blm: not a BLMF file".to_owned());
         }
 
-        let mut out = Self { version: u32_at(4)?, width: u32_at(12)?, height: u32_at(16)?, types: vec![] };
+        let mut out = Self { version: u32_at(4)?, width: u32_at(12)?, height: u32_at(16)?, types: vec![], tail: vec![] };
         let count = u32_at(8)?;
         let mut p = 20;
         for _ in 0..count {
@@ -50,14 +58,37 @@ impl BattleLocations {
             let mut locations = Vec::with_capacity(n);
             for _ in 0..n {
                 let v = (0..9).map(|i| u32_at(p + i * 4).map(|v| v as i32)).collect::<Result<Vec<_>, _>>()?;
-                locations.push(Location { rect: [v[0], v[1], v[2], v[3]], centre: [v[4], v[5]], id: v[6] });
+                locations.push(Location { rect: [v[0], v[1], v[2], v[3]], centre: [v[4], v[5]], id: v[6], extra: [v[7], v[8]] });
                 p += 36;
             }
 
             out.types.push((name, locations));
         }
 
+        out.tail = b[p..].to_vec();
         Ok(out)
+    }
+
+    /// The file's bytes.
+    pub fn write(&self) -> Vec<u8> {
+        let mut o = b"BLMF".to_vec();
+        for v in [self.version, self.types.len() as u32, self.width, self.height] {
+            o.extend_from_slice(&v.to_le_bytes());
+        }
+
+        for (name, locations) in &self.types {
+            o.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            o.extend(name.chars().map(|c| c as u8));
+            o.extend_from_slice(&(locations.len() as u32).to_le_bytes());
+            for l in locations {
+                for v in [l.rect[0], l.rect[1], l.rect[2], l.rect[3], l.centre[0], l.centre[1], l.id, l.extra[0], l.extra[1]] {
+                    o.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+        }
+
+        o.extend_from_slice(&self.tail);
+        o
     }
 
     /// The locations whose rectangle holds the cell, as (battle type, location).

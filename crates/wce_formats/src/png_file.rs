@@ -253,6 +253,68 @@ impl PngFile {
     ///
     /// Fails if zlib fails.
     pub fn encode(&self) -> Result<Vec<u8>, PngError> {
+        let compressed = self.compressed_pixels()?;
+        let mut out = SIGNATURE.to_vec();
+        let mut ihdr = Vec::with_capacity(13);
+        ihdr.extend_from_slice(&self.width.to_be_bytes());
+        ihdr.extend_from_slice(&self.height.to_be_bytes());
+        ihdr.extend_from_slice(&[self.bit_depth, self.color_type, 0, 0, 0]);
+        put_chunk(&mut out, b"IHDR", &ihdr);
+        self.put_idat(&mut out, &compressed);
+        put_chunk(&mut out, b"IEND", &[]);
+        Ok(out)
+    }
+
+    /// The pixels encoded as [`Self::encode`] does, every other chunk of the original kept where it was (a Photoshop-saved file keeps
+    /// its `pHYs`, `iCCP`, `cHRM`...: only the IDAT run changes). The image's size and format must be the original's.
+    ///
+    /// # Errors
+    ///
+    /// Fails if zlib fails, or the original is not a PNG of the same size and format.
+    pub fn encode_keeping_chunks(&self) -> Result<Vec<u8>, PngError> {
+        let b = &self.original;
+        if b.len() < 8 || b[..8] != SIGNATURE {
+            return self.encode();
+        }
+
+        let compressed = self.compressed_pixels()?;
+        let mut out = SIGNATURE.to_vec();
+        let (mut i, mut idat_done) = (8, false);
+        while i + 12 <= b.len() {
+            let n = be32(&b[i..]) as usize;
+            if i + 12 + n > b.len() {
+                return fail("truncated chunk");
+            }
+
+            let kind = &b[i + 4..i + 8];
+            if kind == b"IHDR" && (be32(&b[i + 8..]) != self.width || be32(&b[i + 12..]) != self.height || b[i + 16] != self.bit_depth || b[i + 17] != self.color_type) {
+                return fail("the original has another size or format");
+            }
+
+            if kind == b"IDAT" {
+                if !idat_done {
+                    self.put_idat(&mut out, &compressed);
+                    idat_done = true;
+                }
+            } else {
+                out.extend_from_slice(&b[i..i + 12 + n]);
+            }
+
+            i += 12 + n;
+        }
+
+        Ok(out)
+    }
+
+    fn put_idat(&self, out: &mut Vec<u8>, compressed: &[u8]) {
+        let chunk = if self.idat_chunk_size > 0 { self.idat_chunk_size as usize } else { 8192 };
+        for data in compressed.chunks(chunk) {
+            put_chunk(out, b"IDAT", data);
+        }
+    }
+
+    /// The rows filtered as libpng's heuristic picks and deflated as the kit's zlib does: the IDAT stream.
+    fn compressed_pixels(&self) -> Result<Vec<u8>, PngError> {
         let bpp = self.bytes_per_pixel();
         let stride = self.width as usize * bpp;
         let height = self.height as usize;
@@ -276,20 +338,7 @@ impl PngFile {
             filter_row(best.0, row, prev, bpp, &mut out[1..]);
         }
 
-        let compressed = deflate_kit(&filtered)?;
-        let mut out = SIGNATURE.to_vec();
-        let mut ihdr = Vec::with_capacity(13);
-        ihdr.extend_from_slice(&self.width.to_be_bytes());
-        ihdr.extend_from_slice(&self.height.to_be_bytes());
-        ihdr.extend_from_slice(&[self.bit_depth, self.color_type, 0, 0, 0]);
-        put_chunk(&mut out, b"IHDR", &ihdr);
-        let chunk = if self.idat_chunk_size > 0 { self.idat_chunk_size as usize } else { 8192 };
-        for data in compressed.chunks(chunk) {
-            put_chunk(&mut out, b"IDAT", data);
-        }
-
-        put_chunk(&mut out, b"IEND", &[]);
-        Ok(out)
+        deflate_kit(&filtered)
     }
 
     /// The original bytes while the pixels are unchanged, else [`Self::encode`].

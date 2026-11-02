@@ -7,7 +7,7 @@ historical battle, a settlement map), its low-frequency (LF) ground, the tiles p
 docs/plans/tile.md (items 1, 3, 4, 5) and the map context's open items that are about the map rather than the open tile
 (docs/plans/map_context_todo.md, "Map-level terrain", "Large map contexts: performance").
 
-Status: **Phase 0 done (2026-11-02, "Phase 0 results"); the user's decisions are in "Decisions" at the end.** Next: Phase 1.
+Status: **Phases 0 and 1 done (2026-11-02); the user's decisions are in "Decisions" at the end.** Next: Phase 2 (the viewer).
 
 ## What Terry does and what the tool does with it
 
@@ -168,6 +168,10 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    bits and the blm rounding (Phase 6), the normal chunks' source (Phase 3), Thrones' references.
 1. **Model and files**: `wce_terrain`, `wce_terrain_io::attila`; every map file of the kits and the packs read and written; the round-trip
    gates; the profile's `MapFacts`. Done when every kit map round-trips byte for byte.
+   **Done 2026-11-02** (docs/formats/map_files.md): 129 kit maps of Attila and Thrones, 862 files, through the model and back with no
+   failure; the built files of Attila's and Thrones' packs and BOB's outputs written back byte for byte. Left: Rome 2's tile list (versions
+   8, 9) and tile map (version 6) writers (Phase 9). The built files' readers stay in `wce_tile::battle_map` (the tile tool uses them)
+   instead of moving into `wce_terrain`.
 2. **Viewer**: the streamer made a public module with the frame as a parameter (the tile tool's captures unchanged); `MapDocument`; the
    Terrain tool opens a map (kit, project, or packs read-only), the whole map in 3D, the Map panel, the overlays, the LF picking pyramid.
    Done when `main_attila_map` walks within the budgets.

@@ -2450,6 +2450,28 @@ name = "wce_siege"
 version = "0.0.1"
 
 [[package]]
+name = "wce_terrain"
+version = "0.0.1"
+dependencies = [
+ "rayon",
+ "wce_formats",
+ "wce_tile_model",
+]
+
+[[package]]
+name = "wce_terrain_io"
+version = "0.0.1"
+dependencies = [
+ "rayon",
+ "thiserror",
+ "wce_formats",
+ "wce_terrain",
+ "wce_tile",
+ "wce_tile_model",
+ "wce_vfs",
+]
+
+[[package]]
 name = "wce_tile"
 version = "0.0.1"
 dependencies = [
