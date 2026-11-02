@@ -86,8 +86,14 @@ run weather_check     ex wce_weather weather_check "$BKIT/raw_data/warscape_asse
 run terrain_check     ex wce_tile_editor terrain_check "$GAME"
 run tech_check ex wce_tile_editor tech_check "$GAME"   # every building logic file reads into the technology overlays' shapes (the building technology chip)
 run tdb_build         ex wce_formats tdb_build "$BKIT/raw_data/terrain/tiles/battle/_tile_database" - "$BKIT/working_data/terrain/tiles/battle/tile_database.bin"
+# ---- map gates (docs/plans/terrain_editor.md): a kit map folder through the Terrain tool's model and back (unedited, made again, minimal
+# edits), and the packs' built map files (tile_map, tile_list, locations.blm, CHMF, deployment XML) read and written back, byte for byte
+MAPRAW="$GAME/assembly_kit/raw_data"; [ -d "$MAPRAW/terrain/battles" ] || MAPRAW="$BKIT/raw_data"
+run map_roundtrip     ex wce_terrain_io map_roundtrip_check "$MAPRAW" --filter settlement_western_city_b_small
+run map_built_roundtrip ex wce_terrain_io map_built_roundtrip_check --game "$GAME" --vanilla
 if [ "$CORPUS" = 1 ]; then
     run roundtrip     ex wce_formats roundtrip "$MANIFEST" "$GAME"
+    run map_roundtrip_all ex wce_terrain_io map_roundtrip_check "$MAPRAW"   # every battle and campaign map folder of the kit (about 25 s)
     run scene_check   ex wce_tile scene_check "$GAME"   # every tile.ted of both kits
     run tile_roundtrip_all ex wce_tile_io tile_roundtrip_check "$GAME"   # every TEd project of the kit(s) through the model and back (about 2 min)
     run tile_binary_roundtrip_all ex wce_tile_io tile_binary_roundtrip_check "$GAME/data"   # every exported tile folder of the packs through the model and back (about 3 min)
