@@ -31,8 +31,11 @@ along land edges) is in docs/re/battle_maps.md, "Tile seams". This plan owns all
 
 Measured 2026-10-21 on western_city_rome/medium, sea on, 64 neighbour cells (192 tiles, 1.38 M draw items): 23 fps, CPU-bound; 42 fps
 after the terrain blend's constants / boxes set once and the sea as a quadtree. Left:
-- Culling by area: PARTIAL. 43e983c made removal cheap (dead items skipped and their slots reused, the incremental update 3.1 -> 0.6 ms); culling still walks every item per view (13 views a frame, ~6.5 ms):
-  skip a whole far tile at once.
-- The environment cube redrawn every 4th frame at ~9 ms (a stutter): spread its faces over frames, or skip far items in it.
+- Culling by area: PARTIAL. 43e983c made removal cheap (dead items skipped and their slots reused, the incremental update 3.1 -> 0.6 ms).
+  2026-11-02 (docs/plans/terrain_editor.md, Phase 2 "Frame time"): the terrain entities are made ready once a frame and culled by their
+  box before their patches; the sea bed, the selection outline and the environment cube no longer go over every entity a frame. The draw
+  set's culling is 0.18 ms a view around Rome (1.8 ms for 10 views): skipping a whole far tile at once is what is left of this item.
+- The environment cube redrawn every 4th frame at ~9 ms (a stutter): its cost was finding the ground under the battle centre over every
+  entity (cached by the scene's revision since 2026-11-02; the cube draws the sky and clouds only).
 - The shadow cascades' instance upload (2.2 ms) and the terrain shadow draws (one per terrain entity per cascade, 3 ms).
 - The GPU side is unmeasured (the GPU timer item is in rendering_remaining.md).

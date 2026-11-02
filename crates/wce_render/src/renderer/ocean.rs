@@ -262,6 +262,9 @@ pub(crate) struct OceanGpu {
     /// without touching the terrain revision.
     sea_bed_terrains: (u64, u64),
 
+    /// The scene (address, revision) and the sea's origin the sea bed was last checked for: unchanged, nothing is looked at.
+    sea_bed_quick: (usize, u64, u32, u32, u32),
+
     /// The game units per scene unit the grids and the sea bed were built with (both are in game units).
     units: f32,
 
@@ -386,6 +389,15 @@ impl Renderer {
     fn ocean_sea_bed(&mut self, scene: &RenderScene) {
         // The texture covers game units; the terrains are in scene units. The terrains over it (a map context has hundreds, most farther).
         let (u, o) = (self.camera.units, self.ocean_origin(scene));
+
+        // Nothing in the scene changed and the sea is where it was: the texture stands, without going over every entity (a map view has
+        // 300 000 of them: 1 to 2 ms a frame).
+        let quick = (scene as *const RenderScene as usize, scene.revision(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
+        if self.water.ocean.sea_bed.is_some() && self.water.ocean.sea_bed_quick == quick {
+            return;
+        }
+
+        self.water.ocean.sea_bed_quick = quick;
         let half = SEA_BED_HALF / u;
         let over = |e: &Entity, t: &wce_scene::render_scene::Terrain| {
             let m = &e.world.m;
