@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use crate::raster::{Grid, Mask, N4, N8, area2, dist, inside, simplify, simplify_loop};
-use crate::{Deployment, Edge, EdgeKind, Input, Layout, Node, NodeKind, P, ZoneKind};
+use crate::{Deployment, Edge, EdgeKind, Input, Layout, Node, NodeKind, P, WallPiece, ZoneKind};
 
 /// The raster's cell (scene units).
 pub const CELL: f64 = 2.0;
@@ -105,6 +105,11 @@ pub fn generate(input: &Input) -> Layout {
         g.fill_polygon(&mut nogo, p);
     }
 
+    // The steep ground blocks as the no-go regions do: the streets and areas never climb a cliff the units cannot.
+    for (n, s) in nogo.iter_mut().zip(even_odd(&g, &input.steep)) {
+        *n |= s;
+    }
+
     let mut buildings = g.mask();
     for p in &input.obstacles {
         g.fill_polygon(&mut buildings, p);
@@ -127,6 +132,16 @@ pub fn generate(input: &Input) -> Layout {
     let mut walls = g.mask();
     for c in wall_cells.iter().flatten() {
         walls[*c] = true;
+    }
+
+    // An inner gate (a gate with the map's edge reachable from neither side: a citadel's, a second circle's) is a way through, not a
+    // wall: its passage opened, the streets run through it.
+    let others: Mask = (0..g.len()).map(|k| nogo[k] || input.sea.as_ref().is_some_and(|f| f.at(g.centre(k)))).collect();
+    let inner = inner_gates(input, &g, &walls, &others);
+    for &i in &inner {
+        for c in gate_passage(&g, &input.walls[i], &wall_cells[i]) {
+            walls[c] = false;
+        }
     }
 
     // An encampment's palisade: its runs are walls; its openings are shut for the settlement's outline (their entries open them again).
@@ -867,6 +882,48 @@ fn fill_small_holes(g: &Grid, m: &mut Mask, max_area: f64) {
 }
 
 /// Set parts smaller than `min_area` are unset, but for the one holding `keep`.
+/// The gates with the map's edge reachable from neither side (the walls, no-go and sea as the barrier): their sides are both the
+/// settlement's.
+fn inner_gates(input: &Input, g: &Grid, walls: &Mask, others: &Mask) -> Vec<usize> {
+    let barrier: Mask = (0..g.len()).map(|k| walls[k] || others[k]).collect();
+    let pass: Mask = barrier.iter().map(|&b| !b).collect();
+    let outside = g.flood(&pass, (0..g.len()).filter(|&k| g.on_border(k)));
+    input.walls.iter().enumerate().filter(|(_, w)| w.gate).filter_map(|(i, w)| {
+        let mid = [(w.ends[0][0] + w.ends[1][0]) / 2.0, (w.ends[0][1] + w.ends[1][1]) / 2.0];
+        let (dx, dz) = (w.ends[1][0] - w.ends[0][0], w.ends[1][1] - w.ends[0][1]);
+        let l = dx.hypot(dz).max(1e-6);
+        let n = [-dz / l, dx / l];
+        // A side: its ground just past the gate's footprint (open ground, not the barrier).
+        let side = |s: f64| (10..=40).step_by(5).filter_map(|d| g.at([mid[0] + s * n[0] * f64::from(d), mid[1] + s * n[1] * f64::from(d)])).find(|&k| !barrier[k]);
+        let (a, b) = (side(1.0)?, side(-1.0)?);
+        (!outside[a] && !outside[b]).then_some(i)
+    }).collect()
+}
+
+/// A gate's passage: its cells within a third of its length of the line across its middle.
+fn gate_passage(g: &Grid, w: &WallPiece, cells: &[usize]) -> Vec<usize> {
+    let mid = [(w.ends[0][0] + w.ends[1][0]) / 2.0, (w.ends[0][1] + w.ends[1][1]) / 2.0];
+    let (dx, dz) = (w.ends[1][0] - w.ends[0][0], w.ends[1][1] - w.ends[0][1]);
+    let l = dx.hypot(dz).max(1e-6);
+    let along = [dx / l, dz / l];
+    cells.iter().copied().filter(|&k| {
+        let p = g.centre(k);
+        ((p[0] - mid[0]) * along[0] + (p[1] - mid[1]) * along[1]).abs() <= l / 3.0
+    }).collect()
+}
+
+/// The cells inside an odd number of the outlines: outlines holding others as holes.
+fn even_odd(g: &Grid, outlines: &[Vec<P>]) -> Mask {
+    let mut m = g.mask();
+    for p in outlines {
+        for k in g.polygon_cells(p) {
+            m[k] = !m[k];
+        }
+    }
+
+    m
+}
+
 fn keep_large_parts(g: &Grid, m: &mut Mask, min_area: f64, keep: usize) {
     let (label, sizes) = g.components(m);
     for k in 0..g.len() {
@@ -1642,24 +1699,25 @@ fn approaches(out: &mut Layout, g: &Grid, attacker: &Mask, nogo: &Mask, bounds: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Capture, WallPiece};
+    use crate::Capture;
+
+    /// A straight wall from p to q: pieces of 20, the walkway on the axis, 6 thick; the `gate_at`th piece a gate.
+    fn side(p: P, q: P, gate_at: Option<usize>, walls: &mut Vec<WallPiece>) {
+        let n = (dist(p, q) / 20.0).round() as usize;
+        for i in 0..n {
+            let s = [p[0] + (q[0] - p[0]) * i as f64 / n as f64, p[1] + (q[1] - p[1]) * i as f64 / n as f64];
+            let e = [p[0] + (q[0] - p[0]) * (i + 1) as f64 / n as f64, p[1] + (q[1] - p[1]) * (i + 1) as f64 / n as f64];
+            let d = [(e[0] - s[0]) / 20.0, (e[1] - s[1]) / 20.0];
+            let nrm = [-d[1] * 3.0, d[0] * 3.0];
+            let fp = vec![[s[0] - nrm[0], s[1] - nrm[1]], [e[0] - nrm[0], e[1] - nrm[1]], [e[0] + nrm[0], e[1] + nrm[1]], [s[0] + nrm[0], s[1] + nrm[1]]];
+            walls.push(WallPiece { footprint: vec![fp.clone()], platforms: vec![fp], walkway: vec![], gate: gate_at == Some(i), ends: [s, e] });
+        }
+    }
 
     /// A walled square town with a gate on the south side and a block of houses in the middle.
     fn town() -> Input {
         let mut walls = vec![];
         let (a, b) = (300.0, 700.0);
-        // Pieces of 20 along each side, the walkway on the axis, 6 thick.
-        let side = |p: P, q: P, gate_at: Option<usize>, walls: &mut Vec<WallPiece>| {
-            let n = (dist(p, q) / 20.0).round() as usize;
-            for i in 0..n {
-                let s = [p[0] + (q[0] - p[0]) * i as f64 / n as f64, p[1] + (q[1] - p[1]) * i as f64 / n as f64];
-                let e = [p[0] + (q[0] - p[0]) * (i + 1) as f64 / n as f64, p[1] + (q[1] - p[1]) * (i + 1) as f64 / n as f64];
-                let d = [(e[0] - s[0]) / 20.0, (e[1] - s[1]) / 20.0];
-                let nrm = [-d[1] * 3.0, d[0] * 3.0];
-                let fp = vec![[s[0] - nrm[0], s[1] - nrm[1]], [e[0] - nrm[0], e[1] - nrm[1]], [e[0] + nrm[0], e[1] + nrm[1]], [s[0] + nrm[0], s[1] + nrm[1]]];
-                walls.push(WallPiece { footprint: vec![fp.clone()], platforms: vec![fp], walkway: vec![], gate: gate_at == Some(i), ends: [s, e] });
-            }
-        };
         side([a, a], [b, a], Some(10), &mut walls);
         side([b, a], [b, b], None, &mut walls);
         side([b, b], [a, b], None, &mut walls);
@@ -1672,8 +1730,7 @@ mod tests {
             obstacles: vec![block(333.0, 333.0, 485.0, 485.0), block(515.0, 333.0, 667.0, 485.0), block(333.0, 515.0, 485.0, 667.0), block(515.0, 515.0, 667.0, 667.0)],
             walls,
             captures: vec![Capture { at: [500.0, 500.0], major: true }],
-            palisade: vec![],
-            sea: None,
+            ..Input::default()
         }
     }
 
@@ -1688,6 +1745,65 @@ mod tests {
         assert!(l.edges.iter().any(|e| e.kind == EdgeKind::Street));
         assert_eq!(l.edges.iter().filter(|e| e.kind == EdgeKind::Wall).count(), 1);
         assert!(l.approaches.len() >= 4);
+    }
+
+    /// A ring of cliffs (an outline and the one it holds as a hole) is the ring only.
+    #[test]
+    fn steep_outlines_are_filled_even_odd() {
+        let square = |a: f64, b: f64| vec![[a, a], [b, a], [b, b], [a, b]];
+        let g = Grid::new([0.0, 0.0], [100.0, 100.0], 2.0);
+        let m = even_odd(&g, &[square(10.0, 90.0), square(30.0, 70.0)]);
+        let at = |x: f64, z: f64| m[g.at([x, z]).expect("on the grid")];
+        assert!(at(20.0, 50.0) && at(80.0, 80.0));
+        assert!(!at(50.0, 50.0) && !at(5.0, 5.0));
+    }
+
+    /// A steep bank across the east side of the town's ring road: the streets keep off it (made without it, one runs over it, and the
+    /// check finds it).
+    #[test]
+    fn steep_ground_blocks_the_streets() {
+        let bank = vec![[662.0, 430.0], [698.0, 430.0], [698.0, 570.0], [662.0, 570.0]];
+        let on_bank = |p: P| (664.0..=696.0).contains(&p[0]) && (432.0..=568.0).contains(&p[1]);
+        let input = Input { steep: vec![bank], ..town() };
+        let l = generate(&input);
+        eprintln!("{}\n{:?}", l.summary(), l.warnings);
+        assert!(!l.edges.is_empty() && !l.nodes.is_empty());
+        for e in l.edges.iter().filter(|e| e.kind != EdgeKind::Wall) {
+            assert!(!e.line.iter().any(|&p| on_bank(p)), "a {:?} edge on the bank: {:?}", e.kind, e.line);
+        }
+
+        assert!(!l.nodes.iter().any(|n| on_bank(n.centre)), "a node on the bank");
+        assert!(crate::check::check_steep(&l, &input.steep).is_empty());
+
+        let blind = generate(&Input { steep: vec![], ..input.clone() });
+        assert!(!crate::check::check_steep(&blind, &input.steep).is_empty(), "made without the bank, no street crosses it: {}", blind.summary());
+    }
+
+    /// A citadel inside an open town: a walled square with its own gate on the north side, the main capture in it. The street graph is
+    /// one, through the citadel's gate.
+    #[test]
+    fn inner_gates_are_ways_through() {
+        let mut input = Input { obstacles: vec![], ..town() };
+        let (a, b) = (420.0, 580.0);
+        let mut inner = vec![];
+        side([a, a], [b, a], None, &mut inner);
+        side([b, a], [b, b], None, &mut inner);
+        side([b, b], [a, b], Some(4), &mut inner);
+        side([a, b], [a, a], None, &mut inner);
+        let gate = inner.iter().find(|w| w.gate).map(|w| [(w.ends[0][0] + w.ends[1][0]) / 2.0, (w.ends[0][1] + w.ends[1][1]) / 2.0]).expect("a gate");
+        input.walls.extend(inner);
+        let l = generate(&input);
+        eprintln!("{}\n{:?}", l.summary(), l.warnings);
+        let r = crate::check::check(&l);
+        assert!(r.problems.is_empty(), "{:?}", r.problems);
+        assert!(!r.notes.iter().any(|n| n.contains("parts")), "{:?}", r.notes);
+        let near = |a: P, b: P| {
+            let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+            let t = (((gate[0] - a[0]) * dx + (gate[1] - a[1]) * dz) / (dx * dx + dz * dz).max(1e-9)).clamp(0.0, 1.0);
+            dist([a[0] + t * dx, a[1] + t * dz], gate) < 8.0
+        };
+        let through = l.edges.iter().filter(|e| e.kind == EdgeKind::Street).any(|e| e.line.windows(2).any(|w| near(w[0], w[1])));
+        assert!(through, "no street through the citadel's gate at {gate:?}");
     }
 
     /// A camp: a square palisade of side 200 (pieces every 10 along their z, 10 long towards -z, the camp on their +x), an opening of

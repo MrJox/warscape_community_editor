@@ -2063,12 +2063,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add("tile_generate_siege_ai", "tile_generate_siege_ai", "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported", |e, _| {
-        let Some(d) = document(e) else { return fail("no tile open") };
-        match d.generate_siege_ai() {
-            Ok(l) => ok(&format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("
-  {w}")).collect::<String>())),
+        with_tile(e, |t, e| match t.generate_siege_ai_now(e) {
+            Ok(l) => ok(&format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("\n  {w}")).collect::<String>())),
             Err(err) => fail(&err),
-        }
+        })
     });
 
     c.add("tile_select_layer", "tile_select_layer <layer path | #elem>", "select a layer or an element in the scene tree", |e, a| {

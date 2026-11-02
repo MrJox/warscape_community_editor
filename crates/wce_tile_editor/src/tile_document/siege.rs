@@ -202,6 +202,11 @@ impl Tile {
             }
         }
 
+        // The steep ground the game will not walk: the automatic no-go areas the tool worked out (metres).
+        if let Some(outlines) = &self.auto_nogos {
+            input.steep = outlines.iter().map(|o| o.iter().map(|p| [f64::from(p[0]) * u, f64::from(p[1]) * u]).collect()).collect();
+        }
+
         let read = |key: &str| -> Option<Arc<LogicSummary>> {
             if let Some(l) = self.logic_summaries.borrow().get(key) {
                 return l.clone();
@@ -605,6 +610,7 @@ impl TileDocument {
         let report = wce_siege::check::check(&layout);
         layout.warnings.extend(report.problems.iter().map(|p| format!("check: {p}")));
         layout.warnings.extend(wce_siege::check::check_captures(&layout, &input.captures));
+        layout.warnings.extend(wce_siege::check::check_steep(&layout, &input.steep).into_iter().map(|w| format!("check: {w}")));
 
         let root = self.tile().tscene().scene_graph().ok_or("this tile has no SCENE_GRAPH")?;
         let mark = self.begin()?;

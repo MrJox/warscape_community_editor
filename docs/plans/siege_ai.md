@@ -26,11 +26,27 @@ in [editor_todo.md](editor_todo.md).
   the ring stays open. Wall edges run 8 su past each gate.
 - **Entry nodes** where a street crosses the perimeter with no wall.
 
+## Decisions (user, 2026-11-02, after Amon Calen crashed the game)
+
+- **Steep ground is no-go, automatically.** The game will not walk ground steeper than 30 degrees (BOB's automatic no-go areas,
+  `terrain_outlines.xml`); a graph across it sent units through nodes they cannot reach (Amon Calen, a hill city with no no-go regions:
+  streets up 14 m escarpments, areas spanning two circles; the game crashed in the battle advice, a unit without soldiers). Generate
+  SiegeAI works the automatic no-go areas out first and blocks them as it blocks no-go regions; the check lists streets, area
+  connections and nodes on them.
+- **Inner gates are ways through.** A gate with the settlement on both sides (a citadel's, a second circle's) gets its passage opened,
+  so a street runs through it. Map authors should still prefer an open passage to an inner gate: the game's AI handles inner gates
+  badly.
+
 ## Design
 
 - **`wce_siege`** (pure geometry): a 2 su raster (distance transform, flood fill, closing, thinning, contours); the generator from an input
-  (bounds, no-go, footprints, wall pieces with walkways and gate flags, captures, a sea mask) to a layout; a checker (`check`,
-  `check_captures`); SVG output.
+  (bounds, no-go, steep ground, footprints, wall pieces with walkways and gate flags, captures, a sea mask) to a layout; a checker
+  (`check`, `check_captures`, `check_steep`); SVG output.
+- **Steep ground:** `Input::steep`, the automatic no-go outlines (some hold others as holes: a ring of cliffs around a plateau), filled
+  even-odd into the no-go mask. The tool works them out with stage B (`water_view.rs` `refresh_auto_nogos`, the view's own when they are
+  current) before generating; without them the generator runs and warns.
+- **Inner gates:** gates with the map's edge reachable from neither side (walls, no-go and sea as the barrier); their cells within a
+  third of their length of the line across their middle are taken out of the walls.
 - **Fort pieces:** buildings with wall firing lines (`Crenel*`, `HighWall`, `LowWall`) or gates, plus raised buildings touching them; wall
   edges along the middle of their platforms. Procedural walls give their layout's walkway (`wce_walls::scene::walls`).
 - **Nodes:** boxes along the street that fit the free space and never overlap; Boundary a geodesic split of the free space, grown a few su
