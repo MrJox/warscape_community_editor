@@ -19,6 +19,7 @@ use wce_map_view::maps::{GAME_FAR_PLANE, PacksTree, game_map_folder, game_maps, 
 use wce_map_view::{MapView, Rings};
 use wce_scene::render_scene::DocumentId;
 use wce_terrain::MapKind;
+use wce_terrain::pyramid::HeightPyramid;
 use wce_terrain_editor::{MapDocument, MapSource};
 use wce_tile::battle_map::context::{CELL, Spot};
 use wce_tile::battle_map::kit_maps;
@@ -45,6 +46,32 @@ impl Loaded {
     }
 }
 
+/// The shown map's LF and its pyramid: where a ray meets the LF (what the LF brushes paint).
+struct LfPick {
+    lf: Arc<wce_scene::render_scene::LfMap>,
+    pyramid: HeightPyramid,
+}
+
+impl LfPick {
+    fn new(lf: Arc<wce_scene::render_scene::LfMap>) -> Self {
+        let (nx, nz) = (lf.nx.max(0) as u32, lf.nz.max(0) as u32);
+        let pyramid = HeightPyramid::new(nx, nz, |x, y| lf.values[(y * nx + x) as usize]);
+        Self { lf, pyramid }
+    }
+
+    /// Where the ray (frame, scene units) meets the LF: the point (scene units) and the sample's raw height there.
+    fn hit(&self, o: Float3, d: Float3) -> Option<(Float3, f32)> {
+        let lf = &self.lf;
+        let (s, k) = (lf.step, 65535.0 / lf.scale.max(1e-6));
+        let os = [(o.x - lf.x0) / s, (o.y + lf.offset) * k, (o.z - lf.z0) / s];
+        let ds = [d.x / s, d.y * k, d.z / s];
+        let nx = lf.nx as u32;
+        let t = self.pyramid.intersect(os, ds, |x, y| lf.values[(y * nx + x) as usize])?;
+        let p = o + d * t;
+        Some((p, os[1] + ds[1] * t))
+    }
+}
+
 enum Job {
     Opened(Result<Loaded, String>),
     Built(DocumentId, Box<Streamer>),
@@ -67,6 +94,10 @@ pub struct TerrainTool {
     rings: Rings,
     overview: bool,
 
+    /// The shown map's LF picking, and the cursor's point on it (frame, scene units) with its raw LF height.
+    pick: Option<LfPick>,
+    cursor: Option<(Float3, f32)>,
+
     /// The map on the scene and the document it shows, the one whose view is being made, the camera of each map last shown.
     view: MapView,
     shown: DocumentId,
@@ -87,7 +118,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(),
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(),
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -279,6 +310,8 @@ impl TerrainTool {
 
         self.light(e, id);
         let lift = s.frame().lift(0.0, 0.0);
+        self.pick = s.frame().lf.clone().map(LfPick::new);
+        self.cursor = None;
         self.view.begin(e, id, s, &self.rings, |_| vec![]);
         self.shown = id;
         self.building = 0;
@@ -368,7 +401,28 @@ impl TerrainTool {
             gui::text_wrapped(&self.view.status);
         }
 
+        if let Some(line) = self.cursor_line() {
+            gui::text_disabled(&line);
+        }
+
         gui::end();
+    }
+}
+
+impl TerrainTool {
+    /// Where a viewport pixel's ray meets the shown map's LF.
+    fn pick_at(&self, e: &Editor, x: i32, y: i32) -> Option<(Float3, f32)> {
+        let (o, d) = e.viewport.ray(x, y)?;
+        self.pick.as_ref()?.hit(o, d)
+    }
+
+    /// The cursor's point on the LF for the panel: its map cell, metres above the sea and the raw sample.
+    fn cursor_line(&self) -> Option<String> {
+        let (p, raw) = self.cursor?;
+        let f = self.view.frame()?;
+        let (cx, cy) = f.cell_of(f64::from(p.x), f64::from(p.z));
+        let metres = f64::from(raw) / 65535.0 * wce_tile::battle_map::context::LF_HEIGHT - wce_tile::battle_map::context::VERTICAL_OFFSET;
+        Some(format!("LF under the cursor: cell {cx:.2}, {cy:.2}, {metres:.2} m (raw {raw:.1})"))
     }
 }
 
@@ -401,6 +455,14 @@ impl Tool for TerrainTool {
         let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
         let (name, placed) = (d.name.clone(), d.placed.clone());
         self.view.draw_overview(e, origin, size, &name, &placed, None);
+    }
+
+    fn viewport_input(&mut self, e: &mut Editor, ev: &wce_editor::tool::ViewportEvent) -> bool {
+        if ev.kind == wce_editor::tool::ViewportEventKind::Hover {
+            self.cursor = self.pick_at(e, ev.x, ev.y);
+        }
+
+        false
     }
 
     fn update(&mut self, e: &mut Editor) {
@@ -446,6 +508,30 @@ impl Tool for TerrainTool {
 
                 t.view.settle(e, &t.rings);
                 CommandResult::success(t.view.status.clone())
+            })
+        });
+
+        c.add("terrain_pick", "terrain_pick <x> <y>", "the Terrain tool: where the ray of a viewport pixel meets the shown map's LF", |e, a| {
+            let (Some(x), Some(y)) = (a.first().and_then(|v| v.parse().ok()), a.get(1).and_then(|v| v.parse().ok())) else {
+                return CommandResult::fail("usage: terrain_pick <x> <y>");
+            };
+
+            with_terrain(e, |t, e| {
+                t.cursor = t.pick_at(e, x, y);
+                match (t.cursor, t.cursor_line()) {
+                    (Some((p, _)), Some(line)) => CommandResult::success(format!("{line}; at {:.2} {:.2} {:.2}", p.x, p.y, p.z)),
+                    _ => {
+                        // What a march along the ray over the LF finds (to tell a miss of the pyramid from a ray off the map).
+                        let ray = e.viewport.ray(x, y);
+                        let march = ray.zip(t.pick.as_ref()).and_then(|((o, d), p)| {
+                            (0..200_000).map(|k| k as f32 * 0.5).find(|&k| {
+                                let q = o + d * k;
+                                q.y <= p.lf.height_at(q.x, q.z)
+                            }).map(|k| o + d * k)
+                        });
+                        CommandResult::fail(format!("no LF under that pixel (ray {ray:?}; a march finds {march:?})"))
+                    }
+                }
             })
         });
 
