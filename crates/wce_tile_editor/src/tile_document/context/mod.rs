@@ -71,7 +71,8 @@ pub struct ContextRequest {
     pub map: Arc<PlacedMap>,
     pub spot: Spot,
 
-    /// The open tile's size in cells and its scene units per metre.
+    /// The open tile's size in cells and its scene units per metre. No cells (0, 0): the map's own frame (the Terrain tool), its origin at
+    /// `spot` with the map's axes (x along the columns, z up the rows), nothing left out and the heights measured from the sea.
     pub cells: (i32, i32),
     pub unit: f64,
 
@@ -299,7 +300,7 @@ impl Frame {
         let open = me.rect();
         let to_map = me.to_map();
         let from_map = to_map.inverse();
-        let (lf_level, lf_range) = map.lf_stats(open);
+        let (lf_level, lf_range) = if rq.cells == (0, 0) { (0.0, 0.0) } else { map.lf_stats(open) };
         let lf = lf_map(&map, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
 
         // The first to cover a cell owns it (the open tile, then the placements in the map's order).

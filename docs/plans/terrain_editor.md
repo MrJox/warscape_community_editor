@@ -176,6 +176,16 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    Terrain tool opens a map (kit, project, or packs read-only), the whole map in 3D, the Map panel, the overlays, the LF picking pyramid.
    Done when `main_attila_map` walks within the budgets.
   The streamer's frame is the only part of this phase that touches the tile tool.
+   **Progress 2026-11-02.** Done: `wce_map_view` (the map context's scene driver and map loading moved out of the Tile panel: `MapView`,
+   `Rings`, `maps`; the Tile tool's map context captures unchanged, 92 to 107 dB against the baseline as two baseline runs are);
+   `ContextRequest` with no cells is the map's own frame (origin at the map's centre, heights from the sea); `wce_terrain_editor::
+   MapDocument`; `wce_terrain_tool` (the `terrain` feature of `wce_app`, replacing the placeholder): a Terrain panel with the map list
+   (the packs' maps, the kits'), Open (read on a worker; a kit map also into the model), the rings, the view distance, the overview map;
+   the view follows the active map document (each map keeps its camera); scripts `terrain_open`, `terrain_settle`, `terrain_view`. The
+   campaign battle map from the packs at its centre: 15.2 ms a frame (p95 17.4), CPU-bound, 100 251 draw items (RX 7900 XTX).
+   DEVIATION (for now): the map is lit by the first day, dry weather of the climate at its centre (`weather/<climate>/`), not the Tile
+   tool's weather choice. Left: the culling by area (the p95 and Rome's 297 k items), the Map panel (2D), the overlays, the LF picking
+   pyramid, an editor option to thin the fog for high views (the weather's fog washes out the map from 9 km up).
 3. **LF editing**: the paged field, the brushes, the page undo, the GPU updates in parts, the normals, the sea LF, the LF patches, saving
    the TIFFs, `Heights & Normals` against BOB.
 4. **Tile map editing**: the cell layers, explicit tiles, the fill on a worker and the partial rebuild, validation; `Tilemap` against BOB.

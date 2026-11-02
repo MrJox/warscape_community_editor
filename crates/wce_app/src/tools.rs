@@ -16,13 +16,16 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
     #[cfg(feature = "ui")]
     tools.push(Box::new(wce_ui_tool::UiTool::default()));
 
+    #[cfg(feature = "terrain")]
+    tools.push(Box::new(wce_terrain_tool::TerrainTool::default()));
+
     #[cfg(feature = "placeholders")]
     tools.extend(placeholders());
 
     tools
 }
 
-/// The future tools: no features yet.
+/// The future tools: no features yet (the Terrain tool is a feature of its own).
 #[cfg(feature = "placeholders")]
 fn placeholders() -> Vec<Box<dyn Tool>> {
     use wce_editor::icons;
@@ -34,10 +37,6 @@ fn placeholders() -> Vec<Box<dyn Tool>> {
             "Unit editor: skinned models, animations, variant mesh definition (VMD) assembly. Needs the SkinnedInstance render kind, bone palette and the anim/skeleton formats.",
         )),
         Box::new(PlaceholderTool::new("vfx", "VFX", icons::SPARKLES, "Particle and effect editor on the existing particle system and vfx definitions: emitter graph, standalone preview scene, vfx XML export.")),
-        Box::new(PlaceholderTool::new(
-            "terrain", "Terrain", icons::MOUNTAIN,
-            "Battle map and Terry terrain: tilemap painting and the pixel-close terrain pass (see docs/re/terrain.md), tile_list/blm export, BOB terrain stages.",
-        )),
         Box::new(PlaceholderTool::new("cinematic", "Cinematic", icons::CLAPPERBOARD, "Keyframed scene composition and movie recording over PropertyPaths, with a camera rig, a second viewport and PNG sequence export.")),
     ]
 }

@@ -12,12 +12,13 @@ path = "src/main.rs"
 # One feature per editor, so that a release builds only the editors that work. The default set is the release's; scripts and gates build with
 # --all-features.
 [features]
-default = ["weather", "tile", "ui"]
+default = ["weather", "tile", "ui", "terrain"]
 weather = ["dep:wce_weather_tool"]
 tile = ["dep:wce_tile_tool"]
 ui = ["dep:wce_ui_tool"]
+terrain = ["dep:wce_terrain_tool"]
 
-# The tabs of the editors still to come (unit, VFX, terrain, cinematic): only their plans, no features.
+# The tabs of the editors still to come (unit, VFX, cinematic): only their plans, no features.
 placeholders = []
 
 [dependencies]
@@ -27,6 +28,7 @@ wce_editor = { path = "../wce_editor" }
 wce_foundation = { path = "../wce_foundation" }
 wce_imgui = { path = "../wce_imgui" }
 wce_render = { path = "../wce_render" }
+wce_terrain_tool = { path = "../wce_terrain_tool", optional = true }
 wce_tile_tool = { path = "../wce_tile_tool", optional = true }
 wce_ui_tool = { path = "../wce_ui_tool", optional = true }
 wce_weather_tool = { path = "../wce_weather_tool", optional = true }

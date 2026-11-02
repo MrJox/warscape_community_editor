@@ -1,0 +1,19 @@
+[package]
+name = "wce_terrain_tool"
+description = "The Terrain tool (Terry's replacement, docs/plans/terrain_editor.md): battle maps opened as documents and shown whole, streamed around the camera with the game's terrain shaders."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wce_editor = { path = "../wce_editor" }
+wce_editor_core = { path = "../wce_editor_core" }
+wce_foundation = { path = "../wce_foundation" }
+wce_map_view = { path = "../wce_map_view" }
+wce_scene = { path = "../wce_scene" }
+wce_terrain = { path = "../wce_terrain" }
+wce_terrain_editor = { path = "../wce_terrain_editor" }
+wce_terrain_io = { path = "../wce_terrain_io" }
+wce_tile = { path = "../wce_tile" }
+wce_tile_editor = { path = "../wce_tile_editor" }
+wce_vfs = { path = "../wce_vfs" }
