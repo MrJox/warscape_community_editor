@@ -34,7 +34,8 @@ check it.
   piece file of its Gondor, Moria and Khazad buildings and some cliffs and rocks (258 models in 103 folders, every one with its original;
   in `gondor_fort_straight` every copy has its original's size, and in the pair compared only a few header bytes differ). The logic file
   names only the originals. A file whose name less a trailing `_<digits>`
-  after `destructNN` is in its folder is skipped (`index::copied_piece`).
+  after `destructNN` is in its folder is skipped (`index::copied_piece`). The procedural walls drop them from their bases too
+  (`wce_walls::building::numbered_copy_of`): warped and shipped beside their originals, the game drew every Gondor wall piece twice.
 - **ASSUMPTION**: the first frame is what a standing siege engine shows. For the ram it is exactly the bind pose (its inverse binds
   are the inverses of frame 0). Check: a deployed ram or tower in game, wheels in place.
 
