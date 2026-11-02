@@ -392,51 +392,110 @@ impl Default for Terrain {
     }
 }
 
+/// An LF map's samples, shared by every terrain on the map and edited in place (the Terrain tool's brushes): a revision that moves with
+/// every edit and the samples changed since the renderer last took them (`take_dirty`), so that it updates only those on the GPU.
+#[derive(Debug, Default)]
+pub struct LfSamples {
+    values: std::sync::RwLock<Vec<u16>>,
+    revision: std::sync::atomic::AtomicU64,
+    dirty: std::sync::Mutex<Option<[i32; 4]>>,
+}
+
+impl LfSamples {
+    pub fn new(values: Vec<u16>) -> Arc<Self> {
+        Arc::new(Self { values: std::sync::RwLock::new(values), ..Default::default() })
+    }
+
+    /// The samples, row by row (`LfMap::nx` a row).
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, Vec<u16>> {
+        self.values.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Changes samples: `f` gets them all (row by row, `nx` a row); `rect` (i0, j0, i1, j1, end exclusive) is what it changed.
+    pub fn edit(&self, rect: [i32; 4], f: impl FnOnce(&mut [u16])) {
+        {
+            let mut v = self.values.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            f(&mut v);
+        }
+
+        let mut d = self.dirty.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *d = Some(d.map_or(rect, |o| [o[0].min(rect[0]), o[1].min(rect[1]), o[2].max(rect[2]), o[3].max(rect[3])]));
+        self.revision.fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Moves on with every edit (0: never edited).
+    pub fn revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// The samples changed since the last call (i0, j0, i1, j1, end exclusive).
+    pub fn take_dirty(&self) -> Option<[i32; 4]> {
+        self.dirty.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take()
+    }
+}
+
 /// A map's low-frequency heights in world space (the game's `t_low_res_height_map`): sample (i, j) at x = x0 + i * step, z = z0 + j * step,
 /// its height `values[j * nx + i] / 65535 * scale - offset` (scene units), bilinear between samples and clamped at the edges.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct LfMap {
     pub x0: f32,
     pub z0: f32,
     pub step: f32,
     pub nx: i32,
     pub nz: i32,
-    pub values: Vec<u16>,
+
+    /// The samples (shared: an edit shows on every terrain on the map).
+    pub values: Arc<LfSamples>,
     pub scale: f32,
     pub offset: f32,
 
     /// Its normals as the blend shader reads `s_lf_normal_map`: at uv = (x, -z) / `normal_world`, wrapping (the image is the map's normals
-    /// laid around a torus of that size); .a = x, .g = -z of the unit normal * 0.5 + 0.5.
+    /// laid around a torus of that size); .a = x, .g = -z of the unit normal * 0.5 + 0.5. `normal_k` samples a side of a texel. The image is
+    /// as the map was made: the renderer works out the texels of edited samples itself (`normal_texel`).
     pub normal: TerrainImage,
     pub normal_world: [f32; 2],
+    pub normal_k: i32,
 
-    /// Changes with the content.
+    /// Changes with the content (an edit in place keeps it: `values`' revision says).
     pub id: u64,
 }
 
+/// Two LF maps are the same map (their samples are compared by what they are, not by value).
+impl PartialEq for LfMap {
+    fn eq(&self, o: &Self) -> bool {
+        self.id == o.id && Arc::ptr_eq(&self.values, &o.values)
+    }
+}
+
 impl LfMap {
-    fn value(&self, i: i32, j: i32) -> f32 {
-        f32::from(self.values[(j.clamp(0, self.nz - 1) * self.nx + i.clamp(0, self.nx - 1)) as usize])
+    fn value_in(&self, v: &[u16], i: i32, j: i32) -> f32 {
+        f32::from(v[(j.clamp(0, self.nz - 1) * self.nx + i.clamp(0, self.nx - 1)) as usize])
     }
 
-    /// The height at a world point (scene units).
-    pub fn height_at(&self, x: f32, z: f32) -> f32 {
-        if self.nx < 1 || self.nz < 1 || self.values.is_empty() {
+    /// The height at a world point (scene units), from the samples `v` (a `values.read()`).
+    pub fn height_in(&self, v: &[u16], x: f32, z: f32) -> f32 {
+        if self.nx < 1 || self.nz < 1 || v.is_empty() {
             return -self.offset;
         }
 
         let fi = ((x - self.x0) / self.step).clamp(0.0, (self.nx - 1) as f32);
         let fj = ((z - self.z0) / self.step).clamp(0.0, (self.nz - 1) as f32);
         let (i, j) = (fi.floor() as i32, fj.floor() as i32);
-        let (u, v) = (fi - i as f32, fj - j as f32);
-        let a = self.value(i, j) + (self.value(i + 1, j) - self.value(i, j)) * u;
-        let b = self.value(i, j + 1) + (self.value(i + 1, j + 1) - self.value(i, j + 1)) * u;
-        (a + (b - a) * v) / 65535.0 * self.scale - self.offset
+        let (u, t) = (fi - i as f32, fj - j as f32);
+        let a = self.value_in(v, i, j) + (self.value_in(v, i + 1, j) - self.value_in(v, i, j)) * u;
+        let b = self.value_in(v, i, j + 1) + (self.value_in(v, i + 1, j + 1) - self.value_in(v, i, j + 1)) * u;
+        (a + (b - a) * t) / 65535.0 * self.scale - self.offset
+    }
+
+    /// The height at a world point (scene units).
+    pub fn height_at(&self, x: f32, z: f32) -> f32 {
+        self.height_in(&self.values.read(), x, z)
     }
 
     /// The lowest and highest height over a world rectangle (its samples and the ones around it).
     pub fn range(&self, x0: f32, z0: f32, x1: f32, z1: f32) -> (f32, f32) {
-        if self.nx < 1 || self.nz < 1 || self.values.is_empty() {
+        let values = self.values.read();
+        if self.nx < 1 || self.nz < 1 || values.is_empty() {
             return (-self.offset, -self.offset);
         }
 
@@ -446,7 +505,7 @@ impl LfMap {
         let (j0, j1) = (j(z0.min(z1)), (j(z0.max(z1)) + 1).min(self.nz - 1));
         let (mut lo, mut hi) = (u16::MAX, 0u16);
         for jj in j0..=j1 {
-            for &v in &self.values[(jj * self.nx + i0) as usize..=(jj * self.nx + i1) as usize] {
+            for &v in &values[(jj * self.nx + i0) as usize..=(jj * self.nx + i1) as usize] {
                 lo = lo.min(v);
                 hi = hi.max(v);
             }
@@ -454,6 +513,39 @@ impl LfMap {
 
         let h = |v: u16| f32::from(v) / 65535.0 * self.scale - self.offset;
         (h(lo), h(hi))
+    }
+
+    /// The normal map's size in texels (`normal_k` samples a side of one).
+    pub fn normal_size(&self) -> (i32, i32) {
+        let k = self.normal_k.max(1);
+        ((self.nx + k - 1) / k, (self.nz + k - 1) / k)
+    }
+
+    /// Texel (c, r) of the normal map from the samples `v`: its centre wraps to a point of the map (x = u * world, z = -v * world, give or
+    /// take whole turns), the normal from the heights' central differences one texel apart; RGBA bytes as `normal` holds them.
+    pub fn normal_texel(&self, v: &[u16], c: i32, r: i32) -> [u8; 4] {
+        let k = self.normal_k.max(1);
+        let (w, h) = self.normal_size();
+        let s = self.step * k as f32;
+        let (wx, wz) = (w as f32 * s, h as f32 * s);
+        let (u, t) = ((c as f32 + 0.5) / w as f32, (r as f32 + 0.5) / h as f32);
+        let x = self.x0 + (u * wx - self.x0).rem_euclid(wx);
+        let z = self.z0 + (-t * wz - self.z0).rem_euclid(wz);
+        let dx = (self.height_in(v, x + s, z) - self.height_in(v, x - s, z)) / (2.0 * s);
+        let dz = (self.height_in(v, x, z + s) - self.height_in(v, x, z - s)) / (2.0 * s);
+        let l = (dx * dx + dz * dz + 1.0).sqrt();
+        let q = |v: f32| ((v * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0).round() as u8;
+        [255, q(dz / l), 0, q(-dx / l)]
+    }
+
+    /// The normal map's texel column and row that a sample (i, j) lies in.
+    pub fn normal_texel_of(&self, i: i32, j: i32) -> (i32, i32) {
+        let k = self.normal_k.max(1);
+        let (w, h) = self.normal_size();
+        let s = self.step * k as f32;
+        let (wx, wz) = (w as f32 * s, h as f32 * s);
+        let (x, z) = (self.x0 + i as f32 * self.step, self.z0 + j as f32 * self.step);
+        (((x.rem_euclid(wx) / s) as i32).clamp(0, w - 1), (((-z).rem_euclid(wz) / s) as i32).clamp(0, h - 1))
     }
 }
 

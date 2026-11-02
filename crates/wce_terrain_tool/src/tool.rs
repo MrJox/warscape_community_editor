@@ -56,7 +56,9 @@ struct LfPick {
 impl LfPick {
     fn new(lf: Arc<wce_scene::render_scene::LfMap>) -> Self {
         let (nx, nz) = (lf.nx.max(0) as u32, lf.nz.max(0) as u32);
-        let pyramid = HeightPyramid::new(nx, nz, |x, y| lf.values[(y * nx + x) as usize]);
+        let values = lf.values.read();
+        let pyramid = HeightPyramid::new(nx, nz, |x, y| values[(y * nx + x) as usize]);
+        drop(values);
         Self { lf, pyramid }
     }
 
@@ -67,7 +69,9 @@ impl LfPick {
         let os = [(o.x - lf.x0) / s, (o.y + lf.offset) * k, (o.z - lf.z0) / s];
         let ds = [d.x / s, d.y * k, d.z / s];
         let nx = lf.nx as u32;
-        let t = self.pyramid.intersect(os, ds, |x, y| lf.values[(y * nx + x) as usize])?;
+        let values = lf.values.read();
+        let t = self.pyramid.intersect(os, ds, |x, y| values[(y * nx + x) as usize])?;
+        drop(values);
         let p = o + d * t;
         Some((p, os[1] + ds[1] * t))
     }

@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
 use wce_foundation::math::{Float3, Float4x4};
-use wce_scene::render_scene::{LfMap, Payload, RenderScene, Terrain, TerrainImage, TerrainMaterial, Water, WaterVertex};
+use wce_scene::render_scene::{LfMap, LfSamples, Payload, RenderScene, Terrain, TerrainImage, TerrainMaterial, Water, WaterVertex};
 use wce_tile::battle_map::context::{Affine2, CELL, LF_HEIGHT, MapPlacement, PlacedMap, Spot, VERTICAL_OFFSET};
 
 use super::{MATERIAL_IDS, NORMAL_IDS, next_id};
@@ -188,7 +188,7 @@ fn lf_map(map: &PlacedMap, from_map: &Affine2, to_map: &Affine2, lf_level: f64, 
     });
 
     let mut lf = LfMap {
-        x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values, scale: (LF_HEIGHT / unit) as f32, offset: ((VERTICAL_OFFSET + lf_level) / unit) as f32,
+        x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values: LfSamples::new(values), scale: (LF_HEIGHT / unit) as f32, offset: ((VERTICAL_OFFSET + lf_level) / unit) as f32,
         id: next_id(&NORMAL_IDS), ..Default::default()
     };
 
@@ -199,29 +199,21 @@ fn lf_map(map: &PlacedMap, from_map: &Affine2, to_map: &Affine2, lf_level: f64, 
 /// The LF map's normals as the blend shader reads `s_lf_normal_map`: at uv = (x, -z) / normal_world, wrapping, so the image lays the map's
 /// normals around a torus of that size; .a = x, .g = -z of the unit normal * 0.5 + 0.5.
 fn lf_normals(lf: &mut LfMap) {
-    let k = ((lf.nx.max(lf.nz) + LF_NORMAL_SIDE - 1) / LF_NORMAL_SIDE).max(1);
-    let (w, h) = ((lf.nx + k - 1) / k, (lf.nz + k - 1) / k);
-    let s = lf.step * k as f32;
-    let (wx, wz) = (w as f32 * s, h as f32 * s);
+    lf.normal_k = ((lf.nx.max(lf.nz) + LF_NORMAL_SIDE - 1) / LF_NORMAL_SIDE).max(1);
+    let (w, h) = lf.normal_size();
+    let s = lf.step * lf.normal_k as f32;
     let mut px = vec![0u8; (w * h * 4) as usize];
     let lfr = &*lf;
+    let values = lfr.values.read();
     px.par_chunks_mut((w * 4) as usize).enumerate().for_each(|(r, row)| {
-        // The texel's centre wraps to a point of the map: x = u * wx, z = -v * wz, give or take whole turns.
-        let v = (r as f32 + 0.5) / h as f32;
-        let z = lfr.z0 + (-v * wz - lfr.z0).rem_euclid(wz);
         for (c, out) in row.chunks_mut(4).enumerate() {
-            let u = (c as f32 + 0.5) / w as f32;
-            let x = lfr.x0 + (u * wx - lfr.x0).rem_euclid(wx);
-            let dx = (lfr.height_at(x + s, z) - lfr.height_at(x - s, z)) / (2.0 * s);
-            let dz = (lfr.height_at(x, z + s) - lfr.height_at(x, z - s)) / (2.0 * s);
-            let l = (dx * dx + dz * dz + 1.0).sqrt();
-            let q = |v: f32| ((v * 0.5 + 0.5).clamp(0.0, 1.0) * 255.0).round() as u8;
-            out.copy_from_slice(&[255, q(dz / l), 0, q(-dx / l)]);
+            out.copy_from_slice(&lfr.normal_texel(&values, c as i32, r as i32));
         }
     });
 
+    drop(values);
     lf.normal = TerrainImage { w: w as u32, h: h as u32, rgba: Some(Arc::new(px)) };
-    lf.normal_world = [wx, wz];
+    lf.normal_world = [w as f32 * s, h as f32 * s];
 }
 
 /// A material of one colour: `base` with its blend and index maps averaged into one pixel and a flat normal (the LF map's normals shade it).
