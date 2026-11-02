@@ -160,6 +160,9 @@ pub struct TerrainTool {
     /// A job on its way (one at a time) and what it is doing.
     rx: Option<Receiver<Job>>,
     busy: String,
+
+    /// When the job on its way started (the panel shows how long it has taken).
+    busy_since: Option<std::time::Instant>,
     status: String,
 
     /// The packs' tiles in the kit's layout (a placement no kit has; a map of the packs names the packs' tiles), and the kits' tile roots.
@@ -171,7 +174,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), painting: None, mirror: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(),
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), painting: None, mirror: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -292,11 +295,20 @@ impl TerrainTool {
     }
 
     /// Starts reading a map.
-    fn start_open(&mut self, e: &Editor, name: &str) {
+    fn start_open(&mut self, e: &mut Editor, name: &str) {
         match self.inputs(e, name) {
             Ok(i) => {
                 let (tx, rx) = channel();
-                self.busy = format!("reading {name}...");
+                // A kit map is filled as BOB does: the campaign map's 2.9 million cells take a while.
+                let kit = game_map_folder(name, e.game().campaign_battle_map).is_none();
+                self.busy = if kit {
+                    format!("reading {name} and filling it with tiles as BOB does (the kit's campaign map: about a minute and a half)")
+                } else {
+                    format!("reading {name}")
+                };
+
+                self.busy_since = Some(std::time::Instant::now());
+                e.status(&format!("Terrain: {}...", self.busy), false);
                 self.rx = Some(rx);
                 std::thread::spawn(move || {
                     let _ = tx.send(Job::Opened(open_map(&i)));
@@ -334,7 +346,8 @@ impl TerrainTool {
         self.building = id;
         let (tx, rx) = channel();
         let files = e.files();
-        self.busy = "reading the map's ground...".to_owned();
+        self.busy = "reading the map's ground".to_owned();
+        self.busy_since = Some(std::time::Instant::now());
         self.rx = Some(rx);
         std::thread::spawn(move || {
             let _ = tx.send(Job::Built(id, Box::new(Streamer::new(rq, files))));
@@ -395,9 +408,18 @@ impl TerrainTool {
         let Ok(job) = rx.try_recv() else { return };
         self.rx = None;
         self.busy.clear();
+        let took = self.busy_since.take().map_or(0.0, |t| t.elapsed().as_secs_f64());
         match job {
-            Job::Opened(Ok(l)) => self.adopt(e, l.document()),
-            Job::Opened(Err(err)) => self.status = err,
+            Job::Opened(Ok(l)) => {
+                e.status(&format!("Terrain: {} read in {took:.0} s", l.name), false);
+                self.adopt(e, l.document());
+            }
+
+            Job::Opened(Err(err)) => {
+                e.status(&format!("Terrain: {err}"), true);
+                self.status = err;
+            }
+
             Job::Built(id, s) => {
                 if e.docs.find(id).is_some() && e.docs.active_id() == id {
                     self.show(e, id, s);
@@ -439,6 +461,12 @@ impl TerrainTool {
             self.start_open(e, &name);
         }
 
+        // What the workers are doing, and for how long (opening the kit's campaign map takes over a minute).
+        if !self.busy.is_empty() {
+            let secs = self.busy_since.map_or(0, |t| t.elapsed().as_secs());
+            gui::text_colored([1.0, 0.8, 0.3, 1.0], &format!("{} ... {secs} s", self.busy));
+        }
+
         gui::separator();
         let mut rings = gui::slider_int("full detail (cells)", &mut self.rings.near, 1, 64);
         rings |= gui::slider_int("ground and buildings (cells)", &mut self.rings.mid, 1, 128);
@@ -455,10 +483,6 @@ impl TerrainTool {
         gui::slider_float("view distance", &mut self.rings.view_distance, GAME_FAR_PLANE, whole, "%.0f");
         gui::checkbox("follow the camera", &mut self.rings.follow);
         gui::checkbox("overview map", &mut self.overview);
-        if !self.busy.is_empty() {
-            gui::text_disabled(&self.busy);
-        }
-
         if !self.status.is_empty() {
             gui::text_wrapped(&self.status);
         }
@@ -811,6 +835,30 @@ impl Tool for TerrainTool {
                     Ok(s) => CommandResult::success(s),
                     Err(err) => CommandResult::fail(err),
                 }
+            })
+        });
+
+        c.add("terrain_start", "terrain_start <map | campaign>", "the Terrain tool: what its Open button does (the map read on a worker); `terrain_wait` for the view", |e, a| {
+            let Some(name) = a.first() else { return CommandResult::fail("usage: terrain_start <map | campaign>") };
+            let want = if name == "campaign" { wce_map_view::maps::GAME_MAP.to_owned() } else { name.clone() };
+            with_terrain(e, |t, e| {
+                t.refresh_maps(e);
+                let want = if t.maps.contains(&want) { want } else { format!("{want}{}", wce_map_view::maps::GAME_FILES) };
+                t.start_open(e, &want);
+                CommandResult::success(format!("{}{}", t.busy, t.status))
+            })
+        });
+
+        c.add("terrain_wait", "terrain_wait [seconds]", "the Terrain tool: waits until what Open started is shown (the workers polled as the frames would)", |e, a| {
+            let limit = a.first().and_then(|v| v.parse::<f64>().ok()).unwrap_or(600.0);
+            with_terrain(e, |t, e| {
+                let t0 = std::time::Instant::now();
+                while t.rx.is_some() && t0.elapsed().as_secs_f64() < limit {
+                    t.poll(e);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+
+                CommandResult::success(format!("after {:.1} s: shown {}, busy '{}', status '{}'", t0.elapsed().as_secs_f64(), t.shown, t.busy, t.status))
             })
         });
 
