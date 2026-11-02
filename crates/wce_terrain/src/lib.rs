@@ -3,6 +3,7 @@
 
 pub mod cells;
 pub mod explicit;
+pub mod lf_edit;
 pub mod map;
 pub mod paged;
 pub mod pyramid;

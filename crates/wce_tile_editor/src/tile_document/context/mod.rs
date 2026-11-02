@@ -349,6 +349,11 @@ impl Frame {
         }
     }
 
+    /// The most cells a placement reaches past its origin.
+    pub fn reach(&self) -> i32 {
+        self.reach
+    }
+
     /// The LF height under a frame point relative to the open tile (scene units).
     pub fn lift(&self, x: f64, z: f64) -> f32 {
         self.lf.as_ref().map_or(0.0, |lf| lf.height_at(x as f32, z as f32))

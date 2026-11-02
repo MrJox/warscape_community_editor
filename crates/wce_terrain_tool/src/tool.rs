@@ -19,7 +19,10 @@ use wce_map_view::maps::{GAME_FAR_PLANE, PacksTree, game_map_folder, game_maps, 
 use wce_map_view::{MapView, Rings};
 use wce_scene::render_scene::DocumentId;
 use wce_terrain::MapKind;
+use wce_terrain::lf_edit::{LfBrush, LfOp, LfStroke};
 use wce_terrain::pyramid::HeightPyramid;
+use wce_terrain::LfRole;
+use wce_terrain_editor::lf::{LfMirror, LfStrokeCommand};
 use wce_terrain_editor::{MapDocument, MapSource};
 use wce_tile::battle_map::context::{CELL, Spot};
 use wce_tile::battle_map::kit_maps;
@@ -77,6 +80,40 @@ impl LfPick {
     }
 }
 
+/// The LF brush's settings (the Terrain panel's "LF brush").
+#[derive(Clone, Debug)]
+struct LfPaint {
+    on: bool,
+
+    /// 0 raise, 1 lower, 2 smooth, 3 flatten (to the height where the stroke starts), 4 noise.
+    op: i32,
+    radius_m: f32,
+
+    /// Metres a dab at full weight (raise, lower, noise); flatten and smooth go this share of the way (0 .. 1) per dab.
+    amount_m: f32,
+    share: f32,
+    falloff: f32,
+    aspect: f32,
+    rotation_deg: f32,
+    noise_scale_m: f32,
+}
+
+impl Default for LfPaint {
+    fn default() -> Self {
+        Self { on: false, op: 0, radius_m: 300.0, amount_m: 2.0, share: 0.2, falloff: 1.0, aspect: 1.0, rotation_deg: 0.0, noise_scale_m: 400.0 }
+    }
+}
+
+const LF_OPS: [&str; 5] = ["raise", "lower", "smooth", "flatten", "noise"];
+
+/// A stroke being painted: on which document, its record so far, the view's mirror and the flatten target (raw).
+struct Painting {
+    doc: DocumentId,
+    stroke: LfStroke,
+    mirror: Option<Arc<LfMirror>>,
+    target: f64,
+}
+
 enum Job {
     Opened(Result<Loaded, String>),
     Built(DocumentId, Box<Streamer>),
@@ -102,6 +139,14 @@ pub struct TerrainTool {
     /// The Map panel (the active map from above).
     map_panel: crate::map_panel::MapPanel,
 
+    /// The LF brush, the stroke being painted, the brush ring's layer and entity.
+    paint: LfPaint,
+    painting: Option<Painting>,
+
+    /// The shown map's field mirrored into its view (a kit map's land LF on the view's lattice).
+    mirror: Option<Arc<LfMirror>>,
+    ring: (wce_scene::render_scene::LayerId, wce_scene::render_scene::EntityId),
+
     /// The shown map's LF picking, and the cursor's point on it (frame, scene units) with its raw LF height.
     pick: Option<LfPick>,
     cursor: Option<(Float3, f32)>,
@@ -126,7 +171,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(),
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), painting: None, mirror: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(),
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -143,6 +188,12 @@ fn kit_roots(e: &Editor) -> Vec<PathBuf> {
     }
 
     roots
+}
+
+/// Where a kit map saves: its folder in the projects' kit layout (a map of the packs: nowhere, it is read-only).
+fn save_dir(e: &Editor, d: &MapDocument) -> Option<PathBuf> {
+    d.model()?;
+    Some(e.settings_ref().kit_projects_dir().join("raw_data/terrain/battles").join(&d.name))
 }
 
 /// The kit with the battle tile database (its `raw_data`).
@@ -269,8 +320,9 @@ impl TerrainTool {
     }
 
     /// A document read: on the editor's list (the active one: the view follows it).
-    fn adopt(&mut self, e: &mut Editor, d: Box<MapDocument>) {
+    fn adopt(&mut self, e: &mut Editor, mut d: Box<MapDocument>) {
         self.status = format!("{}: {}", d.name, d.summary());
+        d.save_dir = save_dir(e, &d);
         let id = e.docs.add(&mut e.scene, d, "terrain");
         e.docs.set_active(id);
         self.start_view(e, id);
@@ -320,6 +372,11 @@ impl TerrainTool {
         let lift = s.frame().lift(0.0, 0.0);
         self.pick = s.frame().lf.clone().map(LfPick::new);
         self.cursor = None;
+        self.painting = None;
+        self.mirror = e.docs.find_as::<MapDocument>(id).and_then(|d| d.lf_field(LfRole::Land))
+            .zip(self.pick.as_ref())
+            .and_then(|(field, p)| LfMirror::of(field, p.lf.values.clone(), p.lf.nx, p.lf.nz))
+            .map(Arc::new);
         self.view.begin(e, id, s, &self.rings, |_| vec![]);
         self.shown = id;
         self.building = 0;
@@ -355,7 +412,8 @@ impl TerrainTool {
     fn open_now(&mut self, e: &mut Editor, name: &str) -> Result<String, String> {
         self.refresh_maps(e);
         let i = self.inputs(e, name)?;
-        let d = open_map(&i)?.document();
+        let mut d = open_map(&i)?.document();
+        d.save_dir = save_dir(e, &d);
         let summary = format!("{}: {}", d.name, d.summary());
         let rq = self.request(e, &d).ok_or("no kit with a tile database")?;
         let id = e.docs.add(&mut e.scene, d, "terrain");
@@ -413,6 +471,8 @@ impl TerrainTool {
             gui::text_disabled(&line);
         }
 
+        self.draw_paint_section(e);
+
         gui::end();
     }
 }
@@ -431,6 +491,199 @@ impl TerrainTool {
         let (cx, cy) = f.cell_of(f64::from(p.x), f64::from(p.z));
         let metres = f64::from(raw) / 65535.0 * wce_tile::battle_map::context::LF_HEIGHT - wce_tile::battle_map::context::VERTICAL_OFFSET;
         Some(format!("LF under the cursor: cell {cx:.2}, {cy:.2}, {metres:.2} m (raw {raw:.1})"))
+    }
+}
+
+impl TerrainTool {
+    /// Metres between two LF samples of the shown map.
+    fn sample_metres(&self) -> f64 {
+        self.pick.as_ref().map_or(16.0, |p| f64::from(p.lf.step) / UNIT)
+    }
+
+    /// The field sample (x along the columns, y down the rows of the file) under a frame point.
+    fn field_xy(&self, p: Float3) -> Option<(f64, f64)> {
+        let lf = &self.pick.as_ref()?.lf;
+        let (fi, fj) = (f64::from((p.x - lf.x0) / lf.step), f64::from((p.z - lf.z0) / lf.step));
+        Some((fi, f64::from(lf.nz - 1) - fj))
+    }
+
+    /// The brush at a field sample.
+    fn brush_at(&self, cx: f64, cy: f64) -> LfBrush {
+        let r = f64::from(self.paint.radius_m) / self.sample_metres();
+        let strength = if matches!(self.paint.op, 2 | 3) { f64::from(self.paint.share) } else { 1.0 };
+        let brush = wce_tile::height_field::Brush { cx, cy, radius: r.max(1.0), strength, falloff: f64::from(self.paint.falloff), curve: None, image: None };
+        LfBrush { brush, aspect: f64::from(self.paint.aspect).max(0.05), rotation: f64::from(self.paint.rotation_deg).to_radians() }
+    }
+
+    /// The operation of a dab (raw units).
+    fn op(&self, target: f64) -> LfOp {
+        let raw = f64::from(self.paint.amount_m) / wce_tile::battle_map::context::LF_HEIGHT * 65535.0;
+        match self.paint.op {
+            1 => LfOp::Raise(-raw),
+            2 => LfOp::Smooth,
+            3 => LfOp::Flatten(target),
+            4 => LfOp::Noise { amount: raw, scale: f64::from(self.paint.noise_scale_m) / self.sample_metres() },
+            _ => LfOp::Raise(raw),
+        }
+    }
+
+    /// Starts a stroke on the shown map (a kit map: its model has the field); the flatten target is the height at `at`.
+    fn begin_stroke(&mut self, e: &mut Editor, at: Option<(f64, f64)>) -> bool {
+        let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return false };
+        let Some(field) = d.lf_field(LfRole::Land) else {
+            e.status("this map is from the game's packs: open the kit's map to paint its LF", true);
+            return false;
+        };
+
+        let mirror = self.mirror.clone();
+        let target = at.map_or(0.0, |(x, y)| f64::from(field.at((x.round().max(0.0) as u32).min(field.width() - 1), (y.round().max(0.0) as u32).min(field.height() - 1))));
+        self.painting = Some(Painting { doc: self.shown, stroke: LfStroke::default(), mirror, target });
+        true
+    }
+
+    /// A dab at a field sample: the model's field, the view (mirror, picking).
+    fn dab(&mut self, e: &mut Editor, cx: f64, cy: f64) {
+        let b = self.brush_at(cx, cy);
+        let Some(target) = self.painting.as_ref().map(|p| p.target) else { return };
+        let op = self.op(target);
+        let Some(paint) = self.painting.as_mut() else { return };
+        let Some(d) = e.docs.find_as_mut::<MapDocument>(paint.doc) else { return };
+        let Some(field) = d.lf_field_mut(LfRole::Land) else { return };
+        let Some(rect) = paint.stroke.dab(field, &b, op) else { return };
+        if let Some(m) = &paint.mirror {
+            m.copy(field, rect);
+            if let Some(pick) = self.pick.as_mut() {
+                let v = m.view_rect(rect);
+                let values = pick.lf.values.read();
+                let nx = pick.lf.nx as u32;
+                pick.pyramid.update((v[0], v[1], v[2], v[3]), |x, y| values[(y * nx + x) as usize]);
+            }
+        }
+    }
+
+    /// What the LF edits (strokes, undo, redo) moved, once no stroke is being painted: the picking there, and the chunks whose objects
+    /// stand on it built again.
+    fn follow_lf_edits(&mut self, e: &Editor) {
+        if self.painting.is_some() {
+            return;
+        }
+
+        let Some(m) = self.mirror.clone() else { return };
+        let Some(rect) = m.take_touched() else { return };
+        if let Some(pick) = self.pick.as_mut() {
+            let v = m.view_rect(rect);
+            let values = pick.lf.values.read();
+            let nx = pick.lf.nx as u32;
+            pick.pyramid.update((v[0], v[1], v[2], v[3]), |x, y| values[(y * nx + x) as usize]);
+        }
+
+        let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
+        let (sx, sy) = (f64::from(m.w) / f64::from(d.placed.width.max(1)), f64::from(m.h) / f64::from(d.placed.height.max(1)));
+        let cells = [
+            (f64::from(rect[0]) / sx).floor() as i32 - 1, (f64::from(rect[1]) / sy).floor() as i32 - 1,
+            (f64::from(rect[2]) / sx).ceil() as i32 + 1, (f64::from(rect[3]) / sy).ceil() as i32 + 1,
+        ];
+
+        if let Some(s) = self.view.streamer.as_mut() {
+            s.rebuild(cells);
+        }
+    }
+
+    /// The stroke onto the document's history.
+    fn end_stroke(&mut self, e: &mut Editor) -> Option<usize> {
+        let paint = self.painting.take()?;
+        let d = e.docs.find_as_mut::<MapDocument>(paint.doc)?;
+        let record = paint.stroke.finish(d.lf_field(LfRole::Land)?)?;
+        let bytes = record.bytes();
+        d.push_stroke(LfStrokeCommand { role: LfRole::Land, record: Arc::new(record), mirror: paint.mirror });
+        Some(bytes)
+    }
+
+    /// The brush's ring on the ground at the cursor (an overlay on a layer of the tool's), or none.
+    fn update_ring(&mut self, e: &mut Editor) {
+        let ring = (|| {
+            if !self.paint.on {
+                return None;
+            }
+
+            let (p, _) = self.cursor?;
+            let (cx, cy) = self.field_xy(p)?;
+            let lf = &self.pick.as_ref()?.lf;
+            let b = self.brush_at(cx, cy);
+            let (s, c) = b.rotation.sin_cos();
+            let values = lf.values.read();
+            let mut pts = vec![];
+            for k in 0..=64 {
+                let a = f64::from(k) / 64.0 * std::f64::consts::TAU;
+                let (u, v) = (a.cos() * b.brush.radius * b.aspect, a.sin() * b.brush.radius);
+                let (fx, fy) = (cx + c * u - s * v, cy + s * u + c * v);
+                let (x, z) = (lf.x0 + fx as f32 * lf.step, lf.z0 + (f64::from(lf.nz - 1) - fy) as f32 * lf.step);
+                pts.push(Float3::new(x, lf.height_in(&values, x, z) + 0.5, z));
+            }
+
+            let col = 0xFF40_D0FFu32;
+            let lines = pts.windows(2).flat_map(|w| [w[0], w[1]]).map(|p| wce_scene::render_scene::OverlayVertex { p, rgba: col }).collect();
+            Some(wce_scene::render_scene::Overlay { lines, depth_test: false, ..Default::default() })
+        })();
+
+        let (layer, id) = self.ring;
+        match ring {
+            Some(o) => {
+                if layer == 0 || e.scene.layer(layer).is_none() {
+                    self.ring.0 = e.scene.add_layer(self.shown, "terrain brush");
+                    self.ring.1 = 0;
+                }
+
+                if self.ring.1 != 0 && e.scene.find(self.ring.1).is_some() {
+                    e.scene.update_payload(self.ring.1, wce_scene::render_scene::Payload::Overlay(o));
+                } else {
+                    let src = wce_scene::render_scene::SourceRef { doc: self.shown, item: u64::MAX };
+                    self.ring.1 = e.scene.add(self.ring.0, wce_foundation::math::Float4x4::IDENTITY, wce_scene::render_scene::Payload::Overlay(o), src);
+                }
+            }
+
+            None => {
+                if id != 0 {
+                    e.scene.remove_layer(layer);
+                    self.ring = (0, 0);
+                }
+            }
+        }
+    }
+
+    fn draw_paint_section(&mut self, e: &mut Editor) {
+        let can = e.docs.find_as::<MapDocument>(self.shown).is_some_and(|d| d.lf_field(LfRole::Land).is_some());
+        if !gui::collapsing_header("LF brush", 0) {
+            return;
+        }
+
+        if !can {
+            gui::text_disabled("Open a kit map (not one of the game's packs) to paint its LF.");
+            self.paint.on = false;
+            return;
+        }
+
+        gui::checkbox("paint (left button)", &mut self.paint.on);
+        gui::combo("operation", &mut self.paint.op, &LF_OPS);
+        gui::slider_float("radius (m)", &mut self.paint.radius_m, 20.0, 5000.0, "%.0f");
+        match self.paint.op {
+            2 | 3 => {
+                gui::slider_float("strength", &mut self.paint.share, 0.01, 1.0, "%.2f");
+            }
+
+            _ => {
+                gui::slider_float("metres a dab", &mut self.paint.amount_m, 0.05, 50.0, "%.2f");
+            }
+        }
+
+        if self.paint.op == 4 {
+            gui::slider_float("noise size (m)", &mut self.paint.noise_scale_m, 32.0, 5000.0, "%.0f");
+        }
+
+        gui::slider_float("falloff", &mut self.paint.falloff, 0.0, 1.0, "%.2f");
+        gui::slider_float("aspect", &mut self.paint.aspect, 0.1, 10.0, "%.2f");
+        gui::slider_float("rotation (deg)", &mut self.paint.rotation_deg, -180.0, 180.0, "%.0f");
+        gui::text_disabled(&format!("a sample every {:.1} m", self.sample_metres()));
     }
 }
 
@@ -481,11 +734,45 @@ impl Tool for TerrainTool {
     }
 
     fn viewport_input(&mut self, e: &mut Editor, ev: &wce_editor::tool::ViewportEvent) -> bool {
-        if ev.kind == wce_editor::tool::ViewportEventKind::Hover {
-            self.cursor = self.pick_at(e, ev.x, ev.y);
+        use wce_editor::tool::ViewportEventKind as K;
+        self.cursor = self.pick_at(e, ev.x, ev.y);
+        if !self.paint.on || ev.button != 0 {
+            return false;
         }
 
-        false
+        let at = self.cursor.and_then(|(p, _)| self.field_xy(p));
+        match ev.kind {
+            K::Press => {
+                if self.painting.is_none() && !self.begin_stroke(e, at) {
+                    return false;
+                }
+
+                if let Some((x, y)) = at {
+                    self.dab(e, x, y);
+                }
+
+                true
+            }
+
+            K::Drag => {
+                if let Some((x, y)) = at.filter(|_| self.painting.is_some()) {
+                    self.dab(e, x, y);
+                }
+
+                true
+            }
+
+            K::Release => {
+                self.end_stroke(e);
+                true
+            }
+
+            _ => false,
+        }
+    }
+
+    fn claims_left_button(&self, _: &Editor) -> bool {
+        self.paint.on
     }
 
     fn update(&mut self, e: &mut Editor) {
@@ -509,6 +796,8 @@ impl Tool for TerrainTool {
         }
 
         self.map_panel.apply_drape(e, self.shown, &self.view);
+        self.update_ring(e);
+        self.follow_lf_edits(e);
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
@@ -575,6 +864,39 @@ impl Tool for TerrainTool {
                 }
 
                 CommandResult::success(format!("Map panel layer {k}{}", if t.map_panel.drape { ", on the ground" } else { "" }))
+            })
+        });
+
+        c.add("terrain_paint", "terrain_paint <raise|lower|smooth|flatten|noise> <cell x> <cell y> <radius m> <amount m or strength> [dabs]", "the Terrain tool: one LF stroke of dabs at a map cell (flatten: to the height there), onto the history", |e, a| {
+            let usage = "usage: terrain_paint <raise|lower|smooth|flatten|noise> <cell x> <cell y> <radius m> <amount m or strength> [dabs]";
+            let Some(op) = a.first().and_then(|o| LF_OPS.iter().position(|n| n == o)) else { return CommandResult::fail(usage) };
+            let nums: Vec<f64> = a[1..].iter().filter_map(|v| v.parse().ok()).collect();
+            let [cx, cy, radius, amount, ..] = nums[..] else { return CommandResult::fail(usage) };
+            let dabs = nums.get(4).map_or(1, |&n| n.max(1.0) as usize);
+            with_terrain(e, |t, e| {
+                let Some(d) = e.docs.find_as::<MapDocument>(t.shown) else { return CommandResult::fail("no map shown") };
+                let Some(field) = d.lf_field(LfRole::Land) else { return CommandResult::fail("the shown map has no LF to paint (a map of the packs)") };
+                let (ppc_x, ppc_y) = (f64::from(field.width()) / f64::from(d.placed.width.max(1)), f64::from(field.height()) / f64::from(d.placed.height.max(1)));
+                let (x, y) = (cx * ppc_x, cy * ppc_y);
+                let saved = t.paint.clone();
+                t.paint.op = op as i32;
+                t.paint.radius_m = radius as f32;
+                if matches!(op, 2 | 3) { t.paint.share = amount as f32 } else { t.paint.amount_m = amount as f32 }
+                if !t.begin_stroke(e, Some((x, y))) {
+                    t.paint = saved;
+                    return CommandResult::fail("no stroke");
+                }
+
+                for _ in 0..dabs {
+                    t.dab(e, x, y);
+                }
+
+                let r = t.end_stroke(e);
+                t.paint = saved;
+                match r {
+                    Some(bytes) => CommandResult::success(format!("{} at sample ({x:.0}, {y:.0}): {dabs} dabs, the record keeps {} KB", LF_OPS[op], bytes / 1024)),
+                    None => CommandResult::fail("the stroke changed nothing"),
+                }
             })
         });
 

@@ -7,7 +7,7 @@ use rayon::prelude::*;
 /// Samples a side of a page.
 pub const PAGE: u32 = 64;
 
-const PAGE_LEN: usize = (PAGE * PAGE) as usize;
+pub const PAGE_LEN: usize = (PAGE * PAGE) as usize;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PagedU16 {
@@ -108,6 +108,22 @@ impl PagedU16 {
     pub fn page(&self, px: u32, py: u32) -> &[u16] {
         let p = (py * self.pw + px) as usize * PAGE_LEN;
         &self.v[p..p + PAGE_LEN]
+    }
+
+    /// The page holding sample (x, y) and the sample's place in it.
+    pub fn locate(&self, x: u32, y: u32) -> (u32, usize) {
+        (y / PAGE * self.pw + x / PAGE, ((y % PAGE) * PAGE + x % PAGE) as usize)
+    }
+
+    /// Page `p`'s samples (PAGE rows of PAGE; `p` is `py * pages across + px`).
+    pub fn page_at(&self, p: u32) -> &[u16] {
+        let o = p as usize * PAGE_LEN;
+        &self.v[o..o + PAGE_LEN]
+    }
+
+    pub fn page_at_mut(&mut self, p: u32) -> &mut [u16] {
+        let o = p as usize * PAGE_LEN;
+        &mut self.v[o..o + PAGE_LEN]
     }
 
     /// The memory the samples take (bytes).

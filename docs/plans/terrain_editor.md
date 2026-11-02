@@ -219,6 +219,24 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    2.7 ms, terrain 2.0, the sea 1.5 (its chunks' waves 0.8), the G-buffer 1.2, view culling 1.8 (10 views).
 3. **LF editing**: the paged field, the brushes, the page undo, the GPU updates in parts, the normals, the sea LF, the LF patches, saving
    the TIFFs, `Heights & Normals` against BOB.
+   **Progress 2026-11-02.** Done:
+   - `LfMap`'s samples shared and edited in place (`LfSamples`: a revision, the samples edited since the renderer looked); the renderer
+     updates only the edited texels of the LF window and normal map (`DEFAULT` textures, `LfMap::normal_texel` shared with the context's
+     normal map); the Tile tool's map context captures unchanged.
+   - `wce_terrain::lf_edit`: `LfBrush` (the Tile tool's `Brush` with Terry's aspect and rotation), `LfStroke` (a float copy of the pages
+     it touches, so small dabs add up; the pages before), `LfRecord` (the undo record of those pages: a 1500 m brush's stroke 592 KB);
+     raise / lower, smooth, flatten (to the height where the stroke starts), noise.
+   - `wce_terrain_editor::lf`: `LfMirror` (the model's field into the view's LF, rows the other way up; what it touched), the stroke
+     command (undo / redo on the model, mirrored); `MapDocument::lf_field_mut` / `push_stroke` / `save` (into the projects' kit layout,
+     `<projects>/assembly_kit/raw_data/terrain/battles/<map>`: the edited files made again, the others copied once).
+   - The Terrain tool's "LF brush" (paint with the left button, the settings, the ring on the ground); the picking pyramid follows every
+     edit; the chunks under an edit are built again once no stroke is painted (`Streamer::rebuild`: their objects stand on the new LF);
+     `terrain_paint` for scripts.
+   - Checked on `settlement_western_city_rome_medium`: a hill raised and smoothed, undone and redone in the view; saved, the kit's
+     `lf_heights.tif` and the saved one differ only in the pixel data (the header and size kept), the other files byte for byte; the map
+     reopens from the projects folder with the hill.
+   Left: the sea LF (the view takes the sea LF as 0), the per-tile LF patches, the `Heights & Normals` outputs (the rules are known,
+   docs/re/terry.md), the edits of a map with a different view lattice (only the map's own frame mirrors), stroke spacing by distance.
 4. **Tile map editing**: the cell layers, explicit tiles, the fill on a worker and the partial rebuild, validation; `Tilemap` against BOB.
 5. **The `.terry` scene**: the ECS model, outliner, inspector, gizmo, creation modes, overlays; `Terry file` against BOB.
 6. **BCA generation**: the spec, the generator, its errors file; Thrones' Terry's output as the oracle.

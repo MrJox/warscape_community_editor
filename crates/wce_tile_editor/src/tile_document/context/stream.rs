@@ -405,6 +405,16 @@ impl Streamer {
         out
     }
 
+    /// Builds the chunks over a rectangle of map cells (x0, y0, x1, y1; end exclusive) again, at their levels: the LF under them changed
+    /// (the Terrain tool's brushes), and their objects stand on it. A chunk owns the placements whose origin it holds, so the chunks up to
+    /// the largest tile's size before the rectangle too. What they show stays until the new version is built.
+    pub fn rebuild(&mut self, cells: [i32; 4]) {
+        let reach = self.shared.frame.reach();
+        let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
+        let (x1, y1) = ((cells[2] - 1).div_euclid(CHUNK), (cells[3] - 1).div_euclid(CHUNK));
+        self.wanted.retain(|&(cx, cy), _| cx < x0 || cx > x1 || cy < y0 || cy > y1);
+    }
+
     /// The chunks wanted and not on the scene at their level yet.
     pub fn busy(&self) -> usize {
         self.wanted.iter().filter(|(k, l)| self.shown.get(k) != Some(l)).count()
