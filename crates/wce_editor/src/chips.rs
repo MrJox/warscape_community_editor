@@ -81,6 +81,24 @@ fn draw_camera_chip(e: &mut Editor) {
         }
     }
 
+    // The editor view's fog (a deviation from the game's look: from high over a map the weather's fog washes everything out).
+    let mut fog = e.viewport.fog;
+    if e.viewport.game_view {
+        gui::begin_disabled(true);
+    }
+
+    if gui::slider_float("Fog (editor view)##camerachip", &mut fog, 0.0, 1.0, "%.2f") {
+        e.viewport.fog = fog;
+    }
+
+    if e.viewport.game_view {
+        gui::end_disabled();
+    }
+
+    if gui::is_item_hovered() {
+        gui::set_tooltip("How much of the weather's fog the editor view draws (1: as the game does). Thinner fog shows a map from high up; the game view always has the game's fog.");
+    }
+
     gui::separator_text("Camera");
     for m in CameraMode::ALL {
         if gui::radio_button(&format!("{}##camerachip", m.label()), mode == m) && mode != m {

@@ -669,6 +669,12 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("view_fog", "view_fog <0..1>", "the editor view's fog: the share of the weather's fog it draws (1: as the game does; the game view always has it)", |e, a| {
+        let Some(k) = a.first().and_then(|v| v.parse::<f32>().ok()) else { return fail("usage: view_fog <0..1>") };
+        e.viewport.fog = k.clamp(0.0, 1.0);
+        ok(format!("editor view fog {:.2}", e.viewport.fog))
+    });
+
     c.add("focus", "focus", "frame the selection in the viewport", |e, _| {
         viewport::focus_selection(e);
         ok("")

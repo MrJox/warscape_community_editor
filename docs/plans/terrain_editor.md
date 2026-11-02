@@ -7,7 +7,7 @@ historical battle, a settlement map), its low-frequency (LF) ground, the tiles p
 docs/plans/tile.md (items 1, 3, 4, 5) and the map context's open items that are about the map rather than the open tile
 (docs/plans/map_context_todo.md, "Map-level terrain", "Large map contexts: performance").
 
-Status: **Phases 0 and 1 done (2026-11-02); the user's decisions are in "Decisions" at the end.** Next: Phase 2 (the viewer).
+Status: **Phases 0, 1 and 2 done (2026-11-02); the user's decisions are in "Decisions" at the end.** Next: Phase 3 (LF editing).
 
 ## What Terry does and what the tool does with it
 
@@ -184,7 +184,8 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    the view follows the active map document (each map keeps its camera); scripts `terrain_open`, `terrain_settle`, `terrain_view`. The
    campaign battle map from the packs at its centre: 15.2 ms a frame (p95 17.4), CPU-bound, 100 251 draw items (RX 7900 XTX).
    DEVIATION (for now): the map is lit by the first day, dry weather of the climate at its centre (`weather/<climate>/`), not the Tile
-   tool's weather choice. Left: an editor option to thin the fog for high views (the weather's fog washes out the map from 9 km up).
+   tool's weather choice. **Phase 2 done (2026-11-02).** The fog: an editor view option, "Fog (editor view)" in the camera chip
+   (`view_fog`), the user's permission for the deviation (docs/editor.md, view modes).
    **Overlays (2026-11-02).** The Map panel's layer "on the ground" (with an opacity): `RenderScene::set_ground_overlay` (a picture, a
    frame -> texel map, an id, the map view's layer: drawn while that layer is visible; not a structural change) and the renderer's
    `pass_ground_overlay`, an editor pass (`EDITOR_HLSL drape_ps`, never in the game view): each pixel's world point from the scene's
