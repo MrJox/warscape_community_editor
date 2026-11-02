@@ -820,6 +820,31 @@ pub struct RenderScene {
     /// Where the ground, buildings, decals and trees take snow, and how much (a map context's season snow map; none: the weather's alone).
     /// Set with [`Self::set_snow`].
     snow: Option<SnowRegions>,
+    ground_overlay: Option<GroundOverlay>,
+}
+
+/// A picture laid over the ground in the editor's view (the Terrain tool's map layers; never in the game view): a frame point's texel is
+/// `to_texel * (x, z, 1)`, RGBA texels row by row; `id` changes whenever the picture does (the renderer uploads it again then).
+#[derive(Clone, Debug)]
+pub struct GroundOverlay {
+    pub to_texel: [[f32; 3]; 2],
+    pub w: u32,
+    pub h: u32,
+    pub rgba: Arc<Vec<u8>>,
+    pub id: u64,
+
+    /// 0 .. 1.
+    pub opacity: f32,
+
+    /// The layer it belongs to (the map view's): drawn while that layer is there and visible.
+    pub layer: LayerId,
+}
+
+impl GroundOverlay {
+    /// The same picture where it was, as strong (the texels are not compared: the id says).
+    fn same(&self, o: &Self) -> bool {
+        self.id == o.id && self.w == o.w && self.h == o.h && self.to_texel == o.to_texel && self.opacity == o.opacity && self.layer == o.layer
+    }
 }
 
 /// The cells of a map that have snow: a frame point's cell is `to_cell * (x, z, 1)`; one byte per cell (non-zero: snow), row by row.
@@ -869,6 +894,7 @@ impl Default for RenderScene {
             sea_level: 0.0,
             battle_centre: [0.0, 0.0],
             snow: None,
+            ground_overlay: None,
         }
     }
 }
@@ -1169,6 +1195,23 @@ impl RenderScene {
     /// Where snow lies (the draws are made again: their snow flags follow it).
     pub fn snow(&self) -> Option<&SnowRegions> {
         self.snow.as_ref()
+    }
+
+    pub fn ground_overlay(&self) -> Option<&GroundOverlay> {
+        self.ground_overlay.as_ref()
+    }
+
+    /// Lays a picture over the ground (none: takes it off). Not a structural change: the draw sets stay.
+    pub fn set_ground_overlay(&mut self, o: Option<GroundOverlay>) {
+        let same = match (&self.ground_overlay, &o) {
+            (Some(a), Some(b)) => a.same(b),
+            (a, b) => a.is_none() && b.is_none(),
+        };
+
+        if !same {
+            self.ground_overlay = o;
+            self.revision += 1;
+        }
     }
 
     pub fn set_snow(&mut self, snow: Option<SnowRegions>) {

@@ -122,7 +122,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::default(), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(),
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(),
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -503,6 +503,8 @@ impl Tool for TerrainTool {
         if self.shown != 0 {
             self.view.stream(e, &self.rings);
         }
+
+        self.map_panel.apply_drape(e, self.shown, &self.view);
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
@@ -554,11 +556,21 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_map_layer", "terrain_map_layer <n>", "the Terrain tool: the Map panel shows its n-th layer (0 the LF, 1 the placements, then the kit map's cell layers)", |e, a| {
+        c.add("terrain_map_layer", "terrain_map_layer <n> [ground|off] [opacity]", "the Terrain tool: the Map panel shows its n-th layer (0 the LF, 1 the placements, then the kit map's cell layers), on the ground or not", |e, a| {
             let Some(k) = a.first().and_then(|v| v.parse::<usize>().ok()) else { return CommandResult::fail("usage: terrain_map_layer <n>") };
+            let drape = a.get(1).map(|v| v == "ground");
+            let opacity = a.get(2).and_then(|v| v.parse::<f32>().ok());
             with_terrain(e, |t, _| {
                 t.map_panel.set_layer(k);
-                CommandResult::success(format!("Map panel layer {k}"))
+                if let Some(on) = drape {
+                    t.map_panel.drape = on;
+                }
+
+                if let Some(o) = opacity {
+                    t.map_panel.opacity = o.clamp(0.05, 1.0);
+                }
+
+                CommandResult::success(format!("Map panel layer {k}{}", if t.map_panel.drape { ", on the ground" } else { "" }))
             })
         });
 
