@@ -458,6 +458,12 @@ pub struct DrawStats {
     pub shadow_instances: u64,
     pub shadow_triangles: u64,
     pub terrain_patches: u64,
+
+    /// The game-shader terrain over the frame's views: the terrain entities walked, their patches tested against a view and the patch
+    /// instances drawn.
+    pub terrain_entities: u64,
+    pub terrain_tested: u64,
+    pub terrain_drawn: u64,
 }
 
 /// What the renderer draws and how: the editor's graphics options, overlays and the battle state the weather shaders read.
@@ -1443,6 +1449,7 @@ impl Renderer {
         self.build_draws(scene, cam.eye);
         self.place_effect_rigids();
         let waiting = self.draw_lists.waiting;
+        self.begin_terrain_frame();
         self.draw_stats = DrawStats { items: self.draw_stats.items, batches: self.draw_stats.batches, models: self.draw_stats.models, waiting_models: waiting, ..Default::default() };
         self.resize(width, height);
         self.gpu_timer.begin_frame();

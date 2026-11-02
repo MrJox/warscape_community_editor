@@ -13,9 +13,8 @@
 //! ASSUMPTION: the game's instance rows scale y by half of x and z (see `CUSTOM_TERRAIN_Y`).
 //! Not drawn: their shadows (the game's custom geometry has no shadow entry of its own; not traced).
 
-use std::collections::HashMap;
 
-use wce_scene::render_scene::{CUSTOM_TERRAIN_Y, CustomTerrainMesh, Entity, EntityId, Payload};
+use wce_scene::render_scene::{CUSTOM_TERRAIN_Y, CustomTerrainMesh, Entity, Payload};
 
 use super::*;
 use super::terrain::box_in_frustum;
@@ -103,7 +102,7 @@ impl Renderer {
 
     /// The custom meshes of an LF group's terrains (`ids`, among `ents`) with the bound shaders and LF constants, the group's frame moved by
     /// `shift` (scene units); `cull` is the view-projection in scene units. Returns the triangles drawn.
-    pub(crate) fn draw_custom_meshes(&mut self, ents: &HashMap<EntityId, &Entity>, ids: &[EntityId], how: CustomDraw, cull: &Float4x4, shift: [f32; 2]) -> u64 {
+    pub(crate) fn draw_custom_meshes(&mut self, ents: &[&Entity], how: CustomDraw, cull: &Float4x4, shift: [f32; 2]) -> u64 {
         let custom_vs = match how {
             CustomDraw::None => return 0,
             CustomDraw::Depth(vs) => Some(vs),
@@ -113,9 +112,9 @@ impl Renderer {
         // The drawn levels: (mesh, level) -> instance rows.
         let (eye, units, origin) = (self.terrain.lod_eye, self.camera.units, self.camera.origin);
         let mut batches: Vec<((u64, usize), Vec<f32>)> = vec![];
-        for id in ids {
-            let Some(Payload::Terrain(t)) = ents.get(id).map(|e| &e.payload) else { continue };
-            let (Some(m), Some(p)) = (&t.custom, self.terrain.placed.get(id)) else { continue };
+        for e in ents {
+            let Payload::Terrain(t) = &e.payload else { continue };
+            let (Some(m), Some(p)) = (&t.custom, self.terrain.placed.get(&e.id)) else { continue };
             let Some(g) = self.terrain.custom.get(&m.id) else { continue };
             let w = &p.world.m;
 
