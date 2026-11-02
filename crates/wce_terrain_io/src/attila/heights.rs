@@ -1,0 +1,102 @@
+//! BOB_Terrain's `Heights & Normals` outputs from a map's LF fields (docs/re/terry.md, "BOB_Terrain's outputs"):
+//!
+//! - `lf_height_map.dds`: L16, no mips, each sample the TIFF's through `trunc(f32(f32(a * f32(1 / 65535)) * f32(65535)))` (one step lower
+//!   now and then);
+//! - `lf_sea_height_map.dds`: the same of the sea field, with a mip chain down to a side of 2 (`floor(log2(min side))` levels): each level
+//!   from the float level above, `f32(((a + b) + c) + d) * 0.25` over the 2 x 2 block (floor halving), truncated as level 0;
+//! - `lf_height_map.data`: CHMF version 5 of the samples, the header's min the lowest sample and max 65535, spacing 1, regions of 16 x 16
+//!   cells (`cells` the map's size in cells, the samples a cell from the field's size; whole regions, the last ones reaching past the
+//!   map with its edge samples), each region encoded by `chmf::encode_region` with BOB's tag `[region min, 65535]`; the samples converted as the DDS's.
+
+use wce_formats::chmf::{ChmfFile, ChmfRegion, encode_region};
+use wce_terrain::paged::PagedU16;
+
+/// Map cells a side of a CHMF region.
+const REGION_CELLS: u32 = 16;
+
+/// The level-0 value of a sample (the converter's float round trip, truncated).
+pub fn convert(a: u16) -> u16 {
+    let inv = 1.0f32 / 65535.0;
+    ((f32::from(a) * inv) * 65535.0) as u16
+}
+
+/// The 128-byte DDS header of an L16 texture: none or a mip chain.
+fn l16_header(w: u32, h: u32, mips: Option<u32>) -> Vec<u8> {
+    let mut v = [0u32; 31];
+    v[0] = 0x7c;
+    v[2] = h;
+    v[3] = w;
+    v[18] = 0x20;
+    v[19] = 0x2_0000;
+    v[21] = 0x10;
+    v[22] = 0xffff;
+    if let Some(m) = mips {
+        v[1] = 0x2_1007;
+        v[6] = m;
+        v[26] = 0x40_1008;
+    }
+
+    let mut out = b"DDS ".to_vec();
+    out.extend(v.iter().flat_map(|x| x.to_le_bytes()));
+    out
+}
+
+/// The field's samples row by row (row 0 the file's first).
+fn rows(field: &PagedU16) -> Vec<u16> {
+    field.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()
+}
+
+/// `lf_height_map.dds`.
+pub fn lf_height_dds(field: &PagedU16) -> Vec<u8> {
+    let mut out = l16_header(field.width(), field.height(), None);
+    out.extend(rows(field).into_iter().flat_map(|a| convert(a).to_le_bytes()));
+    out
+}
+
+/// `lf_sea_height_map.dds`.
+pub fn lf_sea_height_dds(field: &PagedU16) -> Vec<u8> {
+    let (mut w, mut h) = (field.width(), field.height());
+    let levels = w.min(h).max(1).ilog2().max(1);
+    let mut out = l16_header(w, h, Some(levels));
+    let inv = 1.0f32 / 65535.0;
+    let mut level: Vec<f32> = rows(field).into_iter().map(|a| f32::from(a) * inv).collect();
+    let put = |out: &mut Vec<u8>, level: &[f32]| out.extend(level.iter().flat_map(|&v| ((v * 65535.0) as u16).to_le_bytes()));
+    put(&mut out, &level);
+    for _ in 1..levels {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let at = |x: u32, y: u32| level[(y.min(h - 1) * w + x.min(w - 1)) as usize];
+        let next: Vec<f32> = (0..nw * nh).map(|i| {
+            let (x, y) = (2 * (i % nw), 2 * (i / nw));
+            (((at(x, y) + at(x + 1, y)) + at(x, y + 1)) + at(x + 1, y + 1)) * 0.25
+        }).collect();
+
+        put(&mut out, &next);
+        (level, w, h) = (next, nw, nh);
+    }
+
+    out
+}
+
+/// `lf_height_map.data` for a map of `cells` (width, height in cells): the samples as the DDS has them (converted).
+pub fn lf_height_data(field: &PagedU16, cells: (u32, u32)) -> Vec<u8> {
+    let (w, h) = (field.width(), field.height());
+    let (cx, cy) = ((w / cells.0.max(1)).max(1), (h / cells.1.max(1)).max(1));
+    let all: Vec<u16> = rows(field).into_iter().map(convert).collect();
+    let min = all.iter().copied().min().unwrap_or(0);
+    let mut f = ChmfFile { version: 5, width: w, height: h, cells_x: cx, cells_y: cy, min: f32::from(min), max: 65535.0, spacing: 1, regions: vec![] };
+    let (rw, rh) = (cells.0.div_ceil(REGION_CELLS), cells.1.div_ceil(REGION_CELLS));
+    for ry in 0..rh {
+        for rx in 0..rw {
+            // Always a whole region: the last row and column reach past the map (BOB's campaign map: rows 1424 .. 1440 of 1437), their
+            // samples past it the edge's.
+            let rect = [rx * REGION_CELLS, ry * REGION_CELLS, (rx + 1) * REGION_CELLS, (ry + 1) * REGION_CELLS];
+            let (sw, sh) = ((rect[2] - rect[0]) * cx, (rect[3] - rect[1]) * cy);
+            let (sx, sy) = (rect[0] * cx, rect[1] * cy);
+            let samples: Vec<u16> = (0..sh).flat_map(|y| (0..sw).map(move |x| (x, y))).map(|(x, y)| all[((sy + y).min(h - 1) * w + (sx + x).min(w - 1)) as usize]).collect();
+            let (tag, offsets, data) = encode_region(sw, sh, &samples);
+            f.regions.push(ChmfRegion { rect, tag: [tag[0], 65535], offsets, data });
+        }
+    }
+
+    f.write()
+}
