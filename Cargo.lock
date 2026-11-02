@@ -2469,6 +2469,7 @@ version = "0.0.1"
 dependencies = [
  "rayon",
  "wce_formats",
+ "wce_tile",
  "wce_tile_model",
 ]
 
@@ -2479,7 +2480,9 @@ dependencies = [
  "wce_editor_core",
  "wce_scene",
  "wce_terrain",
+ "wce_terrain_io",
  "wce_tile",
+ "wce_tile_model",
 ]
 
 [[package]]
