@@ -1832,8 +1832,7 @@ impl TileTool {
 
     /// Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one out of the export; the warnings in the log.
     pub fn generate_siege_ai(&mut self, e: &mut Editor) {
-        let Some(d) = document(e) else { return };
-        self.status = match d.generate_siege_ai() {
+        self.status = match self.generate_siege_ai_now(e) {
             Ok(l) => {
                 for w in &l.warnings {
                     log::warn(format!("Generate SiegeAI: {w}"));
@@ -1846,6 +1845,23 @@ impl TileTool {
                 format!("Generate SiegeAI failed: {err}")
             }
         };
+    }
+
+    /// Generate SiegeAI on the open tile, its steep ground (the automatic no-go areas) worked out first.
+    ///
+    /// # Errors
+    ///
+    /// No tile, or the document's [`TileDocument::generate_siege_ai`] failed.
+    pub(crate) fn generate_siege_ai_now(&mut self, e: &mut Editor) -> Result<wce_siege::Layout, String> {
+        let id = document_id(e).ok_or("no tile open")?;
+        let steep = self.refresh_auto_nogos(e, id);
+        let d = document(e).ok_or("no tile open")?;
+        let mut layout = d.generate_siege_ai()?;
+        if let Err(why) = steep {
+            layout.warnings.push(format!("the steep ground is not known ({why}): streets may climb it"));
+        }
+
+        Ok(layout)
     }
 
     fn handle_keys(&mut self, e: &mut Editor) {

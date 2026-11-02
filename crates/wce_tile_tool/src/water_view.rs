@@ -73,6 +73,30 @@ impl TileTool {
     }
 }
 
+impl TileTool {
+    /// The automatic no-go areas of the open tile as it is now, worked out unless the view has them for this version already (Generate
+    /// SiegeAI keeps its streets off the steep ground they cover).
+    ///
+    /// # Errors
+    ///
+    /// Stage B failed.
+    pub(crate) fn refresh_auto_nogos(&mut self, e: &mut Editor, id: DocumentId) -> Result<(), String> {
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return Err("no tile".to_owned()) };
+        let key = Some((id, d.history().version()));
+        if self.nogo_for == key && d.tile().auto_nogos().is_some() {
+            return Ok(());
+        }
+
+        let game = self.exported_game(e).ok();
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let (_, nogos) = stage_b_of(d, game.as_deref(), true)?;
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        d.tile_mut().set_auto_nogos(nogos);
+        self.nogo_for = key;
+        Ok(())
+    }
+}
+
 /// The tile as it is in memory (its scene, its heights in the range the next save gives them, its entry with that range) through stage B's
 /// water map; the water planes' models from the game's packs when they are known.
 /// Polygons in metres (tile frame).

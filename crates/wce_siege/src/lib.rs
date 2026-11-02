@@ -60,6 +60,10 @@ pub struct Input {
     /// The no-go regions (closed).
     pub nogo: Vec<Vec<P>>,
 
+    /// The steep ground the game will not walk (BOB's automatic no-go areas, `terrain_outlines.xml`): outlines, some holding others as
+    /// holes (a ring of cliffs around a plateau), so they are filled together, even-odd.
+    pub steep: Vec<Vec<P>>,
+
     /// What blocks of the buildings that are not fort pieces: their hard outlines (closed).
     pub obstacles: Vec<Vec<P>>,
 

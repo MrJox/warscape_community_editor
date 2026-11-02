@@ -155,3 +155,30 @@ pub fn check_captures(l: &Layout, captures: &[Capture]) -> Vec<String> {
 
     out
 }
+
+/// The streets, area connections and nodes on the steep ground the game will not walk (`Input::steep`, outlines filled even-odd): units
+/// sent along them never get there.
+pub fn check_steep(l: &Layout, steep: &[Vec<P>]) -> Vec<String> {
+    let on = |p: P| steep.iter().filter(|o| o.len() >= 3 && inside(p, o)).count() % 2 == 1;
+    let mut out = vec![];
+    for (i, n) in l.nodes.iter().enumerate() {
+        if on(n.centre) {
+            out.push(format!("node {i} stands on steep ground at ({:.0}, {:.0})", n.centre[0], n.centre[1]));
+        }
+    }
+
+    for (i, e) in l.edges.iter().enumerate().filter(|(_, e)| matches!(e.kind, EdgeKind::Street | EdgeKind::AreaConnection)) {
+        let crossing = e.line.windows(2).find_map(|w| {
+            let steps = (dist(w[0], w[1]) / 2.0).ceil().max(1.0);
+            (0..=steps as usize).map(|k| {
+                let t = k as f64 / steps;
+                [w[0][0] + (w[1][0] - w[0][0]) * t, w[0][1] + (w[1][1] - w[0][1]) * t]
+            }).find(|&p| on(p))
+        });
+        if let Some(p) = crossing {
+            out.push(format!("edge {i} ({:?}) crosses steep ground at ({:.0}, {:.0})", e.kind, p[0], p[1]));
+        }
+    }
+
+    out
+}
