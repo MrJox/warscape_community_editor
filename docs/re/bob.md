@@ -17,6 +17,22 @@ two at once; any bare argument pops a modal dialog and hangs. CA's tile example:
 - A scratch kit (copy of `binaries` + one tile + helpers, ~900 MB, `tile_editor/scratch/kit1`) runs BOB headless in about 40 s for a 1x1 tile. Created with `bob_run.py scratch --tile-deps --raw terrain/tiles/battle/<tile>` (the kit1 copy was made before the flag existed and then completed by hand).
 - Kit requirements found by elimination: `raw_data/db` (489 MB DB schema) and `raw_data/EmpireDesignData`, otherwise BOB exits 1 after 20 s with empty logs; `working_data/terrain/vegetation/battle/grass/max_grass.xml` for Vegetation.
 - Consumer list: the tile's `tile.ted` plus its raw files; processors `Tile`, `Vegetation`, `Battle` together gave 15 actions (Create tile agf, Blendmap, Prepare/Generate Vegetation x8, Generate Grass, Cleanup, Tile).
+- **The Terrain processor headless** (2026-11-02, this machine; scratch kit `I:\wce_scratch\attila\assembly_kit`, run on a hidden desktop
+  with `run_hidden.ps1`): a configuration with `<processor>Terrain</processor>`, `<directory>&lt;raw>/terrain/battles/<map>/</directory>`
+  and every file of the map folder as a consumer selects three actions, `Tilemap`, `Terry file` and `Heights & Normals`. Besides `binaries`,
+  `raw_data/db`, `raw_data/EmpireDesignData`, the battle tile database and the `rules.bob` files, it needs
+  `working_data/terrain/tiles/battle/tile_database.bin` and `.../campaign/tile_database.bin` (without them BOB crashes at start, exit 0, no
+  log, a dump in `%LOCALAPPDATA%\CrashDumps`: a null buffer compared with the magic `FASTBIN0` in `Warscape.AssemblyKit.dll` RVA 0x610467)
+  and `raw_data/warscape_asset_variation_db/environment_map.xml` ("Failed to build climate map"). Each crash leaves a 290 MB dump on C:.
+  A settlement-sized map takes under a second, `main_attila_map` 14 minutes (`Tilemap` 13 of them).
+  - `Tilemap` reads `terrain/tiles/battle/tile_upgrades.xml` (not in the kit: the game's, from the vanilla packs) after "Loading lf height
+    map"; without it it logs "Exception message is: Invalid document structure" and goes on. BOB's XML parser rejects `--` inside a
+    comment ("Illegal sequence '--' in comment"), which the game's file has five times (`<!------ NORDIC ------>`): the scratch copy has
+    those comments rewritten, nothing else.
+  - The `[Terrain]` rules that make it save `tile_map.index` / `.tiles`, `locations.blm` / `.mask0` / `.mask1` and the `deployment` folder
+    (`save_final_tile_map`, `save_meta_data_map`) are read from a `rules.bob` **in the map's folder** (listed as a consumer too);
+    `raw_data/terrain/battles/rules.bob` and `raw_data/terrain/rules.bob` did not reach the map (without the map's own, only
+    `terrain.tile_list` and the LF files come out).
 
 ## Determinism (tile `tdd_custom_dead_marshes/1x1/aa`)
 
