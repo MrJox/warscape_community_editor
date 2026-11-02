@@ -550,6 +550,10 @@ pub struct RenderSettings {
     /// and the tint; overlays are not picked either.
     pub game_view: bool,
 
+    /// The editor view's fog, a factor of the environment's distance and height fog strengths (1: as the game draws it). A deviation from
+    /// the game's look the user allowed (2026-11-02): from high over a map the fog washes everything out. Never in the game view.
+    pub fog_amount: f32,
+
     // Editor overlays: a line grid on y = 0, and the entities whose bounds are outlined (yellow, on top).
     pub show_grid: bool,
     pub grid_step: f32,
@@ -619,6 +623,7 @@ impl Default for RenderSettings {
             render_scale: 1.0,
             sharpness: 0.5,
             game_view: false,
+            fog_amount: 1.0,
             show_grid: false,
             grid_step: 10.0,
             grid_half_extent: 200.0,
@@ -1469,6 +1474,14 @@ impl Renderer {
         }
 
         apply_environment(&env, &mut self.cbs);
+        // The editor view's fog amount: battlefog.hlsl's alpha is saturate((g_fog_height_strength * the height term + the distance term)
+        // * the clear-distance ramp), its distance term g_fog_distance_scale * (1 - exp(-d)) (g_fog_distance_strength only sets how fast d
+        // grows): scaling the two scales the fog (the GLSL listing of ps30_main).
+        if !self.settings.game_view && self.settings.fog_amount < 1.0 {
+            let k = self.settings.fog_amount.clamp(0.0, 1.0);
+            self.cbs.set_f("fog_VS_PS", "g_fog_distance_scale", &[env.fog_distance_scale * k]);
+            self.cbs.set_f("fog_VS_PS", "g_fog_height_strength", &[env.fog_height_strength * k]);
+        }
 
         // gfx_screen_space_reflections 0 (Attila, Thrones of Britannia; fn 0x11904130): no environment specular pass, the directional
         // light adds the environment's specular itself.
