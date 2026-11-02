@@ -122,6 +122,8 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                 s.items, s.models, s.batches, s.waiting_models, s.views, s.instances, s.draw_calls, s.triangles as f64 * 1e-6, s.camera_instances, s.terrain_patches,
                 s.camera_triangles as f64 * 1e-6, s.shadow_instances, s.shadow_triangles as f64 * 1e-6,
             );
+            r += &format!("  terrain (all views): {} entities walked, {} patches tested, {} drawn
+", s.terrain_entities, s.terrain_tested, s.terrain_drawn);
             r += &rd.gpu_timer().report();
         }
 

@@ -114,6 +114,10 @@ pub(crate) struct Placed {
     step: f32,
     patches: Vec<PlacedPatch>,
 
+    /// The box around its patches (world, scene units): a view tests it before the patches.
+    bmin: [f32; 3],
+    bmax: [f32; 3],
+
     /// The material's blend box: its id, the world box (min x y z, max x y z, scene units) and the rotation index of the material's maps.
     pub(crate) blend_box: Option<(u64, [f32; 6], f32)>,
 }
@@ -414,6 +418,11 @@ pub(crate) struct TerrainGpuState {
     /// Index buffers of a patch of cx x cz cells at a stride, and their index counts.
     grid_ib: BTreeMap<(i32, i32, i32), (Option<ID3D11Buffer>, u32)>,
     entities: Vec<EntityId>,
+
+    /// The frame's number (`begin_terrain_frame`) and the terrain entities made ready in it (`terrain_surface_entities`): the material pass
+    /// and every shadow cascade take the same list, made once a frame (made per view, a map's 5 500 terrains cost 0.46 ms each time).
+    frame: u64,
+    surface: Option<(u64, Vec<EntityId>)>,
     pub(crate) viewz: Target,
     pub(crate) acc: [Target; 3],
     rt_w: u32,
@@ -615,7 +624,9 @@ impl Renderer {
         let Some(g) = self.terrain.hf.get(&key) else { return };
         wce_prof!("terrain.place");
         let w = &world.m;
-        let mut placed = Placed { key, world: *world, lf, units, lod: t.lod, step: g.step, patches: Vec::with_capacity(g.patches.len()), blend_box: None };
+        let mut placed = Placed {
+            key, world: *world, lf, units, lod: t.lod, step: g.step, patches: Vec::with_capacity(g.patches.len()), bmin: [f32::MAX; 3], bmax: [f32::MIN; 3], blend_box: None,
+        };
         for (k, p) in g.patches.iter().enumerate() {
             if p.vb.is_none() {
                 continue;
@@ -644,6 +655,10 @@ impl Renderer {
             }
 
             (bmin[1], bmax[1]) = (bmin[1] - 0.2, bmax[1] + 0.2);
+            for r in 0..3 {
+                (placed.bmin[r], placed.bmax[r]) = (placed.bmin[r].min(bmin[r]), placed.bmax[r].max(bmax[r]));
+            }
+
             placed.patches.push(PlacedPatch { bmin, bmax, cx: p.cx, cz: p.cz, patch: k, row });
         }
 
@@ -1488,9 +1503,20 @@ impl Renderer {
         self.draw_stats.triangles += triangles;
     }
 
-    /// The terrain entities the material pass draws, with their geometry built and placed.
+    /// A new frame: the terrain entities are made ready again the first time a pass asks.
+    pub(crate) fn begin_terrain_frame(&mut self) {
+        self.terrain.frame += 1;
+    }
+
+    /// The terrain entities the material pass draws, with their geometry built and placed (once a frame; the other passes take the list).
     fn terrain_surface_entities<'s>(&mut self, scene: &'s RenderScene) -> Vec<&'s wce_scene::render_scene::Entity> {
         wce_prof!("terrain.surface_entities");
+        if let Some((frame, ids)) = &self.terrain.surface
+            && *frame == self.terrain.frame
+        {
+            return ids.iter().filter_map(|&id| scene.find(id)).collect();
+        }
+
         let mut ents = vec![];
         for id in self.terrain.entities.clone() {
             let Some(e) = scene.find(id) else { continue };
@@ -1512,6 +1538,7 @@ impl Renderer {
             }
         }
 
+        self.terrain.surface = Some((self.terrain.frame, ents.iter().map(|e| e.id).collect()));
         ents
     }
 
@@ -1554,7 +1581,6 @@ impl Renderer {
     pub(crate) fn draw_terrain_patches_with(
         &mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, cull: &Float4x4, clip: &Float4x4, how: CustomDraw,
     ) -> u64 {
-        let by_id: HashMap<EntityId, &wce_scene::render_scene::Entity> = ents.iter().map(|e| (e.id, *e)).collect();
         let material_only = matches!(how, CustomDraw::Material);
         let geom_il = match how {
             CustomDraw::Depth(_) => self.layout(vs, "terrain_geom", &geom_layout()),
@@ -1562,20 +1588,20 @@ impl Renderer {
         };
 
         // Groups by LF map, in the entities' order.
-        let mut groups: Vec<(Option<Arc<LfMap>>, Vec<EntityId>)> = vec![];
+        let mut groups: Vec<(Option<Arc<LfMap>>, Vec<&wce_scene::render_scene::Entity>)> = vec![];
         for e in ents {
             let Payload::Terrain(t) = &e.payload else { continue };
             let id = t.lf.as_ref().map_or(0, |lf| lf.id);
             match groups.iter_mut().find(|(lf, _)| lf.as_ref().map_or(0, |lf| lf.id) == id) {
-                Some((_, v)) => v.push(e.id),
-                None => groups.push((t.lf.clone(), vec![e.id])),
+                Some((_, v)) => v.push(*e),
+                None => groups.push((t.lf.clone(), vec![*e])),
             }
         }
 
         let (eye, units, origin) = (self.terrain.lod_eye, self.camera.units, self.camera.origin);
         let (view, eye_cb) = (self.camera.cb_view, self.camera.cb_eye);
         let mut triangles = 0;
-        for (lf, ids) in groups {
+        for (lf, group) in groups {
             // vs_height_map_cb: the LF window (unorm 0..1 times the map's scale, less its offset, in game units), its size and the world's,
             // the offset that puts it where it is; the high-frequency height comes from the vertices (the instance rows are in game units).
             let d = match &lf {
@@ -1617,17 +1643,25 @@ impl Renderer {
             // The batches: (buffer, patch, stride) -> instance rows.
             let mut batches: Vec<(usize, usize, i32, i32, i32, Vec<f32>)> = vec![];
             let mut at: HashMap<(usize, usize, i32), usize> = HashMap::new();
-            for id in &ids {
-                let custom = by_id.get(id).is_some_and(|e| matches!(&e.payload, Payload::Terrain(t) if t.custom.is_some()));
+            for e in &group {
+                let custom = matches!(&e.payload, Payload::Terrain(t) if t.custom.is_some());
                 if material_only || custom {
                     continue;
                 }
 
-                let Some(p) = self.terrain.placed.get(id) else { continue };
+                let Some(p) = self.terrain.placed.get(&e.id) else { continue };
+                self.draw_stats.terrain_entities += 1;
+                if !box_in_frustum(cull, p.bmin, p.bmax) {
+                    continue;
+                }
+
+                self.draw_stats.terrain_tested += p.patches.len() as u64;
                 for pp in &p.patches {
                     if !box_in_frustum(cull, pp.bmin, pp.bmax) {
                         continue;
                     }
+
+                    self.draw_stats.terrain_drawn += 1;
 
                     // The stride by distance: one more halving of the vertices per doubling past LOD_STEPS grid steps (2 m steps: every 2nd
                     // vertex from 512 m, every 4th from 1 km ...), a power of two that divides the patch.
@@ -1697,7 +1731,7 @@ impl Renderer {
             }
 
             if !matches!(how, CustomDraw::None) {
-                triangles += self.draw_custom_meshes(&by_id, &ids, how, cull, [sx, sz]);
+                triangles += self.draw_custom_meshes(&group, how, cull, [sx, sz]);
                 if let Some(il) = &geom_il {
                     self.ctx.set_input_layout(Some(il));
                     self.bind(vs);
