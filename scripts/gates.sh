@@ -12,6 +12,7 @@
 #   WCE_BIN    folder with the built wce binary for the scripted app gates (default target/release, or $CARGO_TARGET_DIR/release)
 #   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when missing)
 #   WCE_ROME2  Rome 2's folder: its gates run too (skipped when not set)
+#   WCE_BOB_KIT  a scratch Assembly Kit BOB_Terrain ran in: the Heights & Normals gates compare with its outputs (skipped when not set)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/gates}"; shift || true
@@ -91,6 +92,13 @@ run tdb_build         ex wce_formats tdb_build "$BKIT/raw_data/terrain/tiles/bat
 MAPRAW="$GAME/assembly_kit/raw_data"; [ -d "$MAPRAW/terrain/battles" ] || MAPRAW="$BKIT/raw_data"
 run map_roundtrip     ex wce_terrain_io map_roundtrip_check "$MAPRAW" --filter settlement_western_city_b_small
 run map_built_roundtrip ex wce_terrain_io map_built_roundtrip_check --game "$GAME" --vanilla
+# BOB_Terrain's Heights & Normals outputs made from a kit map's LF, against a BOB run's (a scratch kit: docs/re/bob.md; skipped without one)
+BOBKIT="${WCE_BOB_KIT:-}"
+if [ -n "$BOBKIT" ] && [ -d "$BOBKIT/working_data/terrain/battles" ]; then
+    for m in $(ls "$BOBKIT/working_data/terrain/battles"); do
+        [ -f "$BOBKIT/working_data/terrain/battles/$m/lf_height_map.data" ] && run "heights_build_$m" ex wce_terrain_io heights_build_check "$BOBKIT/raw_data/terrain/battles/$m" "$BOBKIT/working_data/terrain/battles/$m"
+    done
+fi
 if [ "$CORPUS" = 1 ]; then
     run roundtrip     ex wce_formats roundtrip "$MANIFEST" "$GAME"
     run map_roundtrip_all ex wce_terrain_io map_roundtrip_check "$MAPRAW"   # every battle and campaign map folder of the kit (about 25 s)

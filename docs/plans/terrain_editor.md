@@ -235,8 +235,11 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    - Checked on `settlement_western_city_rome_medium`: a hill raised and smoothed, undone and redone in the view; saved, the kit's
      `lf_heights.tif` and the saved one differ only in the pixel data (the header and size kept), the other files byte for byte; the map
      reopens from the projects folder with the hill.
-   Left: the sea LF (the view takes the sea LF as 0), the per-tile LF patches, the `Heights & Normals` outputs (the rules are known,
-   docs/re/terry.md), the edits of a map with a different view lattice (only the map's own frame mirrors), stroke spacing by distance.
+   - `wce_terrain_io::attila::heights`: BOB's `Heights & Normals` outputs from the model's LF fields, `lf_height_map.dds`,
+     `lf_sea_height_map.dds` (its mips) and `lf_height_map.data` (CHMF), byte for byte against BOB on `wce_relief` and `main_attila_map`
+     (`heights_build_check`; `gates.sh` runs it over a BOB scratch kit's outputs when `WCE_BOB_KIT` names one).
+   Left: the sea LF (the view takes the sea LF as 0), the per-tile LF patches, writing the built files on save / export (Phase 7), the
+   edits of a map with a different view lattice (only the map's own frame mirrors), stroke spacing by distance.
 4. **Tile map editing**: the cell layers, explicit tiles, the fill on a worker and the partial rebuild, validation; `Tilemap` against BOB.
 5. **The `.terry` scene**: the ECS model, outliner, inspector, gizmo, creation modes, overlays; `Terry file` against BOB.
 6. **BCA generation**: the spec, the generator, its errors file; Thrones' Terry's output as the oracle.
