@@ -184,8 +184,13 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    the view follows the active map document (each map keeps its camera); scripts `terrain_open`, `terrain_settle`, `terrain_view`. The
    campaign battle map from the packs at its centre: 15.2 ms a frame (p95 17.4), CPU-bound, 100 251 draw items (RX 7900 XTX).
    DEVIATION (for now): the map is lit by the first day, dry weather of the climate at its centre (`weather/<climate>/`), not the Tile
-   tool's weather choice. Left: the Map panel (2D), the overlays, an editor option to thin the fog for high views (the weather's fog
-   washes out the map from 9 km up).
+   tool's weather choice. Left: the overlays (the cell layers draped on the ground: a screen-space editor pass), an editor option to
+   thin the fog for high views (the weather's fog washes out the map from 9 km up).
+   **Map panel (2026-11-02).** The active map from above, a texel a cell: the LF (shaded), the placements (each in its tile set's colour;
+   what a map of the packs has instead of a tile map image) and a kit map's cell layers from the model; wheel zoom, middle-button pan, a
+   click moves the camera there; the camera and its view direction; the hovered cell's colour named from the map's tile database (tile
+   set, tile, variation, climate) and the placement over it. The Terrain tool's own default layout (Map and Outliner left, Terrain and
+   Inspector right); `terrain_map_layer` for scripts. `MapDocument` keeps the tile database it was filled with.
    **LF picking (2026-11-02).** `wce_terrain::pyramid::HeightPyramid`: min / max over 8 x 8-cell leaf blocks, merged 2 x 2 to one root;
    a ray descends nearest block first and meets each cell's bilinear surface exactly (a quadratic along the ray; the field is solid below
    its surface, so a ray coming in through a side meets it there); `update` measures again only the blocks an edit touched. Tests: 240

@@ -38,11 +38,12 @@ struct Loaded {
     model: Option<wce_terrain::MapModel>,
     placed: Arc<wce_tile::battle_map::context::PlacedMap>,
     locations: Option<wce_tile::battle_map::locations::BattleLocations>,
+    db: Arc<TileDatabase>,
 }
 
 impl Loaded {
     fn document(self) -> Box<MapDocument> {
-        Box::new(MapDocument::new(self.name, self.source, self.model, self.placed, self.locations))
+        Box::new(MapDocument::new(self.name, self.source, self.model, self.placed, self.locations, self.db))
     }
 }
 
@@ -94,6 +95,9 @@ pub struct TerrainTool {
     rings: Rings,
     overview: bool,
 
+    /// The Map panel (the active map from above).
+    map_panel: crate::map_panel::MapPanel,
+
     /// The shown map's LF picking, and the cursor's point on it (frame, scene units) with its raw LF height.
     pick: Option<LfPick>,
     cursor: Option<(Float3, f32)>,
@@ -118,7 +122,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(),
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::default(), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(),
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -162,7 +166,7 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
         }
     };
 
-    Ok(Loaded { name: i.name.clone(), source, model, placed, locations })
+    Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db })
 }
 
 impl TerrainTool {
@@ -445,6 +449,21 @@ impl Tool for TerrainTool {
 
     fn draw_panels(&mut self, e: &mut Editor) {
         self.draw_map_panel(e);
+        self.map_panel.draw(e, self.shown, &self.view);
+    }
+
+    fn default_layout(&self, dockspace: gui::ImGuiID) {
+        let (left, center) = gui::dock_builder_split(dockspace, gui::DIR_LEFT, 0.24);
+        let (right, center) = gui::dock_builder_split(center, gui::DIR_RIGHT, 0.25);
+        let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.22);
+        gui::dock_builder_dock_window("Viewport", center);
+        gui::dock_builder_dock_window("Map", left);
+        gui::dock_builder_dock_window("Outliner", left);
+        gui::dock_builder_dock_window("Terrain", right);
+        gui::dock_builder_dock_window("Inspector", right);
+        gui::dock_builder_dock_window("Assets", bottom);
+        gui::dock_builder_dock_window("Log", bottom);
+        gui::dock_builder_dock_window("History", bottom);
     }
 
     fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
@@ -532,6 +551,14 @@ impl Tool for TerrainTool {
                         CommandResult::fail(format!("no LF under that pixel (ray {ray:?}; a march finds {march:?})"))
                     }
                 }
+            })
+        });
+
+        c.add("terrain_map_layer", "terrain_map_layer <n>", "the Terrain tool: the Map panel shows its n-th layer (0 the LF, 1 the placements, then the kit map's cell layers)", |e, a| {
+            let Some(k) = a.first().and_then(|v| v.parse::<usize>().ok()) else { return CommandResult::fail("usage: terrain_map_layer <n>") };
+            with_terrain(e, |t, _| {
+                t.map_panel.set_layer(k);
+                CommandResult::success(format!("Map panel layer {k}"))
             })
         });
 

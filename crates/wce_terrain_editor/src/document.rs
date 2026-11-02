@@ -13,6 +13,7 @@ use wce_scene::render_scene::{LayerId, RenderScene};
 use wce_terrain::MapModel;
 use wce_tile::battle_map::context::PlacedMap;
 use wce_tile::battle_map::locations::BattleLocations;
+use wce_tile::battle_map::tile_db::TileDatabase;
 
 /// Where a map comes from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,11 +34,14 @@ pub struct MapDocument {
     pub source: MapSource,
     pub placed: Arc<PlacedMap>,
     pub locations: Option<BattleLocations>,
+
+    /// The tile database the map was filled with (its sets', tiles' and climates' colours name the cells).
+    pub db: Arc<TileDatabase>,
 }
 
 impl MapDocument {
-    pub fn new(name: String, source: MapSource, model: Option<MapModel>, placed: Arc<PlacedMap>, locations: Option<BattleLocations>) -> Self {
-        Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations }
+    pub fn new(name: String, source: MapSource, model: Option<MapModel>, placed: Arc<PlacedMap>, locations: Option<BattleLocations>, db: Arc<TileDatabase>) -> Self {
+        Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db }
     }
 
     /// The map's files as data (a kit map; none for a map of the packs).
