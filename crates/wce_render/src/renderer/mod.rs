@@ -1719,6 +1719,11 @@ impl Renderer {
             }
 
             {
+                wce_prof!("render.ground_overlay");
+                self.pass_ground_overlay(scene, display);
+            }
+
+            {
                 wce_prof!("render.selection_outline");
                 self.pass_selection_outline(scene, display);
             }

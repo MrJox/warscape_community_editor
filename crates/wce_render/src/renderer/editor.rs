@@ -69,7 +69,29 @@ float4 outline_ps(float4 pos : SV_Position) : SV_Target {
     if (near_any == 0) discard;
     return float4(colour.rgb, colour.a * (near_visible > 0 ? 1 : hidden_alpha));
 }
+
+// A picture laid over the ground (the Terrain tool's map layers): the pixel's world point from the scene's depth (clip z / w) and the
+// inverse view-projection, its texel `to_texel * (x, z, 1)`; outside the picture or on the sky nothing.
+cbuffer Drape : register(b1) { row_major float4x4 inv_vp; float4 to_texel0; float4 to_texel1; float4 drape_size; };
+Texture2D<float> drape_depth : register(t0);
+Texture2D<float4> drape_texels : register(t1);
+float4 drape_ps(float4 pos : SV_Position) : SV_Target {
+    float z = drape_depth.Load(int3(int2(pos.xy), 0));
+    if (z <= 0 || z >= 0.9999999) discard;
+    float2 ndc = float2(pos.x / drape_size.z * 2 - 1, 1 - pos.y / drape_size.w * 2);
+    float4 w = mul(inv_vp, float4(ndc, z, 1));
+    w /= w.w;
+    float3 xz1 = float3(w.x, w.z, 1);
+    float2 t = float2(dot(to_texel0.xyz, xz1), dot(to_texel1.xyz, xz1));
+    if (t.x < 0 || t.y < 0 || t.x >= drape_size.x || t.y >= drape_size.y) discard;
+    float4 c = drape_texels.Load(int3(int2(t), 0));
+    return float4(c.rgb, c.a * to_texel0.w);
+}
 "#;
+
+/// The drape's constants: the inverse view-projection, the two rows of the frame -> texel map (the first's w the opacity), the picture's
+/// size and the target's.
+const DRAPE_CB: usize = 112;
 
 /// The outline's constants: the colour, the radius in pixels and the alpha of the hidden parts' outline, padded.
 const OUTLINE_CB: usize = 32;
@@ -271,6 +293,11 @@ pub(crate) struct EditorGpu {
     ovl_cb: Option<ID3D11Buffer>,
     pick_cb: Option<ID3D11Buffer>,
 
+    /// The ground overlay's pixel shader, constants and picture (its id, the texture's view).
+    drape_ps: Option<ID3D11PixelShader>,
+    drape_cb: Option<ID3D11Buffer>,
+    drape: Option<(u64, ID3D11ShaderResourceView)>,
+
     /// The overlay entities, as of a scene (address) and its overlay revision: the selection outline looks at them alone (it went over
     /// every entity a frame: a map view's 300 000, 0.8 ms).
     outline_overlays: ((usize, u64), Vec<wce_scene::render_scene::EntityId>),
@@ -381,6 +408,7 @@ impl Renderer {
         let tps = compile(EDITOR_HLSL, "editor_passes", "tint_ps", "ps_5_0")?;
         let ovs = compile(EDITOR_HLSL, "editor_passes", "outline_vs", "vs_5_0")?;
         let ops = compile(EDITOR_HLSL, "editor_passes", "outline_ps", "ps_5_0")?;
+        let dps = compile(EDITOR_HLSL, "editor_passes", "drape_ps", "ps_5_0")?;
         let oel = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false), element(c"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, false)];
         let mut pel = vec![element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false)];
         for i in 1..=3 {
@@ -402,6 +430,8 @@ impl Renderer {
         e.outline_vs = dev.create_vertex_shader(&ovs).ok();
         e.outline_ps = dev.create_pixel_shader(&ops).ok();
         e.outline_cb = dynamic_buffer(&dev, OUTLINE_CB, D3D11_BIND_CONSTANT_BUFFER);
+        e.drape_ps = dev.create_pixel_shader(&dps).ok();
+        e.drape_cb = dynamic_buffer(&dev, DRAPE_CB, D3D11_BIND_CONSTANT_BUFFER);
         let channel = |mask: u8| crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
             BlendEnable: false.into(), SrcBlend: D3D11_BLEND_ONE, DestBlend: D3D11_BLEND_ZERO, BlendOp: D3D11_BLEND_OP_ADD, SrcBlendAlpha: D3D11_BLEND_ONE,
             DestBlendAlpha: D3D11_BLEND_ZERO, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: mask,
@@ -807,6 +837,62 @@ impl Renderer {
         }
 
         self.draw_lists.draws = draws;
+        self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
+        self.ctx.set_render_targets(&[], None);
+    }
+
+    /// The scene's ground overlay over the target (an editor view: never in the game view).
+    pub(crate) fn pass_ground_overlay(&mut self, scene: &RenderScene, target: &RenderTarget) {
+        let Some(o) = scene.ground_overlay().filter(|o| o.opacity > 0.0 && o.w > 0 && o.h > 0 && o.rgba.len() >= (o.w * o.h * 4) as usize) else { return };
+        if scene.layer(o.layer).is_none_or(|l| !l.visible) {
+            return;
+        }
+
+        if let Err(error) = self.create_editor_resources() {
+            self.error(error.0);
+            return;
+        }
+
+        if self.editor.drape.as_ref().is_none_or(|(id, _)| *id != o.id) {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: o.w, Height: o.h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            };
+
+            let tex = self.dev.create_texture_2d(&desc, Some(&[InitData::new(&o.rgba[..(o.w * o.h * 4) as usize], o.w * 4)]));
+            self.editor.drape = tex.and_then(|t| self.dev.create_shader_resource_view(&t, None)).ok().map(|srv| (o.id, srv));
+        }
+
+        let (Some((_, texels)), Some(depth), Some(cb), Some(ps)) =
+            (self.editor.drape.clone(), self.gbuffer.depth_srv(), self.editor.drape_cb.clone(), self.editor.drape_ps.clone())
+        else {
+            return;
+        };
+
+        // The camera's view-projection is of absolute scene positions (it culls them), the depth the same points' clip z / w.
+        let inv = wce_foundation::math::inverse(&self.camera.main_view_proj);
+        let (w, h) = (target.width(), target.height());
+        let mut consts = [0f32; DRAPE_CB / 4];
+        consts[..16].copy_from_slice(inv.data());
+        consts[16..19].copy_from_slice(&o.to_texel[0]);
+        consts[19] = o.opacity.clamp(0.0, 1.0);
+        consts[20..23].copy_from_slice(&o.to_texel[1]);
+        consts[24..28].copy_from_slice(&[o.w as f32, o.h as f32, w as f32, h as f32]);
+        write_dynamic(&self.ctx, &cb, &consts);
+        let e = &self.editor;
+        self.ctx.set_render_targets(&[target.rtv().cloned()], None);
+        self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
+        self.ctx.set_blend_state(e.ovl_blend.as_ref());
+        self.ctx.set_depth_stencil_state(e.ovl_ds_off.as_ref(), 0);
+        self.ctx.set_rasterizer_state(e.ovl_rs.as_ref());
+        self.ctx.set_input_layout(None);
+        self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        self.ctx.vs_set_shader(e.outline_vs.as_ref());
+        self.ctx.ps_set_shader(Some(&ps));
+        self.ctx.ps_set_constant_buffers(1, &[Some(cb)]);
+        self.ctx.ps_set_shader_resources(0, &[Some(depth), Some(texels)]);
+        self.ctx.draw(3, 0);
+        self.ctx.ps_set_shader_resources(0, &[None, None]);
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
         self.ctx.set_render_targets(&[], None);
     }

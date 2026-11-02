@@ -95,6 +95,11 @@ impl MapView {
         self.doc
     }
 
+    /// The scene layer the view is on (0: none).
+    pub fn layer(&self) -> LayerId {
+        self.layer
+    }
+
     pub fn frame(&self) -> Option<&Arc<Frame>> {
         self.streamer.as_ref().map(|s| s.frame())
     }

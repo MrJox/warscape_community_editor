@@ -41,6 +41,12 @@ pub struct MapPanel {
 
     /// The cell under the cursor, said.
     hover: String,
+
+    /// The picture's texels (for the ground), its id (a new picture, a new id), and whether it lies over the ground and how strong.
+    texels: Option<std::sync::Arc<Vec<u8>>>,
+    picture_id: u64,
+    pub drape: bool,
+    pub opacity: f32,
 }
 
 /// The layers a map has, with their names.
@@ -137,6 +143,33 @@ fn colour_name(d: &MapDocument, role: Option<&LayerRole>, c: [u8; 4]) -> String 
 }
 
 impl MapPanel {
+    pub fn new() -> Self {
+        Self { opacity: 0.5, ..Default::default() }
+    }
+
+    /// The picture over the ground of the 3D view (the scene's ground overlay), when on; taken off otherwise.
+    pub fn apply_drape(&self, e: &mut Editor, doc: DocumentId, view: &MapView) {
+        let overlay = (|| {
+            if !self.drape {
+                return None;
+            }
+
+            let (_, shown_doc, _, w, h) = self.shown.as_ref()?;
+            let d = e.docs.find_as::<MapDocument>(*shown_doc).filter(|_| *shown_doc == doc)?;
+            let f = view.frame()?;
+            let (sx, sy) = (f64::from(*w) / f64::from(d.placed.width.max(1)), f64::from(*h) / f64::from(d.placed.height.max(1)));
+            let m = &f.to_map.m;
+            let to_texel = [
+                [(m[0][0] * sx) as f32, (m[0][1] * sx) as f32, (m[0][2] * sx) as f32],
+                [(m[1][0] * sy) as f32, (m[1][1] * sy) as f32, (m[1][2] * sy) as f32],
+            ];
+
+            Some(wce_scene::render_scene::GroundOverlay { to_texel, w: *w, h: *h, rgba: self.texels.clone()?, id: self.picture_id, opacity: self.opacity, layer: view.layer() })
+        })();
+
+        e.scene.set_ground_overlay(overlay);
+    }
+
     /// Shows the `k`-th layer of the list (scripts).
     pub fn set_layer(&mut self, k: usize) {
         self.layer = k;
@@ -186,11 +219,22 @@ impl MapPanel {
             }
 
             let d = e.docs.find_as::<MapDocument>(doc).expect("found above");
+            self.texels = None;
             if let Some((w, h, px)) = picture(d, &layer) {
+                let texels = std::sync::Arc::new(px);
                 e.images.forget(&key);
-                e.images.submit(&key, w, h, px);
+                e.images.submit(&key, w, h, texels.to_vec());
+                self.texels = Some(texels);
+                self.picture_id += 1;
                 self.shown = Some((key, doc, layer.clone(), w, h));
             }
+        }
+
+        gui::checkbox("on the ground", &mut self.drape);
+        if self.drape {
+            gui::same_line();
+            gui::set_next_item_width(120.0);
+            gui::slider_float("opacity", &mut self.opacity, 0.05, 1.0, "%.2f");
         }
 
         let d = e.docs.find_as::<MapDocument>(doc).expect("found above");
