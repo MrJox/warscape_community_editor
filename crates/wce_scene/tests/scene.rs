@@ -155,7 +155,7 @@ fn structure_log() {
 #[test]
 fn lf_map_and_ground() {
     // 3 x 2 samples 10 apart from (100, 200): values 0, 65535 ... scaled by 30, less 5.
-    let lf = LfMap { x0: 100.0, z0: 200.0, step: 10.0, nx: 3, nz: 2, values: vec![0, 65535, 0, 65535, 65535, 65535], scale: 30.0, offset: 5.0, ..Default::default() };
+    let lf = LfMap { x0: 100.0, z0: 200.0, step: 10.0, nx: 3, nz: 2, values: wce_scene::render_scene::LfSamples::new(vec![0, 65535, 0, 65535, 65535, 65535]), scale: 30.0, offset: 5.0, ..Default::default() };
     assert!((lf.height_at(100.0, 200.0) + 5.0).abs() < 1e-4);
     assert!((lf.height_at(105.0, 200.0) - 10.0).abs() < 1e-3);
     assert!((lf.height_at(105.0, 205.0) - 17.5).abs() < 1e-3);

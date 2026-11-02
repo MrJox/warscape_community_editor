@@ -127,6 +127,12 @@ pub(crate) struct Placed {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LfGpu {
     window: Option<ID3D11ShaderResourceView>,
+    window_tex: Option<ID3D11Texture2D>,
+
+    /// The samples' revision this copy is of, and the samples edited since that the window still has to take (i0, j0, i1, j1; end
+    /// exclusive): an edit updates those texels, not the textures.
+    revision: u64,
+    window_dirty: Option<[i32; 4]>,
 
     /// The window's first sample (column, row of the map) and its side.
     i0: i32,
@@ -686,7 +692,8 @@ impl Renderer {
     /// The GPU side of an LF map: its normal map for the render origin (the heights' window is made when drawn, around the camera).
     fn build_lf(&mut self, lf: &LfMap) {
         let o = self.camera.origin;
-        if self.terrain.lf.get(&lf.id).is_some_and(|g| g.normal_origin == o) {
+        let revision = lf.values.revision();
+        if self.terrain.lf.get(&lf.id).is_some_and(|g| g.normal_origin == o && g.revision == revision) {
             return;
         }
 
@@ -697,9 +704,10 @@ impl Renderer {
         {
             // One level: its texel is 64 units or so, more than a pixel covers within the far plane (the smaller levels are never read),
             // and a level can be rolled exactly by any whole number of texels.
+            // DEFAULT: an edit of the samples updates its texels.
             let mut td = D3D11_TEXTURE2D_DESC {
                 Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
             };
 
             g.normal_src = self.dev.create_texture_2d(&td, Some(&[InitData::new(&rgba[..(w * h * 4) as usize], w * 4)])).ok();
@@ -707,6 +715,16 @@ impl Renderer {
             g.normal_dst = self.dev.create_texture_2d(&td, None).ok();
             let srv = g.normal_dst.as_ref().and_then(|t| self.dev.create_shader_resource_view(t, None).ok());
             g.normal = Texture { srv, width: w, height: h, mips: 1, depth: 1, format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() };
+        }
+
+        // Samples edited since: their normal texels again, the window's rows later (`lf_draw`).
+        if g.revision != revision {
+            if let Some(r) = lf.values.take_dirty() {
+                self.update_lf_normals(lf, g.normal_src.as_ref(), r);
+                g.window_dirty = Some(g.window_dirty.map_or(r, |d| [d[0].min(r[0]), d[1].min(r[1]), d[2].max(r[2]), d[3].max(r[3])]));
+            }
+
+            g.revision = revision;
         }
 
         // The shader reads it at uv = (x, -z) / normal_world of the position relative to the origin: rolled by the origin's texels (it is
@@ -750,30 +768,42 @@ impl Renderer {
         let g = if stale {
             let (i0, j0) = if whole { (0, 0) } else { (ci - n / 2, cj - n / 2) };
             let mut tex = vec![0u16; (n * n) as usize];
-            if lf.values.len() == (lf.nx * lf.nz) as usize {
+            let values = lf.values.read();
+            if values.len() == (lf.nx * lf.nz) as usize {
                 for (r, row) in tex.chunks_mut(n as usize).enumerate() {
                     let j = (j0 + n - 1 - r as i32).clamp(0, lf.nz - 1);
                     for (c, v) in row.iter_mut().enumerate() {
-                        *v = lf.values[(j * lf.nx + (i0 + c as i32).clamp(0, lf.nx - 1)) as usize];
+                        *v = values[(j * lf.nx + (i0 + c as i32).clamp(0, lf.nx - 1)) as usize];
                     }
                 }
             }
 
+            drop(values);
+
+            // DEFAULT: an edit of the samples updates its rows (`window_dirty`).
             let td = D3D11_TEXTURE2D_DESC {
                 Width: n as u32, Height: n as u32, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R16_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
             };
 
             let sd = [InitData::new(bytemuck::cast_slice(&tex), (n * 2) as u32)];
-            let window = self.dev.create_texture_2d(&td, Some(&sd)).and_then(|tx| self.dev.create_shader_resource_view(&tx, None)).ok();
+            let window_tex = self.dev.create_texture_2d(&td, Some(&sd)).ok();
+            let window = window_tex.as_ref().and_then(|tx| self.dev.create_shader_resource_view(tx, None).ok());
             if window.is_none() {
                 self.error("terrain: the LF height window did not upload".to_owned());
             }
 
-            let g = LfGpu { window, i0, j0, n, ..g };
+            let g = LfGpu { window, window_tex, window_dirty: None, i0, j0, n, ..g };
             self.terrain.lf.insert(lf.id, g.clone());
             g
         } else {
+            if let Some(d) = g.window_dirty {
+                self.update_lf_window(lf, &g, d);
+                if let Some(stored) = self.terrain.lf.get_mut(&lf.id) {
+                    stored.window_dirty = None;
+                }
+            }
+
             g
         };
 
@@ -781,6 +811,55 @@ impl Renderer {
         let (x_t, z_t, w) = (lf.x0 + g.i0 as f32 * s, lf.z0 + (g.j0 - 1) as f32 * s, n as f32 * s);
         let uv_offset = ((eye.x - x_t) + (eye.z - z_t)) / (2.0 * w);
         LfDraw { srv: g.window, n: n as f32, width: w, scale: lf.scale, offset: lf.offset, uv_offset, shift: [x_t + uv_offset * w, z_t + uv_offset * w] }
+    }
+
+    /// Edited samples (i0, j0, i1, j1; end exclusive) into an LF window: the rows and columns of them it holds.
+    fn update_lf_window(&self, lf: &LfMap, g: &LfGpu, d: [i32; 4]) {
+        let Some(tex) = &g.window_tex else { return };
+        let (n, i0, j0) = (g.n, g.i0, g.j0);
+        let (ci0, ci1) = (d[0].max(i0), d[2].min(i0 + n));
+        let (cj0, cj1) = (d[1].max(j0), d[3].min(j0 + n));
+        if ci0 >= ci1 || cj0 >= cj1 {
+            return;
+        }
+
+        // Window row r holds sample row j0 + n - 1 - r.
+        let (top, bottom) = (j0 + n - cj1, j0 + n - cj0);
+        let values = lf.values.read();
+        let mut rows = Vec::with_capacity(((ci1 - ci0) * (bottom - top)) as usize);
+        for r in top..bottom {
+            let j = (j0 + n - 1 - r).clamp(0, lf.nz - 1);
+            rows.extend((ci0..ci1).map(|i| values[(j * lf.nx + i.clamp(0, lf.nx - 1)) as usize]));
+        }
+
+        drop(values);
+        let b = D3D11_BOX { left: (ci0 - i0) as u32, top: top as u32, front: 0, right: (ci1 - i0) as u32, bottom: bottom as u32, back: 1 };
+        let _ = self.ctx.update_subresource(tex, 0, Some(&b), bytemuck::cast_slice(&rows), ((ci1 - ci0) * 2) as u32, 0);
+    }
+
+    /// Edited samples (i0, j0, i1, j1; end exclusive) into the unrolled LF normal map: the texels whose normals they move (a texel's
+    /// samples around: the normal takes the heights a texel to each side), in up to four pieces where the torus wraps.
+    fn update_lf_normals(&self, lf: &LfMap, src: Option<&ID3D11Texture2D>, d: [i32; 4]) {
+        let Some(src) = src else { return };
+        let (w, h) = lf.normal_size();
+        let m = lf.normal_k.max(1) + 1;
+        let (c0, r1) = lf.normal_texel_of(d[0] - m, d[1] - m);
+        let (c1, r0) = lf.normal_texel_of(d[2] - 1 + m, d[3] - 1 + m);
+        let span = |a: i32, b: i32, n: i32| if b >= a { vec![(a, b + 1)] } else { vec![(a, n), (0, b + 1)] };
+        let values = lf.values.read();
+        for (ca, cb) in span(c0, c1, w) {
+            for (ra, rb) in span(r0, r1, h) {
+                let mut px = Vec::with_capacity(((cb - ca) * (rb - ra) * 4) as usize);
+                for r in ra..rb {
+                    for c in ca..cb {
+                        px.extend_from_slice(&lf.normal_texel(&values, c, r));
+                    }
+                }
+
+                let b = D3D11_BOX { left: ca as u32, top: ra as u32, front: 0, right: cb as u32, bottom: rb as u32, back: 1 };
+                let _ = self.ctx.update_subresource(src, 0, Some(&b), &px, ((cb - ca) * 4) as u32, 0);
+            }
+        }
     }
 
     /// The height texture of the terrains without an LF map: zero everywhere.
