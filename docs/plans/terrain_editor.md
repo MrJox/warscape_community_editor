@@ -7,7 +7,7 @@ historical battle, a settlement map), its low-frequency (LF) ground, the tiles p
 docs/plans/tile.md (items 1, 3, 4, 5) and the map context's open items that are about the map rather than the open tile
 (docs/plans/map_context_todo.md, "Map-level terrain", "Large map contexts: performance").
 
-Status: **plan, not started; the user's decisions of 2026-11-02 are in "Decisions" at the end.** Next: Phase 0.
+Status: **Phase 0 done (2026-11-02, "Phase 0 results"); the user's decisions are in "Decisions" at the end.** Next: Phase 1.
 
 ## What Terry does and what the tool does with it
 
@@ -143,12 +143,29 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
   captures before / after the streamer moves (`scripts/shots.sh`).
 - Pack output and Launch in game: the edited map's built files in a pack (or loose), the battle at a BCA the user picks.
 
+## Phase 0 results (2026-11-02)
+
+- **The oracle**: BOB_Terrain runs headless in a scratch kit (`I:\wce_scratch\attila\assembly_kit`; its needs in docs/re/bob.md):
+  `main_attila_map` in 14 minutes, a settlement-sized map in under a second.
+- **Already exact against fresh BOB output**: the fill's `terrain.tile_list` and the final `tile_map.tiles` / `.index` (the campaign
+  battle map byte for byte), `lf_height_map.dds` and `lf_sea_height_map.dds` (conversion and mip rules found), `lf_height_map.data`
+  (the CHMF encoder, one rule left: the region tag). To do: `locations.blm`'s rounding, its masks, the deployment files' writer.
+- **The fill on the campaign battle map: 74 s** (one thread, with loading and writing 117 MB; BOB: 13 minutes). Phase 4's "fill again
+  after an edit" cannot be a full fill per stroke: profile it, and run it on a worker after the stroke with the old placements shown
+  until it lands.
+- **The map context on the campaign map today** (`western_city_rome/small` at its placement, default rings 8 / 24 / 64, RX 7900 XTX,
+  vanilla packs): cold 117 tiles opened in 20.6 s (first ring 7.1 s), 206 MB of cache written; warm 1.2 s to the first ring; 877 MB of tile
+  templates, 297 093 draw items; **19.8 ms a frame (p95 21.6), CPU-bound**; peak working set about 3.0 GB. The viewer starts above the
+  16 ms budget: Phase 2 starts with the culling by area (docs/plans/map_context_todo.md, "Large map contexts").
+
 ## Phases
 
 0. **Survey and measurements** (no tool code). Terry's outputs: run BOB_Terrain's three actions on a scratch kit for a settlement map and
    `main_attila_map`, list what each writes; decode the normal chunks, `locations.blm.mask0` / `.mask1`, the deployment files, the `.terry`
    -> `locations.blm` mapping (docs/re/terry.md, "Open"). Measure the port's fill on the campaign map (BOB: 5 minutes) and opening the map
    context there (time, memory). Thrones' Terry as a reference: screenshots and a few black-box runs (the user sends them when a phase needs them).
+   **Done 2026-11-02** (results below and in docs/re/terry.md, "BOB_Terrain's outputs"); left for the phases that need them: the masks'
+   bits and the blm rounding (Phase 6), the normal chunks' source (Phase 3), Thrones' references.
 1. **Model and files**: `wce_terrain`, `wce_terrain_io::attila`; every map file of the kits and the packs read and written; the round-trip
    gates; the profile's `MapFacts`. Done when every kit map round-trips byte for byte.
 2. **Viewer**: the streamer made a public module with the frame as a parameter (the tile tool's captures unchanged); `MapDocument`; the

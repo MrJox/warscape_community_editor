@@ -74,10 +74,32 @@ Attila's Terry crashes at launch (user, 2026-11-02); Thrones of Britannia's runs
 | `normal.dds` | 250 MB | 250 MB |
 | others | `culture_map.png`, `snow_map*.png`, `nogo.dds`, `explicit_tiles.txt`, `config.xml`, `tile_map.tiles` / `.index` (an old version 7 pair) | `layout_map.png`, `lf_sea_colour*.tif`, `masks.xml`, `season_mask_*.png`, `snow_mask/` |
 
+## BOB_Terrain's outputs (Phase 0, 2026-11-02)
+
+Fresh BOB runs on a scratch kit (how: docs/re/bob.md, "The Terrain processor headless"): `main_attila_map` (14 minutes) and `wce_relief`, a
+copy of `settlement_western_city_b_small` with synthetic relief written into its `lf_heights.tif` (563 .. 4160) and `lf_sea_heights.tif`
+(every TEd-made map in the kit has a flat LF, 436 or 655: useless for this). The 42 BOB outputs already in the user's `working_data` were
+built with an older tile database: they are not fill oracles (33 of 43 differ, all by the custom tiles; a fresh run agrees).
+
+| File | Written by | What it is | Status |
+|---|---|---|---|
+| `terrain.tile_list` | Tilemap | the placements | the port's fill exact (`wce_relief` 73 / 73, docs/re/battle_maps.md for the rest) |
+| `tile_map.index` / `.tiles` | Tilemap, with `save_final_tile_map` | the final tile map (v9) | the port's `fill_kit_tile_map` + writer: `main_attila_map` byte-identical (116 834 848 bytes); on `wce_relief` every byte but BOB's uninitialised LF floats of non-origin cells |
+| `lf_height_map.dds` | Heights & Normals | L16, no mips, the TIFF's samples through `trunc(f32(f32(a * f32(1 / 65535)) * f32(65535)))` (a sample one step lower now and then) | rule exact on all 46 719 744 samples of `main_attila_map` and on `wce_relief` |
+| `lf_sea_height_map.dds` | Heights & Normals | L16 with a full mip chain (to 2 x 2: 11 levels for 4064 x 2874); level 0 as above; each level from the float level above: `f32(((a + b) + c) + d) * 0.25` over the 2 x 2 block, then truncated the same way | exact on every level of `wce_relief`; level 0 of `main_attila_map` exact |
+| `lf_height_map.data` | Heights & Normals | CHMF v5 of the raw LF samples (header min = the lowest sample, max 65535; spacing 1); regions of 16 x 16 cells (cells of 8 x 8 samples on a settlement map, 4 x 4 on the campaign one: 11 430 regions) | `wce_formats::chmf::encode_region` gives every block; the region's tag is `[region min, 65535]` (the encoder writes `[min, max]`) |
+| `locations.blm` | Tilemap, with `save_meta_data_map` | the `.terry`'s BCAs by type, in entity order; header and the climate table as the game's | counts = the `.terry`'s per type; 5 of 9 types record for record as the game's (its `.terry` was older for the procedural ones). Centre = the BCA's position in cells (`x / 256 + width / 2`, `height / 2 - z / 256`), rectangle from its `Catchment Region` child; the rounding to cells is open |
+| `locations.blm.mask0` / `.mask1` | Tilemap, with `save_meta_data_map` | a u16 bitset per cell | open: the low bits of `mask0` look like `1 << climate` (the blm's climate order); other bits follow the placed tiles (their data was not in the scratch kit) and maybe the BCAs. `main_attila_map`: `mask0` agrees with the game's on no cell, `mask1` on 75 % |
+| `deployment/deployment_NNNN.xml` | Tilemap, with `save_meta_data_map` | `BATTLE_DEPLOYMENT_AREA_HASH_TABLE`: per alliance a `deployment_area` (category `DAC_*`) of `standard additive` boundaries, tile-local units | one file per two `ECDeploymentZone`s (1 766 -> 883); the game's 2 074 come from another `.terry` |
+| `<map>.agf`, `entities.agf` | all | BOB's asset list (`##folder`, `#all`, `#tiles`) | text |
+
+- `Terry file` (7 s on the 32 MB project) writes nothing visible; the blm, masks and deployments come out of `Tilemap` when the map's
+  folder has a `rules.bob` with `save_meta_data_map` (docs/re/bob.md).
+- No normal chunks were written: the game's 736 come from elsewhere (the kit's 250 MB `normal.dds`; open).
+- `Tilemap` logs "Failed to find tile for point 360x977" (and three more points) on `main_attila_map`; the port gives 4 messages too.
+
 ## Open
 
-- What `Terry file` writes (the `.terry` -> `locations.blm` / `.mask0` / `.mask1` and the 2 074 deployment files of `terrain.pack`), and
-  what `Heights & Normals` writes (`lf_height_map.dds` / `.data`, `lf_sea_height_map.dds`, the 736 normal chunks): BOB on a scratch kit is
-  the oracle.
+- The blm rectangles' rounding, the masks' bits, where the game's 736 normal chunks come from.
 - The falloff models' formulas (`Radius Sin`, `Radius Sin Sin`) and `OpSimpleChannel0`'s properties.
 - The BCA generator's algorithm (the `Zonifier`): black box first (run it in Thrones' Terry on a scratch map, diff the `.terry`).
