@@ -1,0 +1,15 @@
+[package]
+name = "wce_map_view"
+description = "A battle map on the scene, streamed around the camera (the map context's streamer driven for a tool: chunks on the scene once their GPU side is ready, the sea, the far ring, snow regions, the overview map), and the battle maps a view shows (the game's and the kits'). Shared by the Tile tool's map context and the Terrain tool."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wce_editor = { path = "../wce_editor" }
+wce_foundation = { path = "../wce_foundation" }
+wce_scene = { path = "../wce_scene" }
+wce_tile = { path = "../wce_tile" }
+wce_tile_editor = { path = "../wce_tile_editor" }
+wce_tile_io = { path = "../wce_tile_io" }
+wce_vfs = { path = "../wce_vfs" }

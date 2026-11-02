@@ -2420,6 +2420,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_map_view"
+version = "0.0.1"
+dependencies = [
+ "wce_editor",
+ "wce_foundation",
+ "wce_scene",
+ "wce_tile",
+ "wce_tile_editor",
+ "wce_tile_io",
+ "wce_vfs",
+]
+
+[[package]]
 name = "wce_render"
 version = "0.0.1"
 dependencies = [
@@ -2536,6 +2549,7 @@ dependencies = [
  "wce_editor_core",
  "wce_formats",
  "wce_foundation",
+ "wce_map_view",
  "wce_render",
  "wce_scene",
  "wce_siege",

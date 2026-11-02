@@ -478,7 +478,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("map_context_settle", "map_context_settle", "wait until the map context's chunks around the camera are on the scene; says what it has", |e, _| {
         with_tile(e, |t, e| {
-            if t.context.streamer.is_none() {
+            if t.context.view.streamer.is_none() {
                 return fail("no map context");
             }
 
