@@ -204,6 +204,22 @@ fn database_root(e: &Editor) -> Option<PathBuf> {
     kit_roots(e).into_iter().find(|r| r.join("terrain/tiles/battle/_tile_database").is_dir())
 }
 
+/// The land nearest the map's centre (a sample above the sea, on a grid of about 256 a side), where a map's view starts: the campaign
+/// map's centre is the Aegean, a view of fog and water. None for a map all under the sea.
+fn land_near_centre(lf: &wce_scene::render_scene::LfMap) -> Option<Float3> {
+    const ABOVE_SEA: f32 = 20.0;
+    let v = lf.values.read();
+    let stride = (lf.nx.max(lf.nz) / 256).max(1);
+    let (ci, cj) = (-lf.x0 / lf.step, -lf.z0 / lf.step);
+    (0..lf.nz).step_by(stride as usize)
+        .flat_map(|j| (0..lf.nx).step_by(stride as usize).map(move |i| (i, j)))
+        .map(|(i, j)| (lf.x0 + i as f32 * lf.step, lf.z0 + j as f32 * lf.step, (i as f32 - ci).powi(2) + (j as f32 - cj).powi(2)))
+        .map(|(x, z, d)| (x, z, d, lf.height_in(&v, x, z)))
+        .filter(|&(.., h)| h > ABOVE_SEA)
+        .min_by(|a, b| a.2.total_cmp(&b.2))
+        .map(|(x, z, _, h)| Float3::new(x, h, z))
+}
+
 /// Reads a map (a worker's job).
 fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
     let packs_folder = game_map_folder(&i.name, i.game_dir);
@@ -375,7 +391,7 @@ impl TerrainTool {
         }
     }
 
-    /// A view's frame made: the view on the scene, the camera where it was on this map (else over its centre).
+    /// A view's frame made: the view on the scene, the camera where it was on this map (else over the land nearest its centre).
     fn show(&mut self, e: &mut Editor, id: DocumentId, s: Box<Streamer>) {
         if self.shown != 0 {
             self.cameras.insert(self.shown, e.viewport.camera());
@@ -383,6 +399,7 @@ impl TerrainTool {
 
         self.light(e, id);
         let lift = s.frame().lift(0.0, 0.0);
+        let start = s.frame().lf.as_ref().and_then(|lf| land_near_centre(lf));
         self.pick = s.frame().lf.clone().map(LfPick::new);
         self.cursor = None;
         self.painting = None;
@@ -394,8 +411,8 @@ impl TerrainTool {
         self.shown = id;
         self.building = 0;
         let cam = self.cameras.get(&id).copied().unwrap_or_else(|| {
-            let target = Float3::new(0.0, lift, 0.0);
-            wce_scene::camera::Camera { eye: target + Float3::new(0.0, 1800.0, -2600.0), target, ..e.viewport.camera() }
+            let target = start.unwrap_or(Float3::new(0.0, lift, 0.0));
+            wce_scene::camera::Camera { eye: target + Float3::new(0.0, 1200.0, -900.0), target, ..e.viewport.camera() }
         });
 
         e.viewport.controller().set_camera(&cam);
