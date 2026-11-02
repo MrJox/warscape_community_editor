@@ -70,6 +70,9 @@ struct Plan {
     /// The battle map when it is a position in a map; `None`: the tile alone (its folder is known after the export).
     position: Option<BattleMap>,
 
+    /// The tile's deployment zones in the battle's frame (a tile alone).
+    zones: Vec<launch::Zone>,
+
     /// The editor's mounted files (the release, its mod packs, its loose folders), and its mod packs that are in `data\`.
     vfs: Option<Arc<Vfs>>,
     mods: Vec<String>,
@@ -112,7 +115,7 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
     };
 
     let map = plan.position.take().unwrap_or_else(|| BattleMap::Tile(folder.clone()));
-    let xml = launch::battle_xml(&Battle { map, cells: plan.cells, weather: plan.weather.clone(), sea_surface: plan.sea_surface.clone(), army: &plan.army, facts: &plan.game.launch });
+    let xml = launch::battle_xml(&Battle { map, cells: plan.cells, weather: plan.weather.clone(), sea_surface: plan.sea_surface.clone(), army: &plan.army, facts: &plan.game.launch, zones: &plan.zones });
     files.push((launch::BATTLE_XML.to_owned(), xml.as_bytes().to_vec()));
 
     // Loose files, with the mod packs their assets need; the pack when loose files would lose to one of them.
@@ -398,10 +401,20 @@ impl TileTool {
         });
         let mods: Vec<String> = e.selected_mod_packs().into_iter().filter(|m| data.join(m).is_file()).collect();
         let before = STEPS.map(|(k, _)| settings.step_seconds.get(k).copied());
+
+        // The tile's deployment zones, from its centre (a tile alone; at a map position the map has its own).
+        let zones = if position.is_some() { vec![] } else {
+            let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+            let centre = (f64::from(info.cells_x) * launch::CELL_UNITS / 2.0, f64::from(info.cells_y) * launch::CELL_UNITS / 2.0);
+            d.tile().deployment_zones().into_iter().filter_map(|(alliance, z)| Some(launch::Zone {
+                alliance: alliance.parse().ok()?,
+                polygons: z.polygons.into_iter().map(|(k, p)| (launch::Zone::boundary_type(k), p.into_iter().map(|q| [q[0] - centre.0, q[1] - centre.1]).collect())).collect(),
+            })).collect()
+        };
         let loose = settings.delivery == LaunchDelivery::Loose;
         let plan = Plan {
             inputs: self.export_inputs(e)?, staging: staging.clone(), cells: (info.cells_x, info.cells_y), weather: BattleWeather::from_tile(self.weather.choice()),
-            sea_surface: sea_surface.unwrap_or_default(), settings, game: profile, army, position, vfs: e.vfs().cloned(), mods, copy_to: (!dry_run).then(|| data.join(LAUNCH_PACK)),
+            sea_surface: sea_surface.unwrap_or_default(), settings, game: profile, army, position, zones, vfs: e.vfs().cloned(), mods, copy_to: (!dry_run).then(|| data.join(LAUNCH_PACK)),
         };
 
         activity::clear();
