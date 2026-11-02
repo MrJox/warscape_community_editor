@@ -130,6 +130,47 @@ pub struct Battle<'a> {
 
     /// What the game's battle XML has.
     pub facts: &'a LaunchFacts,
+
+    /// The tile's deployment zones (a tile alone; at a map position the map's own are the game's): each army's area is the one of its
+    /// `deployment_area_alliance_index`, its unit inside it. None: the whole tile for both, as the benchmarks have it.
+    pub zones: &'a [Zone],
+}
+
+/// A tile's deployment zone in the battle's frame (a tile alone: scene units from the tile's centre, +y its +z; docs/re/game_command_
+/// line.md, "The battle's frame"): its `alliance_id`, its polygons with their boundary types.
+#[derive(Clone, Debug, Default)]
+pub struct Zone {
+    pub alliance: u32,
+    pub polygons: Vec<(&'static str, Vec<[f64; 2]>)>,
+}
+
+impl Zone {
+    /// The battle XML's boundary type of a polygon kind.
+    pub fn boundary_type(kind: wce_siege::ZoneKind) -> &'static str {
+        match kind {
+            wce_siege::ZoneKind::Additive => "standard additive",
+            wce_siege::ZoneKind::Subtractive => "standard subtractive",
+            wce_siege::ZoneKind::GuerrillaAdditive => "guerrilla exclusion additive",
+            wce_siege::ZoneKind::GuerrillaSubtractive => "guerrilla exclusion subtractive",
+        }
+    }
+
+    /// The point of the zone (in a standard additive polygon and no standard subtractive one, `margin` from their edges) nearest `near`,
+    /// on a 10 unit grid within `half` of the centre.
+    pub fn spot(&self, near: [f64; 2], half: (f64, f64), margin: f64) -> Option<[f64; 2]> {
+        use wce_siege::raster::{dist, inside};
+        let of = |t: &'static str| self.polygons.iter().filter(move |(k, p)| *k == t && p.len() >= 3).map(|(_, p)| p);
+        let edge_gap = |p: [f64; 2]| {
+            of("standard additive").chain(of("standard subtractive")).flat_map(|poly| (0..poly.len()).map(move |i| (poly[i], poly[(i + 1) % poly.len()]))).map(|(a, b)| {
+                let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+                let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (dx * dx + dz * dz).max(1e-9)).clamp(0.0, 1.0);
+                dist(p, [a[0] + t * dx, a[1] + t * dz])
+            }).fold(f64::MAX, f64::min)
+        };
+        let ok = |p: [f64; 2]| of("standard additive").any(|poly| inside(p, poly)) && !of("standard subtractive").any(|poly| inside(p, poly)) && edge_gap(p) >= margin;
+        let (nx, nz) = ((half.0 / 10.0) as i64, (half.1 / 10.0) as i64);
+        (-nx..=nx).flat_map(|i| (-nz..=nz).map(move |j| [i as f64 * 10.0, j as f64 * 10.0])).filter(|&p| ok(p)).min_by(|a, b| dist(*a, near).total_cmp(&dist(*b, near)))
+    }
 }
 
 /// Text for an XML attribute or element.
@@ -163,18 +204,35 @@ pub fn battle_xml(b: &Battle) -> String {
             a += &format!("\t\t\t<deployment_area_alliance_index>{}</deployment_area_alliance_index>\n", 1 - id);
         }
 
+        // The tile's zone of the army's index, when it has one: its polygons as they are, the unit in it (where it would stand without).
+        let zone = b.zones.iter().find(|z| z.alliance == 1 - id).filter(|z| z.polygons.iter().any(|(k, _)| *k == "standard additive"));
+        let at = zone.and_then(|z| z.spot([0.0, y], (dx, dy), 25.0)).unwrap_or([0.0, y]);
         a += "\t\t\t<deployment_area>\n";
-        a += &boundary("standard additive");
-        a += &boundary("guerrilla exclusion additive");
-        if attacker {
-            a += &boundary("guerrilla exclusion subtractive");
+        match zone {
+            Some(z) => {
+                for (kind, pts) in &z.polygons {
+                    a += &format!("\t\t\t\t<boundary type='{kind}'>\n");
+                    for p in pts {
+                        a += &format!("\t\t\t\t\t<position x='{:.0}' y='{:.0}'/>\n", p[0], p[1]);
+                    }
+
+                    a += "\t\t\t\t\t<orientation radians=\"0.00\"/>\n\t\t\t\t</boundary>\n";
+                }
+            }
+            None => {
+                a += &boundary("standard additive");
+                a += &boundary("guerrilla exclusion additive");
+                if attacker {
+                    a += &boundary("guerrilla exclusion subtractive");
+                }
+            }
         }
 
         a += "\t\t\t</deployment_area>\n";
         a += &format!(
-            "\t\t\t<unit script_name=\"{name}\">\n\t\t\t\t<unit_type type=\"{}\"/>\n\t\t\t\t<position x=\"0\" y=\"{y}\"/>\n\t\t\t\t<orientation radians=\"0\"/>\n\
+            "\t\t\t<unit script_name=\"{name}\">\n\t\t\t\t<unit_type type=\"{}\"/>\n\t\t\t\t<position x=\"{:.0}\" y=\"{:.0}\"/>\n\t\t\t\t<orientation radians=\"0\"/>\n\
              \t\t\t\t<width metres=\"20\"/>\n\t\t\t\t<unit_experience level=\"0\"/>\n\t\t\t</unit>\n\t\t</army>\n",
-            esc(unit)
+            esc(unit), at[0], at[1]
         );
         a += "\t\t<victory_condition>\n\t\t\t<kill_or_rout_enemy></kill_or_rout_enemy>\n\t\t</victory_condition>\n";
         if attacker && settlement {
@@ -596,6 +654,33 @@ mod tests {
         LaunchArmy::default().resolved(&wce_vfs::GameProfile::ATTILA.launch)
     }
 
+    /// A tile with CA's zones: the defender's a square round the centre, the attacker's the map less a hole round it. Each army takes
+    /// the zone of its index as it is, its unit inside it clear of the edges.
+    #[test]
+    fn a_tile_alone_takes_its_deployment_zones() {
+        let square = |h: f64| vec![[-h, -h], [h, -h], [h, h], [-h, h]];
+        let zones = [
+            Zone { alliance: 1, polygons: vec![("standard additive", square(200.0)), ("guerrilla exclusion additive", square(300.0))] },
+            Zone { alliance: 0, polygons: vec![("standard additive", square(1100.0)), ("standard subtractive", square(400.0))] },
+        ];
+        let s = attila_army();
+        let map = BattleMap::Tile("terrain/tiles/battle/assembly_kit/x/battlefield".to_owned());
+        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &wce_vfs::GameProfile::ATTILA.launch, zones: &zones });
+        assert!(x.contains("<boundary type='standard subtractive'>\n\t\t\t\t\t<position x='-400' y='-400'/>"));
+        assert!(!x.contains("y='952'"), "a whole-tile area was written");
+
+        let unit = |name: &str| {
+            let at = x.find(&format!("script_name=\"{name}\"")).expect("the unit");
+            let pos = &x[at..][x[at..].find("<position x=\"").expect("its position") + 13..];
+            let xs = pos.split('"').collect::<Vec<_>>();
+            [xs[0].parse::<f64>().expect("x"), xs[2].parse::<f64>().expect("y")]
+        };
+        let d = unit("wce_defender");
+        assert!(d[0].abs() <= 175.0 && d[1].abs() <= 175.0, "the defender at {d:?}");
+        let a = unit("wce_attacker");
+        assert!(a[0].abs().max(a[1].abs()) >= 425.0, "the attacker at {a:?}");
+    }
+
     #[test]
     fn coastal_sets() {
         for set in ["sea", "sea_coast", "sea_coast_landing", "settlement_western_ports", "river_mouth_shallow"] {
@@ -611,7 +696,7 @@ mod tests {
     fn tile_battle_as_tested() {
         let s = attila_army();
         let facts = wce_vfs::GameProfile::ATTILA.launch;
-        let x = battle_xml(&Battle { map: BattleMap::Tile("terrain/tiles/battle/plains/8x8/8x8_aa".to_owned()), cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &facts });
+        let x = battle_xml(&Battle { map: BattleMap::Tile("terrain/tiles/battle/plains/8x8/8x8_aa".to_owned()), cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &facts, zones: &[] });
         assert!(x.contains("<name>terrain/tiles/battle/plains/8x8/8x8_aa</name>"));
         assert!(!x.contains("tile_map_position"));
         assert!(x.contains("<type>land_normal</type>"));
@@ -632,7 +717,7 @@ mod tests {
         let game = &wce_vfs::GameProfile::ROME_2;
         let s = LaunchArmy { tile_upgrades: "level1".to_owned(), ..LaunchArmy::default() }.resolved(&game.launch);
         let map = BattleMap::Position { map: format!("{}/", game.campaign_battle_map), x: 0.5, y: 0.5, settlement: true };
-        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &game.launch });
+        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &game.launch, zones: &[] });
         assert!(x.contains("<faction>rom_rome</faction>") && x.contains("<unit_type type=\"Rom_Hastati\"/>"));
         assert!(x.contains("<faction>rom_suebi</faction>") && x.contains("<unit_type type=\"Ger_Spear_Levy\"/>"));
         assert!(x.contains("<subculture>sc_rom_roman</subculture>") && x.contains("<name>terrain/battles/main_rome_map/</name>"));
@@ -643,7 +728,7 @@ mod tests {
     fn settlement_position() {
         let s = LaunchArmy { tile_upgrades: "level1 escalation3".to_owned(), ..attila_army() };
         let map = BattleMap::Position { map: "terrain/battles/main_attila_map/".to_owned(), x: 310.0 / 2032.0, y: 324.0 / 1437.0, settlement: true };
-        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: "wind_level_2".to_owned(), army: &s, facts: &wce_vfs::GameProfile::ATTILA.launch });
+        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: "wind_level_2".to_owned(), army: &s, facts: &wce_vfs::GameProfile::ATTILA.launch, zones: &[] });
         assert!(x.contains("</battle_description>
 	<sea_surface_name>wind_level_2</sea_surface_name>
 	<weather>"));
