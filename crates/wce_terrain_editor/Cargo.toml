@@ -1,0 +1,12 @@
+[package]
+name = "wce_terrain_editor"
+description = "The Terrain tool's document (docs/plans/terrain_editor.md): a battle map open in the editor, its model (wce_terrain), its placements and battle locations; what it shows is streamed by wce_map_view."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+wce_editor_core = { path = "../wce_editor_core" }
+wce_scene = { path = "../wce_scene" }
+wce_terrain = { path = "../wce_terrain" }
+wce_tile = { path = "../wce_tile" }

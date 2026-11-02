@@ -2332,6 +2332,7 @@ dependencies = [
  "wce_foundation",
  "wce_imgui",
  "wce_render",
+ "wce_terrain_tool",
  "wce_tile_tool",
  "wce_ui_tool",
  "wce_weather_tool",
@@ -2472,6 +2473,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "wce_terrain_editor"
+version = "0.0.1"
+dependencies = [
+ "wce_editor_core",
+ "wce_scene",
+ "wce_terrain",
+ "wce_tile",
+]
+
+[[package]]
 name = "wce_terrain_io"
 version = "0.0.1"
 dependencies = [
@@ -2481,6 +2492,23 @@ dependencies = [
  "wce_terrain",
  "wce_tile",
  "wce_tile_model",
+ "wce_vfs",
+]
+
+[[package]]
+name = "wce_terrain_tool"
+version = "0.0.1"
+dependencies = [
+ "wce_editor",
+ "wce_editor_core",
+ "wce_foundation",
+ "wce_map_view",
+ "wce_scene",
+ "wce_terrain",
+ "wce_terrain_editor",
+ "wce_terrain_io",
+ "wce_tile",
+ "wce_tile_editor",
  "wce_vfs",
 ]
 
