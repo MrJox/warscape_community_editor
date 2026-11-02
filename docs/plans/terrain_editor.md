@@ -184,8 +184,15 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    the view follows the active map document (each map keeps its camera); scripts `terrain_open`, `terrain_settle`, `terrain_view`. The
    campaign battle map from the packs at its centre: 15.2 ms a frame (p95 17.4), CPU-bound, 100 251 draw items (RX 7900 XTX).
    DEVIATION (for now): the map is lit by the first day, dry weather of the climate at its centre (`weather/<climate>/`), not the Tile
-   tool's weather choice. Left: the Map panel (2D), the overlays, the LF picking pyramid, an editor option to thin the fog for high views
-   (the weather's fog washes out the map from 9 km up).
+   tool's weather choice. Left: the Map panel (2D), the overlays, an editor option to thin the fog for high views (the weather's fog
+   washes out the map from 9 km up).
+   **LF picking (2026-11-02).** `wce_terrain::pyramid::HeightPyramid`: min / max over 8 x 8-cell leaf blocks, merged 2 x 2 to one root;
+   a ray descends nearest block first and meets each cell's bilinear surface exactly (a quadratic along the ray; the field is solid below
+   its surface, so a ray coming in through a side meets it there); `update` measures again only the blocks an edit touched. Tests: 240
+   rays in every direction against a fine march. The campaign battle map's LF (8 128 x 5 748, `lf_pyramid_bench`): made in 8 ms (about
+   4 MB), 1.6 us a ray, a 256 x 256 edit's update 84 us. The Terrain tool keeps one for the shown map (from its view's LF) and shows the
+   LF under the cursor (cell, metres, raw sample); `terrain_pick <x> <y>` for scripts. At Rome: cell (619.24, 676.25), 59.88 m, the
+   median the map context reported under its tile.
    **Frame time (2026-11-02).** CPU-bound (half the render scale changed nothing). Where it went and what was done, the Terrain tool on
    the campaign battle map, default rings, game view distance, RX 7900 XTX:
    - the terrain's ~5 500 entities (mostly far LF ground) made ready per view (5 times a frame, 0.46 ms each) and every patch tested in

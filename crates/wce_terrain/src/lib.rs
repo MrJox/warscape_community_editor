@@ -5,6 +5,7 @@ pub mod cells;
 pub mod explicit;
 pub mod map;
 pub mod paged;
+pub mod pyramid;
 pub mod terry;
 
 pub use map::{Item, LayerRole, LfRole, MapKind, MapModel};
