@@ -98,6 +98,27 @@ built with an older tile database: they are not fill oracles (33 of 43 differ, a
 - No normal chunks were written: the game's 736 come from elsewhere (the kit's 250 MB `normal.dds`; open).
 - `Tilemap` logs "Failed to find tile for point 360x977" (and three more points) on `main_attila_map`; the port gives 4 messages too.
 
+## Per-tile LF patches (Ghidra, 2026-11-03)
+
+Project `kit` in `I:\wce_scratch\ghidra_kit` (Attila's `TWeak_TerrainMetadataEditor.AssemblyKit.dll` and `ToolDataBuilderDll.AssemblyKit.dll`,
+image base 0x10000000).
+
+- Terry's `Apply Per-Tile LF Patches` (action `on_apply_lf_patches()`, fn 0x100018d0, `ApplyPerTileLFPatches.cpp`): the map's tile
+  instances grouped by variation; each variation folder's `lf_mask.tif` read as a scalar field (none: skipped); for each instance
+  `TerrainMetadataEditor::apply_lf_patch` (fn 0x10001270): the mask must be the tile's cells times the samples a cell; its rectangle at the
+  instance's origin cell times that (turned: w and h swap for 0x20 / 0x80) must lie in the LF, else the instance is skipped; every mask
+  sample below 0.9 (`DAT_100c2ec8`) is written into the LF sample under it, the others leave it. Mask sample (u, v) goes to the field at
+  (fn 0x10001080, rotation = the instance's flags & 0xf0): 0x20 (h - 1 - v, u), 0x40 (w - 1 - u, h - 1 - v), 0x80 (v, w - 1 - u), else
+  (u, v). One undo step, "Apply LF Patches". Tiles with a mask: the custom-mesh cliffs (0 on the low side, 65535 on the plateau) and the
+  `sea` set (all 0).
+- BOB has the same walk, `apply_per_tile_lf_patches` (fn 0x1002c5c0, `TerrainProcessor.cpp`, the same transform at fn 0x1002c4f0), which
+  multiplies the LF by the mask (fn 0x1002c3f0), but nothing calls it (no call, jump or address of it in the DLL): BOB builds the LF as the
+  TIFF has it, which agrees with the heights outputs matching the TIFF's byte for byte.
+- No Attila kit map has them applied: on all 113 every low sample under a patch differs from the mask (the campaign map: 2.1 million
+  samples, mostly the coasts under sea tiles). So the orientation could not be checked on data; both DLLs agree on it.
+- The editor: `wce_terrain::lf_patch`, the Terrain tool's "Apply per-tile LF patches" (`terrain_lf_patches`). ASSUMPTION: the mask and
+  the LF are read as 0 .. 1 of 65535, so the value written is the mask's raw sample (the masks hold only 0 and 65535).
+
 ## Open
 
 - The blm rectangles' rounding, the masks' bits, where the game's 736 normal chunks come from.

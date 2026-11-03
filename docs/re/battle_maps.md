@@ -208,7 +208,7 @@ plains (aa .. ad) elsewhere.
     geometry (no patches); `vs30_custom_geom` (the surface's `vs30_geom` with the position made (x, 2 y, -z, 1), on the LF) draws it into
     the terrain's depth passes, so the tile's blend box projects its material onto it, and `vs30_custom_geom_mat` + `ps30_custom_geom_mat`
     add the albedo (`<name>_<climate>_diffuse.dds`, else `_default_`) to the blend accumulation with the weight `10 * N0.w`. `lf_mask` is
-    applied by the kit's tools when a map is built (`apply_per_tile_lf_patches`); the game never reads it.
+    Terry's to apply, on request (`Apply Per-Tile LF Patches`; BOB's copy is never called: docs/re/terry.md); the game never reads it.
   - The editor (`context::custom_mesh`, `renderer::terrain_custom`) draws them so. The tile frame's z runs to the map's south, the scene's
     to the north: a vertex is at (x, y, depth + z) (the placements say so: a cliff's plateau meets the land tiles south of it). Its terrain's
     patches are not drawn (zero heights: the LF there is the land the cliff drops from); under the sea beside the mesh `Frame::place` puts
@@ -233,7 +233,7 @@ plains (aa .. ad) elsewhere.
     Only where the land LF under the tile is at or under the sea (the median of its quarter-cell samples at most 10 m above 0;
     `Frame::on_sea_lf`): TDD builds the Long Lake of `rom_third_age_map` from `sea` tiles on a flat 626 m LF, and its battle sea LF is
     -20 m there; on it the lake's tiles sank 646 m into pits between their coast tiles.
-  - Open: the LOD rule the game uses for them; what `apply_per_tile_lf_patches` does to the LF.
+  - Open: the LOD rule the game uses for them. (What the LF patches do: docs/re/terry.md, "Per-tile LF patches".)
 - ASSUMPTIONS / known gaps: the median-LF reference for the open tile (above); the LF bilinear in the CPU lift and the shader on the same
   lattice (4.6 cm steps: the 16-bit LF); the tiles' alpha is the game's per-size texture (below, 2026-10-31); at the far ring's outer edge
   one can see under the ground's last edge in thin lines (master too); new tiles' material maps (mip chains) are built on the render thread

@@ -18,7 +18,7 @@ Status: **Phases 0, 1 and 2 done (2026-11-02); the user's decisions are in "Deci
 | 2D tile map view | a Map panel: the cell layers as an image (one texel a cell), pan / zoom, the same tools as the 3D view; the overview map stays | 2 |
 | Paint tile sets (layers, fill), place / move / rotate / remove explicit tiles | cell layer painting (tile set, tile / variation colours, climate, culture, snow per season), explicit tiles with the gizmo and the fit test (`test_final_tile_position`) | 4 |
 | Paint LF heights and sea LF (falloff / image / disk / square brushes, size, aspect, rotation; one add / subtract operation; undo optional) | the tile tool's brushes and operations (raise, lower, smooth, flatten, level, ramp, noise, image brushes, falloff curves) on a paged LF field, always with undo; aspect ratio and rotation added | 3 |
-| Apply (per-tile) LF patches | the custom-mesh tiles' `lf_mask.tif` into the LF (RE: what `apply_per_tile_lf_patches` does, docs/re/battle_maps.md) | 3 |
+| Apply (per-tile) LF patches | the custom-mesh and sea tiles' `lf_mask.tif` into the LF (docs/re/terry.md, "Per-tile LF patches") | 3 |
 | Entities: battle catchment areas, deployment zones and regions, rivers, prop meshes, VFX, environment volumes, season masks; spot / circle / rectangle / polyline / spline creation; gizmo, clone, multi-selection, scene tree, properties, undo view | the `.terry` scene as a lossless ECS model; the editor's outliner, inspector (multi-selection), gizmo and creation modes; overlays draped on the ground | 5 |
 | Generate battle catchment areas (`bca_generation_spec.xml`) | the generator ported, Thrones' Terry as the oracle | 6 |
 | BOB_Terrain: `Terry file`, `Tilemap`, `Heights & Normals` | reimplemented, BOB as the oracle (docs/plans/tile.md decisions); pack output; Launch in game at a chosen location | 7 |
@@ -245,8 +245,10 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    field, with undo, redo and save (`lf_sea_heights.tif` rewritten in its pixels only). Dabs every quarter of the radius along the
    stroke's path (`spacing`): the same stroke however fast the mouse goes (`terrain_stroke`: 2, 7 and 200 moves, the same field).
    Note for scripts: a `shot` is taken a frame or more later, so the command after it may already show (`frames 5` after each).
-   Left: the per-tile LF patches, writing the built files on save / export (Phase 7), the edits of a map with a different view lattice
-   (only the map's own frame mirrors).
+   The per-tile LF patches (Terry's `Apply Per-Tile LF Patches`, decompiled: docs/re/terry.md): `wce_terrain::lf_patch`, a button and
+   `terrain_lf_patches`, one undo step; no kit map has them applied (BOB never calls its copy).
+   Left: writing the built files on save / export (Phase 7), the edits of a map with a different view lattice (only the map's own frame
+   mirrors). **Phase 3 done (2026-11-03)** but for those.
 4. **Tile map editing**: the cell layers, explicit tiles, the fill on a worker and the partial rebuild, validation; `Tilemap` against BOB.
 5. **The `.terry` scene**: the ECS model, outliner, inspector, gizmo, creation modes, overlays; `Terry file` against BOB.
 6. **BCA generation**: the spec, the generator, its errors file; Thrones' Terry's output as the oracle.
