@@ -2,6 +2,7 @@
 
 mod cell_paint;
 mod map_panel;
+mod refill;
 mod tool;
 
 pub use tool::TerrainTool;

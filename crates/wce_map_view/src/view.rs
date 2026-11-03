@@ -100,7 +100,7 @@ impl MapView {
         self.layer
     }
 
-    pub fn frame(&self) -> Option<&Arc<Frame>> {
+    pub fn frame(&self) -> Option<Arc<Frame>> {
         self.streamer.as_ref().map(|s| s.frame())
     }
 

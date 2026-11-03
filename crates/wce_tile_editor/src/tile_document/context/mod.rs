@@ -242,6 +242,66 @@ fn plain_material(base: &TerrainMaterial, id: u64, normal_id: u64) -> TerrainMat
     m
 }
 
+/// What a frame knows of the placements: who owns each cell, each cell's climate, the placements by the chunk of their origin, the most
+/// cells one reaches.
+struct MapIndex {
+    owner: Vec<u32>,
+    climate: Vec<u8>,
+    by_chunk: HashMap<ChunkKey, Vec<usize>>,
+    reach: i32,
+}
+
+impl MapIndex {
+    fn new(map: &PlacedMap, open: [i32; 4]) -> Self {
+        // The first to cover a cell owns it (the open tile, then the placements in the map's order).
+        let (w, h) = (map.width as i32, map.height as i32);
+        let cw = (w + CHUNK - 1) / CHUNK;
+        let mut owner = vec![0u32; (w.max(0) * h.max(0)) as usize];
+        let mut mark = |r: [i32; 4], who: u32| {
+            for y in r[1].max(0)..r[3].min(h) {
+                for x in r[0].max(0)..r[2].min(w) {
+                    let o = &mut owner[(y * w + x) as usize];
+                    if *o == 0 {
+                        *o = who;
+                    }
+                }
+            }
+        };
+
+        mark(open, 1);
+
+        // The climates, the same way (the open tile's own placement gives its cells theirs).
+        let mut climate = vec![NO_CLIMATE; (w.max(0) * h.max(0)) as usize];
+        for p in map.placements.iter().filter(|p| map.climate_of(p).is_some()) {
+            let r = p.rect();
+            for y in r[1].max(0)..r[3].min(h) {
+                for x in r[0].max(0)..r[2].min(w) {
+                    let c = &mut climate[(y * w + x) as usize];
+                    if *c == NO_CLIMATE {
+                        *c = p.climate;
+                    }
+                }
+            }
+        }
+
+        let mut by_chunk: HashMap<ChunkKey, Vec<usize>> = HashMap::new();
+        let mut reach = 0;
+        for (i, p) in map.placements.iter().enumerate() {
+            let r = p.rect();
+            if r[0] < open[2] && open[0] < r[2] && r[1] < open[3] && open[1] < r[3] {
+                continue;
+            }
+
+            let key = (p.x.div_euclid(CHUNK), p.y.div_euclid(CHUNK));
+            mark(r, (key.1 * cw + key.0) as u32 + 2);
+            reach = reach.max(r[2] - r[0]).max(r[3] - r[1]);
+            by_chunk.entry(key).or_default().push(i);
+        }
+
+        Self { owner, climate, by_chunk, reach }
+    }
+}
+
 /// The map seen from the open tile: its frame, its LF map, the placements by chunk and the cells they cover.
 pub struct Frame {
     pub map: Arc<PlacedMap>,
@@ -299,57 +359,26 @@ impl Frame {
         let lf = lf_map(&map, map.lf.as_ref(), LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
         let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
 
-        // The first to cover a cell owns it (the open tile, then the placements in the map's order).
-        let (w, h) = (map.width as i32, map.height as i32);
-        let cw = (w + CHUNK - 1) / CHUNK;
-        let mut owner = vec![0u32; (w.max(0) * h.max(0)) as usize];
-        let mut mark = |r: [i32; 4], who: u32| {
-            for y in r[1].max(0)..r[3].min(h) {
-                for x in r[0].max(0)..r[2].min(w) {
-                    let o = &mut owner[(y * w + x) as usize];
-                    if *o == 0 {
-                        *o = who;
-                    }
-                }
-            }
-        };
-
-        mark(open, 1);
-
-        // The climates, the same way (the open tile's own placement gives its cells theirs).
-        let mut climate = vec![NO_CLIMATE; (w.max(0) * h.max(0)) as usize];
-        for p in map.placements.iter().filter(|p| map.climate_of(p).is_some()) {
-            let r = p.rect();
-            for y in r[1].max(0)..r[3].min(h) {
-                for x in r[0].max(0)..r[2].min(w) {
-                    let c = &mut climate[(y * w + x) as usize];
-                    if *c == NO_CLIMATE {
-                        *c = p.climate;
-                    }
-                }
-            }
-        }
-
+        let index = MapIndex::new(&map, open);
         let kit_climates = ClimateList::load(&rq.raw_root.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
         let climates = effective_climates(kit_climates, "battle", files.as_deref());
-        let mut by_chunk: HashMap<ChunkKey, Vec<usize>> = HashMap::new();
-        let mut reach = 0;
-        for (i, p) in map.placements.iter().enumerate() {
-            let r = p.rect();
-            if r[0] < open[2] && open[0] < r[2] && r[1] < open[3] && open[1] < r[3] {
-                continue;
-            }
-
-            let key = (p.x.div_euclid(CHUNK), p.y.div_euclid(CHUNK));
-            mark(r, (key.1 * cw + key.0) as u32 + 2);
-            reach = reach.max(r[2] - r[0]).max(r[3] - r[1]);
-            by_chunk.entry(key).or_default().push(i);
-        }
-
+        let MapIndex { owner, climate, by_chunk, reach } = index;
         Self {
             map, unit: rq.unit, open, to_map, from_map, lf_level, lf_range, lf, sea_lf, by_chunk, owner, reach, climate, climates, look: rq.look.clone(),
             groups: rq.groups.clone(), files, plain_base: Mutex::new(rq.plain.clone()), plain_normal_id: next_id(&NORMAL_IDS), zeros: Mutex::default(),
             plain_bases: Mutex::default(), plains: Mutex::default(),
+        }
+    }
+
+    /// The same frame over other placements of the same map (the Terrain tool's fill run again after an edit): its LF maps, climates
+    /// and materials kept, the placements' chunks and cells worked out again (a while on the campaign map: away from the UI thread).
+    pub fn with_map(&self, map: Arc<PlacedMap>) -> Self {
+        let MapIndex { owner, climate, by_chunk, reach } = MapIndex::new(&map, self.open);
+        Self {
+            map, unit: self.unit, open: self.open, to_map: self.to_map, from_map: self.from_map, lf_level: self.lf_level, lf_range: self.lf_range,
+            lf: self.lf.clone(), sea_lf: self.sea_lf.clone(), by_chunk, owner, reach, climate, climates: self.climates.clone(), look: self.look.clone(),
+            groups: self.groups.clone(), files: self.files.clone(), plain_base: Mutex::new(self.plain_base.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()),
+            plain_normal_id: self.plain_normal_id, zeros: Mutex::default(), plain_bases: Mutex::default(), plains: Mutex::default(),
         }
     }
 

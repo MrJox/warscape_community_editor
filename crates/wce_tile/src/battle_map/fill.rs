@@ -93,8 +93,10 @@ pub struct MapImages<'a> {
     /// `x, y, tile path, rotation degrees` lines (explicit_tiles.txt).
     pub explicit_tiles: Option<&'a str>,
 
-    /// The low-frequency height field (0..1) and its size.
+    /// The low-frequency height field (0..1) and its size; or its 16-bit samples (the Terrain tool's field: the same heights, each
+    /// `f32(v) * (1 / 65535)`).
     pub lf: Option<(&'a [f32], u32, u32)>,
+    pub lf_u16: Option<(&'a [u16], u32, u32)>,
 }
 
 pub struct TileMapFill<'a> {
@@ -109,10 +111,30 @@ pub struct TileMapFill<'a> {
 
     /// (tile, variation) per placed index - 1 (`find_tile`).
     pub placed: Vec<(usize, usize)>,
+
+    /// What each cell's colour names, for the quick rejection (`quick_fail`): a tile's index, a set's index | `KEY_SET`, `KEY_NONE`.
+    keys: Vec<u32>,
+
+    /// Per tile and rotation, where `test_final_tile_position` checks its first cell: the offset of its first unmasked subtile and the
+    /// largest offsets of the subtiles before it and it (any of them off the map fails the rotation first).
+    firsts: Vec<[Option<First>; 4]>,
     links: Vec<Vec<bool>>,
 
     /// Lines BOB would print ("Failed to find tile for point x x y").
     pub messages: Vec<String>,
+}
+
+/// A cell key of a tile set (`TileMapFill::keys`), and of no tile or set.
+const KEY_SET: u32 = 0x8000_0000;
+const KEY_NONE: u32 = u32::MAX;
+
+/// The first cell a rotation of a tile checks (`TileMapFill::firsts`).
+#[derive(Clone, Copy, Debug)]
+struct First {
+    dx: i32,
+    dy: i32,
+    reach_x: i32,
+    reach_y: i32,
 }
 
 fn colour_eq(c: [f32; 3], p: [u8; 3]) -> bool {
@@ -127,7 +149,7 @@ impl<'a> TileMapFill<'a> {
         let n = (w * h) as usize;
         let mut f = Self {
             db, w, h, ids: vec![0; n], climates: vec![0; n], areas: vec![[i32::MAX, i32::MAX, i32::MIN + 1, i32::MIN + 1]; db.sets.len()],
-            rng: Rng(0x1234_4332), layers: [vec![Cell::EMPTY; n], vec![Cell::EMPTY; n]], placed: vec![],
+            rng: Rng(0x1234_4332), layers: [vec![Cell::EMPTY; n], vec![Cell::EMPTY; n]], placed: vec![], keys: vec![], firsts: vec![],
             links: vec![vec![false; db.sets.len() + 1]; n], messages: vec![],
         };
 
@@ -152,7 +174,59 @@ impl<'a> TileMapFill<'a> {
         }
 
         f.scan_tile_areas();
+        f.keys = f.ids.iter().map(|&id| {
+            if id == 0 {
+                KEY_NONE
+            } else if id & SET_BIT != 0 {
+                db.set_from_id(id).map_or(KEY_NONE, |s| s as u32 | KEY_SET)
+            } else {
+                db.tile_from_id(id).map_or(KEY_NONE, |t| t as u32)
+            }
+        }).collect();
+
+        f.firsts = db.tiles.iter().map(|tile| {
+            let mut out = [None; 4];
+            for (r, &rot) in ROTATIONS.iter().enumerate() {
+                let (mut reach_x, mut reach_y) = (0, 0);
+                'find: for sy in 0..tile.height {
+                    for sx in 0..tile.width {
+                        let (dx, dy) = rotate_in_tile_space(tile.width, tile.height, rot, sx, sy);
+                        (reach_x, reach_y) = (reach_x.max(dx), reach_y.max(dy));
+                        if tile.masked() && !tile.subtile_masked_valid(sx, sy) {
+                            continue;
+                        }
+
+                        out[r] = Some(First { dx, dy, reach_x, reach_y });
+                        break 'find;
+                    }
+                }
+            }
+
+            out
+        }).collect();
+
         f
+    }
+
+    /// Whether tile `t` at (x, y) surely fits in no rotation, from the first cell each rotation checks (`test_final_tile_position` stops
+    /// there): off the map, taken, nothing, or another tile's or set's (only the tile's own in an exact scan). False when unsure.
+    fn quick_fail(&self, t: usize, x: u32, y: u32, exact: bool) -> bool {
+        let set_key = self.db.tiles[t].set.map_or(KEY_NONE, |s| s as u32 | KEY_SET);
+        self.firsts[t].iter().all(|first| {
+            let Some(f) = first else { return false };
+            let (px, py) = (x as i32 + f.dx, y as i32 + f.dy);
+            if x as i32 + f.reach_x >= self.w as i32 || y as i32 + f.reach_y >= self.h as i32 || px < 0 || py < 0 {
+                return true;
+            }
+
+            let c = self.cell(px as u32, py as u32);
+            if self.layers[0][c].index != 0 {
+                return true;
+            }
+
+            let k = self.keys[c];
+            !(k == t as u32 || (!exact && k == set_key && k != KEY_NONE))
+        })
     }
 
     fn tile_id(&self, p: [u8; 3]) -> u32 {
@@ -459,6 +533,19 @@ impl<'a> TileMapFill<'a> {
     fn test_final_tile_position(&mut self, t: usize, x: u32, y: u32, shared: bool, resource: bool, climate: &mut u32, exact: bool) -> Option<(usize, u16)> {
         let db = self.db;
         let tile = &db.tiles[t];
+
+        // Sure to fit nowhere: only the draws the full test makes when nothing fits (BOB draws them all the same).
+        if !shared && !resource && self.quick_fail(t, x, y, exact) {
+            if tile.random_rotatable {
+                self.rng.below(tile.variations.len() as u32);
+                if self.w != 64 {
+                    self.rng.below(4);
+                }
+            }
+
+            return None;
+        }
+
         let (tw, th) = (tile.width, tile.height);
         let (mw, mh) = (self.w as i32, self.h as i32);
         let mut ok = [true; 4];
@@ -720,6 +807,16 @@ impl<'a> TileMapFill<'a> {
 
     /// `TILE_MAP::calculate_lf_min_maxs` (0x102e6ec0): the low-frequency height range under every placed tile, two cells around it.
     pub fn calculate_lf_min_maxs(&mut self, field: &[f32], fw: u32, fh: u32) {
+        self.lf_min_maxs(|i| field.get(i).copied(), fw, fh);
+    }
+
+    /// The same from 16-bit samples: the lowest and highest sample converted (the conversion keeps their order).
+    pub fn calculate_lf_min_maxs_u16(&mut self, field: &[u16], fw: u32, fh: u32) {
+        let scale = 1.0f32 / 65535.0;
+        self.lf_min_maxs(|i| field.get(i).map(|&v| f32::from(v) * scale), fw, fh);
+    }
+
+    fn lf_min_maxs(&mut self, at: impl Fn(usize) -> Option<f32>, fw: u32, fh: u32) {
         // In single precision, the start truncated (__ftol), as BOB computes it: on the campaign map (1437 rows, 4 field pixels per cell)
         // a start of 92 comes out as 91.99999 and takes one more row; the 64-cell maps are exact either way.
         let (mw, mh) = (self.w as f32, self.h as f32);
@@ -745,7 +842,7 @@ impl<'a> TileMapFill<'a> {
                 while (py as f32) < ey {
                     let mut px = sx as i64;
                     while (px as f32) < ex {
-                        let v = field.get(py as usize * fw as usize + px as usize).copied().unwrap_or(0.0);
+                        let v = at(py as usize * fw as usize + px as usize).unwrap_or(0.0);
                         lo = lo.min(v);
                         hi = hi.max(v);
                         px += 1;

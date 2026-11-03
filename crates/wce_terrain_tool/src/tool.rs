@@ -153,8 +153,10 @@ pub struct TerrainTool {
     /// The LF brush, the stroke being painted, the brush ring's layer and entity.
     paint: LfPaint,
 
-    /// The cell layers' painting.
+    /// The cell layers' painting; the fill run again after an edit of the layers it reads (and one wanted once the stroke ends).
     cells: crate::cell_paint::CellPaint,
+    refill: crate::refill::Refill,
+    refill_wanted: bool,
     painting: Option<Painting>,
 
     /// The shown map's fields mirrored into its view (a kit map's land and sea LF on the view's lattices), and the view's sea LF.
@@ -190,7 +192,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -547,6 +549,10 @@ impl TerrainTool {
             gui::text_disabled(&line);
         }
 
+        if let Some(t) = self.refill.elapsed() {
+            gui::text_colored([1.0, 0.8, 0.3, 1.0], &format!("filling the map with tiles again... {t:.0} s"));
+        }
+
         let lf_was = self.paint.on;
         self.draw_paint_section(e);
         let cells_was = self.cells.on;
@@ -801,9 +807,49 @@ impl TerrainTool {
     fn follow_cell_edits(&mut self, e: &mut Editor) {
         let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
         let touched = d.cells.take();
+        let fill_reads = |k: usize| d.model().and_then(|m| m.layers.get(k)).is_some_and(|(r, _)| matches!(r, wce_terrain::LayerRole::TileMap | wce_terrain::LayerRole::Climate));
+        self.refill_wanted |= touched.iter().any(|(k, _)| fill_reads(*k));
         let drape = !self.cells.painting();
         for (k, rect) in touched {
             self.map_panel.cells_changed(e, self.shown, k, rect, drape);
+        }
+
+        // The fill again once the stroke is done.
+        if self.refill_wanted && !self.cells.painting()
+            && let Some(frame) = self.view.frame()
+            && let Some(d) = e.docs.find_as::<MapDocument>(self.shown)
+        {
+            self.refill_wanted = false;
+            if self.refill.request(d, self.shown, frame) {
+                e.status("Terrain: filling the map with tiles again (BOB's fill)...", false);
+            }
+        }
+    }
+
+    /// A fill done: the map's placements replaced, the chunks whose placements changed built again.
+    fn follow_refill(&mut self, e: &mut Editor) {
+        let Some(done) = self.refill.poll() else { return };
+        if done.doc == self.shown
+            && let Some(d) = e.docs.find_as_mut::<MapDocument>(done.doc)
+        {
+            d.placed = done.map.clone();
+            if let Some(s) = self.view.streamer.as_mut() {
+                s.swap_frame(done.frame.clone(), &done.changed);
+            }
+
+            self.map_panel.placements_changed();
+            let failed = if done.messages.is_empty() { String::new() } else { format!(", {} cells with no tile that fits", done.messages.len()) };
+            let m = format!("Terrain: filled again in {:.1} s: {} placements, {} chunks changed{failed}", done.secs, done.map.placements.len(), done.changed.len());
+            self.status = m.clone();
+            e.status(&m, false);
+        }
+
+        if self.refill.again
+            && let Some(frame) = self.view.frame()
+            && let Some(d) = e.docs.find_as::<MapDocument>(self.shown)
+        {
+            self.refill.again = false;
+            self.refill.request(d, self.shown, frame);
         }
     }
 
@@ -1055,6 +1101,7 @@ impl Tool for TerrainTool {
         self.update_ring(e);
         self.follow_lf_edits(e);
         self.follow_cell_edits(e);
+        self.follow_refill(e);
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
@@ -1226,9 +1273,9 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_cells", "terrain_cells <layer> brush <x> <y> <radius> <r> <g> <b> | rect <x0> <y0> <x1> <y1> <r> <g> <b> | fill <x> <y> <r> <g> <b>", "the Terrain tool: one cell stroke on a kit map's layer (its index in the Cell layers list; rect corners inclusive), onto the history", |e, a| {
+        c.add("terrain_cells", "terrain_cells <layer index | tile_map | climate> brush <x> <y> <radius> <r> <g> <b> | rect <x0> <y0> <x1> <y1> <r> <g> <b> | fill <x> <y> <r> <g> <b>", "the Terrain tool: one cell stroke on a kit map's layer (its index in the Cell layers list; rect corners inclusive), onto the history", |e, a| {
             let usage = "usage: terrain_cells <layer> brush <x> <y> <radius> <r> <g> <b> | rect <x0> <y0> <x1> <y1> <r> <g> <b> | fill <x> <y> <r> <g> <b>";
-            let (Some(layer), Some(mode)) = (a.first().and_then(|v| v.parse::<usize>().ok()), a.get(1)) else { return CommandResult::fail(usage) };
+            let (Some(layer), Some(mode)) = (a.first().cloned(), a.get(1)) else { return CommandResult::fail(usage) };
             let n: Vec<i64> = a[2..].iter().filter_map(|v| v.parse().ok()).collect();
             let (mode, from, to, radius, colour) = match (mode.as_str(), &n[..]) {
                 ("brush", [x, y, rad, r, g, b]) => (0, (*x, *y), (*x, *y), *rad, [*r, *g, *b]),
@@ -1238,6 +1285,18 @@ impl Tool for TerrainTool {
             };
 
             with_terrain(e, |t, e| {
+                // A layer by index or role (tile_map, climate).
+                let role = match layer.as_str() {
+                    "tile_map" => Some(wce_terrain::LayerRole::TileMap),
+                    "climate" => Some(wce_terrain::LayerRole::Climate),
+                    _ => None,
+                };
+
+                let model = e.docs.find_as::<MapDocument>(t.shown).and_then(|d| d.model());
+                let Some(layer) = layer.parse::<usize>().ok().or_else(|| model.and_then(|m| m.layers.iter().position(|(r, _)| Some(r) == role.as_ref()))) else {
+                    return CommandResult::fail("no such layer on the shown map");
+                };
+
                 let saved = (t.cells.layer, t.cells.mode, t.cells.radius, t.cells.colour);
                 (t.cells.layer, t.cells.mode, t.cells.radius) = (layer, mode, radius as i32);
                 t.cells.colour = [colour[0] as u8, colour[1] as u8, colour[2] as u8, 255];
@@ -1255,6 +1314,29 @@ impl Tool for TerrainTool {
                     None => CommandResult::fail("no cells changed (no kit map, no such layer, or outside it)"),
                 }
             })
+        });
+
+        c.add("terrain_refill_wait", "terrain_refill_wait [seconds]", "the Terrain tool: waits for the fill run again after a cell edit (scripts)", |e, a| {
+            let limit = a.first().and_then(|v| v.parse::<f64>().ok()).unwrap_or(600.0);
+            let started = std::time::Instant::now();
+            loop {
+                let busy = with_terrain(e, |t, e| {
+                    t.follow_cell_edits(e);
+                    t.follow_refill(e);
+                    CommandResult::success(if t.refill.busy() || t.refill_wanted { "busy" } else { "idle" })
+                });
+
+                if busy.message != "busy" {
+                    let status = with_terrain(e, |t, _| CommandResult::success(t.status.clone()));
+                    return CommandResult::success(format!("after {:.1} s: {}", started.elapsed().as_secs_f64(), status.message));
+                }
+
+                if started.elapsed().as_secs_f64() > limit {
+                    return CommandResult::fail("the fill is still running");
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         });
 
         c.add("terrain_view", "terrain_view <distance> [near mid far]", "the Terrain tool: the camera's view distance (scene units) and the rings (cells)", |e, a| {

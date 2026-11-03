@@ -24,7 +24,8 @@ use super::{CHUNK, ContextRequest, Frame, TileKey, cache, tile_dir};
 pub type ChunkKey = (i32, i32);
 
 /// A chunk a worker finished: its entities at a level.
-type Built = (ChunkKey, Lod, Vec<(Float4x4, Payload)>);
+/// A built chunk and the frame generation it was built with.
+type Built = (ChunkKey, Lod, Vec<(Float4x4, Payload)>, u64);
 
 /// A chunk's level of detail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,7 +81,10 @@ struct Shared {
     /// The threads the workers' data-parallel loops run on (a tile's opening is full of them): below normal priority and apart from
     /// rayon's global pool, which the renderer's culling uses every frame.
     pool: rayon::ThreadPool,
-    frame: Arc<Frame>,
+
+    /// The frame and its generation: the Terrain tool swaps in a frame over new placements (`Streamer::swap_frame`); a job builds with the
+    /// frame it starts with, and what an older one built is dropped.
+    frame: Mutex<(Arc<Frame>, u64)>,
     rq: ContextRequest,
     files: Option<Arc<dyn Files>>,
     queue: Mutex<Vec<Job>>,
@@ -100,11 +104,15 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Shared {
+    fn frame(&self) -> (Arc<Frame>, u64) {
+        let f = lock(&self.frame);
+        (f.0.clone(), f.1)
+    }
 
     /// Whether a placement's tile is a custom-mesh one (the cliffs), as the first root that has it says (remembered per tile; one the roots
     /// do not have is not: the packs' form is not read yet).
-    fn is_custom(&self, i: usize) -> bool {
-        let p = &self.frame.map.placements[i];
+    fn is_custom(&self, frame: &Frame, i: usize) -> bool {
+        let p = &frame.map.placements[i];
         let key = (p.location.clone(), p.variation.clone());
         if let Some(&known) = lock(&self.custom_tiles).get(&key) {
             return known;
@@ -117,10 +125,10 @@ impl Shared {
     }
 
     /// A placement's tile: from memory, else read from the cache or opened (one thread does, the others wait for it).
-    fn template(&self, i: usize) -> Option<Arc<Template>> {
+    fn template(&self, frame: &Frame, i: usize) -> Option<Arc<Template>> {
         // Its climate's look: the map gives each placement its own.
-        let p = &self.frame.map.placements[i];
-        let climate = self.frame.climate_name(i);
+        let p = &frame.map.placements[i];
+        let climate = frame.climate_name(i);
         let look = TerrainLook { climate: climate.clone(), ..self.rq.look.clone() };
         let key = (p.location.clone(), p.variation.clone(), climate);
         let now = self.clock.fetch_add(1, Ordering::Relaxed);
@@ -180,7 +188,7 @@ impl Shared {
                 if cached { stats.from_cache += 1 } else { stats.opened += 1 }
                 stats.open_s += t.load_s;
                 stats.bytes += t.bytes;
-                self.frame.offer_plain(&t.material);
+                frame.offer_plain(&t.material);
                 Slot::Ready(Arc::new(t), now)
             }
 
@@ -241,8 +249,9 @@ impl Shared {
 
             // Not in the pool: `template` may wait for another worker's tile, and a pool thread waiting inside a parallel loop can take up
             // that very worker's job (a deadlock); only the opening and the cache read run there.
-            let entities = self.frame.build_chunk(job.key, job.lod, &|i| self.template(i), &|i| self.is_custom(i));
-            if tx.send((job.key, job.lod, entities)).is_err() {
+            let (frame, generation) = self.frame();
+            let entities = frame.build_chunk(job.key, job.lod, &|i| self.template(&frame, i), &|i| self.is_custom(&frame, i));
+            if tx.send((job.key, job.lod, entities, generation)).is_err() {
                 return;
             }
         }
@@ -292,7 +301,7 @@ impl Streamer {
         let rings = [rq.near, rq.mid, rq.far];
         let frame_s = started.elapsed().as_secs_f64();
         let shared = Arc::new(Shared {
-            pool, frame, rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), custom_tiles: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
+            pool, frame: Mutex::new((frame, 0)), rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), custom_tiles: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
             clock: Default::default(), stop: AtomicBool::new(false),
         });
 
@@ -310,13 +319,27 @@ impl Streamer {
         self.rings = [near, mid, far];
     }
 
-    pub fn frame(&self) -> &Arc<Frame> {
-        &self.shared.frame
+    pub fn frame(&self) -> Arc<Frame> {
+        self.shared.frame().0
+    }
+
+    /// A frame over new placements of the map (`Frame::with_map`, made away from the UI thread): the chunks in `changed` (whose
+    /// placements differ) and those being built are built again with it; the others stay as they are on the scene.
+    pub fn swap_frame(&mut self, frame: Arc<Frame>, changed: &[ChunkKey]) {
+        {
+            let mut f = lock(&self.shared.frame);
+            *f = (frame, f.1 + 1);
+        }
+
+        let changed: std::collections::HashSet<ChunkKey> = changed.iter().copied().collect();
+        let shown = &self.shown;
+        self.wanted.retain(|k, l| shown.get(k) == Some(l) && !changed.contains(k));
+        lock(&self.shared.queue).clear();
     }
 
     /// The open tile's centre in its frame (the focus before there is a camera).
     pub fn open_centre(&self) -> (f64, f64) {
-        let f = &self.shared.frame;
+        let f = self.frame();
         let o = f.open;
         let (cx, cy) = (f64::from(o[0] + o[2]) * 0.5, f64::from(o[1] + o[3]) * 0.5);
         f.from_map.apply(cx, cy)
@@ -337,7 +360,7 @@ impl Streamer {
 
     /// Works out the levels around the focus (a point of the frame), queues what changes and returns what the workers finished.
     pub fn update(&mut self, focus: (f64, f64)) -> Vec<ChunkChange> {
-        let f = self.shared.frame.clone();
+        let (f, generation) = self.shared.frame();
         let (fx, fy) = f.cell_of(focus.0, focus.1);
         let reach = f64::from(self.rings.into_iter().max().unwrap_or(0)) + SLACK;
         let (cw, ch) = f.chunks();
@@ -391,8 +414,8 @@ impl Streamer {
         self.shared.work.notify_all();
 
         // What the workers finished, if still wanted at that level.
-        while let Ok((k, l, entities)) = self.results.try_recv() {
-            if self.wanted.get(&k) == Some(&l) {
+        while let Ok((k, l, entities, built_with)) = self.results.try_recv() {
+            if built_with == generation && self.wanted.get(&k) == Some(&l) {
                 self.shown.insert(k, l);
                 out.push(ChunkChange::Set(k, l, entities));
             }
@@ -409,7 +432,7 @@ impl Streamer {
     /// (the Terrain tool's brushes), and their objects stand on it. A chunk owns the placements whose origin it holds, so the chunks up to
     /// the largest tile's size before the rectangle too. What they show stays until the new version is built.
     pub fn rebuild(&mut self, cells: [i32; 4]) {
-        let reach = self.shared.frame.reach();
+        let reach = self.frame().reach();
         let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
         let (x1, y1) = ((cells[2] - 1).div_euclid(CHUNK), (cells[3] - 1).div_euclid(CHUNK));
         self.wanted.retain(|&(cx, cy), _| cx < x0 || cx > x1 || cy < y0 || cy > y1);
@@ -426,8 +449,8 @@ impl Streamer {
         while self.busy() > 0 {
             match self.results.recv_timeout(std::time::Duration::from_millis(50)) {
                 Ok(r) => {
-                    let (k, l, entities) = r;
-                    if self.wanted.get(&k) == Some(&l) {
+                    let (k, l, entities, built_with) = r;
+                    if built_with == self.shared.frame().1 && self.wanted.get(&k) == Some(&l) {
                         self.shown.insert(k, l);
                         out.push(ChunkChange::Set(k, l, entities));
                     }
@@ -454,7 +477,7 @@ impl Streamer {
 
     /// What it did so far, for the status line.
     pub fn report(&self) -> String {
-        let f = &self.shared.frame;
+        let f = self.frame();
         let s = lock(&self.shared.stats);
         let [near, mid, far] = self.shown();
         let failed = if s.failed.is_empty() { String::new() } else { format!(", {} could not be opened", s.failed.len()) };

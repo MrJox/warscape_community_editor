@@ -212,6 +212,13 @@ impl MapPanel {
         }
     }
 
+    /// The map's placements changed (the fill ran again): the placements' picture is made again when shown.
+    pub fn placements_changed(&mut self) {
+        if self.shown.as_ref().is_some_and(|s| s.2 == Layer::Placements) {
+            self.shown = None;
+        }
+    }
+
     /// Shows the `k`-th layer of the list (scripts).
     pub fn set_layer(&mut self, k: usize) {
         self.layer = k;

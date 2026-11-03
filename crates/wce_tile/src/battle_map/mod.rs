@@ -50,16 +50,23 @@ fn fill<'a>(db: &'a TileDatabase, map: &Path) -> Result<TileMapFill<'a>, String>
     let lf = read("lf_heights.tif").ok().and_then(|b| tiff_heights(&b).ok());
     let images = MapImages {
         width: w, height: h, tile_map: &tiles, climate_map: climate.as_ref().map(|c| c.2.as_slice()), explicit_tiles: explicit.as_deref(),
-        lf: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)),
+        lf: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)), lf_u16: None,
     };
 
-    let mut fill = TileMapFill::new(db, &images);
+    Ok(fill_images(db, &images))
+}
+
+/// Fills a map's images (`build_tile_map`, then the low-frequency heights).
+fn fill_images<'a>(db: &'a TileDatabase, images: &MapImages) -> TileMapFill<'a> {
+    let mut fill = TileMapFill::new(db, images);
     fill.build(images.explicit_tiles);
     if let Some((field, fw, fh)) = images.lf {
         fill.calculate_lf_min_maxs(field, fw, fh);
+    } else if let Some((field, fw, fh)) = images.lf_u16 {
+        fill.calculate_lf_min_maxs_u16(field, fw, fh);
     }
 
-    Ok(fill)
+    fill
 }
 
 /// Fills a kit battle map (`map`: the map's folder) and returns its tile map as `TILE_MAP::save` writes it (the campaign map's
@@ -80,6 +87,19 @@ pub fn fill_kit_tile_map(db: &TileDatabase, map: &Path) -> Result<(TileMap, Vec<
 /// Fails when the map's tile map can't be read.
 pub fn fill_kit_map(db: &TileDatabase, map: &Path) -> Result<(TileList, Vec<String>), String> {
     let fill = fill(db, map)?;
+    Ok((tile_list(db, &fill), fill.messages))
+}
+
+/// A map's images (a kit map as the Terrain tool holds it) filled with the tiles of `db`: its placements, with `lf` (its LF, which
+/// `images.lf` holds as 0 .. 1) and BOB's messages.
+pub fn place_images(db: &TileDatabase, name: &str, images: &MapImages, lf: Option<context::LfField>) -> (context::PlacedMap, Vec<String>) {
+    let fill = fill_images(db, images);
+    let list = tile_list(db, &fill);
+    (context::PlacedMap::from_tile_list(name, &list, db, lf), fill.messages)
+}
+
+/// The battle field of a fill as BOB writes it (`terrain.tile_list`).
+fn tile_list(db: &TileDatabase, fill: &TileMapFill) -> TileList {
     let (w, h) = (fill.w, fill.h);
     let placements = fill.battle_field();
     let mut list = TileList {
@@ -111,7 +131,7 @@ pub fn fill_kit_map(db: &TileDatabase, map: &Path) -> Result<(TileList, Vec<Stri
         list.placements.push(TileListPlacement { name: index, x: p.x, y: p.y, flags: p.flags, climate: p.climate, lf: p.lf });
     }
 
-    Ok((list, fill.messages))
+    list
 }
 
 /// The kit's battle maps (folders of `<raw_data>/terrain/battles` with a `tile_map.png`), sorted.
