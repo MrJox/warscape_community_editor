@@ -22,6 +22,10 @@ pub const CELL: f64 = 128.0;
 pub const LF_HEIGHT: f64 = 3000.0;
 pub const VERTICAL_OFFSET: f64 = 20.0;
 
+/// The metres of the sea LF's full range (`LF * SEA_LF_HEIGHT - VERTICAL_OFFSET`): Rome 2's sea tiles' (docs/re/rome2_renderer.md),
+/// taken as Attila's.
+pub const SEA_LF_HEIGHT: f64 = 400.0;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct MapPlacement {
     /// The tile's location (`terrain\tiles\battle\<set>\<size>`) and the variation's.
@@ -150,6 +154,9 @@ pub struct PlacedMap {
     pub height: u32,
     pub placements: Vec<MapPlacement>,
     pub lf: Option<LfField>,
+
+    /// The sea tiles' LF (`lf_sea_heights.tif`): set by the Terrain tool (its sea LF brush); none, the sea tiles stand on a flat -20 m.
+    pub sea_lf: Option<LfField>,
 
     /// Names the database doesn't know (their size is taken as 1 x 1).
     pub unknown: Vec<String>,

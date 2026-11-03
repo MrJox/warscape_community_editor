@@ -24,8 +24,8 @@ use wce_terrain::pyramid::HeightPyramid;
 use wce_terrain::LfRole;
 use wce_terrain_editor::lf::{LfMirror, LfStrokeCommand};
 use wce_terrain_editor::{MapDocument, MapSource};
-use wce_tile::battle_map::context::{CELL, Spot};
-use wce_tile::battle_map::kit_maps;
+use wce_tile::battle_map::context::{CELL, LfField, Spot};
+use wce_tile::battle_map::{kit_maps, l16_dds_heights};
 use wce_tile::battle_map::tile_db::TileDatabase;
 use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::context::{ContextRequest, Streamer, TileProvider, cache};
@@ -85,6 +85,9 @@ impl LfPick {
 struct LfPaint {
     on: bool,
 
+    /// The sea LF (`lf_sea_heights.tif`, under the sea tiles), not the land's.
+    sea: bool,
+
     /// 0 raise, 1 lower, 2 smooth, 3 flatten (to the height where the stroke starts), 4 noise.
     op: i32,
     radius_m: f32,
@@ -100,15 +103,16 @@ struct LfPaint {
 
 impl Default for LfPaint {
     fn default() -> Self {
-        Self { on: false, op: 0, radius_m: 300.0, amount_m: 2.0, share: 0.2, falloff: 1.0, aspect: 1.0, rotation_deg: 0.0, noise_scale_m: 400.0 }
+        Self { on: false, sea: false, op: 0, radius_m: 300.0, amount_m: 2.0, share: 0.2, falloff: 1.0, aspect: 1.0, rotation_deg: 0.0, noise_scale_m: 400.0 }
     }
 }
 
 const LF_OPS: [&str; 5] = ["raise", "lower", "smooth", "flatten", "noise"];
 
-/// A stroke being painted: on which document, its record so far, the view's mirror and the flatten target (raw).
+/// A stroke being painted: on which document and field, its record so far, the view's mirror and the flatten target (raw).
 struct Painting {
     doc: DocumentId,
+    role: LfRole,
     stroke: LfStroke,
     mirror: Option<Arc<LfMirror>>,
     target: f64,
@@ -143,8 +147,10 @@ pub struct TerrainTool {
     paint: LfPaint,
     painting: Option<Painting>,
 
-    /// The shown map's field mirrored into its view (a kit map's land LF on the view's lattice).
+    /// The shown map's fields mirrored into its view (a kit map's land and sea LF on the view's lattices), and the view's sea LF.
     mirror: Option<Arc<LfMirror>>,
+    sea_mirror: Option<Arc<LfMirror>>,
+    sea_lf: Option<Arc<wce_scene::render_scene::LfMap>>,
     ring: (wce_scene::render_scene::LayerId, wce_scene::render_scene::EntityId),
 
     /// The shown map's LF picking, and the cursor's point on it (frame, scene units) with its raw LF height.
@@ -174,7 +180,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), painting: None, mirror: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -220,6 +226,11 @@ fn land_near_centre(lf: &wce_scene::render_scene::LfMap) -> Option<Float3> {
         .map(|(x, z, _, h)| Float3::new(x, h, z))
 }
 
+/// A model's field as the map context's (the same rows).
+fn lf_field(f: &wce_terrain::paged::PagedU16) -> LfField {
+    LfField { w: f.width(), h: f.height(), values: f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() }
+}
+
 /// Reads a map (a worker's job).
 fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
     let packs_folder = game_map_folder(&i.name, i.game_dir);
@@ -229,16 +240,24 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
         _ => i.db.clone(),
     };
 
-    let (placed, locations) = load_map(&i.name, i.game_dir, &i.raw, &db, i.files.as_deref())?;
-    let (source, model) = match packs_folder {
-        Some(folder) => (MapSource::Packs(folder), None),
+    let (mut placed, locations) = load_map(&i.name, i.game_dir, &i.raw, &db, i.files.as_deref())?;
+    let (source, model, sea) = match packs_folder {
+        Some(folder) => {
+            let sea = i.files.as_ref().and_then(|f| f.read(&format!("{folder}/lf_sea_height_map.dds")).ok()).and_then(|b| l16_dds_heights(&b));
+            (MapSource::Packs(folder), None, sea)
+        }
+
         None => {
             let dir = i.raw.join("terrain/battles").join(&i.name);
             let files = wce_terrain_io::MapFiles::from_dir(&dir).map_err(|e| e.to_string())?;
             let model = wce_terrain_io::attila::read(&i.name, MapKind::Battle, &files).map_err(|e| e.to_string())?;
-            (MapSource::Kit(dir), Some(model))
+            let sea = model.lf(LfRole::Sea).map(|f| lf_field(f.get()));
+            (MapSource::Kit(dir), Some(model), sea)
         }
     };
+
+    // The sea tiles stand on the map's sea LF (the Tile tool's map context keeps them on a flat -20 m).
+    Arc::make_mut(&mut placed).sea_lf = sea;
 
     Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db })
 }
@@ -405,10 +424,14 @@ impl TerrainTool {
         self.pick = s.frame().lf.clone().map(LfPick::new);
         self.cursor = None;
         self.painting = None;
-        self.mirror = e.docs.find_as::<MapDocument>(id).and_then(|d| d.lf_field(LfRole::Land))
-            .zip(self.pick.as_ref())
-            .and_then(|(field, p)| LfMirror::of(field, p.lf.values.clone(), p.lf.nx, p.lf.nz))
+        self.sea_lf = s.frame().sea_lf.clone();
+        let doc = e.docs.find_as::<MapDocument>(id);
+        let mirror = |role: LfRole, lf: Option<&Arc<wce_scene::render_scene::LfMap>>| doc.and_then(|d| d.lf_field(role))
+            .zip(lf)
+            .and_then(|(field, lf)| LfMirror::of(field, lf.values.clone(), lf.nx, lf.nz))
             .map(Arc::new);
+        self.mirror = mirror(LfRole::Land, self.pick.as_ref().map(|p| &p.lf));
+        self.sea_mirror = mirror(LfRole::Sea, self.sea_lf.as_ref());
         self.view.begin(e, id, s, &self.rings, |_| vec![]);
         self.shown = id;
         self.building = 0;
@@ -538,14 +561,28 @@ impl TerrainTool {
 }
 
 impl TerrainTool {
-    /// Metres between two LF samples of the shown map.
-    fn sample_metres(&self) -> f64 {
-        self.pick.as_ref().map_or(16.0, |p| f64::from(p.lf.step) / UNIT)
+    /// The field the brush paints.
+    fn role(&self) -> LfRole {
+        if self.paint.sea { LfRole::Sea } else { LfRole::Land }
     }
 
-    /// The field sample (x along the columns, y down the rows of the file) under a frame point.
+    /// The view's LF of the brush's field, and its mirror.
+    fn target_lf(&self) -> Option<&Arc<wce_scene::render_scene::LfMap>> {
+        if self.paint.sea { self.sea_lf.as_ref() } else { self.pick.as_ref().map(|p| &p.lf) }
+    }
+
+    fn target_mirror(&self) -> Option<Arc<LfMirror>> {
+        if self.paint.sea { self.sea_mirror.clone() } else { self.mirror.clone() }
+    }
+
+    /// Metres between two samples of the brush's field.
+    fn sample_metres(&self) -> f64 {
+        self.target_lf().map_or(16.0, |lf| f64::from(lf.step) / UNIT)
+    }
+
+    /// The sample of the brush's field (x along the columns, y down the rows of the file) under a frame point.
     fn field_xy(&self, p: Float3) -> Option<(f64, f64)> {
-        let lf = &self.pick.as_ref()?.lf;
+        let lf = self.target_lf()?;
         let (fi, fj) = (f64::from((p.x - lf.x0) / lf.step), f64::from((p.z - lf.z0) / lf.step));
         Some((fi, f64::from(lf.nz - 1) - fj))
     }
@@ -558,9 +595,10 @@ impl TerrainTool {
         LfBrush { brush, aspect: f64::from(self.paint.aspect).max(0.05), rotation: f64::from(self.paint.rotation_deg).to_radians() }
     }
 
-    /// The operation of a dab (raw units).
+    /// The operation of a dab (raw units of the brush's field: the sea LF spans 400 m, the land's 3000 m).
     fn op(&self, target: f64) -> LfOp {
-        let raw = f64::from(self.paint.amount_m) / wce_tile::battle_map::context::LF_HEIGHT * 65535.0;
+        use wce_tile::battle_map::context::{LF_HEIGHT, SEA_LF_HEIGHT};
+        let raw = f64::from(self.paint.amount_m) / if self.paint.sea { SEA_LF_HEIGHT } else { LF_HEIGHT } * 65535.0;
         match self.paint.op {
             1 => LfOp::Raise(-raw),
             2 => LfOp::Smooth,
@@ -573,14 +611,16 @@ impl TerrainTool {
     /// Starts a stroke on the shown map (a kit map: its model has the field); the flatten target is the height at `at`.
     fn begin_stroke(&mut self, e: &mut Editor, at: Option<(f64, f64)>) -> bool {
         let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return false };
-        let Some(field) = d.lf_field(LfRole::Land) else {
-            e.status("this map is from the game's packs: open the kit's map to paint its LF", true);
+        let role = self.role();
+        let Some(field) = d.lf_field(role) else {
+            let why = if d.model().is_none() { "this map is from the game's packs: open the kit's map to paint its LF" } else { "this map has no lf_sea_heights.tif" };
+            e.status(why, true);
             return false;
         };
 
-        let mirror = self.mirror.clone();
+        let mirror = self.target_mirror();
         let target = at.map_or(0.0, |(x, y)| f64::from(field.at((x.round().max(0.0) as u32).min(field.width() - 1), (y.round().max(0.0) as u32).min(field.height() - 1))));
-        self.painting = Some(Painting { doc: self.shown, stroke: LfStroke::default(), mirror, target });
+        self.painting = Some(Painting { doc: self.shown, role, stroke: LfStroke::default(), mirror, target });
         true
     }
 
@@ -591,11 +631,13 @@ impl TerrainTool {
         let op = self.op(target);
         let Some(paint) = self.painting.as_mut() else { return };
         let Some(d) = e.docs.find_as_mut::<MapDocument>(paint.doc) else { return };
-        let Some(field) = d.lf_field_mut(LfRole::Land) else { return };
+        let Some(field) = d.lf_field_mut(paint.role) else { return };
         let Some(rect) = paint.stroke.dab(field, &b, op) else { return };
         if let Some(m) = &paint.mirror {
             m.copy(field, rect);
-            if let Some(pick) = self.pick.as_mut() {
+            if paint.role == LfRole::Land
+                && let Some(pick) = self.pick.as_mut()
+            {
                 let v = m.view_rect(rect);
                 let values = pick.lf.values.read();
                 let nx = pick.lf.nx as u32;
@@ -611,24 +653,26 @@ impl TerrainTool {
             return;
         }
 
-        let Some(m) = self.mirror.clone() else { return };
-        let Some(rect) = m.take_touched() else { return };
-        if let Some(pick) = self.pick.as_mut() {
-            let v = m.view_rect(rect);
-            let values = pick.lf.values.read();
-            let nx = pick.lf.nx as u32;
-            pick.pyramid.update((v[0], v[1], v[2], v[3]), |x, y| values[(y * nx + x) as usize]);
-        }
+        for (m, land) in [(self.mirror.clone(), true), (self.sea_mirror.clone(), false)] {
+            let Some(m) = m else { continue };
+            let Some(rect) = m.take_touched() else { continue };
+            if land && let Some(pick) = self.pick.as_mut() {
+                let v = m.view_rect(rect);
+                let values = pick.lf.values.read();
+                let nx = pick.lf.nx as u32;
+                pick.pyramid.update((v[0], v[1], v[2], v[3]), |x, y| values[(y * nx + x) as usize]);
+            }
 
-        let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
-        let (sx, sy) = (f64::from(m.w) / f64::from(d.placed.width.max(1)), f64::from(m.h) / f64::from(d.placed.height.max(1)));
-        let cells = [
-            (f64::from(rect[0]) / sx).floor() as i32 - 1, (f64::from(rect[1]) / sy).floor() as i32 - 1,
-            (f64::from(rect[2]) / sx).ceil() as i32 + 1, (f64::from(rect[3]) / sy).ceil() as i32 + 1,
-        ];
+            let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
+            let (sx, sy) = (f64::from(m.w) / f64::from(d.placed.width.max(1)), f64::from(m.h) / f64::from(d.placed.height.max(1)));
+            let cells = [
+                (f64::from(rect[0]) / sx).floor() as i32 - 1, (f64::from(rect[1]) / sy).floor() as i32 - 1,
+                (f64::from(rect[2]) / sx).ceil() as i32 + 1, (f64::from(rect[3]) / sy).ceil() as i32 + 1,
+            ];
 
-        if let Some(s) = self.view.streamer.as_mut() {
-            s.rebuild(cells);
+            if let Some(s) = self.view.streamer.as_mut() {
+                s.rebuild(cells);
+            }
         }
     }
 
@@ -636,9 +680,9 @@ impl TerrainTool {
     fn end_stroke(&mut self, e: &mut Editor) -> Option<usize> {
         let paint = self.painting.take()?;
         let d = e.docs.find_as_mut::<MapDocument>(paint.doc)?;
-        let record = paint.stroke.finish(d.lf_field(LfRole::Land)?)?;
+        let record = paint.stroke.finish(d.lf_field(paint.role)?)?;
         let bytes = record.bytes();
-        d.push_stroke(LfStrokeCommand { role: LfRole::Land, record: Arc::new(record), mirror: paint.mirror });
+        d.push_stroke(LfStrokeCommand { role: paint.role, record: Arc::new(record), mirror: paint.mirror });
         Some(bytes)
     }
 
@@ -651,7 +695,7 @@ impl TerrainTool {
 
             let (p, _) = self.cursor?;
             let (cx, cy) = self.field_xy(p)?;
-            let lf = &self.pick.as_ref()?.lf;
+            let lf = self.target_lf()?;
             let b = self.brush_at(cx, cy);
             let (s, c) = b.rotation.sin_cos();
             let values = lf.values.read();
@@ -707,6 +751,15 @@ impl TerrainTool {
         }
 
         gui::checkbox("paint (left button)", &mut self.paint.on);
+        let mut field = i32::from(self.paint.sea);
+        if gui::combo("field", &mut field, &["land LF", "sea LF (under the sea tiles)"]) {
+            self.paint.sea = field == 1;
+        }
+
+        if self.paint.sea && self.sea_mirror.is_none() {
+            gui::text_disabled("This map has no sea LF to paint (no lf_sea_heights.tif).");
+        }
+
         gui::combo("operation", &mut self.paint.op, &LF_OPS);
         gui::slider_float("radius (m)", &mut self.paint.radius_m, 20.0, 5000.0, "%.0f");
         match self.paint.op {
@@ -934,19 +987,22 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_paint", "terrain_paint <raise|lower|smooth|flatten|noise> <cell x> <cell y> <radius m> <amount m or strength> [dabs]", "the Terrain tool: one LF stroke of dabs at a map cell (flatten: to the height there), onto the history", |e, a| {
-            let usage = "usage: terrain_paint <raise|lower|smooth|flatten|noise> <cell x> <cell y> <radius m> <amount m or strength> [dabs]";
+        c.add("terrain_paint", "terrain_paint [sea] <raise|lower|smooth|flatten|noise> <cell x> <cell y> <radius m> <amount m or strength> [dabs]", "the Terrain tool: one LF stroke of dabs at a map cell (flatten: to the height there), onto the history; `sea`: on the sea LF", |e, a| {
+            let usage = "usage: terrain_paint [sea] <raise|lower|smooth|flatten|noise> <cell x> <cell y> <radius m> <amount m or strength> [dabs]";
+            let sea = a.first().is_some_and(|v| v == "sea");
+            let a = if sea { &a[1..] } else { a };
             let Some(op) = a.first().and_then(|o| LF_OPS.iter().position(|n| n == o)) else { return CommandResult::fail(usage) };
             let nums: Vec<f64> = a[1..].iter().filter_map(|v| v.parse().ok()).collect();
             let [cx, cy, radius, amount, ..] = nums[..] else { return CommandResult::fail(usage) };
             let dabs = nums.get(4).map_or(1, |&n| n.max(1.0) as usize);
             with_terrain(e, |t, e| {
                 let Some(d) = e.docs.find_as::<MapDocument>(t.shown) else { return CommandResult::fail("no map shown") };
-                let Some(field) = d.lf_field(LfRole::Land) else { return CommandResult::fail("the shown map has no LF to paint (a map of the packs)") };
+                let Some(field) = d.lf_field(if sea { LfRole::Sea } else { LfRole::Land }) else { return CommandResult::fail("the shown map has no such LF to paint (a map of the packs, or no sea LF)") };
                 let (ppc_x, ppc_y) = (f64::from(field.width()) / f64::from(d.placed.width.max(1)), f64::from(field.height()) / f64::from(d.placed.height.max(1)));
                 let (x, y) = (cx * ppc_x, cy * ppc_y);
                 let saved = t.paint.clone();
                 t.paint.op = op as i32;
+                t.paint.sea = sea;
                 t.paint.radius_m = radius as f32;
                 if matches!(op, 2 | 3) { t.paint.share = amount as f32 } else { t.paint.amount_m = amount as f32 }
                 if !t.begin_stroke(e, Some((x, y))) {
