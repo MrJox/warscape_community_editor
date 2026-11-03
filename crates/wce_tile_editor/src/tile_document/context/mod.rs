@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use wce_foundation::math::{Float3, Float4x4};
 use wce_scene::render_scene::{LfMap, LfSamples, Payload, RenderScene, Terrain, TerrainImage, TerrainMaterial, Water, WaterVertex};
-use wce_tile::battle_map::context::{Affine2, CELL, LF_HEIGHT, MapPlacement, PlacedMap, Spot, VERTICAL_OFFSET};
+use wce_tile::battle_map::context::{Affine2, CELL, LF_HEIGHT, LfField, MapPlacement, PlacedMap, SEA_LF_HEIGHT, Spot, VERTICAL_OFFSET};
 
 use super::{MATERIAL_IDS, NORMAL_IDS, next_id};
 use crate::terrain_bake::TerrainLook;
@@ -164,10 +164,10 @@ fn position(m: &Float4x4) -> (f64, f64) {
     (f64::from(m.m[0][3]), f64::from(m.m[2][3]))
 }
 
-/// The map's LF in the open frame, on the LF's own lattice (the frame's axes are the map's turned by whole quarter turns, so its samples are
-/// the map's pixels): heights relative to the median LF under the open tile.
-fn lf_map(map: &PlacedMap, from_map: &Affine2, to_map: &Affine2, lf_level: f64, unit: f64) -> Option<LfMap> {
-    let f = map.lf.as_ref().filter(|f| f.w > 1 && f.h > 1)?;
+/// A field of the map (its LF, its sea LF) in the open frame, on the field's own lattice (the frame's axes are the map's turned by whole
+/// quarter turns, so its samples are the map's pixels): `LF * height - VERTICAL_OFFSET` m, relative to the median LF under the open tile.
+fn lf_map(map: &PlacedMap, f: Option<&LfField>, height: f64, from_map: &Affine2, to_map: &Affine2, lf_level: f64, unit: f64) -> Option<LfMap> {
+    let f = f.filter(|f| f.w > 1 && f.h > 1)?;
     let (ppx, ppy) = (f64::from(f.w) / f64::from(map.width), f64::from(f.h) / f64::from(map.height));
     let s = CELL / ppx;
     let b = bounds(from_map, 0.0, 0.0, f64::from(f.w - 1) / ppx, f64::from(f.h - 1) / ppy);
@@ -188,7 +188,7 @@ fn lf_map(map: &PlacedMap, from_map: &Affine2, to_map: &Affine2, lf_level: f64, 
     });
 
     let mut lf = LfMap {
-        x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values: LfSamples::new(values), scale: (LF_HEIGHT / unit) as f32, offset: ((VERTICAL_OFFSET + lf_level) / unit) as f32,
+        x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values: LfSamples::new(values), scale: (height / unit) as f32, offset: ((VERTICAL_OFFSET + lf_level) / unit) as f32,
         id: next_id(&NORMAL_IDS), ..Default::default()
     };
 
@@ -257,6 +257,9 @@ pub struct Frame {
     pub lf_range: f64,
     pub lf: Option<Arc<LfMap>>,
 
+    /// The sea tiles' LF (`PlacedMap::sea_lf`): none, the sea tiles on a flat -20 m.
+    pub sea_lf: Option<Arc<LfMap>>,
+
     /// The placements by the chunk of their origin cell (those over the open tile's cells left out); who draws each cell (row by row: 0
     /// nobody, 1 the open tile, else the chunk of the placement over it: `owner_of`); the cells a tile reaches past its origin at most.
     pub by_chunk: HashMap<ChunkKey, Vec<usize>>,
@@ -293,7 +296,8 @@ impl Frame {
         let to_map = me.to_map();
         let from_map = to_map.inverse();
         let (lf_level, lf_range) = if rq.cells == (0, 0) { (0.0, 0.0) } else { map.lf_stats(open) };
-        let lf = lf_map(&map, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
+        let lf = lf_map(&map, map.lf.as_ref(), LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
+        let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
 
         // The first to cover a cell owns it (the open tile, then the placements in the map's order).
         let (w, h) = (map.width as i32, map.height as i32);
@@ -343,7 +347,7 @@ impl Frame {
         }
 
         Self {
-            map, unit: rq.unit, open, to_map, from_map, lf_level, lf_range, lf, by_chunk, owner, reach, climate, climates, look: rq.look.clone(),
+            map, unit: rq.unit, open, to_map, from_map, lf_level, lf_range, lf, sea_lf, by_chunk, owner, reach, climate, climates, look: rq.look.clone(),
             groups: rq.groups.clone(), files, plain_base: Mutex::new(rq.plain.clone()), plain_normal_id: next_id(&NORMAL_IDS), zeros: Mutex::default(),
             plain_bases: Mutex::default(), plains: Mutex::default(),
         }
@@ -581,9 +585,7 @@ impl Frame {
         // sea LF is taken as 0 everywhere (its few other pixels are not read). Only a sea tile at the sea (`on_sea_lf`): a mod's lake of
         // sea tiles high up (TDD's Long Lake, 626 m) stays on the land's LF.
         if self.on_sea_lf(i) {
-            let mut sea = frame;
-            sea.m[1][3] = self.sea_y() - (VERTICAL_OFFSET / self.unit) as f32;
-            out.push((sea, Payload::Terrain(Terrain { lf: None, ..terrain })));
+            out.push(self.on_sea(frame, terrain));
             return self.place_entities(t, lod, frame, out);
         }
 
@@ -600,6 +602,18 @@ impl Frame {
 
         out.push((frame, Payload::Terrain(terrain)));
         self.place_entities(t, lod, frame, out);
+    }
+
+    /// A sea tile's ground (`frame`: where it stands on the land's LF) on the sea's LF: the map's sea LF (`LF * 400 - 20` m), else a
+    /// flat -20 m (the sea LF taken as 0).
+    fn on_sea(&self, mut frame: Float4x4, t: Terrain) -> (Float4x4, Payload) {
+        match &self.sea_lf {
+            Some(sea) => (frame, Payload::Terrain(Terrain { lf: Some(sea.clone()), ..t })),
+            None => {
+                frame.m[1][3] = self.sea_y() - (VERTICAL_OFFSET / self.unit) as f32;
+                (frame, Payload::Terrain(Terrain { lf: None, ..t }))
+            }
+        }
     }
 
     /// Whether a placement is drawn on the sea's LF (`place`): a tile of the `sea` set whose land LF is at or under the sea (the median of
@@ -676,10 +690,9 @@ impl Frame {
                 } else if self.on_sea_lf(i) {
                     // A sea tile's ground on the sea's LF (`place`): on the land's, next to a cliff it rose out of the sea.
                     let c = if self.map.climate_of(p).is_some() { p.climate } else { NO_CLIMATE };
-                    let (mut world, ground) = self.ground(p.rect(), true, c);
+                    let (world, ground) = self.ground(p.rect(), true, c);
                     if let Payload::Terrain(t) = ground {
-                        world.m[1][3] = self.sea_y() - (VERTICAL_OFFSET / self.unit) as f32;
-                        out.push((world, Payload::Terrain(Terrain { lf: None, ..t })));
+                        out.push(self.on_sea(world, t));
                     }
 
                     cut.push(p.rect());
