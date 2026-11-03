@@ -114,6 +114,20 @@ built with an older tile database: they are not fill oracles (33 of 43 differ, a
   BOB's `Terry file` fails (exit 1, no message) on a version 2 / 3 project with entities in the version 3 / 10 form.
 - No entity of the kit is turned or scaled (52 016 transforms of `main_attila_map`: `rotation="0 0 0"`, `scale="1 1 1"`).
 
+## Running Thrones' Terry: the BCA generator's oracle (2026-11-03)
+
+Thrones of Britannia's TWeak / Terry runs on a scratch copy of its kit, driven through its window (it has no command line for a project
+or an action: `/standalone <plugin>` and `/autotest` only). What it needs besides the kit: a `data` folder beside the kit holding
+`movies.pack` (its test for the game; a junction to the game's `data` does), and `working_data/terrain/tiles/battle` and `campaign`
+`tile_database.bin` (from the game's packs; without them loading a project crashes in `Warscape.AssemblyKit.dll`). In Load Options,
+"Scene (Entities)" must be on: without the scene, Save writes the LF TIFFs and not the `.terry`.
+
+`vik_attila_map` (Thrones' campaign battle map) through `Tools > Generate Battle Catchment Areas`, then Save As: 636 BCAs (the shipped
+project: 630) with their `Catchment Region`s, 780 deployment zones with 1 088 regions; the types: coastal_battle 125 (shipped 118),
+land_bridge 236 (235), port_assault 25, settlement_standard 63, settlement_unfortified 158, unfortified_port 29 (31). No
+`bca_generation_errors.txt` was written. The fresh output is the oracle; the shipped project came from other inputs or an older
+generator. Kept outside the repository (`I:\wce_scratch\thrones_kit\oracle` on this machine).
+
 ## Per-tile LF patches (Ghidra, 2026-11-03)
 
 Project `kit` in `I:\wce_scratch\ghidra_kit` (Attila's `TWeak_TerrainMetadataEditor.AssemblyKit.dll` and `ToolDataBuilderDll.AssemblyKit.dll`,
