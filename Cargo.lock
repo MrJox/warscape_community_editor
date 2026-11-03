@@ -2504,6 +2504,7 @@ version = "0.0.1"
 dependencies = [
  "wce_editor",
  "wce_editor_core",
+ "wce_formats",
  "wce_foundation",
  "wce_map_view",
  "wce_scene",
