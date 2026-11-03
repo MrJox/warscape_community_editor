@@ -1,0 +1,24 @@
+# Procedural walls' preview pieces are made again only when what they are made from changes (their layout, doors, the ground across
+# them): an edit elsewhere (a building added, which publishes the tile again; the terrain raised far off) takes them as they were. %TILE%
+# is the kit tile terrain_rugged_hills_desert/1x1/aa.
+tile "%TILE%"
+frames 5
+add_polygon "WceWallSpline|roman_fort_straight|20,120;220,120"
+frames 400
+wall_preview_stats 1 1
+
+# Far from the wall: nothing made again.
+select none
+add_building barbarian_fort_straight 60 230
+frames 400
+wall_preview_stats 1 1
+paint raise 200 220 20
+frames 400
+wall_preview_stats 1 1
+
+# Under it: made again, only the new pieces kept.
+brush 15 6 0.7
+paint raise 120 120 30
+frames 400
+wall_preview_stats 2 1
+quit

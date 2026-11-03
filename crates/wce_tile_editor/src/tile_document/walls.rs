@@ -26,8 +26,17 @@ pub const SNAP: f64 = 8.0;
 /// How long a wall is left unchanged before its preview pieces are made again (dragging a point would otherwise remake them every frame).
 pub const PREVIEW_DELAY: Duration = Duration::from_millis(300);
 
+/// The pieces made for a wall as it was (`Tile::wall_signature`): where each model is drawn, and the keys of the files made for them.
+#[derive(Clone)]
+struct Made {
+    models: Vec<(wce_foundation::math::Float4x4, String)>,
+    keys: Vec<String>,
+}
+
 /// The preview pieces: each wall's entities and the files made for them (in `wce_vfs::generated`, under keys that change with every
-/// remake, so the model cache never shows an old one), the bases read once, the walls waiting to be remade.
+/// remake, so the model cache never shows an old one), the bases read once, the walls waiting to be remade. The pieces made are kept by
+/// what they were made from (their signature): a wall whose layout, doors and ground are as they were takes them again (an edit elsewhere,
+/// a republish of the tile) instead of being made again.
 #[derive(Default)]
 pub(crate) struct WallPreview {
     bases: HashMap<String, Option<Arc<BuildingFiles>>>,
@@ -38,12 +47,23 @@ pub(crate) struct WallPreview {
     /// The fort pieces' ends from their logic files (`Tile::piece_ends`), read once.
     ends: std::cell::RefCell<HashMap<String, Vec<wce_walls::logic::PieceEnd>>>,
     entities: HashMap<usize, Vec<EntityId>>,
-    keys: HashMap<usize, Vec<String>>,
+
+    /// The signature of each wall's pieces on the scene, and the pieces made by signature.
+    shown_as: HashMap<usize, u64>,
+    made: HashMap<u64, Made>,
     pending: HashMap<usize, Instant>,
     revision: u64,
+
+    /// How many times walls' pieces were made (not taken again): for the tests.
+    made_count: u64,
 }
 
 impl WallPreview {
+
+    /// How many times walls' pieces were made, and how many sets of them are kept.
+    pub fn stats(&self) -> (u64, usize) {
+        (self.made_count, self.made.len())
+    }
 
     /// The preview pieces' entities by wall element.
     pub(crate) fn entities_by_wall(&self) -> &HashMap<usize, Vec<EntityId>> {
@@ -52,6 +72,11 @@ impl WallPreview {
 }
 
 impl Tile {
+    /// The walls' preview pieces: how many times they were made, and how many sets are kept (`WallPreview::stats`).
+    pub fn wall_preview_stats(&self) -> (u64, usize) {
+        self.wall_preview.stats()
+    }
+
     pub fn is_wall(&self, elem: usize) -> bool {
         elem < self.tscene().doc().elements().len() && self.tscene().type_of(elem) == WALL_SPLINE
     }
@@ -258,15 +283,45 @@ impl Tile {
         }
     }
 
-    /// The preview entities are gone with the layer (and the walls' indices may have moved): every wall's preview is made again.
+    /// The preview entities are gone with the layer (and the walls' indices may have moved): every wall's preview is put back (its pieces
+    /// made again only when what they are made from changed).
     pub(crate) fn wall_preview_cleared(&mut self) {
         self.wall_preview.entities.clear();
-        for key in self.wall_preview.keys.drain().flat_map(|(_, k)| k) {
-            wce_vfs::generated::remove_prefix(&folder(&key));
-        }
-
+        self.wall_preview.shown_as.clear();
         self.wall_preview.pending.clear();
         self.walls_changed();
+    }
+
+    /// What a wall's pieces are made from: its layout (the points, the levels on the ground, the ends and what they are attached to), its
+    /// door sections, and the ground across its band (the pieces' feet are stretched down to it).
+    fn wall_signature(&self, layout: &WallLayout, doors: &[usize]) -> u64 {
+        use std::hash::{Hash, Hasher};
+
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        format!("{layout:?}").hash(&mut h);
+        doors.hash(&mut h);
+        let u = self.unit();
+        for sm in &layout.plan.samples {
+            let across = [-sm.dir[1], sm.dir[0]];
+            for k in -4..=4 {
+                let d = f64::from(k) * 5.0;
+                let ground = self.project.height_at((sm.centre[0] + across[0] * d) / u, (sm.centre[1] + across[1] * d) / u);
+                ((ground * 1000.0).round() as i64).hash(&mut h);
+            }
+        }
+
+        h.finish()
+    }
+
+    /// The pieces made under signatures no wall shows any more, and their files, go.
+    fn drop_unused_wall_pieces(&mut self) {
+        let wp = &mut self.wall_preview;
+        let unused = wp.made.keys().filter(|s| !wp.shown_as.values().any(|v| v == *s)).copied().collect::<Vec<_>>();
+        for sig in unused {
+            for key in wp.made.remove(&sig).map(|m| m.keys).unwrap_or_default() {
+                wce_vfs::generated::remove_prefix(&folder(&key));
+            }
+        }
     }
 
     /// Per frame: makes again the previews of the walls left alone long enough.
@@ -303,19 +358,40 @@ impl Tile {
     /// The wall's preview pieces: its old ones removed, a piece per stretch of the layout made from the base (its intact meshes) and
     /// drawn where it goes. A hidden wall (or one that is no longer a wall) has none.
     fn make_wall_preview(&mut self, scene: &mut RenderScene, elem: usize) {
-        for id in self.wall_preview.entities.remove(&elem).unwrap_or_default() {
-            scene.remove(id);
-        }
+        let before = self.wall_preview.shown_as.remove(&elem);
+        let ids = self.wall_preview.entities.remove(&elem).unwrap_or_default();
+        let layout = self.wall_layout(elem).filter(|_| self.is_wall(elem) && self.shown(elem));
+        let signature = layout.as_ref().map(|l| {
+            let ps = pieces(&l.plan, l.profile).into_iter().filter(|p| !p.rigid).collect::<Vec<_>>();
+            self.wall_signature(l, &self.wall_doors(l, &ps).0)
+        });
 
-        for key in self.wall_preview.keys.remove(&elem).unwrap_or_default() {
-            wce_vfs::generated::remove_prefix(&folder(&key));
-        }
-
-        if !self.is_wall(elem) || !self.shown(elem) {
+        // As it was: its pieces stay where they are.
+        if signature.is_some() && signature == before && !ids.is_empty() {
+            self.wall_preview.entities.insert(elem, ids);
+            self.wall_preview.shown_as.insert(elem, signature.expect("a signature"));
             return;
         }
 
-        let Some(layout) = self.wall_layout(elem) else { return };
+        for id in ids {
+            scene.remove(id);
+        }
+
+        let (Some(layout), Some(signature)) = (layout, signature) else {
+            self.drop_unused_wall_pieces();
+            return;
+        };
+
+        // Made before (an edit elsewhere, the tile published again, an undo): the same pieces again.
+        if let Some(made) = self.wall_preview.made.get(&signature).cloned() {
+            let source = self.source(super::item_of(elem));
+            let ids = made.models.into_iter().map(|(world, model)| scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source)).collect();
+            self.wall_preview.entities.insert(elem, ids);
+            self.wall_preview.shown_as.insert(elem, signature);
+            self.drop_unused_wall_pieces();
+            return;
+        }
+
         let Some(base) = self.wall_base(layout.profile.key) else { return };
         let (up, down) = (self.wall_base(layout.profile.step_up), self.wall_base(layout.profile.step_down));
         let door = (!layout.profile.door.is_empty()).then(|| self.wall_base(layout.profile.door)).flatten();
@@ -356,6 +432,7 @@ impl Tile {
         let source = self.source(super::item_of(elem));
         let mut ids = vec![];
         let mut keys = vec![];
+        let mut models = vec![];
         for (key, piece, files) in made {
             let wt = WorldTransform { position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]), rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)) };
             let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));
@@ -363,7 +440,8 @@ impl Tile {
                 let model = path.ends_with(".rigid_model_v2").then(|| path.clone());
                 wce_vfs::generated::put(&path, bytes);
                 if let Some(model) = model {
-                    ids.push(scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source));
+                    ids.push(scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model: model.clone(), lod: true, ..Default::default() }), source));
+                    models.push((world, model));
                 }
             }
 
@@ -377,11 +455,15 @@ impl Tile {
             let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));
             for name in files.files.keys().filter(|n| wce_walls::building::is_piece_mesh(n) && wce_walls::pieces::level_of(n) == 1) {
                 let model = format!("{}{name}", folder(key));
-                ids.push(scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source));
+                ids.push(scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model: model.clone(), lod: true, ..Default::default() }), source));
+                models.push((world, model));
             }
         }
 
         self.wall_preview.entities.insert(elem, ids);
-        self.wall_preview.keys.insert(elem, keys);
+        self.wall_preview.shown_as.insert(elem, signature);
+        self.wall_preview.made.insert(signature, Made { models, keys });
+        self.wall_preview.made_count += 1;
+        self.drop_unused_wall_pieces();
     }
 }

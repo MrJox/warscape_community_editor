@@ -2062,6 +2062,17 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("wall_preview_stats", "wall_preview_stats [made] [kept]", "log how many times the walls' preview pieces were made and how many sets are kept; with numbers, test them", |e, a| {
+        let Some(d) = document(e) else { return no_tile() };
+        let (made, kept) = d.tile().wall_preview_stats();
+        let want = |i: usize| a.get(i).and_then(|v| v.parse::<u64>().ok());
+        match (want(0), want(1)) {
+            (Some(m), _) if m != made => fail(format!("{made} made, expected {m}")),
+            (_, Some(k)) if k != kept as u64 => fail(format!("{kept} kept, expected {k}")),
+            _ => ok(format!("{made} made, {kept} kept")),
+        }
+    });
+
     c.add("tile_generate_siege_ai", "tile_generate_siege_ai", "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported", |e, _| {
         with_tile(e, |t, e| match t.generate_siege_ai_now(e) {
             Ok(l) => ok(&format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("\n  {w}")).collect::<String>())),
