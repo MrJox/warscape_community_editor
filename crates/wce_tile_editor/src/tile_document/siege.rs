@@ -648,6 +648,7 @@ impl TileDocument {
         let perimeter = pts3(&layout.perimeter, [0.0, 0.0]);
         let approaches: Vec<_> = layout.approaches.iter().map(|a| pts3(a, [0.0, 0.0])).collect();
         let separators: Vec<_> = layout.separators.iter().map(|l| pts3(l, [0.0, 0.0])).collect();
+        let wall_zones: Vec<_> = layout.wall_zones.iter().map(|z| pts3(z, [0.0, 0.0])).collect();
         let mut coast: Vec<(&str, Vec<Double3>)> = layout.deployment_lines.iter().map(|l| ("AIH_DEFAULT_DEPLOYMENT_LINE", pts3(l, [0.0, 0.0]))).collect();
         coast.extend(layout.beaches.iter().map(|l| ("AIH_BEACH_LANDING", pts3(l, [0.0, 0.0]))));
         coast.extend(layout.beach_approaches.iter().map(|l| ("AIH_BEACH_LANDING_FORT_APPROACH", pts3(l, [0.0, 0.0]))));
@@ -691,6 +692,14 @@ impl TileDocument {
         for (kind, line, _) in edges.iter().filter(|e| on_walls(e.0)) {
             let e = sc.add_container_instance(Some(walls), "SiegeAIEdgeInstance", &edge_attrs(kind.ted()))?;
             polygon(sc, e, "SIEGE_AI_POLYGON_INSTANCE", "Street", line, &[])?;
+        }
+
+        // The walls' battlefield zones (TEd's zone defaults: EFP_LOW_WALL).
+        if !wall_zones.is_empty() {
+            let z = sc.add_layer(Some(top), "Wall_Zones")?;
+            for pts in &wall_zones {
+                polygon(sc, z, "ZONE_POLYGON_INSTANCE", "Zone", pts, &[("polygon_closed", "1")])?;
+            }
         }
 
         let fort = sc.add_layer(Some(top), "Fort")?;

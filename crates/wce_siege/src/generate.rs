@@ -27,6 +27,10 @@ pub const CELL: f64 = 2.0;
 /// The fort perimeter's distance outside the walls (CA: 10-14).
 pub const PERIMETER_OUT: f64 = 12.0;
 
+/// A wall's battlefield zone reaches this far either side of its walkway's middle (TDD's: 8 out and 21 in from the pieces' line, whose
+/// walkway's middle is 5 in).
+pub const WALL_ZONE_HALF: f64 = 15.0;
+
 /// A street longer than this gets areas along it (a guide: the AI takes long to walk long streets).
 pub const MAX_STREET: f64 = 300.0;
 
@@ -567,6 +571,7 @@ pub fn generate(input: &Input) -> Layout {
     }
 
     out.separators = separators(&out.perimeter, &out.edges.iter().filter(|e| e.kind == EdgeKind::Wall).map(|e| e.line.clone()).collect::<Vec<_>>());
+    out.wall_zones = out.edges.iter().filter(|e| e.kind == EdgeKind::Wall).flat_map(|e| zone_runs(&e.line, 250.0, 60.0)).filter_map(|l| strip(&l, WALL_ZONE_HALF, 10.0)).collect();
 
     // The ring closed: walls, separators and no-go regions keep the outside from the town (as in CA's tiles but one).
     let wall_lines: Vec<&Vec<P>> = out.edges.iter().filter(|e| e.kind == EdgeKind::Wall).map(|e| &e.line).collect();
@@ -910,6 +915,67 @@ fn gate_passage(g: &Grid, w: &WallPiece, cells: &[usize]) -> Vec<usize> {
         let p = g.centre(k);
         ((p[0] - mid[0]) * along[0] + (p[1] - mid[1]) * along[1]).abs() <= l / 3.0
     }).collect()
+}
+
+/// A line cut where it turns by more than `corner` degrees and into pieces of at most `max_len` (a closed ring into several), so each
+/// piece's strip is a simple polygon.
+fn zone_runs(line: &[P], max_len: f64, corner: f64) -> Vec<Vec<P>> {
+    let mut out = vec![];
+    let mut cur: Vec<P> = vec![];
+    let mut len = 0.0;
+    for (i, &p) in line.iter().enumerate() {
+        if let Some(&q) = cur.last() {
+            len += dist(q, p);
+        }
+
+        cur.push(p);
+        let turn = (i > 0 && i + 1 < line.len()).then(|| {
+            let (a, b) = ([p[0] - line[i - 1][0], p[1] - line[i - 1][1]], [line[i + 1][0] - p[0], line[i + 1][1] - p[1]]);
+            (a[0] * b[1] - a[1] * b[0]).atan2(a[0] * b[0] + a[1] * b[1]).abs().to_degrees()
+        });
+        if i + 1 < line.len() && (len >= max_len || turn.is_some_and(|t| t > corner)) {
+            out.push(std::mem::take(&mut cur));
+            cur.push(p);
+            len = 0.0;
+        }
+    }
+
+    if cur.len() >= 2 {
+        out.push(cur);
+    }
+
+    out
+}
+
+/// A closed strip `half` either side of a line (its points about `step` apart): the left side along it, the right side back; none for a
+/// line shorter than a step.
+fn strip(line: &[P], half: f64, step: f64) -> Option<Vec<P>> {
+    let total = line.windows(2).map(|w| dist(w[0], w[1])).sum::<f64>();
+    if line.len() < 2 || total < step {
+        return None;
+    }
+
+    // Even points along it, each with the direction there.
+    let n = (total / step).ceil() as usize;
+    let mut pts = vec![];
+    let (mut seg, mut acc) = (0, 0.0);
+    for k in 0..=n {
+        let at = total * k as f64 / n as f64;
+        while seg + 2 < line.len() && acc + dist(line[seg], line[seg + 1]) < at {
+            acc += dist(line[seg], line[seg + 1]);
+            seg += 1;
+        }
+
+        let (a, b) = (line[seg], line[seg + 1]);
+        let l = dist(a, b).max(1e-9);
+        let t = ((at - acc) / l).clamp(0.0, 1.0);
+        pts.push(([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], [(b[0] - a[0]) / l, (b[1] - a[1]) / l]));
+    }
+
+    let side = |s: f64| pts.iter().map(move |&(p, d)| [p[0] - d[1] * half * s, p[1] + d[0] * half * s]);
+    let mut out = side(1.0).collect::<Vec<_>>();
+    out.extend(side(-1.0).collect::<Vec<_>>().into_iter().rev());
+    Some(out)
 }
 
 /// The cells inside an odd number of the outlines: outlines holding others as holes.
@@ -1744,6 +1810,14 @@ mod tests {
         assert!(l.nodes.iter().any(|n| n.kind == NodeKind::Area));
         assert!(l.edges.iter().any(|e| e.kind == EdgeKind::Street));
         assert_eq!(l.edges.iter().filter(|e| e.kind == EdgeKind::Wall).count(), 1);
+
+        // Its battlefield zones: strips along the wall run (one per side of the square), every walkway segment's middle in one of them.
+        assert!(l.wall_zones.len() >= 4, "{} zones", l.wall_zones.len());
+        let wall = &l.edges.iter().find(|e| e.kind == EdgeKind::Wall).expect("a wall").line;
+        for w in wall.windows(2).filter(|w| dist(w[0], w[1]) > 1.0) {
+            let mid = [(w[0][0] + w[1][0]) / 2.0, (w[0][1] + w[1][1]) / 2.0];
+            assert!(l.wall_zones.iter().any(|z| inside(mid, z)), "the walkway at {mid:?} in no zone");
+        }
         assert!(l.approaches.len() >= 4);
     }
 
