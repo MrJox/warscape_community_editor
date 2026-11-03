@@ -101,6 +101,16 @@ impl CellLayer {
         self.palette[usize::from(self.cells[(y * self.w + x) as usize])]
     }
 
+    /// The palette index of cell (x, y).
+    pub fn index(&self, x: u32, y: u32) -> u16 {
+        self.cells[(y * self.w + x) as usize]
+    }
+
+    /// Sets cell (x, y) to a palette index (one of `palette`'s).
+    pub fn set_index(&mut self, x: u32, y: u32, i: u16) {
+        self.cells[(y * self.w + x) as usize] = i;
+    }
+
     /// Paints cell (x, y); false when the palette is full.
     pub fn paint(&mut self, x: u32, y: u32, c: Rgba) -> bool {
         let Some(i) = self.index_of(c) else { return false };

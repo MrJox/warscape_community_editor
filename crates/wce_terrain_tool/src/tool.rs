@@ -152,6 +152,9 @@ pub struct TerrainTool {
 
     /// The LF brush, the stroke being painted, the brush ring's layer and entity.
     paint: LfPaint,
+
+    /// The cell layers' painting.
+    cells: crate::cell_paint::CellPaint,
     painting: Option<Painting>,
 
     /// The shown map's fields mirrored into its view (a kit map's land and sea LF on the view's lattices), and the view's sea LF.
@@ -187,7 +190,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -544,7 +547,17 @@ impl TerrainTool {
             gui::text_disabled(&line);
         }
 
+        let lf_was = self.paint.on;
         self.draw_paint_section(e);
+        let cells_was = self.cells.on;
+        self.cells.draw_section(e, self.shown);
+
+        // One painting at a time: the one just turned on.
+        if self.paint.on && !lf_was {
+            self.cells.on = false;
+        } else if self.cells.on && !cells_was {
+            self.paint.on = false;
+        }
 
         gui::end();
     }
@@ -754,6 +767,46 @@ impl TerrainTool {
         Ok(format!("{laid} placements of {tiles} tiles with an lf_mask.tif patched ({outside} off the map): {changed} of their {written} low samples changed, the record keeps {kb} KB"))
     }
 
+    /// The cell paint on the 3D view's ground: the cell under the cursor.
+    fn cell_input(&mut self, e: &mut Editor, kind: wce_editor::tool::ViewportEventKind) -> bool {
+        use wce_editor::tool::ViewportEventKind as K;
+        let cell = self.cursor.zip(self.view.frame()).map(|((p, _), f)| {
+            let (x, y) = f.cell_of(f64::from(p.x), f64::from(p.z));
+            (x.floor() as i64, y.floor() as i64)
+        });
+
+        match kind {
+            K::Press => cell.is_some_and(|c| self.cells.press(e, self.shown, c)),
+            K::Drag => {
+                if let Some(c) = cell {
+                    self.cells.drag(e, c);
+                }
+
+                true
+            }
+
+            K::Release => {
+                if let Some(m) = self.cells.release(e) {
+                    e.status(&m, false);
+                }
+
+                true
+            }
+
+            _ => false,
+        }
+    }
+
+    /// What the cell edits (strokes, undo, redo) changed: the Map panel's picture (and its copy on the ground once no stroke is painted).
+    fn follow_cell_edits(&mut self, e: &mut Editor) {
+        let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
+        let touched = d.cells.take();
+        let drape = !self.cells.painting();
+        for (k, rect) in touched {
+            self.map_panel.cells_changed(e, self.shown, k, rect, drape);
+        }
+    }
+
     /// The stroke onto the document's history.
     fn end_stroke(&mut self, e: &mut Editor) -> Option<usize> {
         let paint = self.painting.take()?;
@@ -890,7 +943,22 @@ impl Tool for TerrainTool {
 
     fn draw_panels(&mut self, e: &mut Editor) {
         self.draw_map_panel(e);
+        self.map_panel.paint = self.cells.on;
+        self.map_panel.outline = self.cells.dragging;
         self.map_panel.draw(e, self.shown, &self.view);
+
+        // The cell paint in the Map panel.
+        if self.cells.on
+            && let Some(i) = self.map_panel.input
+        {
+            if i.pressed {
+                self.cells.press(e, self.shown, i.cell);
+            } else if i.down && self.cells.painting() {
+                self.cells.drag(e, i.cell);
+            } else if i.released && let Some(m) = self.cells.release(e) {
+                e.status(&m, false);
+            }
+        }
     }
 
     fn default_layout(&self, dockspace: gui::ImGuiID) {
@@ -920,6 +988,10 @@ impl Tool for TerrainTool {
     fn viewport_input(&mut self, e: &mut Editor, ev: &wce_editor::tool::ViewportEvent) -> bool {
         use wce_editor::tool::ViewportEventKind as K;
         self.cursor = self.pick_at(e, ev.x, ev.y);
+        if self.cells.on && ev.button == 0 {
+            return self.cell_input(e, ev.kind);
+        }
+
         if !self.paint.on || ev.button != 0 {
             return false;
         }
@@ -956,7 +1028,7 @@ impl Tool for TerrainTool {
     }
 
     fn claims_left_button(&self, _: &Editor) -> bool {
-        self.paint.on
+        self.paint.on || self.cells.on
     }
 
     fn update(&mut self, e: &mut Editor) {
@@ -982,6 +1054,7 @@ impl Tool for TerrainTool {
         self.map_panel.apply_drape(e, self.shown, &self.view);
         self.update_ring(e);
         self.follow_lf_edits(e);
+        self.follow_cell_edits(e);
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
@@ -1150,6 +1223,37 @@ impl Tool for TerrainTool {
             with_terrain(e, |t, e| match t.apply_lf_patches(e) {
                 Ok(m) => CommandResult::success(m),
                 Err(err) => CommandResult::fail(err),
+            })
+        });
+
+        c.add("terrain_cells", "terrain_cells <layer> brush <x> <y> <radius> <r> <g> <b> | rect <x0> <y0> <x1> <y1> <r> <g> <b> | fill <x> <y> <r> <g> <b>", "the Terrain tool: one cell stroke on a kit map's layer (its index in the Cell layers list; rect corners inclusive), onto the history", |e, a| {
+            let usage = "usage: terrain_cells <layer> brush <x> <y> <radius> <r> <g> <b> | rect <x0> <y0> <x1> <y1> <r> <g> <b> | fill <x> <y> <r> <g> <b>";
+            let (Some(layer), Some(mode)) = (a.first().and_then(|v| v.parse::<usize>().ok()), a.get(1)) else { return CommandResult::fail(usage) };
+            let n: Vec<i64> = a[2..].iter().filter_map(|v| v.parse().ok()).collect();
+            let (mode, from, to, radius, colour) = match (mode.as_str(), &n[..]) {
+                ("brush", [x, y, rad, r, g, b]) => (0, (*x, *y), (*x, *y), *rad, [*r, *g, *b]),
+                ("rect", [x0, y0, x1, y1, r, g, b]) => (1, (*x0, *y0), (*x1, *y1), 0, [*r, *g, *b]),
+                ("fill", [x, y, r, g, b]) => (2, (*x, *y), (*x, *y), 0, [*r, *g, *b]),
+                _ => return CommandResult::fail(usage),
+            };
+
+            with_terrain(e, |t, e| {
+                let saved = (t.cells.layer, t.cells.mode, t.cells.radius, t.cells.colour);
+                (t.cells.layer, t.cells.mode, t.cells.radius) = (layer, mode, radius as i32);
+                t.cells.colour = [colour[0] as u8, colour[1] as u8, colour[2] as u8, 255];
+                let shown = t.shown;
+                let r = if t.cells.press(e, shown, from) {
+                    t.cells.drag(e, to);
+                    t.cells.release(e)
+                } else {
+                    None
+                };
+
+                (t.cells.layer, t.cells.mode, t.cells.radius, t.cells.colour) = saved;
+                match r {
+                    Some(m) => CommandResult::success(m),
+                    None => CommandResult::fail("no cells changed (no kit map, no such layer, or outside it)"),
+                }
             })
         });
 

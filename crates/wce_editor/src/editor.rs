@@ -1362,7 +1362,7 @@ impl Editor {
     pub fn frame(&mut self, textures: &mut D3D11Renderer) {
         wce_prof!("editor.frame");
         self.frame += 1;
-        self.images.flush(&self.dev, textures);
+        self.images.flush(&self.dev, &self.ctx, textures);
         self.input_origin = None;
 
         // Lines of a `script` command run outside a script (the command line, the console).
