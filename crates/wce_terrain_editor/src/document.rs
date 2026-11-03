@@ -42,11 +42,14 @@ pub struct MapDocument {
     /// place every loader looks), and what the last save said.
     pub save_dir: Option<PathBuf>,
     message: Option<String>,
+
+    /// The cells its layer edits changed, for the views.
+    pub cells: Arc<crate::cells::CellWatch>,
 }
 
 impl MapDocument {
     pub fn new(name: String, source: MapSource, model: Option<MapModel>, placed: Arc<PlacedMap>, locations: Option<BattleLocations>, db: Arc<TileDatabase>) -> Self {
-        Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db, save_dir: None, message: None }
+        Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db, save_dir: None, message: None, cells: Arc::default() }
     }
 
     /// The map's files as data (a kit map; none for a map of the packs).
@@ -62,6 +65,23 @@ impl MapDocument {
 
     pub fn lf_field(&self, role: wce_terrain::LfRole) -> Option<&wce_terrain::paged::PagedU16> {
         self.model().and_then(|m| m.lf(role)).map(|item| item.get())
+    }
+
+    /// A cell layer of the model to paint on (its index in `MapModel::layers`; the file is marked edited); the finished stroke goes on the
+    /// history with `push_cells`.
+    pub fn cell_layer_mut(&mut self, k: usize) -> Option<&mut wce_terrain::cells::CellLayer> {
+        self.history.model_mut().as_mut().and_then(|m| m.layers.get_mut(k)).map(|(_, item)| item.edit())
+    }
+
+    pub fn cell_layer(&self, k: usize) -> Option<&wce_terrain::cells::CellLayer> {
+        self.model().and_then(|m| m.layers.get(k)).map(|(_, item)| item.get())
+    }
+
+    /// A finished cell stroke onto the history (in the layer already).
+    pub fn push_cells(&mut self, cmd: crate::cells::CellStrokeCommand) {
+        use wce_editor_core::command::History;
+        self.history.push(Box::new(cmd));
+        self.history.break_merge();
     }
 
     /// A finished stroke onto the history (it is in the field already: applying it again changes nothing).

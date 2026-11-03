@@ -1,6 +1,7 @@
 //! The Terrain tool's model (docs/plans/terrain_editor.md): a map as data, independent of any game's files. wce_terrain_io reads the
 //! game's files into it and writes them out of it.
 
+pub mod cell_edit;
 pub mod cells;
 pub mod explicit;
 pub mod lf_edit;

@@ -1,8 +1,8 @@
 //! The Map panel: the active map seen from above, one cell a texel. Its layers: the LF (shaded as the overview map), the placements (each
 //! placed tile in its tile set's colour: a map of the packs has no tile map image, its placements stand for it) and a kit map's cell
 //! layers (tile map, climate, culture, snow, season masks, layout). The wheel zooms around the cursor, the middle button pans, a click
-//! moves the camera over the cell; the cell under the cursor is named (its colour in the tile database, the placement over it). Painting
-//! on it comes with Phase 4 (docs/plans/terrain_editor.md).
+//! moves the camera over the cell; the cell under the cursor is named (its colour in the tile database, the placement over it). With the
+//! cell paint on, the left button paints instead (`input`, for the tool); a painted layer's picture is written where it changed.
 
 use wce_editor::editor::Editor;
 use wce_editor::gui::{self, Vec2, col32, v2};
@@ -47,6 +47,22 @@ pub struct MapPanel {
     picture_id: u64,
     pub drape: bool,
     pub opacity: f32,
+
+    /// Set by the tool before `draw`: the left button paints (no camera move), and the rectangle being dragged (cells, inclusive).
+    pub paint: bool,
+    pub outline: Option<[i64; 4]>,
+
+    /// After `draw`: the cell under the cursor and the left button's state over the map this frame.
+    pub input: Option<MapInput>,
+}
+
+/// The cursor over the map (`MapPanel::input`).
+#[derive(Clone, Copy, Debug)]
+pub struct MapInput {
+    pub cell: (i64, i64),
+    pub pressed: bool,
+    pub down: bool,
+    pub released: bool,
 }
 
 /// The layers a map has, with their names.
@@ -170,6 +186,32 @@ impl MapPanel {
         e.scene.set_ground_overlay(overlay);
     }
 
+    /// Cells of a kit map's layer (its index in the model) changed in `rect` (x0, y0, x1, y1; end exclusive): the picture there, when it
+    /// shows that layer; the ground's copy when `drape` (a whole picture: at a stroke's end, not every dab).
+    pub fn cells_changed(&mut self, e: &mut Editor, doc: DocumentId, k: usize, rect: [u32; 4], drape: bool) {
+        let Some((key, shown_doc, Layer::Cells(shown), w, _)) = &self.shown else { return };
+        if *shown_doc != doc || *shown != k {
+            return;
+        }
+
+        let (key, w) = (key.clone(), *w);
+        let Some(l) = e.docs.find_as::<MapDocument>(doc).and_then(|d| d.cell_layer(k)) else { return };
+        let Some(texels) = self.texels.as_mut() else { return };
+        let px = std::sync::Arc::make_mut(texels);
+        for y in rect[1]..rect[3].min(l.height()) {
+            for x in rect[0]..rect[2].min(l.width()) {
+                let c = l.colour(x, y);
+                let o = ((y * w + x) * 4) as usize;
+                px[o..o + 4].copy_from_slice(&[c[0], c[1], c[2], 255]);
+            }
+        }
+
+        e.images.patch(&key, texels.clone(), rect);
+        if drape {
+            self.picture_id += 1;
+        }
+    }
+
     /// Shows the `k`-th layer of the list (scripts).
     pub fn set_layer(&mut self, k: usize) {
         self.layer = k;
@@ -223,7 +265,7 @@ impl MapPanel {
             if let Some((w, h, px)) = picture(d, &layer) {
                 let texels = std::sync::Arc::new(px);
                 e.images.forget(&key);
-                e.images.submit(&key, w, h, texels.to_vec());
+                e.images.submit_patchable(&key, w, h, texels.to_vec());
                 self.texels = Some(texels);
                 self.picture_id += 1;
                 self.shown = Some((key, doc, layer.clone(), w, h));
@@ -298,6 +340,9 @@ impl MapPanel {
         }
 
         dl.rect(screen(0.0, 0.0), screen(mw, mh), col32(255, 255, 255, 90), 0.0, 1.0);
+        if let Some(o) = self.outline {
+            dl.rect(screen(o[0] as f64, o[1] as f64), screen(o[2] as f64 + 1.0, o[3] as f64 + 1.0), col32(255, 220, 60, 255), 0.0, 2.0);
+        }
 
         // The camera and where it looks.
         if let Some(f) = view.frame() {
@@ -313,8 +358,17 @@ impl MapPanel {
 
         dl.pop_clip_rect();
 
-        // The cell under the cursor; a click moves the camera over it.
+        // The cell under the cursor; a click moves the camera over it (paints, with the cell paint on).
         self.hover.clear();
+        self.input = None;
+        if hovered || (self.paint && active) {
+            let c = to_cell(mouse, centre, scale);
+            self.input = Some(MapInput {
+                cell: (c[0].floor() as i64, c[1].floor() as i64), pressed: hovered && gui::is_mouse_clicked(0), down: active && gui::is_mouse_down(0),
+                released: gui::is_mouse_released(0),
+            });
+        }
+
         if hovered {
             let c = to_cell(mouse, centre, scale);
             let (x, y) = (c[0].floor(), c[1].floor());
@@ -341,6 +395,7 @@ impl MapPanel {
             }
 
             if gui::is_mouse_clicked(0)
+                && !self.paint
                 && let Some(f) = view.frame()
             {
                 let (fx, fz) = f.from_map.apply(c[0], c[1]);
