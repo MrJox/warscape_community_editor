@@ -4,6 +4,7 @@ mod cell_paint;
 mod explicit_tiles;
 mod map_panel;
 mod refill;
+mod validate;
 mod tool;
 
 pub use tool::TerrainTool;
