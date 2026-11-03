@@ -52,6 +52,7 @@ impl Loaded {
     fn document(self) -> Box<MapDocument> {
         let mut d = MapDocument::new(self.name, self.source, self.model, self.placed, self.locations, self.db);
         d.fill_messages = self.messages;
+        d.unit = UNIT;
         Box::new(d)
     }
 }
@@ -162,6 +163,9 @@ pub struct TerrainTool {
     cells: crate::cell_paint::CellPaint,
     explicit: crate::explicit_tiles::ExplicitPanel,
 
+    /// The `.terry` scene drawn and its creation modes.
+    terry: crate::terry_view::TerryView,
+
     /// The last checks of the shown map.
     findings: Vec<crate::validate::Finding>,
     refill: crate::refill::Refill,
@@ -201,7 +205,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -571,6 +575,8 @@ impl TerrainTool {
         self.cells.draw_section(e, self.shown);
         let placing_was = self.explicit.placing;
         self.explicit.draw_section(e, self.shown);
+        let terry_was = self.terry.claims_left_button();
+        self.terry.draw_section(e, self.shown);
         self.draw_validation(e);
 
         // One left-button mode at a time: the one just turned on.
@@ -580,6 +586,12 @@ impl TerrainTool {
             (self.paint.on, self.explicit.placing) = (false, false);
         } else if self.explicit.placing && !placing_was {
             (self.paint.on, self.cells.on) = (false, false);
+        }
+
+        if self.terry.claims_left_button() && !terry_was {
+            (self.paint.on, self.cells.on, self.explicit.placing) = (false, false, false);
+        } else if self.paint.on || self.cells.on || self.explicit.placing {
+            self.terry.mode = crate::terry_view::Mode::Select;
         }
 
         gui::end();
@@ -1055,10 +1067,23 @@ impl Tool for TerrainTool {
 
     fn draw_panels(&mut self, e: &mut Editor) {
         self.draw_map_panel(e);
-        self.map_panel.paint = self.cells.on || self.explicit.placing;
+        self.map_panel.paint = self.cells.on || self.explicit.placing || self.terry.claims_left_button();
         self.map_panel.outline = self.cells.dragging;
         self.map_panel.marks = e.docs.find_as::<MapDocument>(self.shown).map(|d| self.explicit.marks(d)).unwrap_or_default();
         self.map_panel.draw(e, self.shown, &self.view);
+
+        // A `.terry` creation click in the Map panel (the cell's centre).
+        if self.terry.claims_left_button()
+            && let Some(i) = self.map_panel.input.filter(|i| i.pressed)
+            && let Some(d) = e.docs.find_as::<MapDocument>(self.shown)
+        {
+            let (w, h) = (f64::from(d.placed.width / 2), f64::from(d.placed.height / 2));
+            let cell = wce_terrain_editor::document::TERRY_CELL;
+            let at = [(i.cell.0 as f64 + 0.5 - w) * cell, (h - (i.cell.1 as f64 + 0.5)) * cell];
+            if let Some(m) = self.terry.click(e, self.shown, at) {
+                e.status(&m, false);
+            }
+        }
 
         // Placing an explicit tile in the Map panel.
         if self.explicit.placing
@@ -1118,6 +1143,22 @@ impl Tool for TerrainTool {
             return self.cell_input(e, ev.kind);
         }
 
+        // A `.terry` creation click on the ground.
+        if self.terry.claims_left_button() && ev.button == 0 {
+            if ev.kind == wce_editor::tool::ViewportEventKind::Press {
+                if let Some((p, _)) = self.cursor {
+                    let at = [f64::from(p.x) * UNIT, f64::from(p.z) * UNIT];
+                    if let Some(m) = self.terry.click(e, self.shown, at) {
+                        e.status(&m, false);
+                    }
+                }
+
+                return true;
+            }
+
+            return matches!(ev.kind, wce_editor::tool::ViewportEventKind::Drag | wce_editor::tool::ViewportEventKind::Release);
+        }
+
         if self.explicit.placing {
             let cell = self.cursor.zip(self.view.frame()).map(|((p, _), f)| {
                 let (x, y) = f.cell_of(f64::from(p.x), f64::from(p.z));
@@ -1175,7 +1216,7 @@ impl Tool for TerrainTool {
     }
 
     fn claims_left_button(&self, _: &Editor) -> bool {
-        self.paint.on || self.cells.on || self.explicit.placing
+        self.paint.on || self.cells.on || self.explicit.placing || self.terry.claims_left_button()
     }
 
     fn update(&mut self, e: &mut Editor) {
@@ -1203,6 +1244,8 @@ impl Tool for TerrainTool {
         self.follow_lf_edits(e);
         self.follow_cell_edits(e);
         self.follow_refill(e);
+        let frame = self.view.frame().filter(|_| self.shown != 0);
+        self.terry.update(e, self.shown, frame);
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
@@ -1477,6 +1520,82 @@ impl Tool for TerrainTool {
                 let m = t.validate(e);
                 let lines: Vec<String> = t.findings.iter().map(|f| format!("{:?}: {}", f.severity, f.text)).collect();
                 CommandResult::success(format!("{m}{}{}", if lines.is_empty() { "" } else { "\n" }, lines.join("\n")))
+            })
+        });
+
+        c.add("terrain_terry", "terrain_terry count | bca <x> <z> | zone <x> <z> <x> <z> <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>", "the Terrain tool: the shown kit map's .terry entities (metres from the map's centre, ids in hex; one step on the history each)", |e, a| {
+            let usage = "usage: terrain_terry count | bca <x> <z> | zone <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>";
+            let hex = |v: &String| u64::from_str_radix(v, 16).ok();
+            let nums: Vec<f64> = a.iter().skip(1).filter_map(|v| v.parse().ok()).collect();
+            with_terrain(e, |t, e| {
+                let doc = t.shown;
+                let r = match (a.first().map(String::as_str), a.len()) {
+                    (Some("count"), 1) => {
+                        let d = e.docs.find_as::<MapDocument>(doc);
+                        Ok(d.and_then(|d| d.project()).map_or_else(|| "no .terry project".to_owned(), |p| {
+                            let mut kinds: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+                            for x in &p.entities {
+                                *kinds.entry(p.kind(x).name()).or_default() += 1;
+                            }
+
+                            format!("{} entities: {kinds:?}", p.entities.len())
+                        }))
+                    }
+
+                    (Some("bca"), 3) if nums.len() == 2 => crate::terry_view::new_bca(e, doc, [nums[0], nums[1]]),
+                    (Some("zone"), n) if n >= 7 && nums.len() == n - 1 && nums.len() % 2 == 0 => {
+                        let pts: Vec<[f64; 2]> = nums.chunks(2).map(|c| [c[0], c[1]]).collect();
+                        crate::terry_view::new_zone(e, doc, &pts)
+                    }
+
+                    (Some("delete"), 2) => hex(&a[1]).ok_or_else(|| usage.to_owned()).and_then(|id| crate::terry_view::delete(e, doc, &[id])),
+                    (Some("duplicate"), 2) => hex(&a[1]).ok_or_else(|| usage.to_owned()).and_then(|id| crate::terry_view::duplicate(e, doc, &[id])),
+                    (Some("set"), 5) => match (hex(&a[1]), e.docs.find_as_mut::<MapDocument>(doc)) {
+                        (Some(id), Some(d)) => {
+                            let before = d.project().and_then(|p| p.entity(id).and_then(|x| p.component(x, &a[2])).and_then(|c| p.doc.get(c, &a[3])));
+                            match before {
+                                Some(before) => {
+                                    let revision = d.terry_revision.clone();
+                                    d.push_terry(Box::new(wce_terrain_editor::terry::TerryAttrCommand { id, component: a[2].clone(), attr: a[3].clone(), before: before.clone(), after: a[4].clone(), key: 0, revision }));
+                                    Ok(format!("{}.{}: {before} -> {}", a[2], a[3], a[4]))
+                                }
+
+                                None => Err("no such entity, component or attribute".to_owned()),
+                            }
+                        }
+
+                        _ => Err(usage.to_owned()),
+                    },
+
+                    (Some("move"), 4) => match (hex(&a[1]), a[2].parse::<f64>(), a[3].parse::<f64>(), e.docs.find_as_mut::<MapDocument>(doc)) {
+                        (Some(id), Ok(dx), Ok(dz), Some(d)) => {
+                            let mut m = wce_foundation::math::Float4x4::IDENTITY;
+                            (m.m[0][3], m.m[2][3]) = ((dx / UNIT) as f32, (dz / UNIT) as f32);
+                            let src = wce_scene::render_scene::SourceRef { doc, item: id };
+                            wce_editor_core::document::Document::transform_items(d, &[src], &m, 0x7e57_0001 ^ id);
+                            let p = d.project().and_then(|p| p.entity(id).and_then(|x| p.local_position(x)));
+                            Ok(format!("moved: {p:?}"))
+                        }
+
+                        _ => Err(usage.to_owned()),
+                    },
+
+                    (Some("get"), 2) => match (hex(&a[1]), e.docs.find_as::<MapDocument>(doc)) {
+                        (Some(id), Some(d)) => d.project().and_then(|p| p.entity(id).map(|x| {
+                            let w = p.world_position(id);
+                            format!("{} ({}) local {:?} world {w:?} children {:x?}", x.name, p.kind(x).name(), p.local_position(x), x.children)
+                        })).ok_or_else(|| "no such entity".to_owned()),
+
+                        _ => Err(usage.to_owned()),
+                    },
+
+                    _ => Err(usage.to_owned()),
+                };
+
+                match r {
+                    Ok(m) => CommandResult::success(m),
+                    Err(err) => CommandResult::fail(err),
+                }
             })
         });
 

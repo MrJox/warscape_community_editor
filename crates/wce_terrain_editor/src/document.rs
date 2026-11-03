@@ -48,11 +48,36 @@ pub struct MapDocument {
 
     /// BOB's messages of the last fill ("Failed to find tile for point x x y": a cell no tile fits).
     pub fill_messages: Vec<String>,
+
+    /// The `.terry` scene: its revision (moves with every edit), the view's metres a scene unit, and the gizmo's gesture (its id, the
+    /// items' positions when it started, the move so far: metres).
+    pub terry_revision: crate::terry::TerryRevision,
+    pub unit: f64,
+    gesture: Option<Gesture>,
+}
+
+/// A gizmo gesture on `.terry` entities: its id, the items' positions when it started, the move so far (metres).
+type Gesture = (u64, std::collections::HashMap<u64, [f64; 3]>, [f64; 3]);
+
+/// Cells a side of the map's grid in `.terry` metres (docs/re/terry.md).
+pub const TERRY_CELL: f64 = 256.0;
+
+/// The values offered for an enumerated `.terry` attribute (the file's own values are added to them).
+fn choices_of(attr: &str) -> &'static [&'static str] {
+    match attr {
+        "catchment_type" => &["land_normal", "land_ambush", "land_bridge", "coastal_battle", "naval_normal", "settlement_standard", "settlement_unfortified", "port_assault", "unfortified_port"],
+        "deployment_category" => &["DZC_RIVER", "DZC_COAST"],
+        "deployment_type" => &["DZT_1V1"],
+        "region_type" => &["DZRT_ADDITIVE", "DZRT_SUBTRACTIVE"],
+        _ => &[],
+    }
 }
 
 impl MapDocument {
     pub fn new(name: String, source: MapSource, model: Option<MapModel>, placed: Arc<PlacedMap>, locations: Option<BattleLocations>, db: Arc<TileDatabase>) -> Self {
-        Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db, save_dir: None, message: None, cells: Arc::default(), fill_messages: vec![] }
+        Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db, save_dir: None, message: None, cells: Arc::default(), fill_messages: vec![],
+            terry_revision: Arc::default(), unit: 1.0, gesture: None,
+        }
     }
 
     /// The map's files as data (a kit map; none for a map of the packs).
@@ -68,6 +93,37 @@ impl MapDocument {
 
     pub fn lf_field(&self, role: wce_terrain::LfRole) -> Option<&wce_terrain::paged::PagedU16> {
         self.model().and_then(|m| m.lf(role)).map(|item| item.get())
+    }
+
+    /// The `.terry` scene (a kit map's).
+    pub fn project(&self) -> Option<&wce_terrain::terry::TerryProject> {
+        self.model().and_then(|m| m.project.as_ref()).map(|p| p.get())
+    }
+
+    /// The `.terry` scene to change (the file is marked edited); a structural edit goes on the history with `push_terry` after.
+    pub fn project_mut(&mut self) -> Option<&mut wce_terrain::terry::TerryProject> {
+        self.history.model_mut().as_mut().and_then(|m| m.project.as_mut()).map(|p| p.edit())
+    }
+
+    /// A `.terry` edit onto the history (applied by pushing it, or already done: `TerrySpliceCommand::done`).
+    pub fn push_terry(&mut self, cmd: Box<dyn wce_editor_core::command::Command<Option<MapModel>>>) {
+        self.history.push(cmd);
+        self.terry_revision.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// An entity's position in the view's frame (scene units).
+    pub fn frame_position(&self, id: u64) -> Option<wce_foundation::math::Float3> {
+        let p = self.project()?;
+        p.entity(id)?;
+        let w = p.world_position(id);
+        let u = self.unit.max(1e-9);
+        Some(wce_foundation::math::Float3::new((w[0] / u) as f32, (w[1] / u) as f32, (w[2] / u) as f32))
+    }
+
+    /// The LF height (metres) under a `.terry` point (metres from the map's centre).
+    pub fn lf_metres_at(&self, x: f64, z: f64) -> f64 {
+        let (w, h) = (f64::from(self.placed.width / 2), f64::from(self.placed.height / 2));
+        self.placed.lf_metres(x / TERRY_CELL + w, h - z / TERRY_CELL)
     }
 
     /// A cell layer of the model to paint on (its index in `MapModel::layers`; the file is marked edited); the finished stroke goes on the
@@ -206,6 +262,174 @@ impl Document for MapDocument {
 
     fn shows_scene(&self) -> bool {
         true
+    }
+
+    /// The `.terry` scene: its entities by kind (battle catchment areas by type, deployment zones, the others), each with its children.
+    fn outline(&self) -> wce_editor_core::document::OutlinerNode {
+        use wce_editor_core::document::OutlinerNode;
+        use wce_terrain::terry::EntityKind;
+        let doc = self.id();
+        let node = |label: String, item: u64, selectable: bool, children: Vec<OutlinerNode>| OutlinerNode {
+            label, source: wce_scene::render_scene::SourceRef { doc, item }, selectable, children,
+        };
+
+        let Some(p) = self.project() else { return node(self.name.clone(), 0, false, vec![]) };
+        fn tree(p: &wce_terrain::terry::TerryProject, doc: u32, id: u64, depth: u32) -> wce_editor_core::document::OutlinerNode {
+            let e = p.entity(id);
+            let label = e.map_or_else(|| format!("{id:x}"), |e| if e.name.is_empty() { format!("{id:x}") } else { e.name.clone() });
+            let children = if depth < 16 { e.map(|e| e.children.iter().map(|&c| tree(p, doc, c, depth + 1)).collect()).unwrap_or_default() } else { vec![] };
+            wce_editor_core::document::OutlinerNode { label, source: wce_scene::render_scene::SourceRef { doc, item: id }, selectable: true, children }
+        }
+
+        let mut groups: std::collections::BTreeMap<EntityKind, Vec<u64>> = std::collections::BTreeMap::new();
+        for e in p.entities.iter().filter(|e| p.parent_of(e.id).is_none()) {
+            groups.entry(p.kind(e)).or_default().push(e.id);
+        }
+
+        let children = groups.into_iter().map(|(k, ids)| {
+            let label = format!("{} ({})", k.name(), ids.len());
+            node(label, 0, false, ids.into_iter().map(|id| tree(p, doc, id, 0)).collect())
+        }).collect();
+
+        node(format!("{} - {} .terry entities", self.name, p.entities.len()), 0, false, children)
+    }
+
+    fn describe(&self, item: wce_scene::render_scene::SourceRef) -> String {
+        let Some(p) = self.project() else { return String::new() };
+        p.entity(item.item).map_or_else(String::new, |e| format!("{} ({})", e.name, p.kind(e).name()))
+    }
+
+    /// An entity's name and its components' attributes: numbers, vectors, switches, the enumerated ones as choices.
+    fn inspect(&mut self, item: wce_scene::render_scene::SourceRef, ins: &mut dyn wce_editor_core::inspector::Inspector) {
+        use crate::terry::TerryAttrCommand;
+        let Some(p) = self.project() else { return };
+        let Some(e) = p.entity(item.item).cloned() else { return };
+        let revision = self.terry_revision.clone();
+        let key_of = |c: &str, a: &str| {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ item.item;
+            for b in c.bytes().chain(a.bytes()) {
+                h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+            }
+
+            h | 1
+        };
+
+        let mut edits: Vec<TerryAttrCommand> = vec![];
+        ins.section(&format!("{} ({})", e.name, p.kind(&e).name()));
+        let mut name = e.name.clone();
+        if ins.edit_string("name", "name", &mut name) {
+            edits.push(TerryAttrCommand { id: e.id, component: String::new(), attr: "name".to_owned(), before: e.name.clone(), after: name, key: key_of("", "name"), revision: revision.clone() });
+        }
+
+        ins.text("id", "id", &format!("{:x}", e.id));
+        let w = p.world_position(e.id);
+        ins.text("world", "on the map (m)", &format!("{:.1}, {:.1}, {:.1}", w[0], w[1], w[2]));
+        for (cname, c) in &e.components {
+            ins.section(cname);
+            let attrs: Vec<(String, String)> = p.doc.elements()[*c].attrs.iter().map(|a| (a.name.clone(), p.doc.get(*c, &a.name).unwrap_or_default())).collect();
+            for (a, v) in attrs {
+                let field = format!("{cname}.{a}");
+                let mut push = |after: String| edits.push(TerryAttrCommand { id: e.id, component: cname.clone(), attr: a.clone(), before: v.clone(), after, key: key_of(cname, &a), revision: revision.clone() });
+                let nums: Vec<f64> = v.split_whitespace().filter_map(|t| t.parse().ok()).collect();
+                let all_numbers = !v.is_empty() && nums.len() == v.split_whitespace().count();
+                if v == "true" || v == "false" {
+                    let mut b = v == "true";
+                    if ins.edit_bool(&field, &a, &mut b) {
+                        push(b.to_string());
+                    }
+                } else if !choices_of(&a).is_empty() {
+                    let mut list: Vec<String> = choices_of(&a).iter().map(|s| (*s).to_owned()).collect();
+                    if !list.contains(&v) {
+                        list.push(v.clone());
+                    }
+
+                    let mut k = list.iter().position(|x| *x == v).unwrap_or(0) as i32;
+                    if ins.edit_choice(&field, &a, &mut k, &list) {
+                        push(list[k.max(0) as usize].clone());
+                    }
+                } else if all_numbers && nums.len() == 3 {
+                    let mut f = [nums[0] as f32, nums[1] as f32, nums[2] as f32];
+                    if ins.edit_float3(&field, &a, &mut f, 1.0) {
+                        push(f.iter().map(|&x| wce_terrain::terry::number_text(f64::from(x))).collect::<Vec<_>>().join(" "));
+                    }
+                } else if all_numbers && nums.len() == 1 {
+                    let mut f = nums[0] as f32;
+                    if ins.edit_float(&field, &a, &mut f, 1.0, -1.0e9, 1.0e9) {
+                        push(wce_terrain::terry::number_text(f64::from(f)));
+                    }
+                } else {
+                    let mut t = v.clone();
+                    if ins.edit_string(&field, &a, &mut t) {
+                        push(t);
+                    }
+                }
+            }
+
+            if cname == "ECPolyline"
+                && let Some((pts, closed)) = p.polyline(&e)
+            {
+                ins.text(&format!("{cname}.points"), "points", &format!("{} ({})", pts.len(), if closed { "closed" } else { "open" }));
+            }
+        }
+
+        let ended = ins.gesture_ended();
+        for cmd in edits {
+            self.push_terry(Box::new(cmd));
+        }
+
+        if ended {
+            self.history.break_merge();
+        }
+    }
+
+    fn item_transform(&self, item: wce_scene::render_scene::SourceRef) -> Option<wce_foundation::math::Float4x4> {
+        let p = self.frame_position(item.item)?;
+        let mut m = wce_foundation::math::Float4x4::IDENTITY;
+        (m.m[0][3], m.m[1][3], m.m[2][3]) = (p.x, p.y, p.z);
+        Some(m)
+    }
+
+    /// Moves entities by the gizmo's delta: an `ECTileAlignment` one snapped to the cell grid (256 m), a root `ECLandscapeAbove` one put on
+    /// the LF; one undo step a gesture.
+    fn transform_items(&mut self, items: &[wce_scene::render_scene::SourceRef], delta: &wce_foundation::math::Float4x4, gesture: u64) {
+        use crate::terry::TerryAttrCommand;
+        let u = self.unit;
+        let d = [f64::from(delta.m[0][3]) * u, f64::from(delta.m[1][3]) * u, f64::from(delta.m[2][3]) * u];
+        if self.gesture.as_ref().is_none_or(|g| g.0 != gesture) {
+            let starts = self.project().map(|p| items.iter().filter_map(|i| Some((i.item, p.local_position(p.entity(i.item)?)?))).collect()).unwrap_or_default();
+            self.gesture = Some((gesture, starts, [0.0; 3]));
+        }
+
+        let Some(g) = self.gesture.as_mut() else { return };
+        g.2 = [g.2[0] + d[0], g.2[1] + d[1], g.2[2] + d[2]];
+        let (acc, starts) = (g.2, g.1.clone());
+        let Some(p) = self.project() else { return };
+        let mut cmds = vec![];
+        for (id, start) in starts {
+            let Some(e) = p.entity(id) else { continue };
+            let parent = p.parent_of(id).map_or([0.0; 3], |q| p.world_position(q));
+            let mut l = [start[0] + acc[0], start[1] + acc[1], start[2] + acc[2]];
+            if p.component(e, "ECTileAlignment").is_some() {
+                for k in [0, 2] {
+                    l[k] = ((parent[k] + l[k]) / TERRY_CELL).round() * TERRY_CELL - parent[k];
+                }
+            }
+
+            if p.component(e, "ECLandscapeAbove").is_some() && p.parent_of(id).is_none() {
+                l[1] = self.lf_metres_at(l[0], l[2]);
+            }
+
+            let Some(t) = p.component(e, "ECTransform") else { continue };
+            let before = p.doc.get(t, "position").unwrap_or_default();
+            let after = l.iter().map(|&v| wce_terrain::terry::number_text(v)).collect::<Vec<_>>().join(" ");
+            if after != before {
+                cmds.push(TerryAttrCommand { id, component: "ECTransform".to_owned(), attr: "position".to_owned(), before, after, key: gesture ^ id.rotate_left(17) | 1, revision: self.terry_revision.clone() });
+            }
+        }
+
+        for c in cmds {
+            self.push_terry(Box::new(c));
+        }
     }
 
     fn as_any(&self) -> &dyn Any {
