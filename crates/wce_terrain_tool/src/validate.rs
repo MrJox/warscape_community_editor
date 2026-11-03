@@ -84,8 +84,12 @@ pub fn check(d: &MapDocument, roots: &[PathBuf]) -> Vec<Finding> {
         out.push(Finding { severity: Severity::Error, cell: at, text: format!("the fill: {msg} (no tile of the painted set fits there)") });
     }
 
-    // Explicit tiles the database does not know, or off the map.
+    // Explicit tiles the database does not know, or off the map; lines BOB does not read.
     if let Some(x) = &m.explicit {
+        for n in x.get().bad_lines() {
+            out.push(Finding { severity: Severity::Error, cell: None, text: format!("explicit_tiles.txt line {n} is no x,y,tile,rotation (an empty last line too): BOB's Tilemap fails on it") });
+        }
+
         for t in x.get().tiles() {
             match crate::explicit_tiles::tile_size(db, &t.path) {
                 None => out.push(Finding { severity: Severity::Error, cell: Some((t.x, t.y)), text: format!("explicit tile {} at {}, {}: not in the tile database (BOB skips it)", t.path, t.x, t.y) }),

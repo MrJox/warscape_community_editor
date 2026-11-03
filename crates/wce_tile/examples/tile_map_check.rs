@@ -45,6 +45,7 @@ fn main() {
 
     let name = |m: &TileMap, c: &TileMapCell| if c.index > 0 { m.names.get(c.index as usize - 1).cloned().unwrap_or_default() } else { String::new() };
     let w = got.width as usize;
+    let mut bad = 0usize;
     for layer in 0..2 {
         let (mut same, mut first, mut kinds) = (0usize, None, BTreeMap::<&str, usize>::new());
         for (i, (a, b)) in got.layers[layer].iter().zip(&want.layers[layer]).enumerate() {
@@ -52,7 +53,9 @@ fn main() {
                 if name(&got, a) != name(&want, b) { "origin: tile" } else if a.flags != b.flags { "origin: flags" } else if a.climate != b.climate { "origin: climate" }
                 else if a.lf != b.lf { "origin: lf" } else if a.origin != b.origin || a.flipped != b.flipped { "origin: other" } else { "" }
             } else if a.index != b.index { "cover: origin" } else if a.flags != b.flags { "cover: flags" } else if a.climate != b.climate { "cover: climate" }
-            else if a.origin != b.origin || a.lf != b.lf || a.flipped != b.flipped { "cover: other" } else { "" };
+            else if a.origin != b.origin || a.flipped != b.flipped { "cover: other" }
+            // BOB leaves a covered cell's LF min / max as the memory had them (on a small map: 1e-45, 19146097000), the fill writes 0.
+            else if a.lf != b.lf { "cover: lf (BOB's left-over memory)" } else { "" };
 
             if kind.is_empty() {
                 same += 1;
@@ -60,7 +63,10 @@ fn main() {
             }
 
             *kinds.entry(kind).or_default() += 1;
-            first.get_or_insert(i);
+            if !kind.starts_with("cover: lf") {
+                bad += 1;
+                first.get_or_insert(i);
+            }
         }
 
         println!("layer {layer}: {same} / {} cells agree; {kinds:?}", got.layers[layer].len());
@@ -76,6 +82,11 @@ fn main() {
 
     for m in messages.iter().take(5) {
         println!("  {m}");
+    }
+
+    // Fails on any difference but BOB's left-over LF of covered cells.
+    if bad > 0 {
+        std::process::exit(1);
     }
 }
 

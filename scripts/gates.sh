@@ -12,7 +12,7 @@
 #   WCE_BIN    folder with the built wce binary for the scripted app gates (default target/release, or $CARGO_TARGET_DIR/release)
 #   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when missing)
 #   WCE_ROME2  Rome 2's folder: its gates run too (skipped when not set)
-#   WCE_BOB_KIT  a scratch Assembly Kit BOB_Terrain ran in: the Heights & Normals gates compare with its outputs (skipped when not set)
+#   WCE_BOB_KIT  a scratch Assembly Kit BOB_Terrain ran in: the Heights & Normals and Tilemap gates compare with its outputs (skipped when not set)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/gates}"; shift || true
@@ -97,6 +97,8 @@ BOBKIT="${WCE_BOB_KIT:-}"
 if [ -n "$BOBKIT" ] && [ -d "$BOBKIT/working_data/terrain/battles" ]; then
     for m in $(ls "$BOBKIT/working_data/terrain/battles"); do
         [ -f "$BOBKIT/working_data/terrain/battles/$m/lf_height_map.data" ] && run "heights_build_$m" ex wce_terrain_io heights_build_check "$BOBKIT/raw_data/terrain/battles/$m" "$BOBKIT/working_data/terrain/battles/$m"
+        # The fill (tile map and battle field) of the map as BOB filled it (an edited map's too: wce_edit, docs/plans/terrain_editor.md Phase 4)
+        [ -f "$BOBKIT/working_data/terrain/battles/$m/tile_map.index" ] && run "tilemap_$m" ex wce_tile tile_map_check "$BOBKIT/raw_data/terrain" "$m" "$BOBKIT/working_data/terrain/battles/$m"
     done
 fi
 if [ "$CORPUS" = 1 ]; then
