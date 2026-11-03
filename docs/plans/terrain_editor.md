@@ -275,6 +275,21 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    with restricted tiles (Phase 6); the Tile tool's map context captures against the commit before the streamer's frame became swappable
    (not run: C: too full for a second build); the fill's remaining 18 s on the campaign map.
 5. **The `.terry` scene**: the ECS model, outliner, inspector, gizmo, creation modes, overlays; `Terry file` against BOB.
+   **Progress 2026-11-03.** Done (battle maps; docs/re/terry.md, "The scene's structure"):
+   - `wce_terrain::terry`: positions through the transform tree, rectangles, polylines, kinds; attribute edits; entities added
+     (`insert_entities`, the kit's layout and line endings, an old header brought to 3 / 10), removed with their descendants and the
+     references to them (`remove_entities`), listed under a parent (`add_child`): text splices, exact and small undo records.
+   - The map document: `TerryAttrCommand` (merged per gesture), `TerrySpliceCommand`; the Outliner (by kind, then the entity tree), the
+     Inspector (every component's attributes; the enumerated ones as choices), the gizmo (`ECTileAlignment` on the cell grid, a root
+     `ECLandscapeAbove` on the LF).
+   - The Terrain tool: the entities within a radius of the camera as pickable overlays on the LF (editor view; the campaign map's 1 091
+     near its centre, no cost in frame time), filters by kind; creation of BCAs (with their `Catchment Region`) and deployment zones
+     (clicks; in pairs, under a BCA), delete, duplicate; `terrain_terry`. Validation: settlement and port BCAs on no settlement or port
+     tile, zones of no BCA.
+   - Against BOB: an edited `.terry` (two BCAs, a zone pair) through BOB's Terrain processor: `locations.blm` lists the BCAs at the cells
+     the model puts them, `deployment_0000.xml` has the zones' boundaries as the model computes them.
+   Left: editing a polyline's points (moving, adding), the Inspector on several entities at once, the other creation modes (circle, spline,
+   river, prop, VFX: campaign maps, Phase 8), `locations.blm`'s rounding of the rectangles (Phase 7).
 6. **BCA generation**: the spec, the generator, its errors file; Thrones' Terry's output as the oracle.
 7. **Export**: pack output, Launch in game at a location, the minimal-edit gates over the whole build.
 8. **Campaign maps** (in scope, after the battle maps): `terrain/campaigns/<map>`: props, VFX, environment volumes, season masks, the layout map;

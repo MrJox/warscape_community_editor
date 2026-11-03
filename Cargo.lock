@@ -2478,6 +2478,8 @@ name = "wce_terrain_editor"
 version = "0.0.1"
 dependencies = [
  "wce_editor_core",
+ "wce_formats",
+ "wce_foundation",
  "wce_scene",
  "wce_terrain",
  "wce_terrain_io",
