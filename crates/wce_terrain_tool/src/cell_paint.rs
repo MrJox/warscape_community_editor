@@ -19,6 +19,9 @@ pub const MODES: [&str; 4] = ["brush", "rectangle", "fill", "pick"];
 /// The most palette entries the list shows (the filter narrows it).
 const LIST_MAX: usize = 400;
 
+/// A layer's palette list: names and colours.
+type Palette = Vec<(String, Rgba)>;
+
 /// A stroke being painted.
 struct Painting {
     doc: DocumentId,
@@ -40,7 +43,7 @@ pub struct CellPaint {
     filter: String,
 
     /// The palette list of a layer (document, layer): names and colours.
-    entries: Option<(DocumentId, usize, Vec<(String, Rgba)>)>,
+    entries: Option<(DocumentId, usize, Palette)>,
     painting: Option<Painting>,
 
     /// The rectangle being dragged (cells, inclusive corners), for the Map panel to outline.
@@ -72,7 +75,7 @@ fn rgba(c: [f32; 3]) -> Rgba {
 
 /// What can be painted on a layer: the tile database's tile sets, tiles and variations (the tile map), its climates, else the colours the
 /// layer has.
-fn palette(db: &TileDatabase, role: &LayerRole, used: &[Rgba]) -> Vec<(String, Rgba)> {
+fn palette(db: &TileDatabase, role: &LayerRole, used: &[Rgba]) -> Palette {
     match role {
         LayerRole::TileMap => {
             let mut out = vec![("nothing (black)".to_owned(), [0, 0, 0, 255])];
