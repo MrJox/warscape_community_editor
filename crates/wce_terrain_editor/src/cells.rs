@@ -63,3 +63,50 @@ impl Command<Option<MapModel>> for CellStrokeCommand {
         self
     }
 }
+
+/// The watch's layer index for the explicit tiles (`explicit_tiles.txt`): an edit of them fills the map again too.
+pub const EXPLICIT: usize = usize::MAX;
+
+/// An edit of the explicit tiles: the list before and after (a small file; none: the map has no `explicit_tiles.txt`).
+pub struct ExplicitCommand {
+    pub name: String,
+    pub before: Option<wce_terrain::explicit::ExplicitTiles>,
+    pub after: Option<wce_terrain::explicit::ExplicitTiles>,
+    pub watch: Arc<CellWatch>,
+}
+
+impl ExplicitCommand {
+    fn put(&self, model: &mut Option<MapModel>, to: Option<&wce_terrain::explicit::ExplicitTiles>) {
+        let Some(m) = model.as_mut() else { return };
+        match (to, m.explicit.as_mut()) {
+            (Some(t), Some(item)) => *item.edit() = t.clone(),
+            (Some(t), None) => {
+                let mut item = wce_terrain::Item::new("explicit_tiles.txt", t.clone(), wce_tile_model::Blob::Bytes(Arc::from(&[][..])));
+                item.edit();
+                m.explicit = Some(item);
+            }
+
+            (None, _) => m.explicit = None,
+        }
+
+        self.watch.note(EXPLICIT, [0, 0, 0, 0]);
+    }
+}
+
+impl Command<Option<MapModel>> for ExplicitCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, model: &mut Option<MapModel>) {
+        self.put(model, self.after.as_ref());
+    }
+
+    fn revert(&mut self, model: &mut Option<MapModel>) {
+        self.put(model, self.before.as_ref());
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}

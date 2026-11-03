@@ -52,6 +52,9 @@ pub struct MapPanel {
     pub paint: bool,
     pub outline: Option<[i64; 4]>,
 
+    /// Cells to outline (x0, y0, x1, y1; end exclusive) in a colour: the explicit tiles and the one being placed.
+    pub marks: Vec<([i64; 4], [u8; 4])>,
+
     /// After `draw`: the cell under the cursor and the left button's state over the map this frame.
     pub input: Option<MapInput>,
 }
@@ -347,6 +350,10 @@ impl MapPanel {
         }
 
         dl.rect(screen(0.0, 0.0), screen(mw, mh), col32(255, 255, 255, 90), 0.0, 1.0);
+        for (m, c) in &self.marks {
+            dl.rect(screen(m[0] as f64, m[1] as f64), screen(m[2] as f64, m[3] as f64), col32(c[0], c[1], c[2], c[3]), 0.0, 2.0);
+        }
+
         if let Some(o) = self.outline {
             dl.rect(screen(o[0] as f64, o[1] as f64), screen(o[2] as f64 + 1.0, o[3] as f64 + 1.0), col32(255, 220, 60, 255), 0.0, 2.0);
         }
