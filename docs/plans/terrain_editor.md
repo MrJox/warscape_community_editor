@@ -238,8 +238,15 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    - `wce_terrain_io::attila::heights`: BOB's `Heights & Normals` outputs from the model's LF fields, `lf_height_map.dds`,
      `lf_sea_height_map.dds` (its mips) and `lf_height_map.data` (CHMF), byte for byte against BOB on `wce_relief` and `main_attila_map`
      (`heights_build_check`; `gates.sh` runs it over a BOB scratch kit's outputs when `WCE_BOB_KIT` names one).
-   Left: the sea LF (the view takes the sea LF as 0), the per-tile LF patches, writing the built files on save / export (Phase 7), the
-   edits of a map with a different view lattice (only the map's own frame mirrors), stroke spacing by distance.
+   **2026-11-03.** Opening: the kits' tile databases read as one (`TileDatabase::load_layered`: the projects' kit layout's few tiles over
+   the Assembly Kit's; the project's alone filled the campaign map with nothing); the view starts over the land nearest the map's centre.
+   The sea LF: the Terrain tool's sea tiles stand on it (`PlacedMap::sea_lf`, the frame's second `LfMap`: `LF * 400 - 20` m, Rome 2's
+   sea tiles' mapping taken as Attila's; without one, the Tile tool's map context, the flat -20 m as before); the LF brush paints either
+   field, with undo, redo and save (`lf_sea_heights.tif` rewritten in its pixels only). Dabs every quarter of the radius along the
+   stroke's path (`spacing`): the same stroke however fast the mouse goes (`terrain_stroke`: 2, 7 and 200 moves, the same field).
+   Note for scripts: a `shot` is taken a frame or more later, so the command after it may already show (`frames 5` after each).
+   Left: the per-tile LF patches, writing the built files on save / export (Phase 7), the edits of a map with a different view lattice
+   (only the map's own frame mirrors).
 4. **Tile map editing**: the cell layers, explicit tiles, the fill on a worker and the partial rebuild, validation; `Tilemap` against BOB.
 5. **The `.terry` scene**: the ECS model, outliner, inspector, gizmo, creation modes, overlays; `Terry file` against BOB.
 6. **BCA generation**: the spec, the generator, its errors file; Thrones' Terry's output as the oracle.
