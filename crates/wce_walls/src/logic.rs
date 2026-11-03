@@ -103,8 +103,11 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
             }).collect::<Vec<_>>();
             let drop = here.iter().filter_map(|(sp, _)| sp.replaces).collect::<Vec<_>>();
             let kept = |p: [f32; 3]| inside(&planes, p) && !(in_box(p) && drop.iter().any(|&(a, b)| p[0] > a + 1e-3 && p[0] < b - 1e-3));
-            let old = d["platforms"].as_array().cloned().unwrap_or_default();
-            let (mut platforms, strips) = platform_strips(&old, warp, cuts, &kept, 0, &mut notes);
+            // The base's platforms less what the steps replace: cut out of them (a platform wider than the step's cross-section keeps the
+            // rest of its width), so the walkway and a step never lie one over the other.
+            let old = carve_platforms(d["platforms"].as_array().map_or(&[][..], Vec::as_slice), &drop, drop_zy);
+            let on_planes = |p: [f32; 3]| inside(&planes, p);
+            let (mut platforms, strips) = platform_strips(&old, warp, cuts, &on_planes, 0, &mut notes);
             let lines = d["ef_lines"].as_array().cloned().unwrap_or_default();
             let mut ef = place_lines(&lines, warp, &strips, &kept, &mut notes);
             for (sp, sd) in here {
@@ -304,6 +307,67 @@ struct Strip {
 
 /// Platforms cut along x and warped, the strips whose middle `keep` refuses left out; per original platform, its strips (indices from
 /// `offset`).
+/// Platforms less the boxes the steps replace (`drops`: their x ranges; `zy`: the cross-section, z then y; none: all of it), as the
+/// pieces of each platform outside them (x before the range, after it, and within it the z on either side of the box). A platform wholly
+/// outside every box is kept as it is.
+fn carve_platforms(old: &[Value], drops: &[(f32, f32)], zy: Option<((f32, f32), (f32, f32))>) -> Vec<Value> {
+    let ((z0, z1), (y0, y1)) = zy.unwrap_or(((f32::MIN, f32::MAX), (f32::MIN, f32::MAX)));
+    let mut out = vec![];
+    for p in old {
+        let mut pieces = vec![outline(&p["vertices"])];
+        for &(a, b) in drops {
+            let mut next = vec![];
+            for poly in pieces {
+                let ys = poly.iter().fold((f32::MAX, f32::MIN), |(lo, hi), q| (lo.min(q[1]), hi.max(q[1])));
+                if poly.iter().all(|q| q[0] <= a) || poly.iter().all(|q| q[0] >= b) || ys.1 < y0 || ys.0 > y1 {
+                    next.push(poly);
+                    continue;
+                }
+
+                let mid = half_plane(&half_plane(&poly, 0, a, false), 0, b, true);
+                next.extend([half_plane(&poly, 0, a, true), half_plane(&poly, 0, b, false), half_plane(&mid, 2, z0, true), half_plane(&mid, 2, z1, false)]);
+            }
+
+            pieces = next.into_iter().filter(|q| q.len() >= 3 && area_xz(q) > 1e-4).collect();
+        }
+
+        for poly in pieces {
+            let mut q = p.clone();
+            q["vertices"] = json!({ "outline": poly.iter().map(|&v| point3(v)).collect::<Vec<_>>() });
+            out.push(q);
+        }
+    }
+
+    out
+}
+
+/// A polygon cut by the plane `axis` = `at`, the side below it (`below`) or above it kept (Sutherland-Hodgman).
+fn half_plane(poly: &[[f32; 3]], axis: usize, at: f32, below: bool) -> Vec<[f32; 3]> {
+    let inside = |q: &[f32; 3]| if below { q[axis] <= at } else { q[axis] >= at };
+    let mut out = vec![];
+    for i in 0..poly.len() {
+        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+        if inside(&a) {
+            out.push(a);
+        }
+
+        if inside(&a) != inside(&b) {
+            let t = (at - a[axis]) / (b[axis] - a[axis]);
+            out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+        }
+    }
+
+    out
+}
+
+/// A polygon's area on the ground (x, z).
+fn area_xz(poly: &[[f32; 3]]) -> f32 {
+    (0..poly.len()).map(|i| {
+        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+        a[0] * b[2] - b[0] * a[2]
+    }).sum::<f32>().abs() / 2.0
+}
+
 fn platform_strips(old: &[Value], warp: &dyn Warp, cuts: &Cuts, keep: &dyn Fn([f32; 3]) -> bool, offset: usize, notes: &mut LogicNotes) -> (Vec<Value>, Vec<Vec<Strip>>) {
     let mut new = vec![];
     let mut strips = vec![];
@@ -507,6 +571,21 @@ fn point3([x, y, z]: [f32; 3]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A walkway (x 0..20, z 3..9 at y 15) under a step over x 5..10 whose cross-section is z 5.1..8.9: the step's box goes, the walkway
+    /// keeps its outer and inner edges there and all of itself elsewhere; a platform under the box's heights is left whole.
+    #[test]
+    fn a_step_cuts_its_box_out_of_the_walkway() {
+        let quad = |x0: f32, x1: f32, z0: f32, z1: f32, y: f32| json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
+            { "x": x0, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z1 }, { "x": x0, "y": y, "z": z1 } ] } });
+        let out = carve_platforms(&[quad(0.0, 20.0, 3.0, 9.0, 15.0), quad(0.0, 20.0, 3.0, 9.0, 2.0)], &[(5.0, 10.0)], Some(((5.1, 8.9), (14.0, 26.5))));
+        let area = |ps: &[Value]| ps.iter().map(|p| area_xz(&outline(&p["vertices"]))).sum::<f32>();
+        let (walkway, low): (Vec<Value>, Vec<Value>) = out.into_iter().partition(|p| outline(&p["vertices"])[0][1] > 10.0);
+        assert!((area(&walkway) - (120.0 - 5.0 * 3.8)).abs() < 1e-3, "{}", area(&walkway));
+        assert!((area(&low) - 120.0).abs() < 1e-3);
+        let inside_box = |q: &[f32; 3]| q[0] > 5.01 && q[0] < 9.99 && q[2] > 5.11 && q[2] < 8.89;
+        assert!(!walkway.iter().any(|p| outline(&p["vertices"]).iter().any(inside_box)));
+    }
 
     #[test]
     fn an_end_cap_gives_its_outer_side_and_the_way_out() {
