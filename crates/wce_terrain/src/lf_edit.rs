@@ -152,6 +152,26 @@ impl LfStroke {
         changed
     }
 
+    /// One sample set (an LF patch's): recorded as a dab's are. Whether it changed.
+    pub fn set(&mut self, field: &mut PagedU16, x: u32, y: u32, value: u16) -> bool {
+        if field.at(x, y) == value {
+            return false;
+        }
+
+        let (p, k) = field.locate(x, y);
+        if !self.shadow.contains_key(&p) {
+            let page = field.page_at(p);
+            self.before.insert(p, page.into());
+            self.shadow.insert(p, page.iter().map(|&v| f32::from(v)).collect());
+        }
+
+        self.shadow.get_mut(&p).expect("made above")[k] = f32::from(value);
+        field.set(x, y, value);
+        let c = [x, y, x + 1, y + 1];
+        self.rect = Some(self.rect.map_or(c, |r| [r[0].min(c[0]), r[1].min(c[1]), r[2].max(c[2]), r[3].max(c[3])]));
+        true
+    }
+
     /// The stroke's undo record: the pages it touched that changed (none when nothing did).
     pub fn finish(self, field: &PagedU16) -> Option<LfRecord> {
         let rect = self.rect?;

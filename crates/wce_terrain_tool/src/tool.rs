@@ -20,6 +20,7 @@ use wce_map_view::{MapView, Rings};
 use wce_scene::render_scene::DocumentId;
 use wce_terrain::MapKind;
 use wce_terrain::lf_edit::{LfBrush, LfOp, LfStroke};
+use wce_terrain::lf_patch;
 use wce_terrain::pyramid::HeightPyramid;
 use wce_terrain::LfRole;
 use wce_terrain_editor::lf::{LfMirror, LfStrokeCommand};
@@ -710,6 +711,49 @@ impl TerrainTool {
         }
     }
 
+    /// Terry's "Apply Per-Tile LF Patches" on the shown map (`wce_terrain::lf_patch`): every placement whose variation folder has an
+    /// `lf_mask.tif` (the custom-mesh cliffs and the `sea` set, whose masks are all 0; looked for in the kits' order) lays it into the land
+    /// LF, one step on the history. No kit map has them applied (Attila's 113: every low sample changes).
+    fn apply_lf_patches(&mut self, e: &mut Editor) -> Result<String, String> {
+        let roots = kit_roots(e);
+        let mirror = self.mirror.clone();
+        let d = e.docs.find_as_mut::<MapDocument>(self.shown).ok_or("no map shown")?;
+        let placed = d.placed.clone();
+        let field = d.lf_field_mut(LfRole::Land).ok_or("this map is from the game's packs: open the kit's map to patch its LF")?;
+        let per_cell = field.width() / placed.width.max(1);
+        let mut masks: std::collections::HashMap<(String, String), Option<lf_patch::LfPatch>> = std::collections::HashMap::new();
+        let mut stroke = LfStroke::default();
+        let (mut laid, mut outside, mut written, mut changed) = (0usize, 0usize, 0usize, 0usize);
+        for p in &placed.placements {
+            let mask = masks.entry((p.location.clone(), p.variation.clone())).or_insert_with(|| {
+                let rel = format!("{}/{}/lf_mask.tif", p.location.replace('\\', "/"), p.variation);
+                roots.iter().find_map(|r| std::fs::read(r.join(&rel)).ok())
+                    .and_then(|b| wce_formats::image_containers::TiffFile::parse(&b).ok())
+                    .filter(|t| t.bits_per_sample == 16 && t.samples_per_pixel == 1)
+                    .map(|t| lf_patch::LfPatch { w: t.width, h: t.height, values: t.pixels.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() })
+            });
+
+            let Some(mask) = mask else { continue };
+            match lf_patch::apply(&mut stroke, field, mask, (p.x, p.y), p.rotation, per_cell) {
+                Some((w, c)) => (laid, written, changed) = (laid + 1, written + w, changed + c),
+                None => outside += 1,
+            }
+        }
+
+        let tiles = masks.values().filter(|m| m.is_some()).count();
+        let Some(record) = stroke.finish(field) else {
+            return Ok(format!("{laid} placements of {tiles} tiles with an lf_mask.tif ({outside} off the map): the LF already had them"));
+        };
+
+        if let Some(m) = &mirror {
+            m.copy(field, record.rect);
+        }
+
+        let kb = record.bytes() / 1024;
+        d.push_stroke(LfStrokeCommand { role: LfRole::Land, record: Arc::new(record), mirror });
+        Ok(format!("{laid} placements of {tiles} tiles with an lf_mask.tif patched ({outside} off the map): {changed} of their {written} low samples changed, the record keeps {kb} KB"))
+    }
+
     /// The stroke onto the document's history.
     fn end_stroke(&mut self, e: &mut Editor) -> Option<usize> {
         let paint = self.painting.take()?;
@@ -784,6 +828,15 @@ impl TerrainTool {
             return;
         }
 
+        if gui::button("Apply per-tile LF patches") {
+            match self.apply_lf_patches(e) {
+                Ok(m) => e.status(&format!("LF patches: {m}"), false),
+                Err(err) => e.status(&err, true),
+            }
+        }
+
+        gui::same_line();
+        gui::text_disabled("the cliff and sea tiles' lf_mask.tif into the land LF");
         gui::checkbox("paint (left button)", &mut self.paint.on);
         let mut field = i32::from(self.paint.sea);
         if gui::combo("field", &mut field, &["land LF", "sea LF (under the sea tiles)"]) {
@@ -1090,6 +1143,13 @@ impl Tool for TerrainTool {
                     Some(bytes) => CommandResult::success(format!("{} along ({x0}, {y0}) .. ({x1}, {y1}), {events} moves: the record keeps {} KB, the field's sum {sum}", LF_OPS[op], bytes / 1024)),
                     None => CommandResult::fail("the stroke changed nothing"),
                 }
+            })
+        });
+
+        c.add("terrain_lf_patches", "terrain_lf_patches", "the Terrain tool: Terry's Apply Per-Tile LF Patches on the shown map (the custom-mesh tiles' lf_mask.tif into the land LF)", |e, _| {
+            with_terrain(e, |t, e| match t.apply_lf_patches(e) {
+                Ok(m) => CommandResult::success(m),
+                Err(err) => CommandResult::fail(err),
             })
         });
 
