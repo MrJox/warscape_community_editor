@@ -250,6 +250,30 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    Left: writing the built files on save / export (Phase 7), the edits of a map with a different view lattice (only the map's own frame
    mirrors). **Phase 3 done (2026-11-03)** but for those.
 4. **Tile map editing**: the cell layers, explicit tiles, the fill on a worker and the partial rebuild, validation; `Tilemap` against BOB.
+   **Progress 2026-11-03.** Done:
+   - Cell layers (`wce_terrain::cell_edit`): a stroke (round or square brush, rectangle, flood fill; the picker) keeps the 8 x 8-cell
+     chunks it touches, its record undoes them; the document's `CellStrokeCommand` and `CellWatch` (what changed, undo and redo too). The
+     Terrain panel's Cell layers section (the colour from the tile database's sets, tiles, variations, climates, or the layer's own),
+     painted in the Map panel or on the 3D view's ground; the Map panel's picture written where cells change (`ImageTextures` patchable
+     pictures). `terrain_cells`.
+   - The fill again after an edit of the tile map, the climates or the explicit tiles (`refill`): the model's layers taken on the UI
+     thread, filled on a worker (`place_images`, the LF as 16-bit samples), the chunks whose placements differ (and those their tiles
+     reach into) built again with a frame over the new placements (`Frame::with_map`; the streamer's frame swappable, results tagged with
+     its generation); the others stay. A kit map is filled from its model when opened too. `terrain_refill_wait`.
+   - The fill's speed: a tile is rejected at a cell when each rotation's first checked cell already fails, with the random draws BOB makes
+     all the same: the campaign battle map 72 s -> 18 s (byte for byte BOB's tile map and tile list still). One painted cell changes
+     every placement after it (decision 3): on the campaign map all 38 920 chunks are built again.
+   - Explicit tiles: listed, placed (tile or variation, a quarter turn, the fit shown: the map's edge and the other explicit tiles; BOB
+     tests none), turned, removed, outlined in the Map panel; `ExplicitCommand`; the file kept ending as the kit's (BOB fails on an empty
+     last line). `terrain_explicit`.
+   - Validation (`terrain_validate`): colours of no database entry, climate colours of no climate, the cells no tile fits (the fill's
+     messages), explicit tiles unknown, off the map or unreadable, tiles in no kit.
+   - Against BOB: an edited Rome map run through BOB's Terrain processor in the scratch kit (`wce_edit`): the battle field exact, the tile
+     map equal but for BOB's left-over memory in covered cells' LF min / max; `tile_map_check` fails on anything else, `gates.sh` runs it
+     over `WCE_BOB_KIT`'s maps.
+   Left: painted settlement sizes against `tile_upgrades.xml` (its rule, docs/plans/tile.md item 3, to be settled with the user); BCAs
+   with restricted tiles (Phase 6); the Tile tool's map context captures against the commit before the streamer's frame became swappable
+   (not run: C: too full for a second build); the fill's remaining 18 s on the campaign map.
 5. **The `.terry` scene**: the ECS model, outliner, inspector, gizmo, creation modes, overlays; `Terry file` against BOB.
 6. **BCA generation**: the spec, the generator, its errors file; Thrones' Terry's output as the oracle.
 7. **Export**: pack output, Launch in game at a location, the minimal-edit gates over the whole build.
