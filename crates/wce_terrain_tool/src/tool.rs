@@ -155,6 +155,7 @@ pub struct TerrainTool {
 
     /// The cell layers' painting; the fill run again after an edit of the layers it reads (and one wanted once the stroke ends).
     cells: crate::cell_paint::CellPaint,
+    explicit: crate::explicit_tiles::ExplicitPanel,
     refill: crate::refill::Refill,
     refill_wanted: bool,
     painting: Option<Painting>,
@@ -192,7 +193,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -557,12 +558,16 @@ impl TerrainTool {
         self.draw_paint_section(e);
         let cells_was = self.cells.on;
         self.cells.draw_section(e, self.shown);
+        let placing_was = self.explicit.placing;
+        self.explicit.draw_section(e, self.shown);
 
-        // One painting at a time: the one just turned on.
+        // One left-button mode at a time: the one just turned on.
         if self.paint.on && !lf_was {
-            self.cells.on = false;
+            (self.cells.on, self.explicit.placing) = (false, false);
         } else if self.cells.on && !cells_was {
-            self.paint.on = false;
+            (self.paint.on, self.explicit.placing) = (false, false);
+        } else if self.explicit.placing && !placing_was {
+            (self.paint.on, self.cells.on) = (false, false);
         }
 
         gui::end();
@@ -807,7 +812,8 @@ impl TerrainTool {
     fn follow_cell_edits(&mut self, e: &mut Editor) {
         let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
         let touched = d.cells.take();
-        let fill_reads = |k: usize| d.model().and_then(|m| m.layers.get(k)).is_some_and(|(r, _)| matches!(r, wce_terrain::LayerRole::TileMap | wce_terrain::LayerRole::Climate));
+        let fill_reads = |k: usize| k == wce_terrain_editor::cells::EXPLICIT
+            || d.model().and_then(|m| m.layers.get(k)).is_some_and(|(r, _)| matches!(r, wce_terrain::LayerRole::TileMap | wce_terrain::LayerRole::Climate));
         self.refill_wanted |= touched.iter().any(|(k, _)| fill_reads(*k));
         let drape = !self.cells.painting();
         for (k, rect) in touched {
@@ -989,9 +995,23 @@ impl Tool for TerrainTool {
 
     fn draw_panels(&mut self, e: &mut Editor) {
         self.draw_map_panel(e);
-        self.map_panel.paint = self.cells.on;
+        self.map_panel.paint = self.cells.on || self.explicit.placing;
         self.map_panel.outline = self.cells.dragging;
+        self.map_panel.marks = e.docs.find_as::<MapDocument>(self.shown).map(|d| self.explicit.marks(d)).unwrap_or_default();
         self.map_panel.draw(e, self.shown, &self.view);
+
+        // Placing an explicit tile in the Map panel.
+        if self.explicit.placing
+            && let Some(i) = self.map_panel.input
+        {
+            self.explicit.preview = e.docs.find_as::<MapDocument>(self.shown).and_then(|d| self.explicit.fits(d, i.cell));
+            if i.pressed {
+                match self.explicit.place(e, self.shown, i.cell) {
+                    Ok(m) => e.status(&m, false),
+                    Err(err) => e.status(&err, true),
+                }
+            }
+        }
 
         // The cell paint in the Map panel.
         if self.cells.on
@@ -1038,6 +1058,27 @@ impl Tool for TerrainTool {
             return self.cell_input(e, ev.kind);
         }
 
+        if self.explicit.placing {
+            let cell = self.cursor.zip(self.view.frame()).map(|((p, _), f)| {
+                let (x, y) = f.cell_of(f64::from(p.x), f64::from(p.z));
+                (x.floor() as i64, y.floor() as i64)
+            });
+
+            self.explicit.preview = cell.and_then(|c| e.docs.find_as::<MapDocument>(self.shown).and_then(|d| self.explicit.fits(d, c)));
+            if ev.button == 0 && ev.kind == wce_editor::tool::ViewportEventKind::Press {
+                if let Some(c) = cell {
+                    match self.explicit.place(e, self.shown, c) {
+                        Ok(m) => e.status(&m, false),
+                        Err(err) => e.status(&err, true),
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
         if !self.paint.on || ev.button != 0 {
             return false;
         }
@@ -1074,7 +1115,7 @@ impl Tool for TerrainTool {
     }
 
     fn claims_left_button(&self, _: &Editor) -> bool {
-        self.paint.on || self.cells.on
+        self.paint.on || self.cells.on || self.explicit.placing
     }
 
     fn update(&mut self, e: &mut Editor) {
@@ -1337,6 +1378,38 @@ impl Tool for TerrainTool {
 
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
+        });
+
+        c.add("terrain_explicit", "terrain_explicit add <x> <y> <tile or variation path> <degrees> | remove <i> | list", "the Terrain tool: the shown kit map's explicit tiles (one step on the history each)", |e, a| {
+            let usage = "usage: terrain_explicit add <x> <y> <path> <degrees> | remove <i> | list";
+            with_terrain(e, |t, e| {
+                let shown = t.shown;
+                match (a.first().map(String::as_str), &a.get(1..).unwrap_or_default()) {
+                    (Some("add"), [x, y, path, deg]) => {
+                        let (Ok(x), Ok(y), Ok(deg)) = (x.parse::<i64>(), y.parse::<i64>(), deg.parse::<i32>()) else { return CommandResult::fail(usage) };
+                        t.explicit.choose(path, deg);
+                        match t.explicit.place(e, shown, (x, y)) {
+                            Ok(m) => CommandResult::success(m),
+                            Err(err) => CommandResult::fail(err),
+                        }
+                    }
+
+                    (Some("remove"), [i]) => match i.parse::<usize>() {
+                        Ok(i) if crate::explicit_tiles::ExplicitPanel::remove(e, shown, i) => CommandResult::success(format!("explicit tile {i} removed")),
+                        _ => CommandResult::fail("no such explicit tile"),
+                    },
+
+                    (Some("list"), []) => {
+                        let d = e.docs.find_as::<MapDocument>(shown);
+                        let lines: Vec<String> = d.and_then(|d| d.model()).and_then(|m| m.explicit.as_ref())
+                            .map(|x| x.get().tiles().map(|t| format!("{},{},{},{}", t.x, t.y, t.path, t.rotation)).collect())
+                            .unwrap_or_default();
+                        CommandResult::success(format!("{} explicit tiles: {}", lines.len(), lines.join("; ")))
+                    }
+
+                    _ => CommandResult::fail(usage),
+                }
+            })
         });
 
         c.add("terrain_view", "terrain_view <distance> [near mid far]", "the Terrain tool: the camera's view distance (scene units) and the rings (cells)", |e, a| {
