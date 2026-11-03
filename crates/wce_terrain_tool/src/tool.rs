@@ -168,7 +168,7 @@ pub struct TerrainTool {
     /// The packs' tiles in the kit's layout (a placement no kit has; a map of the packs names the packs' tiles), and the kits' tile roots.
     packs: Option<Arc<PacksTree>>,
     provider: Option<TileProvider>,
-    db: Option<(PathBuf, Arc<TileDatabase>)>,
+    db: Option<(Vec<PathBuf>, Arc<TileDatabase>)>,
 }
 
 impl Default for TerrainTool {
@@ -244,15 +244,17 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
 }
 
 impl TerrainTool {
-    fn database(&mut self, raw: &std::path::Path) -> Result<Arc<TileDatabase>, String> {
+    /// The kits' tile databases as one, the projects' kit layout's tiles over the Assembly Kits' (`kit_roots`' order; cached for them).
+    fn databases(&mut self, roots: &[PathBuf]) -> Result<Arc<TileDatabase>, String> {
         if let Some((r, db)) = &self.db
-            && r == raw
+            && r == roots
         {
             return Ok(db.clone());
         }
 
-        let db = Arc::new(TileDatabase::load(&raw.join("terrain/tiles/battle/_tile_database"))?);
-        self.db = Some((raw.to_path_buf(), db.clone()));
+        let folders: Vec<PathBuf> = roots.iter().map(|r| r.join("terrain/tiles/battle/_tile_database")).filter(|f| f.is_dir()).collect();
+        let db = Arc::new(TileDatabase::load_layered(&folders.iter().map(PathBuf::as_path).collect::<Vec<_>>())?);
+        self.db = Some((roots.to_vec(), db.clone()));
         Ok(db)
     }
 
@@ -305,8 +307,8 @@ impl TerrainTool {
         let raw = roots.iter().find(|r| r.join("terrain/battles").join(name).join("tile_map.png").is_file()).cloned()
             .or_else(|| database_root(e))
             .ok_or("no Assembly Kit with a battle tile database in the settings")?;
-        let db_root = database_root(e).unwrap_or_else(|| raw.clone());
-        let db = self.database(&db_root)?;
+        // Every kit's tiles (a project's few and the Assembly Kit's): the project's database alone misses the map's tiles.
+        let db = self.databases(&roots)?;
         Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone() })
     }
 

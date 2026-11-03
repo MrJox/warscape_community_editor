@@ -151,6 +151,18 @@ impl TileDatabase {
     ///
     /// Fails when `_settings.xml` can't be read.
     pub fn load(folder: &Path) -> Result<Self, String> {
+        Self::load_layered(&[folder])
+    }
+
+    /// Reads the databases of `folders` as one, the first one's tiles over the later ones' (a projects' kit layout before the Assembly
+    /// Kit: its few tiles and the kit's others). The settings are the first `_settings.xml` of the folders; a tile is its first TILES
+    /// file of a name, then its first of a location.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no folder has a `_settings.xml` that reads.
+    pub fn load_layered(folders: &[&Path]) -> Result<Self, String> {
+        let folder = folders.iter().find(|f| f.join("_settings.xml").is_file()).or(folders.first()).ok_or("no tile database")?;
         let settings = std::fs::read(folder.join("_settings.xml")).map_err(|e| format!("{}: {e}", folder.join("_settings.xml").display()))?;
         let mut db = Self::default();
         let settings = root(&settings);
@@ -180,9 +192,16 @@ impl TileDatabase {
             }
         }
 
-        let mut files = std::fs::read_dir(folder.join("TILES")).map(|d| d.filter_map(Result::ok).map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default();
-        files.retain(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("xml")));
-        files.sort();
+        // In the folders' order: the first of a name or location is the one kept (`fix_up` sorts the tiles after).
+        let (mut names, mut locations) = (std::collections::HashSet::new(), std::collections::HashSet::new());
+        let mut files = vec![];
+        for f in folders {
+            let mut own = std::fs::read_dir(f.join("TILES")).map(|d| d.filter_map(Result::ok).map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default();
+            own.retain(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("xml")));
+            own.sort();
+            files.extend(own.into_iter().filter(|p| names.insert(p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default())));
+        }
+
         for path in files {
             let Ok(bytes) = std::fs::read(&path) else { continue };
             let t = root(&bytes);
@@ -216,7 +235,9 @@ impl TileDatabase {
                 id: 0,
             };
 
-            db.tiles.push(tile);
+            if locations.insert(tile.location.to_ascii_lowercase()) {
+                db.tiles.push(tile);
+            }
         }
 
         db.fix_up();
