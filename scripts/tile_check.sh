@@ -86,6 +86,8 @@ OSG="$KIT/assembly_kit/osgiliath_test/battlefield"
 run_script tile_walls 1 "$DESERT"
 W="$OUT/tile_walls1/saved/tile.wce"
 [ "$(grep -c '<WceWallSpline' "$W" 2>/dev/null)" = 1 ] && ! grep -q 'sharp=' "$W" && echo "walls: the saved tile.wce has the wall, without the undone sharp mark" || fail "walls: the saved tile.wce lacks the wall or keeps an undone sharp mark"
+# procedural walls: their preview pieces made again only when what they are made from changes (asserts in the script)
+run_script tile_wall_preview_cache 1 "$DESERT"
 
 # building technology overlays (tile_tech.txt): the kinds, the scope, the most destroyed state, the overlapping buildings; identical captures between two runs,
 # and each differs from the plain view

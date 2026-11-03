@@ -13,6 +13,9 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **Slopes are climbed by steps**, never by a ramp of the walkway. **Steps use authored rises only** (review rounds 1-2, option B):
   nothing is stretched vertically; a step uses as much of the start of its culture's stair as it rises, at its own slope; a larger rise
   chains stairs. 15 m climbs of about 10 are a whole stepped bastion, as vanilla. Runs between steps are at least `min_run` long.
+  **The step's platforms replace the walkway's where it is** (user, 2026-11-03: units got stuck on 15 m steps, where the stair's
+  platforms lay over the sloped walkway's): the walkway's platforms are cut around the step's cross-section; a 15 m wall keeps its
+  walkway's mesh under the stair.
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).
@@ -45,7 +48,9 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   angles down to about 12 degrees), with overhang copies filling 8 m outer corners; stair sections spliced only into the levels their
   step piece has. Every level's meshes, the logic and zone files (`make_piece`).
 - **Shared scene code** (`wce_walls::scene`): walls, anchors, layouts, doors and lowering over a `TedScene`, for the editor and exporters.
-- **Preview** (`wce_tile_editor` `tile_document/walls.rs`): intact meshes made 300 ms after the last change, served from `wce_vfs::generated`.
+- **Preview** (`wce_tile_editor` `tile_document/walls.rs`): intact meshes made 300 ms after the last change, served from `wce_vfs::generated`;
+  kept by what they were made from (the layout, the doors, the ground across the wall: `wall_signature`), so an edit elsewhere or a
+  republish of the tile takes them again instead of making them (`scripts/tile_wall_preview_cache.txt`).
 - **Lowering happens at export, not in the compile:** `workflow::save_exported_prepared` compiles with the walls lowered in memory
   (`lower_walls`) into `BUILDING_INSTANCE`s keyed `wce_<tile>_<variation>_<wall>_<piece>`; rows copied from the bases (`db::copy_rows`),
   `EFLines` rebuilt from the piece, `DockingLines` warped and cut to 5 units, none over steps. `wce_walls::pack` writes
