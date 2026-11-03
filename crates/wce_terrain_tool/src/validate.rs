@@ -103,6 +103,32 @@ pub fn check(d: &MapDocument, roots: &[PathBuf]) -> Vec<Finding> {
         }
     }
 
+    // Settlement and port battle catchment areas whose centre is on no settlement or port tile.
+    if let Some(p) = d.project() {
+        let (w, h) = (f64::from(d.placed.width / 2), f64::from(d.placed.height / 2));
+        let cell = wce_terrain_editor::document::TERRY_CELL;
+        for e in p.with_component("ECBattleCatchmentArea") {
+            let wce_terrain::terry::EntityKind::Bca(t) = p.kind(e) else { continue };
+            if !(t.starts_with("settlement") || t.contains("port")) {
+                continue;
+            }
+
+            let pos = p.world_position(e.id);
+            let (cx, cy) = ((pos[0] / cell + w).floor() as i32, (h - pos[2] / cell).floor() as i32);
+            let on = d.placed.in_rect([cx, cy, cx + 1, cy + 1]).iter().any(|&i| {
+                let l = d.placed.placements[i].location.to_lowercase();
+                l.contains("settlement") || l.contains("port") || l.contains("city") || l.contains("town")
+            });
+
+            if !on {
+                out.push(Finding {
+                    severity: Severity::Warning, cell: Some((cx, cy)),
+                    text: format!("{} ({t}) at cell {cx}, {cy}: on no settlement or port tile", e.name),
+                });
+            }
+        }
+    }
+
     // Tiles in no kit: the game has them only if a pack does.
     let mut used: BTreeMap<(String, String), (usize, (i32, i32))> = BTreeMap::new();
     for p in &d.placed.placements {

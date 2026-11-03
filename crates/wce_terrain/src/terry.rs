@@ -2,10 +2,17 @@
 //! (one element per component: `ECTransform`, `ECRectangle`, `ECBattleCatchmentArea`, ...) and `<children>` (`<child id/>`). The text is
 //! a lossless [`XmlDoc`]: an unedited project saves byte for byte and an edit rewrites only its attribute's value. This module indexes
 //! the entities; their components are read from the document by name.
+//!
+//! Positions (`ECTransform position="x y z"`) are metres from the map's centre, x east, z north (256 a cell: docs/re/terry.md), a child's
+//! relative to its parent's. A polyline's point (x, y) is at (x, z) + its entity's position (checked against BOB's deployment files: the
+//! points come out shifted by the tile's centre, y as z). No vanilla entity is turned or scaled (`rotation="0 0 0"`, `scale="1 1 1"`
+//! on all of the campaign battle map's 52 016 transforms), so the shapes are read as translated only.
+//!
+//! Structural edits (an entity added or removed) are text splices of the document ([`XmlSplice`]): small, exact undo records.
 
 use std::collections::HashMap;
 
-use wce_formats::xml_doc::{XmlDoc, XmlError};
+use wce_formats::xml_doc::{XmlDoc, XmlError, XmlSplice};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TerryEntity {
@@ -28,6 +35,55 @@ pub struct TerryProject {
     pub doc: XmlDoc,
     pub entities: Vec<TerryEntity>,
     by_id: HashMap<u64, usize>,
+    parents: HashMap<u64, u64>,
+}
+
+/// What an entity is, by its components (Terry's creation modes make these).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum EntityKind {
+    /// A battle catchment area (`ECBattleCatchmentArea`) and its type.
+    Bca(String),
+    /// A BCA's `Catchment Region` (a rectangle child).
+    CatchmentRegion,
+    DeploymentZone,
+    DeploymentRegion,
+    Other,
+}
+
+impl EntityKind {
+    pub fn name(&self) -> String {
+        match self {
+            Self::Bca(t) => format!("battle catchment area ({t})"),
+            Self::CatchmentRegion => "catchment region".to_owned(),
+            Self::DeploymentZone => "deployment zone".to_owned(),
+            Self::DeploymentRegion => "deployment zone region".to_owned(),
+            Self::Other => "entity".to_owned(),
+        }
+    }
+}
+
+/// Numbers of an attribute ("x y z").
+fn numbers(v: &str) -> Vec<f64> {
+    v.split_whitespace().filter_map(|t| t.parse().ok()).collect()
+}
+
+/// A number as Terry writes it (up to 9 significant digits, no trailing zeros).
+pub fn number_text(v: f64) -> String {
+    if v == v.trunc() && v.abs() < 1e15 {
+        return format!("{}", v as i64);
+    }
+
+    let mut t = format!("{v:.9}");
+    let digits = v.abs().log10().floor() as i32 + 1;
+    if digits > 0 {
+        t = format!("{v:.prec$}", prec = (9 - digits).max(0) as usize);
+    }
+
+    if t.contains('.') {
+        t = t.trim_end_matches('0').trim_end_matches('.').to_owned();
+    }
+
+    t
 }
 
 impl TerryProject {
@@ -68,6 +124,13 @@ impl TerryProject {
             self.by_id.insert(id, self.entities.len());
             self.entities.push(ent);
         }
+
+        self.parents = self.entities.iter().flat_map(|e| e.children.iter().map(move |&c| (c, e.id))).collect();
+    }
+
+    /// Reads the entities again (after an edit of the document that changes names or the tree).
+    pub fn reindex(&mut self) {
+        self.index();
     }
 
     pub fn save(&self) -> Vec<u8> {
@@ -76,6 +139,210 @@ impl TerryProject {
 
     pub fn entity(&self, id: u64) -> Option<&TerryEntity> {
         self.by_id.get(&id).map(|&i| &self.entities[i])
+    }
+
+    pub fn parent_of(&self, id: u64) -> Option<u64> {
+        self.parents.get(&id).copied()
+    }
+
+    /// What an entity is.
+    pub fn kind(&self, e: &TerryEntity) -> EntityKind {
+        let has = |n: &str| e.components.iter().any(|(c, _)| c == n);
+        if let Some(c) = self.component(e, "ECBattleCatchmentArea") {
+            return EntityKind::Bca(self.doc.get(c, "catchment_type").unwrap_or_default());
+        }
+
+        if has("ECDeploymentZone") {
+            EntityKind::DeploymentZone
+        } else if has("ECDeploymentZoneRegion") {
+            EntityKind::DeploymentRegion
+        } else if has("ECRectangle") && self.parent_of(e.id).and_then(|p| self.entity(p)).is_some_and(|p| self.component(p, "ECBattleCatchmentArea").is_some()) {
+            EntityKind::CatchmentRegion
+        } else {
+            EntityKind::Other
+        }
+    }
+
+    /// An entity's position relative to its parent (metres), none without a transform.
+    pub fn local_position(&self, e: &TerryEntity) -> Option<[f64; 3]> {
+        let t = self.component(e, "ECTransform")?;
+        let v = numbers(&self.doc.get(t, "position")?);
+        (v.len() == 3).then(|| [v[0], v[1], v[2]])
+    }
+
+    /// An entity's position on the map: its own added to its ancestors' (an entity without a transform sits at its parent's).
+    pub fn world_position(&self, id: u64) -> [f64; 3] {
+        let mut p = [0.0; 3];
+        let mut at = Some(id);
+        let mut guard = 0;
+        while let Some(i) = at.filter(|_| guard < 64) {
+            if let Some(l) = self.entity(i).and_then(|e| self.local_position(e)) {
+                p = [p[0] + l[0], p[1] + l[1], p[2] + l[2]];
+            }
+
+            at = self.parent_of(i);
+            guard += 1;
+        }
+
+        p
+    }
+
+    /// An `ECRectangle`'s width and height (metres, centred on the entity).
+    pub fn rectangle(&self, e: &TerryEntity) -> Option<[f64; 2]> {
+        let c = self.component(e, "ECRectangle")?;
+        Some([self.doc.get(c, "width")?.parse().ok()?, self.doc.get(c, "height")?.parse().ok()?])
+    }
+
+    /// An `ECPolyline`'s points (x, z offsets from the entity, metres) and whether it is closed.
+    pub fn polyline(&self, e: &TerryEntity) -> Option<(Vec<[f64; 2]>, bool)> {
+        let c = self.component(e, "ECPolyline")?;
+        let elems = self.doc.elements();
+        let line = elems[c].children.iter().copied().find(|&k| elems[k].name == "polyline")?;
+        let closed = self.doc.get(line, "closed").is_some_and(|v| v == "true");
+        let pts = elems[line].children.iter().filter(|&&k| elems[k].name == "point")
+            .filter_map(|&k| Some([self.doc.get(k, "x")?.parse().ok()?, self.doc.get(k, "y")?.parse().ok()?]))
+            .collect();
+        Some((pts, closed))
+    }
+
+    /// Sets an attribute of an entity's component; its value before (none: no such entity, component or attribute).
+    pub fn set_attr(&mut self, id: u64, component: &str, attr: &str, value: &str) -> Option<String> {
+        let e = self.entity(id)?;
+        let c = self.component(e, component)?;
+        let before = self.doc.get(c, attr)?;
+        self.doc.set(c, attr, value);
+        Some(before)
+    }
+
+    /// An unused entity id (one past the largest).
+    pub fn next_id(&self) -> u64 {
+        self.entities.iter().map(|e| e.id).max().map_or(0x1_0000_0000_0000, |m| m + 1)
+    }
+
+    /// The text's line ending and the scene's entity indent (as the kit writes: CRLF or LF, eight spaces).
+    fn style(&self) -> (&'static str, String) {
+        let t = self.doc.original_text();
+        let eol = if t.windows(2).any(|w| w == b"\r\n") { "\r\n" } else { "\n" };
+        let indent = self.entities.first().map_or_else(|| "        ".to_owned(), |e| {
+            let off = self.doc.elements()[e.elem].start_off;
+            let ls = t[..off].iter().rposition(|&c| c == b'\n').map_or(0, |p| p + 1);
+            String::from_utf8_lossy(&t[ls..off]).into_owned()
+        });
+
+        (eol, indent)
+    }
+
+    /// Adds entities (their XML, `{eol}` for the line ending, `{i}` for one indent step: the text indented as a scene's entities are) at
+    /// the scene's end. The splices that did it (empty on failure).
+    pub fn insert_entities(&mut self, xml: &str) -> Result<Vec<XmlSplice>, XmlError> {
+        self.doc.bake_pending()?;
+        let mark = self.doc.journal_mark();
+        let (eol, indent) = self.style();
+        let step = if indent.len() >= 8 { &indent[..indent.len() / 2] } else { "    " };
+        let body: String = xml.lines().map(|l| format!("{indent}{}{eol}", l.replace("{i}", step))).collect();
+        let elems = self.doc.elements();
+        let scene = self.doc.roots().iter().flat_map(|&r| elems[r].children.iter().copied()).find(|&e| elems[e].name == "scene")
+            .ok_or_else(|| XmlError::Edit("no scene".to_owned()))?;
+        let el = &elems[scene];
+        if el.self_closing {
+            // `<scene version="10"/>` (an empty project) opened: the tag's `/>` becomes `>`, the entities, then `</scene>` at the scene's indent.
+            let t = self.doc.original_text();
+            let ls = t[..el.start_off].iter().rposition(|&c| c == b'\n').map_or(0, |p| p + 1);
+            let scene_indent = String::from_utf8_lossy(&t[ls..el.start_off]).into_owned();
+            let text = format!(">{eol}{body}{scene_indent}</scene>");
+            let (pos, len) = (el.attrs_end, el.start_end - el.attrs_end);
+            self.doc.splice(pos, len, text.as_bytes())?;
+        } else {
+            let t = self.doc.original_text();
+            let close = el.end_off - "</scene>".len();
+            let ls = t[..close].iter().rposition(|&c| c == b'\n').map_or(close, |p| p + 1);
+            self.doc.splice(ls, 0, body.as_bytes())?;
+        }
+
+        let out = self.doc.journal_since(mark);
+        self.index();
+        Ok(out)
+    }
+
+    /// Removes entities, their descendants and every `<child id>` naming them. The splices that did it.
+    pub fn remove_entities(&mut self, ids: &[u64]) -> Result<Vec<XmlSplice>, XmlError> {
+        self.doc.bake_pending()?;
+        let mark = self.doc.journal_mark();
+        let mut gone: Vec<u64> = vec![];
+        let mut todo: Vec<u64> = ids.to_vec();
+        while let Some(id) = todo.pop() {
+            if gone.contains(&id) {
+                continue;
+            }
+
+            gone.push(id);
+            if let Some(e) = self.entity(id) {
+                todo.extend(e.children.iter().copied());
+            }
+        }
+
+        // The entities' elements and the references to them, last first (the earlier elements' indices stay).
+        let elems = self.doc.elements();
+        let mut doomed: Vec<usize> = gone.iter().filter_map(|&id| self.entity(id).map(|e| e.elem)).collect();
+        let is_ref = |k: usize| elems[k].name == "child" && self.doc.get(k, "id").and_then(|v| u64::from_str_radix(&v, 16).ok()).is_some_and(|i| gone.contains(&i));
+        doomed.extend((0..elems.len()).filter(|&k| is_ref(k)));
+        doomed.sort_unstable();
+        doomed.dedup();
+
+        // An element inside another doomed one goes with it.
+        let inside = |k: usize| {
+            let mut p = elems[k].parent;
+            while let Some(q) = p {
+                if doomed.binary_search(&q).is_ok() {
+                    return true;
+                }
+
+                p = elems[q].parent;
+            }
+
+            false
+        };
+
+        let top: Vec<usize> = doomed.iter().copied().filter(|&k| !inside(k)).collect();
+        for &k in top.iter().rev() {
+            self.doc.remove_element_inplace(k)?;
+        }
+
+        let out = self.doc.journal_since(mark);
+        self.index();
+        Ok(out)
+    }
+
+    /// An entity's XML and its descendants' (each `<entity>` element's text as the file has it, without the indent of its first line).
+    pub fn entity_text(&self, id: u64) -> Vec<(u64, String)> {
+        let mut out = vec![];
+        let mut todo = vec![id];
+        while let Some(i) = todo.pop() {
+            let Some(e) = self.entity(i) else { continue };
+            let el = &self.doc.elements()[e.elem];
+            out.push((i, String::from_utf8_lossy(&self.doc.text_of_range(el.start_off, el.end_off)).into_owned()));
+            todo.extend(e.children.iter().rev().copied());
+        }
+
+        out
+    }
+
+    /// Applies recorded splices again (redo), then reads the entities again.
+    pub fn redo(&mut self, splices: &[XmlSplice]) {
+        for s in splices {
+            let _ = self.doc.apply_splice(s);
+        }
+
+        self.index();
+    }
+
+    /// Takes recorded splices back (undo), then reads the entities again.
+    pub fn undo(&mut self, splices: &[XmlSplice]) {
+        for s in splices.iter().rev() {
+            let _ = self.doc.unapply_splice(s);
+        }
+
+        self.index();
     }
 
     /// The element of an entity's component.
@@ -104,10 +371,15 @@ impl TerryProject {
 }
 
 #[cfg(test)]
+fn tests_text() -> &'static str {
+    tests::TEXT
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    const TEXT: &str = r#"<project version="3">
+    pub(super) const TEXT: &str = r#"<project version="3">
     <scene version="10">
         <entity id="140532c302f8fd6" name="Thermopylae">
             <components>
@@ -145,5 +417,56 @@ mod tests {
         let t = p.component(&bca, "ECBattleCatchmentArea").expect("component");
         p.doc.set(t, "catchment_type", "land_ambush");
         assert_eq!(p.save(), TEXT.replace("catchment_type=\"land_normal\"", "catchment_type=\"land_ambush\"").as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+
+    const EMPTY: &str = "<project version=\"3\">\r\n    <scene version=\"10\"/>\r\n</project>\r\n";
+
+    fn bca(id: u64) -> String {
+        format!("<entity id=\"{id:x}\" name=\"new\">\n{{i}}<components>\n{{i}}{{i}}<ECRectangle width=\"2048\" height=\"2048\" active=\"true\"/>\n{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"256 0 -512\"/>\n{{i}}{{i}}<ECBattleCatchmentArea catchment_type=\"land_normal\" active=\"true\"/>\n{{i}}</components>\n{{i}}<children/>\n</entity>")
+    }
+
+    #[test]
+    fn insert_into_an_empty_scene_and_back() {
+        let mut p = TerryProject::parse(EMPTY.as_bytes().to_vec()).expect("xml");
+        let s = p.insert_entities(&bca(0x10)).expect("inserted");
+        let text = String::from_utf8(p.save()).expect("utf8");
+        assert!(text.starts_with("<project version=\"3\">\r\n    <scene version=\"10\">\r\n        <entity id=\"10\" name=\"new\">\r\n            <components>\r\n"), "{text}");
+        assert!(text.ends_with("        </entity>\r\n    </scene>\r\n</project>\r\n"), "{text}");
+        assert_eq!(p.entities.len(), 1);
+        assert_eq!(p.world_position(0x10), [256.0, 0.0, -512.0]);
+        assert_eq!(p.kind(&p.entities[0]), EntityKind::Bca("land_normal".to_owned()));
+        p.undo(&s);
+        assert_eq!(p.save(), EMPTY.as_bytes());
+        assert!(p.entities.is_empty());
+        p.redo(&s);
+        assert_eq!(String::from_utf8(p.save()).expect("utf8"), text);
+    }
+
+    #[test]
+    fn remove_takes_children_and_references() {
+        let mut p = TerryProject::parse(super::tests_text().as_bytes().to_vec()).expect("xml");
+        let before = p.save();
+        assert_eq!(p.world_position(0x1_4053_2c30_2f8f_d7), [-31744.0, 26.9883385, -13568.0]);
+        let s = p.insert_entities(&bca(0x99)).expect("inserted");
+        let s2 = p.remove_entities(&[0x1_4053_2c30_2f8f_d6]).expect("removed");
+        assert_eq!(p.entities.len(), 1);
+        assert!(!String::from_utf8_lossy(&p.save()).contains("140532c302f8fd7"), "the child and every reference go");
+        p.undo(&s2);
+        p.undo(&s);
+        assert_eq!(p.save(), before);
+        assert_eq!(p.entities.len(), 2);
+    }
+
+    #[test]
+    fn numbers_as_terry_writes_them() {
+        assert_eq!(number_text(-31744.0), "-31744");
+        assert_eq!(number_text(26.988338470458984), "26.9883385");
+        assert_eq!(number_text(3434.164_06), "3434.16406");
+        assert_eq!(number_text(0.5), "0.5");
     }
 }
