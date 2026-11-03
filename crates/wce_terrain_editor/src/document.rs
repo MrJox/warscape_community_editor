@@ -407,7 +407,7 @@ impl Document for MapDocument {
         let mut cmds = vec![];
         for (id, start) in starts {
             let Some(e) = p.entity(id) else { continue };
-            let parent = p.parent_of(id).map_or([0.0; 3], |q| p.world_position(q));
+            let parent = p.transform_parent_of(id).map_or([0.0; 3], |q| p.world_position(q));
             let mut l = [start[0] + acc[0], start[1] + acc[1], start[2] + acc[2]];
             if p.component(e, "ECTileAlignment").is_some() {
                 for k in [0, 2] {
@@ -415,7 +415,7 @@ impl Document for MapDocument {
                 }
             }
 
-            if p.component(e, "ECLandscapeAbove").is_some() && p.parent_of(id).is_none() {
+            if p.component(e, "ECLandscapeAbove").is_some() && p.transform_parent_of(id).is_none() {
                 l[1] = self.lf_metres_at(l[0], l[2]);
             }
 

@@ -3,8 +3,10 @@
 //! a lossless [`XmlDoc`]: an unedited project saves byte for byte and an edit rewrites only its attribute's value. This module indexes
 //! the entities; their components are read from the document by name.
 //!
-//! Positions (`ECTransform position="x y z"`) are metres from the map's centre, x east, z north (256 a cell: docs/re/terry.md), a child's
-//! relative to its parent's. A polyline's point (x, y) is at (x, z) + its entity's position (checked against BOB's deployment files: the
+//! Positions (`ECTransform position="x y z"`) are metres from the map's centre, x east, z north (256 a cell: docs/re/terry.md), relative
+//! to the transform parent's: the entity whose `ECTransform` lists it in its own `<children>`. That is not the entity tree (`<entity>`'s
+//! `<children>`): a BCA's entity children are its `Catchment Region` and its deployment zones, its transform's only the region, and the
+//! zones' regions are placed on the map itself (`DZR 0` at -105150 under a BCA at -104192; BOB's deployment files agree). A polyline's point (x, y) is at (x, z) + its entity's position (checked against BOB's deployment files: the
 //! points come out shifted by the tile's centre, y as z). No vanilla entity is turned or scaled (`rotation="0 0 0"`, `scale="1 1 1"`
 //! on all of the campaign battle map's 52 016 transforms), so the shapes are read as translated only.
 //!
@@ -36,6 +38,7 @@ pub struct TerryProject {
     pub entities: Vec<TerryEntity>,
     by_id: HashMap<u64, usize>,
     parents: HashMap<u64, u64>,
+    transform_parents: HashMap<u64, u64>,
 }
 
 /// What an entity is, by its components (Terry's creation modes make these).
@@ -126,6 +129,25 @@ impl TerryProject {
         }
 
         self.parents = self.entities.iter().flat_map(|e| e.children.iter().map(move |&c| (c, e.id))).collect();
+        let elems = self.doc.elements();
+        let mut tp = HashMap::new();
+        for e in &self.entities {
+            let Some(t) = self.component(e, "ECTransform") else { continue };
+            for &c in elems[t].children.iter().filter(|&&c| elems[c].name == "children") {
+                for &k in &elems[c].children {
+                    if let Some(id) = self.doc.get(k, "id").and_then(|v| u64::from_str_radix(&v, 16).ok()) {
+                        tp.insert(id, e.id);
+                    }
+                }
+            }
+        }
+
+        self.transform_parents = tp;
+    }
+
+    /// The entity an entity's position is relative to (its parent's `ECTransform` lists it).
+    pub fn transform_parent_of(&self, id: u64) -> Option<u64> {
+        self.transform_parents.get(&id).copied()
     }
 
     /// Reads the entities again (after an edit of the document that changes names or the tree).
@@ -170,7 +192,7 @@ impl TerryProject {
         (v.len() == 3).then(|| [v[0], v[1], v[2]])
     }
 
-    /// An entity's position on the map: its own added to its ancestors' (an entity without a transform sits at its parent's).
+    /// An entity's position on the map: its own added to its transform ancestors' (an entity without a transform: its transform parent's).
     pub fn world_position(&self, id: u64) -> [f64; 3] {
         let mut p = [0.0; 3];
         let mut at = Some(id);
@@ -180,7 +202,7 @@ impl TerryProject {
                 p = [p[0] + l[0], p[1] + l[1], p[2] + l[2]];
             }
 
-            at = self.parent_of(i);
+            at = self.transform_parent_of(i);
             guard += 1;
         }
 
@@ -214,6 +236,32 @@ impl TerryProject {
         Some(before)
     }
 
+    /// Lists `child` in `parent`'s entity `<children>` (opening a `<children/>`). The splices that did it.
+    pub fn add_child(&mut self, parent: u64, child: u64) -> Result<Vec<XmlSplice>, XmlError> {
+        self.doc.bake_pending()?;
+        let mark = self.doc.journal_mark();
+        let (eol, indent) = self.style();
+        let step = if indent.len() >= 8 { indent[..indent.len() / 2].to_owned() } else { "    ".to_owned() };
+        let e = self.entity(parent).ok_or_else(|| XmlError::Edit("no such entity".to_owned()))?;
+        let elems = self.doc.elements();
+        let c = elems[e.elem].children.iter().copied().find(|&k| elems[k].name == "children").ok_or_else(|| XmlError::Edit("no <children>".to_owned()))?;
+        let el = &elems[c];
+        let line = format!("{indent}{step}{step}<child id=\"{child:x}\"/>{eol}");
+        if el.self_closing {
+            let text = format!(">{eol}{line}{indent}{step}</children>");
+            self.doc.splice(el.attrs_end, el.start_end - el.attrs_end, text.as_bytes())?;
+        } else {
+            let t = self.doc.original_text();
+            let close = el.end_off - "</children>".len();
+            let ls = t[..close].iter().rposition(|&b| b == b'\n').map_or(close, |p| p + 1);
+            self.doc.splice(ls, 0, line.as_bytes())?;
+        }
+
+        let out = self.doc.journal_since(mark);
+        self.index();
+        Ok(out)
+    }
+
     /// An unused entity id (one past the largest).
     pub fn next_id(&self) -> u64 {
         self.entities.iter().map(|e| e.id).max().map_or(0x1_0000_0000_0000, |m| m + 1)
@@ -237,6 +285,23 @@ impl TerryProject {
     pub fn insert_entities(&mut self, xml: &str) -> Result<Vec<XmlSplice>, XmlError> {
         self.doc.bake_pending()?;
         let mark = self.doc.journal_mark();
+
+        // An old project (`<project version="2"><scene version="3">`, the kit's empty ones) is written as Terry writes one with entities,
+        // version 3 and 10: BOB's `Terry file` fails on entities under the old header (exit 1, no message).
+        let elems = self.doc.elements();
+        let root = self.doc.roots().iter().copied().find(|&r| elems[r].name == "project");
+        let scene_el = root.and_then(|r| elems[r].children.iter().copied().find(|&e| elems[e].name == "scene"));
+        let old = |e: usize, min: u32| self.doc.get(e, "version").and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v < min);
+        let (old_project, old_scene) = (root.is_some_and(|r| old(r, 3)), scene_el.is_some_and(|s| old(s, 10)));
+        if let (true, Some(r)) = (old_project, root) {
+            self.doc.set(r, "version", "3");
+        }
+
+        if let (true, Some(s)) = (old_scene, scene_el) {
+            self.doc.set(s, "version", "10");
+        }
+
+        self.doc.bake_pending()?;
         let (eol, indent) = self.style();
         let step = if indent.len() >= 8 { &indent[..indent.len() / 2] } else { "    " };
         let body: String = xml.lines().map(|l| format!("{indent}{}{eol}", l.replace("{i}", step))).collect();
@@ -448,6 +513,22 @@ mod edit_tests {
     }
 
     #[test]
+    fn an_old_project_gets_terrys_versions() {
+        let old = "<project version=\"2\">
+    <scene version=\"3\"/>
+</project>
+";
+        let mut p = TerryProject::parse(old.as_bytes().to_vec()).expect("xml");
+        let s = p.insert_entities(&bca(0x10)).expect("inserted");
+        let text = String::from_utf8(p.save()).expect("utf8");
+        assert!(text.starts_with("<project version=\"3\">
+    <scene version=\"10\">
+        <entity id=\"10\""), "{text}");
+        p.undo(&s);
+        assert_eq!(p.save(), old.as_bytes());
+    }
+
+    #[test]
     fn remove_takes_children_and_references() {
         let mut p = TerryProject::parse(super::tests_text().as_bytes().to_vec()).expect("xml");
         let before = p.save();
@@ -460,6 +541,21 @@ mod edit_tests {
         p.undo(&s);
         assert_eq!(p.save(), before);
         assert_eq!(p.entities.len(), 2);
+    }
+
+    #[test]
+    fn a_zone_under_a_bca() {
+        let mut p = TerryProject::parse(super::tests_text().as_bytes().to_vec()).expect("xml");
+        let before = p.save();
+        let zone = "<entity id=\"77\" name=\"DZ 0/0\">\n{i}<components>\n{i}{i}<ECDeploymentZone alliance_id=\"0\" active=\"true\"/>\n{i}</components>\n{i}<children/>\n</entity>";
+        let mut s = p.insert_entities(zone).expect("inserted");
+        s.extend(p.add_child(0x1_4053_2c30_2f8f_d6, 0x77).expect("child"));
+        assert_eq!(p.parent_of(0x77), Some(0x1_4053_2c30_2f8f_d6));
+        assert_eq!(p.transform_parent_of(0x77), None, "a zone is no transform child");
+        assert_eq!(p.transform_parent_of(0x1_4053_2c30_2f8f_d7), Some(0x1_4053_2c30_2f8f_d6));
+        assert_eq!(p.world_position(0x77), [0.0; 3]);
+        p.undo(&s);
+        assert_eq!(p.save(), before);
     }
 
     #[test]

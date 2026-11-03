@@ -316,23 +316,37 @@ pub fn new_bca(e: &mut Editor, doc: DocumentId, at: [f64; 2]) -> Result<String, 
     Ok(format!("{name} at {}, {} (land_normal; its type in the Inspector)", n(x), n(z)))
 }
 
-/// A deployment zone of one additive region through `pts` (metres on the map; three at least).
+/// A deployment zone of one additive region through `pts` (metres on the map; three at least). Zones come in pairs, the two alliances'
+/// halves of one deployment ("DZ k/0" then "DZ k/1", as the kit's 883 pairs; BOB writes a deployment file per pair): a new zone is the
+/// alliance its predecessor leaves open. A zone belongs to a battle catchment area (an entity child of it: BOB writes the deployments of
+/// a BCA's zones only): the selected one, else the one whose rectangle holds the first point. Its region is placed on the map (no
+/// transform parent), as the kit's are.
 pub fn new_zone(e: &mut Editor, doc: DocumentId, pts: &[[f64; 2]]) -> Result<String, String> {
     if pts.len() < 3 {
         return Err("a deployment zone needs three points at least".to_owned());
     }
 
+    let selected: Vec<u64> = e.selection.items().iter().filter(|s| s.doc == doc).map(|s| s.item).collect();
     let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
     let p = d.project().ok_or("this map has no .terry project")?;
+    let is_bca = |id: &u64| p.entity(*id).is_some_and(|x| matches!(p.kind(x), EntityKind::Bca(_)));
+    let holds = |id: &u64| p.entity(*id).and_then(|x| p.rectangle(x)).is_some_and(|r| {
+        let w = p.world_position(*id);
+        (pts[0][0] - w[0]).abs() <= r[0] / 2.0 && (pts[0][1] - w[2]).abs() <= r[1] / 2.0
+    });
+
+    let bca = selected.iter().copied().find(is_bca).or_else(|| p.entities.iter().map(|x| x.id).filter(is_bca).find(holds))
+        .ok_or("a deployment zone belongs to a battle catchment area: select one, or start the zone inside one")?;
     let (id, rid) = (p.next_id(), p.next_id() + 1);
-    let zones = p.with_component("ECDeploymentZone").count();
+    let zones = p.entity(bca).map_or(0, |b| b.children.iter().filter(|c| p.entity(**c).is_some_and(|x| p.component(x, "ECDeploymentZone").is_some())).count());
+    let (pair, alliance) = (zones / 2, zones % 2);
     let n = |v: f64| wce_terrain::terry::number_text(v);
     let o = pts[0];
     let y = d.lf_metres_at(o[0], o[1]);
     let points: String = pts.iter().map(|q| format!("{{i}}{{i}}{{i}}{{i}}<point x=\"{}\" y=\"{}\"/>\n", n(q[0] - o[0]), n(q[1] - o[1]))).collect();
     let xml = format!(
-        "<entity id=\"{id:x}\" name=\"DZ {zones}/0\">\n{{i}}<components>\n\
-{{i}}{{i}}<ECDeploymentZone deployment_category=\"DZC_RIVER\" deployment_type=\"DZT_1V1\" active=\"true\" facing_direction=\"0\" deployment_zone_id=\"0\" alliance_id=\"0\" configuration=\"0\"/>\n\
+        "<entity id=\"{id:x}\" name=\"DZ {pair}/{alliance}\">\n{{i}}<components>\n\
+{{i}}{{i}}<ECDeploymentZone deployment_category=\"DZC_RIVER\" deployment_type=\"DZT_1V1\" active=\"true\" facing_direction=\"0\" deployment_zone_id=\"0\" alliance_id=\"{alliance}\" configuration=\"0\"/>\n\
 {{i}}</components>\n{{i}}<children>\n{{i}}{{i}}<child id=\"{rid:x}\"/>\n{{i}}</children>\n</entity>\n<entity id=\"{rid:x}\" name=\"DZR 0\">\n{{i}}<components>\n\
 {{i}}{{i}}<ECDeploymentZoneRegion active=\"true\" region_type=\"DZRT_ADDITIVE\"/>\n{{i}}{{i}}<ECPolyline active=\"true\">\n{{i}}{{i}}{{i}}<polyline closed=\"true\">\n\
 {points}{{i}}{{i}}{{i}}</polyline>\n{{i}}{{i}}</ECPolyline>\n{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{} {} {}\"/>\n\
@@ -340,8 +354,12 @@ pub fn new_zone(e: &mut Editor, doc: DocumentId, pts: &[[f64; 2]]) -> Result<Str
         n(o[0]), n(y), n(o[1])
     );
 
-    structural(e, doc, "new deployment zone", |p| p.insert_entities(&xml).map_err(|err| err.to_string()))?;
-    Ok(format!("deployment zone DZ {zones}/0 of {} points", pts.len()))
+    structural(e, doc, "new deployment zone", |p| {
+        let mut s = p.insert_entities(&xml).map_err(|err| err.to_string())?;
+        s.extend(p.add_child(bca, id).map_err(|err| err.to_string())?);
+        Ok(s)
+    })?;
+    Ok(format!("deployment zone DZ {pair}/{alliance} (alliance {alliance}) of {} points, of BCA {bca:x}", pts.len()))
 }
 
 /// Removes entities (their descendants and the references to them).
@@ -370,8 +388,8 @@ pub fn duplicate(e: &mut Editor, doc: DocumentId, ids: &[u64]) -> Result<String,
                 t = t.replace(&format!("id=\"{a:x}\""), &format!("id=\"{b:x}\""));
             }
 
-            // The root a cell to the east.
-            if old == root
+            // A cell to the east: each copied entity placed on its own (the root, a BCA's zones' regions: no transform parent in the copy).
+            if p.transform_parent_of(old).is_none_or(|q| !map.contains_key(&q))
                 && let Some(pos) = p.entity(old).and_then(|x| p.local_position(x))
             {
                 let n = |v: f64| wce_terrain::terry::number_text(v);
