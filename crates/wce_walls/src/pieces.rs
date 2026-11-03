@@ -678,9 +678,10 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
             *bytes = mesh::warp_mesh_with(bytes, warp, &cuts, &cut_out, zy, &parts)?;
         } else if *name == logic_name && logic_too {
             let own = bytes.clone();
+            // The walkable surfaces are always the step's own where it is (one surface under the units: the base's walkway, sloped over
+            // the step, under a 15 m wall's stair too, had them stuck); the meshes are cut only where the family's step replaces them.
             let mut splices = sections.iter().filter_map(|sec| {
-                let replaces = replaces.then_some(sec.drop);
-                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, replaces, per_piece: false })
+                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, replaces: Some(sec.drop), per_piece: false })
             }).collect::<Vec<_>>();
             splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, replaces: None, per_piece: true }));
             *bytes = logic::warp_logic_with(bytes, warp, &cuts, zy, &splices)?.0;
