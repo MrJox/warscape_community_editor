@@ -203,6 +203,10 @@ pub struct Layout {
     /// `PALT_FORT` AI separators (open lines).
     pub separators: Vec<Vec<P>>,
 
+    /// The walls' battlefield zones (`ZONE_POLYGON_INSTANCE`, `EFP_LOW_WALL`; closed): a strip along each wall run, as TDD's tiles have
+    /// along their gatehouses (CA's tiles: around their walls).
+    pub wall_zones: Vec<Vec<P>>,
+
     /// A port's `AIH_DEFAULT_DEPLOYMENT_LINE`s (at sea, in the defender's zone).
     pub deployment_lines: Vec<[P; 2]>,
 

@@ -33,6 +33,9 @@ in [editor_todo.md](editor_todo.md).
   streets up 14 m escarpments, areas spanning two circles; the game crashed in the battle advice, a unit without soldiers). Generate
   SiegeAI works the automatic no-go areas out first and blocks them as it blocks no-go regions; the check lists streets, area
   connections and nodes on them.
+- **The walls get battlefield zones** (user, 2026-11-03: units could not be put on the walls; CA's settlements have `EFP_LOW_WALL`
+  `ZONE_POLYGON_INSTANCE`s in 70 of 71 tiles, TDD's along its gatehouses): a strip 15 su either side of every wall run's walkway, cut
+  at sharp corners and every 250 su, into the layer `Wall_Zones` (TEd's zone defaults).
 - **Inner gates are ways through.** A gate with the settlement on both sides (a citadel's, a second circle's) gets its passage opened,
   so a street runs through it. Map authors should still prefer an open passage to an inner gate: the game's AI handles inner gates
   badly.
