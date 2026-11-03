@@ -103,8 +103,15 @@ pub fn check(d: &MapDocument, roots: &[PathBuf]) -> Vec<Finding> {
         }
     }
 
-    // Settlement and port battle catchment areas whose centre is on no settlement or port tile.
+    // Settlement and port battle catchment areas whose centre is on no settlement or port tile; deployment zones of no BCA.
     if let Some(p) = d.project() {
+        for z in p.with_component("ECDeploymentZone") {
+            let under_bca = p.parent_of(z.id).and_then(|b| p.entity(b)).is_some_and(|b| p.component(b, "ECBattleCatchmentArea").is_some());
+            if !under_bca {
+                out.push(Finding { severity: Severity::Warning, cell: None, text: format!("deployment zone {} ({:x}) belongs to no battle catchment area: BOB writes no deployment of it", z.name, z.id) });
+            }
+        }
+
         let (w, h) = (f64::from(d.placed.width / 2), f64::from(d.placed.height / 2));
         let cell = wce_terrain_editor::document::TERRY_CELL;
         for e in p.with_component("ECBattleCatchmentArea") {
