@@ -99,11 +99,14 @@ struct LfPaint {
     aspect: f32,
     rotation_deg: f32,
     noise_scale_m: f32,
+
+    /// A dab every this share of the radius along the stroke's path (the stroke the same however fast the mouse goes).
+    spacing: f32,
 }
 
 impl Default for LfPaint {
     fn default() -> Self {
-        Self { on: false, sea: false, op: 0, radius_m: 300.0, amount_m: 2.0, share: 0.2, falloff: 1.0, aspect: 1.0, rotation_deg: 0.0, noise_scale_m: 400.0 }
+        Self { on: false, sea: false, op: 0, radius_m: 300.0, amount_m: 2.0, share: 0.2, falloff: 1.0, aspect: 1.0, rotation_deg: 0.0, noise_scale_m: 400.0, spacing: 0.25 }
     }
 }
 
@@ -116,6 +119,9 @@ struct Painting {
     stroke: LfStroke,
     mirror: Option<Arc<LfMirror>>,
     target: f64,
+
+    /// The last dab (field samples): the next ones go along the path from it.
+    last: Option<(f64, f64)>,
 }
 
 enum Job {
@@ -620,7 +626,7 @@ impl TerrainTool {
 
         let mirror = self.target_mirror();
         let target = at.map_or(0.0, |(x, y)| f64::from(field.at((x.round().max(0.0) as u32).min(field.width() - 1), (y.round().max(0.0) as u32).min(field.height() - 1))));
-        self.painting = Some(Painting { doc: self.shown, role, stroke: LfStroke::default(), mirror, target });
+        self.painting = Some(Painting { doc: self.shown, role, stroke: LfStroke::default(), mirror, target, last: None });
         true
     }
 
@@ -673,6 +679,34 @@ impl TerrainTool {
             if let Some(s) = self.view.streamer.as_mut() {
                 s.rebuild(cells);
             }
+        }
+    }
+
+    /// Dabs from the last one towards a field sample, `spacing` of the radius apart (the narrow side of an elongated brush); the first
+    /// of a stroke where it is.
+    fn dab_to(&mut self, e: &mut Editor, x: f64, y: f64) {
+        let Some(last) = self.painting.as_ref().map(|p| p.last) else { return };
+        let Some((mut lx, mut ly)) = last else {
+            self.dab(e, x, y);
+            if let Some(p) = self.painting.as_mut() {
+                p.last = Some((x, y));
+            }
+
+            return;
+        };
+
+        let b = self.brush_at(x, y);
+        let step = (b.brush.radius * b.aspect.min(1.0) * f64::from(self.paint.spacing)).max(0.5);
+        let (dx, dy) = (x - lx, y - ly);
+        let len = dx.hypot(dy);
+        let n = (len / step).floor() as usize;
+        for _ in 0..n {
+            (lx, ly) = (lx + dx / len * step, ly + dy / len * step);
+            self.dab(e, lx, ly);
+        }
+
+        if let Some(p) = self.painting.as_mut() {
+            p.last = Some((lx, ly));
         }
     }
 
@@ -779,6 +813,7 @@ impl TerrainTool {
         gui::slider_float("falloff", &mut self.paint.falloff, 0.0, 1.0, "%.2f");
         gui::slider_float("aspect", &mut self.paint.aspect, 0.1, 10.0, "%.2f");
         gui::slider_float("rotation (deg)", &mut self.paint.rotation_deg, -180.0, 180.0, "%.0f");
+        gui::slider_float("spacing (of the radius)", &mut self.paint.spacing, 0.05, 1.0, "%.2f");
         gui::text_disabled(&format!("a sample every {:.1} m", self.sample_metres()));
     }
 }
@@ -844,7 +879,7 @@ impl Tool for TerrainTool {
                 }
 
                 if let Some((x, y)) = at {
-                    self.dab(e, x, y);
+                    self.dab_to(e, x, y);
                 }
 
                 true
@@ -852,7 +887,7 @@ impl Tool for TerrainTool {
 
             K::Drag => {
                 if let Some((x, y)) = at.filter(|_| self.painting.is_some()) {
-                    self.dab(e, x, y);
+                    self.dab_to(e, x, y);
                 }
 
                 true
@@ -1018,6 +1053,41 @@ impl Tool for TerrainTool {
                 t.paint = saved;
                 match r {
                     Some(bytes) => CommandResult::success(format!("{} at sample ({x:.0}, {y:.0}): {dabs} dabs, the record keeps {} KB", LF_OPS[op], bytes / 1024)),
+                    None => CommandResult::fail("the stroke changed nothing"),
+                }
+            })
+        });
+
+        c.add("terrain_stroke", "terrain_stroke <raise|lower|smooth|flatten|noise> <x0> <y0> <x1> <y1> <radius m> <amount m or strength> [events]", "the Terrain tool: a land LF stroke along a line of map cells as the mouse paints it, its moves `events` (default 2) along the line; reports the field's sum", |e, a| {
+            let usage = "usage: terrain_stroke <raise|lower|smooth|flatten|noise> <x0> <y0> <x1> <y1> <radius m> <amount m or strength> [events]";
+            let Some(op) = a.first().and_then(|o| LF_OPS.iter().position(|n| n == o)) else { return CommandResult::fail(usage) };
+            let nums: Vec<f64> = a[1..].iter().filter_map(|v| v.parse().ok()).collect();
+            let [x0, y0, x1, y1, radius, amount, ..] = nums[..] else { return CommandResult::fail(usage) };
+            let events = nums.get(6).map_or(2, |&n| n.max(2.0) as usize);
+            with_terrain(e, |t, e| {
+                let Some(d) = e.docs.find_as::<MapDocument>(t.shown) else { return CommandResult::fail("no map shown") };
+                let Some(field) = d.lf_field(LfRole::Land) else { return CommandResult::fail("the shown map has no LF to paint (a map of the packs)") };
+                let (ppc_x, ppc_y) = (f64::from(field.width()) / f64::from(d.placed.width.max(1)), f64::from(field.height()) / f64::from(d.placed.height.max(1)));
+                let saved = t.paint.clone();
+                t.paint.op = op as i32;
+                t.paint.sea = false;
+                t.paint.radius_m = radius as f32;
+                if matches!(op, 2 | 3) { t.paint.share = amount as f32 } else { t.paint.amount_m = amount as f32 }
+                if !t.begin_stroke(e, Some((x0 * ppc_x, y0 * ppc_y))) {
+                    t.paint = saved;
+                    return CommandResult::fail("no stroke");
+                }
+
+                for k in 0..events {
+                    let f = k as f64 / (events - 1) as f64;
+                    t.dab_to(e, (x0 + (x1 - x0) * f) * ppc_x, (y0 + (y1 - y0) * f) * ppc_y);
+                }
+
+                let r = t.end_stroke(e);
+                t.paint = saved;
+                let sum: u64 = e.docs.find_as::<MapDocument>(t.shown).and_then(|d| d.lf_field(LfRole::Land)).map_or(0, |f| f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u64::from(u16::from_le_bytes(*c))).sum());
+                match r {
+                    Some(bytes) => CommandResult::success(format!("{} along ({x0}, {y0}) .. ({x1}, {y1}), {events} moves: the record keeps {} KB, the field's sum {sum}", LF_OPS[op], bytes / 1024)),
                     None => CommandResult::fail("the stroke changed nothing"),
                 }
             })
