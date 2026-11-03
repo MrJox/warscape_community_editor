@@ -45,11 +45,14 @@ pub struct MapDocument {
 
     /// The cells its layer edits changed, for the views.
     pub cells: Arc<crate::cells::CellWatch>,
+
+    /// BOB's messages of the last fill ("Failed to find tile for point x x y": a cell no tile fits).
+    pub fill_messages: Vec<String>,
 }
 
 impl MapDocument {
     pub fn new(name: String, source: MapSource, model: Option<MapModel>, placed: Arc<PlacedMap>, locations: Option<BattleLocations>, db: Arc<TileDatabase>) -> Self {
-        Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db, save_dir: None, message: None, cells: Arc::default() }
+        Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db, save_dir: None, message: None, cells: Arc::default(), fill_messages: vec![] }
     }
 
     /// The map's files as data (a kit map; none for a map of the packs).

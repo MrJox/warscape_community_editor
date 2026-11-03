@@ -31,17 +31,48 @@ pub struct Done {
     pub messages: Vec<String>,
 }
 
-/// What a fill reads, taken from the model.
-struct Inputs {
-    doc: DocumentId,
-    name: String,
-    db: Arc<TileDatabase>,
+/// What a fill reads of a map's model.
+pub struct FillInputs {
     w: u32,
     h: u32,
     tiles: Vec<[u8; 3]>,
     climate: Option<Vec<[u8; 3]>>,
     explicit: Option<String>,
     lf: Option<LfField>,
+}
+
+impl FillInputs {
+    /// The model's tile map, climates, explicit tiles and LF as they are (none without a tile map).
+    pub fn of(m: &wce_terrain::MapModel) -> Option<Self> {
+        let tiles = m.layer(&LayerRole::TileMap).map(|l| l.get())?;
+        let (w, h) = (tiles.width(), tiles.height());
+        let climate = m.layer(&LayerRole::Climate).map(|l| l.get()).filter(|l| l.width() == w && l.height() == h).map(rgb);
+        let explicit = m.explicit.as_ref().map(|x| x.get().write().iter().map(|&c| char::from(c)).collect());
+        let lf = m.lf(LfRole::Land).map(|f| {
+            let f = f.get();
+            LfField { w: f.width(), h: f.height(), values: f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() }
+        });
+
+        Some(Self { w, h, tiles: rgb(tiles), climate, explicit, lf })
+    }
+
+    /// BOB's fill of them: the placements (with the LF) and BOB's messages.
+    pub fn fill(&self, db: &TileDatabase, name: &str) -> (PlacedMap, Vec<String>) {
+        let lf = self.lf.as_ref().map(|f| (f.values.as_slice(), f.w, f.h));
+        let images = MapImages {
+            width: self.w, height: self.h, tile_map: &self.tiles, climate_map: self.climate.as_deref(), explicit_tiles: self.explicit.as_deref(), lf: None, lf_u16: lf,
+        };
+
+        place_images(db, name, &images, self.lf.clone())
+    }
+}
+
+/// What a fill again reads.
+struct Inputs {
+    doc: DocumentId,
+    name: String,
+    db: Arc<TileDatabase>,
+    fill: FillInputs,
     old: Arc<PlacedMap>,
     frame: Arc<Frame>,
 }
@@ -105,12 +136,7 @@ fn changed_chunks(old: &PlacedMap, new: &PlacedMap) -> Vec<ChunkKey> {
 
 fn run(i: Inputs) -> Done {
     let started = Instant::now();
-    let lf = i.lf.as_ref().map(|f| (f.values.as_slice(), f.w, f.h));
-    let images = MapImages {
-        width: i.w, height: i.h, tile_map: &i.tiles, climate_map: i.climate.as_deref(), explicit_tiles: i.explicit.as_deref(), lf: None, lf_u16: lf,
-    };
-
-    let (mut map, messages) = place_images(&i.db, &i.name, &images, i.lf.clone());
+    let (mut map, messages) = i.fill.fill(&i.db, &i.name);
     map.sea_lf.clone_from(&i.old.sea_lf);
     let changed = changed_chunks(&i.old, &map);
     let map = Arc::new(map);
@@ -135,17 +161,8 @@ impl Refill {
             return true;
         }
 
-        let Some(m) = d.model() else { return false };
-        let Some(tiles) = m.layer(&LayerRole::TileMap).map(|l| l.get()) else { return false };
-        let (w, h) = (tiles.width(), tiles.height());
-        let climate = m.layer(&LayerRole::Climate).map(|l| l.get()).filter(|l| l.width() == w && l.height() == h).map(rgb);
-        let explicit = m.explicit.as_ref().map(|x| x.get().write().iter().map(|&c| char::from(c)).collect());
-        let lf = m.lf(LfRole::Land).map(|f| {
-            let f = f.get();
-            LfField { w: f.width(), h: f.height(), values: f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() }
-        });
-
-        let inputs = Inputs { doc, name: d.placed.name.clone(), db: d.db.clone(), w, h, tiles: rgb(tiles), climate, explicit, lf, old: d.placed.clone(), frame };
+        let Some(fill) = d.model().and_then(FillInputs::of) else { return false };
+        let inputs = Inputs { doc, name: d.placed.name.clone(), db: d.db.clone(), fill, old: d.placed.clone(), frame };
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let _ = tx.send(run(inputs));

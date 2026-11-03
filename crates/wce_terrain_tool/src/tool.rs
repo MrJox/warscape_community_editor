@@ -43,11 +43,16 @@ struct Loaded {
     placed: Arc<wce_tile::battle_map::context::PlacedMap>,
     locations: Option<wce_tile::battle_map::locations::BattleLocations>,
     db: Arc<TileDatabase>,
+
+    /// BOB's messages of the fill (a kit map).
+    messages: Vec<String>,
 }
 
 impl Loaded {
     fn document(self) -> Box<MapDocument> {
-        Box::new(MapDocument::new(self.name, self.source, self.model, self.placed, self.locations, self.db))
+        let mut d = MapDocument::new(self.name, self.source, self.model, self.placed, self.locations, self.db);
+        d.fill_messages = self.messages;
+        Box::new(d)
     }
 }
 
@@ -156,6 +161,9 @@ pub struct TerrainTool {
     /// The cell layers' painting; the fill run again after an edit of the layers it reads (and one wanted once the stroke ends).
     cells: crate::cell_paint::CellPaint,
     explicit: crate::explicit_tiles::ExplicitPanel,
+
+    /// The last checks of the shown map.
+    findings: Vec<crate::validate::Finding>,
     refill: crate::refill::Refill,
     refill_wanted: bool,
     painting: Option<Painting>,
@@ -193,7 +201,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None,
         }
     }
@@ -253,26 +261,29 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
         _ => i.db.clone(),
     };
 
-    let (mut placed, locations) = load_map(&i.name, i.game_dir, &i.raw, &db, i.files.as_deref())?;
-    let (source, model, sea) = match packs_folder {
+    let (mut placed, locations, source, model, sea, messages) = match packs_folder {
         Some(folder) => {
+            let (placed, locations) = load_map(&i.name, i.game_dir, &i.raw, &db, i.files.as_deref())?;
             let sea = i.files.as_ref().and_then(|f| f.read(&format!("{folder}/lf_sea_height_map.dds")).ok()).and_then(|b| l16_dds_heights(&b));
-            (MapSource::Packs(folder), None, sea)
+            (placed, locations, MapSource::Packs(folder), None, sea, vec![])
         }
 
+        // A kit map: its files into the model, the model filled as BOB fills the files (the same fill runs again after an edit).
         None => {
             let dir = i.raw.join("terrain/battles").join(&i.name);
             let files = wce_terrain_io::MapFiles::from_dir(&dir).map_err(|e| e.to_string())?;
             let model = wce_terrain_io::attila::read(&i.name, MapKind::Battle, &files).map_err(|e| e.to_string())?;
+            let inputs = crate::refill::FillInputs::of(&model).ok_or_else(|| format!("{}: no tile_map.png", dir.display()))?;
+            let (placed, messages) = inputs.fill(&db, &i.name);
             let sea = model.lf(LfRole::Sea).map(|f| lf_field(f.get()));
-            (MapSource::Kit(dir), Some(model), sea)
+            (Arc::new(placed), None, MapSource::Kit(dir), Some(model), sea, messages)
         }
     };
 
     // The sea tiles stand on the map's sea LF (the Tile tool's map context keeps them on a flat -20 m).
     Arc::make_mut(&mut placed).sea_lf = sea;
 
-    Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db })
+    Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db, messages })
 }
 
 impl TerrainTool {
@@ -560,6 +571,7 @@ impl TerrainTool {
         self.cells.draw_section(e, self.shown);
         let placing_was = self.explicit.placing;
         self.explicit.draw_section(e, self.shown);
+        self.draw_validation(e);
 
         // One left-button mode at a time: the one just turned on.
         if self.paint.on && !lf_was {
@@ -778,6 +790,53 @@ impl TerrainTool {
         Ok(format!("{laid} placements of {tiles} tiles with an lf_mask.tif patched ({outside} off the map): {changed} of their {written} low samples changed, the record keeps {kb} KB"))
     }
 
+    /// The checks of the shown map, again.
+    fn validate(&mut self, e: &Editor) -> String {
+        let roots = kit_roots(e);
+        self.findings = e.docs.find_as::<MapDocument>(self.shown).map(|d| crate::validate::check(d, &roots)).unwrap_or_default();
+        let errors = self.findings.iter().filter(|f| f.severity == crate::validate::Severity::Error).count();
+        format!("{errors} errors, {} warnings", self.findings.len() - errors)
+    }
+
+    /// The camera over a map cell.
+    fn look_at_cell(&self, e: &mut Editor, at: (i32, i32)) {
+        let Some(f) = self.view.frame() else { return };
+        let (fx, fz) = f.from_map.apply(f64::from(at.0) + 0.5, f64::from(at.1) + 0.5);
+        let cam = e.viewport.camera();
+        let target = Float3::new(fx as f32, f.lift(fx, fz), fz as f32);
+        e.viewport.controller().set_camera(&wce_scene::camera::Camera { eye: target + Float3::new(0.0, 400.0, -300.0), target, ..cam });
+    }
+
+    fn draw_validation(&mut self, e: &mut Editor) {
+        if !gui::collapsing_header("Validation", 0) {
+            return;
+        }
+
+        if gui::button("Check the map") {
+            let m = self.validate(e);
+            e.status(&format!("Terrain: {m}"), false);
+        }
+
+        gui::same_line();
+        gui::text_disabled("colours in no database, cells no tile fits, explicit tiles, tiles in no kit");
+        let mut go = None;
+        for (i, f) in self.findings.iter().enumerate() {
+            let col = if f.severity == crate::validate::Severity::Error { [1.0, 0.45, 0.4, 1.0] } else { [1.0, 0.8, 0.3, 1.0] };
+            gui::push_id_int(i as i32);
+            gui::push_style_color(gui::COL_TEXT as i32, gui::v4(col[0], col[1], col[2], col[3]));
+            if gui::selectable(&f.text, false, 0) {
+                go = f.cell;
+            }
+
+            gui::pop_style_color(1);
+            gui::pop_id();
+        }
+
+        if let Some(at) = go {
+            self.look_at_cell(e, at);
+        }
+    }
+
     /// The cell paint on the 3D view's ground: the cell under the cursor.
     fn cell_input(&mut self, e: &mut Editor, kind: wce_editor::tool::ViewportEventKind) -> bool {
         use wce_editor::tool::ViewportEventKind as K;
@@ -839,6 +898,7 @@ impl TerrainTool {
             && let Some(d) = e.docs.find_as_mut::<MapDocument>(done.doc)
         {
             d.placed = done.map.clone();
+            d.fill_messages.clone_from(&done.messages);
             if let Some(s) = self.view.streamer.as_mut() {
                 s.swap_frame(done.frame.clone(), &done.changed);
             }
@@ -1409,6 +1469,14 @@ impl Tool for TerrainTool {
 
                     _ => CommandResult::fail(usage),
                 }
+            })
+        });
+
+        c.add("terrain_validate", "terrain_validate", "the Terrain tool: the shown map's checks (the Validation section): a count, then each finding", |e, _| {
+            with_terrain(e, |t, e| {
+                let m = t.validate(e);
+                let lines: Vec<String> = t.findings.iter().map(|f| format!("{:?}: {}", f.severity, f.text)).collect();
+                CommandResult::success(format!("{m}{}{}", if lines.is_empty() { "" } else { "\n" }, lines.join("\n")))
             })
         });
 
