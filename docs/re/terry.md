@@ -98,6 +98,22 @@ built with an older tile database: they are not fill oracles (33 of 43 differ, a
 - No normal chunks were written: the game's 736 come from elsewhere (the kit's 250 MB `normal.dds`; open).
 - `Tilemap` logs "Failed to find tile for point 360x977" (and three more points) on `main_attila_map`; the port gives 4 messages too.
 
+## The scene's structure, from the files and BOB (2026-11-03)
+
+- **Two trees.** An `<entity>`'s `<children>` is the logical tree (a BCA's: its `Catchment Region`, then its deployment zones); its
+  `ECTransform`'s own `<children>` is the spatial one, which positions are relative to (a BCA's: the region only). A zone has no
+  transform; its regions' positions are on the map (`DZR 0` at -105150 under `BCA 00521` at -104192).
+- **Units.** Positions are metres from the map's centre (the tile list's `origin_offset`: `width / 2`, `height / 2` in whole cells), x
+  east, z north, 256 a cell: every settlement and port BCA of `main_attila_map` (421) has its centre on a settlement or port tile so
+  read, 4 do with z flipped. A polyline's point (x, y) is at (x, z) + its entity's position: BOB's deployment files have the points
+  shifted by the BCA's position, y as z.
+- **Deployment zones** come in pairs, alliance 0 then 1 (`DZ k/0`, `DZ k/1`; 883 pairs on `main_attila_map`), children of a BCA: BOB's
+  `Tilemap` writes one `deployment_NNNN.xml` per BCA with zones (per alliance, its regions as boundaries relative to the BCA's
+  position, `DZC_RIVER` as `DAC_RIVER`), none for zones of no BCA. Checked on an edited map: the boundaries are the model's.
+- **Versions.** The kit's projects with entities are all `<project version="3"><scene version="10">`; the empty ones are mostly 2 / 3.
+  BOB's `Terry file` fails (exit 1, no message) on a version 2 / 3 project with entities in the version 3 / 10 form.
+- No entity of the kit is turned or scaled (52 016 transforms of `main_attila_map`: `rotation="0 0 0"`, `scale="1 1 1"`).
+
 ## Per-tile LF patches (Ghidra, 2026-11-03)
 
 Project `kit` in `I:\wce_scratch\ghidra_kit` (Attila's `TWeak_TerrainMetadataEditor.AssemblyKit.dll` and `ToolDataBuilderDll.AssemblyKit.dll`,
