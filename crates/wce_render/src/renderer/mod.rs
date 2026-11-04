@@ -1391,6 +1391,10 @@ impl Renderer {
 
     /// Draws a scene (lit by its environment slot) as a view sees it into a target, at the target's size.
     pub fn render(&mut self, scene: &RenderScene, view_params: &ViewParams, target: &mut RenderTarget) {
+        for r in wce_d3d11::safe::take_rejected() {
+            self.error(format!("d3d11: refused {r}"));
+        }
+
         self.grass.season.clone_from(&scene.vegetation_season);
         if !self.climate.eq_ignore_ascii_case(&scene.climate) {
             self.climate = scene.climate.to_lowercase();

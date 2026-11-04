@@ -699,7 +699,8 @@ impl Renderer {
 
         let mut g = self.terrain.lf.remove(&lf.id).unwrap_or_default();
         let (w, h) = (lf.normal.w, lf.normal.h);
-        if g.normal_src.is_none()
+        // Made again when the map's normals change size (the copies below address them by its size).
+        if (g.normal_src.is_none() || g.normal.width != w || g.normal.height != h)
             && let Some(rgba) = lf.normal.rgba.as_ref().filter(|p| w > 0 && h > 0 && p.len() >= (w * h * 4) as usize)
         {
             // One level: its texel is 64 units or so, more than a pixel covers within the far plane (the smaller levels are never read),
