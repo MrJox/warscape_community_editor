@@ -105,6 +105,7 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
             let kept = |p: [f32; 3]| inside(&planes, p) && !(in_box(p) && drop.iter().any(|&(a, b)| p[0] > a + 1e-3 && p[0] < b - 1e-3));
             // The base's platforms less what the steps replace: cut out of them (a platform wider than the step's cross-section keeps the
             // rest of its width), so the walkway and a step never lie one over the other.
+            // Grouped by the platform they come from: the firing lines' `parent_index` counts the platforms as they were.
             let old = carve_platforms(d["platforms"].as_array().map_or(&[][..], Vec::as_slice), &drop, drop_zy);
             let on_planes = |p: [f32; 3]| inside(&planes, p);
             let (mut platforms, strips) = platform_strips(&old, warp, cuts, &on_planes, 0, &mut notes);
@@ -114,7 +115,8 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
                 let part_cuts = Cuts { step, at: vec![sp.x.0, sp.x.1] };
                 let part_planes = sp.warp.clip_planes();
                 let holds = |p: [f32; 3]| sp.holds(p) && inside(&part_planes, p);
-                let (more, s2) = platform_strips(sd["platforms"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &part_cuts, &holds, platforms.len(), &mut notes);
+                let theirs = sd["platforms"].as_array().into_iter().flatten().map(|p| vec![p.clone()]).collect::<Vec<_>>();
+                let (more, s2) = platform_strips(&theirs, sp.warp, &part_cuts, &holds, platforms.len(), &mut notes);
                 platforms.extend(more);
                 ef.extend(place_lines(sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &s2, &holds, &mut notes));
             }
@@ -299,18 +301,18 @@ pub fn round_trips(bytes: &[u8]) -> Result<bool, String> {
     Ok(out == bytes)
 }
 
-/// A strip of a platform: its index among the new platforms, and the x range it covers before the warp.
+/// A strip of a platform: its index among the new platforms, the x range it covers before the warp, and its outline on the ground (x,
+/// z) before the warp.
 struct Strip {
     index: usize,
     x: (f32, f32),
+    ground: Vec<[f32; 2]>,
 }
 
-/// Platforms cut along x and warped, the strips whose middle `keep` refuses left out; per original platform, its strips (indices from
-/// `offset`).
 /// Platforms less the boxes the steps replace (`drops`: their x ranges; `zy`: the cross-section, z then y; none: all of it), as the
 /// pieces of each platform outside them (x before the range, after it, and within it the z on either side of the box). A platform wholly
-/// outside every box is kept as it is.
-fn carve_platforms(old: &[Value], drops: &[(f32, f32)], zy: Option<((f32, f32), (f32, f32))>) -> Vec<Value> {
+/// outside every box is kept as it is. Per platform, its pieces.
+fn carve_platforms(old: &[Value], drops: &[(f32, f32)], zy: Option<((f32, f32), (f32, f32))>) -> Vec<Vec<Value>> {
     let ((z0, z1), (y0, y1)) = zy.unwrap_or(((f32::MIN, f32::MAX), (f32::MIN, f32::MAX)));
     let mut out = vec![];
     for p in old {
@@ -331,11 +333,11 @@ fn carve_platforms(old: &[Value], drops: &[(f32, f32)], zy: Option<((f32, f32), 
             pieces = next.into_iter().filter(|q| q.len() >= 3 && area_xz(q) > 1e-4).collect();
         }
 
-        for poly in pieces {
+        out.push(pieces.into_iter().map(|poly| {
             let mut q = p.clone();
             q["vertices"] = json!({ "outline": poly.iter().map(|&v| point3(v)).collect::<Vec<_>>() });
-            out.push(q);
-        }
+            q
+        }).collect());
     }
 
     out
@@ -368,40 +370,44 @@ fn area_xz(poly: &[[f32; 3]]) -> f32 {
     }).sum::<f32>().abs() / 2.0
 }
 
-fn platform_strips(old: &[Value], warp: &dyn Warp, cuts: &Cuts, keep: &dyn Fn([f32; 3]) -> bool, offset: usize, notes: &mut LogicNotes) -> (Vec<Value>, Vec<Vec<Strip>>) {
+/// Platforms (each given as its pieces) cut along x and warped, the strips whose middle `keep` refuses left out; per original platform,
+/// the strips of all its pieces (indices from `offset`).
+fn platform_strips(old: &[Vec<Value>], warp: &dyn Warp, cuts: &Cuts, keep: &dyn Fn([f32; 3]) -> bool, offset: usize, notes: &mut LogicNotes) -> (Vec<Value>, Vec<Vec<Strip>>) {
     let mut new = vec![];
     let mut strips = vec![];
-    for p in old {
-        let points = outline(&p["vertices"]);
-        let normal = p3(&p["normal"]);
-        let planes = warp.clip_planes();
-        let mut slabs = slice_along_x(&points, cuts);
-        if slabs.is_empty() {
-            slabs = vec![points.clone()];
-        }
-
-        let slabs = slabs.into_iter().map(|s| clip_to(&s, &planes, true)).filter(|s| s.len() >= 3).collect::<Vec<_>>();
-
+    for group in old {
         let mut mine = vec![];
-        for s in slabs {
-            let n = s.len() as f32;
-            let mid = s.iter().fold([0.0; 3], |m, q| [m[0] + q[0] / n, m[1] + q[1] / n, m[2] + q[2] / n]);
-            if !keep(mid) {
-                continue;
+        for p in group {
+            let points = outline(&p["vertices"]);
+            let normal = p3(&p["normal"]);
+            let planes = warp.clip_planes();
+            let mut slabs = slice_along_x(&points, cuts);
+            if slabs.is_empty() {
+                slabs = vec![points.clone()];
             }
 
-            let x = s.iter().fold((f32::MAX, f32::MIN), |(lo, hi), q| (lo.min(q[0]), hi.max(q[0])));
-            let w = s.iter().map(|&q| warp.point(q)).collect::<Vec<_>>();
-            let mut nn = normalised(newell(&w));
-            if nn[0] * normal[0] + nn[1] * normal[1] + nn[2] * normal[2] < 0.0 {
-                nn = [-nn[0], -nn[1], -nn[2]];
-            }
+            let slabs = slabs.into_iter().map(|s| clip_to(&s, &planes, true)).filter(|s| s.len() >= 3).collect::<Vec<_>>();
 
-            let mut q = p.clone();
-            q["vertices"] = json!({ "outline": w.iter().map(|&v| point3(v)).collect::<Vec<_>>() });
-            q["normal"] = point3(nn);
-            mine.push(Strip { index: offset + new.len(), x });
-            new.push(q);
+            for s in slabs {
+                let n = s.len() as f32;
+                let mid = s.iter().fold([0.0; 3], |m, q| [m[0] + q[0] / n, m[1] + q[1] / n, m[2] + q[2] / n]);
+                if !keep(mid) {
+                    continue;
+                }
+
+                let x = s.iter().fold((f32::MAX, f32::MIN), |(lo, hi), q| (lo.min(q[0]), hi.max(q[0])));
+                let w = s.iter().map(|&q| warp.point(q)).collect::<Vec<_>>();
+                let mut nn = normalised(newell(&w));
+                if nn[0] * normal[0] + nn[1] * normal[1] + nn[2] * normal[2] < 0.0 {
+                    nn = [-nn[0], -nn[1], -nn[2]];
+                }
+
+                let mut q = p.clone();
+                q["vertices"] = json!({ "outline": w.iter().map(|&v| point3(v)).collect::<Vec<_>>() });
+                q["normal"] = point3(nn);
+                mine.push(Strip { index: offset + new.len(), x, ground: s.iter().map(|q| [q[0], q[2]]).collect() });
+                new.push(q);
+            }
         }
 
         strips.push(mine);
@@ -429,7 +435,8 @@ fn place_lines(old: &[Value], warp: &dyn Warp, strips: &[Vec<Strip>], keep: &dyn
             continue;
         };
 
-        let inside = mine.iter().find(|s| s.x.0 - 1e-3 <= mid[0] && mid[0] <= s.x.1 + 1e-3);
+        // The strip under it (a carved platform has several over the same x: its sides of a step), else one over its x.
+        let inside = mine.iter().find(|s| in_ring(&s.ground, [mid[0], mid[2]])).or_else(|| mine.iter().find(|s| s.x.0 - 1e-3 <= mid[0] && mid[0] <= s.x.1 + 1e-3));
         let strip = inside.unwrap_or_else(|| {
             notes.orphan_lines += 1;
             mine.iter().min_by(|a, b| gap(a, mid[0]).total_cmp(&gap(b, mid[0]))).expect("not empty")
@@ -447,6 +454,26 @@ fn place_lines(old: &[Value], warp: &dyn Warp, strips: &[Vec<Strip>], keep: &dyn
     }
 
     out
+}
+
+/// If a point (x, z) is inside a ring, its edges included.
+fn in_ring(ring: &[[f32; 2]], p: [f32; 2]) -> bool {
+    let mut inside = false;
+    for i in 0..ring.len() {
+        let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+        let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+        let len2 = dx * dx + dz * dz;
+        let t = if len2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        if (a[0] + dx * t - p[0]).hypot(a[1] + dz * t - p[1]) < 1e-3 {
+            return true;
+        }
+
+        if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < a[0] + dx * (p[1] - a[1]) / dz {
+            inside = !inside;
+        }
+    }
+
+    inside
 }
 
 fn gap(s: &Strip, x: f32) -> f32 {
@@ -578,13 +605,36 @@ mod tests {
     fn a_step_cuts_its_box_out_of_the_walkway() {
         let quad = |x0: f32, x1: f32, z0: f32, z1: f32, y: f32| json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
             { "x": x0, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z1 }, { "x": x0, "y": y, "z": z1 } ] } });
-        let out = carve_platforms(&[quad(0.0, 20.0, 3.0, 9.0, 15.0), quad(0.0, 20.0, 3.0, 9.0, 2.0)], &[(5.0, 10.0)], Some(((5.1, 8.9), (14.0, 26.5))));
+        let out = carve_platforms(&[quad(0.0, 20.0, 3.0, 9.0, 15.0), quad(0.0, 20.0, 3.0, 9.0, 2.0)], &[(5.0, 10.0)], Some(((5.1, 8.9), (14.0, 26.5)))).into_iter().flatten().collect::<Vec<_>>();
         let area = |ps: &[Value]| ps.iter().map(|p| area_xz(&outline(&p["vertices"]))).sum::<f32>();
         let (walkway, low): (Vec<Value>, Vec<Value>) = out.into_iter().partition(|p| outline(&p["vertices"])[0][1] > 10.0);
         assert!((area(&walkway) - (120.0 - 5.0 * 3.8)).abs() < 1e-3, "{}", area(&walkway));
         assert!((area(&low) - 120.0).abs() < 1e-3);
         let inside_box = |q: &[f32; 3]| q[0] > 5.01 && q[0] < 9.99 && q[2] > 5.11 && q[2] < 8.89;
         assert!(!walkway.iter().any(|p| outline(&p["vertices"]).iter().any(inside_box)));
+    }
+
+    /// A step carves the walkway (platform 0) into pieces; the parapet's platform (1) and a firing line on it (parent 1) come after it:
+    /// the line stays on the parapet's strip, and lines on the walkway's sides by the step on their own side's piece.
+    #[test]
+    fn firing_lines_keep_their_platform_when_one_before_is_carved() {
+        let quad = |x0: f32, x1: f32, z0: f32, z1: f32, y: f32| json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
+            { "x": x0, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z1 }, { "x": x0, "y": y, "z": z1 } ] } });
+        let line = |x: f32, z: f32, parent: usize| json!({ "start": { "x": x - 0.25, "y": 15.0, "z": z }, "end": { "x": x + 0.25, "y": 15.0, "z": z },
+            "direction": { "x": 0.0, "y": 0.0, "z": -1.0 }, "parent_index": parent });
+        let carved = carve_platforms(&[quad(0.0, 20.0, 3.0, 9.0, 15.0), quad(0.0, 20.0, 1.0, 3.0, 15.0)], &[(5.0, 10.0)], Some(((5.1, 8.9), (14.0, 26.5))));
+        let mut notes = LogicNotes::default();
+        let cuts = Cuts { step: 100.0, at: vec![] };
+        let (platforms, strips) = platform_strips(&carved, &crate::warp::Identity, &cuts, &|_| true, 0, &mut notes);
+        let lines = place_lines(&[line(15.0, 2.0, 1), line(7.0, 4.0, 0), line(7.0, 8.95, 0)], &crate::warp::Identity, &strips, &|_| true, &mut notes);
+        let under = |l: &Value| outline(&platforms[l["parent_index"].as_u64().unwrap() as usize]["vertices"]);
+        let parapet = under(&lines[0]);
+        assert!(parapet.iter().all(|q| q[2] <= 3.0 + 1e-3), "the parapet's line on {parapet:?}");
+        let outer = under(&lines[1]);
+        assert!(outer.iter().all(|q| q[2] <= 5.1 + 1e-3 && q[0] >= 5.0 - 1e-3 && q[0] <= 10.0 + 1e-3), "the walkway's line on {outer:?}");
+        let inner = under(&lines[2]);
+        assert!(inner.iter().all(|q| q[2] >= 8.9 - 1e-3), "the walkway's inner line on {inner:?}");
+        assert_eq!(notes.orphan_lines, 0);
     }
 
     #[test]
