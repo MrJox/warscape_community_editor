@@ -72,6 +72,9 @@ fn style(p: &TerryProject, id: u64, kind: &EntityKind) -> (usize, [f32; 4]) {
         }
 
         EntityKind::DeploymentZone => (2, [0.35, 0.9, 0.4, 1.0]),
+        EntityKind::Prop(_) => (3, [0.85, 0.75, 0.55, 0.9]),
+        EntityKind::Vfx(_) => (3, [0.4, 0.9, 1.0, 0.9]),
+        EntityKind::EnvironmentVolume(_) => (3, [1.0, 0.9, 0.3, 0.9]),
         EntityKind::Other => (3, [1.0, 1.0, 1.0, 0.8]),
     }
 }
@@ -117,6 +120,20 @@ fn overlay(d: &MapDocument, frame: &Frame, id: u64, show: [bool; 4]) -> Option<O
     if let Some((pts, closed)) = p.polyline(e) {
         let pts: Vec<[f64; 2]> = pts.iter().map(|q| [w[0] + q[0], w[2] + q[1]]).collect();
         on_ground(frame, &pts, closed, d.terry_frame, colour, &mut lines);
+    }
+
+    // An environment volume: its inner and outer radius.
+    if let Some(c) = p.component(e, "ECEnvironmentVolume") {
+        for attr in ["inner_radius", "outer_radius"] {
+            let r: f64 = p.doc.get(c, attr).and_then(|v| v.trim().parse().ok()).unwrap_or(0.0);
+            if r > 0.0 {
+                let ring: Vec<[f64; 2]> = (0..48).map(|k| {
+                    let a = f64::from(k) / 48.0 * std::f64::consts::TAU;
+                    [w[0] + r * a.cos(), w[2] + r * a.sin()]
+                }).collect();
+                on_ground(frame, &ring, true, d.terry_frame, colour, &mut lines);
+            }
+        }
     }
 
     if lines.is_empty() {
