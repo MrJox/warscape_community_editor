@@ -313,6 +313,15 @@ the group in `default` and in every climate), `terrain/textures/campaign/default
   POSITION5.w > 0 and decals POSITION5.z: the editor sets both to 1 (ASSUMPTION: the engine's per-instance value was not traced).
   `g_snowing_intensity` is the environment's WEATHER snowing_intensity (most files have 0; e.g. charlemagne/med_wi_land_day_snow_2 has 1).
   The campaign's `snow_mask_<season>.dds` (main_attila_map, cha_attila_map) are map-level.
+  2026-11-05: the engine loads `/snow_mask_%s.dds` for the four seasons in `FUN_1190cd40` (rva 0x190e721; also `0x191d251`, and
+  `/snow_mask_%s%d.dds` at `0x191d365`) and copies each into a CPU image of the terrain object (+0x86c, 6 dwords a season): not bound as
+  a shader resource there. The resolve's `s_mask_map` (GLSL `glsl_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss.glsl` in the
+  packs, readable) is sampled at the far maps' uv (world xz / (`g_world_dimensions` * `g_far_terrain_scale`), y flipped, plus
+  `g_far_world_read_uv_offset`); where its green is not 0 it blends the diffuse array's group `g_layer2_texture_index` at variation
+  (g - 0.25) * 4, where its red is not 0 the group `g_layer1_texture_index` at (r - 0.25) * 4, both by the albedo's alpha. Set in
+  `FUN_118839d0` from two getters (`FUN_1070d310`, `FUN_107cdb70`: field reads of objects the decompiler doesn't name). Not traced:
+  which texture `s_mask_map` is on the campaign and which groups the two layers are (the campaign's `default` climate lists `snow` and
+  `burnt_ground` besides its ground groups).
 - **Snow on the ground (2026-10-22, from the DXBC of `ps30_terrain_to_gbuffer_ss`):** the resolve reads `g_snowing_intensity` and `g_wind`
   of `weather_shared` (`g_season_type` and `g_snow_mask` are unused there). With intensity i > 0 it perturbs the normal with
   `s_snow_normals` (uv = xz * 0.0005 and * 0.07), and where the normal faces away from the wind (direction (wind.x, -1, wind.y)) beyond a
