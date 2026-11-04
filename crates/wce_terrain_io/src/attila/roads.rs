@@ -15,6 +15,13 @@
 //!
 //! ASSUMPTION: a tile takes the highest level of the regions of the road cells under it (the game picks a tile's group list in
 //! `FUN_11806d80` / `FUN_1181e380`, not decompiled to that point); a tile without a road cell under it the level at its centre.
+//!
+//! The farmland, the same way: the map's `dynamic_resources.esf` (`CAMPAIGN_DYNAMIC_RESOURCES`) lists per region (its key 0xfe00 + the
+//! region's index) areas of hex cells (row 0 the south edge) with a building superchain, a level and an upgrade group
+//! (`att_sch_agriculture`, 1 to 3, `farmland_mediterranean` or `farmland_northern` on `main_attila_map`). An area is farmland when
+//! the region has a building of that superchain (`building_chains`' `building_superchain`) whose chain level (`building_levels`'
+//! `level`: 0 for `att_bld_all_agriculture_generic_1`, 1 for the `_2`s) reaches the area's: its grass, mud and snow tiles take the
+//! group's farmland tiles. ASSUMPTIONS: that comparison (the game's is not decompiled), and a tile taking the area of its centre cell.
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -44,6 +51,9 @@ pub struct RoadTables {
 
     /// A building's road value.
     pub values: HashMap<String, f64>,
+
+    /// A building's superchain and its level in its chain (`building_levels`, `building_chains`).
+    pub chain_levels: HashMap<String, (String, u32)>,
 }
 
 impl RoadTables {
@@ -62,7 +72,13 @@ impl RoadTables {
                 *m.entry(b).or_default() += v;
                 m
             });
-        Self { thresholds, values }
+        let superchains: HashMap<String, String> = table_rows(schema, "building_chains_tables", list, read).into_iter()
+            .filter_map(|r| Some((r.get("key")?.clone(), r.get("building_superchain")?.clone())))
+            .collect();
+        let chain_levels = table_rows(schema, "building_levels_tables", list, read).into_iter()
+            .filter_map(|r| Some((r.get("level_name")?.clone(), (superchains.get(r.get("chain")?)?.clone(), r.get("level")?.parse::<u32>().ok()?))))
+            .collect();
+        Self { thresholds, values, chain_levels }
     }
 
     /// The level a road value reaches (0 when none).
@@ -199,7 +215,53 @@ pub fn region_buildings(startpos: &[u8]) -> Result<HashMap<String, Vec<String>>,
     Ok(out)
 }
 
-/// The roads of a campaign at its start: each region's level and the swaps that draw it.
+/// An area of `dynamic_resources.esf`: hex cells of a region that take an upgrade group once the region's buildings of a superchain
+/// reach a level.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResourceArea {
+    pub region: usize,
+    pub superchain: String,
+    pub level: u32,
+    pub group: String,
+    pub cells: Vec<(u16, u16)>,
+}
+
+/// The areas of a campaign map's `dynamic_resources.esf`.
+///
+/// # Errors
+///
+/// Not an ESF, or not `CAMPAIGN_DYNAMIC_RESOURCES`.
+pub fn dynamic_resources(esf: &[u8]) -> Result<Vec<ResourceArea>, String> {
+    let e = ESF::decode(&mut Cursor::new(esf), &None).map_err(|e| format!("dynamic_resources.esf: {e}"))?;
+    let root = as_record(e.root_node()).filter(|r| r.name() == "CAMPAIGN_DYNAMIC_RESOURCES").ok_or("dynamic_resources.esf: not CAMPAIGN_DYNAMIC_RESOURCES")?;
+    let mut out = vec![];
+    for info in root.children().iter().flatten().filter_map(as_record).filter(|r| r.name() == "REGION_RESOURCE_INFO_BLOCK") {
+        for g in info.children() {
+            let Some(id) = g.iter().find_map(u32_of) else { continue };
+            let region = id.wrapping_sub(0xfe00) as usize;
+            for areas in g.iter().filter_map(as_record).filter(|r| r.name() == "REGION_RESOURCE_INFO_AREAS_BLOCK") {
+                for ag in areas.children() {
+                    let mut texts = ag.iter().filter_map(str_of);
+                    let (Some(superchain), Some(group)) = (texts.next(), texts.next()) else { continue };
+                    let level = ag.iter().find_map(u32_of).unwrap_or(0);
+                    let cells = ag.iter().filter_map(as_record).filter(|r| r.name() == "REGION_RESOURCE_AREAS_BLOCK")
+                        .flat_map(|r| r.children().iter().flatten())
+                        .filter_map(|n| match n {
+                            NodeType::U16Array(v) => Some(v.as_chunks::<2>().0.iter().map(|c| (c[0], c[1])).collect::<Vec<_>>()),
+                            _ => None,
+                        })
+                        .flatten()
+                        .collect();
+                    out.push(ResourceArea { region, superchain: superchain.to_owned(), level, group: group.to_owned(), cells });
+                }
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+/// The roads and farmland of a campaign at its start: each region's road level, the farmland's cells, and the swaps that draw them.
 #[derive(Clone, Debug, Default)]
 pub struct CampaignRoads {
     pub hex: HexMap,
@@ -208,15 +270,37 @@ pub struct CampaignRoads {
     pub values: Vec<f64>,
     pub levels: Vec<usize>,
     pub upgrades: Upgrades,
+
+    /// The farmland's hex cells and their upgrade groups.
+    pub farms: HashMap<(u32, u32), String>,
+
+    /// The resource areas reached and not.
+    pub areas_on: usize,
+    pub areas_off: usize,
 }
 
 impl CampaignRoads {
-    pub fn new(hex: HexMap, buildings: &HashMap<String, Vec<String>>, tables: &RoadTables, upgrades: Upgrades) -> Self {
+    pub fn new(hex: HexMap, buildings: &HashMap<String, Vec<String>>, tables: &RoadTables, upgrades: Upgrades, areas: &[ResourceArea]) -> Self {
         let values: Vec<f64> = hex.regions.iter()
             .map(|r| buildings.get(r).map_or(0.0, |b| b.iter().filter_map(|b| tables.values.get(b)).sum()))
             .collect();
         let levels = values.iter().map(|&v| tables.level(v)).collect();
-        Self { hex, values, levels, upgrades }
+        let mut farms = HashMap::new();
+        let (mut areas_on, mut areas_off) = (0, 0);
+        for a in areas {
+            // The region's highest level in the superchain.
+            let reached = hex.regions.get(a.region).and_then(|r| buildings.get(r)).into_iter().flatten()
+                .filter_map(|b| tables.chain_levels.get(b).filter(|(sc, _)| *sc == a.superchain).map(|(_, l)| *l))
+                .max();
+            if reached.is_some_and(|l| l >= a.level) {
+                areas_on += 1;
+                farms.extend(a.cells.iter().map(|&(c, r)| ((u32::from(c), u32::from(r)), a.group.clone())));
+            } else {
+                areas_off += 1;
+            }
+        }
+
+        Self { hex, values, levels, upgrades, farms, areas_on, areas_off }
     }
 
     /// How many regions are at each level.
@@ -254,13 +338,28 @@ impl CampaignRoads {
         })
     }
 
-    /// The map with its road tiles swapped for their level's (the others as they are); the number swapped.
-    pub fn apply(&self, m: &PlacedMap) -> (PlacedMap, usize) {
+    /// The farmland group of the hex cell at a tile's centre (`w` x `h` the map's cells, row 0 the north edge).
+    pub fn tile_farm(&self, rect: [i32; 4], (w, h): (u32, u32)) -> Option<&str> {
+        let (x, y) = (f64::from(rect[0] + rect[2]) / 2.0, f64::from(rect[1] + rect[3]) / 2.0);
+        let cell = self.hex.cell_at(x / f64::from(w) * self.hex.world.0, (1.0 - y / f64::from(h)) * self.hex.world.1)?;
+        self.farms.get(&cell).map(String::as_str)
+    }
+
+    /// The map with its road tiles swapped for their level's and the tiles on farmland for its group's (the others as they are); the
+    /// numbers of road and of farmland tiles swapped.
+    pub fn apply(&self, m: &PlacedMap) -> (PlacedMap, usize, usize) {
         let mut out = m.clone();
-        let mut n = 0;
+        let (mut n, mut farmed) = (0, 0);
         for p in &mut out.placements {
             let loc = norm(&p.location);
             if !loc.starts_with(BASE_SET) {
+                if !self.farms.is_empty()
+                    && let Some(dst) = self.tile_farm(p.rect(), (m.width, m.height)).and_then(|g| self.upgrades.groups.get(g)).and_then(|g| g.get(&loc))
+                {
+                    p.location.clone_from(dst);
+                    farmed += 1;
+                }
+
                 continue;
             }
 
@@ -275,17 +374,19 @@ impl CampaignRoads {
             }
         }
 
-        (out, n)
+        (out, n, farmed)
     }
 }
 
-/// A campaign's roads from its files: `map_data.esf`, the startpos, `tile_upgrades.xml` and the db.
+/// A campaign's roads and farmland from its files: `map_data.esf`, the startpos, `tile_upgrades.xml`, the db, and the map's
+/// `dynamic_resources.esf` when it has one.
 ///
 /// # Errors
 ///
 /// A file can't be read as it should.
-pub fn read(map_data: &[u8], startpos: &[u8], tile_upgrades: &[u8], tables: &RoadTables) -> Result<CampaignRoads, String> {
-    Ok(CampaignRoads::new(HexMap::read(map_data)?, &region_buildings(startpos)?, tables, Upgrades::parse(tile_upgrades)))
+pub fn read(map_data: &[u8], startpos: &[u8], tile_upgrades: &[u8], tables: &RoadTables, dynamic: Option<&[u8]>) -> Result<CampaignRoads, String> {
+    let areas = dynamic.map(dynamic_resources).transpose()?.unwrap_or_default();
+    Ok(CampaignRoads::new(HexMap::read(map_data)?, &region_buildings(startpos)?, tables, Upgrades::parse(tile_upgrades), &areas))
 }
 
 #[cfg(test)]
@@ -294,7 +395,7 @@ mod tests {
 
     #[test]
     fn levels_by_threshold() {
-        let t = RoadTables { thresholds: vec![0.0, 10.0, 40.0], values: HashMap::new() };
+        let t = RoadTables { thresholds: vec![0.0, 10.0, 40.0], ..Default::default() };
         assert_eq!([t.level(0.0), t.level(9.9), t.level(10.0), t.level(39.0), t.level(40.0), t.level(95.0)], [0, 0, 1, 1, 2, 2]);
     }
 
