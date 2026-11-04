@@ -126,7 +126,7 @@ impl ContextUi {
         self.maps_for = raw.to_path_buf();
         self.maps.clear();
         if let Some(f) = files {
-            self.maps.extend(game_maps(f, self.game_dir));
+            self.maps.extend(game_maps(f, self.game_dir, false));
         }
 
         self.maps.extend(kit_maps(raw));

@@ -120,12 +120,17 @@ pub fn game_map_folder(name: &str, game_dir: &str) -> Option<String> {
     name.strip_suffix(GAME_FILES).map(|f| format!("terrain/battles/{f}"))
 }
 
-/// The battle maps in the packs (base game and mods): the folders of `terrain/battles` with a `tile_map.tiles`, as the list names them
-/// (`game_dir`, the game's own campaign, first as `GAME_MAP`).
-pub fn game_maps(files: &dyn Files, game_dir: &str) -> Vec<String> {
+/// The battle maps in the packs (base game and mods): the folders of `terrain/battles` with a `tile_map.tiles` (`lists`: or a
+/// `terrain.tile_list`, a game without kit maps: Rome 2's 104), as the list names them (`game_dir`, the game's own campaign, first as
+/// `GAME_MAP`).
+pub fn game_maps(files: &dyn Files, game_dir: &str, lists: bool) -> Vec<String> {
     let mut folders: Vec<String> = files.list("terrain/battles/", "/tile_map.tiles").into_iter()
         .filter_map(|p| p.strip_suffix("/tile_map.tiles").map(str::to_owned))
         .collect();
+    if lists {
+        folders.extend(files.list("terrain/battles/", "/terrain.tile_list").into_iter().filter_map(|p| p.strip_suffix("/terrain.tile_list").map(str::to_owned)));
+    }
+
     folders.sort();
     folders.dedup();
     let own = folders.iter().any(|f| f.eq_ignore_ascii_case(game_dir));
@@ -140,10 +145,16 @@ pub fn load_map(name: &str, game_dir: &str, raw: &Path, db: &TileDatabase, files
     if let Some(folder) = game_map_folder(name, game_dir) {
         let files = files.ok_or("no game files")?;
         let read = |n: &str| files.read(&format!("{folder}/{n}"));
-        let index = read("tile_map.index")?;
-        let tiles = read("tile_map.tiles")?;
         let lf = read("lf_height_map.dds").ok();
-        let map = load_game_map(name, db, &index, &tiles, lf.as_deref())?;
+        // A tile map, else (most of Rome 2's maps) the battle field.
+        let map = match (read("tile_map.index"), read("tile_map.tiles")) {
+            (Ok(index), Ok(tiles)) => load_game_map(name, db, &index, &tiles, lf.as_deref())?,
+            _ => {
+                let list = wce_tile::battle_map::tile_list::TileList::parse(&read("terrain.tile_list")?)?;
+                PlacedMap::from_tile_list(name, &list, db, lf.as_deref().and_then(wce_tile::battle_map::l16_dds_heights))
+            }
+        };
+
         let locations = read("locations.blm").ok().and_then(|b| BattleLocations::parse(&b).ok());
         return Ok((Arc::new(map), locations));
     }

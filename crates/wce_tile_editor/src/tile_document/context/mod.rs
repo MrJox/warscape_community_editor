@@ -288,8 +288,9 @@ impl MapIndex {
         let mut by_chunk: HashMap<ChunkKey, Vec<usize>> = HashMap::new();
         let mut reach = 0;
         for (i, p) in map.placements.iter().enumerate() {
+            // Not under the open tile; no open tile (the Terrain tool's frame: an empty rectangle at the map's centre) hides nothing.
             let r = p.rect();
-            if r[0] < open[2] && open[0] < r[2] && r[1] < open[3] && open[1] < r[3] {
+            if open[0] < open[2] && open[1] < open[3] && r[0] < open[2] && open[0] < r[2] && r[1] < open[3] && open[1] < r[3] {
                 continue;
             }
 

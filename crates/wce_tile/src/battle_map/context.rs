@@ -200,7 +200,7 @@ type SplitName = (String, String, Option<(i32, i32)>, bool);
 #[derive(Default)]
 struct Sizes {
     by_location: std::collections::HashMap<String, (i32, i32)>,
-    first_variation: std::collections::HashMap<String, String>,
+    variations: std::collections::HashMap<String, Vec<String>>,
     names: std::collections::HashMap<String, SplitName>,
 }
 
@@ -208,26 +208,38 @@ impl Sizes {
     fn new(db: &TileDatabase) -> Self {
         Self {
             by_location: db.tiles.iter().map(|t| (norm(&t.location), (t.width, t.height))).collect(),
-            first_variation: db.tiles.iter().filter_map(|t| Some((norm(&t.location), t.variations.first()?.location.clone()))).collect(),
+            variations: db.tiles.iter().filter(|t| !t.variations.is_empty()).map(|t| (norm(&t.location), t.variations.iter().map(|v| v.location.clone()).collect())).collect(),
             names: Default::default(),
         }
     }
 }
 
 impl PlacedMap {
-    fn placement(&mut self, sizes: &mut Sizes, name: &str, (x, y): (i32, i32), flags: u16, flipped: bool, climate: u8) -> MapPlacement {
+    /// A placement of `name` (a tile's location and variation, or Rome 2's tile alone). `variation`: Rome 2's variation index (its
+    /// tile list's byte 12, its tile map's cell byte 12: the game clamps it to the tile's variations, fn 0x115b9940); a tile named alone
+    /// without one takes its first variation.
+    #[allow(clippy::too_many_arguments)]
+    fn placement(&mut self, sizes: &mut Sizes, name: &str, (x, y): (i32, i32), flags: u16, flipped: bool, climate: u8, variation: Option<u8>) -> MapPlacement {
         if !sizes.names.contains_key(name) {
-            // An older map (Rome 2's, version 6) names the tile alone: its first variation (the game's choice is not known).
-            let ((location, variation), any) = match sizes.first_variation.get(&norm(name)) {
-                Some(v) => ((name.replace('/', "\\"), v.clone()), true),
+            let ((location, first), any) = match sizes.variations.get(&norm(name)) {
+                Some(v) => ((name.replace('/', "\\"), v[0].clone()), true),
                 None => (split_name(name), false),
             };
 
             let size = sizes.by_location.get(&norm(&location)).copied();
-            sizes.names.insert(name.to_owned(), (location, variation, size, any));
+            sizes.names.insert(name.to_owned(), (location, first, size, any));
         }
 
-        let (location, variation, size, any_variation) = sizes.names[name].clone();
+        let (location, mut variation_name, size, mut any_variation) = sizes.names[name].clone();
+        if any_variation
+            && let Some(k) = variation
+            && let Some(v) = sizes.variations.get(&norm(&location))
+        {
+            variation_name.clone_from(&v[usize::from(k).min(v.len() - 1)]);
+            any_variation = false;
+        }
+
+        let variation = variation_name;
         if size.is_none() && !self.unknown.contains(&location) {
             self.unknown.push(location.clone());
         }
@@ -253,7 +265,9 @@ impl PlacedMap {
         let mut sizes = Sizes::new(db);
         for p in list.placements.iter().filter(|p| p.flags & 0x700 != Self::GEOMETRY_ONLY) {
             let n = list.names.get(p.name).map_or("", String::as_str);
-            let pl = m.placement(&mut sizes, n, (i32::from(p.x), i32::from(p.y)), p.flags, p.flags & 4 != 0, p.climate);
+            // Before version 11 (Rome 2) the byte is the variation; the climate is not known.
+            let (climate, variation) = if list.version < 11 { (u8::MAX, Some(p.climate)) } else { (p.climate, None) };
+            let pl = m.placement(&mut sizes, n, (i32::from(p.x), i32::from(p.y)), p.flags, p.flags & 4 != 0, climate, variation);
             m.placements.push(pl);
         }
 
@@ -268,7 +282,8 @@ impl PlacedMap {
         for layer in &map.layers {
             for c in layer.iter().filter(|c| c.index > 0 && c.flags & 0x700 != Self::GEOMETRY_ONLY) {
                 let n = map.names.get(c.index as usize - 1).map_or("", String::as_str);
-                let pl = m.placement(&mut sizes, n, (i32::from(c.origin[0]), i32::from(c.origin[1])), c.flags, c.flipped != 0, c.climate);
+                let (climate, variation) = if map.version < 8 { (u8::MAX, Some(c.climate)) } else { (c.climate, None) };
+                let pl = m.placement(&mut sizes, n, (i32::from(c.origin[0]), i32::from(c.origin[1])), c.flags, c.flipped != 0, climate, variation);
                 m.placements.push(pl);
             }
         }

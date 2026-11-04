@@ -397,7 +397,7 @@ impl TerrainTool {
 
         self.maps.clear();
         if let Some(f) = e.files() {
-            self.maps.extend(game_maps(f.as_ref(), e.game().campaign_battle_map));
+            self.maps.extend(game_maps(f.as_ref(), e.game().campaign_battle_map, !e.game().features.kit_tiles));
         }
 
         for r in &roots {
@@ -414,11 +414,18 @@ impl TerrainTool {
 
     /// What opening `name` needs.
     fn inputs(&mut self, e: &Editor, name: &str) -> Result<OpenInputs, String> {
+        self.prepare_packs(e);
+        // A game without kit maps (Rome 2): the maps of its packs, with the packs' tile database (`PacksTree::raw`).
         if !e.game().features.kit_tiles {
-            return Err(format!("{}: the Terrain tool reads its kit's battle maps and tile database (Attila and Thrones for now)", e.game().display_name));
+            if game_map_folder(name, e.game().campaign_battle_map).is_none() {
+                return Err(format!("{}: no kit maps; open one of the packs' (game files)", e.game().display_name));
+            }
+
+            let raw = self.packs.as_ref().ok_or("no game files")?.raw()?;
+            let db = self.databases_of(std::slice::from_ref(&raw), map_kind(name).0)?;
+            return Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone() });
         }
 
-        self.prepare_packs(e);
         let roots = kit_roots(e);
         let raw = roots.iter().find(|r| kit_map_dir(r, name).join("tile_map.png").is_file()).cloned()
             .or_else(|| database_root(e))
@@ -459,7 +466,8 @@ impl TerrainTool {
         let roots = kit_roots(e);
         Some(ContextRequest {
             map: m.clone(), spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 }, cells: (0, 0), unit: UNIT,
-            near: self.rings.near, mid: self.rings.mid, far: self.view.far_ring(self.rings.far), raw_root: database_root(e)?, tile_roots: roots,
+            near: self.rings.near, mid: self.rings.mid, far: self.view.far_ring(self.rings.far),
+            raw_root: database_root(e).or_else(|| self.packs.as_ref().and_then(|p| p.raw().ok()))?, tile_roots: roots,
             game_kit: database_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)), look: TerrainLook::default(), trees: true, plain: None,
             groups: None, cache: Some(cache::cache_dir()), provider: self.provider.clone(),
         })
