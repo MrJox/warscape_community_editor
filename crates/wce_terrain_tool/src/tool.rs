@@ -46,12 +46,16 @@ struct Loaded {
 
     /// BOB's messages of the fill (a kit map).
     messages: Vec<String>,
+
+    /// A campaign's roads at its start (none for a battle map, or when its files can't be read).
+    roads: Option<Arc<wce_terrain_io::attila::roads::CampaignRoads>>,
 }
 
 impl Loaded {
     fn document(self) -> Box<MapDocument> {
         let mut d = MapDocument::new(self.name, self.source, self.model, self.placed, self.locations, self.db);
         d.fill_messages = self.messages;
+        d.view_roads = self.roads;
         d.terry_frame = if map_kind(&d.name).0 == MapKind::Campaign { wce_terrain_editor::document::TerryFrame::campaign(d.placed.width, d.placed.height) } else { wce_terrain_editor::document::TerryFrame::BATTLE };
         Box::new(d)
     }
@@ -204,6 +208,10 @@ struct OpenInputs {
     /// A game without kit maps (Rome 2): the pack map is edited in its built form, from this folder when it has a saved copy (the
     /// projects' `working_data/terrain/battles/<map>`), else from the packs.
     built: Option<PathBuf>,
+
+    /// The game and its install folder (a campaign's startpos and db: its roads at the start).
+    game: &'static wce_foundation::game::GameProfile,
+    install: Option<PathBuf>,
 }
 
 pub struct TerrainTool {
@@ -364,6 +372,37 @@ fn lf_field(f: &wce_terrain::paged::PagedU16) -> LfField {
     LfField::shared(f.grid().clone())
 }
 
+/// A campaign's roads at its start (`wce_terrain_io::attila::roads`): its map's `map_data.esf`, its startpos (a loose file of the game's
+/// `data` folder), `tile_upgrades.xml` (a kit's or project's first, then the packs') and the db. None when one is missing (logged).
+fn campaign_roads(i: &OpenInputs) -> Option<Arc<wce_terrain_io::attila::roads::CampaignRoads>> {
+    let started = std::time::Instant::now();
+    let (_, name) = map_kind(&i.name);
+    let campaign = name.strip_suffix("_map").unwrap_or(name);
+    let r = (|| {
+        let files = i.files.as_ref().ok_or("no game files")?;
+        let schema = rpfm_lib::schema::Schema::load(&wce_foundation::settings::rpfm_schema_path(i.game).ok_or("no rpfm schema")?, None).map_err(|e| e.to_string())?;
+        let list = |p: &str| files.list(p, "");
+        let read = |p: &str| files.read(p).ok().map(|b| b.to_vec());
+        let tables = wce_terrain_io::attila::roads::RoadTables::read(&schema, campaign, &list, &read);
+        let map_data = files.read(&format!("campaign_maps/{name}/map_data.esf")).map_err(|e| format!("map_data.esf: {e}"))?;
+        let startpos = std::fs::read(i.install.as_ref().ok_or("no game folder")?.join(format!("data/campaigns/{campaign}/startpos.esf"))).map_err(|e| format!("startpos.esf: {e}"))?;
+        const UPGRADES: &str = "terrain/tiles/campaign/tile_upgrades.xml";
+        let upgrades = std::fs::read(i.raw.join(UPGRADES)).ok().or_else(|| files.read(UPGRADES).ok().map(|b| b.to_vec())).ok_or("no tile_upgrades.xml")?;
+        wce_terrain_io::attila::roads::read(&map_data, &startpos, &upgrades, &tables)
+    })();
+    match r {
+        Ok(roads) => {
+            log::info(format!("terrain open {}: roads at the start, regions a level {:?} ({:.1} s)", i.name, roads.level_counts(), started.elapsed().as_secs_f64()));
+            Some(Arc::new(roads))
+        }
+
+        Err(e) => {
+            log::warn(format!("terrain open {}: no roads at the start: {e}", i.name));
+            None
+        }
+    }
+}
+
 /// Reads a map (a worker's job).
 fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
     let packs_folder = game_map_folder(&i.name, i.game_dir);
@@ -426,7 +465,8 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
         (m.lf_height, m.vertical_offset) = (h, o);
     }
 
-    Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db, messages })
+    let roads = if kind == MapKind::Campaign { campaign_roads(i) } else { None };
+    Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db, messages, roads })
 }
 
 impl TerrainTool {
@@ -501,7 +541,7 @@ impl TerrainTool {
             let raw = self.packs.as_ref().ok_or("no game files")?.raw()?;
             let db = self.databases_of(std::slice::from_ref(&raw), map_kind(name).0)?;
             let built = Some(built_dir(e, name));
-            return Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone(), built });
+            return Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone(), built, game: e.game(), install: e.settings_ref().game_dir() });
         }
 
         let roots = kit_roots(e);
@@ -510,7 +550,7 @@ impl TerrainTool {
             .ok_or("no Assembly Kit with a battle tile database in the settings")?;
         // Every kit's tiles (a project's few and the Assembly Kit's): the project's database alone misses the map's tiles.
         let db = self.databases_of(&roots, map_kind(name).0)?;
-        Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone(), built: None })
+        Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone(), built: None, game: e.game(), install: e.settings_ref().game_dir() })
     }
 
     /// Starts reading a map.
@@ -540,7 +580,8 @@ impl TerrainTool {
 
     /// The view's request for a map document: the map's own frame (no open tile), the panel's rings.
     fn request(&self, e: &Editor, d: &MapDocument) -> Option<ContextRequest> {
-        let m = &d.placed;
+        // The road tiles at the campaign's start (the view only).
+        let m = &d.shown_placed();
         let roots = kit_roots(e);
         Some(ContextRequest {
             map: m.clone(), spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 }, cells: (0, 0),
@@ -654,6 +695,22 @@ impl TerrainTool {
         self.view.stream(e, &self.rings);
     }
 
+    /// A campaign map's "roads at the start" switch (the view built again when it changes).
+    fn draw_roads_control(&mut self, e: &mut Editor) {
+        let id = self.shown;
+        let Some(d) = e.docs.find_as_mut::<MapDocument>(id).filter(|d| d.view_roads.is_some()) else { return };
+        let mut on = d.roads_at_start;
+        if gui::checkbox("roads at the campaign's start", &mut on) {
+            d.roads_at_start = on;
+            self.start_view(e, id);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The road tiles as the game shows them on the first turn: each region's road level from its buildings in the startpos \
+                (campaign_map_roads, tile_upgrades.xml). Off: the kit's roads_climate tiles, as BOB places them. The view only: the map's files keep the kit's tiles.");
+        }
+    }
+
     /// Takes in what the workers finished.
     fn poll(&mut self, e: &mut Editor) {
         let Some(rx) = &self.rx else { return };
@@ -762,6 +819,7 @@ impl TerrainTool {
         let terry_was = self.terry.claims_left_button();
         self.terry.draw_section(e, self.shown);
         self.layout.draw_controls(e, self.shown);
+        self.draw_roads_control(e);
         self.draw_validation(e);
         self.draw_export(e);
 
@@ -1997,6 +2055,29 @@ impl Tool for TerrainTool {
 
                     _ => CommandResult::fail(usage),
                 }
+            })
+        });
+
+        c.add("terrain_roads", "terrain_roads [on|off]", "the Terrain tool: a campaign's roads drawn at its start's levels (its regions' buildings: on) or as the kit paints them (off); then what they are", |e, a| {
+            with_terrain(e, |t, e| {
+                let id = t.shown;
+                let Some(d) = e.docs.find_as_mut::<MapDocument>(id) else { return CommandResult::fail("no map shown") };
+                let Some(roads) = d.view_roads.clone() else { return CommandResult::fail("the shown map has no roads at a start (a campaign map; its startpos and db read)") };
+                let was = d.roads_at_start;
+                match a.first().map(String::as_str) {
+                    Some("on") => d.roads_at_start = true,
+                    Some("off") => d.roads_at_start = false,
+                    None => {}
+                    Some(_) => return CommandResult::fail("usage: terrain_roads [on|off]"),
+                }
+
+                let on = d.roads_at_start;
+                let swapped = if on { roads.apply(&d.placed).1 } else { 0 };
+                if on != was {
+                    t.start_view(e, id);
+                }
+
+                CommandResult::success(format!("roads at the start {}: regions a level {:?}, {swapped} road tiles upgraded", if on { "on" } else { "off" }, roads.level_counts()))
             })
         });
 

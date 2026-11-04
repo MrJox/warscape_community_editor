@@ -55,6 +55,13 @@ pub struct MapDocument {
     /// How the `.terry`'s coordinates sit on the view's frame.
     pub terry_frame: TerryFrame,
     gesture: Option<Gesture>,
+
+    /// A campaign's roads at its start (the levels its regions' buildings give them): the view draws the road tiles upgraded so
+    /// ([`Self::shown_placed`]); `placed`, what is edited and saved, keeps the kit's.
+    pub view_roads: Option<Arc<wce_terrain_io::attila::roads::CampaignRoads>>,
+
+    /// Whether the view draws the roads at the start's levels (else the kit's tiles).
+    pub roads_at_start: bool,
 }
 
 /// How a map's `.terry` coordinates sit on the view's frame (scene units, 128 a cell, the map's centre at 0): `frame = (terry - origin)
@@ -113,6 +120,14 @@ type Gesture = (u64, std::collections::HashMap<u64, [f64; 3]>, [f64; 3]);
 pub const TERRY_CELL: f64 = 256.0;
 
 /// The values offered for an enumerated `.terry` attribute (the file's own values are added to them).
+/// Placements as the view draws them: with a campaign's roads ([`MapDocument::view_roads`]) their road tiles upgraded to their level's.
+pub fn shown_placed(placed: &Arc<PlacedMap>, roads: Option<&wce_terrain_io::attila::roads::CampaignRoads>) -> Arc<PlacedMap> {
+    match roads {
+        Some(r) => Arc::new(r.apply(placed).0),
+        None => placed.clone(),
+    }
+}
+
 fn choices_of(attr: &str) -> &'static [&'static str] {
     match attr {
         "catchment_type" => &["land_normal", "land_ambush", "land_bridge", "coastal_battle", "naval_normal", "settlement_standard", "settlement_unfortified", "port_assault", "unfortified_port"],
@@ -126,8 +141,18 @@ fn choices_of(attr: &str) -> &'static [&'static str] {
 impl MapDocument {
     pub fn new(name: String, source: MapSource, model: Option<MapModel>, placed: Arc<PlacedMap>, locations: Option<BattleLocations>, db: Arc<TileDatabase>) -> Self {
         Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db, save_dir: None, message: None, cells: Arc::default(), fill_messages: vec![],
-            terry_revision: Arc::default(), terry_frame: TerryFrame::BATTLE, gesture: None,
+            terry_revision: Arc::default(), terry_frame: TerryFrame::BATTLE, gesture: None, view_roads: None, roads_at_start: true,
         }
+    }
+
+    /// The placements as the view draws them: a campaign's road tiles at its start's levels (`view_roads`), else `placed`.
+    pub fn shown_placed(&self) -> Arc<PlacedMap> {
+        shown_placed(&self.placed, self.start_roads().as_deref())
+    }
+
+    /// The campaign's roads at its start when the view draws them.
+    pub fn start_roads(&self) -> Option<Arc<wce_terrain_io::attila::roads::CampaignRoads>> {
+        self.view_roads.clone().filter(|_| self.roads_at_start)
     }
 
     /// The map's files as data (a kit map; none for a map of the packs).
