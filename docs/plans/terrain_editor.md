@@ -291,6 +291,20 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    Left: editing a polyline's points (moving, adding), the Inspector on several entities at once, the other creation modes (circle, spline,
    river, prop, VFX: campaign maps, Phase 8), `locations.blm`'s rounding of the rectangles (Phase 7).
 6. **BCA generation**: the spec, the generator, its errors file; Thrones' Terry's output as the oracle.
+   **Progress 2026-11-04.** Done (docs/re/terry.md, "The BCA generator"):
+   - `wce_terrain::bca`: Terry's generator ported from Thrones' TWeak DLL: the spec, the BCAs (infield, restrictions, border, names),
+     the deployment zones (`bca::zones`: the 8 x 8 cells' regions with the deployment masks, the Zonifier, Douglas-Peucker, the coast
+     split, the dual configurations), the errors and `delete_invalid`; the `.terry` entities as Terry writes them (`terry_xml`).
+   - `bca_check` against Thrones' Terry on `vik_attila_map`: all 636 BCAs (name, type, cell), 780 zones, 1 088 regions, 8 317 points (to
+     5 cm) agree, given the tile map Terry reads (the game packs': Terry builds its battle field through the game's file system); with
+     BOB's battle field the same BCAs, 514 by name. Our written project reads back the same; its text is Terry's but for ids, y and the
+     last digit of about 290 of 11 000 points. Gate `bca_<map>` (`WCE_BCA_ORACLE`). The campaign battle map in 3.2 s.
+   - The Terrain tool: "Generate battle catchment areas" (`terrain_terry generate`): the procedural BCAs replaced, one step on the
+     history; on `main_attila_map` 24 895 BCAs with 1 778 zones in place of 24 882.
+   DEVIATIONS: the y of the generated entities is the LF's (Terry's is the terrain's, tiles included); the errors go to the status line,
+   not an errors file (where Terry writes it is not known; it wrote none for the oracle). Left: Attila has no oracle (its shipped
+   project was made from other inputs: 97 % of its zones agree), the deployment masks are unchecked against Terry (Thrones' kit has
+   none).
 7. **Export**: pack output, Launch in game at a location, the minimal-edit gates over the whole build.
 8. **Campaign maps** (in scope, after the battle maps): `terrain/campaigns/<map>`: props, VFX, environment volumes, season masks, the layout map;
    the 375 MB LF paged from disk.

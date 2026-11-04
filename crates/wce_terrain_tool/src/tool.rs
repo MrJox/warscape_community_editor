@@ -213,7 +213,7 @@ impl Default for TerrainTool {
 
 /// The `raw_data` folders a placement's tile and a kit map are looked for in, in order: the projects' kit layout, then the Assembly Kits in
 /// the settings' order (`wce_tile::sources`).
-fn kit_roots(e: &Editor) -> Vec<PathBuf> {
+pub(crate) fn kit_roots(e: &Editor) -> Vec<PathBuf> {
     let mut roots = e.settings_ref().assembly_kit_raw_dirs();
     roots.retain(|raw| raw.join("terrain").is_dir());
     let projects = e.settings_ref().kit_projects_dir().join("raw_data");
@@ -1523,8 +1523,8 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_terry", "terrain_terry count | bca <x> <z> | zone <x> <z> <x> <z> <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>", "the Terrain tool: the shown kit map's .terry entities (metres from the map's centre, ids in hex; one step on the history each)", |e, a| {
-            let usage = "usage: terrain_terry count | bca <x> <z> | zone <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>";
+        c.add("terrain_terry", "terrain_terry count | bca <x> <z> | generate | zone <x> <z> <x> <z> <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>", "the Terrain tool: the shown kit map's .terry entities (metres from the map's centre, ids in hex; one step on the history each)", |e, a| {
+            let usage = "usage: terrain_terry count | bca <x> <z> | generate | zone <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>";
             let hex = |v: &String| u64::from_str_radix(v, 16).ok();
             let nums: Vec<f64> = a.iter().skip(1).filter_map(|v| v.parse().ok()).collect();
             with_terrain(e, |t, e| {
@@ -1543,6 +1543,7 @@ impl Tool for TerrainTool {
                     }
 
                     (Some("bca"), 3) if nums.len() == 2 => crate::terry_view::new_bca(e, doc, [nums[0], nums[1]]),
+                    (Some("generate"), 1) => crate::terry_view::generate_bcas(e, doc),
                     (Some("zone"), n) if n >= 7 && nums.len() == n - 1 && nums.len() % 2 == 0 => {
                         let pts: Vec<[f64; 2]> = nums.chunks(2).map(|c| [c[0], c[1]]).collect();
                         crate::terry_view::new_zone(e, doc, &pts)

@@ -67,6 +67,16 @@ fn main() {
     println!("{map}: {w} x {h} cells, {} tile instances, {} deployment masks; {} BCAs made, {} kept", instances.len(), masks.len(), ours.len(), kept.len());
 
     let p = TerryProject::parse(std::fs::read(oracle).expect("oracle")).expect("xml");
+    if let Ok(out) = std::env::var("BCA_WRITE") {
+        // The oracle's project with its procedural BCAs replaced by ours (y 0), for checking the writer by running on it.
+        let mut q = p.clone();
+        q.remove_entities(&wce_terrain::bca::procedural(&q)).expect("removed");
+        let (xml, _) = wce_terrain::bca::terry_xml(&spec, &kept, w, h, q.next_id(), &|_, _| 0.0);
+        q.insert_entities(&xml).expect("inserted");
+        std::fs::write(&out, q.save()).expect("written");
+        println!("written {out}");
+    }
+
     let mut theirs: BTreeMap<String, (String, (i32, i32))> = BTreeMap::new();
     for e in &p.entities {
         let EntityKind::Bca(kind) = p.kind(e) else { continue };

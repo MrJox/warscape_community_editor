@@ -274,6 +274,14 @@ impl TerryView {
         }
 
         gui::end_disabled();
+        if gui::button("Generate battle catchment areas") {
+            let m = generate_bcas(e, doc).unwrap_or_else(|err| err);
+            e.status(&m, false);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Terry's generator: the procedural BCAs replaced by those bca_generation_spec.xml makes from the map's tiles, with their deployment zones");
+        }
     }
 
     pub fn claims_left_button(&self) -> bool {
@@ -410,4 +418,70 @@ pub fn duplicate(e: &mut Editor, doc: DocumentId, ids: &[u64]) -> Result<String,
     let xml = xml.trim_end().to_owned();
     structural(e, doc, "duplicate entities", |p| p.insert_entities(&xml).map_err(|err| err.to_string()))?;
     Ok(format!("{} entities duplicated a cell to the east", roots.len()))
+}
+
+/// The battle field of a placed map as the generator takes it: its placements as tile database indices (in the map's order: the battle
+/// field's); the ones the database doesn't know are left out.
+fn battle_field(db: &wce_tile::battle_map::tile_db::TileDatabase, placed: &wce_tile::battle_map::context::PlacedMap) -> Vec<wce_tile::battle_map::fill::Placement> {
+    let mut by_name = HashMap::new();
+    for (t, tile) in db.tiles.iter().enumerate() {
+        for v in 0..tile.variations.len() {
+            by_name.insert(db.tile_location_of(t, v).replace('/', "\\").to_lowercase(), (t, v));
+        }
+    }
+
+    placed.placements.iter().filter_map(|p| {
+        let key = format!("{}\\{}", p.location.replace('/', "\\").trim_matches('\\'), p.variation).to_lowercase();
+        let &(tile, variation) = by_name.get(&key)?;
+        Some(wce_tile::battle_map::fill::Placement {
+            tile, variation, x: p.x as i16, y: p.y as i16, flags: (p.rotation & 0xf0) | if p.flipped { 4 } else { 0 }, climate: p.climate, lf: [0.0, 0.0],
+        })
+    }).collect()
+}
+
+/// Terry's Generate Battle Catchment Areas (docs/re/terry.md, "The BCA generator"): the procedural BCAs (and their regions and zones)
+/// replaced by the ones `bca_generation_spec.xml` makes from the shown map's battle field, deployment zones included; with the spec's
+/// `delete_invalid` the BCAs with errors are left out. The spec and the tiles' deployment masks are looked for in the projects' kit layout,
+/// then the Assembly Kits. One step on the history.
+pub fn generate_bcas(e: &mut Editor, doc: DocumentId) -> Result<String, String> {
+    let roots = crate::tool::kit_roots(e);
+    let spec_path = roots.iter().filter_map(|r| r.parent()).map(|k| k.join("editor_working_data/Terry/bca_generation_spec.xml")).find(|p| p.is_file())
+        .ok_or("no editor_working_data/Terry/bca_generation_spec.xml in the projects' kit layout or an Assembly Kit")?;
+    let spec = wce_terrain::bca::Spec::parse(&std::fs::read(&spec_path).map_err(|err| format!("{}: {err}", spec_path.display()))?);
+    let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
+    let p = d.project().ok_or("this map has no .terry project")?;
+    let (w, h) = (d.placed.width, d.placed.height);
+    let instances = battle_field(&d.db, &d.placed);
+    let masks = wce_terrain::bca::load_masks(&d.db, &instances, &roots);
+    let all = wce_terrain::bca::generate(&spec, &d.db, w, h, &instances, &masks);
+    let kept: Vec<&wce_terrain::bca::Bca> = all.iter().filter(|b| !(spec.delete_invalid && !b.errors.is_empty())).collect();
+    let old = wce_terrain::bca::procedural(p);
+    let first = p.next_id();
+    let (xml, _) = wce_terrain::bca::terry_xml(&spec, &kept, w, h, first, &|x, z| d.lf_metres_at(x, z));
+    let zones: usize = kept.iter().map(|b| b.zones.len()).sum();
+    let errors: Vec<String> = all.iter().flat_map(|b| b.errors.iter().map(move |m| format!("{}: {m}", b.name))).collect();
+    if kept.is_empty() && old.is_empty() {
+        return Ok(format!("no battle catchment areas: {} made, {} with errors (a map's {} cells by its edges make none)", all.len(), errors.len(), spec.map_border_for_outfield));
+    }
+
+    structural(e, doc, "generate battle catchment areas", |p| {
+        let mut s = p.remove_entities(&old).map_err(|err| err.to_string())?;
+        s.extend(p.insert_entities(&xml).map_err(|err| err.to_string())?);
+        Ok(s)
+    })?;
+
+    let mut msg = format!(
+        "{} battle catchment areas with {zones} deployment zones ({} made, {} with errors{}; {} procedural ones replaced; {} deployment masks)",
+        kept.len(), all.len(), all.iter().filter(|b| !b.errors.is_empty()).count(), if spec.delete_invalid { ", left out" } else { "" }, old.len(),
+        masks.len()
+    );
+
+    if !errors.is_empty() {
+        msg += &format!("\n{}", errors.iter().take(20).cloned().collect::<Vec<_>>().join("\n"));
+        if errors.len() > 20 {
+            msg += &format!("\n... {} more", errors.len() - 20);
+        }
+    }
+
+    Ok(msg)
 }
