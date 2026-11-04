@@ -122,6 +122,14 @@ pub fn fit_baked_heights(pairs: &[(f64, f64)]) -> Option<(f64, f64, usize)> {
     Some((a, b, inliers.len()))
 }
 
+/// The game units a scene unit is for a tile's heights in a map's view: its database's `RENDER_PARAMS` `unit_scale`, 2 for a battle
+/// tile (a cell 256 m; the tile project's `unit_scale`), 0.2 for a campaign tile (`terrain/tiles/campaign`; its LF's metres too). The
+/// game's own campaign `lf_normal.dds` agrees: its normals tilt about 14 times as far for a slope of the LF as the battle map's do
+/// against its LF, `normal_lf_scale` taken out (`campaign_normal_scale`; 10 by the unit scales).
+pub fn height_unit(dir: &Path) -> f64 {
+    if dir.to_string_lossy().replace('\\', "/").to_lowercase().contains("/terrain/tiles/campaign/") { 0.2 } else { 2.0 }
+}
+
 /// Whether a folder holds a tile: the editor's tile.wce or TEd's tile.ted.
 pub fn has_tile(dir: &Path) -> bool {
     dir.join(WCE_FILE).exists() || dir.join(TED_FILE).exists()

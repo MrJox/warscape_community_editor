@@ -52,6 +52,25 @@ fn main() {
     let mut res: Vec<f64> = pts.iter().map(|p| (p.1 - (slope * p.0 + b)).abs()).collect();
     res.sort_by(f64::total_cmp);
     println!("{} props: y = {slope:.4} v + {b:.4}; residual median {:.4}, 90% {:.4}, max {:.4}", pts.len(), res[res.len() / 2], res[res.len() * 9 / 10], res[res.len() - 1]);
+    // The props lowest on their ground: per band of LF the 10th percentile of y (a prop on a flat tile stands on the LF).
+    let mut bands: std::collections::BTreeMap<i64, Vec<f64>> = std::collections::BTreeMap::new();
+    for p in &pts {
+        bands.entry((p.0 * 50.0) as i64).or_default().push(p.1);
+    }
+
+    let lows: Vec<(f64, f64)> = bands.iter().filter(|(_, v)| v.len() >= 20).map(|(k, v)| {
+        let mut v = v.clone();
+        v.sort_by(f64::total_cmp);
+        ((*k as f64 + 0.5) / 50.0, v[v.len() / 10])
+    }).collect();
+    let n = lows.len() as f64;
+    let (mx, my) = (lows.iter().map(|p| p.0).sum::<f64>() / n, lows.iter().map(|p| p.1).sum::<f64>() / n);
+    let k = lows.iter().map(|p| (p.0 - mx) * (p.1 - my)).sum::<f64>() / lows.iter().map(|p| (p.0 - mx).powi(2)).sum::<f64>();
+    println!("lows: {} bands; y = {k:.4} v + {:.4}; per LF metre (712 a unit of v): {:.6}; a cell (0.32) in those metres: {:.2}", lows.len(), my - k * mx, k / 712.0, 0.32 / (k / 712.0));
+    for l in &lows {
+        println!("  v {:.2} y {:.3} line {:.3}", l.0, l.1, k * l.0 + my - k * mx);
+    }
+
     for p in pts.iter().take(8) {
         println!("  v {:.5} y {:.4} fit {:.4}", p.0, p.1, slope * p.0 + b);
     }

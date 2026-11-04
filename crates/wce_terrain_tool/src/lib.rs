@@ -7,6 +7,7 @@ mod launch;
 mod layout_view;
 mod map_panel;
 mod placements;
+mod prop_models;
 mod refill;
 mod terry_view;
 mod validate;

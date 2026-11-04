@@ -38,7 +38,7 @@ fn sincos(a: f32) -> (f32, f32) {
 /// `on_rotation_changed` turns the rotation (degrees) into a quaternion from the half angles' sines and cosines, `update_transform` the
 /// quaternion into a rotation matrix `R` and the transform `R` times the scale on each column, then the position. A marker's row `i` is
 /// the transform's column `i`.
-fn matrix(p: &TerryProject, e: &TerryEntity) -> [f32; 16] {
+pub fn matrix(p: &TerryProject, e: &TerryEntity) -> [f32; 16] {
     let r = numbers(p, e, "rotation", [0.0; 3]).map(|v| v as f32);
     let s = numbers(p, e, "scale", [1.0; 3]).map(|v| v as f32);
     let w = p.world_position(e.id);
