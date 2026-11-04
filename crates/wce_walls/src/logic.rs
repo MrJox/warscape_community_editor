@@ -105,7 +105,10 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
 
                 levels.and_then(|l| l.get(k)).map(|sd| (sp, sd))
             }).collect::<Vec<_>>();
-            let drop = here.iter().filter_map(|(sp, _)| sp.replaces).collect::<Vec<_>>();
+            // What a step replaces goes from every piece of the base (its end caps' platforms are pieces of their own), not only from the
+            // one its own platforms go into; at the levels the step has (a level it lacks keeps the base whole).
+            let drop = splices.iter().zip(&parts).filter(|(sp, pieces)| !sp.per_piece && pieces.first().is_some_and(|l| l.get(k).is_some()))
+                .filter_map(|(sp, _)| sp.replaces).collect::<Vec<_>>();
             let kept = |p: [f32; 3]| inside(&planes, p) && !(in_box(p) && drop.iter().any(|&(a, b)| p[0] > a + 1e-3 && p[0] < b - 1e-3));
             // The base's platforms less what the steps replace: cut out of them (a platform wider than the step's cross-section keeps the
             // rest of its width), so the walkway and a step never lie one over the other.
@@ -219,6 +222,18 @@ pub fn extent_x(bytes: &[u8]) -> Result<(f32, f32), String> {
     let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
     let f = |k: &str| v["bounding_box"][k].as_f64().unwrap_or(0.0) as f32;
     Ok((f("min_x"), f("max_x")))
+}
+
+/// The z extent of a piece's walkway: its intact platforms lying at `height` (within a few centimetres). None without any.
+pub fn walkway_z(bytes: &[u8], height: f32) -> Option<(f32, f32)> {
+    let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).ok()?;
+    let v = serde_json::to_value(&parsed).ok()?;
+    let zs = v["pieces"].as_array().into_iter().flatten().filter_map(|p| p["destructs"].as_array().and_then(|d| d.first()))
+        .flat_map(|d| d["platforms"].as_array().into_iter().flatten().map(|q| outline(&q["vertices"])).collect::<Vec<_>>())
+        .filter(|o| !o.is_empty() && o.iter().all(|q| (q[1] - height).abs() < 0.05))
+        .flat_map(|o| o.into_iter().map(|q| q[2]))
+        .collect::<Vec<_>>();
+    (!zs.is_empty()).then(|| zs.iter().fold((f32::MAX, f32::MIN), |(a, b), &z| (a.min(z), b.max(z))))
 }
 
 /// The x extent a wall attaches to on a fort piece: where its walkway ends (its platforms' x extent, every piece's intact level), else

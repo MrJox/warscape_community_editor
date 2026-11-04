@@ -31,6 +31,9 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **A wall attaches on its building's walkway ends** (`logic::joint_extent_x`: the platforms' x extent, else the logic box when they
   differ by over 0.5 m), and an attached end goes onto the joint exactly (2026-11-04: the gondor tower's box is -10.53..10.76, its
   walkways end at +-10.5; walls left a slit of light against it).
+- **A 15 m step is one stair across the whole walkway** (`Profile::step_across`, user 2026-11-04: units walked around a stair on the
+  inner half beside a ramp on the outer one): the bastion's stair spread over the base's walkway width, one platform; the base's
+  platforms (every piece's, its end caps' too) and firing lines over that width give way to it.
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).
