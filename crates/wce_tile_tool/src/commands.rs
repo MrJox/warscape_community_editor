@@ -2073,6 +2073,42 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
     });
 
+    c.add(
+        "wall_tech_check", "wall_tech_check [gaps stacked loose]",
+        "check the selected walls' pieces together (as the technology overlay draws them): the stretches no footprint covers, the platforms over one another, the formation line ends on no platform; with numbers, test them (at most that many)",
+        |e, a| {
+            let walls = crate::tool::selected(e);
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            let (mut gaps, mut stacked, mut loose, mut text) = (0, 0, 0, String::new());
+            let walls = walls.into_iter().filter(|&w| d.tile().is_wall(w)).collect::<Vec<_>>();
+            for w in walls {
+                let Some(r) = d.tile_mut().wall_tech_check(w) else { continue };
+                (gaps, stacked, loose) = (gaps + r.gaps.len(), stacked + r.stacked.len(), loose + r.loose_lines.len());
+                text.push_str(&format!("\n  wall {w}: {} gap(s), {} stacked, {} loose line end(s)", r.gaps.len(), r.stacked.len(), r.loose_lines.len()));
+                for (s0, s1, at) in r.gaps.iter().take(8) {
+                    text.push_str(&format!("\n    gap {s0:.1}..{s1:.1} m at ({:.1}, {:.1})", at[0], at[1]));
+                }
+
+                for (i, j, area, at) in r.stacked.iter().take(8) {
+                    text.push_str(&format!("\n    stacked pieces {i}/{j}, {area:.2} m2 at ({:.1}, {:.1}, {:.1})", at[0], at[1], at[2]));
+                }
+
+                for at in r.loose_lines.iter().take(8) {
+                    text.push_str(&format!("\n    loose line end at ({:.1}, {:.1}, {:.1})", at[0], at[1], at[2]));
+                }
+            }
+
+            let want = |i: usize| a.get(i).and_then(|v| v.parse::<usize>().ok());
+            let summary = format!("{gaps} gap(s), {stacked} stacked, {loose} loose line end(s){text}");
+            if want(0).is_some_and(|n| gaps > n) || want(1).is_some_and(|n| stacked > n) || want(2).is_some_and(|n| loose > n) {
+                return fail(summary);
+            }
+
+            ok(summary)
+        },
+    );
+
     c.add("tile_generate_siege_ai", "tile_generate_siege_ai", "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported", |e, _| {
         with_tile(e, |t, e| match t.generate_siege_ai_now(e) {
             Ok(l) => ok(&format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("\n  {w}")).collect::<String>())),
