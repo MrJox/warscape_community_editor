@@ -11,6 +11,7 @@
 
 pub mod build;
 pub mod campaign;
+pub mod cities;
 pub mod heights;
 pub mod normals;
 
