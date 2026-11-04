@@ -2,9 +2,9 @@
 //! the Terrain tool's entity editing (Phase 5) works on them, and back (docs/plans/terrain_editor.md, Phase 9). Only the campaign battle
 //! maps have them (the seven `main_*`).
 //!
-//! - A location is a battle catchment area: at the middle of its centre cell (`locations::records`' cells are `w / 2 + trunc(x / 256)`,
-//!   so the middle of the interval that truncates to a cell gives the cell back), its `Catchment Region` a spatial child placed and sized
-//!   so that its rectangle gives the record's back (the same middles). Its type is the record's.
+//! - A location is a battle catchment area at its centre cell's corner, the origin of its deployment file's points (the cells are
+//!   `w / 2 + trunc(x / 256)`: a corner gives its cell back), its `Catchment Region` a spatial child placed and sized so that its
+//!   rectangle gives the record's back (the middles of the intervals that truncate to its cells). Its type is the record's.
 //! - A location's id is `0xffff0000 + n`, n its deployment file's number: the BCAs with one come first, by n (`locations::records` and
 //!   `deployment::build` number them in entity order), then the others type by type, in the file's order.
 //! - A file's areas are deployment zones of the BCA (alliance 0's, then 1's: `deployment::build` writes them so), a boundary a zone region
@@ -97,7 +97,9 @@ pub fn scene(blm: &BattleLocations, deployments: &BTreeMap<u32, Element>) -> Res
     for (t, i, dep) in order {
         let (kind, locs) = &blm.types[t];
         let l = &locs[i];
-        let (bx, bz) = (middle(l.centre[0] - cx), -middle(l.centre[1] - cy));
+        // The centre cell's corner: the deployment files' origin (their river zones' points lie on the river tiles there: 99.6 % of
+        // `main_rome_map`'s, `deployment_fit`; the cell's middle, 73 %), and `trunc` gives the cell back from it.
+        let (bx, bz) = (f64::from(l.centre[0] - cx) * CELL, -f64::from(l.centre[1] - cy) * CELL);
         let (m0, m1) = (middle(l.rect[0] - cx), middle(l.rect[2] - cx));
         let (n0, n1) = (middle(l.rect[1] - cy), middle(l.rect[3] - cy));
         let (rx, rw) = ((m0 + m1) / 2.0, m1 - m0);
