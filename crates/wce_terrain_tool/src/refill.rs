@@ -58,7 +58,7 @@ impl FillInputs {
 
     /// BOB's fill of them: the placements (with the LF) and BOB's messages.
     pub fn fill(&self, db: &TileDatabase, name: &str) -> (PlacedMap, Vec<String>) {
-        let lf = self.lf.as_ref().map(|f| (f.values.as_slice(), f.w, f.h));
+        let lf = self.lf.as_ref().map(|f| (&f.values[..], f.w, f.h));
         let images = MapImages {
             width: self.w, height: self.h, tile_map: &self.tiles, climate_map: self.climate.as_deref(), explicit_tiles: self.explicit.as_deref(), lf: None, lf_u16: lf,
             // The header only: the placements are the same.
