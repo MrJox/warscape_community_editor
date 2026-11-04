@@ -76,7 +76,7 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
         lf_u16: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)), campaign: m.kind == wce_terrain::MapKind::Campaign,
     };
 
-    let (tile_map, tile_list, messages) = wce_tile::battle_map::build_images(inputs.db, &images);
+    let (tile_map, tile_list, mut messages) = wce_tile::battle_map::build_images(inputs.db, &images);
     let mut files = vec![];
     let (index, tiles_file) = tile_map.write();
     files.push(("tile_map.index".to_owned(), index));
@@ -122,6 +122,18 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
             files.push(("prop_marker.markers".to_owned(), super::campaign::prop_markers(p).map_err(err)?));
             files.push(("particle_emitter_marker.markers".to_owned(), super::campaign::particle_markers(p).map_err(|e| crate::file_error("markers", e))?));
             files.push(("environment_collection.xml".to_owned(), super::campaign::environment_collection(p)));
+        }
+
+        // Not BOB's: the game's snow masks, from the map folder's art (`snow_mask/*.tga`).
+        for (path, blob) in &m.carried {
+            if let Some(name) = super::campaign::snow_mask_name(path)
+                && let Ok(bytes) = blob.bytes()
+            {
+                match super::campaign::snow_mask_dds(&bytes) {
+                    Ok(dds) => files.push((name, dds)),
+                    Err(e) => messages.push(format!("{path}: {e}")),
+                }
+            }
         }
     } else if let Some(p) = m.project.as_ref().map(|p| p.get()) {
         let climates = wce_terrain::locations::climate_environments(inputs.db, inputs.environment_map);
