@@ -51,7 +51,7 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   angles down to about 12 degrees), with overhang copies filling 8 m outer corners; stair sections spliced only into the levels their
   step piece has. Every level's meshes, the logic and zone files (`make_piece`).
 - **Shared scene code** (`wce_walls::scene`): walls, anchors, layouts, doors and lowering over a `TedScene`, for the editor and exporters.
-- **Preview** (`wce_tile_editor` `tile_document/walls.rs`): intact meshes made 300 ms after the last change, served from `wce_vfs::generated`;
+- **Preview** (`wce_tile_editor` `tile_document/walls.rs`): intact meshes and the logic file (the technology overlay draws it) made 300 ms after the last change, served from `wce_vfs::generated`;
   kept by what they were made from (the layout, the doors, the ground across the wall: `wall_signature`), so an edit elsewhere or a
   republish of the tile takes them again instead of making them (`scripts/tile_wall_preview_cache.txt`).
 - **Lowering happens at export, not in the compile:** `workflow::save_exported_prepared` compiles with the walls lowered in memory
