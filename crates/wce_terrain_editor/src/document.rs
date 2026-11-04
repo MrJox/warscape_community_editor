@@ -168,7 +168,8 @@ impl MapDocument {
         let w = p.world_position(id);
         let t = self.terry_frame;
         let (x, z) = t.to_frame(w[0], w[2]);
-        let y = if t.y_from_lf { self.lf_metres_at(w[0], w[2]) / 2.0 } else { w[1] / t.unit.max(1e-9) };
+        // A campaign map's entities on its LF (its metres over 0.2: `wce_tile::tile_project::height_unit`); a battle map's `.terry` y.
+        let y = if t.y_from_lf { self.lf_metres_at(w[0], w[2]) / 0.2 } else { w[1] / t.unit.max(1e-9) };
         Some(wce_foundation::math::Float3::new(x as f32, y as f32, z as f32))
     }
 
@@ -178,17 +179,16 @@ impl MapDocument {
         self.placed.lf_metres(cx, cy)
     }
 
-    /// The `.terry` y of a new entity standing at a point: a battle map's the LF's metres; a campaign map's from the LF sample `v` (0 ..
-    /// 1) under it, `4.4744 v + 0.6285`. ASSUMPTION: the least-squares line of the kit's campaign props on the landscape (13 104 of
-    /// `main_attila_map`; their y follows the tiles' geometry, not the LF: residual median 0.56, 90 % 1.38).
+    /// The `.terry` y of a new entity standing at a point: a battle map's the LF's metres; a campaign map's as the kit's props have
+    /// theirs, 0.0025 an LF metre (the lowest on their ground rise 0.0022 a metre: not the drawn terrain's scale, which is 5 times that;
+    /// the game stands `ECLandscapeAbove` props on the ground). ASSUMPTION.
     pub fn terry_y_at(&self, x: f64, z: f64) -> f64 {
         let m = self.lf_metres_at(x, z);
         if !self.terry_frame.y_from_lf {
             return m;
         }
 
-        let v = (m + self.placed.vertical_offset) / self.placed.lf_height.max(1e-9);
-        4.4744 * v + 0.6285
+        m * self.terry_frame.unit
     }
 
     /// A cell layer of the model to paint on (its index in `MapModel::layers`; the file is marked edited); the finished stroke goes on the

@@ -247,6 +247,14 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
 - **The fill**: as a battle map's (docs/re/battle_maps.md) with the campaign database's shared geometry and `also_place_tile_set`; the
   battle field has the campaign's header (`is_campaign` 1, LF position 0, 0, origin offset 0, -height).
 - `locations.blm` is 28 bytes (`BLMF`, 8, 0, width, height, 0, 0) and both masks empty.
+- **Heights** (2026-11-04): a campaign map's LF metres (`lf_height` 712, `vertical_offset` 38.28) and its tiles' heights are drawn at
+  the campaign database's `unit_scale`, 0.2 game units a scene unit (a battle map's 2): five scene units an LF metre, a cell 128. The
+  game's own `lf_normal.dds` (8128 x 5764 DXT5, x in alpha, z in green) tilts about 14 times as far for an LF slope as the battle map's
+  `normal.dds` does, `normal_lf_scale` (1.3 / 1) taken out (`campaign_normal_scale`); 10 by the unit scales. Drawn at the battle's 2
+  the campaign was flat. The kit's props' `.terry` y does not follow that (0.0022 an LF metre at the lowest, five times lower): the
+  game stands them on the ground (`ECLandscapeAbove`); a new prop's y keeps the kit's scale.
+- **Prop models** in the view: each prop's model with the export's transform (in `.terry` units, so times 1 / 0.0025 into the view),
+  standing on the drawn ground, within 48 cells of the camera.
 
 ## Open
 

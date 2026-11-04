@@ -212,6 +212,7 @@ pub struct TerrainTool {
     terry: crate::terry_view::TerryView,
     layout: crate::layout_view::LayoutView,
     placements: crate::placements::PlacementsPanel,
+    props: crate::prop_models::PropModels,
 
     /// The last checks of the shown map.
     findings: Vec<crate::validate::Finding>,
@@ -261,7 +262,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), placements: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), placements: Default::default(), props: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None, campaign_db: None, export: None, exported: None, launch_after_export: None, launched: None,
         }
     }
@@ -525,7 +526,9 @@ impl TerrainTool {
         let m = &d.placed;
         let roots = kit_roots(e);
         Some(ContextRequest {
-            map: m.clone(), spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 }, cells: (0, 0), unit: UNIT,
+            map: m.clone(), spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 }, cells: (0, 0),
+            // A campaign map's heights: its database's `unit_scale` (`wce_tile::tile_project::height_unit`).
+            unit: if map_kind(&d.name).0 == MapKind::Campaign { 0.2 } else { UNIT },
             near: self.rings.near, mid: self.rings.mid, far: self.view.far_ring(self.rings.far),
             raw_root: database_root(e).or_else(|| self.packs.as_ref().and_then(|p| p.raw().ok()))?, tile_roots: roots,
             game_kit: whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)), look: TerrainLook::default(), trees: true, plain: None,
@@ -1570,7 +1573,8 @@ impl Tool for TerrainTool {
 
         let frame = self.view.frame().filter(|_| self.shown != 0);
         self.terry.update(e, self.shown, frame.clone());
-        self.layout.update(e, self.shown, frame);
+        self.layout.update(e, self.shown, frame.clone());
+        self.props.update(e, self.shown, frame);
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {

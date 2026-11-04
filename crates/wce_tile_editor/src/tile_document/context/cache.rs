@@ -84,6 +84,10 @@ pub fn key(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Option<&Path>)
     files.sort();
     let mut h = fnv(0xCBF2_9CE4_8422_2325, &VERSION.to_le_bytes());
     h = fnv(h, dir.to_string_lossy().to_lowercase().as_bytes());
+    // A campaign tile's heights are in other units (`tile_project::height_unit`): its templates made before that are not these.
+    if wce_tile::tile_project::height_unit(dir) != 2.0 {
+        h = fnv(h, b"campaign heights 0.2");
+    }
     for (p, len, time) in &files {
         h = fnv(h, p.as_bytes());
         h = fnv(h, &len.to_le_bytes());

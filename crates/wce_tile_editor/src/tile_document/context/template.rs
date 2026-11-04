@@ -354,7 +354,9 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
     let (nx, nz) = (((ex + 2.0 * o) / step).round() as i32 + 1, ((ez + 2.0 * o) / step).round() as i32 + 1);
     // The heights the game draws: BOB's final_heights.dds (the tile's own faded to 0 over the last 64 m of a land edge, so neighbours
     // meet on the LF; docs/re/battle_maps.md, tile seams) when it is not older than the tile, else the editing heights.
-    let (project, unit) = (&t.project, t.unit());
+    // A campaign tile's heights are in other units (`tile_project::height_unit`): its ground and objects stretched up to match.
+    let (project, unit) = (&t.project, wce_tile::tile_project::height_unit(&t.project.dir));
+    let stretch = (t.unit() / unit) as f32;
     let baked = project.final_heights();
     let height = |x: f64, z: f64| (baked.as_ref().map_or_else(|| project.height_at(x, z), |f| f.at(x, z)) / unit) as f32;
     let own = Grid::sample(nx, nz, -o, -o, step, &height);
@@ -377,6 +379,12 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
         .filter(|e| !matches!(&e.payload, Payload::Water(w) if !w.river))
         .map(|e| (e.world, e.payload.clone()))
         .collect();
+
+    if stretch != 1.0 {
+        for (w, _) in &mut entities {
+            w.m[1][3] *= stretch;
+        }
+    }
 
     // The mid ring's first.
     entities.sort_by_key(|(_, p)| !is_mid(p));
