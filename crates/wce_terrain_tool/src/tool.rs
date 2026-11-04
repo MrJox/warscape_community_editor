@@ -1712,8 +1712,8 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_terry", "terrain_terry count | bca <x> <z> | generate | zone <x> <z> <x> <z> <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>", "the Terrain tool: the shown kit map's .terry entities (metres from the map's centre, ids in hex; one step on the history each)", |e, a| {
-            let usage = "usage: terrain_terry count | bca <x> <z> | generate | zone <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>";
+        c.add("terrain_terry", "terrain_terry count | bca <x> <z> | generate | points <id> <x> <z> ... | zone <x> <z> <x> <z> <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>", "the Terrain tool: the shown kit map's .terry entities (metres from the map's centre, ids in hex; one step on the history each)", |e, a| {
+            let usage = "usage: terrain_terry count | bca <x> <z> | generate | points <id> <x> <z> ... | zone <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>";
             let hex = |v: &String| u64::from_str_radix(v, 16).ok();
             let nums: Vec<f64> = a.iter().skip(1).filter_map(|v| v.parse().ok()).collect();
             with_terrain(e, |t, e| {
@@ -1733,6 +1733,15 @@ impl Tool for TerrainTool {
 
                     (Some("bca"), 3) if nums.len() == 2 => crate::terry_view::new_bca(e, doc, [nums[0], nums[1]]),
                     (Some("generate"), 1) => crate::terry_view::generate_bcas(e, doc),
+                    (Some("points"), n) if n >= 8 && n % 2 == 0 => match hex(&a[1]) {
+                        Some(id) => {
+                            let v: Vec<f64> = a[2..].iter().filter_map(|v| v.parse().ok()).collect();
+                            let pts: Vec<[f64; 2]> = v.chunks(2).map(|c| [c[0], c[1]]).collect();
+                            crate::terry_view::set_points(e, doc, id, &pts).map(|()| format!("{} points", pts.len()))
+                        }
+
+                        None => Err(usage.to_owned()),
+                    },
                     (Some("zone"), n) if n >= 7 && nums.len() == n - 1 && nums.len() % 2 == 0 => {
                         let pts: Vec<[f64; 2]> = nums.chunks(2).map(|c| [c[0], c[1]]).collect();
                         crate::terry_view::new_zone(e, doc, &pts)
@@ -1773,7 +1782,8 @@ impl Tool for TerrainTool {
                     (Some("get"), 2) => match (hex(&a[1]), e.docs.find_as::<MapDocument>(doc)) {
                         (Some(id), Some(d)) => d.project().and_then(|p| p.entity(id).map(|x| {
                             let w = p.world_position(id);
-                            format!("{} ({}) local {:?} world {w:?} children {:x?}", x.name, p.kind(x).name(), p.local_position(x), x.children)
+                            let line = p.polyline(x).map(|(pts, closed)| format!(" polyline {pts:?}{}", if closed { " closed" } else { "" })).unwrap_or_default();
+                            format!("{} ({}) local {:?} world {w:?} children {:x?}{line}", x.name, p.kind(x).name(), p.local_position(x), x.children)
                         })).ok_or_else(|| "no such entity".to_owned()),
 
                         _ => Err(usage.to_owned()),

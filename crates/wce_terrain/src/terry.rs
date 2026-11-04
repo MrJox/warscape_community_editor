@@ -329,6 +329,46 @@ impl TerryProject {
         Ok(out)
     }
 
+    /// Replaces an `ECPolyline`'s points (x, z offsets from the entity, metres): the `<point>` lines between `<polyline>` and its end tag
+    /// written again in the first point's indent (the file's line ending), the rest of the file as it was. The splices that did it.
+    pub fn set_polyline(&mut self, id: u64, pts: &[[f64; 2]]) -> Result<Vec<XmlSplice>, XmlError> {
+        self.doc.bake_pending()?;
+        let missing = || XmlError::Edit("no polyline".to_owned());
+        let e = self.entity(id).ok_or_else(missing)?;
+        let c = self.component(e, "ECPolyline").ok_or_else(missing)?;
+        let elems = self.doc.elements();
+        let line = elems[c].children.iter().copied().find(|&k| elems[k].name == "polyline").ok_or_else(missing)?;
+        let el = &elems[line];
+        if el.self_closing {
+            return Err(XmlError::Edit("a polyline without points".to_owned()));
+        }
+
+        let t = self.doc.original_text();
+        let indent_of = |off: usize| {
+            let ls = t[..off].iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1);
+            String::from_utf8_lossy(&t[ls..off]).into_owned()
+        };
+
+        let (eol, _) = self.style();
+        let own = indent_of(el.start_off);
+        let first = el.children.iter().copied().find(|&k| elems[k].name == "point");
+        let step = if own.contains('\t') { "\t".to_owned() } else { "    ".to_owned() };
+        let point_indent = first.map_or_else(|| format!("{own}{step}"), |k| indent_of(elems[k].start_off));
+        let mut text = String::from(eol);
+        for q in pts {
+            text += &format!("{point_indent}<point x=\"{}\" y=\"{}\"/>{eol}", number_text(q[0]), number_text(q[1]));
+        }
+
+        text += &own;
+        let close = el.end_off - "</polyline>".len();
+        let (pos, len) = (el.start_end, close - el.start_end);
+        let mark = self.doc.journal_mark();
+        self.doc.splice(pos, len, text.as_bytes())?;
+        let out = self.doc.journal_since(mark);
+        self.index();
+        Ok(out)
+    }
+
     /// Removes entities, their descendants and every `<child id>` naming them. The splices that did it.
     pub fn remove_entities(&mut self, ids: &[u64]) -> Result<Vec<XmlSplice>, XmlError> {
         self.doc.bake_pending()?;
@@ -564,5 +604,23 @@ mod edit_tests {
         assert_eq!(number_text(26.988338470458984), "26.9883385");
         assert_eq!(number_text(3434.164_06), "3434.16406");
         assert_eq!(number_text(0.5), "0.5");
+    }
+
+    #[test]
+    fn a_polylines_points_rewritten_and_back() {
+        let mut p = TerryProject::parse(super::tests_text().as_bytes().to_vec()).expect("xml");
+        let region = "<entity id=\"20\" name=\"DZR 0\">\n{i}<components>\n{i}{i}<ECDeploymentZoneRegion active=\"true\" region_type=\"DZRT_ADDITIVE\"/>\n\
+{i}{i}<ECPolyline active=\"true\">\n{i}{i}{i}<polyline closed=\"true\">\n{i}{i}{i}{i}<point x=\"0\" y=\"0\"/>\n{i}{i}{i}{i}<point x=\"100\" y=\"0\"/>\n\
+{i}{i}{i}{i}<point x=\"100\" y=\"-50\"/>\n{i}{i}{i}</polyline>\n{i}{i}</ECPolyline>\n{i}{i}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"10 0 20\"/>\n\
+{i}</components>\n{i}<children/>\n</entity>";
+        p.insert_entities(region).expect("inserted");
+        let before = p.save();
+        let s = p.set_polyline(0x20, &[[0.0, 0.0], [120.5, 0.0], [120.5, -60.0], [0.0, -60.0]]).expect("set");
+        let e = p.entity(0x20).expect("the region").clone();
+        assert_eq!(p.polyline(&e), Some((vec![[0.0, 0.0], [120.5, 0.0], [120.5, -60.0], [0.0, -60.0]], true)));
+        let text = String::from_utf8(p.save()).expect("utf-8");
+        assert!(text.contains("                        <point x=\"120.5\" y=\"-60\"/>\n                        <point x=\"0\" y=\"-60\"/>\n                    </polyline>"));
+        p.undo(&s);
+        assert_eq!(p.save(), before);
     }
 }
