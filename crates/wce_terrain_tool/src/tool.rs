@@ -283,7 +283,11 @@ fn save_dir(e: &Editor, d: &MapDocument) -> Option<PathBuf> {
 
 /// The kit with the battle tile database (its `raw_data`).
 fn database_root(e: &Editor) -> Option<PathBuf> {
-    kit_roots(e).into_iter().find(|r| r.join("terrain/tiles/battle/_tile_database").is_dir())
+    // A whole kit first (battle and campaign databases: decompiling a pack's tile reads both); a project with only a battle database
+    // copied into it would make every pack tile fail.
+    let roots = kit_roots(e);
+    let has = |r: &PathBuf, kind: &str| r.join(format!("terrain/tiles/{kind}/_tile_database")).is_dir();
+    roots.iter().find(|r| has(r, "battle") && has(r, "campaign")).or_else(|| roots.iter().find(|r| has(r, "battle"))).cloned()
 }
 
 /// The land nearest the map's centre (a sample above the sea, on a grid of about 256 a side), where a map's view starts: the campaign
