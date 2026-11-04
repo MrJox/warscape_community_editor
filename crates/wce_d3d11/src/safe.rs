@@ -196,6 +196,38 @@ enum Extent {
     Texture { format: DXGI_FORMAT, w: u32, h: u32, d: u32 },
 }
 
+impl Extent {
+    /// Width (bytes for a buffer), height and depth.
+    fn dims(&self) -> [u32; 3] {
+        match *self {
+            Extent::Buffer(size) => [size, 1, 1],
+            Extent::Texture { w, h, d, .. } => [w, h, d],
+        }
+    }
+}
+
+/// Whether a box lies within a subresource of these dimensions. Without the debug layer the runtime doesn't check it, and drivers
+/// write (or copy) outside the resource: their own memory, which crashes them later on another thread.
+fn box_within(b: &D3D11_BOX, [w, h, d]: [u32; 3]) -> bool {
+    b.left <= b.right && b.top <= b.bottom && b.front <= b.back && b.right <= w && b.bottom <= h && b.back <= d
+}
+
+static REJECTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Notes a call refused for addressing outside its resource, with its caller's location.
+fn reject(what: String) {
+    if let Ok(mut r) = REJECTED.lock()
+        && r.len() < 64
+    {
+        r.push(what);
+    }
+}
+
+/// The calls refused since the last call for addressing outside their resources (a bug in the caller), each with its location.
+pub fn take_rejected() -> Vec<String> {
+    REJECTED.lock().map(|mut r| std::mem::take(&mut *r)).unwrap_or_default()
+}
+
 fn extent(resource: &ID3D11Resource, sub: u32) -> Option<Extent> {
     if let Ok(b) = resource.cast::<ID3D11Buffer>() {
         return (sub == 0).then(|| Extent::Buffer(b.desc().ByteWidth));
@@ -553,13 +585,18 @@ pub trait ContextExt {
     fn copy_resource(&self, dst: &ID3D11Resource, src: &ID3D11Resource);
     /// A multisampled texture averaged into a one-sample one (subresource 0 of both).
     fn resolve_subresource(&self, dst: &ID3D11Resource, src: &ID3D11Resource, format: DXGI_FORMAT);
+    /// Copies `src_box` of a subresource (all of it when `None`) to `dst_at` of another. Skipped, and noted ([`take_rejected`]), when
+    /// either subresource doesn't exist or the region falls outside either.
+    #[track_caller]
     fn copy_subresource_region(&self, dst: &ID3D11Resource, dst_sub: u32, dst_at: [u32; 3], src: &ID3D11Resource, src_sub: u32, src_box: Option<&D3D11_BOX>);
 
     /// Copies `data` into a subresource, or the `dst_box` region of it, with these pitches.
     ///
     /// # Errors
     ///
-    /// Fails without copying when the subresource doesn't exist, has a format without a known layout, or `data` doesn't cover the region.
+    /// Fails without copying when the subresource doesn't exist, has a format without a known layout, `dst_box` falls outside it (also
+    /// noted, [`take_rejected`]) or `data` doesn't cover the region.
+    #[track_caller]
     fn update_subresource(&self, dst: &ID3D11Resource, sub: u32, dst_box: Option<&D3D11_BOX>, data: &[u8], row_pitch: u32, depth_pitch: u32) -> windows_core::Result<()>;
 
     /// Maps a subresource (`flags`: `D3D11_MAP_FLAG_DO_NOT_WAIT` or 0).
@@ -827,12 +864,38 @@ impl ContextExt for ID3D11DeviceContext {
         unsafe { self.ResolveSubresource(dst, 0, src, 0, format) };
     }
 
+    #[track_caller]
     fn copy_subresource_region(&self, dst: &ID3D11Resource, dst_sub: u32, [x, y, z]: [u32; 3], src: &ID3D11Resource, src_sub: u32, src_box: Option<&D3D11_BOX>) {
-        // SAFETY: a GPU copy; the runtime checks the regions; the box is a reference or none.
+        let fits = match (extent(src, src_sub), extent(dst, dst_sub)) {
+            (Some(s), Some(d)) => {
+                let s = s.dims();
+                let b = src_box.copied().unwrap_or(D3D11_BOX { left: 0, top: 0, front: 0, right: s[0], bottom: s[1], back: s[2] });
+                let at = D3D11_BOX { left: x, top: y, front: z, right: x.saturating_add(b.right - b.left.min(b.right)), bottom: y.saturating_add(b.bottom - b.top.min(b.bottom)), back: z.saturating_add(b.back - b.front.min(b.back)) };
+                box_within(&b, s) && box_within(&at, d.dims())
+            }
+
+            _ => false,
+        };
+
+        if !fits {
+            let (s, d) = (extent(src, src_sub).map(|e| e.dims()), extent(dst, dst_sub).map(|e| e.dims()));
+            reject(format!("copy_subresource_region at {}: {src_box:?} of {s:?} to {:?} of {d:?}", std::panic::Location::caller(), [x, y, z]));
+            return;
+        }
+
+        // SAFETY: a GPU copy of a region inside both subresources (checked above); the box is a reference or none.
         unsafe { self.CopySubresourceRegion(dst, dst_sub, x, y, z, src, src_sub, src_box.map(|b| b as *const _)) };
     }
 
+    #[track_caller]
     fn update_subresource(&self, dst: &ID3D11Resource, sub: u32, dst_box: Option<&D3D11_BOX>, data: &[u8], row_pitch: u32, depth_pitch: u32) -> windows_core::Result<()> {
+        if let (Some(b), Some(e)) = (dst_box, extent(dst, sub))
+            && !box_within(b, e.dims())
+        {
+            reject(format!("update_subresource at {}: {b:?} of {:?}", std::panic::Location::caller(), e.dims()));
+            return invalid();
+        }
+
         let need = match extent(dst, sub) {
             Some(Extent::Buffer(size)) => dst_box.map_or(size, |b| b.right.saturating_sub(b.left)) as usize,
             Some(Extent::Texture { format, w, h, d }) => {
