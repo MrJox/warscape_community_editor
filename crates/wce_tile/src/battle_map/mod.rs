@@ -100,6 +100,13 @@ pub fn kit_battle_field(db: &TileDatabase, map: &Path) -> Result<(u32, u32, Vec<
     Ok((fill.w, fill.h, fill.battle_field()))
 }
 
+/// BOB's `Tilemap` of a map's images: the final tile map, the battle field (`terrain.tile_list`) and BOB's messages.
+pub fn build_images(db: &TileDatabase, images: &MapImages) -> (TileMap, TileList, Vec<String>) {
+    let fill = fill_images(db, images);
+    let list = tile_list(db, &fill);
+    (fill.tile_map(), list, fill.messages)
+}
+
 /// A map's images (a kit map as the Terrain tool holds it) filled with the tiles of `db`: its placements, with `lf` (its LF, which
 /// `images.lf` holds as 0 .. 1) and BOB's messages.
 pub fn place_images(db: &TileDatabase, name: &str, images: &MapImages, lf: Option<context::LfField>) -> (context::PlacedMap, Vec<String>) {
