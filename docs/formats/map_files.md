@@ -38,8 +38,9 @@ A file not edited is written back as its original blob (a file on disk is copied
 - `map_built_roundtrip_check [--game <dir> [--vanilla]] [<map folder>...]`: the packs' built files (every `terrain/battles/<map>`) and
   loose folders (BOB's outputs) parsed and written back. Attila with its enabled mods and BOB's two scratch outputs: 19 CHMF, 3 858
   deployment XML, 5 `locations.blm`, 17 tile lists, 5 tile maps, all byte for byte; Thrones (vanilla): 5, 691, 1, 4, 1, all byte for
-  byte. Rome 2 (vanilla): CHMF (111), deployment XML (8 168) and `locations.blm` (7, version 7) byte for byte; its `terrain.tile_list`
-  (versions 9 and 8, 104 files) and `tile_map` (version 6, 7 files: the index has a chunk table the writer does not keep) do not read
-  or write back yet (Phase 9).
+  byte. Rome 2 (vanilla, `WCE_GAME_KEY=rome_2`, 2026-11-04): CHMF (111), deployment XML (8 168), `locations.blm` (7, version 7),
+  `terrain.tile_list` (104: versions 7 to 9; Rome 2's loader fn 0x115b9940: 14-byte placements, a rectangle list, version 7's strings
+  UTF-16, version 9's last section kept verbatim) and `tile_map` (7, version 6: the index's chunk table and the cells' unknown bytes
+  kept), all byte for byte (`wce_tile::battle_map::tile_list` / `tile_map`).
 - In `scripts/gates.sh`: `map_roundtrip` (one settlement map), `map_built_roundtrip` (the vanilla packs); `--corpus` adds
   `map_roundtrip_all`.

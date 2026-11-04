@@ -152,7 +152,7 @@ fn tile_list(db: &TileDatabase, fill: &TileMapFill, campaign: bool) -> TileList 
         let size = tile.width.max(tile.height);
         let (x, y) = (i32::from(p.x), i32::from(p.y));
         list.bounds = [list.bounds[0].min(x - size), list.bounds[1].min(y - size), list.bounds[2].max(x + size), list.bounds[3].max(y + size)];
-        list.placements.push(TileListPlacement { name: index, x: p.x, y: p.y, flags: p.flags, climate: p.climate, lf: p.lf });
+        list.placements.push(TileListPlacement { name: index, x: p.x, y: p.y, flags: p.flags, climate: p.climate, lf: p.lf, old: [0; 3] });
     }
 
     list

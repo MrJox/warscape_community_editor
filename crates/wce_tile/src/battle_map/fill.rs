@@ -883,6 +883,7 @@ impl<'a> TileMapFill<'a> {
             climate: c.climate,
             flipped: u8::from(c.flipped),
             lf: [c.lf_min, c.lf_max],
+            old: [0; 4],
         };
 
         TileMap {
@@ -891,6 +892,7 @@ impl<'a> TileMapFill<'a> {
             height: self.h,
             layers: [self.layers[0].iter().map(cell).collect(), self.layers[1].iter().map(cell).collect()],
             names: self.placed.iter().map(|&(t, v)| self.db.tile_location_of(t, v)).collect(),
+            chunks: vec![],
         }
     }
 

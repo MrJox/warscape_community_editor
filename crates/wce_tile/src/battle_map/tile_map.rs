@@ -21,6 +21,9 @@ pub struct TileMapCell {
     pub climate: u8,
     pub flipped: u8,
     pub lf: [f32; 2],
+
+    /// Versions 6 and 7: the cell's bytes 10, 11 (an i16, -1 mostly), 14 and 15 (unknown).
+    pub old: [u8; 4],
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -30,6 +33,9 @@ pub struct TileMap {
     pub height: u32,
     pub layers: [Vec<TileMapCell>; 2],
     pub names: Vec<String>,
+
+    /// Versions 6 and 7: `tile_map.index` after its first 12 bytes (the chunk count and rectangles), verbatim.
+    pub chunks: Vec<u8>,
 }
 
 const CELL: usize = 20;
@@ -71,11 +77,11 @@ impl TileMap {
         let cell = |o: usize| {
             let (index, flags, origin) = (u32_at(tiles, o) as i32, u16_at(tiles, o + 4), [u16_at(tiles, o + 6), u16_at(tiles, o + 8)]);
             if version < 8 {
-                TileMapCell { index, flags, origin, climate: tiles[o + 12], flipped: tiles[o + 13], lf: [0.0; 2] }
+                TileMapCell { index, flags, origin, climate: tiles[o + 12], flipped: tiles[o + 13], lf: [0.0; 2], old: [tiles[o + 10], tiles[o + 11], tiles[o + 14], tiles[o + 15]] }
             } else {
                 TileMapCell {
                     index, flags, origin, climate: tiles[o + 10], flipped: tiles[o + 11],
-                    lf: [f32::from_bits(u32_at(tiles, o + 12)), f32::from_bits(u32_at(tiles, o + 16))],
+                    lf: [f32::from_bits(u32_at(tiles, o + 12)), f32::from_bits(u32_at(tiles, o + 16))], old: [0; 4],
                 }
             }
         };
@@ -91,25 +97,36 @@ impl TileMap {
             p += 2 + len;
         }
 
-        Ok(Self { version, width, height, layers, names })
+        let chunks = if version < 8 { index[12..].to_vec() } else { vec![] };
+        Ok(Self { version, width, height, layers, names, chunks })
     }
 
-    /// The two files: (`tile_map.index`, `tile_map.tiles`), version 9 whatever the version read.
+    /// The two files: (`tile_map.index`, `tile_map.tiles`): versions 6 and 7 as read (their chunk table and cells' unknown bytes kept),
+    /// any other as version 9.
     pub fn write(&self) -> (Vec<u8>, Vec<u8>) {
+        let old = matches!(self.version, 6 | 7);
         let mut index = vec![];
-        for v in [9, self.width, self.height] {
+        for v in [if old { self.version } else { 9 }, self.width, self.height] {
             index.extend(v.to_le_bytes());
         }
 
-        let mut o = Vec::with_capacity(2 * self.layers[0].len() * CELL);
+        if old {
+            index.extend_from_slice(&self.chunks);
+        }
+
+        let mut o = Vec::with_capacity(2 * self.layers[0].len() * if old { OLD_CELL } else { CELL });
         for c in self.layers.iter().flatten() {
             o.extend(c.index.to_le_bytes());
             o.extend(c.flags.to_le_bytes());
             o.extend(c.origin[0].to_le_bytes());
             o.extend(c.origin[1].to_le_bytes());
-            o.extend([c.climate, c.flipped]);
-            o.extend(c.lf[0].to_le_bytes());
-            o.extend(c.lf[1].to_le_bytes());
+            if old {
+                o.extend([c.old[0], c.old[1], c.climate, c.flipped, c.old[2], c.old[3]]);
+            } else {
+                o.extend([c.climate, c.flipped]);
+                o.extend(c.lf[0].to_le_bytes());
+                o.extend(c.lf[1].to_le_bytes());
+            }
         }
 
         o.extend((self.names.len() as u32).to_le_bytes());
