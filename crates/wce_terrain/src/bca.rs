@@ -396,3 +396,92 @@ pub fn generate(
 
     out
 }
+
+/// A number as Terry writes a polyline's point (`%g`: six significant digits).
+fn point_text(v: f32) -> String {
+    let v = f64::from(v);
+    if v == 0.0 {
+        return "0".to_owned();
+    }
+
+    let e = v.abs().log10().floor() as i32;
+    if !(-5..6).contains(&e) {
+        return crate::terry::number_text(v);
+    }
+
+    let t = format!("{v:.prec$}", prec = (5 - e).max(0) as usize);
+    if t.contains('.') { t.trim_end_matches('0').trim_end_matches('.').to_owned() } else { t }
+}
+
+/// The `.terry` entities of generated BCAs (Terry's, fn 0x10007ee0 and 0x100619c0; `{i}` an indent step, for
+/// [`crate::terry::TerryProject::insert_entities`]): per BCA its entity (`ECProcedural`) and `Catchment Region` (2048 m plus `boundary`
+/// cells), then the deployment zones and their regions; ids from `first_id`. Positions are metres from the map's centre (`w / 2`, `h / 2`
+/// cells, z north); `height` gives a point's y. The number of ids used with it.
+pub fn terry_xml(spec: &Spec, bcas: &[&Bca], w: u32, h: u32, first_id: u64, height: &dyn Fn(f64, f64) -> f64) -> (String, u64) {
+    let n = |v: f64| crate::terry::number_text(v);
+    let (cw, ch) = ((w / 2) as f32, (h / 2) as f32);
+    let world = |x: f32, y: f32| ((x - cw) * 256.0, (ch - y) * 256.0);
+    let mut id = first_id;
+    let mut take = || {
+        let v = id;
+        id += 1;
+        v
+    };
+
+    let (mut head, mut tail) = (String::new(), String::new());
+    for b in bcas {
+        let (bid, cid) = (take(), take());
+        let (x, z) = world(b.cell.0 as f32, b.cell.1 as f32);
+        let (x, z) = (f64::from(x), f64::from(z));
+        let dz_ids: Vec<(u64, Vec<u64>)> = b.zones.iter().map(|d| (take(), d.regions.iter().map(|_| take()).collect())).collect();
+        let mut kids = format!("{{i}}{{i}}<child id=\"{cid:x}\"/>\n");
+        for (d, _) in &dz_ids {
+            kids += &format!("{{i}}{{i}}<child id=\"{d:x}\"/>\n");
+        }
+
+        let side = 2048 + spec.types[b.type_index].boundary * 256;
+        head += &format!(
+            "<entity id=\"{bid:x}\" name=\"{}\">\n{{i}}<components>\n{{i}}{{i}}<ECRectangle width=\"2048\" height=\"2048\" active=\"true\"/>\n\
+{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{} {} {}\">\n{{i}}{{i}}{{i}}<children>\n\
+{{i}}{{i}}{{i}}{{i}}<child id=\"{cid:x}\"/>\n{{i}}{{i}}{{i}}</children>\n{{i}}{{i}}</ECTransform>\n{{i}}{{i}}<ECLandscapeAbove active=\"true\"/>\n\
+{{i}}{{i}}<ECTileAlignment active=\"true\"/>\n{{i}}{{i}}<ECBattleCatchmentArea catchment_type=\"{}\" active=\"true\"/>\n\
+{{i}}{{i}}<ECProcedural active=\"true\"/>\n{{i}}</components>\n{{i}}<children>\n{kids}{{i}}</children>\n</entity>\n\
+<entity id=\"{cid:x}\" name=\"Catchment Region\">\n{{i}}<components>\n{{i}}{{i}}<ECRectangle width=\"{side}\" height=\"{side}\" active=\"true\"/>\n\
+{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"0 0 0\"/>\n{{i}}{{i}}<ECLandscapeAbove active=\"true\"/>\n\
+{{i}}</components>\n{{i}}<children/>\n</entity>\n",
+            b.name, n(x), n(height(x, z)), n(z), b.kind
+        );
+
+        for (d, (did, rids)) in b.zones.iter().zip(&dz_ids) {
+            let kids: String = rids.iter().map(|r| format!("{{i}}{{i}}<child id=\"{r:x}\"/>\n")).collect();
+            let kids = if kids.is_empty() { "{i}<children/>\n".to_owned() } else { format!("{{i}}<children>\n{kids}{{i}}</children>\n") };
+            tail += &format!(
+                "<entity id=\"{did:x}\" name=\"{}\">\n{{i}}<components>\n{{i}}{{i}}<ECDeploymentZone deployment_category=\"DZC_{}\" deployment_type=\"DZT_1V1\" \
+active=\"true\" facing_direction=\"0\" deployment_zone_id=\"0\" alliance_id=\"{}\" configuration=\"{}\"/>\n{{i}}</components>\n{kids}</entity>\n",
+                d.name, d.category.to_uppercase(), d.alliance, d.configuration
+            );
+
+            for (r, rid) in d.regions.iter().zip(rids) {
+                let pts: Vec<(f32, f32)> = r.points.iter().map(|&(x, y)| world(x, y)).collect();
+                let (x0, z0) = pts[0];
+                let points: String = pts.iter()
+                    .map(|&(x, z)| format!("{{i}}{{i}}{{i}}{{i}}<point x=\"{}\" y=\"{}\"/>\n", point_text(x - x0), point_text(z - z0)))
+                    .collect();
+                let (x0, z0) = (f64::from(x0), f64::from(z0));
+                tail += &format!(
+                    "<entity id=\"{rid:x}\" name=\"{}\">\n{{i}}<components>\n{{i}}{{i}}<ECDeploymentZoneRegion active=\"true\" region_type=\"{}\"/>\n\
+{{i}}{{i}}<ECPolyline active=\"true\">\n{{i}}{{i}}{{i}}<polyline closed=\"true\">\n{points}{{i}}{{i}}{{i}}</polyline>\n{{i}}{{i}}</ECPolyline>\n\
+{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{} {} {}\"/>\n{{i}}</components>\n{{i}}<children/>\n</entity>\n",
+                    r.name, if r.subtractive { "DZRT_SUBTRACTIVE" } else { "DZRT_ADDITIVE" }, n(x0), n(height(x0, z0)), n(z0)
+                );
+            }
+        }
+    }
+
+    (head + &tail, id - first_id)
+}
+
+/// The procedural BCAs of a project (`ECProcedural`: the generator's; Terry removes them first).
+pub fn procedural(p: &crate::terry::TerryProject) -> Vec<u64> {
+    p.entities.iter().filter(|e| matches!(p.kind(e), crate::terry::EntityKind::Bca(_)) && p.component(e, "ECProcedural").is_some()).map(|e| e.id).collect()
+}
