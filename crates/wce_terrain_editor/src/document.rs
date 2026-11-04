@@ -178,6 +178,19 @@ impl MapDocument {
         self.placed.lf_metres(cx, cy)
     }
 
+    /// The `.terry` y of a new entity standing at a point: a battle map's the LF's metres; a campaign map's from the LF sample `v` (0 ..
+    /// 1) under it, `4.4744 v + 0.6285`. ASSUMPTION: the least-squares line of the kit's campaign props on the landscape (13 104 of
+    /// `main_attila_map`; their y follows the tiles' geometry, not the LF: residual median 0.56, 90 % 1.38).
+    pub fn terry_y_at(&self, x: f64, z: f64) -> f64 {
+        let m = self.lf_metres_at(x, z);
+        if !self.terry_frame.y_from_lf {
+            return m;
+        }
+
+        let v = (m + self.placed.vertical_offset) / self.placed.lf_height.max(1e-9);
+        4.4744 * v + 0.6285
+    }
+
     /// A cell layer of the model to paint on (its index in `MapModel::layers`; the file is marked edited); the finished stroke goes on the
     /// history with `push_cells`.
     pub fn cell_layer_mut(&mut self, k: usize) -> Option<&mut wce_terrain::cells::CellLayer> {
