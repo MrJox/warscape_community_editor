@@ -241,11 +241,17 @@ impl PlacedMap {
         self.climates.get(usize::from(p.climate)).map(String::as_str).filter(|c| !c.is_empty())
     }
 
-    /// From a battle field (`terrain.tile_list`, or the fill of a kit map).
+    /// The render mode (a placement's flags & 0x700) of a shared-geometry tile on the geometry layer (docs/re/battle_maps.md): the
+    /// textured tile over it (0x600, everything but the geometry) is drawn instead, with its own mesh. ASSUMPTION: the bits' meaning, read
+    /// from how BOB sets them (0x700 a whole tile, 0x100 geometry only, 0x600 no geometry, 0x300 the sea under a coast); the game's use
+    /// of them is not decompiled. The editor draws each placement whole, so a shared mesh under a textured tile would only z-fight.
+    pub const GEOMETRY_ONLY: u16 = 0x100;
+
+    /// From a battle field (`terrain.tile_list`, or the fill of a kit map); not its geometry-only placements ([`Self::GEOMETRY_ONLY`]).
     pub fn from_tile_list(name: &str, list: &TileList, db: &TileDatabase, lf: Option<LfField>) -> Self {
         let mut m = Self { name: name.to_owned(), width: list.battle_size[0], height: list.battle_size[1], lf, climates: climate_names(db), ..Default::default() };
         let mut sizes = Sizes::new(db);
-        for p in &list.placements {
+        for p in list.placements.iter().filter(|p| p.flags & 0x700 != Self::GEOMETRY_ONLY) {
             let n = list.names.get(p.name).map_or("", String::as_str);
             let pl = m.placement(&mut sizes, n, (i32::from(p.x), i32::from(p.y)), p.flags, p.flags & 4 != 0, p.climate);
             m.placements.push(pl);
@@ -254,12 +260,13 @@ impl PlacedMap {
         m
     }
 
-    /// From a saved tile map (the campaign's `tile_map.tiles`): the origin cells of both layers.
+    /// From a saved tile map (the campaign's `tile_map.tiles`): the origin cells of both layers, not the geometry-only ones
+    /// ([`Self::GEOMETRY_ONLY`]).
     pub fn from_tile_map(name: &str, map: &TileMap, db: &TileDatabase, lf: Option<LfField>) -> Self {
         let mut m = Self { name: name.to_owned(), width: map.width, height: map.height, lf, climates: climate_names(db), ..Default::default() };
         let mut sizes = Sizes::new(db);
         for layer in &map.layers {
-            for c in layer.iter().filter(|c| c.index > 0) {
+            for c in layer.iter().filter(|c| c.index > 0 && c.flags & 0x700 != Self::GEOMETRY_ONLY) {
                 let n = map.names.get(c.index as usize - 1).map_or("", String::as_str);
                 let pl = m.placement(&mut sizes, n, (i32::from(c.origin[0]), i32::from(c.origin[1])), c.flags, c.flipped != 0, c.climate);
                 m.placements.push(pl);
