@@ -281,6 +281,9 @@ impl PlacedMap {
     /// textured tile over it (0x600, everything but the geometry) is drawn instead, with its own mesh. ASSUMPTION: the bits' meaning, read
     /// from how BOB sets them (0x700 a whole tile, 0x100 geometry only, 0x600 no geometry, 0x300 the sea under a coast); the game's use
     /// of them is not decompiled. The editor draws each placement whole, so a shared mesh under a textured tile would only z-fight.
+    /// The textured tile's own mesh is the shared one's, as drawn: every set that shares geometry (Attila's campaign: 23 sets on
+    /// `grass_01`; Thrones': 9) has flat tiles, in the packs (their `hf_height_map.data` 75 or 96 bytes, constant) and in the kit (its
+    /// `final_heights.dds`); no battle database shares geometry (2026-11-04).
     pub const GEOMETRY_ONLY: u16 = 0x100;
 
     /// From a battle field (`terrain.tile_list`, or the fill of a kit map); not its geometry-only placements ([`Self::GEOMETRY_ONLY`]).

@@ -358,7 +358,10 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    - Campaign rendering from the game's (user's screenshots, 2026-11-04): the texture group `climate`, the campaign lighting, the
      campaign water shader and `lf_sea_colour`, the open sea on the sea LF, the forests (`trees.campaign_tree_list`), the tiles' rivers
      from BOB's files (docs/re/terry.md, "Campaign maps"); traversal 77 -> 41 ms a frame.
-   Left: the game's own use of the render modes (shared meshes under textured tiles), a campaign launch (noted, not for now); from the
+   - The render modes (2026-11-04): no change needed. Every tile of a set sharing geometry is flat, in the packs and the kits (Attila's
+     and Thrones' campaigns; no battle database shares geometry; docs/re/battle_maps.md), so the textured tile drawn with its own mesh
+     over the left-out geometry-only placement is the game's ground. The bits' meaning stays read from BOB, not decompiled.
+   Left: a campaign launch (noted, not for now); from the
    campaign's rendering: the cities and roads (the startpos and the settlement display tables), the trees' size and lean, the mountains'
    look, the seasons' snow masks, the GPU's terrain cost (smaller rings for campaign maps).
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
