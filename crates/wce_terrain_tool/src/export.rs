@@ -108,7 +108,7 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
     let name = map.clone();
     std::thread::spawn(move || {
         let t0 = Instant::now();
-        let built = if model.built { Some(built_changes(&model, &name, packs.as_deref())) } else { None };
+        let built = if model.built { Some(built_changes(&model, &db, &name, packs.as_deref())) } else { None };
         let r = built.unwrap_or_else(|| build(&model, &BuildInputs { db: &db, environment_map: &env, tile_upgrades: &upgrades }).map_err(|err| err.to_string()))
             .and_then(|b| {
                 let (folder, pack) = write(&out, &name, &b.files, profile)?;
@@ -121,8 +121,8 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
 }
 
 /// A built map's files that differ from the packs' (or the packs lack), as a build's.
-fn built_changes(model: &wce_terrain::MapModel, name: &str, packs: Option<&dyn wce_vfs::files::Files>) -> Result<wce_terrain_io::attila::build::Built, String> {
-    let written = wce_terrain_io::built::write(model).map_err(|err| err.to_string())?;
+fn built_changes(model: &wce_terrain::MapModel, db: &TileDatabase, name: &str, packs: Option<&dyn wce_vfs::files::Files>) -> Result<wce_terrain_io::attila::build::Built, String> {
+    let written = wce_terrain_io::built::write(model, Some(db)).map_err(|err| err.to_string())?;
     let (folder, _) = game_folder(name);
     let mut files = vec![];
     for (rel, blob) in &written.folder {

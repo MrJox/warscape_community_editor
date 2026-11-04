@@ -363,6 +363,12 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
                         Arc::make_mut(&mut placed).lf = Some(lf_field(f.get()));
                     }
 
+                    // The placements the model has (a saved copy's edits).
+                    if let Some(list) = &m.tile_list {
+                        let lf = placed.lf.clone();
+                        placed = Arc::new(wce_tile::battle_map::context::PlacedMap::from_tile_list(&i.name, list.get(), &db, lf));
+                    }
+
                     Some(m)
                 }
 
