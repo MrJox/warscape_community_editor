@@ -17,4 +17,5 @@ wce_terrain_editor = { path = "../wce_terrain_editor" }
 wce_terrain_io = { path = "../wce_terrain_io" }
 wce_tile = { path = "../wce_tile" }
 wce_tile_editor = { path = "../wce_tile_editor" }
+wce_tile_tool = { path = "../wce_tile_tool" }
 wce_vfs = { path = "../wce_vfs" }

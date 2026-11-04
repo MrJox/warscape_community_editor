@@ -204,13 +204,17 @@ pub struct TerrainTool {
     /// The export on its way, and the last one done (what Launch in game ships).
     export: Option<crate::export::ExportJob>,
     exported: Option<crate::export::Exported>,
+
+    /// A launch waiting for its export (the BCA, dry run, ignore movie packs), and the game launched.
+    launch_after_export: Option<(crate::launch::Spot, bool, bool)>,
+    launched: Option<wce_tile_tool::launch::Running>,
 }
 
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
             maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
-            status: String::new(), packs: None, provider: None, db: None, export: None, exported: None,
+            status: String::new(), packs: None, provider: None, db: None, export: None, exported: None, launch_after_export: None, launched: None,
         }
     }
 }
@@ -1012,7 +1016,43 @@ impl TerrainTool {
         Ok(m)
     }
 
-    /// The export, when it is done: its result for the status bar.
+    /// Launch in game at a BCA (`id`, else the selected one, else the first): with the shown map's last export when it is of this map and
+    /// the map has not changed since, else after an export.
+    pub(crate) fn launch(&mut self, e: &mut Editor, id: Option<u64>, dry_run: bool, ignore_movie_packs: bool) -> Result<String, String> {
+        if self.launched.is_some() && !dry_run {
+            return Err("the game launched before is still running".to_owned());
+        }
+
+        let spot = crate::launch::spot(e, self.shown, id)?;
+        let d = e.docs.find_as::<MapDocument>(self.shown).ok_or("no map shown")?;
+        let fresh = self.exported.as_ref().is_some_and(|x| x.map == d.name && x.revision == wce_editor_core::document::Document::history(d).version());
+        if !fresh {
+            let m = self.start_export(e)?;
+            self.launch_after_export = Some((spot, dry_run, ignore_movie_packs));
+            return Ok(format!("{m} (then the launch)"));
+        }
+
+        self.launch_now(e, &spot, dry_run, ignore_movie_packs)
+    }
+
+    fn launch_now(&mut self, e: &mut Editor, spot: &crate::launch::Spot, dry_run: bool, ignore_movie_packs: bool) -> Result<String, String> {
+        let x = self.exported.clone().ok_or("no export")?;
+        let d = e.docs.find_as::<MapDocument>(self.shown).ok_or("no map shown")?;
+        let (w, h) = (d.placed.width, d.placed.height);
+        let p = crate::launch::prepare(e, &x, w, h, spot, dry_run, ignore_movie_packs)?;
+        let at = format!("{} ({}) at cell {:.0}, {:.0}", spot.name, spot.kind, spot.cell.0, spot.cell.1);
+        if dry_run {
+            let xml = e.output_dir().join("dry_wce_launch.xml");
+            let _ = std::fs::write(&xml, &p.xml);
+            return Ok(format!("dry run: {} at {at}: the pack {}, the battle {}; command line: {}", x.map, p.pack.display(), xml.display(), p.command));
+        }
+
+        let (running, started) = crate::launch::start(e, &p)?;
+        self.launched = Some(running);
+        Ok(format!("launched {started} into a battle on {} at {at}; the launch pack is removed when the game exits", x.map))
+    }
+
+    /// The export, when it is done: its result for the status bar (and the launch waiting for it).
     fn follow_export(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
         let r = self.export.as_ref()?.poll()?;
         self.export = None;
@@ -1021,6 +1061,16 @@ impl TerrainTool {
             self.exported = Some(x);
             m
         });
+
+        if let Some((spot, dry, ignore)) = self.launch_after_export.take() {
+            let r = r.and_then(|m| self.launch_now(e, &spot, dry, ignore).map(|l| format!("{m}; {l}")));
+            match &r {
+                Ok(m) => e.status(m, false),
+                Err(err) => e.status(&format!("launch in game: {err}"), true),
+            }
+
+            return Some(r);
+        }
 
         match &r {
             Ok(m) => e.status(m, false),
@@ -1051,6 +1101,20 @@ impl TerrainTool {
         gui::end_disabled();
         if gui::is_item_hovered_allow_disabled() {
             gui::set_tooltip("What BOB_Terrain builds (tile map, battle field, LF heights, locations.blm and its masks, deployment files), made from the map as it is, loose under the output folder and as a mod pack");
+        }
+
+        gui::same_line();
+        gui::begin_disabled(!can || self.export.is_some() || self.launched.is_some());
+        if gui::button("Launch in game") {
+            match self.launch(e, None, false, false) {
+                Ok(m) => e.status(&m, false),
+                Err(err) => e.status(&format!("launch in game: {err}"), true),
+            }
+        }
+
+        gui::end_disabled();
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("The export in the launch pack, a battle at the selected battle catchment area (else the first): one unit a side");
         }
 
         if !can {
@@ -1312,6 +1376,11 @@ impl Tool for TerrainTool {
         self.follow_cell_edits(e);
         self.follow_refill(e);
         self.follow_export(e);
+        if let Some(m) = self.launched.as_mut().and_then(wce_tile_tool::launch::Running::poll) {
+            self.launched = None;
+            e.status(&format!("Launch in game: {m}"), false);
+        }
+
         let frame = self.view.frame().filter(|_| self.shown != 0);
         self.terry.update(e, self.shown, frame);
     }
@@ -1536,6 +1605,33 @@ impl Tool for TerrainTool {
 
             if !started.ok || !a.iter().any(|v| v == "--wait") {
                 return started;
+            }
+
+            loop {
+                let r = with_terrain(e, |t, e| match t.follow_export(e) {
+                    Some(Ok(m)) => CommandResult::success(m),
+                    Some(Err(err)) => CommandResult::fail(err),
+                    None => CommandResult::success("busy"),
+                });
+
+                if !(r.ok && r.message == "busy") {
+                    return r;
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        });
+
+        c.add("terrain_launch", "terrain_launch [<BCA id>] [--dry-run] [--ignore-movie-packs]", "the Terrain tool: Launch in game on the shown kit map at a battle catchment area (its id in hex; else the selected one, else the first), after an export when needed (waits for it)", |e, a| {
+            let id = a.iter().find(|v| !v.starts_with("--")).and_then(|v| u64::from_str_radix(v, 16).ok());
+            let (dry, ignore) = (a.iter().any(|v| v == "--dry-run"), a.iter().any(|v| v == "--ignore-movie-packs"));
+            let r = with_terrain(e, |t, e| match t.launch(e, id, dry, ignore) {
+                Ok(m) => CommandResult::success(m),
+                Err(err) => CommandResult::fail(err),
+            });
+
+            if !r.ok || !r.message.ends_with("(then the launch)") {
+                return r;
             }
 
             loop {

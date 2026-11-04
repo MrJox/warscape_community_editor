@@ -21,6 +21,9 @@ use wce_tile::battle_map::tile_db::TileDatabase;
 #[derive(Clone, Debug)]
 pub struct Exported {
     pub map: String,
+
+    /// The map document's history version it was made from.
+    pub revision: u64,
     pub folder: PathBuf,
     pub pack: PathBuf,
 
@@ -80,6 +83,7 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
     let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
     let model = d.model().ok_or("a map of the game's packs can't be exported (open the kit's map)")?.clone();
     let map = d.name.clone();
+    let revision = wce_editor_core::document::Document::history(d).version();
     let env = kit_file(kit_roots, "warscape_asset_variation_db/environment_map.xml");
     let upgrades = kit_file(kit_roots, "terrain/tiles/battle/tile_upgrades.xml");
     let out = e.output_dir();
@@ -92,7 +96,7 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
             .map_err(|err| err.to_string())
             .and_then(|b| {
                 let (folder, pack) = write(&out, &name, &b.files, profile)?;
-                Ok(Exported { map: name.clone(), folder, pack, files: b.files, messages: b.messages, secs: t0.elapsed().as_secs_f64() })
+                Ok(Exported { map: name.clone(), revision, folder, pack, files: b.files, messages: b.messages, secs: t0.elapsed().as_secs_f64() })
             });
         let _ = tx.send(r);
     });
