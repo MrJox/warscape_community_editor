@@ -37,6 +37,9 @@ use crate::shader_lib::{bind_sampler, bind_srv};
 
 const OCEAN_VS: &str = "dx11_sm_4_0_ocean.hlsl_vs_vs30_main";
 
+/// A campaign map's sea (`waterplane.hlsl`'s campaign vertex shader: a flat plane, the world position on to the pixel shader).
+const CAMPAIGN_SEA_VS: &str = "dx11_sm_3_0_waterplane.hlsl_vs_vs30_main_campaign";
+
 /// Rome 2's (`sm_3_0`; a forward pass).
 const R2_OCEAN_VS: &str = "dx11_sm_3_0_ocean.hlsl_vs_vs30_main";
 
@@ -496,10 +499,28 @@ impl Renderer {
             true => self.shader(&r2_ocean_ps_shadows(quality)).or_else(|| self.shader(&ocean_ps)),
             false => self.shader(&ocean_ps),
         };
-        let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), ps) else { return false };
+        // A campaign map's sea: the game's campaign water (`waterplane.hlsl`, vs30_main_campaign / ps30_campaign_<quality>_water_quality),
+        // flat, coloured from the map's lf_sea_colour; on the same chunks (their rest positions).
+        let campaign = scene.campaign_sea.clone().filter(|_| !rome2).and_then(|c| {
+            let vs = self.shader(CAMPAIGN_SEA_VS)?;
+            let ps = self.shader(&format!("dx11_sm_3_0_waterplane.hlsl_ps_ps30_campaign_{}_water_quality", super::water::water_level(quality)))?;
+            Some((c, vs, ps))
+        });
+        let (vs, ps) = match &campaign {
+            Some((_, vs, ps)) => (vs.clone(), ps.clone()),
+            None => {
+                let (Some(vs), Some(ps)) = (self.shader(if rome2 { R2_OCEAN_VS } else { OCEAN_VS }), ps) else { return false };
+                (vs, ps)
+            }
+        };
         let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
-        let el = [element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 32, false)];
-        let Some(layout) = self.layout(&vs, if rome2 { "ocean_rome2" } else { "ocean" }, &el) else { return false };
+        let layout = if campaign.is_some() {
+            self.layout(&vs, "campaign_sea", &[element(c"POSITION", 0, f4, 0, 16, false)])
+        } else {
+            let el = [element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 32, false)];
+            self.layout(&vs, if rome2 { "ocean_rome2" } else { "ocean" }, &el)
+        };
+        let Some(layout) = layout else { return false };
 
         wce_prof!("render.ocean");
         let u = self.camera.units;
@@ -663,6 +684,24 @@ impl Renderer {
         cbs.set_f("OceanSharedConstants", "g_detail_normal_uv_speed2", &[detail[3]]);
         cbs.set_f("OceanSharedConstants", "g_transparency_exponential_scale", &[TRANSPARENCY_EXPONENTIAL_SCALE]);
         cbs.set_f("OceanSharedConstants", "g_foam_anim_data", &foam_anim);
+        // The campaign water's: the map's size (game units) for its colour map, the surfaces' repeats, no shroud, no overlay transform;
+        // its world matrix moves the chunks (the sea's frame) into the frame of the map's south-west corner, where the camera goes too.
+        let mut sea_shift = self.ocean_origin(scene) - self.camera.origin;
+        if let Some((c, _, _)) = &campaign {
+            let o = self.ocean_origin(scene);
+            let corner = Float3::new(c.corner[0], o.y, c.corner[1]);
+            let mut world = Float4x4::IDENTITY;
+            (world.m[0][3], world.m[2][3]) = ((o.x - corner.x) * u, (o.z - corner.z) * u);
+            let cbs = &mut self.cbs;
+            cbs.set_m("waterplane_VS", "g_world", world.data());
+            cbs.set_m("waterplane_VS", "g_overlay_view_projection", Float4x4::IDENTITY.data());
+            cbs.set_f("campaign_CB", "g_wp_world_size", &[c.size[0] * u, c.size[1] * u]);
+            cbs.set_f("campaign_ocean_cb", "g_sea_uv_scale", &[sea_uv]);
+            cbs.set_f("campaign_ocean_cb", "g_swell_uv_scale", &[swell_uv]);
+            cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
+            sea_shift = corner - self.camera.origin;
+        }
+
         self.upload();
 
         let rtvs = if rome2 {
@@ -720,10 +759,20 @@ impl Renderer {
         bind_srv(ctx, &ps, "g_tShadowBuffer_SM50", self.shadow_map.srv.as_ref());
         bind_sampler(ctx, &ps, "sShadowBuffer_SM50", self.states.s_shadow_cmp.as_ref());
         self.bind_baked_shadow(&ps);
+        if let Some((c, _, _)) = &campaign {
+            let colour = srv(self.textures.get(&c.colour, false)).or_else(|| self.res.white_srv.clone());
+            let ctx = &self.ctx;
+            for s in ["s_lf_colour", "s_overlay", "s_shroud"] {
+                bind_sampler(ctx, &ps, s, self.states.s_clamp_linear.as_ref());
+            }
 
-        // The camera (and the cascades) in the sea's frame for its draws, the view's again after.
-        let shift = self.ocean_origin(scene) - self.camera.origin;
-        self.shift_camera_constants(shift);
+            bind_srv(ctx, &ps, "s_lf_colour", colour.as_ref());
+            bind_srv(ctx, &ps, "s_overlay", self.res.opaque_black_srv.as_ref());
+            bind_srv(ctx, &ps, "s_shroud", self.res.white_srv.as_ref());
+        }
+
+        // The camera (and the cascades) in the sea's frame for its draws (a campaign sea's: the map corner's), the view's again after.
+        self.shift_camera_constants(sea_shift);
         self.upload();
         let o = &self.water.ocean;
         if o.vb.is_some()

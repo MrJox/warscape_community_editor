@@ -141,6 +141,21 @@ enum Job {
 pub(crate) const CAMPAIGN: &str = "campaigns/";
 
 /// A map name's kind and folder name (`campaigns/<name>`: a kit campaign map).
+/// A campaign map's sea colour (`terrain/campaigns/<map>/lf_sea_colour.dds` in the packs) over the map's cells in the view's frame: the
+/// game's campaign water shader colours its sea from it (`waterplane.hlsl` campaign: `s_lf_colour` at the world position over
+/// `g_wp_world_size`, v from the north). None for a battle map, or without the file.
+fn campaign_sea(e: &Editor, id: DocumentId, s: &Streamer) -> Option<wce_scene::render_scene::CampaignSea> {
+    let d = e.docs.find_as::<MapDocument>(id)?;
+    let (MapKind::Campaign, name) = map_kind(&d.name) else { return None };
+    let colour = format!("terrain/campaigns/{name}/lf_sea_colour.dds");
+    e.files().filter(|f| f.exists(&colour))?;
+    let f = s.frame();
+    let (w, h) = (f64::from(f.map.width), f64::from(f.map.height));
+    let (sw, ne) = (f.from_map.apply(0.0, h), f.from_map.apply(w, 0.0));
+    let size = [(ne.0 - sw.0) as f32, (ne.1 - sw.1) as f32];
+    (size[0] > 0.0 && size[1] > 0.0).then(|| wce_scene::render_scene::CampaignSea { colour, corner: [sw.0 as f32, sw.1 as f32], size })
+}
+
 pub(crate) fn map_kind(name: &str) -> (MapKind, &str) {
     match name.strip_prefix(CAMPAIGN) {
         Some(n) => (MapKind::Campaign, n),
@@ -611,6 +626,7 @@ impl TerrainTool {
         }
 
         self.light(e, id);
+        e.scene.campaign_sea = campaign_sea(e, id, &s);
         let lift = s.frame().lift(0.0, 0.0);
         let start = s.frame().lf.as_ref().and_then(|lf| land_near_centre(lf));
         self.pick = s.frame().lf.clone().map(LfPick::new);
@@ -1570,6 +1586,7 @@ impl Tool for TerrainTool {
         // The map closed: its view goes with it.
         if self.shown != 0 && e.docs.find(self.shown).is_none() {
             self.view.clear(e);
+            e.scene.campaign_sea = None;
             self.cameras.remove(&self.shown);
             self.shown = 0;
         }
