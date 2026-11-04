@@ -394,7 +394,13 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      section, the tile map made again from the list after an edit (`TileMap::with_placements`: `place_tile`'s cover, an origin cell's
      64-cell chunk number in bytes 10 and 11, the flip byte kept): all seven byte for byte from their own placements
      (`tile_map_rebuild_check`, gate `rome2_tile_map_rebuild` with `WCE_ROME2_DB`). Checked in the app: a road removed on `main_gaul`.
-   Left for Rome 2: the normals and `tile_map.png` after an edit (the packs' stay); a launch.
+   - The LF normal chunks after an LF edit (2026-11-04): the chunks the edit reaches, each from its own shipped chunk (Rome 2 has no
+     `normal.dds`), moved over the edited samples by the change of the LF's normal (`normals::edited_shipped_chunks`; Attila's export
+     now moves its `normal.dds` the same way, keeping the tiles' relief). The layouts: the 256-sample grid of 576-pixel chunks (the
+     large maps, 27 of 94) and one chunk of a 512-sample LF with a 32-pixel margin; the 67 small maps whose normal map is not the LF's size
+     (one chunk of 320, 640 or 1152 pixels) keep the game's. `built_normals_check` (gates `rome2_built_normals_<map>`): away from the edit
+     within 0.2 of the shipped chunk, every changed normal moving out of a raised hill.
+   Left for Rome 2: `tile_map.png` after an edit (the packs' stays); a launch.
 
 ## Risks
 
