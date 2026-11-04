@@ -102,6 +102,17 @@ pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn
         d(a).total_cmp(&d(b))
     }).cloned();
     let ends = [attached(points[0]), attached(points[points.len() - 1])];
+
+    // An attached end starts exactly on its joint, wherever its point was left within reach (the joints of TDD's gondor pieces moved
+    // from their boxes' ends to their walkways' a quarter of a metre in, and walls snapped before kept a gap; user 2026-11-04).
+    let mut points = points;
+    let last = points.len() - 1;
+    for (k, i) in [(0, 0), (1, last)] {
+        if let Some(a) = &ends[k] {
+            points[i] = [a.at[0], a.at[2]];
+        }
+    }
+
     let input = WallInput {
         points,
         sharp,

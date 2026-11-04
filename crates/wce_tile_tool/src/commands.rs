@@ -1241,7 +1241,12 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let (doors, skipped) = d.tile().wall_doors(&l, &ps);
         let (defences, defences_skipped) = wce_walls::pieces::defence_slots(&l.plan, l.profile);
         let defences = defences.iter().map(|(s, k)| format!("{k} at {s:.0}")).collect::<Vec<_>>().join(", ");
-        ok(format!("{}; {} pieces, doors at pieces {doors:?}; towers and bastions [{defences}]; corners [{corners}]; runs [{runs}]; steps [{steps}]{}", crate::tool::wall_summary(&l), ps.len(),
+        let n = l.plan.samples.len();
+        let ends = [(0, l.plan.samples.first()), (1, l.plan.samples.get(n.wrapping_sub(1)))].iter().filter_map(|&(k, sm)| {
+            let (sm, a) = (sm?, l.ends[k].as_ref()?);
+            Some(format!("end {k} at ({:.3}, {:.3}), its joint ({:.3}, {:.3})", sm.centre[0], sm.centre[1], a.at[0], a.at[2]))
+        }).collect::<Vec<_>>().join(", ");
+        ok(format!("{}; {} pieces, doors at pieces {doors:?}; towers and bastions [{defences}]; corners [{corners}]; runs [{runs}]; steps [{steps}]; joints [{ends}]{}", crate::tool::wall_summary(&l), ps.len(),
             l.plan.warnings.iter().chain(&skipped).chain(&defences_skipped).map(|w| format!("; {w}")).collect::<String>()))
     });
 

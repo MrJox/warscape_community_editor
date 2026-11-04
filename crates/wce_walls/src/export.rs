@@ -63,10 +63,10 @@ impl Bases<'_> {
     }
 }
 
-/// The x extent of a building's frame: its logic file's box.
+/// The x extent a wall attaches to on a building: its joints, else its logic file's box (`logic::joint_extent_x`).
 fn extent(files: &dyn Files, key: &str) -> Option<(f64, f64)> {
     let b = files.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok()?;
-    crate::logic::extent_x(&b).ok().map(|(a, b)| (f64::from(a), f64::from(b))).filter(|(a, b)| b > a)
+    crate::logic::joint_extent_x(&b).ok().map(|(a, b)| (f64::from(a), f64::from(b))).filter(|(a, b)| b > a)
 }
 
 /// Lowers the scene's walls (see the module), `ground(x, z)` the terrain in scene units, keys prefixed with `prefix`; the pieces go in each
