@@ -3,6 +3,7 @@
 //! themselves ([`MapFiles::from_dir`] / [`MapFiles::write_to`] do), so the gates run in memory.
 
 pub mod attila;
+pub mod built;
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -47,6 +48,11 @@ fn collect(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Blob>) -> std::i
 }
 
 impl MapFiles {
+
+    /// Files read already (a folder of the game's packs).
+    pub fn from_bytes(files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Self {
+        Self { folder: files.into_iter().map(|(p, b)| (p, Blob::Bytes(std::sync::Arc::from(b)))).collect() }
+    }
 
     /// The files of a folder (not read yet: blobs that point at the files).
     ///

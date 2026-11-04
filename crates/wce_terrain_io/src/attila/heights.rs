@@ -133,11 +133,22 @@ pub fn campaign_lf_data(field: &PagedU16, cells: (u32, u32)) -> Vec<u8> {
     f.write()
 }
 
-/// `lf_height_map.data` of samples (`w` x `h`, converted already).
-fn lf_height_data_of(all: &[u16], w: u32, h: u32, cells: (u32, u32)) -> Vec<u8> {
+/// `lf_height_map.data` of samples (`w` x `h`, converted already), as BOB writes it (the header's max and each region tag's second
+/// value 65535).
+pub fn lf_height_data_of(all: &[u16], w: u32, h: u32, cells: (u32, u32)) -> Vec<u8> {
+    chmf_of(all, w, h, cells, true)
+}
+
+/// The same with the header's max the highest sample and the regions' tags as encoded (Rome 2's packs).
+pub fn lf_height_data_rome2(all: &[u16], w: u32, h: u32, cells: (u32, u32)) -> Vec<u8> {
+    chmf_of(all, w, h, cells, false)
+}
+
+fn chmf_of(all: &[u16], w: u32, h: u32, cells: (u32, u32), bob: bool) -> Vec<u8> {
     let (cx, cy) = ((w / cells.0.max(1)).max(1), (h / cells.1.max(1)).max(1));
     let min = all.iter().copied().min().unwrap_or(0);
-    let mut f = ChmfFile { version: 5, width: w, height: h, cells_x: cx, cells_y: cy, min: f32::from(min), max: 65535.0, spacing: 1, regions: vec![] };
+    let max = if bob { 65535.0 } else { f32::from(all.iter().copied().max().unwrap_or(0)) };
+    let mut f = ChmfFile { version: 5, width: w, height: h, cells_x: cx, cells_y: cy, min: f32::from(min), max, spacing: 1, regions: vec![] };
     let (rw, rh) = (cells.0.div_ceil(REGION_CELLS), cells.1.div_ceil(REGION_CELLS));
     for ry in 0..rh {
         for rx in 0..rw {
@@ -148,7 +159,7 @@ fn lf_height_data_of(all: &[u16], w: u32, h: u32, cells: (u32, u32)) -> Vec<u8> 
             let (sx, sy) = (rect[0] * cx, rect[1] * cy);
             let samples: Vec<u16> = (0..sh).flat_map(|y| (0..sw).map(move |x| (x, y))).map(|(x, y)| all[((sy + y).min(h - 1) * w + (sx + x).min(w - 1)) as usize]).collect();
             let (tag, offsets, data) = encode_region(sw, sh, &samples);
-            f.regions.push(ChmfRegion { rect, tag: [tag[0], 65535], offsets, data });
+            f.regions.push(ChmfRegion { rect, tag: if bob { [tag[0], 65535] } else { tag }, offsets, data });
         }
     }
 

@@ -135,6 +135,9 @@ if [ -n "${WCE_ROME2:-}" ]; then
     run rome2_tile_database ex wce_tile_io rome2_tile_database_check "$WCE_ROME2"
     run rome2_tile_decompile ex_rome2 wce_tile_io tile_decompile_check "$WCE_ROME2" --filter roads_stone/2x2
     run rome2_tile_workflow ex_rome2 wce_tile_io tile_workflow_check "$WCE_ROME2" "$OUT/rome2_workflow" terrain/tiles/battle/settlement_roman_cities/roman_city_a/small
+    # Its maps' built files (the only form they have) read and written back, and the CHMF an LF edit makes (Terrain tool, Phase 9)
+    run rome2_map_built_roundtrip ex_rome2 wce_terrain_io map_built_roundtrip_check --game "$WCE_ROME2" --vanilla
+    run rome2_built_lf ex_rome2 wce_terrain_io built_lf_check "$WCE_ROME2" --vanilla
     if [ "$CORPUS" = 1 ]; then
         run rome2_tile_binary_roundtrip_all ex wce_tile_io tile_binary_roundtrip_check "$WCE_ROME2/data"
         run rome2_tile_decompile_all ex_rome2 wce_tile_io tile_decompile_check "$WCE_ROME2"

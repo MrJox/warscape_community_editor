@@ -283,7 +283,7 @@ impl Document for MapDocument {
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
         let dir = if target.path.as_os_str().is_empty() { self.save_dir.clone().ok_or("no projects folder to save into")? } else { target.path.clone() };
         let model = self.model().ok_or("a map of the game's packs is read-only")?;
-        let files = wce_terrain_io::attila::write(model).map_err(|e| e.to_string())?;
+        let files = if model.built { wce_terrain_io::built::write(model) } else { wce_terrain_io::attila::write(model) }.map_err(|e| e.to_string())?;
         let (mut written, mut kept) = (0, 0);
         for (rel, blob) in &files.folder {
             let to = dir.join(rel);
