@@ -123,7 +123,7 @@ impl Affine2 {
 pub struct LfField {
     pub w: u32,
     pub h: u32,
-    pub values: Vec<u16>,
+    pub values: std::sync::Arc<[u16]>,
 }
 
 impl LfField {
