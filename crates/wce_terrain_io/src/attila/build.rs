@@ -8,7 +8,7 @@
 //!   and nogo images (`wce_terrain::locations`, `wce_terrain::deployment`);
 //! - `tile_map.png` as the map has it (the game's packs carry it).
 //!
-//! Not made: the LF normal chunks (`normals/normal_N.dds`, 576 x 576 DXT5 written by NVTT; the game's own stay in its packs).
+//! - `normals/normal_N.dds`, the LF normal chunks an LF edit reaches ([`super::normals`]; the others stay the game's).
 
 use wce_terrain::locations::{Image, MaskInputs};
 use wce_terrain::{LayerRole, LfRole, MapModel};
@@ -85,6 +85,14 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
     if let Some(f) = land {
         files.push(("lf_height_map.dds".to_owned(), heights::lf_height_dds(f)));
         files.push(("lf_height_map.data".to_owned(), heights::lf_height_data(f, (w, h))));
+    }
+
+    // The LF normal chunks an LF edit reaches (none for an LF as the map's file has it: the game's stay).
+    if let Some(item) = m.lf(LfRole::Land).filter(|i| i.edited()) {
+        let original = item.origin.bytes().ok().and_then(|b| super::normals::tiff_samples(&b)).unwrap_or_default();
+        let base = m.carried.iter().find(|(k, _)| k.eq_ignore_ascii_case("normal.dds")).and_then(|(_, b)| b.bytes().ok())
+            .and_then(|b| super::normals::NormalImage::from_dds(&b));
+        files.extend(super::normals::chunks(item.get(), &original, base.as_ref(), (w, h)));
     }
 
     if let Some(f) = m.lf(LfRole::Sea) {
