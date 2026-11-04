@@ -312,6 +312,12 @@ fn built_files(i: &OpenInputs, folder: &str) -> Result<wce_terrain_io::MapFiles,
     Ok(wce_terrain_io::MapFiles::from_bytes(out))
 }
 
+/// The first source with both tile databases (its `raw_data`): an Assembly Kit, or a projects folder made like one.
+fn whole_kit_root(e: &Editor) -> Option<PathBuf> {
+    let has = |r: &PathBuf, kind: &str| r.join(format!("terrain/tiles/{kind}/_tile_database")).is_dir();
+    kit_roots(e).into_iter().find(|r| has(r, "battle") && has(r, "campaign"))
+}
+
 /// The kit with the battle tile database (its `raw_data`).
 fn database_root(e: &Editor) -> Option<PathBuf> {
     // A whole kit first (battle and campaign databases: decompiling a pack's tile reads both); a project with only a battle database
@@ -431,7 +437,9 @@ impl TerrainTool {
         if (self.packs.is_none() || stale)
             && let Some(vfs) = e.vfs().cloned()
         {
-            let kit = database_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf));
+            // Only a whole kit (both tile databases: decompiling reads them); a projects folder with a database copied in is not one,
+            // and Rome 2 has none (the packs' database then).
+            let kit = whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf));
             let tree = Arc::new(PacksTree::new(vfs, kit, &e.settings_ref().paths().cache_dir().join("neighbours"), e.game().key));
             let t = tree.clone();
             self.provider = Some(Arc::new(move |location: &str, variation: &str| t.tile(location, variation)));
@@ -520,7 +528,7 @@ impl TerrainTool {
             map: m.clone(), spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 }, cells: (0, 0), unit: UNIT,
             near: self.rings.near, mid: self.rings.mid, far: self.view.far_ring(self.rings.far),
             raw_root: database_root(e).or_else(|| self.packs.as_ref().and_then(|p| p.raw().ok()))?, tile_roots: roots,
-            game_kit: database_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)), look: TerrainLook::default(), trees: true, plain: None,
+            game_kit: whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)), look: TerrainLook::default(), trees: true, plain: None,
             groups: None, cache: Some(cache::cache_dir()), provider: self.provider.clone(),
         })
     }

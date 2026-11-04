@@ -107,6 +107,12 @@ impl CellPaint {
             return;
         };
 
+        if m.built {
+            gui::text_wrapped("A map of a game without kit maps (Rome 2) is edited in its built form: its tiles in the Placements section, its LF with the LF brush.");
+            self.on = false;
+            return;
+        }
+
         let names: Vec<String> = m.layers.iter().map(|(r, item)| format!("{} - {}", role_name(r), item.path)).collect();
         if names.is_empty() {
             gui::text_disabled("This map has no cell layers.");
