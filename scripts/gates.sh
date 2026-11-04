@@ -140,6 +140,10 @@ if [ -n "${WCE_ROME2:-}" ]; then
     run rome2_map_built_roundtrip ex_rome2 wce_terrain_io map_built_roundtrip_check --game "$WCE_ROME2" --vanilla
     run rome2_built_lf ex_rome2 wce_terrain_io built_lf_check "$WCE_ROME2" --vanilla
     run rome2_built_scene ex_rome2 wce_terrain_io built_scene_check "$WCE_ROME2" --vanilla
+    # The LF normal chunks an LF edit makes from the shipped ones: a campaign battle map, a settlement map, one with a layout kept
+    for m in main_gaul settlement_greek_city_d alesia; do
+        run "rome2_built_normals_$m" ex_rome2 wce_terrain_io built_normals_check "$WCE_ROME2" "terrain/battles/$m"
+    done
     # The campaign battle maps' tile maps made again from their placements (the database: the Terrain tool's packs tree, WCE_ROME2_DB)
     [ -n "${WCE_ROME2_DB:-}" ] && run rome2_tile_map_rebuild ex_rome2 wce_tile tile_map_rebuild_check "$WCE_ROME2" "$WCE_ROME2_DB"
     if [ "$CORPUS" = 1 ]; then

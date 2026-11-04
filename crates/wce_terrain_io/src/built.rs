@@ -186,6 +186,19 @@ pub fn write(m: &MapModel, db: Option<&wce_tile::battle_map::tile_db::TileDataba
         dds.extend_from_slice(origin.get(128 + f.width() as usize * f.height() as usize * 2..).unwrap_or_default());
         folder.insert(item.path.clone(), Blob::Bytes(Arc::from(dds)));
 
+        // The LF normal chunks the edit reaches, from the shipped ones (docs/formats/map_files.md: Rome 2 has no `normal.dds`).
+        if let Some(cells) = cells(m) {
+            let n = f.width() as usize * f.height() as usize;
+            let original: Vec<u16> = origin.get(128..128 + n * 2).map(|b| b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()).unwrap_or_default();
+            let chunk_name = |i: i64| format!("normals/normal_{i}.dds");
+            let count = m.carried.keys().filter(|k| k.to_ascii_lowercase().starts_with("normals/normal_") && k.to_ascii_lowercase().ends_with(".dds")).count();
+            let shipped = |i: i64| m.carried.iter().find(|(k, _)| k.eq_ignore_ascii_case(&chunk_name(i))).and_then(|(_, b)| b.bytes().ok()).map(|b| b.to_vec());
+            for (name, bytes) in crate::attila::normals::edited_shipped_chunks(f, &original, cells, count, &shipped) {
+                let key = folder.keys().find(|k| k.eq_ignore_ascii_case(&name)).cloned().unwrap_or(name);
+                folder.insert(key, Blob::Bytes(Arc::from(bytes)));
+            }
+        }
+
         let key = folder.keys().find(|p| p.eq_ignore_ascii_case(CHMF)).cloned().unwrap_or_else(|| CHMF.to_owned());
         let shipped = folder.get(&key).and_then(|b| b.bytes().ok());
         if let Some(cells) = cells(m)
