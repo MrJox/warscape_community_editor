@@ -563,6 +563,30 @@ impl TerrainTool {
     /// (ASSUMPTION: a stand-in for the Tile tool's weather choice through the kit's variation database, not shared yet).
     fn light(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(d) = e.docs.find_as::<MapDocument>(id) else { return };
+        // A campaign map: its own lighting, as the game has it (`environment_collection.xml`'s `global_lighting`, Attila's
+        // `lighting/europe_sp.lighting`; else the folder's `default.environment`). A battle weather drew its ground dark and blue.
+        if let (MapKind::Campaign, name) = map_kind(&d.name)
+            && let Some(files) = e.files()
+        {
+            let dir = format!("terrain/campaigns/{name}");
+            let global = files.read(&format!("{dir}/environment_collection.xml")).ok().and_then(|b| {
+                let text = String::from_utf8_lossy(&b).into_owned();
+                let at = text.find("global_lighting=")? + "global_lighting=".len();
+                let quote = text[at..].chars().next()?;
+                text[at + 1..].split(quote).next().map(|s| s.to_lowercase().replace('\\', "/"))
+            });
+            let file = global.filter(|f| files.exists(f)).or_else(|| Some(format!("{dir}/default.environment")).filter(|f| files.exists(f)));
+            if let Some(file) = file {
+                match e.set_weather_preview(Some(&file)) {
+                    Ok(_) => log::info(format!("terrain: the map's lighting {file}")),
+                    Err(err) => e.status(&format!("the map's lighting: {err}"), true),
+                }
+
+                return;
+            }
+        }
+
+        let Some(d) = e.docs.find_as::<MapDocument>(id) else { return };
         let m = &d.placed;
         let (cx, cy) = ((m.width / 2) as i32, (m.height / 2) as i32);
         let climate = m.placements.iter().find(|p| { let r = p.rect(); r[0] <= cx && cx < r[2] && r[1] <= cy && cy < r[3] }).and_then(|p| m.climate_of(p)).map(str::to_lowercase);

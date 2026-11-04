@@ -1327,10 +1327,19 @@ impl Renderer {
         // ps_height_map_cb: the values the live game shows (dump of a battle) where the tool has no other source; the far-distance blend
         // and the map-wide normal map are switched off (g_far_tile_distance / g_far_blend_range very large): the tile's own maps are the near
         // field, and the editor has one tile.
-        cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[20.0, 550.0, 3.0, 0.9]);
-        cbs.set_f("ps_height_map_cb", "g_near_distance_details", &[200.0, 4.0, 0.6, 0.0]);
-        cbs.set_f("ps_height_map_cb", "g_mid_distance_normal_strength", &[2.0]);
-        cbs.set_f("ps_height_map_cb", "g_mid_distance_slope", &[0.96, 3.0]);
+        // A campaign's: its database's RENDER_PARAMS (mid_distance_detail_near / _scale / _slope_high / _strength 1000, 1000, 1.5, 0.6,
+        // slope_low 0.8, normal strength 1; no near-distance detail). ASSUMPTION: that the game feeds them as it feeds the battle's; not traced.
+        if campaign {
+            cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[1000.0, 1000.0, 1.5, 0.6]);
+            cbs.set_f("ps_height_map_cb", "g_near_distance_details", &[200.0, 4.0, 0.0, 0.0]);
+            cbs.set_f("ps_height_map_cb", "g_mid_distance_normal_strength", &[1.0]);
+            cbs.set_f("ps_height_map_cb", "g_mid_distance_slope", &[0.8, 1.5]);
+        } else {
+            cbs.set_f("ps_height_map_cb", "g_mid_distance_details", &[20.0, 550.0, 3.0, 0.9]);
+            cbs.set_f("ps_height_map_cb", "g_near_distance_details", &[200.0, 4.0, 0.6, 0.0]);
+            cbs.set_f("ps_height_map_cb", "g_mid_distance_normal_strength", &[2.0]);
+            cbs.set_f("ps_height_map_cb", "g_mid_distance_slope", &[0.96, 3.0]);
+        }
         cbs.set_f("ps_height_map_cb", "g_channel_offsets", &[0.0; 4]);
         cbs.set_f("ps_height_map_cb", "g_normal_scales", &[1.0, 1.0, 1.0]);
         cbs.set_f("ps_height_map_cb", "g_blend_gain", &[1.0]);

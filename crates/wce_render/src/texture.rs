@@ -284,8 +284,40 @@ fn build_dds(dev: &ID3D11Device, l: &DdsLayout, data: &[u8], data_offset: usize,
 ///
 /// Fails for an unsupported or truncated file, or if the device refuses the texture.
 pub fn load_dds(dev: &ID3D11Device, bytes: &[u8], srgb: bool) -> Result<Texture, RenderError> {
+    let expanded = expand_luminance(bytes);
+    let bytes = expanded.as_deref().unwrap_or(bytes);
     let l = parse_dds_layout(bytes)?;
     build_dds(dev, &l, bytes, 0, 0, srgb)
+}
+
+/// Whether a DDS is 8-bit luminance (DDPF_LUMINANCE, no fourcc): Attila's campaign `medium_detail_map_colour.dds` (64 x 64 L8).
+fn is_luminance8(b: &[u8]) -> bool {
+    let u32_at = |o: usize| b.get(o..o + 4).map(|v| u32::from_le_bytes([v[0], v[1], v[2], v[3]]));
+    b.len() >= 128 && u32_at(80).is_some_and(|f| f & 0x2_0000 != 0 && f & 0x4 == 0) && u32_at(88) == Some(8)
+}
+
+/// An 8-bit luminance DDS as a 32-bit RGBA one (L, L, L, 255 per texel, every mip and face): D3D9 sampled L8 as grey; D3D11's R8 reads
+/// (L, 0, 0, 1), so a shader reading its rgb (the campaign's detail colour) got red alone. `None` for any other file.
+fn expand_luminance(b: &[u8]) -> Option<Vec<u8>> {
+    if !is_luminance8(b) {
+        return None;
+    }
+
+    let mut out = b[..128].to_vec();
+    // Pitch, the pixel format's flags (RGB | alpha pixels), bit count and masks.
+    let w = u32::from_le_bytes([b[16], b[17], b[18], b[19]]);
+    out[20..24].copy_from_slice(&(w * 4).to_le_bytes());
+    out[80..84].copy_from_slice(&0x41u32.to_le_bytes());
+    for (at, v) in [(88, 32u32), (92, 0xFF), (96, 0xFF00), (100, 0xFF_0000), (104, 0xFF00_0000)] {
+        out[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    out.reserve((b.len() - 128) * 4);
+    for &l in &b[128..] {
+        out.extend_from_slice(&[l, l, l, 255]);
+    }
+
+    Some(out)
 }
 
 /// Mip streaming: DDS files store the largest mip first, so the small ones sit at the end of the file.
@@ -308,6 +340,11 @@ pub struct DdsStreamPlan {
 /// Where the mips that fit in `max_dim` start, from the first bytes of a file (at least 148).
 pub fn plan_dds_stream(header: &[u8], file_size: usize, max_dim: u32) -> DdsStreamPlan {
     let mut plan = DdsStreamPlan::default();
+    // A luminance file is expanded whole (`load_dds`).
+    if is_luminance8(header) {
+        return plan;
+    }
+
     let Ok(l) = parse_dds_layout(header) else { return plan };
     plan.width = l.width;
     plan.height = l.height;
