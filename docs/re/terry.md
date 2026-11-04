@@ -88,14 +88,14 @@ built with an older tile database: they are not fill oracles (33 of 43 differ, a
 | `lf_height_map.dds` | Heights & Normals | L16, no mips, the TIFF's samples through `trunc(f32(f32(a * f32(1 / 65535)) * f32(65535)))` (a sample one step lower now and then) | made byte for byte (`heights_build_check`, `wce_relief` and `main_attila_map`) |
 | `lf_sea_height_map.dds` | Heights & Normals | L16 with a full mip chain (to 2 x 2: 11 levels for 4064 x 2874); level 0 as above; each level from the float level above: `f32(((a + b) + c) + d) * 0.25` over the 2 x 2 block, then truncated the same way | made byte for byte, every level (`heights_build_check`, `wce_relief` and `main_attila_map`'s 11 levels of 4064 x 2874: odd sides halve with floor) |
 | `lf_height_map.data` | Heights & Normals | CHMF v5 of the LF samples converted as the DDS's (header min = the lowest, max 65535; spacing 1); whole regions of 16 x 16 cells (cells of 8 x 8 samples on a settlement map, 4 x 4 on the campaign one: 11 430 regions; the last row and column reach past the map, rows 1424 .. 1440 of 1437, with its edge samples); each region's tag `[region min, 65535]` | made by `wce_terrain_io::attila::heights` byte for byte (`heights_build_check`: `wce_relief` and `main_attila_map`, 53 MB) |
-| `locations.blm` | Tilemap, with `save_meta_data_map` | the `.terry`'s BCAs by type, in entity order; header and the climate table as the game's | counts = the `.terry`'s per type; 5 of 9 types record for record as the game's (its `.terry` was older for the procedural ones). Centre = the BCA's position in cells (`x / 256 + width / 2`, `height / 2 - z / 256`), rectangle from its `Catchment Region` child; the rounding to cells is open |
-| `locations.blm.mask0` / `.mask1` | Tilemap, with `save_meta_data_map` | a u16 bitset per cell | open: the low bits of `mask0` look like `1 << climate` (the blm's climate order); other bits follow the placed tiles (their data was not in the scratch kit) and maybe the BCAs. `main_attila_map`: `mask0` agrees with the game's on no cell, `mask1` on 75 % |
-| `deployment/deployment_NNNN.xml` | Tilemap, with `save_meta_data_map` | `BATTLE_DEPLOYMENT_AREA_HASH_TABLE`: per alliance a `deployment_area` (category `DAC_*`) of `standard additive` boundaries, tile-local units | one file per two `ECDeploymentZone`s (1 766 -> 883); the game's 2 074 come from another `.terry` |
+| `locations.blm` | Tilemap, with `save_meta_data_map` | per battle type the `.terry`'s BCAs in entity order; then the cell count and the climate table | made byte for byte (`wce_terrain::locations`, `built_check`; "locations.blm and its masks" below) |
+| `locations.blm.mask0` / `.mask1` | Tilemap, with `save_meta_data_map` | a u16 bitset per cell | made byte for byte (below) |
+| `deployment/deployment_NNNN.xml` | Tilemap, with `save_meta_data_map` | `BATTLE_DEPLOYMENT_AREA_HASH_TABLE`: one file per BCA with zones (entity order); per alliance a `deployment_area` per zone (`DZC_*` as `DAC_*`), per region a `standard additive` / `subtractive` boundary relative to the BCA (f32, `%f` rounding half away from zero) | made byte for byte (`wce_terrain::deployment`: 883 of `main_attila_map`, 384 of Thrones' `vik_attila_map`) |
 | `<map>.agf`, `entities.agf` | all | BOB's asset list (`##folder`, `#all`, `#tiles`) | text |
 
 - `Terry file` (7 s on the 32 MB project) writes nothing visible; the blm, masks and deployments come out of `Tilemap` when the map's
   folder has a `rules.bob` with `save_meta_data_map` (docs/re/bob.md).
-- No normal chunks were written: the game's 736 come from elsewhere (the kit's 250 MB `normal.dds`; open).
+- No normal chunks were written: the game's 736 (`normals/normal_N.dds`, 576 x 576 DXT5 with mips by NVTT: 144-cell squares 64 cells apart, the old tile map's chunk grid) come from elsewhere, likely cut from the kit's 250 MB `normal.dds` (8128 x 5764 ARGB); not made (open).
 - `Tilemap` logs "Failed to find tile for point 360x977" (and three more points) on `main_attila_map`; the port gives 4 messages too.
 
 ## The scene's structure, from the files and BOB (2026-11-03)
@@ -172,6 +172,33 @@ their 780 zones, 1 088 regions and 8 317 polyline points (to 5 cm) agrees (gate 
   - With `delete_invalid` a BCA with any error goes (the oracle: 57 of 693, its number not reused).
 - The y of the BCAs and regions is the terrain's height (the tiles' too: -21.8 on a sea tile whose LF is 0 .. 0.014): not ported.
 
+## locations.blm and its masks (Ghidra, 2026-11-04)
+
+BOB_Terrain's `Tilemap` (BOB_Terrain.AssemblyKit.dll fn 0x10011f60, its masks from ToolDataBuilderDll's `process_terrain_internal`
+fn 0x1002e2f0) through the engine's `WARSCAPE::BATTLE_LOCATIONS_MAP` (`add_catchment`, `set_mask`, `save`; Thrones' engine DLL has the
+names). Ported as `wce_terrain::locations`; byte for byte (`built_check`) on Attila's `main_attila_map`, `wce_edit`, `wce_relief` and
+Thrones' `vik_attila_map`.
+
+- **Records**: the rectangle's edges and the centre to cells as `w / 2 + trunc(x / 256)`, `h / 2 - trunc(z / 256)` (metres, truncated
+  toward zero: an exact half rounds the two sides of the map's centre opposite ways); the id `0xffff0000 + n`, `n` the BCA's deployment
+  file's number, for a BCA with zones, else -1.
+- **Order**: the types and the climate table are `CA_STD::UNORDERED_MAP`s iterated bucket by bucket: 4 buckets, a key appended to
+  bucket `hash % n`, grown to `2n + 1` when the keys outnumber the buckets; the hash (fn 0x1003eb50) starts at 0xf73a51c9 and xors each
+  signed byte from the last back, shifted 0, 8, 16, 24 in turn. The types are inserted as their first BCA comes, the climates in the tile
+  database's order.
+- **The climate table** (fn 0x1002d110): per climate of the database, the `environment_map.xml` entries whose `climate` contains its
+  name (a substring: `ROME_Destruct` takes `ROME_Destructdes`'s) give `battle_types` land 2, sea 4; `time_of_day` day 0x20000, night
+  0x10000; `precipitation` dry 0x400000, rain 0x200000, fog 0x40000, snow 0x100000, storm 0x80000.
+- **mask0** per cell of the tile layer (a covered cell: its origin's tile): 1 an `encampable` tile; 0x100 no tile; 8 a tile with a
+  barbarian variation `minor`; bits 4 .. 7 the cell's climate; 0x400, 0x800, 0x1000, 0x4000, 0x8000 the `culture_map.png` colour of the
+  first five `tile_upgrades.xml` entries with `id` and a colour (when the image covers the map); 0x200 snow; then BOB_Terrain's own
+  pass over `nogo.dds` (B, G, R bytes): (185, 139, 0) 4, (0, 174, 0) 2.
+- **mask1**: 0x1000 a barbarian variation `small`, 0x2000 `medium`; snow (fn 0x1002dbc0): with `snow_map_sp`, `_su`, `_au`, `_wi.png`
+  of one size (BOB accepts them unless both sides differ from the map's: `main_attila_map`'s are 4 rows taller), a white cell sets
+  0x100 << season and mask0's 0x200; without them a white `snow_map.png` cell sets 0x200.
+- The engine reads them back as `get_available_enviroment_mask` (the climate's flags, 0x200, mask1 << 16), `get_culture_id`, the snow
+  attrition queries and `point_contains_mask` (`AM_BARBARIAN_*`).
+
 ## Per-tile LF patches (Ghidra, 2026-11-03)
 
 Project `kit` in `I:\wce_scratch\ghidra_kit` (Attila's `TWeak_TerrainMetadataEditor.AssemblyKit.dll` and `ToolDataBuilderDll.AssemblyKit.dll`,
@@ -195,7 +222,7 @@ image base 0x10000000).
 
 ## Open
 
-- The blm rectangles' rounding, the masks' bits, where the game's 736 normal chunks come from.
+- Where the game's 736 normal chunks come from (and an encoder for them).
 - The falloff models' formulas (`Radius Sin`, `Radius Sin Sin`) and `OpSimpleChannel0`'s properties.
 - The BCA generator: the deployment masks (none in Thrones' kit: their file name is a runtime string, `deployment_mask.png` assumed), the
   y of its entities (the terrain's height), its errors file (none written for the oracle).

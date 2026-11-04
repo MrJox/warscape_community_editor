@@ -306,6 +306,20 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    project was made from other inputs: 97 % of its zones agree), the deployment masks are unchecked against Terry (Thrones' kit has
    none).
 7. **Export**: pack output, Launch in game at a location, the minimal-edit gates over the whole build.
+   **Progress 2026-11-04.** Done:
+   - The builders BOB's `Tilemap` metadata needed, decompiled (BOB_Terrain, ToolDataBuilderDll, the engine; docs/re/terry.md,
+     "locations.blm and its masks"): `wce_terrain::deployment` (the deployment files) and `wce_terrain::locations` (`locations.blm`, the
+     engine's hash map order, the climate table from `environment_map.xml`, `mask0` / `mask1`). `built_check`: byte for byte on Attila's
+     `main_attila_map`, `wce_edit`, `wce_relief` and Thrones' `vik_attila_map`.
+   - The whole build from the model (`wce_terrain_io::attila::build`: tile map, battle field, LF heights, blm and masks, deployment
+     files, `tile_map.png`). `build_check` (gate `build_<map>`): every file of BOB's runs the same (892 on `main_attila_map`, 21 s; 393 on
+     Thrones'), `tile_map.tiles` but for BOB's uninitialised floats.
+   - The Terrain tool's Export section: "Export built files" (`terrain_export [--wait]`, on a worker): loose under the output folder
+     (`terrain/battles/<map>/`) and as `terrain_<map>.pack`. "Launch in game" (`terrain_launch [<id>] [--dry-run]`): the export (made
+     again when the map changed) in the launch pack, a battle at the selected BCA (else the first) through the Tile tool's launch.
+     Dry run checked on `main_attila_map` (315 MB pack, Thermopylae at 0.438976, 0.536534).
+   DEVIATIONS: the LF normal chunks are not made (an edited map keeps the game's; a map the game lacks has none); the launch's battle is
+   one unit a side, summer, day, dry. Left: a real launch (not run here: it takes the screen; the user's to try), the normal chunks.
 8. **Campaign maps** (in scope, after the battle maps): `terrain/campaigns/<map>`: props, VFX, environment volumes, season masks, the layout map;
    the 375 MB LF paged from disk.
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
