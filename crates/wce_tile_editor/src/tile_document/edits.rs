@@ -2368,9 +2368,15 @@ impl TileDocument {
         Ok(changed)
     }
 
-    /// The game's texture groups: every climate's (the default climate has them all), sorted.
+    /// The game's texture groups: every climate's (the default climate has them all), sorted; a campaign database's also `climate` (the
+    /// cell climate's own `texture_set`).
     pub fn texture_group_names(&self) -> Vec<String> {
-        let mut names = self.tile().climates().climates.iter().flat_map(|c| c.textures.iter().map(|t| t.name.clone())).collect::<Vec<_>>();
+        let climates = self.tile().climates();
+        let mut names = climates.climates.iter().flat_map(|c| c.textures.iter().map(|t| t.name.clone())).collect::<Vec<_>>();
+        if climates.kind == "campaign" {
+            names.push("climate".to_owned());
+        }
+
         names.sort();
         names.dedup();
         names

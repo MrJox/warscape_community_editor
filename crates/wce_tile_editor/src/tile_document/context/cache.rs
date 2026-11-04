@@ -87,6 +87,8 @@ pub fn key(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Option<&Path>)
     // A campaign tile's heights are in other units (`tile_project::height_unit`): its templates made before that are not these.
     if wce_tile::tile_project::height_unit(dir) != 2.0 {
         h = fnv(h, b"campaign heights 0.2");
+        // And its `climate` texture groups resolved (`ClimateList::group_of`), its rivers stretched with the ground and across in its unit.
+        h = fnv(h, b"climate group = texture_set, rivers stretched, rivers in the campaign unit, drawn from their files");
     }
     for (p, len, time) in &files {
         h = fnv(h, p.as_bytes());

@@ -1559,10 +1559,11 @@ fn fallback_database(databases: &[TileDatabase], binary: &Tile, location: &str, 
 
 /// The rivers baked into a tile's terrain mesh (the packs ship no river splines) as TEd's: splines fitted to the block's rows
 /// (`river::fit_splines`), per river a `SplineRiverInstance` and its `river_spline<n>.xml`. The mesh is the files' frame (z the other
-/// way: file z = extent - z); the scene's x and z are the file's doubled, its widths too (`wce_tile::river_files`: the file's width is the
-/// point's halved), its heights the file's (the factor 1 TEd's older rivers have, which the editor's save keeps: the editor draws a river
-/// at its points' heights).
-fn river_nodes(mesh: &[u8], extent_z: f64) -> (Vec<Node>, Vec<wce_tile_model::RiverSplines>) {
+/// way: file z = extent - z); the scene's x and z are the file's times the tile's unit (`unit`: 2, doubled, for a battle tile, 0.2 for a
+/// campaign one, as BOB divides them), its widths too (`wce_tile::river_files`: the file's width is the point's halved in a battle
+/// tile), its heights the file's (the factor 1 TEd's older rivers have, which the editor's save keeps: the editor draws a river at its
+/// points' heights).
+fn river_nodes(mesh: &[u8], extent_z: f64, unit: f64) -> (Vec<Node>, Vec<wce_tile_model::RiverSplines>) {
     use super::river::{fit_splines, read_river_block, river_rows};
     let Some(block) = read_river_block(mesh) else { return (vec![], vec![]) };
     let g = |v: f64| crate::xml::values::Num::G.quantise(v);
@@ -1577,7 +1578,7 @@ fn river_nodes(mesh: &[u8], extent_z: f64) -> (Vec<Node>, Vec<wce_tile_model::Ri
         let file = |p: [f32; 3]| [f64::from(p[0]), f64::from(p[1]), extent_z - f64::from(p[2])];
         let scene = |p: [f32; 3]| {
             let f = file(p);
-            [2.0 * f[0], f[1], 2.0 * f[2]]
+            [unit * f[0], f[1], unit * f[2]]
         };
         let mut root = Node::new("SEGMENTED_SPLINE");
         for seg in &segments {
@@ -1624,7 +1625,7 @@ fn river_nodes(mesh: &[u8], extent_z: f64) -> (Vec<Node>, Vec<wce_tile_model::Ri
             points.push(node(
                 "point",
                 vec![
-                    ("width", Value::Float(r32(2.0 * f64::from(values.width[0])))), ("foam_amount", Value::Float(r32(f64::from(values.foam[0])))),
+                    ("width", Value::Float(r32(unit * f64::from(values.width[0])))), ("foam_amount", Value::Float(r32(f64::from(values.foam[0])))),
                     ("alpha_fade", Value::Float(r32(f64::from(alpha)))), ("terrain_offset", Value::Float(0.0)), ("controlIn", rel(control_in)),
                     ("position", rel(at)), ("flow_speed", Value::Float(r32(f64::from(values.flow[0])))), ("controlOut", rel(control_out)),
                 ],
@@ -2011,7 +2012,8 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         let (files, _) = super::TileBinary.write(binary).map_err(|e| e.to_string())?;
         // The rivers the meshes hold, as splines to edit (the fingerprints include them: the meshes are written back while unchanged).
         if let Some(mesh) = files.folder.get("mesh.rigid_model_v2").and_then(|b| b.bytes().ok()) {
-            let (rivers, splines) = river_nodes(&mesh, extent.1);
+            let unit = wce_tile::tile_project::height_unit(std::path::Path::new(&format!("/{folder}")));
+            let (rivers, splines) = river_nodes(&mesh, extent.1, unit);
             if !rivers.is_empty() {
                 let mut l = layer("Decompiled rivers", "LayerExportType_Normal");
                 l.wrapped_mut("children").extend(rivers);

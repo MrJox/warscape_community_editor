@@ -1615,7 +1615,8 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_settle", "terrain_settle", "the Terrain tool: wait until the map's chunks around the camera are on the scene; says what it has", |e, _| {
+        c.add("terrain_settle", "terrain_settle [all]", "the Terrain tool: wait until the map's chunks around the camera are on the scene; says what it has (all: every tile it could not open)", |e, a| {
+            let all = a.first().is_some_and(|v| v == "all");
             with_terrain(e, |t, e| {
                 if t.view.streamer.is_none() {
                     return CommandResult::fail("no map shown");
@@ -1623,7 +1624,7 @@ impl Tool for TerrainTool {
 
                 t.view.settle(e, &t.rings);
                 let failed = t.view.streamer.as_ref().map(|s| s.failed()).unwrap_or_default();
-                let note = if failed.is_empty() { String::new() } else { format!("; could not open: {}", failed.iter().take(4).cloned().collect::<Vec<_>>().join("; ")) };
+                let note = if failed.is_empty() { String::new() } else { format!("; could not open: {}", failed.iter().take(if all { usize::MAX } else { 4 }).cloned().collect::<Vec<_>>().join("; ")) };
                 CommandResult::success(format!("{}{note}", t.view.status))
             })
         });

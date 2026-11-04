@@ -138,7 +138,7 @@ fn apply_climate(m: &mut TerrainMaterial, groups: &TileTextureGroup, look: &Terr
     let default_folder = climates.default_folder();
     let folder = climate.map_or_else(|| default_folder.clone(), |c| climates.folder_of(c));
     let def = climates.find("default");
-    let groups = group_names(groups);
+    let groups = group_names(groups).map(|g| climates.group_of(climate, g));
     let exists = |p: &str| files.exists(p);
     let (mut wanted, mut missing) = (0, 0);
 

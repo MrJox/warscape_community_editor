@@ -255,6 +255,17 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   game stands them on the ground (`ECLandscapeAbove`); a new prop's y keeps the kit's scale.
 - **Prop models** in the view: each prop's model with the export's transform (in `.terry` units, so times 1 / 0.0025 into the view),
   standing on the drawn ground, within 48 cells of the camera.
+- **Texture group `climate`** (2026-11-04): 61 campaign tiles have it on all four channels (the roads), many more on some. It stands
+  for the cell climate's `texture_set` (`europe` -> `grass_b`, `desert` -> `sand_a`; the `default` climate's when a climate has none); the
+  campaign's textures are all under `terrain/textures/campaign/default/<group>`. Unresolved, those tiles had no material: holes onto the
+  sea plane (`ClimateList::group_of`).
+- **Rivers of the campaign tiles** (2026-11-04): BOB's `river_spline<n>.xml` has x and z as the scene's / 0.2 (the database's unit; a
+  battle tile's / 2), and its width is the full width of the packs' ribbon (the river block of `mesh.rigid_model_v2`: 70 for a file's 70,
+  z the other way as in a battle tile). Many kit tile.ted rivers were edited after their file was written (`4x2_varient1`: 9 straight
+  points 37 m up, the file 32 points along the carved bed, 1.48 m down, where `final_heights.dds` has the bed), and the width factor of
+  a file to TEd is 5 or 1 (`river_files::Factors`). The map's view draws an unedited campaign river from its file, else TEd's points at
+  / 0.2 (width x 5), and stretches its heights with the tile's (x 10). `cliff_custom` variations with only `custom_mesh.CS2` (no blend
+  map; the packs ship none for any) are drawn as their mesh alone.
 
 ## Open
 
