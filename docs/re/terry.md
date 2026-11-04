@@ -266,6 +266,19 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   a file to TEd is 5 or 1 (`river_files::Factors`). The map's view draws an unedited campaign river from its file, else TEd's points at
   / 0.2 (width x 5), and stretches its heights with the tile's (x 10). `cliff_custom` variations with only `custom_mesh.CS2` (no blend
   map; the packs ship none for any) are drawn as their mesh alone.
+- **Lighting** (2026-11-04): the game lights a campaign map with its `environment_collection.xml`'s `global_lighting` (Attila:
+  `lighting/europe_sp.lighting`, sun azimuth 262.8, from the west, as the game's screenshots show), not a battle weather (which drew its
+  grass dark grey-blue).
+- **Sea**: drawn by `waterplane.hlsl`'s campaign shaders (vs30_main_campaign: a flat plane, the world position on;
+  ps30_campaign_<quality>_water_quality): the water's colour is `s_lf_colour`, the map's `lf_sea_colour.dds` (read linear), at
+  `(x / g_wp_world_size.x, 1 - z / g_wp_world_size.y)` from the map's south-west corner, lit by the sun and ambient, blended with the
+  refraction by depth, plus the sky's reflection; output `colour * overlay.a + overlay.rgb`.
+- **Forests**: `campaign_maps/<map>/display/trees/trees.campaign_tree_list` (packs only): u32 version 3, f32 bounds (0, 0, 678.5,
+  556.14 on the main map: x east, z north over the whole map, not square to its cells), u32 models, per model a u16-length path and a u32
+  count of 15-byte trees (f32 x y z, u8 0/1, u8 0..5, u8 15). By the bounds all but 6 of 17 576 sampled trees stand on land
+  (`campaign_tree_fit`). The models (`rigidmodels/campaign/vegetation/*`, material CampaignVegetation, vertex format Uk12: f16 (position,
+  u), (normal, v)) are drawn by `rigidcampaignvegetation.hlsl`: the instance's position plus its vertices times 0.4 turned by its
+  angle and leaning towards the camera; the diffuse's alpha cut at 0.5. ASSUMPTION: the second byte is the turn in sixths.
 
 ## Open
 
