@@ -360,8 +360,10 @@ impl Frame {
         let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
 
         let index = MapIndex::new(&map, open);
-        let kit_climates = ClimateList::load(&rq.raw_root.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
-        let climates = effective_climates(kit_climates, "battle", files.as_deref());
+        // A campaign map's tiles (`terrain/tiles/campaign/...`) take the campaign database's climates and textures.
+        let kind = if map.placements.iter().take(64).any(|p| p.location.replace('\\', "/").to_ascii_lowercase().contains("/tiles/campaign/")) { "campaign" } else { "battle" };
+        let kit_climates = ClimateList::load(&rq.raw_root.join(format!("terrain/tiles/{kind}/_tile_database/_settings.xml"))).unwrap_or_default();
+        let climates = effective_climates(kit_climates, kind, files.as_deref());
         let MapIndex { owner, climate, by_chunk, reach } = index;
         Self {
             map, unit: rq.unit, open, to_map, from_map, lf_level, lf_range, lf, sea_lf, by_chunk, owner, reach, climate, climates, look: rq.look.clone(),
