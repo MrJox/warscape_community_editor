@@ -45,6 +45,9 @@ const TREE_KEY: u64 = 1 << 63;
 /// The key bit of a settlement's building among the drawn models.
 const CITY_KEY: u64 = 1 << 62;
 
+/// With [`CITY_KEY`], an aqueduct's.
+const AQUEDUCT_KEY: u64 = 1 << 61;
+
 impl CampaignTrees {
     /// The indices of the trees within `r` cells of a cell.
     fn near(&self, cx: f32, cy: f32, r: f32) -> impl Iterator<Item = u32> + '_ {
@@ -285,6 +288,28 @@ impl PropModels {
                     p6: [p16[8], p16[9], p16[10], p16[11]], p7: [p16[12], p16[13], p16[14], p16[15]], burning: false,
                 };
                 out.push((CITY_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
+                self.city_count += 1;
+            }
+
+            // The aqueducts of the regions with an aqueduct building, turned clockwise (seen from above) by their rotation, on the ground.
+            for (i, aq) in c.aqueducts.iter().enumerate() {
+                let (x, y) = (aq.world.0 / c.world.0 * w, (1.0 - aq.world.1 / c.world.1) * h);
+                if (x - cx).hypot(y - cy) > self.radius_cells {
+                    continue;
+                }
+
+                let (fx, fz) = frame.from_map.apply(x, y);
+                let (s, co) = (aq.rotation as f32).sin_cos();
+                let mut world = Float4x4::IDENTITY;
+                world.m[0] = [co * k, 0.0, s * k, fx as f32];
+                world.m[1] = [0.0, k, 0.0, frame.lift(fx, fz)];
+                world.m[2] = [-s * k, 0.0, co * k, fz as f32];
+                let p16 = DEFAULT_INSTANCE_PARAMS;
+                let mesh = MeshInstance {
+                    model: aq.model.clone(), casts_shadow: true, lod: true, p4: [p16[0], p16[1], p16[2], p16[3]], p5: [p16[4], p16[5], p16[6], p16[7]],
+                    p6: [p16[8], p16[9], p16[10], p16[11]], p7: [p16[12], p16[13], p16[14], p16[15]], burning: false,
+                };
+                out.push((CITY_KEY | AQUEDUCT_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
                 self.city_count += 1;
             }
         }

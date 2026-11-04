@@ -15,6 +15,14 @@
 //!   model id, by faction, subculture or culture, else for all), `campaign_settlement_display_buildings` (a model id's file, its
 //!   normal state: not slum, sieged or blockaded).
 //!
+//! A slot's cell: the map data's by the slot's kind (`primary` the main cell, `port` the port's, `secondary` the next secondary one: a
+//! region without a port has no port slot, its secondary slots start at index 1), else the startpos's own
+//! (`SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/SETTLEMENT_EXPANSION_MAP_DATA`'s `SLOT_MAP_DATA`: index 0 the main slot, 1 the port, then
+//! the secondary ones; 65535 unset). Both agree on all 745 slots of `main_attila` that have both.
+//!
+//! Aqueducts: `campaign_settlement_display_aqueducts` (a model, a world position, a clockwise rotation, by region), shown for the regions
+//! with a building of `has_aqueduct` (`main_attila`: Ravenna's one of 62 rows).
+//!
 //! A leaf's name is RPFM's: `NAME+n` the n-th leaf after the record `NAME` in its group (records skipped), `^+n` the n-th before any.
 //!
 //! Positions: a cell's world position is its top-left corner (RPFM's `MapScale::world_position`; odd columns half a cell down), x east and
@@ -69,8 +77,30 @@ pub struct Cities {
 
     pub slots: Vec<CitySlot>,
 
+    /// The aqueducts of the regions with an aqueduct building.
+    pub aqueducts: Vec<Aqueduct>,
+
     /// What was not found (counts by reason).
     pub notes: Vec<String>,
+}
+
+/// An aqueduct of `campaign_settlement_display_aqueducts`: shown while its region has a building with `has_aqueduct`
+/// (`building_levels`: `att_bld_roman_water_aqueducts_2` to `_4`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Aqueduct {
+    pub region: String,
+
+    /// A packs path, lower case, `/`.
+    pub model: String,
+
+    /// World units (x east, y north), as the slots'.
+    pub world: (f64, f64),
+
+    /// `position_z_height` (not used: the model stands on the ground).
+    pub height: f64,
+
+    /// Clockwise seen from above, radians.
+    pub rotation: f64,
 }
 
 pub(crate) fn as_record(n: &NodeType) -> Option<&RecordNode> {
@@ -122,6 +152,30 @@ fn first_cell(r: &RecordNode) -> Option<(u16, u16)> {
     })
 }
 
+/// A settlement's slot cells in the startpos (`SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/SETTLEMENT_EXPANSION_MAP_DATA`: its
+/// `SLOT_MAP_DATA`, the main slot and the port, and its `SECONDARY_SLOT_ARRAY`'s): the slot's index (the leading u32) -> its cell.
+fn startpos_slot_cells(settlement: &RecordNode) -> HashMap<usize, (u16, u16)> {
+    let mut out = HashMap::new();
+    let Some(data) = child(settlement, "SETTLEMENT_EXPANSION_MANAGER").and_then(|m| child(m, "SETTLEMENT_EXPANSION_MAP_DATA")) else { return out };
+    let mut take = |r: &RecordNode| {
+        for g in r.children() {
+            let mut v = g.iter().filter(|n| as_record(n).is_none());
+            let (Some(i), Some(NodeType::U16(c)), Some(NodeType::U16(row))) = (v.next().and_then(u32_of), v.next(), v.next()) else { continue };
+            out.insert(i as usize, (*c, *row));
+        }
+    };
+
+    for r in data.children().iter().flatten().filter_map(as_record) {
+        match r.name().as_str() {
+            "SLOT_MAP_DATA" => take(r),
+            "SECONDARY_SLOT_ARRAY" => r.children().iter().flatten().filter_map(as_record).filter(|s| s.name() == "SLOT_MAP_DATA").for_each(&mut take),
+            _ => {}
+        }
+    }
+
+    out
+}
+
 /// A db table's rows by column name (every file of `db/<table>/`; `read` gives a path's bytes, `list` the paths under a prefix).
 pub fn table_rows(schema: &Schema, table: &str, list: &dyn Fn(&str) -> Vec<String>, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Vec<HashMap<String, String>> {
     let mut out = vec![];
@@ -152,6 +206,10 @@ pub struct DisplayTables {
 
     /// model id -> model path (its normal state).
     pub models: HashMap<String, String>,
+
+    /// The aqueducts by region (`campaign_settlement_display_aqueducts`), and the building levels with `has_aqueduct`.
+    pub aqueducts: Vec<Aqueduct>,
+    pub with_aqueduct: std::collections::HashSet<String>,
 }
 
 impl DisplayTables {
@@ -183,6 +241,15 @@ impl DisplayTables {
             }
         }
 
+        let num = |r: &HashMap<String, String>, k: &str| r.get(k).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+        for r in rows("campaign_settlement_display_aqueducts_tables") {
+            t.aqueducts.push(Aqueduct {
+                region: get(&r, "region_key"), model: get(&r, "building_path").replace('\\', "/").to_lowercase(),
+                world: (num(&r, "position_x_map"), num(&r, "position_y_map")), height: num(&r, "position_z_height"), rotation: num(&r, "rotation_cw_radians"),
+            });
+        }
+
+        t.with_aqueduct = rows("building_levels_tables").into_iter().filter(|r| get(r, "has_aqueduct") == "true").map(|r| get(&r, "level_name")).collect();
         t
     }
 
@@ -262,7 +329,9 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
 
     let mut cities = Cities { world, grid, ..Default::default() };
     let (mut no_cell, mut no_model, mut no_building) = (0, 0, 0);
+    let (mut from_startpos, mut agree, mut differ) = (0, 0, 0);
     let mut unmatched: HashMap<String, usize> = HashMap::new();
+    let mut aqueduct_regions = std::collections::HashSet::new();
     let regions = child(world_rec, "REGION_MANAGER").and_then(|m| child(m, "REGIONS_ARRAY")).ok_or("startpos.esf: no REGIONS_ARRAY")?;
     for region in regions.children().iter().flatten().filter_map(as_record).filter(|r| r.name() == "REGION") {
         for g in region.children() {
@@ -270,13 +339,38 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             let owner = leaf(g, Some("SETTLEMENT"), 9).and_then(u32_of).and_then(|id| factions.get(&id)).cloned().unwrap_or_default();
             let Some(manager) = g.iter().filter_map(as_record).find(|r| r.name() == "REGION_SLOT_MANAGER") else { continue };
             let cells = map_slots.get(key);
+            let own_cells = g.iter().filter_map(as_record).find(|r| r.name() == "SETTLEMENT").map(startpos_slot_cells).unwrap_or_default();
             let slots = child(manager, "REGION_SLOT_ARRAY").into_iter().flat_map(|a| a.children().iter().flatten().filter_map(as_record)).filter(|r| r.name() == "REGION_SLOT");
+            let mut secondary = 0;
             for (index, slot) in slots.enumerate() {
                 let Some(sg) = slot.children().first() else { continue };
                 let kind = leaf(sg, Some("REGION_BUILDING_MANAGER"), 3).and_then(str_of).unwrap_or_default().to_owned();
                 let building = child(slot, "REGION_BUILDING_MANAGER").and_then(|m| child(m, "BUILDING_BASE"))
                     .and_then(|b| b.children().first().and_then(|bg| leaf(bg, None, 2).and_then(str_of))).filter(|b| !b.is_empty()).map(str::to_owned);
-                let Some(cell) = cells.and_then(|c| c.get(index).copied().flatten()) else {
+                if building.as_ref().is_some_and(|b| tables.with_aqueduct.contains(b)) {
+                    aqueduct_regions.insert(key.to_owned());
+                }
+
+                // The map's cell of the slot by its kind (the main slot, the port, the secondary ones in order: a region without a port has
+                // no port slot, its secondary ones start at index 1), else the startpos's own (its settlement's expansion data; 65535 unset).
+                let map_index = match kind.as_str() {
+                    "primary" => Some(0),
+                    "port" => Some(1),
+                    _ => {
+                        secondary += 1;
+                        Some(1 + secondary)
+                    }
+                };
+                let map_cell = map_index.and_then(|i| cells.and_then(|c| c.get(i).copied().flatten()));
+                let own = map_index.and_then(|i| own_cells.get(&i)).copied().filter(|&(c, r)| c != u16::MAX && r != u16::MAX);
+                match (map_cell, own) {
+                    (Some(a), Some(b)) if a == b => agree += 1,
+                    (Some(_), Some(_)) => differ += 1,
+                    (None, Some(_)) => from_startpos += 1,
+                    _ => {}
+                }
+
+                let Some(cell) = map_cell.or(own) else {
                     no_cell += usize::from(building.is_some());
                     continue;
                 };
@@ -296,7 +390,10 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
         }
     }
 
+    cities.aqueducts = tables.aqueducts.iter().filter(|a| aqueduct_regions.contains(&a.region)).cloned().collect();
     cities.notes.push(format!("{no_cell} buildings in slots without a cell, {no_building} slots without a building, {no_model} buildings without a model"));
+    cities.notes.push(format!("slot cells: map data and startpos agree on {agree}, differ on {differ}; {from_startpos} from the startpos alone; {} aqueducts of {} in {} regions {:?}",
+        cities.aqueducts.len(), tables.aqueducts.len(), aqueduct_regions.len(), aqueduct_regions));
     let mut top: Vec<(String, usize)> = unmatched.into_iter().collect();
     top.sort_by(|a, b| b.1.cmp(&a.1));
     if !top.is_empty() {
