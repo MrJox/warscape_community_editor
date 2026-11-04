@@ -11,6 +11,7 @@
 
 pub mod build;
 pub mod heights;
+pub mod normals;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
