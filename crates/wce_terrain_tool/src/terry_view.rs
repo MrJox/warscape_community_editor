@@ -25,6 +25,10 @@ pub enum Mode {
     Select,
     NewBca,
     NewDeploymentZone,
+
+    /// The selected polyline's points: a click picks a point, the next moves it there; Shift+click on a side adds one; Ctrl+click
+    /// removes one.
+    EditPoints,
 }
 
 pub struct TerryView {
@@ -38,6 +42,9 @@ pub struct TerryView {
     /// The deployment zone being drawn: its points (metres on the map).
     pub points: Vec<[f64; 2]>,
 
+    /// The point picked to move (entity, index).
+    pub picked: Option<(u64, usize)>,
+
     layer: LayerId,
     shown: HashMap<u64, EntityId>,
 
@@ -48,7 +55,7 @@ pub struct TerryView {
 
 impl Default for TerryView {
     fn default() -> Self {
-        Self { show: [true, true, true, true], radius_m: 40_000.0, mode: Mode::Select, points: vec![], layer: 0, shown: HashMap::new(), built: None, draft: 0 }
+        Self { show: [true, true, true, true], radius_m: 40_000.0, mode: Mode::Select, points: vec![], picked: None, layer: 0, shown: HashMap::new(), built: None, draft: 0 }
     }
 }
 
@@ -161,12 +168,29 @@ impl TerryView {
             self.built = Some((doc, revision, self.show, self.radius_m, at));
         }
 
-        // The deployment zone being drawn.
+        // The deployment zone being drawn, or the edited polyline's points.
         let Some(d) = e.docs.find_as::<MapDocument>(doc) else { return };
         let draft = (self.mode == Mode::NewDeploymentZone && !self.points.is_empty()).then(|| {
             let mut lines = vec![];
             on_ground(&frame, &self.points, false, d.unit, overlay_colour(1.0, 1.0, 0.3, 1.0), &mut lines);
             Overlay { lines, depth_test: false, pickable: false, ..Default::default() }
+        });
+
+        let selected = e.selection.items().iter().filter(|s| s.doc == doc).map(|s| s.item).collect::<Vec<_>>();
+        let draft = draft.or_else(|| {
+            if self.mode != Mode::EditPoints {
+                return None;
+            }
+
+            let (id, pts) = selected.iter().find_map(|&id| polyline_world(d, id).map(|p| (id, p)))?;
+            let mut lines = vec![];
+            for (k, q) in pts.iter().enumerate() {
+                let picked = self.picked == Some((id, k));
+                let (r, c) = if picked { (TERRY_CELL / 3.0, overlay_colour(1.0, 0.25, 0.25, 1.0)) } else { (TERRY_CELL / 6.0, overlay_colour(1.0, 1.0, 0.3, 1.0)) };
+                on_ground(&frame, &[[q[0] - r, q[1] - r], [q[0] + r, q[1] - r], [q[0] + r, q[1] + r], [q[0] - r, q[1] + r]], true, d.unit, c, &mut lines);
+            }
+
+            Some(Overlay { lines, depth_test: false, pickable: false, ..Default::default() })
         });
 
         if self.draft != 0 {
@@ -193,6 +217,7 @@ impl TerryView {
     pub fn click(&mut self, e: &mut Editor, doc: DocumentId, at: [f64; 2]) -> Option<String> {
         match self.mode {
             Mode::Select => None,
+            Mode::EditPoints => Some(self.edit_point(e, doc, at).unwrap_or_else(|err| err)),
             Mode::NewBca => Some(new_bca(e, doc, at).unwrap_or_else(|err| err)),
             Mode::NewDeploymentZone => {
                 // Next to the first point: the zone closed and made.
@@ -239,11 +264,17 @@ impl TerryView {
             Mode::Select => 0,
             Mode::NewBca => 1,
             Mode::NewDeploymentZone => 2,
+            Mode::EditPoints => 3,
         };
 
-        if gui::combo("left button", &mut m, &["select (the gizmo moves)", "new battle catchment area", "new deployment zone"]) {
-            self.mode = [Mode::Select, Mode::NewBca, Mode::NewDeploymentZone][m.clamp(0, 2) as usize];
+        if gui::combo("left button", &mut m, &["select (the gizmo moves)", "new battle catchment area", "new deployment zone", "edit the selected polyline's points"]) {
+            self.mode = [Mode::Select, Mode::NewBca, Mode::NewDeploymentZone, Mode::EditPoints][m.clamp(0, 3) as usize];
             self.points.clear();
+            self.picked = None;
+        }
+
+        if self.mode == Mode::EditPoints {
+            gui::text_disabled("click a point, then where it goes; Shift+click a side: a point there; Ctrl+click a point: removed");
         }
 
         if self.mode == Mode::NewDeploymentZone {
@@ -367,7 +398,85 @@ pub fn new_zone(e: &mut Editor, doc: DocumentId, pts: &[[f64; 2]]) -> Result<Str
         s.extend(p.add_child(bca, id).map_err(|err| err.to_string())?);
         Ok(s)
     })?;
-    Ok(format!("deployment zone DZ {pair}/{alliance} (alliance {alliance}) of {} points, of BCA {bca:x}", pts.len()))
+    Ok(format!("deployment zone DZ {pair}/{alliance} (alliance {alliance}) of {} points, of BCA {bca:x}; its region {rid:x}", pts.len()))
+}
+
+/// An entity's polyline on the map (metres from the map's centre: x, z).
+fn polyline_world(d: &MapDocument, id: u64) -> Option<Vec<[f64; 2]>> {
+    let p = d.project()?;
+    let (pts, _) = p.polyline(p.entity(id)?)?;
+    let w = p.world_position(id);
+    Some(pts.iter().map(|q| [w[0] + q[0], w[2] + q[1]]).collect())
+}
+
+impl TerryView {
+    /// A click of the point editing mode (see [`Mode::EditPoints`]).
+    fn edit_point(&mut self, e: &mut Editor, doc: DocumentId, at: [f64; 2]) -> Result<String, String> {
+        let selected: Vec<u64> = e.selection.items().iter().filter(|s| s.doc == doc).map(|s| s.item).collect();
+        let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
+        let (id, mut pts) = selected.iter().find_map(|&id| polyline_world(d, id).map(|p| (id, p))).ok_or("select an entity with a polyline (a deployment zone region)")?;
+        let near = TERRY_CELL / 2.0;
+        let vertex = pts.iter().enumerate().map(|(k, q)| (k, (q[0] - at[0]).hypot(q[1] - at[1]))).filter(|v| v.1 <= near)
+            .min_by(|a, b| a.1.total_cmp(&b.1)).map(|v| v.0);
+        let what;
+        if gui::is_key_down(gui::MOD_CTRL) {
+            let k = vertex.ok_or("Ctrl+click on a point to remove it")?;
+            if pts.len() <= 3 {
+                return Err("a region keeps three points at least".to_owned());
+            }
+
+            pts.remove(k);
+            self.picked = None;
+            what = format!("point {k} removed");
+        } else if gui::is_key_down(gui::MOD_SHIFT) {
+            // The side nearest the click: its point nearest the click on it.
+            let n = pts.len();
+            let mut best: Option<(usize, f64, [f64; 2])> = None;
+            for k in 0..n {
+                let (a, b) = (pts[k], pts[(k + 1) % n]);
+                let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+                let len2 = dx * dx + dz * dz;
+                let t = if len2 > 0.0 { (((at[0] - a[0]) * dx + (at[1] - a[1]) * dz) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                let q = [a[0] + dx * t, a[1] + dz * t];
+                let dist = (q[0] - at[0]).hypot(q[1] - at[1]);
+                if dist <= near && best.is_none_or(|b| dist < b.1) {
+                    best = Some((k, dist, q));
+                }
+            }
+
+            let (k, _, q) = best.ok_or("Shift+click on a side to add a point there")?;
+            pts.insert(k + 1, q);
+            self.picked = Some((id, k + 1));
+            what = format!("point added after {k}");
+        } else if let Some((pid, k)) = self.picked.filter(|p| p.0 == id && p.1 < pts.len()) {
+            if vertex == Some(k) {
+                self.picked = None;
+                return Ok(format!("point {k} let go"));
+            }
+
+            pts[k] = at;
+            self.picked = None;
+            let _ = pid;
+            what = format!("point {k} moved");
+        } else {
+            let k = vertex.ok_or("click on a point of the selected polyline")?;
+            self.picked = Some((id, k));
+            self.built = None;
+            return Ok(format!("point {k} picked: click where it goes"));
+        }
+
+        set_points(e, doc, id, &pts)?;
+        Ok(what)
+    }
+}
+
+/// An entity's polyline set to points on the map (metres from the map's centre), as offsets from its position: one step on the history.
+pub fn set_points(e: &mut Editor, doc: DocumentId, id: u64, pts: &[[f64; 2]]) -> Result<(), String> {
+    let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
+    let p = d.project().ok_or("this map has no .terry project")?;
+    let w = p.world_position(id);
+    let offsets: Vec<[f64; 2]> = pts.iter().map(|q| [q[0] - w[0], q[1] - w[2]]).collect();
+    structural(e, doc, "edit polyline points", |p| p.set_polyline(id, &offsets).map_err(|err| err.to_string()))
 }
 
 /// Removes entities (their descendants and the references to them).
