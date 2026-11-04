@@ -3,6 +3,7 @@
 mod cell_paint;
 mod explicit_tiles;
 mod export;
+mod launch;
 mod map_panel;
 mod refill;
 mod terry_view;
