@@ -79,9 +79,66 @@ pub fn lf_sea_height_dds(field: &PagedU16) -> Vec<u8> {
 
 /// `lf_height_map.data` for a map of `cells` (width, height in cells): the samples as the DDS has them (converted).
 pub fn lf_height_data(field: &PagedU16, cells: (u32, u32)) -> Vec<u8> {
-    let (w, h) = (field.width(), field.height());
-    let (cx, cy) = ((w / cells.0.max(1)).max(1), (h / cells.1.max(1)).max(1));
     let all: Vec<u16> = rows(field).into_iter().map(convert).collect();
+    lf_height_data_of(&all, field.width(), field.height(), cells)
+}
+
+/// The levels of the float chain a field halves through (as the sea map's mips): level `k`'s samples and size.
+fn halved(field: &PagedU16, k: u32) -> (Vec<u16>, u32, u32) {
+    let (mut w, mut h) = (field.width(), field.height());
+    let inv = 1.0f32 / 65535.0;
+    let mut level: Vec<f32> = rows(field).into_iter().map(|a| f32::from(a) * inv).collect();
+    for _ in 0..k {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let at = |x: u32, y: u32| level[(y.min(h - 1) * w + x.min(w - 1)) as usize];
+        let next: Vec<f32> = (0..nw * nh).map(|i| {
+            let (x, y) = (2 * (i % nw), 2 * (i / nw));
+            (((at(x, y) + at(x + 1, y)) + at(x, y + 1)) + at(x + 1, y + 1)) * 0.25
+        }).collect();
+        (level, w, h) = (next, nw, nh);
+    }
+
+    (level.iter().map(|&v| (v * 65535.0) as u16).collect(), w, h)
+}
+
+/// Level `k` of the campaign's chain: level 1 the float chain's, each next one from the level above's u16 samples, `f32(((a + b) + c)
+/// + d) * 0.25` of them as 0 .. 1, truncated.
+fn campaign_level(field: &PagedU16, k: u32) -> (Vec<u16>, u32, u32) {
+    let (mut v, mut w, mut h) = halved(field, 1);
+    let inv = 1.0f32 / 65535.0;
+    for _ in 1..k {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let at = |x: u32, y: u32| f32::from(v[(y.min(h - 1) * w + x.min(w - 1)) as usize]) * inv;
+        let next: Vec<u16> = (0..nw * nh).map(|i| {
+            let (x, y) = (2 * (i % nw), 2 * (i / nw));
+            ((((at(x, y) + at(x + 1, y)) + at(x, y + 1)) + at(x + 1, y + 1)) * 0.25 * 65535.0) as u16
+        }).collect();
+        (v, w, h) = (next, nw, nh);
+    }
+
+    (v, w, h)
+}
+
+/// A campaign map's `lf_height_map.dds` (`k` 1) and `lf_height_map_lq.dds` (`k` 2): the LF halved `k` times, no mips.
+pub fn campaign_lf_dds(field: &PagedU16, k: u32) -> Vec<u8> {
+    let (v, w, h) = campaign_level(field, k);
+    let mut out = l16_header(w, h, None);
+    out.extend(v.iter().flat_map(|a| a.to_le_bytes()));
+    out
+}
+
+/// A campaign map's `lf_height_map.data`: the CHMF of the LF halved three times (a sample a cell); its header's two counts 1 and 8 (BOB's:
+/// ASSUMPTION the samples a cell and the LF's samples a cell).
+pub fn campaign_lf_data(field: &PagedU16, cells: (u32, u32)) -> Vec<u8> {
+    let (v, w, h) = campaign_level(field, 3);
+    let mut f = ChmfFile::parse(&lf_height_data_of(&v, w, h, cells)).unwrap_or_else(|_| ChmfFile { version: 5, width: w, height: h, cells_x: 1, cells_y: 1, min: 0.0, max: 65535.0, spacing: 1, regions: vec![] });
+    (f.cells_x, f.cells_y) = (1, field.width() / cells.0.max(1));
+    f.write()
+}
+
+/// `lf_height_map.data` of samples (`w` x `h`, converted already).
+fn lf_height_data_of(all: &[u16], w: u32, h: u32, cells: (u32, u32)) -> Vec<u8> {
+    let (cx, cy) = ((w / cells.0.max(1)).max(1), (h / cells.1.max(1)).max(1));
     let min = all.iter().copied().min().unwrap_or(0);
     let mut f = ChmfFile { version: 5, width: w, height: h, cells_x: cx, cells_y: cy, min: f32::from(min), max: 65535.0, spacing: 1, regions: vec![] };
     let (rw, rh) = (cells.0.div_ceil(REGION_CELLS), cells.1.div_ceil(REGION_CELLS));

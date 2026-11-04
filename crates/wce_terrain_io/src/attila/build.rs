@@ -83,8 +83,15 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
     files.push(("tile_map.tiles".to_owned(), tiles_file));
     files.push(("terrain.tile_list".to_owned(), tile_list.write()));
     if let Some(f) = land {
-        files.push(("lf_height_map.dds".to_owned(), heights::lf_height_dds(f)));
-        files.push(("lf_height_map.data".to_owned(), heights::lf_height_data(f, (w, h))));
+        if m.kind == wce_terrain::MapKind::Campaign {
+            // The campaign's LF halved (and halved again for the low-quality one).
+            files.push(("lf_height_map.dds".to_owned(), heights::campaign_lf_dds(f, 1)));
+            files.push(("lf_height_map_lq.dds".to_owned(), heights::campaign_lf_dds(f, 2)));
+            files.push(("lf_height_map.data".to_owned(), heights::campaign_lf_data(f, (w, h))));
+        } else {
+            files.push(("lf_height_map.dds".to_owned(), heights::lf_height_dds(f)));
+            files.push(("lf_height_map.data".to_owned(), heights::lf_height_data(f, (w, h))));
+        }
     }
 
     // The LF normal chunks an LF edit reaches (none for an LF as the map's file has it: the game's stay).
@@ -99,7 +106,24 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
         files.push(("lf_sea_height_map.dds".to_owned(), heights::lf_sea_height_dds(f.get())));
     }
 
-    if let Some(p) = m.project.as_ref().map(|p| p.get()) {
+    // A campaign map (BOB's Tilemap skips its masks and climates when the path names the campaigns): an empty locations.blm and masks,
+    // no deployment files; the props, VFX and environment volumes of its .terry instead.
+    if m.kind == wce_terrain::MapKind::Campaign {
+        let mut blm = b"BLMF".to_vec();
+        for v in [8u32, 0, w, h, 0, 0] {
+            blm.extend_from_slice(&v.to_le_bytes());
+        }
+
+        files.push(("locations.blm".to_owned(), blm));
+        files.push(("locations.blm.mask0".to_owned(), vec![]));
+        files.push(("locations.blm.mask1".to_owned(), vec![]));
+        if let Some(p) = m.project.as_ref().map(|p| p.get()) {
+            let err = |e: String| crate::file_error("markers", e);
+            files.push(("prop_marker.markers".to_owned(), super::campaign::prop_markers(p).map_err(err)?));
+            files.push(("particle_emitter_marker.markers".to_owned(), super::campaign::particle_markers(p).map_err(|e| crate::file_error("markers", e))?));
+            files.push(("environment_collection.xml".to_owned(), super::campaign::environment_collection(p)));
+        }
+    } else if let Some(p) = m.project.as_ref().map(|p| p.get()) {
         let climates = wce_terrain::locations::climate_environments(inputs.db, inputs.environment_map);
         files.push(("locations.blm".to_owned(), wce_terrain::locations::build(p, w, h, &climates).write()));
 
