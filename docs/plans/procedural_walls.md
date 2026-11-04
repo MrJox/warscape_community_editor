@@ -17,6 +17,8 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   platforms lay over the sloped walkway's): the walkway's platforms are cut around the step's cross-section; a 15 m wall keeps its
   walkway's mesh under the stair. A cut platform's pieces stay together as that platform: the firing lines name their platform by its
   place in the base's list (2026-11-04: before, every line after a cut platform went to the wrong one, units formed in blocks past a step).
+  A stair brings its wood only, when its bastion has the wood in blocks of its own (2026-11-04: the gondorean bastions' stair well side,
+  a one-sided stone face, stood alone beside a small step); an atlas model (one block) keeps the band around the stair's slope alone.
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).

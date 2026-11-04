@@ -68,7 +68,10 @@ pub fn warp_mesh_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32, 
         let n = model.lods().len();
         for (k, lod) in model.lods_mut().iter_mut().enumerate().take(n) {
             let Some(from) = part.lods().get(k).or(part.lods().last()) else { continue };
-            for block in from.mesh_blocks() {
+            // A stair (a band) is its wood: when the model has it in blocks of its own, only those come (the stone around it is the
+            // stair well's, one-sided faces that stand alone on a small step; user 2026-11-04). An atlas model keeps the band alone.
+            let wood_only = sp.band.is_some() && from.mesh_blocks().iter().any(is_wood);
+            for block in from.mesh_blocks().iter().filter(|b| !wood_only || is_wood(b)) {
                 let mut b = block.clone();
                 warp_block(&mut b, sp.warp, &part_cuts, &holds)?;
                 if !b.mesh().indices().is_empty() {
@@ -79,6 +82,15 @@ pub fn warp_mesh_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32, 
     }
 
     encode(&mut model)
+}
+
+/// If a block is wood (its diffuse texture's name says so).
+fn is_wood(block: &rpfm_lib::files::rigidmodel::MeshBlock) -> bool {
+    block.material().textures().iter().any(|t| matches!(t.tex_type(), rpfm_lib::files::rigidmodel::materials::TextureType::Diffuse) && file_name(t.path()).contains("wood"))
+}
+
+fn file_name(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_lowercase()
 }
 
 /// A block cut at `cuts`, the triangles whose centre (the piece's frame) `keep` refuses left out, warped.
