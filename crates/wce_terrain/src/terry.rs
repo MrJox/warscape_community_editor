@@ -50,6 +50,15 @@ pub enum EntityKind {
     CatchmentRegion,
     DeploymentZone,
     DeploymentRegion,
+
+    /// A prop (`ECPropMesh` with its `ECMesh`): its model.
+    Prop(String),
+
+    /// A VFX (`ECVFX`): its effect.
+    Vfx(String),
+
+    /// An environment volume (`ECEnvironmentVolume`): its lighting file.
+    EnvironmentVolume(String),
     Other,
 }
 
@@ -60,6 +69,9 @@ impl EntityKind {
             Self::CatchmentRegion => "catchment region".to_owned(),
             Self::DeploymentZone => "deployment zone".to_owned(),
             Self::DeploymentRegion => "deployment zone region".to_owned(),
+            Self::Prop(_) => "prop".to_owned(),
+            Self::Vfx(_) => "VFX".to_owned(),
+            Self::EnvironmentVolume(_) => "environment volume".to_owned(),
             Self::Other => "entity".to_owned(),
         }
     }
@@ -172,6 +184,19 @@ impl TerryProject {
         let has = |n: &str| e.components.iter().any(|(c, _)| c == n);
         if let Some(c) = self.component(e, "ECBattleCatchmentArea") {
             return EntityKind::Bca(self.doc.get(c, "catchment_type").unwrap_or_default());
+        }
+
+        let attr = |c: &str, a: &str| self.component(e, c).and_then(|k| self.doc.get(k, a)).unwrap_or_default();
+        if has("ECPropMesh") {
+            return EntityKind::Prop(attr("ECMesh", "model_path"));
+        }
+
+        if has("ECVFX") {
+            return EntityKind::Vfx(attr("ECVFX", "vfx"));
+        }
+
+        if has("ECEnvironmentVolume") {
+            return EntityKind::EnvironmentVolume(attr("ECEnvironmentVolume", "lighting_file"));
         }
 
         if has("ECDeploymentZone") {
