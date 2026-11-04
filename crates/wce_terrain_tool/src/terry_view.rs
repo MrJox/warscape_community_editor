@@ -1,8 +1,9 @@
 //! The `.terry` scene of the shown kit map in the 3D view (docs/plans/terrain_editor.md, Phase 5): each entity near the camera an overlay
 //! on the LF (rectangles, polylines; pickable, so selection, the Outliner, the Inspector and the gizmo reach it through the map
 //! document), drawn again when the scene changes or the camera moves on; and Terry's creation modes for battle maps: a battle catchment area
-//! (a click: a 2048 m rectangle on the cell grid, with its `Catchment Region`), a deployment zone (clicks for its region's points), and
-//! delete and duplicate of the selected entities. Each is one step on the map's history.
+//! (a click: a 2048 m rectangle on the cell grid, with its `Catchment Region`), a deployment zone (clicks for its region's points); for
+//! campaign maps a prop, a VFX and an environment volume (a click each, as the kit's are); and delete and duplicate of the selected
+//! entities. Each is one step on the map's history.
 
 use std::collections::HashMap;
 
@@ -29,6 +30,31 @@ pub enum Mode {
     /// The selected polyline's points: a click picks a point, the next moves it there; Shift+click on a side adds one; Ctrl+click
     /// removes one.
     EditPoints,
+
+    /// Campaign maps: a prop mesh, a VFX, an environment volume at the click.
+    NewProp,
+    NewVfx,
+    NewEnvironmentVolume,
+}
+
+/// The modes of a battle map's and of a campaign map's `.terry`, with their labels.
+const BATTLE_MODES: [(Mode, &str); 4] = [
+    (Mode::Select, "select (the gizmo moves)"), (Mode::NewBca, "new battle catchment area"), (Mode::NewDeploymentZone, "new deployment zone"),
+    (Mode::EditPoints, "edit the selected polyline's points"),
+];
+const CAMPAIGN_MODES: [(Mode, &str); 4] = [
+    (Mode::Select, "select (the gizmo moves)"), (Mode::NewProp, "new prop"), (Mode::NewVfx, "new VFX"), (Mode::NewEnvironmentVolume, "new environment volume"),
+];
+
+/// What a campaign creation makes: the prop's model and scale, the VFX's effect, the environment volume's lighting and radii (`.terry`
+/// units). Empty ones take the map's most used when the section is drawn.
+#[derive(Clone, Debug, Default)]
+pub struct NewCampaignEntity {
+    pub model: String,
+    pub scale: f32,
+    pub vfx: String,
+    pub lighting: String,
+    pub radii: [f32; 2],
 }
 
 pub struct TerryView {
@@ -51,11 +77,17 @@ pub struct TerryView {
     /// What the drawn set is of: document, `.terry` revision, filters, the point it is centred on (metres).
     built: Option<Built>,
     draft: EntityId,
+
+    /// The campaign creations' settings.
+    pub new: NewCampaignEntity,
 }
 
 impl Default for TerryView {
     fn default() -> Self {
-        Self { show: [true, true, true, true], radius_m: 40_000.0, mode: Mode::Select, points: vec![], picked: None, layer: 0, shown: HashMap::new(), built: None, draft: 0 }
+        Self {
+            show: [true, true, true, true], radius_m: 40_000.0, mode: Mode::Select, points: vec![], picked: None, layer: 0, shown: HashMap::new(), built: None, draft: 0,
+            new: NewCampaignEntity { scale: 0.3, radii: [100.0, 150.0], ..Default::default() },
+        }
     }
 }
 
@@ -237,6 +269,9 @@ impl TerryView {
             Mode::Select => None,
             Mode::EditPoints => Some(self.edit_point(e, doc, at).unwrap_or_else(|err| err)),
             Mode::NewBca => Some(new_bca(e, doc, at).unwrap_or_else(|err| err)),
+            Mode::NewProp => Some(new_prop(e, doc, at, &self.new.model, self.new.scale).unwrap_or_else(|err| err)),
+            Mode::NewVfx => Some(new_vfx(e, doc, at, &self.new.vfx).unwrap_or_else(|err| err)),
+            Mode::NewEnvironmentVolume => Some(new_environment_volume(e, doc, at, &self.new.lighting, self.new.radii).unwrap_or_else(|err| err)),
             Mode::NewDeploymentZone => {
                 // Next to the first point: the zone closed and made.
                 let close = self.points.len() >= 3 && (self.points[0][0] - at[0]).hypot(self.points[0][1] - at[1]) < TERRY_CELL / 2.0;
@@ -278,17 +313,23 @@ impl TerryView {
         }
 
         gui::slider_float("drawn within (m)", &mut self.radius_m, 2_000.0, 200_000.0, "%.0f");
-        let mut m = match self.mode {
-            Mode::Select => 0,
-            Mode::NewBca => 1,
-            Mode::NewDeploymentZone => 2,
-            Mode::EditPoints => 3,
-        };
+        let campaign = d.terry_frame.y_from_lf;
+        let modes = if campaign { &CAMPAIGN_MODES } else { &BATTLE_MODES };
+        if !modes.iter().any(|m| m.0 == self.mode) {
+            self.mode = Mode::Select;
+        }
 
-        if gui::combo("left button", &mut m, &["select (the gizmo moves)", "new battle catchment area", "new deployment zone", "edit the selected polyline's points"]) {
-            self.mode = [Mode::Select, Mode::NewBca, Mode::NewDeploymentZone, Mode::EditPoints][m.clamp(0, 3) as usize];
+        let mut m = modes.iter().position(|x| x.0 == self.mode).unwrap_or(0) as i32;
+        let labels: Vec<&str> = modes.iter().map(|x| x.1).collect();
+        if gui::combo("left button", &mut m, &labels) {
+            self.mode = modes[m.clamp(0, 3) as usize].0;
             self.points.clear();
             self.picked = None;
+        }
+
+        if campaign {
+            let selected: Vec<u64> = e.selection.items().iter().filter(|s| s.doc == doc).map(|s| s.item).collect();
+            self.new_entity_settings(p, &selected);
         }
 
         if self.mode == Mode::EditPoints {
@@ -336,6 +377,67 @@ impl TerryView {
     pub fn claims_left_button(&self) -> bool {
         self.mode != Mode::Select
     }
+
+    /// The settings of the campaign creation mode chosen: a text field each, a list of the map's values (most used first), "From the
+    /// selected".
+    fn new_entity_settings(&mut self, p: &TerryProject, selected: &[u64]) {
+        let used = |f: &dyn Fn(&EntityKind) -> Option<String>| -> Vec<String> {
+            let mut c: HashMap<String, usize> = HashMap::new();
+            for x in &p.entities {
+                if let Some(v) = f(&p.kind(x)) {
+                    *c.entry(v).or_default() += 1;
+                }
+            }
+
+            let mut v: Vec<(String, usize)> = c.into_iter().collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            v.into_iter().map(|x| x.0).collect()
+        };
+
+        let pick = |label: &str, value: &mut String, list: &[String]| {
+            if value.is_empty() && let Some(first) = list.first() {
+                value.clone_from(first);
+            }
+
+            gui::input_text(label, None, value, 512, 0);
+            let mut k = list.iter().position(|v| v == value).map_or(-1, |k| k as i32);
+            let names: Vec<&str> = list.iter().map(String::as_str).collect();
+            if gui::combo(&format!("used in the map##{label}"), &mut k, &names) && let Some(v) = list.get(k.max(0) as usize) {
+                value.clone_from(v);
+            }
+        };
+
+        let first_selected = selected.iter().find_map(|&id| p.entity(id));
+        match self.mode {
+            Mode::NewProp => {
+                pick("model", &mut self.new.model, &used(&|k| if let EntityKind::Prop(m) = k { Some(m.clone()) } else { None }));
+                gui::drag_float("scale", &mut self.new.scale, 0.01, 0.01, 100.0, "%.3f");
+                if let Some(x) = first_selected && let EntityKind::Prop(m) = p.kind(x) && gui::button("From the selected") {
+                    self.new.model = m;
+                    let s: Vec<f32> = p.component(x, "ECTransform").and_then(|c| p.doc.get(c, "scale"))
+                        .map(|v| v.split_whitespace().filter_map(|t| t.parse().ok()).collect()).unwrap_or_default();
+                    self.new.scale = s.first().copied().unwrap_or(1.0);
+                }
+
+                gui::text_disabled("a click: the prop there, every season; its y from the LF (ASSUMPTION: the kit's follow the tiles)");
+            }
+
+            Mode::NewVfx => {
+                pick("effect", &mut self.new.vfx, &used(&|k| if let EntityKind::Vfx(v) = k { Some(v.clone()) } else { None }));
+                if let Some(x) = first_selected && let EntityKind::Vfx(v) = p.kind(x) && gui::button("From the selected") {
+                    self.new.vfx = v;
+                }
+            }
+
+            Mode::NewEnvironmentVolume => {
+                pick("lighting", &mut self.new.lighting, &used(&|k| if let EntityKind::EnvironmentVolume(l) = k { Some(l.clone()) } else { None }));
+                gui::drag_float2("inner, outer radius", &mut self.new.radii, 1.0, "%.1f");
+                gui::text_disabled("an outer radius of 0 is the map's global lighting");
+            }
+
+            _ => {}
+        }
+    }
 }
 
 /// A structural edit of the document's `.terry` onto its history.
@@ -353,6 +455,10 @@ fn structural(e: &mut Editor, doc: DocumentId, name: &str, f: impl FnOnce(&mut T
 pub fn new_bca(e: &mut Editor, doc: DocumentId, at: [f64; 2]) -> Result<String, String> {
     let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
     let p = d.project().ok_or("this map has no .terry project")?;
+    if d.terry_frame.y_from_lf {
+        return Err("battle catchment areas are a battle map's (a campaign map's .terry has props, VFX and environment volumes)".to_owned());
+    }
+
     let (x, z) = ((at[0] / TERRY_CELL).round() * TERRY_CELL, (at[1] / TERRY_CELL).round() * TERRY_CELL);
     let y = d.lf_metres_at(x, z);
     let (id, cid) = (p.next_id(), p.next_id() + 1);
@@ -373,6 +479,82 @@ pub fn new_bca(e: &mut Editor, doc: DocumentId, at: [f64; 2]) -> Result<String, 
     Ok(format!("{name} at {}, {} (land_normal; its type in the Inspector)", n(x), n(z)))
 }
 
+/// One campaign entity (the kit's components, in its order) at `at`, named `name`: one step on the history.
+fn new_campaign_entity(e: &mut Editor, doc: DocumentId, at: [f64; 2], y: Option<f64>, name: &str, what: &str, components: &str) -> Result<String, String> {
+    let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
+    let p = d.project().ok_or("this map has no .terry project")?;
+    if !d.terry_frame.y_from_lf {
+        return Err(format!("{what}: a campaign map's (a battle map's props and effects come with its tiles)"));
+    }
+
+    let id = p.next_id();
+    let n = |v: f64| wce_terrain::terry::number_text(v);
+    let y = y.unwrap_or_else(|| d.terry_y_at(at[0], at[1]));
+    let components = components.replace("{pos}", &format!("{} {} {}", n(at[0]), n(y), n(at[1])));
+    let xml = format!("<entity id=\"{id:x}\" name=\"{}\">\n{{i}}<components>\n{components}{{i}}</components>\n{{i}}<children/>\n</entity>", xml_attr(name));
+    structural(e, doc, what, |p| p.insert_entities(&xml).map_err(|err| err.to_string()))?;
+    Ok(format!("{what}: {name} ({id:x}) at {}, {}, {}", n(at[0]), n(y), n(at[1])))
+}
+
+/// Text in an XML attribute.
+fn xml_attr(v: &str) -> String {
+    v.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// A campaign prop: `ECMesh` of `model`, the transform (no turn, `scale` on every axis), on the landscape, every season, visible
+/// everywhere but its destruction zone flags as the kit's defaults; named after the model's file.
+pub fn new_prop(e: &mut Editor, doc: DocumentId, at: [f64; 2], model: &str, scale: f32) -> Result<String, String> {
+    if model.trim().is_empty() {
+        return Err("a prop needs a model (RigidModels/campaign/...rigid_model_v2)".to_owned());
+    }
+
+    let s = wce_terrain::terry::number_text(f64::from(scale));
+    let name = model.rsplit(['/', '\\']).next().unwrap_or(model).trim_end_matches(".rigid_model_v2").to_owned();
+    let c = format!(
+        "{{i}}{{i}}<ECMesh model_path=\"{}\" opacity=\"1\" glow_amount=\"0\" active=\"true\" burn=\"false\" burn_amount=\"0\"/>\n\
+{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"{s} {s} {s}\" active=\"true\" position=\"{{pos}}\"/>\n{{i}}{{i}}<ECLandscapeAbove active=\"true\"/>\n\
+{{i}}{{i}}<ECPropMesh visible_outside_snow_zone=\"true\" active=\"true\" visible_inside_destruction_zone=\"true\" visible_inside_snow_zone=\"true\" visible_outside_destruction_zone=\"true\"/>\n\
+{{i}}{{i}}<ECSeasonMask autumn=\"true\" winter=\"true\" active=\"true\" spring=\"true\" summer=\"true\"/>\n",
+        xml_attr(model.trim())
+    );
+
+    new_campaign_entity(e, doc, at, None, &name, "new prop", &c)
+}
+
+/// A campaign VFX: `ECVFX` of `vfx` (autoplay, visible everywhere, scale 1), the transform, every season; named after the effect.
+pub fn new_vfx(e: &mut Editor, doc: DocumentId, at: [f64; 2], vfx: &str) -> Result<String, String> {
+    let vfx = vfx.trim();
+    if vfx.is_empty() {
+        return Err("a VFX needs an effect".to_owned());
+    }
+
+    let c = format!(
+        "{{i}}{{i}}<ECVFX vfx=\"{v}\" visible_outside_snow_zone=\"true\" instance_name=\"\" scale=\"1\" active=\"true\" visible_inside_destruction_zone=\"true\" visible_inside_snow_zone=\"true\" visible_outside_destruction_zone=\"true\" export_in_tile_marker_file=\"false\" autoplay=\"true\"/>\n\
+{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{{pos}}\"/>\n\
+{{i}}{{i}}<ECSeasonMask autumn=\"true\" winter=\"true\" active=\"true\" spring=\"true\" summer=\"true\"/>\n",
+        v = xml_attr(vfx)
+    );
+
+    new_campaign_entity(e, doc, at, None, vfx, "new VFX", &c)
+}
+
+/// A campaign environment volume: the transform, then `ECEnvironmentVolume` (lighting, radii: `[inner, outer]`); named `EV <n>`.
+pub fn new_environment_volume(e: &mut Editor, doc: DocumentId, at: [f64; 2], lighting: &str, radii: [f32; 2]) -> Result<String, String> {
+    if lighting.trim().is_empty() {
+        return Err("an environment volume needs a lighting file".to_owned());
+    }
+
+    let count = e.docs.find_as::<MapDocument>(doc).and_then(|d| d.project()).map_or(0, |p| p.with_component("ECEnvironmentVolume").count());
+    let n = |v: f32| wce_terrain::terry::number_text(f64::from(v));
+    let c = format!(
+        "{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{{pos}}\"/>\n\
+{{i}}{{i}}<ECEnvironmentVolume outer_radius=\"{}\" lighting_file=\"{}\" active=\"true\" inner_radius=\"{}\"/>\n",
+        n(radii[1]), xml_attr(lighting.trim()), n(radii[0])
+    );
+
+    new_campaign_entity(e, doc, at, None, &format!("EV {}", count + 1), "new environment volume", &c)
+}
+
 /// A deployment zone of one additive region through `pts` (metres on the map; three at least). Zones come in pairs, the two alliances'
 /// halves of one deployment ("DZ k/0" then "DZ k/1", as the kit's 883 pairs; BOB writes a deployment file per pair): a new zone is the
 /// alliance its predecessor leaves open. A zone belongs to a battle catchment area (an entity child of it: BOB writes the deployments of
@@ -386,6 +568,10 @@ pub fn new_zone(e: &mut Editor, doc: DocumentId, pts: &[[f64; 2]]) -> Result<Str
     let selected: Vec<u64> = e.selection.items().iter().filter(|s| s.doc == doc).map(|s| s.item).collect();
     let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
     let p = d.project().ok_or("this map has no .terry project")?;
+    if d.terry_frame.y_from_lf {
+        return Err("deployment zones are a battle map's".to_owned());
+    }
+
     let is_bca = |id: &u64| p.entity(*id).is_some_and(|x| matches!(p.kind(x), EntityKind::Bca(_)));
     let holds = |id: &u64| p.entity(*id).and_then(|x| p.rectangle(x)).is_some_and(|r| {
         let w = p.world_position(*id);

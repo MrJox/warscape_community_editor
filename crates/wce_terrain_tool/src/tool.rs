@@ -1778,8 +1778,8 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_terry", "terrain_terry count | bca <x> <z> | generate | points <id> <x> <z> ... | zone <x> <z> <x> <z> <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>", "the Terrain tool: the shown kit map's .terry entities (metres from the map's centre, ids in hex; one step on the history each)", |e, a| {
-            let usage = "usage: terrain_terry count | bca <x> <z> | generate | points <id> <x> <z> ... | zone <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>";
+        c.add("terrain_terry", "terrain_terry count | bca <x> <z> | prop <x> <z> <model> [scale] | vfx <x> <z> <effect> | ev <x> <z> <lighting> <inner> <outer> | generate | points <id> <x> <z> ... | zone <x> <z> <x> <z> <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>", "the Terrain tool: the shown kit map's .terry entities (metres from the map's centre, ids in hex; one step on the history each)", |e, a| {
+            let usage = "usage: terrain_terry count | bca <x> <z> | prop <x> <z> <model> [scale] | vfx <x> <z> <effect> | ev <x> <z> <lighting> <inner> <outer> | generate | points <id> <x> <z> ... | zone <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>";
             let hex = |v: &String| u64::from_str_radix(v, 16).ok();
             let nums: Vec<f64> = a.iter().skip(1).filter_map(|v| v.parse().ok()).collect();
             with_terrain(e, |t, e| {
@@ -1798,6 +1798,16 @@ impl Tool for TerrainTool {
                     }
 
                     (Some("bca"), 3) if nums.len() == 2 => crate::terry_view::new_bca(e, doc, [nums[0], nums[1]]),
+                    (Some("prop"), 4 | 5) if a[1].parse::<f64>().is_ok() && a[2].parse::<f64>().is_ok() => {
+                        let scale = a.get(4).and_then(|v| v.parse().ok()).unwrap_or(1.0);
+                        crate::terry_view::new_prop(e, doc, [nums[0], nums[1]], &a[3], scale)
+                    }
+
+                    (Some("vfx"), 4) if a[1].parse::<f64>().is_ok() && a[2].parse::<f64>().is_ok() => crate::terry_view::new_vfx(e, doc, [nums[0], nums[1]], &a[3]),
+                    (Some("ev"), 6) if a[1].parse::<f64>().is_ok() && a[2].parse::<f64>().is_ok() => match (a[4].parse(), a[5].parse()) {
+                        (Ok(i), Ok(o)) => crate::terry_view::new_environment_volume(e, doc, [nums[0], nums[1]], &a[3], [i, o]),
+                        _ => Err(usage.to_owned()),
+                    },
                     (Some("generate"), 1) => crate::terry_view::generate_bcas(e, doc),
                     (Some("points"), n) if n >= 8 && n % 2 == 0 => match hex(&a[1]) {
                         Some(id) => {
