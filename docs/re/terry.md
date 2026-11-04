@@ -150,7 +150,9 @@ their 780 zones, 1 088 regions and 8 317 polyline points (to 5 cm) agrees (gate 
     variation's `deployment_mask.png` for the configuration (mirrored vertically, `width / tile width` pixels a cell, luminance
     `(11 R + 16 G + 5 B) >> 5` above 25 the key 1, above 76 the key -1; the configuration's key, else -1), else none for a tile in the
     deployment's `restriction`, else its unmasked subtiles. Turned with the instance (Qt transforms; the flip is ignored). Thrones' kit
-    has no tile folders, so no masks were read;
+    has no tile folders, so no masks were read; Attila's has 107 (`<tile>/<variation>/deployment_mask.png`, 8-bit RGB, 128 pixels a
+    cell mostly; 62 under `main_attila_map`'s tiles). Against Attila's shipped `main_attila_map.terry` (made from other inputs, as
+    Thrones' shipped one: no oracle) the zones of 23 551 of 24 337 common BCAs agree; unmirrored masks lose 850 BCAs to errors;
   - their union cut to the battle rectangle: -512 .. 511 inset by `int(1024 * 64 / (unit * 128 * 8) + 1)`, 33 for unit 2 (+-958 m);
   - the Zonifier: the region's y-x banded rectangles' sides as directed unit edges (top left to right, bottom right to left, right side
     down, left up; an edge meeting its reverse cancels), in a multimap by start point (x, then y); a polygon traced from the first edge:

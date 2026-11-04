@@ -115,6 +115,92 @@ pub fn in_list(db: &TileDatabase, list: &HashSet<String>, p: &Placement) -> bool
     tile.variations.get(p.variation).is_some_and(|v| list.contains(&format!("{rel}/{}", v.location)))
 }
 
+/// A variation's deployment mask (`<tile>/<variation>/deployment_mask.png` in a kit's `raw_data`, fn 0x1005cfc0 / 0x1005b090): per key
+/// its pixels' squares in 1/128 cells of the unturned tile (x0, y0, x1, y1 inclusive), the image mirrored vertically; key 1 the pixels
+/// whose luminance `(11 R + 16 G + 5 B) >> 5` is above 25, key -1 those above 76.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DeploymentMask {
+    pub regions: Vec<(i32, Vec<(i32, i32, i32, i32)>)>,
+}
+
+impl DeploymentMask {
+    /// From an image's RGB pixels, row by row, for a tile of `tile_w` x `tile_h` cells: none when Terry skips it (more than 128 pixels a
+    /// cell) or asserts (the sides' pixels a cell differ, or 128 is no multiple of them).
+    pub fn from_rgb(w: u32, h: u32, rgb: &[[u8; 3]], tile_w: i32, tile_h: i32) -> Option<Self> {
+        if tile_w <= 0 || tile_h <= 0 || rgb.len() != (w * h) as usize {
+            return None;
+        }
+
+        let ppt = w as i32 / tile_w;
+        if ppt == 0 || ppt != h as i32 / tile_h || ppt > zones::UNITS || zones::UNITS % ppt != 0 {
+            return None;
+        }
+
+        let s = zones::UNITS / ppt;
+        let (mut grey, mut white) = (vec![], vec![]);
+        for iy in 0..h as i32 {
+            let row = h as i32 - 1 - iy;
+            for ix in 0..w as i32 {
+                let [r, g, b] = rgb[(row * w as i32 + ix) as usize];
+                let l = (i32::from(r) * 11 + i32::from(g) * 16 + i32::from(b) * 5) >> 5;
+                let rect = (ix * s, iy * s, ix * s + s - 1, iy * s + s - 1);
+                if l > 25 {
+                    grey.push(rect);
+                }
+
+                if l > 76 {
+                    white.push(rect);
+                }
+            }
+        }
+
+        let mut regions = vec![];
+        if !grey.is_empty() {
+            regions.push((1, grey));
+        }
+
+        if !white.is_empty() {
+            regions.push((-1, white));
+        }
+
+        Some(Self { regions })
+    }
+
+    /// A key's squares (none: empty).
+    pub fn key(&self, k: i32) -> &[(i32, i32, i32, i32)] {
+        self.regions.iter().find(|r| r.0 == k).map_or(&[], |r| r.1.as_slice())
+    }
+}
+
+/// The deployment masks of the variations a battle field places, from the first of `raw_roots` (kits' `raw_data`, in the data source
+/// order) that has one.
+pub fn load_masks(db: &TileDatabase, instances: &[Placement], raw_roots: &[std::path::PathBuf]) -> HashMap<(usize, usize), DeploymentMask> {
+    let mut out = HashMap::new();
+    let mut tried = HashSet::new();
+    for p in instances {
+        if !tried.insert((p.tile, p.variation)) {
+            continue;
+        }
+
+        let t = &db.tiles[p.tile];
+        let Some(v) = t.variations.get(p.variation) else { continue };
+        let rel = std::path::PathBuf::from(t.location.replace('\\', "/")).join(&v.location).join("deployment_mask.png");
+        let Some(bytes) = raw_roots.iter().find_map(|r| std::fs::read(r.join(&rel)).ok()) else { continue };
+        let Ok(png) = wce_formats::png_file::PngFile::parse(&bytes) else { continue };
+        let bpp = png.bytes_per_pixel();
+        if png.bit_depth != 8 || !(bpp == 3 || bpp == 4) {
+            continue;
+        }
+
+        let rgb: Vec<[u8; 3]> = png.pixels.chunks_exact(bpp).map(|c| [c[0], c[1], c[2]]).collect();
+        if let Some(m) = DeploymentMask::from_rgb(png.width, png.height, &rgb, t.width, t.height) {
+            out.insert((p.tile, p.variation), m);
+        }
+    }
+
+    out
+}
+
 /// A generated BCA.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bca {
@@ -168,18 +254,22 @@ fn regions(z: &zones::Polygon, centre: (i32, i32), out: &mut Vec<Dzr>) {
 
 /// A BCA's deployment zones for its type (fn 0x10062850): one configuration (0) of two alliances, or with `dual_config` two, the
 /// second's alliances swapped when its zones face the other way (their centroids' axes' dot product below 0).
-fn deploy(spec: &Spec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement], cells: &[i32], b: &mut Bca, dep: &DeploymentSpec) {
+#[allow(clippy::too_many_arguments)]
+fn deploy(
+    spec: &Spec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement], cells: &[i32], masks: &HashMap<(usize, usize), DeploymentMask>,
+    b: &mut Bca, dep: &DeploymentSpec,
+) {
     let inset = zones::battle_inset(2.0);
-    let mut make = || {
-        let (z, e) = zones::zones(spec, dep, db, w, h, instances, cells, b.cell, inset);
+    let mut make = |config: i32| {
+        let (z, e) = zones::zones(spec, dep, db, w, h, instances, cells, masks, config, b.cell, inset);
         b.errors.extend(e);
         let mut z = z.into_iter();
         (z.next(), z.next())
     };
 
     let order: Vec<(i32, i32, Option<zones::Polygon>)> = if dep.dual_config {
-        let (a0, a1) = make();
-        let (mut b0, mut b1) = make();
+        let (a0, a1) = make(0);
+        let (mut b0, mut b1) = make(1);
         if let (Some(p), Some(q), Some(r), Some(s)) = (&a0, &a1, &b0, &b1) {
             let c = |z: &zones::Polygon| {
                 let (a, mx, my) = z.moments();
@@ -195,7 +285,7 @@ fn deploy(spec: &Spec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement
 
         vec![(0, 0, a0), (0, 1, b1), (1, 0, a1), (1, 1, b0)]
     } else {
-        let (a0, a1) = make();
+        let (a0, a1) = make(-1);
         vec![(0, 0, a0), (0, 1, a1)]
     };
 
@@ -243,7 +333,9 @@ pub fn cell_instances(db: &TileDatabase, w: u32, h: u32, instances: &[Placement]
 
 /// The BCAs of a map (`w` x `h` cells, its tile instances in the battle field's order), in the order Terry makes them; with
 /// `delete_invalid` the ones with an error are still listed (their `errors` say why they go).
-pub fn generate(spec: &Spec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement]) -> Vec<Bca> {
+pub fn generate(
+    spec: &Spec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement], masks: &HashMap<(usize, usize), DeploymentMask>,
+) -> Vec<Bca> {
     let cells = cell_instances(db, w, h, instances);
     let mut out: Vec<Bca> = vec![];
     let mut at: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
@@ -290,7 +382,7 @@ pub fn generate(spec: &Spec, db: &TileDatabase, w: u32, h: u32, instances: &[Pla
 
     for b in &mut out {
         if let Some(dep) = spec.types[b.type_index].deployment.as_ref().filter(|d| !d.category.is_empty()) {
-            deploy(spec, db, w, h, instances, &cells, b, dep);
+            deploy(spec, db, w, h, instances, &cells, masks, b, dep);
         }
     }
 
