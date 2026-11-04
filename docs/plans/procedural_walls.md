@@ -15,7 +15,8 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   chains stairs. 15 m climbs of about 10 are a whole stepped bastion, as vanilla. Runs between steps are at least `min_run` long.
   **The step's platforms replace the walkway's where it is** (user, 2026-11-03: units got stuck on 15 m steps, where the stair's
   platforms lay over the sloped walkway's): the walkway's platforms are cut around the step's cross-section; a 15 m wall keeps its
-  walkway's mesh under the stair.
+  walkway's mesh under the stair. A cut platform's pieces stay together as that platform: the firing lines name their platform by its
+  place in the base's list (2026-11-04: before, every line after a cut platform went to the wrong one, units formed in blocks past a step).
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).
