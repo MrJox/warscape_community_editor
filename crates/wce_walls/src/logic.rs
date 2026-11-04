@@ -9,6 +9,7 @@
 //! - every **transform** (attached buildings, emitters, the map flag) is moved and turned; the pieces' own `node_transform` is not;
 //! - **boxes** are recomputed around the warped box.
 
+use std::collections::HashMap;
 use std::io::Cursor;
 
 use rpfm_lib::files::cs2_parsed::Cs2Parsed;
@@ -141,6 +142,17 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
 
             for ring in array_mut(d, "orange_thingies") {
                 warp_footprint(ring, warp, step, &planes);
+            }
+
+            // The collision hull bent with the piece (and the corner's copies' hulls with them): it stayed the base's, straight and
+            // flat over steps and half a piece off (user 2026-11-04: the stairs showed as not walkable, the hull over their platform).
+            let mut hull = collision_polygons(&d["collision_3d"], warp, cuts, &planes);
+            for (sp, sd) in &shapes {
+                hull.extend(collision_polygons(&sd["collision_3d"], sp.warp, cuts, &sp.warp.clip_planes()));
+            }
+
+            if d["collision_3d"].is_object() {
+                write_collision(&mut d["collision_3d"], &hull);
             }
 
             for (sp, mut sd) in shapes {
@@ -595,6 +607,108 @@ fn warp_footprint(ring: &mut Value, warp: &dyn Warp, step: f32, planes: &[[f32; 
     *ring = Value::Array(out);
 }
 
+/// A collision hull (`collision_3d`: vertices, triangles) as polygons cut along x at `cuts`, cut to the half-planes, warped. A cut through
+/// an edge gives the same point to both triangles on it (worked out from the edge's ends in one order), so the hull stays closed.
+fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3]]) -> Vec<Vec<[f32; 3]>> {
+    let verts = c["vertices"].as_array().map(|a| a.iter().map(p3).collect::<Vec<_>>()).unwrap_or_default();
+    let tris = c["triangles"].as_array().map(|a| a.iter().filter_map(|t| {
+        let i = |k: &str| t[k].as_u64().map(|v| v as usize).filter(|&v| v < verts.len());
+        Some([verts[i("vertex_1")?], verts[i("vertex_2")?], verts[i("vertex_3")?]])
+    }).collect::<Vec<_>>()).unwrap_or_default();
+    if tris.is_empty() {
+        return vec![];
+    }
+
+    // The side of a point to a half-plane (a x + b z <= c inside), and a polygon's part on one side.
+    let cut = |poly: &[[f32; 3]], f: &dyn Fn([f32; 3]) -> f32| -> Vec<[f32; 3]> {
+        let mut out = vec![];
+        for i in 0..poly.len() {
+            let (p, q) = (poly[i], poly[(i + 1) % poly.len()]);
+            let (fp, fq) = (f(p), f(q));
+            if fp <= 0.0 {
+                out.push(p);
+            }
+
+            if (fp <= 0.0) != (fq <= 0.0) {
+                // From the edge's ends in a fixed order: the same point for the triangle on the other side.
+                let (a, b, fa, fb) = if (p[0], p[1], p[2]) < (q[0], q[1], q[2]) { (p, q, fp, fq) } else { (q, p, fq, fp) };
+                let t = fa / (fa - fb);
+                out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+            }
+        }
+
+        out
+    };
+
+    let (lo, hi) = tris.iter().flatten().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
+    let bounds = cuts.bounds(lo, hi);
+    let mut polys: Vec<Vec<[f32; 3]>> = tris.iter().map(|t| t.to_vec()).collect();
+    for &x in &bounds[1..bounds.len().saturating_sub(1)] {
+        polys = polys.into_iter().flat_map(|p| [cut(&p, &|q| q[0] - x), cut(&p, &|q| x - q[0])]).filter(|p| p.len() >= 3).collect();
+    }
+
+    for &[a, b, c] in planes {
+        polys = polys.into_iter().map(|p| cut(&p, &|q| a * q[0] + b * q[2] - c)).filter(|p| p.len() >= 3).collect();
+    }
+
+    polys.into_iter().map(|p| p.into_iter().map(|q| warp.point(q)).collect()).collect()
+}
+
+/// A collision hull written from polygons (triangle fans; degenerate triangles left out): its vertices shared (within a tenth of a
+/// millimetre), every triangle's edges and the triangles across them (-1 on an open edge), as the game's files have them.
+fn write_collision(c: &mut Value, polys: &[Vec<[f32; 3]>]) {
+    let mut index: HashMap<[i64; 3], usize> = HashMap::new();
+    let mut verts: Vec<[f32; 3]> = vec![];
+    let mut id = |p: [f32; 3]| *index.entry(p.map(|v| (v * 1e4).round() as i64)).or_insert_with(|| {
+        verts.push(p);
+        verts.len() - 1
+    });
+
+    let mut tris: Vec<[usize; 3]> = vec![];
+    for poly in polys {
+        let ids = poly.iter().map(|&p| id(p)).collect::<Vec<_>>();
+        for k in 1..ids.len().saturating_sub(1) {
+            let t = [ids[0], ids[k], ids[k + 1]];
+            if t[0] != t[1] && t[1] != t[2] && t[0] != t[2] {
+                tris.push(t);
+            }
+        }
+    }
+
+    let mut edges: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+    for (f, t) in tris.iter().enumerate() {
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            edges.entry((a.min(b), a.max(b))).or_default().push(f);
+        }
+    }
+
+    let triangles = tris.iter().enumerate().map(|(f, t)| {
+        let mut o = json!({ "face_index": f, "padding": 0, "vertex_1": t[0], "vertex_2": t[1], "vertex_3": t[2], "zero_4": 0 });
+        for k in 0..3 {
+            let (a, b) = (t[k], t[(k + 1) % 3]);
+            let across = edges.get(&(a.min(b), a.max(b))).and_then(|fs| fs.iter().find(|&&g| g != f)).map_or(-1, |&g| g as i64);
+            o[format!("edge_{}_vertex_1", k + 1)] = json!(a);
+            o[format!("edge_{}_vertex_2", k + 1)] = json!(b);
+            o[format!("face_index_{}", k + 1)] = json!(f);
+            o[format!("zero_{}", k + 1)] = json!(k);
+            o[format!("across_face_index_{}", k + 1)] = json!(across);
+        }
+
+        o
+    }).collect::<Vec<_>>();
+
+    // The box: kept empty when the game's is (a hull's box is all zero in the files seen), else around the hull.
+    let empty = ["min_x", "min_y", "min_z", "max_x", "max_y", "max_z"].iter().all(|k| c["bounding_box"][*k].as_f64().unwrap_or(0.0) == 0.0);
+    if !empty && !verts.is_empty() {
+        let (lo, hi) = verts.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1]), lo[2].min(p[2])], [hi[0].max(p[0]), hi[1].max(p[1]), hi[2].max(p[2])]));
+        c["bounding_box"] = json!({ "min_x": lo[0], "min_y": lo[1], "min_z": lo[2], "max_x": hi[0], "max_y": hi[1], "max_z": hi[2] });
+    }
+
+    c["vertices"] = Value::Array(verts.into_iter().map(point3).collect());
+    c["triangles"] = Value::Array(triangles);
+}
+
 /// A box (`min_x` .. `max_z`) around the warp of the old one (its edges sampled every `step` metres along x).
 fn warp_box(b: &mut Value, warp: &dyn Warp, step: f32) {
     let f = |k: &str| b[k].as_f64().unwrap_or(0.0) as f32;
@@ -751,6 +865,44 @@ mod tests {
         }
 
         assert_eq!(notes.orphan_lines, 0);
+    }
+
+    /// A wall's collision hull (a closed box) bent with the wall: cut where the platforms are, closed still (every edge between two
+    /// triangles, each naming the other), its points where the bend puts them (the middle of its top on the bend, not on a chord).
+    #[test]
+    fn a_collision_hull_is_bent_and_stays_closed() {
+        let corners = [[-10.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 0.0, 9.0], [-10.0, 0.0, 9.0], [-10.0, 15.0, 0.0], [10.0, 15.0, 0.0], [10.0, 15.0, 9.0], [-10.0, 15.0, 9.0]];
+        let faces = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+        let mut hull = json!({
+            "name": "piece01_destruct01_collision3d", "uk_1": 1, "uk_2": 0, "zero_4": 0,
+            "bounding_box": { "min_x": 0.0, "min_y": 0.0, "min_z": 0.0, "max_x": 0.0, "max_y": 0.0, "max_z": 0.0 },
+            "vertices": corners.iter().map(|&p| point3(p)).collect::<Vec<_>>(),
+            "triangles": faces.iter().map(|f| json!({ "vertex_1": f[0], "vertex_2": f[1], "vertex_3": f[2] })).collect::<Vec<_>>(),
+        });
+        let bend = crate::warp::Bend::turning(-10.0, 10.0, 0.6);
+        let polys = collision_polygons(&hull, &bend, &Cuts { step: 5.0, at: vec![] }, &[]);
+        write_collision(&mut hull, &polys);
+
+        let tris = hull["triangles"].as_array().unwrap();
+        assert!(tris.len() >= 12 * 3, "{} triangles", tris.len());
+        for (f, t) in tris.iter().enumerate() {
+            for k in 1..=3 {
+                let across = t[format!("across_face_index_{k}")].as_i64().unwrap();
+                assert!(across >= 0, "triangle {f} edge {k} open");
+                let o = &tris[across as usize];
+                let (a, b) = (t[format!("edge_{k}_vertex_1")].as_u64().unwrap(), t[format!("edge_{k}_vertex_2")].as_u64().unwrap());
+                let theirs = [o["vertex_1"].as_u64().unwrap(), o["vertex_2"].as_u64().unwrap(), o["vertex_3"].as_u64().unwrap()];
+                assert!(theirs.contains(&a) && theirs.contains(&b), "triangle {f} edge {k}: {across} does not share it");
+            }
+        }
+
+        let verts = hull["vertices"].as_array().unwrap().iter().map(p3).collect::<Vec<_>>();
+        for z in [0.0, 9.0] {
+            let want = bend.point([0.0, 15.0, z]);
+            assert!(verts.iter().any(|v| (0..3).all(|i| (v[i] - want[i]).abs() < 1e-3)), "no point at the top's middle, z {z}: {want:?}");
+        }
+
+        assert_eq!(hull["bounding_box"]["max_x"].as_f64(), Some(0.0), "an empty box stays empty");
     }
 
     #[test]

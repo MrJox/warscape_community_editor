@@ -34,6 +34,10 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **A 15 m step is one stair across the whole walkway** (`Profile::step_across`, user 2026-11-04: units walked around a stair on the
   inner half beside a ramp on the outer one): the bastion's stair spread over the base's walkway width, one platform; the base's
   platforms (every piece's, its end caps' too) and firing lines over that width give way to it.
+- **The collision hull (`collision_3d`) is bent with the piece** (2026-11-04: it was the base's as it is, straight, flat over steps and
+  half a piece off its frame; the stairs showed as not walkable under the mouse, the hull over their platform): cut where the platforms
+  are, cut at corners and attached ends, warped, its edges and the triangles across them made again (`logic::collision_polygons`,
+  `write_collision`); the corners' copies bring theirs.
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).
