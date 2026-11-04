@@ -46,6 +46,10 @@ pub struct Splice<'a> {
 
     /// Each of the part's pieces into the piece of the same number (a copy of the base itself), not only its first into the first.
     pub per_piece: bool,
+
+    /// Its collision outlines and footprints too (a copy of the base filling a mitred corner's outer side: without them the corner had
+    /// walkway but no footprint nor hard outline; user 2026-11-04).
+    pub shapes_too: bool,
 }
 
 impl Splice<'_> {
@@ -110,15 +114,20 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
             let on_planes = |p: [f32; 3]| inside(&planes, p);
             let (mut platforms, strips) = platform_strips(&old, warp, cuts, &on_planes, 0, &mut notes);
             let lines = d["ef_lines"].as_array().cloned().unwrap_or_default();
-            let mut ef = place_lines(&lines, warp, &strips, &kept, &mut notes);
+            let mut ef = place_lines(&lines, warp, cuts, &strips, &kept, &mut notes);
+            let mut shapes = vec![];
             for (sp, sd) in here {
+                if sp.shapes_too {
+                    shapes.push((sp, sd.clone()));
+                }
+
                 let part_cuts = Cuts { step, at: vec![sp.x.0, sp.x.1] };
                 let part_planes = sp.warp.clip_planes();
                 let holds = |p: [f32; 3]| sp.holds(p) && inside(&part_planes, p);
                 let theirs = sd["platforms"].as_array().into_iter().flatten().map(|p| vec![p.clone()]).collect::<Vec<_>>();
                 let (more, s2) = platform_strips(&theirs, sp.warp, &part_cuts, &holds, platforms.len(), &mut notes);
                 platforms.extend(more);
-                ef.extend(place_lines(sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &s2, &holds, &mut notes));
+                ef.extend(place_lines(sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &part_cuts, &s2, &holds, &mut notes));
             }
 
             d["platforms"] = Value::Array(platforms);
@@ -129,6 +138,25 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
 
             for ring in array_mut(d, "orange_thingies") {
                 warp_footprint(ring, warp, step, &planes);
+            }
+
+            for (sp, mut sd) in shapes {
+                let part_planes = sp.warp.clip_planes();
+                for o in array_mut(&mut sd, "collision_outlines") {
+                    warp_outline(&mut o["vertices"], sp.warp, step, &part_planes);
+                }
+
+                for ring in array_mut(&mut sd, "orange_thingies") {
+                    warp_footprint(ring, sp.warp, step, &part_planes);
+                }
+
+                let kept = |v: &Value, min: usize| v.as_array().is_some_and(|a| a.len() >= min);
+                for (key, inner) in [("collision_outlines", true), ("orange_thingies", false)] {
+                    let more = sd[key].as_array().into_iter().flatten().filter(|o| if inner { kept(&o["vertices"]["outline"], 2) } else { kept(o, 3) }).cloned().collect::<Vec<_>>();
+                    if let Some(list) = d.get_mut(key).and_then(Value::as_array_mut) {
+                        list.extend(more);
+                    }
+                }
             }
 
             // Pipes cut off by a corner are left out.
@@ -418,11 +446,39 @@ fn platform_strips(old: &[Vec<Value>], warp: &dyn Warp, cuts: &Cuts, keep: &dyn 
     (new, strips)
 }
 
-/// Firing lines moved and turned, on the strip of their platform that is under them; those whose middle `keep` refuses, or whose
-/// platform kept no strip, left out.
-fn place_lines(old: &[Value], warp: &dyn Warp, strips: &[Vec<Strip>], keep: &dyn Fn([f32; 3]) -> bool, notes: &mut LogicNotes) -> Vec<Value> {
-    let mut out = vec![];
+/// Firing lines cut where the platforms are (a line along the wall, the length of the piece, would be a chord of a curve: off the
+/// walkway; user 2026-11-04), moved and turned, each part on the strip of its platform that is under it; those whose middle `keep`
+/// refuses, or whose platform kept no strip, left out.
+fn place_lines(old: &[Value], warp: &dyn Warp, cuts: &Cuts, strips: &[Vec<Strip>], keep: &dyn Fn([f32; 3]) -> bool, notes: &mut LogicNotes) -> Vec<Value> {
+    let mut parts = vec![];
     for l in old {
+        let (s, e) = (p3(&l["start"]), p3(&l["end"]));
+        let bounds = cuts.bounds(s[0].min(e[0]), s[0].max(e[0]));
+        if bounds.len() <= 2 || (e[0] - s[0]).abs() < 1e-4 {
+            parts.push(l.clone());
+            continue;
+        }
+
+        // In the line's own order, start to end.
+        let xs: Vec<f32> = if s[0] <= e[0] { bounds } else { bounds.into_iter().rev().collect() };
+        let at = |x: f32| {
+            let t = (x - s[0]) / (e[0] - s[0]);
+            [x, s[1] + (e[1] - s[1]) * t, s[2] + (e[2] - s[2]) * t]
+        };
+        for w in xs.windows(2) {
+            if (w[1] - w[0]).abs() < 0.05 {
+                continue;
+            }
+
+            let mut q = l.clone();
+            set_p3(&mut q["start"], at(w[0]));
+            set_p3(&mut q["end"], at(w[1]));
+            parts.push(q);
+        }
+    }
+
+    let mut out = vec![];
+    for l in &parts {
         let (s, e) = (p3(&l["start"]), p3(&l["end"]));
         let mid = [(s[0] + e[0]) / 2.0, (s[1] + e[1]) / 2.0, (s[2] + e[2]) / 2.0];
         if !keep(mid) {
@@ -626,7 +682,7 @@ mod tests {
         let mut notes = LogicNotes::default();
         let cuts = Cuts { step: 100.0, at: vec![] };
         let (platforms, strips) = platform_strips(&carved, &crate::warp::Identity, &cuts, &|_| true, 0, &mut notes);
-        let lines = place_lines(&[line(15.0, 2.0, 1), line(7.0, 4.0, 0), line(7.0, 8.95, 0)], &crate::warp::Identity, &strips, &|_| true, &mut notes);
+        let lines = place_lines(&[line(15.0, 2.0, 1), line(7.0, 4.0, 0), line(7.0, 8.95, 0)], &crate::warp::Identity, &cuts, &strips, &|_| true, &mut notes);
         let under = |l: &Value| outline(&platforms[l["parent_index"].as_u64().unwrap() as usize]["vertices"]);
         let parapet = under(&lines[0]);
         assert!(parapet.iter().all(|q| q[2] <= 3.0 + 1e-3), "the parapet's line on {parapet:?}");
@@ -634,6 +690,32 @@ mod tests {
         assert!(outer.iter().all(|q| q[2] <= 5.1 + 1e-3 && q[0] >= 5.0 - 1e-3 && q[0] <= 10.0 + 1e-3), "the walkway's line on {outer:?}");
         let inner = under(&lines[2]);
         assert!(inner.iter().all(|q| q[2] >= 8.9 - 1e-3), "the walkway's inner line on {inner:?}");
+        assert_eq!(notes.orphan_lines, 0);
+    }
+
+    /// A firing line the length of the piece, along a bent wall: cut where the platform is (every 5), each part's ends on the bend (not a
+    /// chord across it), in the line's order.
+    #[test]
+    fn a_long_firing_line_follows_the_bend() {
+        let quad = json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
+            { "x": -10.0, "y": 15.0, "z": 3.0 }, { "x": 10.0, "y": 15.0, "z": 3.0 }, { "x": 10.0, "y": 15.0, "z": 9.0 }, { "x": -10.0, "y": 15.0, "z": 9.0 } ] } });
+        let line = json!({ "start": { "x": 9.84, "y": 15.0, "z": 8.5 }, "end": { "x": -9.84, "y": 15.0, "z": 8.5 },
+            "direction": { "x": 0.0, "y": 0.0, "z": 0.38 }, "parent_index": 0 });
+        let bend = crate::warp::Bend::turning(-10.0, 10.0, 0.6);
+        let cuts = Cuts { step: 5.0, at: vec![] };
+        let mut notes = LogicNotes::default();
+        let (_, strips) = platform_strips(&[vec![quad]], &bend, &cuts, &|_| true, 0, &mut notes);
+        let lines = place_lines(&[line], &bend, &cuts, &strips, &|_| true, &mut notes);
+        assert_eq!(lines.len(), 4);
+        let x = |l: &Value, k: &str| p3(&l[k]);
+        assert_eq!(x(&lines[0], "start"), bend.point([9.84, 15.0, 8.5]));
+        assert_eq!(x(&lines[3], "end"), bend.point([-9.84, 15.0, 8.5]));
+        for (k, w) in [(0, 5.0), (1, 0.0), (2, -5.0)] {
+            let at = bend.point([w, 15.0, 8.5]);
+            let (a, b) = (x(&lines[k], "end"), x(&lines[k + 1], "start"));
+            assert!((a[0] - at[0]).abs() < 1e-4 && (a[2] - at[2]).abs() < 1e-4 && a == b, "{a:?} {b:?} {at:?}");
+        }
+
         assert_eq!(notes.orphan_lines, 0);
     }
 

@@ -681,9 +681,9 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
             // The walkable surfaces are always the step's own where it is (one surface under the units: the base's walkway, sloped over
             // the step, under a 15 m wall's stair too, had them stuck); the meshes are cut only where the family's step replaces them.
             let mut splices = sections.iter().filter_map(|sec| {
-                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, replaces: Some(sec.drop), per_piece: false })
+                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, replaces: Some(sec.drop), per_piece: false, shapes_too: false })
             }).collect::<Vec<_>>();
-            splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, replaces: None, per_piece: true }));
+            splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, replaces: None, per_piece: true, shapes_too: true }));
             *bytes = logic::warp_logic_with(bytes, warp, &cuts, zy, &splices)?.0;
         } else if *name == zones_name && logic_too {
             *bytes = zones::warp_zones(&String::from_utf8_lossy(bytes), warp, cuts.step)?.into_bytes();
