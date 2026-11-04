@@ -363,8 +363,13 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      (a tile list is enough), the packs' tile database; a tile named alone takes its variation from the placement's byte 12 (the
      game clamps it to the tile's variations); `main_gaul` and the multiplayer `canyon` shown. Fixed on the way: the Terrain tool's
      frame (no open tile) left out the placement at the map's centre.
-   Next: editing a Rome 2 map from its built files (no kit images to fill from): the LF, the placements themselves, the battle
-   locations and deployments; written back as built files.
+   - Editing a Rome 2 map in its built form (`wce_terrain_io::built`; the model marked `built`): the LF painted (its DDS and CHMF made
+     again: 110 of 111 CHMFs byte for byte from their DDS with the shipped tags kept, `built_lf_check`), the placements of a map with a
+     `terrain.tile_list` (the Placements section, `terrain_placements`: select, variation, turn, remove, move, place a database tile;
+     inside the map, on no other placement; the bounds made again); Save into the projects' `working_data/terrain/battles/<map>` (read
+     first next time); export of the files that differ from the packs. The refill keeps a campaign map's LF metres (it reset them).
+   Left for Rome 2: the battle locations and deployments (`locations.blm` version 7, the deployment XMLs) as editable entities; the
+   seven `main_*` maps' placements (a version 6 tile map, no tile list); the normals after an LF edit (the packs' stay); a launch.
 
 ## Risks
 

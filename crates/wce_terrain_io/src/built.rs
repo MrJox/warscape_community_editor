@@ -2,6 +2,7 @@
 //! terrain_editor.md, Phase 9): the files a map's folder holds there, into the model and back.
 //!
 //! - `lf_height_map.dds` (L16, a 128-byte header): the land LF, editable ([`MapModel::lf`], `LfRole::Land`);
+//! - `terrain.tile_list`: the placements, editable ([`MapModel::tile_list`]; written back byte for byte unedited, every version);
 //! - every other file carried as it is (the tile list or tile map, `locations.blm`, the deployment files, the sea LF, the normals...).
 //!
 //! Written back: the files as they were, but for an edited LF its DDS (the header kept, the samples the model's) and its CHMF
@@ -22,6 +23,7 @@ use crate::{MapFiles, Result, file_error};
 
 const LF: &str = "lf_height_map.dds";
 const CHMF: &str = "lf_height_map.data";
+const LIST: &str = "terrain.tile_list";
 
 /// The samples of an L16 DDS (a 128-byte header, then the rows): its size and field.
 fn l16(bytes: &[u8]) -> Option<PagedU16> {
@@ -47,6 +49,10 @@ pub fn read(name: &str, files: &MapFiles) -> Result<MapModel> {
             && let Some(f) = l16(&blob.bytes()?)
         {
             m.lf.push((LfRole::Land, Item::new(path.clone(), f, blob.clone())));
+        } else if path.eq_ignore_ascii_case(LIST)
+            && let Ok(t) = wce_tile::battle_map::tile_list::TileList::parse(&blob.bytes()?)
+        {
+            m.tile_list = Some(Item::new(path.clone(), t, blob.clone()));
         } else {
             m.carried.insert(path.clone(), blob.clone());
         }
@@ -57,11 +63,11 @@ pub fn read(name: &str, files: &MapFiles) -> Result<MapModel> {
 
 /// The map's size in cells: its tile list's battle size, else its tile map's.
 fn cells(m: &MapModel) -> Option<(u32, u32)> {
-    let read = |n: &str| m.carried.iter().find(|(p, _)| p.eq_ignore_ascii_case(n)).and_then(|(_, b)| b.bytes().ok());
-    if let Some(t) = read("terrain.tile_list").and_then(|b| wce_tile::battle_map::tile_list::TileList::parse(&b).ok()) {
-        return Some((t.battle_size[0], t.battle_size[1]));
+    if let Some(t) = &m.tile_list {
+        return Some((t.get().battle_size[0], t.get().battle_size[1]));
     }
 
+    let read = |n: &str| m.carried.iter().find(|(p, _)| p.eq_ignore_ascii_case(n)).and_then(|(_, b)| b.bytes().ok());
     let i = read("tile_map.index").filter(|i| i.len() >= 12)?;
     Some((u32::from_le_bytes(i[4..8].try_into().ok()?), u32::from_le_bytes(i[8..12].try_into().ok()?)))
 }
@@ -92,6 +98,10 @@ pub fn chmf(field: &PagedU16, cells: (u32, u32), shipped: Option<&[u8]>) -> Opti
 /// The LF's original file can't be read.
 pub fn write(m: &MapModel) -> Result<MapFiles> {
     let mut folder: BTreeMap<String, Blob> = m.carried.clone();
+    if let Some(t) = &m.tile_list {
+        let blob = if t.edited() { Blob::Bytes(Arc::from(t.get().write())) } else { t.origin.clone() };
+        folder.insert(t.path.clone(), blob);
+    }
     for (_, item) in &m.lf {
         if !item.edited() {
             folder.insert(item.path.clone(), item.origin.clone());

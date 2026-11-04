@@ -67,6 +67,46 @@ impl Command<Option<MapModel>> for CellStrokeCommand {
 /// The watch's layer index for the explicit tiles (`explicit_tiles.txt`): an edit of them fills the map again too.
 pub const EXPLICIT: usize = usize::MAX;
 
+/// The watch's key for a built map's battle field (its placements, `terrain.tile_list`).
+pub const TILE_LIST: usize = usize::MAX - 1;
+
+/// An edit of a built map's battle field: the list before and after (Rome 2's maps: a few thousand placements, a few hundred KB).
+pub struct TileListCommand {
+    pub name: String,
+    pub before: wce_tile::battle_map::tile_list::TileList,
+    pub after: wce_tile::battle_map::tile_list::TileList,
+    pub watch: Arc<CellWatch>,
+}
+
+impl TileListCommand {
+    fn put(&self, model: &mut Option<MapModel>, to: &wce_tile::battle_map::tile_list::TileList) {
+        if let Some(item) = model.as_mut().and_then(|m| m.tile_list.as_mut()) {
+            *item.edit() = to.clone();
+            self.watch.note(TILE_LIST, [0, 0, 0, 0]);
+        }
+    }
+}
+
+impl Command<Option<MapModel>> for TileListCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, model: &mut Option<MapModel>) {
+        let to = self.after.clone();
+        self.put(model, &to);
+    }
+
+    fn revert(&mut self, model: &mut Option<MapModel>) {
+        let to = self.before.clone();
+        self.put(model, &to);
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// An edit of the explicit tiles: the list before and after (a small file; none: the map has no `explicit_tiles.txt`).
 pub struct ExplicitCommand {
     pub name: String,

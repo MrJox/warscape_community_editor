@@ -97,6 +97,9 @@ pub struct MapModel {
 
     /// A map in its built form (a game without kit maps: Rome 2), read and written by `wce_terrain_io::built`; else a kit map folder.
     pub built: bool,
+
+    /// A built map's battle field (`terrain.tile_list`): its placements, edited as they are (no fill).
+    pub tile_list: Option<Item<wce_tile::battle_map::tile_list::TileList>>,
 }
 
 impl MapModel {
