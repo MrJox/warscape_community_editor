@@ -605,6 +605,52 @@ fn rings_overlap(a: &[Vec<[f32; 2]>], b: &[Vec<[f32; 2]>]) -> bool {
     }))
 }
 
+/// What [`Tile::wall_tech_check`] found on a wall.
+#[derive(Clone, Debug, Default)]
+pub struct WallTechReport {
+    /// Stretches of the centre line no footprint covers: from, to (metres along the wall) and where it starts (x, z).
+    pub gaps: Vec<(f64, f64, [f32; 2])>,
+
+    /// Platforms over one another: the pieces (their indices), the area shared and where (x, y, z).
+    pub stacked: Vec<(usize, usize, f32, [f32; 3])>,
+
+    /// Formation line ends standing on no platform (x, y, z).
+    pub loose_lines: Vec<[f32; 3]>,
+}
+
+/// The area two rings share on the ground (the second taken as convex: a platform strip).
+fn overlap_area(a: &[[f32; 2]], b: &[[f32; 2]]) -> f32 {
+    let signed = |r: &[[f32; 2]]| (0..r.len()).map(|i| {
+        let (p, q) = (r[i], r[(i + 1) % r.len()]);
+        p[0] * q[1] - q[0] * p[1]
+    }).sum::<f32>() / 2.0;
+    let turn = signed(b).signum();
+    let mut out = a.to_vec();
+    for i in 0..b.len() {
+        let (c, d) = (b[i], b[(i + 1) % b.len()]);
+        let keep = |p: [f32; 2]| turn * ((d[0] - c[0]) * (p[1] - c[1]) - (d[1] - c[1]) * (p[0] - c[0])) >= 0.0;
+        let input = std::mem::take(&mut out);
+        for k in 0..input.len() {
+            let (p, q) = (input[k], input[(k + 1) % input.len()]);
+            if keep(p) {
+                out.push(p);
+            }
+
+            if keep(p) != keep(q) {
+                let (dp, dq) = ((d[0] - c[0]) * (p[1] - c[1]) - (d[1] - c[1]) * (p[0] - c[0]), (d[0] - c[0]) * (q[1] - c[1]) - (d[1] - c[1]) * (q[0] - c[0]));
+                let t = dp / (dp - dq);
+                out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+            }
+        }
+
+        if out.len() < 3 {
+            return 0.0;
+        }
+    }
+
+    signed(&out).abs()
+}
+
 /// A building's footprint in the world: its rings (3D, for drawing) and the box around them.
 struct Foot {
     elem: usize,
@@ -778,6 +824,95 @@ impl Tile {
         }
 
         any.then_some(o)
+    }
+
+    /// A procedural wall's pieces checked together, in the world: the spots along the wall no piece's footprint covers, the platforms of
+    /// the walkway that lie over one another, and the formation lines whose ends stand on no platform. None before its pieces are made.
+    pub fn wall_tech_check(&mut self, e: usize) -> Option<WallTechReport> {
+        let pieces = self.wall_preview.wall_buildings(e).to_vec();
+        if pieces.is_empty() {
+            return None;
+        }
+
+        // Every piece's shapes, intact, in the world.
+        let (mut platforms, mut feet, mut lines) = (vec![], vec![], vec![]);
+        for (k, (world, key)) in pieces.iter().enumerate() {
+            let Some(model) = self.tech_model(key) else { continue };
+            for piece in &model.pieces {
+                let Some(level) = pick(&piece.levels, 0) else { continue };
+                let frame = *world * piece.local;
+                for item in &level.items {
+                    match (&item.kind, &item.shape) {
+                        (TechKind::Platforms, Shape::Fill(pts)) => platforms.push((k, pts.iter().map(|&q| frame.transform_point(q)).collect::<Vec<_>>())),
+                        (TechKind::Footprints, Shape::Lines { pts, .. }) => feet.push(xz(&pts.iter().map(|&q| frame.transform_point(q)).collect::<Vec<_>>())),
+                        (TechKind::EfLines, Shape::Segments(pts)) if pts.len() >= 2 => lines.push((frame.transform_point(pts[0]), frame.transform_point(pts[1]))),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let mut report = WallTechReport::default();
+
+        // Along the wall, at its samples: covered when a point across the wall, within 6 m of the centre line either side, is in a
+        // footprint (a footprint lies on one side of the centre line or across it; at a corner the sample's direction is the corner's).
+        if let Some(layout) = self.wall_layout(e) {
+            let u = self.unit();
+            let mut open: Option<(f64, [f32; 2])> = None;
+            for sm in &layout.plan.samples {
+                let p = [(sm.centre[0] / u) as f32, (sm.centre[1] / u) as f32];
+                let across = [-sm.dir[1] as f32, sm.dir[0] as f32];
+                let in_foot = |q: [f32; 2]| feet.iter().any(|r| inside(q, r) || (0..r.len()).any(|i| seg_dist(q, r[i], r[(i + 1) % r.len()]) < 0.05));
+                // A corner's tip lies outside the footprints by their margin from the outer face, more along the bisector.
+                let at_corner = layout.plan.corners.iter().any(|&(s, _)| (sm.s - s).abs() < 2.0 * u);
+                let covered = at_corner || [0.0f32, 1.0, -1.0, 2.5, -2.5, 4.0, -4.0, 6.0, -6.0].iter().any(|&d| in_foot([p[0] + across[0] * d, p[1] + across[1] * d]));
+                match (covered, &open) {
+                    (false, None) => open = Some((sm.s / u, p)),
+                    (true, Some((s0, at))) => {
+                        report.gaps.push((*s0, sm.s / u, *at));
+                        open = None;
+                    }
+                    _ => {}
+                }
+            }
+
+            if let Some((s0, at)) = open {
+                report.gaps.push((s0, layout.plan.samples.last().map_or(s0, |sm| sm.s / u), at));
+            }
+        }
+
+        // Platforms over one another: their ground shapes overlap (more than a sliver) less than a man's height apart.
+        for i in 0..platforms.len() {
+            for j in i + 1..platforms.len() {
+                let (a, b) = (&platforms[i].1, &platforms[j].1);
+                let shared = overlap_area(&xz(a), &xz(b));
+                if shared < 0.1 {
+                    continue;
+                }
+
+                let mean = |r: &[Float3]| r.iter().map(|q| q.y).sum::<f32>() / r.len() as f32;
+                if (mean(a) - mean(b)).abs() < 2.0 {
+                    let c = centroid(&xz(a));
+                    report.stacked.push((platforms[i].0, platforms[j].0, shared, [c[0], mean(a), c[1]]));
+                }
+            }
+        }
+
+        // Formation lines' ends: on a platform (within a few centimetres, up to half a metre above or under it).
+        let on_platform = |p: Float3| platforms.iter().any(|(_, r)| {
+            let g = xz(r);
+            let ys = r.iter().fold((f32::MAX, f32::MIN), |(lo, hi), q| (lo.min(q.y), hi.max(q.y)));
+            p.y >= ys.0 - 0.5 && p.y <= ys.1 + 0.5 && (inside([p.x, p.z], &g) || (0..g.len()).any(|i| seg_dist([p.x, p.z], g[i], g[(i + 1) % g.len()]) < 0.05))
+        });
+        for (a, b) in &lines {
+            for p in [*a, *b] {
+                if !on_platform(p) {
+                    report.loose_lines.push([p.x, p.y, p.z]);
+                }
+            }
+        }
+
+        Some(report)
     }
 
     /// The selection, from the highlight: the overlay of the selected buildings follows it.

@@ -19,6 +19,14 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   place in the base's list (2026-11-04: before, every line after a cut platform went to the wrong one, units formed in blocks past a step).
   A stair brings its wood only, when its bastion has the wood in blocks of its own (2026-11-04: the gondorean bastions' stair well side,
   a one-sided stone face, stood alone beside a small step); an atlas model (one block) keeps the band around the stair's slope alone.
+- **Firing lines along the wall are cut where the platforms are** (2026-11-04): the base's lines the length of a piece (the inner
+  side's `LowWall` and `Overflow`) were bent only at their ends, chords of a curve that went off the walkway.
+- **A piece is as long as its base** (2026-11-04): TDD's gondor pieces are 21 long (-10.5..10.5), not 20; at 20 every joint had the
+  pieces a metre over each other (platforms, footprints, lines). A mitre's copies filling the outer side bring their collision outlines
+  and footprints too, not only their platforms and lines.
+- **Check:** `wall_tech_check [gaps stacked loose]` (the selected walls' pieces in the world: stretches no footprint covers, platforms
+  over one another, formation line ends on no platform; `scripts/tile_wall_tech.txt`). Open: at a sharp corner the two sides' platforms
+  overlap in a band about 0.3 m wide along the mitre (Amon Calen's upper prow).
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).
