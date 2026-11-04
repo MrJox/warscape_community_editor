@@ -54,7 +54,10 @@ battle_map_check`, oracles from BOB's Terrain processor; the campaign map takes 
 - **Shared geometry** (scans 1 and 2, the campaign database: most land sets share `grass_01`, `sea` itself): the candidates are tiles of
   a set whose `shared_geometry` is its own name, placed on the geometry layer (bits 0x100) without the set boxes or the link map. In the
   fit (0x10281115) a cell must hold a tile set whose set is the tile set's shared geometry or has the same shared geometry. A tile-layer
-  cell over a geometry tile then takes 0x600.
+  cell over a geometry tile then takes 0x600. Every tile of a set that shares geometry is flat (Attila's campaign: 85 tiles of 22 sets in
+  the packs, `hf_height_map.data` 75 or 96 bytes, and their kit `final_heights.dds`; Thrones' campaign: 33 tiles of 9 sets; no battle
+  database shares geometry): the editor's view, which leaves the geometry-only placements out and draws the textured tile with its
+  own mesh, has the ground the shared mesh gives.
 - **`also_place_tile_set`** (`BATTLE_TILE_MAP::add_tile`, 0x1027ad40; `sea_coast`, `river_mouth`, `cliff_custom`: `sea`): after a
   placement, the first 1 x 1 tile of that set (database order, none of the tile's own set) goes on each of the tile's valid cells (rows,
   then columns, rotated as the tile): variation 0, rotation 0x10, not flipped, render mode 0x300, the tile's climate and LF range.
