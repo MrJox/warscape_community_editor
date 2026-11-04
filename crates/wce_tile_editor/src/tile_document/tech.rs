@@ -676,6 +676,16 @@ impl Tile {
         self.tech.dirty = true;
     }
 
+    /// A procedural wall's preview pieces changed: its overlay is made again.
+    pub(crate) fn tech_wall_changed(&mut self, elem: usize) {
+        self.tech.changed.insert(elem);
+    }
+
+    /// A building's files are gone (a wall preview's piece): its logic file is read again if it comes back.
+    pub(crate) fn tech_forget(&mut self, key: &str) {
+        self.tech.models.remove(key);
+    }
+
     /// Forgets the entities (the scene they were in is gone).
     pub(crate) fn reset_tech(&mut self) {
         self.tech.cells.clear();
@@ -704,6 +714,10 @@ impl Tile {
 
     /// A building's overlay, in the world: its logic file's shapes at the states its pieces show, its emitters. None without a logic file.
     fn tech_building(&mut self, e: usize, s: &TechSettings) -> Option<Overlay> {
+        if self.is_wall(e) {
+            return self.tech_wall(e, s);
+        }
+
         let placed = self.tech_placed(e, s.highest)?;
         let mut o = Overlay { depth_test: !s.xray, pickable: false, ..Default::default() };
         let collision_bits = TechKind::Collision.bit() | TechKind::Gates.bit();
@@ -739,6 +753,31 @@ impl Tile {
         }
 
         Some(o)
+    }
+
+    /// A procedural wall's overlay: its preview pieces' logic files (made with them), each piece at its frame and intact. None before its
+    /// pieces are made.
+    fn tech_wall(&mut self, e: usize, s: &TechSettings) -> Option<Overlay> {
+        let pieces = self.wall_preview.wall_buildings(e).to_vec();
+        let mut o = Overlay { depth_test: !s.xray, pickable: false, ..Default::default() };
+        let mut any = false;
+        for (world, key) in pieces {
+            let Some(model) = self.tech_model(&key) else { continue };
+            any = true;
+            for item in model.building.iter().filter(|i| s.on(i.kind)) {
+                emit(&mut o, &world, item, s.fill);
+            }
+
+            for piece in &model.pieces {
+                let Some(level) = pick(&piece.levels, if s.highest { i64::MAX } else { 0 }) else { continue };
+                let frame = world * piece.local;
+                for item in level.items.iter().filter(|i| s.on(i.kind)) {
+                    emit(&mut o, &frame, item, s.fill);
+                }
+            }
+        }
+
+        any.then_some(o)
     }
 
     /// The selection, from the highlight: the overlay of the selected buildings follows it.
@@ -785,12 +824,18 @@ impl Tile {
         }
 
         let building = |e: usize| self.tscene().type_of(e) == "BUILDING_INSTANCE";
+        // A procedural wall is as far as its nearest piece (it can be long).
+        let wall_distance = |e: usize| self.wall_preview.wall_buildings(e).iter().map(|(w, _)| {
+            let d = w.transform_point(Float3::new(0.0, 0.0, 0.0)) - eye;
+            dot(d, d).sqrt()
+        }).fold(f32::MAX, f32::min);
+        let walls = self.wall_preview.shown_walls();
         let mut found: Vec<(f32, usize)> = match s.scope {
             TechScope::All => self.instances.iter().copied().filter(|&e| building(e) && self.shown(e)).filter_map(|e| {
                 let d = self.world_position(e) - eye;
                 let d = dot(d, d).sqrt();
                 (d <= s.distance + self.marker_radius(e)).then_some((d, e))
-            }).collect(),
+            }).chain(walls.iter().copied().filter(|&e| self.shown(e)).map(|e| (wall_distance(e), e)).filter(|&(d, _)| d <= s.distance)).collect(),
             TechScope::Selected => {
                 let groups: Vec<usize> = self.tech.selection.iter().copied().filter(|&g| g < self.tscene().doc().elements().len() && is_group(self.tscene().type_of(g))).collect();
                 let mut chosen: Vec<usize> = self.tech.selection.iter().copied().filter(|&e| e < self.tscene().doc().elements().len() && building(e)).collect();
@@ -798,9 +843,14 @@ impl Tile {
                     chosen.extend(self.instances.iter().copied().filter(|&b| building(b) && groups.iter().any(|&g| self.tscene().is_descendant(b, g))));
                 }
 
+                chosen.extend(walls.iter().copied().filter(|&w| self.tech.selection.contains(&w) || groups.iter().any(|&g| self.tscene().is_descendant(w, g))));
                 chosen.sort_unstable();
                 chosen.dedup();
                 chosen.into_iter().filter(|&e| self.shown(e)).map(|e| {
+                    if walls.contains(&e) {
+                        return (wall_distance(e), e);
+                    }
+
                     let d = self.world_position(e) - eye;
                     (dot(d, d).sqrt(), e)
                 }).collect()

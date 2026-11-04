@@ -1,0 +1,23 @@
+# The technology overlay draws procedural walls: their preview pieces' logic files (platforms, formation lines), and follows the pieces
+# when the wall is made again. %TILE% is the kit tile terrain_rugged_hills_desert/1x1/aa.
+tile "%TILE%"
+frames 5
+add_polygon "WceWallSpline|roman_fort_straight|20,120;220,120"
+frames 400
+tile_tech none
+tile_tech on platforms formation pipes
+tile_tech scope selected
+frames 5
+assert_tech 1 200
+
+# The wall made again (the ground under it raised): its new pieces drawn.
+brush 15 6 0.7
+paint raise 120 120 30
+frames 400
+assert_tech 1 200
+
+select none
+frames 5
+assert_tech 0
+tile_tech none
+quit

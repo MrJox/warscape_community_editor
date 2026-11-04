@@ -31,6 +31,9 @@ pub const PREVIEW_DELAY: Duration = Duration::from_millis(300);
 struct Made {
     models: Vec<(wce_foundation::math::Float4x4, String)>,
     keys: Vec<String>,
+
+    /// Each piece's frame and building key (its logic file's), for the technology overlay.
+    buildings: Vec<(wce_foundation::math::Float4x4, String)>,
 }
 
 /// The preview pieces: each wall's entities and the files made for them (in `wce_vfs::generated`, under keys that change with every
@@ -63,6 +66,16 @@ impl WallPreview {
     /// How many times walls' pieces were made, and how many sets of them are kept.
     pub fn stats(&self) -> (u64, usize) {
         (self.made_count, self.made.len())
+    }
+
+    /// The walls with pieces on the scene.
+    pub(crate) fn shown_walls(&self) -> Vec<usize> {
+        self.shown_as.keys().copied().collect()
+    }
+
+    /// A wall's pieces on the scene: each one's frame and building key.
+    pub(crate) fn wall_buildings(&self, elem: usize) -> &[(wce_foundation::math::Float4x4, String)] {
+        self.shown_as.get(&elem).and_then(|s| self.made.get(s)).map_or(&[], |m| m.buildings.as_slice())
     }
 
     /// The preview pieces' entities by wall element.
@@ -317,10 +330,10 @@ impl Tile {
     fn drop_unused_wall_pieces(&mut self) {
         let wp = &mut self.wall_preview;
         let unused = wp.made.keys().filter(|s| !wp.shown_as.values().any(|v| v == *s)).copied().collect::<Vec<_>>();
-        for sig in unused {
-            for key in wp.made.remove(&sig).map(|m| m.keys).unwrap_or_default() {
-                wce_vfs::generated::remove_prefix(&folder(&key));
-            }
+        let gone = unused.into_iter().flat_map(|sig| wp.made.remove(&sig).map(|m| m.keys).unwrap_or_default()).collect::<Vec<_>>();
+        for key in gone {
+            wce_vfs::generated::remove_prefix(&folder(&key));
+            self.tech_forget(&key);
         }
     }
 
@@ -358,6 +371,15 @@ impl Tile {
     /// The wall's preview pieces: its old ones removed, a piece per stretch of the layout made from the base (its intact meshes) and
     /// drawn where it goes. A hidden wall (or one that is no longer a wall) has none.
     fn make_wall_preview(&mut self, scene: &mut RenderScene, elem: usize) {
+        let before = self.wall_preview.shown_as.get(&elem).copied();
+        self.make_wall_pieces(scene, elem);
+        // Other pieces: the technology overlay draws theirs.
+        if self.wall_preview.shown_as.get(&elem).copied() != before {
+            self.tech_wall_changed(elem);
+        }
+    }
+
+    fn make_wall_pieces(&mut self, scene: &mut RenderScene, elem: usize) {
         let before = self.wall_preview.shown_as.remove(&elem);
         let ids = self.wall_preview.entities.remove(&elem).unwrap_or_default();
         let layout = self.wall_layout(elem).filter(|_| self.is_wall(elem) && self.shown(elem));
@@ -423,7 +445,7 @@ impl Tile {
                 _ => &base,
             };
 
-            match make_piece(from, &key, &warp, steps, false, Some(1)) {
+            match make_piece(from, &key, &warp, steps, true, Some(1)) {
                 Ok(files) => made.push((key, piece, files)),
                 Err(err) => wce_foundation::log::warn(format!("wall preview: piece {i}: {err}")),
             }
@@ -433,6 +455,7 @@ impl Tile {
         let mut ids = vec![];
         let mut keys = vec![];
         let mut models = vec![];
+        let mut buildings = vec![];
         for (key, piece, files) in made {
             let wt = WorldTransform { position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]), rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)) };
             let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));
@@ -445,6 +468,7 @@ impl Tile {
                 }
             }
 
+            buildings.push((world, key.clone()));
             keys.push(key);
         }
 
@@ -453,6 +477,7 @@ impl Tile {
             let Some(files) = own.get(key) else { continue };
             let wt = WorldTransform { position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]), rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)) };
             let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));
+            buildings.push((world, key.to_owned()));
             for name in files.files.keys().filter(|n| wce_walls::building::is_piece_mesh(n) && wce_walls::pieces::level_of(n) == 1) {
                 let model = format!("{}{name}", folder(key));
                 ids.push(scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model: model.clone(), lod: true, ..Default::default() }), source));
@@ -462,7 +487,7 @@ impl Tile {
 
         self.wall_preview.entities.insert(elem, ids);
         self.wall_preview.shown_as.insert(elem, signature);
-        self.wall_preview.made.insert(signature, Made { models, keys });
+        self.wall_preview.made.insert(signature, Made { models, keys, buildings });
         self.wall_preview.made_count += 1;
         self.drop_unused_wall_pieces();
     }
