@@ -80,6 +80,10 @@ pub struct Profile {
     /// Only what lies within this (y) of the stair's slope is brought (15 m: the treads and stringers, not the stair well's walls).
     pub slab_band: Option<f64>,
 
+    /// The stair spread across the whole walkway (15 m: one stair from side to side, a single platform, instead of a stair on the inner
+    /// half beside a ramp on the outer one, which units walked around; user 2026-11-04).
+    pub step_across: bool,
+
     /// The culture's door section (15 m: units go up through its doors; 8 m: none, the bank is the way up), and where its doors come
     /// out on the ground (the pipes' ground ends, the piece's frame: x, z).
     pub door: &'static str,
@@ -124,6 +128,7 @@ const EIGHT: Profile = Profile {
     slab_zy: Some(((-3.5, 3.0), (-3.0, 16.0))),
     step_replaces: true,
     slab_band: None,
+    step_across: false,
     door: "",
     door_at: (0.0, 0.0),
     defences: &[],
@@ -155,6 +160,7 @@ const FIFTEEN: Profile = Profile {
     slab_zy: Some(((5.1, 8.9), (14.0, 26.5))),
     step_replaces: false,
     slab_band: Some(0.9),
+    step_across: true,
     door: "",
     door_at: (0.0, 13.0),
     defences: &[],

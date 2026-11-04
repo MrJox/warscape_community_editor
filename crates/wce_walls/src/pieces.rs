@@ -522,10 +522,24 @@ pub struct SlabWarp<'a> {
     pub s: (f64, f64),
     pub from: f64,
     pub to: f64,
+
+    /// Across the wall: the stair's z range in the step piece onto the piece's (the whole walkway: one stair from side to side, not a
+    /// stair beside a ramp; user 2026-11-04). None: z as it is.
+    pub across: Option<((f64, f64), (f64, f64))>,
 }
 
 impl SlabWarp<'_> {
+    /// z of the step piece in the piece, and its factor.
+    fn across(&self) -> (f64, f64) {
+        self.across.map_or((0.0, 1.0), |((s0, s1), (t0, t1))| {
+            let f = (t1 - t0) / (s1 - s0).max(1e-9);
+            (t0 - s0 * f, f)
+        })
+    }
+
     fn scene(&self, [x, y, z]: [f64; 3]) -> [f64; 3] {
+        let (z_at, z_by) = self.across();
+        let z = z_at + z * z_by;
         let len = (self.x.1 - self.x.0).max(1e-9);
         let t = ((x - self.x.0) / len).clamp(0.0, 1.0);
         let s = self.s.0 + (x - self.x.0) / len * (self.s.1 - self.s.0);
@@ -559,13 +573,15 @@ impl Warp for SlabWarp<'_> {
         let mut out = vec![];
         let all = sections(p.plan);
         let i = all.iter().position(|&s| s == p.section).unwrap_or(0);
+        // The piece's z is z_at + z z_by of the step piece's.
+        let (z_at, z_by) = self.across();
         if i > 0 || p.plan.end_planes[0].is_some() {
             // s(x) = s.0 + (x - x.0) k >= section.0 + sh z
-            out.push([-k as f32, p.shears.0 as f32, (-(p.section.0 - self.s.0 + k * self.x.0)) as f32]);
+            out.push([-k as f32, (p.shears.0 * z_by) as f32, (-(p.section.0 - self.s.0 + k * self.x.0) - p.shears.0 * z_at) as f32]);
         }
 
         if i + 1 < all.len() || p.plan.end_planes[1].is_some() {
-            out.push([k as f32, -p.shears.1 as f32, (p.section.1 - self.s.0 + k * self.x.0) as f32]);
+            out.push([k as f32, (-p.shears.1 * z_by) as f32, (p.section.1 - self.s.0 + k * self.x.0 + p.shears.1 * z_at) as f32]);
         }
 
         out
@@ -606,7 +622,7 @@ struct InPiece<'a> {
 }
 
 /// The step sections that fall in a piece (each clipped to the piece; a section across two pieces is brought in two halves).
-fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>) -> Vec<InPiece<'a>> {
+fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>, across: Option<((f64, f64), (f64, f64))>) -> Vec<InPiece<'a>> {
     let (plan, profile, piece) = (warp.plan, warp.profile, warp.piece);
     let scale = piece.scale.max(1e-9);
     let to_x = |s: f64| (profile.x.0 + (s - piece.s.0) / scale) as f32;
@@ -634,7 +650,7 @@ fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>) -> Vec<InPiece<
             drop: (to_x(a), to_x(b)),
             part,
             files,
-            warp: SlabWarp { inner: warp, x, walk, own_rise, s: st.s, from: st.from, to: st.to },
+            warp: SlabWarp { inner: warp, x, walk, own_rise, s: st.s, from: st.from, to: st.to, across },
             band: profile.slab_band.map(|h| (walk_at(part.0), walk_at(part.1), h as f32)),
         });
     }
@@ -652,12 +668,22 @@ fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>) -> Vec<InPiece<
 /// A file of the base doesn't read or write back.
 pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: StepFiles, logic_too: bool, only_level: Option<u32>) -> Result<BuildingFiles, String> {
     let cuts = cuts_of(warp.plan, &warp.piece, warp.profile);
-    let sections = steps_in(warp, steps);
     let replaces = warp.profile.step_replaces;
+    let zy = warp.profile.slab_zy.map(|((z0, z1), (y0, y1))| ((z0 as f32, z1 as f32), (y0 as f32, y1 as f32)));
+
+    // A stair across the whole walkway: the step piece's stair (its `slab_zy` z) spread over the walkway's width (the base's own
+    // platforms at its height, the stair's inner side when it reaches further); what the base has over that width there (platforms, firing lines; a metre more
+    // outwards for the parapet's lines) gives way to it.
+    let walk_z = if warp.profile.step_across { base.files.get(&base.logic_name()).and_then(|l| logic::walkway_z(l, warp.profile.walkway as f32)) } else { None };
+    let across = walk_z.zip(zy).map(|((w0, w1), ((z0, z1), _))| ((f64::from(z0), f64::from(z1)), (f64::from(w0), f64::from(w1.max(z1)))));
+    let drop_zy = match (walk_z, zy) {
+        (Some((w0, w1)), Some(((_, z1), ys))) => Some(((w0 - 1.0, w1.max(z1) + 0.01), ys)),
+        _ => zy,
+    };
+    let sections = steps_in(warp, steps, across);
 
     // The levels each section's step piece has.
     let levels = sections.iter().map(|sec| sec.files.files.keys().filter(|n| is_piece_mesh(n)).map(|n| level_of(n)).max().unwrap_or(0)).collect::<Vec<_>>();
-    let zy = warp.profile.slab_zy.map(|((z0, z1), (y0, y1))| ((z0 as f32, z1 as f32), (y0 as f32, y1 as f32)));
     let shifted = warp.overhangs().into_iter().map(|dx| Shifted { inner: warp, dx }).collect::<Vec<_>>();
     let base_x = (warp.profile.x.0 as f32, warp.profile.x.1 as f32);
     let mut b = base.clone().renamed(key).without_collapses();
@@ -689,7 +715,7 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
             // The copies of this mesh filling a mitred corner's outer side.
             let own = bytes.clone();
             parts.extend(shifted.iter().map(|w| mesh::MeshSplice { mesh: &own, warp: w, x: base_x, zy: None, band: None }));
-            *bytes = mesh::warp_mesh_with(bytes, warp, &cuts, &cut_out, zy, &parts)?;
+            *bytes = mesh::warp_mesh_with(bytes, warp, &cuts, &cut_out, drop_zy, &parts)?;
         } else if *name == logic_name && logic_too {
             let own = bytes.clone();
             // The walkable surfaces are always the step's own where it is (one surface under the units: the base's walkway, sloped over
@@ -698,7 +724,7 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
                 sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, replaces: Some(sec.drop), per_piece: false, shapes_too: false })
             }).collect::<Vec<_>>();
             splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, replaces: None, per_piece: true, shapes_too: true }));
-            *bytes = logic::warp_logic_with(bytes, warp, &cuts, zy, &splices)?.0;
+            *bytes = logic::warp_logic_with(bytes, warp, &cuts, drop_zy, &splices)?.0;
         } else if *name == zones_name && logic_too {
             *bytes = zones::warp_zones(&String::from_utf8_lossy(bytes), warp, cuts.step)?.into_bytes();
         } else if !name.ends_with(".meta") {
