@@ -9,6 +9,7 @@
 //!
 //! A file that does not read as its kind is carried as it is.
 
+pub mod build;
 pub mod heights;
 
 use std::collections::BTreeMap;

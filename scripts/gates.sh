@@ -101,6 +101,8 @@ if [ -n "$BOBKIT" ] && [ -d "$BOBKIT/working_data/terrain/battles" ]; then
         [ -f "$BOBKIT/working_data/terrain/battles/$m/tile_map.index" ] && run "tilemap_$m" ex wce_tile tile_map_check "$BOBKIT/raw_data/terrain" "$m" "$BOBKIT/working_data/terrain/battles/$m"
         # Tilemap's metadata (save_meta_data_map): the deployment files, locations.blm and its masks from the map's .terry and images
         [ -f "$BOBKIT/working_data/terrain/battles/$m/locations.blm" ] && run "built_$m" ex wce_terrain built_check "$BOBKIT/raw_data" "$m" "$BOBKIT/working_data/terrain/battles/$m"
+        # The whole build as the Terrain tool exports it (the folder through the model, every built file), against every file BOB wrote
+        [ -f "$BOBKIT/working_data/terrain/battles/$m/tile_map.index" ] && run "build_$m" ex wce_terrain_io build_check "$BOBKIT/raw_data" "$m" "$BOBKIT/working_data/terrain/battles/$m"
     done
 fi
 # Terry's BCA generator (wce_terrain::bca) against a .terry Thrones' Terry generated (docs/re/terry.md, "The BCA generator"): WCE_BCA_ORACLE a
