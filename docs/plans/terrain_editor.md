@@ -349,8 +349,18 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      (ASSUMPTION: the bits' meaning, from how BOB sets them).
    - Memory: the LF shared between the placed map and the fill (`LfField` over an `Arc`): opening the campaign map 4.25 -> 3.34 GB
      private.
-   Left: the LF paged from disk (still three copies of the campaign's 375 MB: the model's pages, the placed map's rows, the scene's
-   samples), the game's own use of the render modes (shared meshes under textured tiles), a campaign launch.
+   - The LF paged from disk (2026-11-04): one copy of its samples (`wce_foundation::samples::SampleGrid`) shared by the model
+     (`PagedU16`, pages the unit of undo), the placed map (`LfField`) and the scene (`LfSamples`, its rows read upside down); a kit map's
+     LF a copy-on-write view of its TIFF strip (Windows `MapViewOfFile`, `FILE_MAP_COPY`; read into memory elsewhere): the samples nobody
+     edited are the file's pages, not the process's memory. A save over the file it was read from detaches the samples first. The
+     refill shares the field too (it copied it twice) and locks it for the LF step alone. The campaign map opened: heap 1 572 -> 431 MB,
+     settled 3 349 -> 2 209 MB (`mem`, a counting allocator). Most of the private memory left (about 5 GB of 7.8) is the GPU driver's.
+   - Campaign rendering from the game's (user's screenshots, 2026-11-04): the texture group `climate`, the campaign lighting, the
+     campaign water shader and `lf_sea_colour`, the open sea on the sea LF, the forests (`trees.campaign_tree_list`), the tiles' rivers
+     from BOB's files (docs/re/terry.md, "Campaign maps"); traversal 77 -> 41 ms a frame.
+   Left: the game's own use of the render modes (shared meshes under textured tiles), a campaign launch (noted, not for now); from the
+   campaign's rendering: the cities and roads (the startpos and the settlement display tables), the trees' size and lean, the mountains'
+   look, the seasons' snow masks, the GPU's terrain cost (smaller rings for campaign maps).
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
    games when their profiles come (their Terry is another tool: out of this seam's first pass).
    **Progress 2026-11-04.** Done:

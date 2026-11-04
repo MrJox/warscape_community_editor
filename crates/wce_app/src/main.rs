@@ -18,6 +18,10 @@
 
 mod tools;
 
+/// The heap counted (`mem`, the memory notes of slow steps): two relaxed atomics an allocation.
+#[global_allocator]
+static ALLOC: wce_foundation::heap::CountingAlloc = wce_foundation::heap::CountingAlloc;
+
 use std::path::PathBuf;
 use std::time::Instant;
 

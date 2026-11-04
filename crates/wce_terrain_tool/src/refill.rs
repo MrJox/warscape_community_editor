@@ -48,8 +48,8 @@ impl FillInputs {
     /// The model's tile map, climates, explicit tiles and LF as they are (none without a tile map).
     pub fn of(m: &wce_terrain::MapModel) -> Option<Self> {
         let lf_of = |m: &wce_terrain::MapModel| m.lf(LfRole::Land).map(|f| {
-            let f = f.get();
-            LfField { w: f.width(), h: f.height(), values: f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() }
+            // The model's own samples (shared: no copy).
+            LfField::shared(f.get().grid().clone())
         });
 
         if let Some(list) = m.tile_list.as_ref().filter(|_| m.built) {
@@ -70,7 +70,8 @@ impl FillInputs {
             return (PlacedMap::from_tile_list(name, list, db, self.lf.clone()), vec![]);
         }
 
-        let lf = self.lf.as_ref().map(|f| (&f.values[..], f.w, f.h));
+        // The LF from `self.lf`, read by the fill's LF step under its lock (`place_images`).
+        let lf = None;
         let images = MapImages {
             width: self.w, height: self.h, tile_map: &self.tiles, climate_map: self.climate.as_deref(), explicit_tiles: self.explicit.as_deref(), lf: None, lf_u16: lf,
             // The header only: the placements are the same.

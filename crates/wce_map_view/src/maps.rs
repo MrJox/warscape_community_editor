@@ -27,7 +27,8 @@ pub fn minimap_pixels(lf: &wce_tile::battle_map::context::LfField, side: u32) ->
     use wce_tile::battle_map::context::{LF_HEIGHT, VERTICAL_OFFSET};
     let k = lf.w.max(lf.h).div_ceil(side).max(1);
     let (w, h) = (lf.w.div_ceil(k), lf.h.div_ceil(k));
-    let m = |x: u32, y: u32| f64::from(lf.values[(y.min(lf.h - 1) * lf.w + x.min(lf.w - 1)) as usize]) / 65535.0 * LF_HEIGHT - VERTICAL_OFFSET;
+    let values = lf.values.read();
+    let m = |x: u32, y: u32| f64::from(values[(y.min(lf.h - 1) * lf.w + x.min(lf.w - 1)) as usize]) / 65535.0 * LF_HEIGHT - VERTICAL_OFFSET;
     let mut px = vec![0u8; (w * h * 4) as usize];
     for y in 0..h {
         for x in 0..w {

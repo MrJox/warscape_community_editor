@@ -78,14 +78,14 @@ impl LfRecord {
     /// The field as the stroke left it.
     pub fn apply(&self, field: &mut PagedU16) {
         for (p, _, after) in &self.pages {
-            field.page_at_mut(*p).copy_from_slice(after);
+            field.write_page(*p, after);
         }
     }
 
     /// The field as it was before the stroke.
     pub fn revert(&self, field: &mut PagedU16) {
         for (p, before, _) in &self.pages {
-            field.page_at_mut(*p).copy_from_slice(before);
+            field.write_page(*p, before);
         }
     }
 
@@ -101,6 +101,10 @@ impl LfStroke {
     pub fn dab(&mut self, field: &mut PagedU16, b: &LfBrush, op: LfOp) -> Option<[u32; 4]> {
         let (x0, y0, x1, y1) = b.reach(field.width(), field.height())?;
         let mut changed: Option<[u32; 4]> = None;
+        // The samples under one lock for the dab (they are shared with the views).
+        let (fw, fh, pw) = (field.width(), field.height(), field.pages().0);
+        let grid = field.grid().clone();
+        let mut v = grid.write();
         for y in y0..=y1 {
             for x in x0..=x1 {
                 let w = b.weight(f64::from(x) - b.brush.cx, f64::from(y) - b.brush.cy);
@@ -110,9 +114,9 @@ impl LfStroke {
 
                 let (p, k) = field.locate(x, y);
                 if !self.shadow.contains_key(&p) {
-                    let page = field.page_at(p);
-                    self.before.insert(p, page.into());
+                    let page = crate::paged::page_of(&v, fw, fh, pw, p);
                     self.shadow.insert(p, page.iter().map(|&v| f32::from(v)).collect());
+                    self.before.insert(p, page);
                 }
 
                 let cur = f64::from(self.shadow[&p][k]);
@@ -125,8 +129,8 @@ impl LfStroke {
                         let mut n = 0.0;
                         for (sx, sy) in [(-1i32, -1i32), (0, -1), (1, -1), (-1, 0), (0, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
                             let (nx, ny) = (x as i32 + sx, y as i32 + sy);
-                            if nx >= 0 && ny >= 0 && (nx as u32) < field.width() && (ny as u32) < field.height() {
-                                sum += f64::from(field.at(nx as u32, ny as u32));
+                            if nx >= 0 && ny >= 0 && (nx as u32) < fw && (ny as u32) < fh {
+                                sum += f64::from(v[(ny as u32 * fw + nx as u32) as usize]);
                                 n += 1.0;
                             }
                         }
@@ -138,8 +142,9 @@ impl LfStroke {
                 let new = new.clamp(0.0, 65535.0);
                 self.shadow.get_mut(&p).expect("made above")[k] = new as f32;
                 let q = new.round() as u16;
-                if q != field.at(x, y) {
-                    field.set(x, y, q);
+                let i = (y * fw + x) as usize;
+                if q != v[i] {
+                    v[i] = q;
                     changed = Some(changed.map_or([x, y, x + 1, y + 1], |c| [c[0].min(x), c[1].min(y), c[2].max(x + 1), c[3].max(y + 1)]));
                 }
             }
@@ -161,8 +166,8 @@ impl LfStroke {
         let (p, k) = field.locate(x, y);
         if !self.shadow.contains_key(&p) {
             let page = field.page_at(p);
-            self.before.insert(p, page.into());
             self.shadow.insert(p, page.iter().map(|&v| f32::from(v)).collect());
+            self.before.insert(p, page);
         }
 
         self.shadow.get_mut(&p).expect("made above")[k] = f32::from(value);
@@ -178,7 +183,7 @@ impl LfStroke {
         let pages: Vec<(u32, Box<[u16]>, Box<[u16]>)> = self.before.into_iter()
             .filter_map(|(p, before)| {
                 let after = field.page_at(p);
-                (*before != *after).then(|| (p, before, after.into()))
+                (*before != *after).then_some((p, before, after))
             })
             .collect();
 

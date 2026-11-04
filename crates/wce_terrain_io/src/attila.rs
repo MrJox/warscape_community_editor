@@ -69,6 +69,45 @@ fn read_layer(bytes: &[u8]) -> std::result::Result<CellLayer, String> {
     CellLayer::from_pixels(p.width, p.height, channels, &p.pixels)
 }
 
+/// An LF file's samples as a copy-on-write view of the file (`SampleGrid::map_file`): its header and directory read for the one strip of
+/// 16-bit grey samples. None for any other layout (it is then read whole, `read_lf`).
+fn map_lf(path: &std::path::Path) -> Option<PagedU16> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut head = [0u8; 8];
+    f.read_exact(&mut head).ok()?;
+    if &head[..4] != b"II*\0" {
+        return None;
+    }
+
+    let ifd = u32::from_le_bytes([head[4], head[5], head[6], head[7]]);
+    f.seek(SeekFrom::Start(u64::from(ifd))).ok()?;
+    let mut count = [0u8; 2];
+    f.read_exact(&mut count).ok()?;
+    let mut entries = vec![0u8; usize::from(u16::from_le_bytes(count)) * 12];
+    f.read_exact(&mut entries).ok()?;
+    let mut tag = std::collections::HashMap::new();
+    for e in entries.chunks_exact(12) {
+        let (id, kind, n) = (u16::from_le_bytes([e[0], e[1]]), u16::from_le_bytes([e[2], e[3]]), u32::from_le_bytes([e[4], e[5], e[6], e[7]]));
+        // One value in the entry (a short in its first two bytes).
+        let value = if kind == 3 { u32::from(u16::from_le_bytes([e[8], e[9]])) } else { u32::from_le_bytes([e[8], e[9], e[10], e[11]]) };
+        if n == 1 {
+            tag.insert(id, value);
+        }
+    }
+
+    let get = |t: u16| tag.get(&t).copied();
+    let (w, h) = (get(256)?, get(257)?);
+    let grey16 = get(258) == Some(16) && get(277).unwrap_or(1) == 1 && get(259).unwrap_or(1) == 1;
+    let offset = get(273)?;
+    if !grey16 || get(279).is_some_and(|n| u64::from(n) < u64::from(w) * u64::from(h) * 2) {
+        return None;
+    }
+
+    let grid = wce_foundation::samples::SampleGrid::map_file(path, u64::from(offset), w, h).ok()?;
+    Some(PagedU16::from_grid(std::sync::Arc::new(grid)))
+}
+
 fn read_lf(bytes: &[u8]) -> std::result::Result<PagedU16, String> {
     let t = TiffFile::parse(bytes).map_err(|e| e.0)?;
     if t.samples_per_pixel != 1 || t.bits_per_sample != 16 || t.entries.iter().any(|e| e.tag == 259 && e.value & 0xFFFF != 1) {
@@ -108,6 +147,14 @@ pub fn read(name: &str, kind: MapKind, files: &MapFiles) -> Result<MapModel> {
                 Err(_) => carried(&mut m),
             }
         } else if let Some(role) = lf_role(&lower) {
+            // A file on disk: its samples a view of it (`map_lf`); else (or when that fails) read.
+            if let Blob::File(file) = blob
+                && let Some(f) = map_lf(file)
+            {
+                m.lf.push((role, Item::new(path.clone(), f, blob.clone())));
+                continue;
+            }
+
             let bytes = blob.bytes()?;
             match read_lf(&bytes) {
                 Ok(f) => m.lf.push((role, Item::new(path.clone(), f, blob.clone()))),
@@ -232,6 +279,34 @@ mod tests {
         folder.insert("m.terry".to_owned(), bytes_blob(b"<project version=\"3\">\n    <scene version=\"10\"/>\n</project>".to_vec()));
         folder.insert("normal.dds".to_owned(), bytes_blob(b"DDS anything".to_vec()));
         MapFiles { folder }
+    }
+
+    #[test]
+    fn an_lf_on_disk_is_a_view_written_back_after_detaching() {
+        let dir = std::env::temp_dir().join(format!("wce_lf_view_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, blob) in &files().folder {
+            std::fs::write(dir.join(name), blob.bytes().unwrap()).unwrap();
+        }
+
+        {
+            let mut m = read("m", MapKind::Battle, &MapFiles::from_dir(&dir).unwrap()).unwrap();
+            let item = m.lf_mut(LfRole::Land).unwrap();
+            assert!(item.get().grid().is_mapped(), "a view of the file");
+            assert_eq!(item.get().at(2, 1), 441);
+            item.edit().set(2, 1, 7);
+            let out = write(&m).unwrap();
+            // As the document's save: the samples into memory, then the file written over.
+            m.lf(LfRole::Land).unwrap().get().grid().detach();
+            std::fs::write(dir.join("lf_heights.tif"), out.folder["lf_heights.tif"].bytes().unwrap()).unwrap();
+            assert_eq!(m.lf(LfRole::Land).unwrap().get().at(2, 1), 7);
+        }
+
+        let again = read("m", MapKind::Battle, &MapFiles::from_dir(&dir).unwrap()).unwrap();
+        assert_eq!(again.lf(LfRole::Land).unwrap().get().at(2, 1), 7);
+        assert_eq!(again.lf(LfRole::Land).unwrap().get().at(1, 1), 440);
+        drop(again);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn same(a: &MapFiles, b: &MapFiles) -> bool {

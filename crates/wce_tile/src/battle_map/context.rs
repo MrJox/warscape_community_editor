@@ -118,15 +118,38 @@ impl Affine2 {
     }
 }
 
-/// A map's low-frequency heights, the 16-bit image (65535 = 1), row 0 at the map's top.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// A map's low-frequency heights, the 16-bit image (65535 = 1), row 0 at the map's top. Its samples are shared (`SampleGrid`): with the
+/// map's model when the Terrain tool has one (its edits are this field's), and between the clones of a placed map.
+#[derive(Clone, Debug)]
 pub struct LfField {
     pub w: u32,
     pub h: u32,
-    pub values: std::sync::Arc<[u16]>,
+    pub values: std::sync::Arc<wce_foundation::samples::SampleGrid>,
+}
+
+impl Default for LfField {
+    fn default() -> Self {
+        Self::new(0, 0, vec![])
+    }
+}
+
+impl PartialEq for LfField {
+    fn eq(&self, o: &Self) -> bool {
+        self.w == o.w && self.h == o.h && (std::sync::Arc::ptr_eq(&self.values, &o.values) || *self.values.read() == *o.values.read())
+    }
 }
 
 impl LfField {
+    /// A field of its own samples (`w` x `h`, row by row).
+    pub fn new(w: u32, h: u32, values: Vec<u16>) -> Self {
+        Self { w, h, values: std::sync::Arc::new(wce_foundation::samples::SampleGrid::new(w, h, values)) }
+    }
+
+    /// A field over shared samples.
+    pub fn shared(values: std::sync::Arc<wce_foundation::samples::SampleGrid>) -> Self {
+        Self { w: values.width(), h: values.height(), values }
+    }
+
     /// Bilinear at a map point in cells (`cells_w` x `cells_h` the map's size), in metres (`LF * lf_height - vertical_offset`); clamped at the
     /// edges.
     pub fn metres(&self, x: f64, y: f64, cells_w: u32, cells_h: u32) -> f64 {
@@ -139,7 +162,8 @@ impl LfField {
         let (x0, y0) = (px.floor() as u32, py.floor() as u32);
         let (x1, y1) = ((x0 + 1).min(self.w - 1), (y0 + 1).min(self.h - 1));
         let (fx, fy) = (px - f64::from(x0), py - f64::from(y0));
-        let v = |x: u32, y: u32| f64::from(self.values[(y * self.w + x) as usize]) / 65535.0;
+        let values = self.values.read();
+        let v = |x: u32, y: u32| f64::from(values[(y * self.w + x) as usize]) / 65535.0;
         let top = v(x0, y0) * (1.0 - fx) + v(x1, y0) * fx;
         let bottom = v(x0, y1) * (1.0 - fx) + v(x1, y1) * fx;
         (top * (1.0 - fy) + bottom * fy) * LF_HEIGHT - VERTICAL_OFFSET

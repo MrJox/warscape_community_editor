@@ -136,6 +136,15 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok(r)
     });
 
+    c.add("mem", "mem [reset]", "the heap's live bytes and its peak (since the start or the last reset)", |_, a| {
+        let note = wce_foundation::heap::note();
+        if a.first().is_some_and(|v| v == "reset") {
+            wce_foundation::heap::reset_peak();
+        }
+
+        CommandResult::success(note)
+    });
+
     c.add("profile", "profile [reset]", "the CPU scope timers (total, calls, worst) sorted by time", |_, a| {
         let r = profile::report(a.first().is_some_and(|x| x == "reset"), 0.01);
         log::info(format!("profile:\n{r}"));

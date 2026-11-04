@@ -306,6 +306,14 @@ impl Document for MapDocument {
                 std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
             }
 
+            // An LF whose samples are a view of this very file (a map opened from the projects folder, saved back): its samples into
+            // memory first (a file with a view of it can't be rewritten).
+            for (_, item) in &model.lf {
+                if matches!(&item.origin, wce_tile_model::Blob::File(src) if *src == to) {
+                    item.get().grid().detach();
+                }
+            }
+
             match blob {
                 wce_tile_model::Blob::File(src) => std::fs::copy(src, &to).map(|_| ()),
                 wce_tile_model::Blob::Bytes(b) => std::fs::write(&to, b),
