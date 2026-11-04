@@ -90,6 +90,9 @@ struct Inputs {
     fill: FillInputs,
     old: Arc<PlacedMap>,
     frame: Arc<Frame>,
+
+    /// A campaign's roads at its start: the view's road tiles at their levels (the document's map keeps the kit's).
+    roads: Option<Arc<wce_terrain_io::attila::roads::CampaignRoads>>,
 }
 
 #[derive(Default)]
@@ -157,7 +160,7 @@ fn run(i: Inputs) -> Done {
     (map.lf_height, map.vertical_offset) = (i.old.lf_height, i.old.vertical_offset);
     let changed = changed_chunks(&i.old, &map);
     let map = Arc::new(map);
-    let frame = Arc::new(i.frame.with_map(map.clone()));
+    let frame = Arc::new(i.frame.with_map(wce_terrain_editor::document::shown_placed(&map, i.roads.as_deref())));
     Done { doc: i.doc, map, frame, changed, secs: started.elapsed().as_secs_f64(), messages }
 }
 
@@ -179,7 +182,7 @@ impl Refill {
         }
 
         let Some(fill) = d.model().and_then(FillInputs::of) else { return false };
-        let inputs = Inputs { doc, name: d.placed.name.clone(), db: d.db.clone(), fill, old: d.placed.clone(), frame };
+        let inputs = Inputs { doc, name: d.placed.name.clone(), db: d.db.clone(), fill, old: d.placed.clone(), frame, roads: d.start_roads() };
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let _ = tx.send(run(inputs));

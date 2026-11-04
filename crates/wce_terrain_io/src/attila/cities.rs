@@ -31,8 +31,8 @@ use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::schema::Schema;
 
 /// Raw map units a cell, across and down; raw units past the world's origin.
-const CELL_RAW_WIDTH: f64 = 6.0;
-const CELL_RAW_HEIGHT: f64 = 8.0;
+pub(crate) const CELL_RAW_WIDTH: f64 = 6.0;
+pub(crate) const CELL_RAW_HEIGHT: f64 = 8.0;
 
 /// A slot of a settlement.
 #[derive(Clone, Debug, PartialEq)]
@@ -73,18 +73,18 @@ pub struct Cities {
     pub notes: Vec<String>,
 }
 
-fn as_record(n: &NodeType) -> Option<&RecordNode> {
+pub(crate) fn as_record(n: &NodeType) -> Option<&RecordNode> {
     match n {
         NodeType::Record(r) => Some(r),
         _ => None,
     }
 }
 
-fn child<'a>(r: &'a RecordNode, name: &str) -> Option<&'a RecordNode> {
+pub(crate) fn child<'a>(r: &'a RecordNode, name: &str) -> Option<&'a RecordNode> {
     r.children().iter().flatten().filter_map(as_record).find(|c| c.name() == name)
 }
 
-fn u32_of(n: &NodeType) -> Option<u32> {
+pub(crate) fn u32_of(n: &NodeType) -> Option<u32> {
     match n {
         NodeType::U8(v) => Some(u32::from(*v)),
         NodeType::U16(v) => Some(u32::from(*v)),
@@ -94,7 +94,7 @@ fn u32_of(n: &NodeType) -> Option<u32> {
     }
 }
 
-fn str_of(n: &NodeType) -> Option<&str> {
+pub(crate) fn str_of(n: &NodeType) -> Option<&str> {
     match n {
         NodeType::Ascii(v) | NodeType::Utf16(v) => Some(v),
         _ => None,
@@ -102,7 +102,7 @@ fn str_of(n: &NodeType) -> Option<&str> {
 }
 
 /// The `n`-th leaf (1-based) after the record `after` in a group (`None`: before any record), records skipped (RPFM's `NAME+n`, `^+n`).
-fn leaf<'a>(group: &'a [NodeType], after: Option<&str>, n: usize) -> Option<&'a NodeType> {
+pub(crate) fn leaf<'a>(group: &'a [NodeType], after: Option<&str>, n: usize) -> Option<&'a NodeType> {
     let start = match after {
         None => 0,
         Some(name) => group.iter().position(|c| as_record(c).is_some_and(|r| r.name() == name))? + 1,

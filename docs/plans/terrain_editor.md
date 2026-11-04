@@ -367,10 +367,16 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      the tree list); drawn near the camera with the props, a model unit a world unit, standing on the ground. `cities_check`: 745 slots,
      408 buildings with a model (every one in the packs). ASSUMPTIONS: a model at its cell's centre, unturned. Left: the 109 buildings
      whose slot has no cell, the empty slots, the sprawl pieces, walls and attachment points, Thrones' and Rome 2's startposes.
-   Left: a campaign launch (noted, not for now); the roads' levels (`tile_upgrades.xml` by region: what the game compares
-     `campaign_map_roads`' thresholds with); from the
-   campaign's rendering: the cities and roads (the startpos and the settlement display tables), the trees' size and lean, the mountains'
-   look, the seasons' snow masks, the GPU's terrain cost (smaller rings for campaign maps).
+   - The roads at the campaign's start (2026-11-05; `wce_terrain_io::attila::roads`, docs/re/terry.md "Roads"): each region's level
+     from its buildings' road effect in the startpos against `campaign_map_roads`' thresholds, the kit's `roads_climate` tiles upgraded
+     by `tile_upgrades.xml`'s `road0_to_road<n>` in the view only (`MapDocument::shown_placed`; the files keep the kit's tiles); the
+     Terrain panel's "roads at the campaign's start" and `terrain_roads [on|off]`. `roads_check`: main_attila 161 / 54 / 9 regions at
+     levels 0 / 1 / 2 (Roma 2, stone, as the game's first turn shows), 2747 road tiles upgraded; the 186 settlements' cells all in
+     their own region. ASSUMPTION: a tile takes the highest level of the road cells under it.
+   Left: a campaign launch (noted, not for now); from the campaign's rendering: a level-0 road's look (its `climate` texture group
+   resolves to the climate's ground texture, so it hardly shows), the settlements' sprawl and walls, Thrones' and Rome 2's
+   startposes, the trees' size and lean, the mountains' look, the seasons' snow masks, the GPU's terrain cost (smaller rings for
+   campaign maps).
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
    games when their profiles come (their Terry is another tool: out of this seam's first pass).
    **Progress 2026-11-04.** Done:

@@ -273,6 +273,25 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   ps30_campaign_<quality>_water_quality): the water's colour is `s_lf_colour`, the map's `lf_sea_colour.dds` (read linear), at
   `(x / g_wp_world_size.x, 1 - z / g_wp_world_size.y)` from the map's south-west corner, lit by the sun and ambient, blended with the
   refraction by depth, plus the sky's reflection; output `colour * overlay.a + overlay.rgb`.
+- **Roads** (2026-11-05): the kit's `tile_map.png` paints every road `roads_climate` (level 0; `main_attila_map`: 59 084 cells of
+  (149, 104, 38), none of `roads` or `roads_stone`), and the game upgrades a road's tiles by its region's level:
+  - a region's road value is the sum of `att_effect_building_road` (scope `region_to_region_own`; 96 buildings, no technology or
+    effect bundle gives it) over its buildings in the startpos; its level the last `campaign_map_roads` row of the campaign whose
+    `threshold` it reaches (`main_attila`: `att_road_lv_1` 0, `att_road_lv_2` 10, `att_road_lv_3` 40; `turns_required_to_upgrade_to`
+    1). The startpos stores no road state;
+  - level n > 0: `terrain/tiles/campaign/tile_upgrades.xml`'s `road0_to_road<n>` (`roads_climate` -> `roads` -> `roads_stone`, 30
+    tiles each, same names and variations; the linking tile `1x1_straight` has none and stays). The file's other groups:
+    `road<a>_to_road<b>` for every other pair, `farmland_mediterranean` and `farmland_northern` (grass, mud and snow tiles to farmland,
+    53 each). Applied by `FUN_1186de70` with a group list its callers (`FUN_11806d80`, `FUN_1181e380`) pass; `FUN_10b44670` takes the
+    highest road level of the 19 hex cells around a settlement;
+  - where roads run: `map_data.esf`'s `HEX_MAP_DATA` (u32 1016, u32 720, 5 120 640 bytes): 7 bytes a hex cell, row 0 the south edge.
+    Byte 0 the region (an index into `REGIONS_BLOCK`; 171 `att_reg_terra_incognita`, the sea and off the map: all 186 settlements'
+    main cells are in their own region), byte 5 the road's edges (a 6-bit mask: 9, 18, 36 straight through, 5, 10, 20, 40, 17, 34
+    bends, 21 and 42 junctions; 15 027 cells), byte 6 the river's (10 770 cells); bytes 1 to 4 not read (byte 2 has 13 values, byte 3
+    5, byte 4 9: ground or climate kinds, ASSUMPTION). The game keeps 8 bytes a cell at run time, a road edge as `'~'` minus its level
+    (`FUN_10b9d440`).
+  The editor draws them so in the view (Terrain panel: "roads at the campaign's start"). ASSUMPTION: a tile takes the highest level of
+  the road cells under it.
 - **Forests**: `campaign_maps/<map>/display/trees/trees.campaign_tree_list` (packs only): u32 version 3, f32 bounds (0, 0, 678.5,
   556.14 on the main map: x east, z north over the whole map, not square to its cells), u32 models, per model a u16-length path and a u32
   count of 15-byte trees (f32 x y z, u8 0/1, u8 0..5, u8 15). By the bounds all but 6 of 17 576 sampled trees stand on land

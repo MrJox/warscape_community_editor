@@ -103,7 +103,7 @@ impl SampleGrid {
             return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("{}: {} samples from byte {offset} past its end", path.display(), n)));
         }
 
-        if offset % 2 == 0
+        if offset.is_multiple_of(2)
             && let Some(view) = MappedView::open(path, offset, n)
         {
             return Ok(Self::with(w, h, Storage::Mapped(view)));
