@@ -82,6 +82,9 @@ pub struct Tile {
     /// One flag per cell (`string_to_mask`: '1' is part of the tile), row by row; empty: not masked.
     pub mask: Vec<bool>,
     pub random_rotatable: bool,
+
+    /// `encampable` (an army can camp on it: `locations.blm`'s mask bit 1).
+    pub encampable: bool,
     pub variations: Vec<Variation>,
     pub links: Vec<Link>,
     pub link_targets: Vec<LinkTarget>,
@@ -219,6 +222,7 @@ impl TileDatabase {
                 colour: colour(&t),
                 mask: attr(&t, "mask").bytes().map(|c| c == b'1').collect(),
                 random_rotatable: flag(&t, "random_rotatable"),
+                encampable: flag(&t, "encampable"),
                 variations: list("VARIATIONS", "VARIATION").iter().map(|v| Variation { location: attr(v, "location").to_owned(), colour: colour(v), barbarian: flag(v, "barbarian") }).collect(),
                 links: list("TILE_LINKS", "TILE_LINK").iter().map(|l| Link {
                     set: set_of(attr(l, "link_set")),
@@ -255,6 +259,7 @@ impl TileDatabase {
             colour: [e.red() as f32, e.green() as f32, e.blue() as f32],
             mask: e.mask().bytes().map(|c| c == b'1').collect(),
             random_rotatable: e.random_rotatable(),
+            encampable: e.encampable(),
             variations: e.variations().iter().map(|v| Variation { location: v.location.clone(), colour: [0.0; 3], barbarian: false }).collect(),
             links: e.links().iter().map(|l| Link {
                 set: set_of(&l.link_set),

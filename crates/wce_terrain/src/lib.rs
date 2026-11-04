@@ -4,9 +4,11 @@
 pub mod bca;
 pub mod cell_edit;
 pub mod cells;
+pub mod deployment;
 pub mod explicit;
 pub mod lf_edit;
 pub mod lf_patch;
+pub mod locations;
 pub mod map;
 pub mod paged;
 pub mod pyramid;
