@@ -353,6 +353,18 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    samples), the game's own use of the render modes (shared meshes under textured tiles), a campaign launch.
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
    games when their profiles come (their Terry is another tool: out of this seam's first pass).
+   **Progress 2026-11-04.** Done:
+   - Thrones in the Terrain tool (its own settings: game, kit): `vik_attila_map` opens (84 356 placements, 3 094 entities), its 133
+     tiles decompiled from the packs, validation, export (394 files, 4 s; the build exact against BOB, Phase 7) and the launch's dry run.
+     Fixed on the way: the packs' tile provider took a project with only a battle database as its kit (every pack tile failed).
+   - Rome 2's built files all read and write back byte for byte (`map_built_roundtrip_check`, 111 maps): `terrain.tile_list` versions
+     7 to 9 and `tile_map` version 6 (docs/formats/map_files.md).
+   - Rome 2's maps in the Terrain tool, read-only (user, 2026-11-04: view first, then edit the built files): its 111 pack maps listed
+     (a tile list is enough), the packs' tile database; a tile named alone takes its variation from the placement's byte 12 (the
+     game clamps it to the tile's variations); `main_gaul` and the multiplayer `canyon` shown. Fixed on the way: the Terrain tool's
+     frame (no open tile) left out the placement at the map's centre.
+   Next: editing a Rome 2 map from its built files (no kit images to fill from): the LF, the placements themselves, the battle
+   locations and deployments; written back as built files.
 
 ## Risks
 
