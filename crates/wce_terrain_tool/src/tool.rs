@@ -137,6 +137,40 @@ enum Job {
 }
 
 /// What opening a map needs, taken from the editor on the UI thread.
+/// A kit campaign map's prefix in the map list (`campaigns/main_attila_map`).
+pub(crate) const CAMPAIGN: &str = "campaigns/";
+
+/// A map name's kind and folder name (`campaigns/<name>`: a kit campaign map).
+pub(crate) fn map_kind(name: &str) -> (MapKind, &str) {
+    match name.strip_prefix(CAMPAIGN) {
+        Some(n) => (MapKind::Campaign, n),
+        None => (MapKind::Battle, name),
+    }
+}
+
+/// The folder of a kit map under a `raw_data` (`terrain/battles/<map>`, `terrain/campaigns/<map>`).
+pub(crate) fn kit_map_dir(raw: &std::path::Path, name: &str) -> PathBuf {
+    match map_kind(name) {
+        (MapKind::Campaign, n) => raw.join("terrain/campaigns").join(n),
+        (_, n) => raw.join("terrain/battles").join(n),
+    }
+}
+
+/// The tile database folder of a kind of map.
+fn database_dir(kind: MapKind) -> &'static str {
+    if kind == MapKind::Campaign { "terrain/tiles/campaign/_tile_database" } else { "terrain/tiles/battle/_tile_database" }
+}
+
+/// A kit's campaign maps (folders with a `tile_map.png`), as the map list names them.
+fn kit_campaign_maps(raw: &std::path::Path) -> Vec<String> {
+    let mut out: Vec<String> = std::fs::read_dir(raw.join("terrain/campaigns")).into_iter().flatten().flatten()
+        .filter(|e| e.path().join("tile_map.png").is_file())
+        .map(|e| format!("{CAMPAIGN}{}", e.file_name().to_string_lossy()))
+        .collect();
+    out.sort();
+    out
+}
+
 struct OpenInputs {
     name: String,
     game_dir: &'static str,
@@ -200,6 +234,7 @@ pub struct TerrainTool {
     packs: Option<Arc<PacksTree>>,
     provider: Option<TileProvider>,
     db: Option<(Vec<PathBuf>, Arc<TileDatabase>)>,
+    campaign_db: Option<(Vec<PathBuf>, Arc<TileDatabase>)>,
 
     /// The export on its way, and the last one done (what Launch in game ships).
     export: Option<crate::export::ExportJob>,
@@ -214,7 +249,7 @@ impl Default for TerrainTool {
     fn default() -> Self {
         Self {
             maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
-            status: String::new(), packs: None, provider: None, db: None, export: None, exported: None, launch_after_export: None, launched: None,
+            status: String::new(), packs: None, provider: None, db: None, campaign_db: None, export: None, exported: None, launch_after_export: None, launched: None,
         }
     }
 }
@@ -235,7 +270,7 @@ pub(crate) fn kit_roots(e: &Editor) -> Vec<PathBuf> {
 /// Where a kit map saves: its folder in the projects' kit layout (a map of the packs: nowhere, it is read-only).
 fn save_dir(e: &Editor, d: &MapDocument) -> Option<PathBuf> {
     d.model()?;
-    Some(e.settings_ref().kit_projects_dir().join("raw_data/terrain/battles").join(&d.name))
+    Some(kit_map_dir(&e.settings_ref().kit_projects_dir().join("raw_data"), &d.name))
 }
 
 /// The kit with the battle tile database (its `raw_data`).
@@ -282,9 +317,9 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
 
         // A kit map: its files into the model, the model filled as BOB fills the files (the same fill runs again after an edit).
         None => {
-            let dir = i.raw.join("terrain/battles").join(&i.name);
+            let dir = kit_map_dir(&i.raw, &i.name);
             let files = wce_terrain_io::MapFiles::from_dir(&dir).map_err(|e| e.to_string())?;
-            let model = wce_terrain_io::attila::read(&i.name, MapKind::Battle, &files).map_err(|e| e.to_string())?;
+            let model = wce_terrain_io::attila::read(map_kind(&i.name).1, map_kind(&i.name).0, &files).map_err(|e| e.to_string())?;
             let inputs = crate::refill::FillInputs::of(&model).ok_or_else(|| format!("{}: no tile_map.png", dir.display()))?;
             let (placed, messages) = inputs.fill(&db, &i.name);
             let sea = model.lf(LfRole::Sea).map(|f| lf_field(f.get()));
@@ -299,17 +334,22 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
 }
 
 impl TerrainTool {
-    /// The kits' tile databases as one, the projects' kit layout's tiles over the Assembly Kits' (`kit_roots`' order; cached for them).
-    fn databases(&mut self, roots: &[PathBuf]) -> Result<Arc<TileDatabase>, String> {
-        if let Some((r, db)) = &self.db
+    /// The kits' tile databases of a kind of map (battle, campaign) as one.
+    fn databases_of(&mut self, roots: &[PathBuf], kind: MapKind) -> Result<Arc<TileDatabase>, String> {
+        let slot = if kind == MapKind::Campaign { &mut self.campaign_db } else { &mut self.db };
+        if let Some((r, db)) = slot.as_ref()
             && r == roots
         {
             return Ok(db.clone());
         }
 
-        let folders: Vec<PathBuf> = roots.iter().map(|r| r.join("terrain/tiles/battle/_tile_database")).filter(|f| f.is_dir()).collect();
+        let folders: Vec<PathBuf> = roots.iter().map(|r| r.join(database_dir(kind))).filter(|f| f.is_dir()).collect();
+        if folders.is_empty() {
+            return Err(format!("no {} in the kits", database_dir(kind)));
+        }
+
         let db = Arc::new(TileDatabase::load_layered(&folders.iter().map(PathBuf::as_path).collect::<Vec<_>>())?);
-        self.db = Some((roots.to_vec(), db.clone()));
+        *slot = Some((roots.to_vec(), db.clone()));
         Ok(db)
     }
 
@@ -340,7 +380,7 @@ impl TerrainTool {
         }
 
         for r in &roots {
-            for m in kit_maps(r) {
+            for m in kit_maps(r).into_iter().chain(kit_campaign_maps(r)) {
                 if !self.maps.contains(&m) {
                     self.maps.push(m);
                 }
@@ -359,11 +399,11 @@ impl TerrainTool {
 
         self.prepare_packs(e);
         let roots = kit_roots(e);
-        let raw = roots.iter().find(|r| r.join("terrain/battles").join(name).join("tile_map.png").is_file()).cloned()
+        let raw = roots.iter().find(|r| kit_map_dir(r, name).join("tile_map.png").is_file()).cloned()
             .or_else(|| database_root(e))
             .ok_or("no Assembly Kit with a battle tile database in the settings")?;
         // Every kit's tiles (a project's few and the Assembly Kit's): the project's database alone misses the map's tiles.
-        let db = self.databases(&roots)?;
+        let db = self.databases_of(&roots, map_kind(name).0)?;
         Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone() })
     }
 
@@ -1430,7 +1470,9 @@ impl Tool for TerrainTool {
                 }
 
                 t.view.settle(e, &t.rings);
-                CommandResult::success(t.view.status.clone())
+                let failed = t.view.streamer.as_ref().map(|s| s.failed()).unwrap_or_default();
+                let note = if failed.is_empty() { String::new() } else { format!("; could not open: {}", failed.iter().take(4).cloned().collect::<Vec<_>>().join("; ")) };
+                CommandResult::success(format!("{}{note}", t.view.status))
             })
         });
 
