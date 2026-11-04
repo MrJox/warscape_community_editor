@@ -2,6 +2,7 @@
 //! model, every built file made from it) against a BOB_Terrain run's outputs for the same folder (a scratch kit's working_data). Every
 //! file BOB wrote must come out byte for byte, but `tile_map.tiles`' LF floats of cells that are no tile's origin (BOB leaves them
 //! uninitialised: docs/re/terry.md, "BOB_Terrain's outputs"). Exit 1 otherwise.
+//! `WCE_OUT=<folder>`: our versions of the differing files written there.
 //!
 //!   cargo run --release -p wce_terrain_io --example build_check -- <kit raw_data> <map | campaigns/<map>> <BOB's output folder>
 
@@ -91,6 +92,11 @@ fn main() {
             println!("  {rel}: the same but for the LF of non-origin cells");
         } else {
             bad += 1;
+            // `WCE_OUT`: a folder for our versions of the files that differ.
+            if let Ok(dir) = std::env::var("WCE_OUT") {
+                std::fs::write(PathBuf::from(dir).join(rel), mine).expect("WCE_OUT writable");
+            }
+
             let first = mine.iter().zip(&want).position(|(x, y)| x != y);
             println!("  {rel}: DIFFERS (sizes {} / {}, first at {first:?})", mine.len(), want.len());
         }
