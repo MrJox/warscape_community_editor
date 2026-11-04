@@ -128,6 +128,48 @@ land_bridge 236 (235), port_assault 25, settlement_standard 63, settlement_unfor
 `bca_generation_errors.txt` was written. The fresh output is the oracle; the shipped project came from other inputs or an older
 generator. Kept outside the repository (`I:\wce_scratch\thrones_kit\oracle` on this machine).
 
+## The BCA generator (Ghidra, 2026-11-04)
+
+Thrones' `TWeak_TerrainMetadataEditor.AssemblyKit.dll` (project `kit`, `GenerateBattleCatchmentAreas.cpp`, main fn 0x10062bc0); ported as
+`wce_terrain::bca` and `bca::zones`, checked by `bca_check` against the oracle above: every one of the 636 BCAs (name, type, cell) and of
+their 780 zones, 1 088 regions and 8 317 polyline points (to 5 cm) agrees (gate `bca_<map>`, `WCE_BCA_ORACLE`).
+
+- **The battle field.** The BCAs come from Terry's `BATTLE_TILE_MAP`, in its tile order (the BCA names count up). Terry builds it as the
+  game does (`TERRAIN_SETUP::build_terrain` in Thrones' `Warscape.AssemblyKit.dll`: `BATTLE_TILE_MAP::load` of a `terrain.tile_list`, else
+  `TILE_MAP::load` of `tile_map.index` / `.tiles` and `TILE_MAP::build_battle_field`, row by row over the origin cells, tile layer
+  then geometry layer), through the game's file system: for `vik_attila_map` that is the game packs' tile map (they ship no
+  `terrain.tile_list`), not BOB's in working_data. With BOB's battle field the BCAs are the same 636 at the same cells, 514 by the same
+  name. A tile_list's tiles missing from the tile database are dropped in order (fn 0x1036da10).
+- **BCAs.** Per tile instance, per spec type in the spec's order: a tile in the type's `infield` (its tile set's name, its location under
+  `terrain/tiles/battle/`, or that and `/<variation>`) makes a BCA at `(x + width / 2, y + height / 2)` (the unturned size) unless one of
+  that type is there or it is within `map_border_for_outfield` of the edge; named `BCA %05d` by the count so far. Another instance of
+  `infield_restriction` in the 8 x 8 cells around it (-4 .. 3; a cell's instance is the first whose unmasked subtiles cover it): "Infield
+  contains restricted tiles".
+- **Deployment zones** (types with a `<deployment category>`), per configuration (one, 0; `dual_config` two):
+  - the instances of the 8 x 8 cells around the centre; each one's region in 1/128 cells relative to the centre cell's corner: its
+    variation's `deployment_mask.png` for the configuration (mirrored vertically, `width / tile width` pixels a cell, luminance
+    `(11 R + 16 G + 5 B) >> 5` above 25 the key 1, above 76 the key -1; the configuration's key, else -1), else none for a tile in the
+    deployment's `restriction`, else its unmasked subtiles. Turned with the instance (Qt transforms; the flip is ignored). Thrones' kit
+    has no tile folders, so no masks were read;
+  - their union cut to the battle rectangle: -512 .. 511 inset by `int(1024 * 64 / (unit * 128 * 8) + 1)`, 33 for unit 2 (+-958 m);
+  - the Zonifier: the region's y-x banded rectangles' sides as directed unit edges (top left to right, bottom right to left, right side
+    down, left up; an edge meeting its reverse cancels), in a multimap by start point (x, then y); a polygon traced from the first edge:
+    at each end the first edge from there, the second when the turn is to the left (float cross product > 0) and there is one, a vertex
+    where the direction changes; every edge start recorded in a point -> polygon hash. A polygon becomes a hole of the first polygon of
+    the other area sign met stepping right (1/128) from its rightmost vertex;
+  - each polygon in cells (x 1/128), then Douglas-Peucker from its least point (x, then y) to its greatest and back, squared distances in
+    f32 against `deployment_coarseness`^2;
+  - fewer than two: "Less than two zones created"; more: "More than two zones created - just kept largest two" (a stable sort by area);
+    with `split` (coasts) both outlines cut by two lines along the centroids' axis, `deployment_split_width` / 2 to each side
+    (Sutherland-Hodgman in f32): each side a zone of pieces;
+  - the entities: `DZ <configuration>/<alliance>` (`ECDeploymentZone`, type `DZT_1V1`, category `DZC_<CATEGORY>`), zone 0 alliance 0 and
+    zone 1 alliance 1; with `dual_config` configuration 1's alliances swap when its centroids' axis points against configuration 0's.
+    An area below `deployment_min_area`: "DZ c/a is too small". Under it a `DZR <n>` per outline then per hole, depth first
+    (`DZRT_ADDITIVE`, a negative area `DZRT_SUBTRACTIVE`), the points `tile_to_world_space(centre + p)`; the region's transform at its
+    first point, the points relative (y as z).
+  - With `delete_invalid` a BCA with any error goes (the oracle: 57 of 693, its number not reused).
+- The y of the BCAs and regions is the terrain's height (the tiles' too: -21.8 on a sea tile whose LF is 0 .. 0.014): not ported.
+
 ## Per-tile LF patches (Ghidra, 2026-11-03)
 
 Project `kit` in `I:\wce_scratch\ghidra_kit` (Attila's `TWeak_TerrainMetadataEditor.AssemblyKit.dll` and `ToolDataBuilderDll.AssemblyKit.dll`,
@@ -153,4 +195,5 @@ image base 0x10000000).
 
 - The blm rectangles' rounding, the masks' bits, where the game's 736 normal chunks come from.
 - The falloff models' formulas (`Radius Sin`, `Radius Sin Sin`) and `OpSimpleChannel0`'s properties.
-- The BCA generator's algorithm (the `Zonifier`): black box first (run it in Thrones' Terry on a scratch map, diff the `.terry`).
+- The BCA generator: the deployment masks (none in Thrones' kit: their file name is a runtime string, `deployment_mask.png` assumed), the
+  y of its entities (the terrain's height), its errors file (none written for the oracle).
