@@ -6,6 +6,7 @@ mod export;
 mod launch;
 mod layout_view;
 mod map_panel;
+mod placements;
 mod refill;
 mod terry_view;
 mod validate;

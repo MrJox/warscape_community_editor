@@ -215,6 +215,13 @@ impl MapDocument {
         self.history.break_merge();
     }
 
+    /// An edit of a built map's placements onto the history (applied).
+    pub fn push_tile_list(&mut self, cmd: crate::cells::TileListCommand) {
+        use wce_editor_core::command::History;
+        self.history.push(Box::new(cmd));
+        self.history.break_merge();
+    }
+
     /// A finished stroke onto the history (it is in the field already: applying it again changes nothing).
     pub fn push_stroke(&mut self, cmd: crate::lf::LfStrokeCommand) {
         use wce_editor_core::command::History;

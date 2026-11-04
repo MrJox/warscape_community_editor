@@ -39,25 +39,37 @@ pub struct FillInputs {
     climate: Option<Vec<[u8; 3]>>,
     explicit: Option<String>,
     lf: Option<LfField>,
+
+    /// A built map's battle field: the placements are its, no fill.
+    list: Option<wce_tile::battle_map::tile_list::TileList>,
 }
 
 impl FillInputs {
     /// The model's tile map, climates, explicit tiles and LF as they are (none without a tile map).
     pub fn of(m: &wce_terrain::MapModel) -> Option<Self> {
-        let tiles = m.layer(&LayerRole::TileMap).map(|l| l.get())?;
-        let (w, h) = (tiles.width(), tiles.height());
-        let climate = m.layer(&LayerRole::Climate).map(|l| l.get()).filter(|l| l.width() == w && l.height() == h).map(rgb);
-        let explicit = m.explicit.as_ref().map(|x| x.get().write().iter().map(|&c| char::from(c)).collect());
-        let lf = m.lf(LfRole::Land).map(|f| {
+        let lf_of = |m: &wce_terrain::MapModel| m.lf(LfRole::Land).map(|f| {
             let f = f.get();
             LfField { w: f.width(), h: f.height(), values: f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() }
         });
 
-        Some(Self { w, h, tiles: rgb(tiles), climate, explicit, lf })
+        if let Some(list) = m.tile_list.as_ref().filter(|_| m.built) {
+            let l = list.get();
+            return Some(Self { w: l.battle_size[0], h: l.battle_size[1], tiles: vec![], climate: None, explicit: None, lf: lf_of(m), list: Some(l.clone()) });
+        }
+
+        let tiles = m.layer(&LayerRole::TileMap).map(|l| l.get())?;
+        let (w, h) = (tiles.width(), tiles.height());
+        let climate = m.layer(&LayerRole::Climate).map(|l| l.get()).filter(|l| l.width() == w && l.height() == h).map(rgb);
+        let explicit = m.explicit.as_ref().map(|x| x.get().write().iter().map(|&c| char::from(c)).collect());
+        Some(Self { w, h, tiles: rgb(tiles), climate, explicit, lf: lf_of(m), list: None })
     }
 
     /// BOB's fill of them: the placements (with the LF) and BOB's messages.
     pub fn fill(&self, db: &TileDatabase, name: &str) -> (PlacedMap, Vec<String>) {
+        if let Some(list) = &self.list {
+            return (PlacedMap::from_tile_list(name, list, db, self.lf.clone()), vec![]);
+        }
+
         let lf = self.lf.as_ref().map(|f| (&f.values[..], f.w, f.h));
         let images = MapImages {
             width: self.w, height: self.h, tile_map: &self.tiles, climate_map: self.climate.as_deref(), explicit_tiles: self.explicit.as_deref(), lf: None, lf_u16: lf,
@@ -139,7 +151,9 @@ fn changed_chunks(old: &PlacedMap, new: &PlacedMap) -> Vec<ChunkKey> {
 fn run(i: Inputs) -> Done {
     let started = Instant::now();
     let (mut map, messages) = i.fill.fill(&i.db, &i.name);
+    // What the fill does not make: the sea LF and the LF's metres (a campaign map's are its database's).
     map.sea_lf.clone_from(&i.old.sea_lf);
+    (map.lf_height, map.vertical_offset) = (i.old.lf_height, i.old.vertical_offset);
     let changed = changed_chunks(&i.old, &map);
     let map = Arc::new(map);
     let frame = Arc::new(i.frame.with_map(map.clone()));

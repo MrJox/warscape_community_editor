@@ -211,6 +211,7 @@ pub struct TerrainTool {
     /// The `.terry` scene drawn and its creation modes.
     terry: crate::terry_view::TerryView,
     layout: crate::layout_view::LayoutView,
+    placements: crate::placements::PlacementsPanel,
 
     /// The last checks of the shown map.
     findings: Vec<crate::validate::Finding>,
@@ -260,7 +261,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), placements: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None, campaign_db: None, export: None, exported: None, launch_after_export: None, launched: None,
         }
     }
@@ -697,6 +698,8 @@ impl TerrainTool {
         self.cells.draw_section(e, self.shown);
         let placing_was = self.explicit.placing;
         self.explicit.draw_section(e, self.shown);
+        let placements_was = self.placements.claims();
+        self.placements.draw_section(e, self.shown);
         let terry_was = self.terry.claims_left_button();
         self.terry.draw_section(e, self.shown);
         self.layout.draw_controls(e, self.shown);
@@ -714,8 +717,13 @@ impl TerrainTool {
 
         if self.terry.claims_left_button() && !terry_was {
             (self.paint.on, self.cells.on, self.explicit.placing) = (false, false, false);
+            self.placements.mode = crate::placements::Mode::Off;
+        } else if self.placements.claims() && !placements_was {
+            (self.paint.on, self.cells.on, self.explicit.placing) = (false, false, false);
+            self.terry.mode = crate::terry_view::Mode::Select;
         } else if self.paint.on || self.cells.on || self.explicit.placing {
             self.terry.mode = crate::terry_view::Mode::Select;
+            self.placements.mode = crate::placements::Mode::Off;
         }
 
         gui::end();
@@ -1008,7 +1016,7 @@ impl TerrainTool {
     fn follow_cell_edits(&mut self, e: &mut Editor) {
         let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
         let touched = d.cells.take();
-        let fill_reads = |k: usize| k == wce_terrain_editor::cells::EXPLICIT
+        let fill_reads = |k: usize| k == wce_terrain_editor::cells::EXPLICIT || k == wce_terrain_editor::cells::TILE_LIST
             || d.model().and_then(|m| m.layers.get(k)).is_some_and(|(r, _)| matches!(r, wce_terrain::LayerRole::TileMap | wce_terrain::LayerRole::Climate));
         self.refill_wanted |= touched.iter().any(|(k, _)| fill_reads(*k));
         let drape = !self.cells.painting();
@@ -1319,9 +1327,9 @@ impl Tool for TerrainTool {
 
     fn draw_panels(&mut self, e: &mut Editor) {
         self.draw_map_panel(e);
-        self.map_panel.paint = self.cells.on || self.explicit.placing || self.terry.claims_left_button();
+        self.map_panel.paint = self.cells.on || self.explicit.placing || self.terry.claims_left_button() || self.placements.claims();
         self.map_panel.outline = self.cells.dragging;
-        self.map_panel.marks = e.docs.find_as::<MapDocument>(self.shown).map(|d| self.explicit.marks(d)).unwrap_or_default();
+        self.map_panel.marks = e.docs.find_as::<MapDocument>(self.shown).map(|d| [self.explicit.marks(d), self.placements.marks(d)].concat()).unwrap_or_default();
         self.map_panel.draw(e, self.shown, &self.view);
 
         // A `.terry` creation click in the Map panel (the cell's centre).
@@ -1333,6 +1341,22 @@ impl Tool for TerrainTool {
             let at = [x, z];
             if let Some(m) = self.terry.click(e, self.shown, at) {
                 e.status(&m, false);
+            }
+        }
+
+        // A built map's placements in the Map panel.
+        if self.placements.claims()
+            && let Some(i) = self.map_panel.input
+        {
+            if let Some(d) = e.docs.find_as::<MapDocument>(self.shown) {
+                self.placements.hover(d, i.cell);
+            }
+
+            if i.pressed {
+                match self.placements.click(e, self.shown, i.cell) {
+                    Ok(m) => e.status(&m, false),
+                    Err(err) => e.status(&err, true),
+                }
             }
         }
 
@@ -1413,6 +1437,32 @@ impl Tool for TerrainTool {
             return matches!(ev.kind, wce_editor::tool::ViewportEventKind::Drag | wce_editor::tool::ViewportEventKind::Release);
         }
 
+        if self.placements.claims() {
+            let cell = self.cursor.zip(self.view.frame()).map(|((p, _), f)| {
+                let (x, y) = f.cell_of(f64::from(p.x), f64::from(p.z));
+                (x.floor() as i64, y.floor() as i64)
+            });
+
+            if let Some(c) = cell
+                && let Some(d) = e.docs.find_as::<MapDocument>(self.shown)
+            {
+                self.placements.hover(d, c);
+            }
+
+            if ev.button == 0 && ev.kind == wce_editor::tool::ViewportEventKind::Press {
+                if let Some(c) = cell {
+                    match self.placements.click(e, self.shown, c) {
+                        Ok(m) => e.status(&m, false),
+                        Err(err) => e.status(&err, true),
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+
         if self.explicit.placing {
             let cell = self.cursor.zip(self.view.frame()).map(|((p, _), f)| {
                 let (x, y) = f.cell_of(f64::from(p.x), f64::from(p.z));
@@ -1470,7 +1520,7 @@ impl Tool for TerrainTool {
     }
 
     fn claims_left_button(&self, _: &Editor) -> bool {
-        self.paint.on || self.cells.on || self.explicit.placing || self.terry.claims_left_button()
+        self.paint.on || self.cells.on || self.explicit.placing || self.terry.claims_left_button() || self.placements.claims()
     }
 
     fn update(&mut self, e: &mut Editor) {
@@ -1796,6 +1846,55 @@ impl Tool for TerrainTool {
 
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
+        });
+
+        c.add("terrain_placements", "terrain_placements count | select <x> <y> | place <x> <y> <tile> [variation] [degrees] | move <x> <y> | turn | remove | variation <k>", "the Terrain tool: a built map's placements (Rome 2's pack maps; cells; on the selected one; one step on the history each)", |e, a| {
+            use crate::placements::{Mode, PlacementsPanel};
+            let usage = "usage: terrain_placements count | select <x> <y> | place <x> <y> <tile> [variation] [degrees] | move <x> <y> | turn | remove | variation <k>";
+            let num = |i: usize| a.get(i).and_then(|v| v.parse::<i64>().ok());
+            with_terrain(e, |t, e| {
+                let doc = t.shown;
+                let at = num(1).zip(num(2));
+                let click = |t: &mut TerrainTool, e: &mut Editor, mode: Mode, at: (i64, i64)| {
+                    let was = t.placements.mode;
+                    t.placements.mode = mode;
+                    let r = t.placements.click(e, doc, at);
+                    t.placements.mode = was;
+                    r
+                };
+
+                let selected = t.placements.selected.ok_or_else(|| "select a placement first".to_owned());
+                let r = match (a.first().map(String::as_str), at) {
+                    (Some("count"), _) => e.docs.find_as::<MapDocument>(doc).and_then(|d| d.model()).and_then(|m| m.tile_list.as_ref())
+                        .map(|l| format!("{} placements, {} tiles, bounds {:?}", l.get().placements.len(), l.get().names.len(), l.get().bounds))
+                        .ok_or_else(|| "no placements to edit (a built map with a terrain.tile_list)".to_owned()),
+                    (Some("select"), Some(at)) => click(t, e, Mode::Select, at),
+                    (Some("move"), Some(at)) => click(t, e, Mode::Move, at),
+                    (Some("place"), Some(at)) if a.len() >= 4 => {
+                        let v = num(4).unwrap_or(0) as i32;
+                        let deg = num(5).unwrap_or(0) as i32;
+                        t.placements.choose(&a[3], v, deg);
+                        click(t, e, Mode::Place, at)
+                    }
+
+                    (Some("turn"), _) => selected.and_then(|i| PlacementsPanel::turn(e, doc, i)),
+                    (Some("remove"), _) => selected.and_then(|i| {
+                        t.placements.selected = None;
+                        PlacementsPanel::remove(e, doc, i)
+                    }),
+                    (Some("variation"), _) => match (selected, num(1)) {
+                        (Ok(i), Some(k)) => PlacementsPanel::set_variation(e, doc, i, k.clamp(0, 255) as u8),
+                        (Err(err), _) => Err(err),
+                        _ => Err(usage.to_owned()),
+                    },
+                    _ => Err(usage.to_owned()),
+                };
+
+                match r {
+                    Ok(m) => CommandResult::success(m),
+                    Err(err) => CommandResult::fail(err),
+                }
+            })
         });
 
         c.add("terrain_explicit", "terrain_explicit add <x> <y> <tile or variation path> <degrees> | remove <i> | list", "the Terrain tool: the shown kit map's explicit tiles (one step on the history each)", |e, a| {
