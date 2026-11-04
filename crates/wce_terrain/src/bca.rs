@@ -340,9 +340,17 @@ pub fn generate(
     let mut out: Vec<Bca> = vec![];
     let mut at: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
     let border = spec.map_border_for_outfield;
+
+    // The lists' answers per type and variation (in_list allocates).
+    let mut memo: Vec<[HashMap<(usize, usize), bool>; 2]> = vec![Default::default(); spec.types.len()];
+    let mut listed = |k: usize, which: usize, p: &Placement| {
+        let list = if which == 0 { &spec.types[k].infield } else { &spec.types[k].restriction };
+        *memo[k][which].entry((p.tile, p.variation)).or_insert_with(|| in_list(db, list, p))
+    };
+
     for (i, p) in instances.iter().enumerate() {
         for (k, t) in spec.types.iter().enumerate() {
-            if !in_list(db, &t.infield, p) {
+            if !listed(k, 0, p) {
                 continue;
             }
 
@@ -368,7 +376,7 @@ pub fn generate(
                 }
 
                 let j = cells[(y as u32 * w + x as u32) as usize];
-                j >= 0 && j as usize != i && in_list(db, &t.restriction, &instances[j as usize])
+                j >= 0 && j as usize != i && listed(k, 1, &instances[j as usize])
             }));
 
             if restricted {

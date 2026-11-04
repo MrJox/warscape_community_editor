@@ -60,7 +60,9 @@ fn main() {
     let spec = Spec::parse(&std::fs::read(spec).expect("spec"));
     println!("spec: {} types ({}), border {}, delete_invalid {}", spec.types.len(), spec.types.iter().map(|t| format!("{} {}", t.name, t.infield.len())).collect::<Vec<_>>().join(", "), spec.map_border_for_outfield, spec.delete_invalid);
     let masks = wce_terrain::bca::load_masks(&db, &instances, &[terrain.parent().map(PathBuf::from).unwrap_or_default()]);
+    let t0 = std::time::Instant::now();
     let ours = generate(&spec, &db, w, h, &instances, &masks);
+    println!("generated in {:.1} s", t0.elapsed().as_secs_f64());
     let kept: Vec<_> = ours.iter().filter(|b| !(spec.delete_invalid && !b.errors.is_empty())).collect();
     println!("{map}: {w} x {h} cells, {} tile instances, {} deployment masks; {} BCAs made, {} kept", instances.len(), masks.len(), ours.len(), kept.len());
 
