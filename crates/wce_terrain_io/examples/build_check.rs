@@ -3,7 +3,7 @@
 //! file BOB wrote must come out byte for byte, but `tile_map.tiles`' LF floats of cells that are no tile's origin (BOB leaves them
 //! uninitialised: docs/re/terry.md, "BOB_Terrain's outputs"). Exit 1 otherwise.
 //!
-//!   cargo run --release -p wce_terrain_io --example build_check -- <kit raw_data> <map> <BOB's output folder>
+//!   cargo run --release -p wce_terrain_io --example build_check -- <kit raw_data> <map | campaigns/<map>> <BOB's output folder>
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -51,9 +51,15 @@ fn main() {
 
     let (raw, out) = (PathBuf::from(raw), PathBuf::from(out));
     let t0 = std::time::Instant::now();
-    let files = MapFiles::from_dir(&raw.join("terrain/battles").join(map)).expect("the map's folder");
-    let m = attila::read(map, MapKind::Battle, &files).expect("the map");
-    let db = TileDatabase::load(&raw.join("terrain/tiles/battle/_tile_database")).expect("tile database");
+    // `campaigns/<map>`: a campaign map (its folder, its tile database).
+    let (kind, folder, name, base) = match map.strip_prefix("campaigns/") {
+        Some(n) => (MapKind::Campaign, "terrain/campaigns", n, "campaign"),
+        None => (MapKind::Battle, "terrain/battles", map.as_str(), "battle"),
+    };
+
+    let files = MapFiles::from_dir(&raw.join(folder).join(name)).expect("the map's folder");
+    let m = attila::read(name, kind, &files).expect("the map");
+    let db = TileDatabase::load(&raw.join(format!("terrain/tiles/{base}/_tile_database"))).expect("tile database");
     let env = std::fs::read(raw.join("warscape_asset_variation_db/environment_map.xml")).unwrap_or_default();
     let upgrades = std::fs::read(raw.join("terrain/tiles/battle/tile_upgrades.xml")).unwrap_or_default();
     let built = build(&m, &BuildInputs { db: &db, environment_map: &env, tile_upgrades: &upgrades }).expect("the build");

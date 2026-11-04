@@ -10,6 +10,7 @@
 //! A file that does not read as its kind is carried as it is.
 
 pub mod build;
+pub mod campaign;
 pub mod heights;
 pub mod normals;
 

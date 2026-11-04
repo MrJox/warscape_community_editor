@@ -414,6 +414,12 @@ fn case_variants(path: &str) -> impl Iterator<Item = String> + '_ {
 }
 
 /// The order a `MARKER_TABLE` gives its keys (inserted in the order of their first record): the keys in slot order.
+/// The order a markers file lists the groups of text keys (given in the order of their first record): the keys' indices.
+pub fn text_key_group_order(keys: &[String]) -> Vec<usize> {
+    let k: Vec<MarkerKey> = keys.iter().map(|s| MarkerKey::Text(s.clone())).collect();
+    marker_table(&k).into_iter().flatten().collect()
+}
+
 pub(crate) fn marker_table_order(keys: &[MarkerKey]) -> Vec<MarkerKey> {
     marker_table(keys).into_iter().flatten().map(|i| keys[i].clone()).collect()
 }
