@@ -295,6 +295,20 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   - A level-0 road hardly shows, as the data has it: `roads_climate`'s tiles have `climate` on all four channels and their
     `blend_map.tif` is 100 % one layer (channel 1, variation 2: the climate's ground), so only their heights and normals differ from
     the ground. `roads` paints its strip with `sand_a` (3 % of a 2x2 straight), `roads_stone` with `farm` variation 1 (7 %).
+- **Settlement sprawl** (2026-11-05, read, not drawn): the startpos's `SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/
+  SETTLEMENT_EXPANSION_MAP_DATA` (its region's key) holds per slot `SLOT_MAP_DATA` (u32 index: 0 the main slot, 1 the port, then the
+  secondary ones; u16 column, row; 65535 unset) with `SLOT_FOOTPRINT_ARRAY`, `SLOT_ZOE_ARRAY` and `SLOT_WALL_ARRAY` hex cells, and
+  `SPRAWL_BLOCK` (21 701 cells on `main_attila`) of `SPRAWL_HEX_MAP_DATA`: u16 column, u16 row, then
+  - field 2 bool (6 048 set), field 3 bool: in the settlement's area (13 702), field 10 u32: the slot it belongs to (a bit: 1 to 64);
+  - fields 4 to 9: a road through the cell: 4 and 5 edge masks, 7 their union, 8 a canonical pattern (1, 5, 9, 21...) and 9 its
+    rotation: 7 = rotl6(8, 9) on all 2 948 cells with one (9, 18, 36 the straight ones as in `HEX_MAP_DATA`'s road byte);
+  - fields 11 to 13: the sprawl's edge: 11 a 6-bit mask, 12 a canonical one (1, 3, 7, 15, 31: `sprawl_edge_1`, `_12`, `_123`,
+    `_1234`, `_12345` of `campaign_settlement_display_sprawl_pieces`) and 13 its rotation: 11 = rotl6(12, 13) on all 1 524 cells.
+  The pieces' models: `campaign_settlement_display_building_ids` rows with `sprawl_piece_type` and `sprawl_piece_level` (1 to 3) by
+  culture or subculture (`barbarian_sprawl_edge_12_lvl1`, `roman_sprawl_edge_12_lvl1`...; walls `wall_12`, towers
+  `AP_barbarian_connecting_tower`). Not drawn yet: which neighbour an edge bit is (the cells outside the settlement's area explain the
+  mask on only 442 of 1 524 cells, with bit 0 north and the bits clockwise; other readings less), so the pieces' turn, and which
+  `sprawl_piece_level` a settlement shows, are not known.
 - **Farmland** (2026-11-05): `campaign_maps/<map>/dynamic_resources.esf` (`CAMPAIGN_DYNAMIC_RESOURCES`, version text `20141114153252`
   on `main_attila_map`): `REGION_RESOURCE_INFO_BLOCK` groups (u16 0xfe00 + a `REGIONS_BLOCK` index; 182), each with
   `REGION_RESOURCE_INFO_AREAS_BLOCK` groups (a building superchain, u32 level 1..3, an upgrade group; 531: all `att_sch_agriculture`,
