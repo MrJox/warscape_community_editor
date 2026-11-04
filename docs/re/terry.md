@@ -250,8 +250,10 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
 
 ## Open
 
-- The campaign render modes: a geometry-layer tile (0x100) under a texture-only one (0x600), and the sea added under a coast (0x300).
-  The editor draws every placement whole (the game files' campaign view did already).
+- The campaign render modes' use in the game: a geometry-layer tile (0x100) under a texture-only one (0x600), the sea added under a
+  coast (0x300). The editor leaves the 0x100 ones out and draws the rest whole.
+- A campaign prop's y: the kit's follow the tiles' geometry (a line through the LF misses by 0.56 at the median); a new one takes the
+  line's.
 - Where the game's 736 normal chunks come from (and an encoder for them).
 - The falloff models' formulas (`Radius Sin`, `Radius Sin Sin`) and `OpSimpleChannel0`'s properties.
 - The BCA generator: the deployment masks (none in Thrones' kit: their file name is a runtime string, `deployment_mask.png` assumed), the
