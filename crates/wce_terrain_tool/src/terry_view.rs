@@ -17,8 +17,18 @@ use wce_terrain_editor::document::{TERRY_CELL, TerryFrame};
 use wce_terrain_editor::terry::TerrySpliceCommand;
 use wce_tile_editor::tile_document::context::Frame;
 
-/// What the drawn set is of: document, `.terry` revision, filters, radius, the point it is centred on.
-type Built = (DocumentId, u64, [bool; 4], f32, [f64; 2]);
+/// What the drawn set is of: document, `.terry` revision, filters (kinds, season), radius, the point it is centred on.
+type Built = (DocumentId, u64, ([bool; 4], usize), f32, [f64; 2]);
+
+/// The seasons of the season filter (`ECSeasonMask`'s attributes), after "every season".
+pub const SEASONS: [&str; 4] = ["spring", "summer", "autumn", "winter"];
+
+/// Whether an entity shows in a season (`season` 1 .. 4 of [`SEASONS`]; 0: every season): Terry's `SeasonManager`, an `ECSeasonMask`
+/// without the season hides it; no mask, every season.
+pub fn in_season(p: &TerryProject, e: &wce_terrain::terry::TerryEntity, season: usize) -> bool {
+    let Some(name) = season.checked_sub(1).and_then(|k| SEASONS.get(k)) else { return true };
+    p.component(e, "ECSeasonMask").is_none_or(|c| p.doc.get(c, name).as_deref() != Some("false"))
+}
 
 /// What a click does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +73,9 @@ pub struct TerryView {
 
     /// Entities within this of the camera's target are drawn (metres).
     pub radius_m: f32,
+
+    /// The season shown (1 .. 4 of [`SEASONS`]; 0: every season).
+    pub season: usize,
     pub mode: Mode,
 
     /// The deployment zone being drawn: its points (metres on the map).
@@ -85,7 +98,7 @@ pub struct TerryView {
 impl Default for TerryView {
     fn default() -> Self {
         Self {
-            show: [true, true, true, true], radius_m: 40_000.0, mode: Mode::Select, points: vec![], picked: None, layer: 0, shown: HashMap::new(), built: None, draft: 0,
+            show: [true, true, true, true], radius_m: 40_000.0, season: 0, mode: Mode::Select, points: vec![], picked: None, layer: 0, shown: HashMap::new(), built: None, draft: 0,
             new: NewCampaignEntity { scale: 0.3, radii: [100.0, 150.0], ..Default::default() },
         }
     }
@@ -132,12 +145,12 @@ fn on_ground(frame: &Frame, pts: &[[f64; 2]], closed: bool, tf: TerryFrame, colo
 }
 
 /// An entity's overlay, or none (a kind not shown, nothing to draw).
-fn overlay(d: &MapDocument, frame: &Frame, id: u64, show: [bool; 4]) -> Option<Overlay> {
+fn overlay(d: &MapDocument, frame: &Frame, id: u64, show: [bool; 4], season: usize) -> Option<Overlay> {
     let p = d.project()?;
     let e = p.entity(id)?;
     let kind = p.kind(e);
     let (slot, c) = style(p, id, &kind);
-    if !show[slot] {
+    if !show[slot] || !in_season(p, e, season) {
         return None;
     }
 
@@ -188,7 +201,7 @@ impl TerryView {
         let at = { let (x, z) = d.terry_frame.from_frame(f64::from(cam.target.x), f64::from(cam.target.z)); [x, z] };
         let revision = d.terry_revision.load(std::sync::atomic::Ordering::Relaxed);
         let fresh = self.built.is_some_and(|(bd, br, bs, brad, bc)| {
-            bd == doc && br == revision && bs == self.show && brad == self.radius_m && (bc[0] - at[0]).hypot(bc[1] - at[1]) < f64::from(self.radius_m) / 4.0
+            bd == doc && br == revision && bs == (self.show, self.season) && brad == self.radius_m && (bc[0] - at[0]).hypot(bc[1] - at[1]) < f64::from(self.radius_m) / 4.0
         });
 
         if !fresh {
@@ -198,7 +211,7 @@ impl TerryView {
                 (w[0] - at[0]).hypot(w[2] - at[1]) <= r
             }).collect();
 
-            let overlays: Vec<(u64, Overlay)> = wanted.into_iter().filter_map(|id| Some((id, overlay(d, &frame, id, self.show)?))).collect();
+            let overlays: Vec<(u64, Overlay)> = wanted.into_iter().filter_map(|id| Some((id, overlay(d, &frame, id, self.show, self.season)?))).collect();
             if self.layer == 0 || e.scene.layer(self.layer).is_none() {
                 self.layer = e.scene.add_layer(doc, "terry entities");
                 self.shown.clear();
@@ -214,7 +227,7 @@ impl TerryView {
                 self.shown.insert(id, ent);
             }
 
-            self.built = Some((doc, revision, self.show, self.radius_m, at));
+            self.built = Some((doc, revision, (self.show, self.season), self.radius_m, at));
         }
 
         // The deployment zone being drawn, or the edited polyline's points.
@@ -328,6 +341,15 @@ impl TerryView {
         }
 
         if campaign {
+            let mut k = self.season as i32;
+            if gui::combo("season", &mut k, &["every season", "spring", "summer", "autumn", "winter"]) {
+                self.season = k.clamp(0, 4) as usize;
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Terry's season: the entities whose season mask leaves the season out are hidden");
+            }
+
             let selected: Vec<u64> = e.selection.items().iter().filter(|s| s.doc == doc).map(|s| s.item).collect();
             self.new_entity_settings(p, &selected);
         }
