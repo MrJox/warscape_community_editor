@@ -42,6 +42,9 @@ const BUCKET: f32 = 16.0;
 /// The key bit of a tree among the drawn models (a prop's key is its `.terry` id).
 const TREE_KEY: u64 = 1 << 63;
 
+/// The key bit of a settlement's building among the drawn models.
+const CITY_KEY: u64 = 1 << 62;
+
 impl CampaignTrees {
     /// The indices of the trees within `r` cells of a cell.
     fn near(&self, cx: f32, cy: f32, r: f32) -> impl Iterator<Item = u32> + '_ {
@@ -109,6 +112,11 @@ pub struct PropModels {
 
     /// The shown campaign's trees (its document; none: no list).
     trees: Option<(DocumentId, Option<Arc<CampaignTrees>>)>,
+
+    /// The shown campaign's settlements at its start (`wce_terrain_io::attila::cities`), read on a thread (the startpos and the db
+    /// tables take seconds): none until they are, or when they can't be.
+    cities: Option<(DocumentId, Arc<std::sync::OnceLock<Option<Arc<wce_terrain_io::attila::cities::Cities>>>>)>,
+    pub city_count: usize,
     pub tree_count: usize,
 
     /// Per drawn tree: the file's y and the ground's height in the list's units (the view's over k) (`terrain_props`).
@@ -117,7 +125,7 @@ pub struct PropModels {
 
 impl Default for PropModels {
     fn default() -> Self {
-        Self { on: true, radius_cells: 96.0, layer: 0, drawn: std::collections::HashMap::new(), built: None, count: 0, props: None, trees: None, tree_count: 0, heights: vec![] }
+        Self { on: true, radius_cells: 96.0, layer: 0, drawn: std::collections::HashMap::new(), built: None, count: 0, props: None, trees: None, tree_count: 0, cities: None, city_count: 0, heights: vec![] }
     }
 }
 
@@ -135,10 +143,39 @@ impl PropModels {
         let cam = e.viewport.camera();
         let (tx, tz) = tf.from_frame(f64::from(cam.target.x), f64::from(cam.target.z));
         let quarter = (self.radius_cells / 4.0).max(1.0) * tf.cell;
-        let key = (doc, d.terry_revision.load(std::sync::atomic::Ordering::Relaxed), ((tx / quarter).floor() as i64, (tz / quarter).floor() as i64));
+        // The settlements arriving (read on a thread) build the models again.
+        let cities_ready = self.cities.as_ref().is_some_and(|(id, c)| *id == doc && c.get().is_some());
+        let revision = d.terry_revision.load(std::sync::atomic::Ordering::Relaxed) * 2 + u64::from(cities_ready);
+        let key = (doc, revision, ((tx / quarter).floor() as i64, (tz / quarter).floor() as i64));
         if self.built == Some(key) {
             return;
         }
+
+        // The settlements: read once a map, away from the UI (the startpos is a loose file of the game's `data` folder).
+        if self.cities.as_ref().is_none_or(|(id, _)| *id != doc) {
+            let cell = Arc::new(std::sync::OnceLock::new());
+            let (_, name) = crate::tool::map_kind(&d.name);
+            let (name, campaign) = (name.to_owned(), name.strip_suffix("_map").unwrap_or(name).to_owned());
+            let game = e.game();
+            let (files, dir) = (e.files(), e.settings_ref().game_dir());
+            let out = cell.clone();
+            std::thread::spawn(move || {
+                let cities = (|| {
+                    let files = files?;
+                    let schema = rpfm_lib::schema::Schema::load(&wce_foundation::settings::rpfm_schema_path(game)?, None).ok()?;
+                    let list = |p: &str| files.list(p, "");
+                    let read = |p: &str| files.read(p).ok().map(|b| b.to_vec());
+                    let tables = wce_terrain_io::attila::cities::DisplayTables::read(&schema, &list, &read);
+                    let map_data = files.read(&format!("campaign_maps/{name}/map_data.esf")).ok()?;
+                    let startpos = std::fs::read(dir?.join(format!("data/campaigns/{campaign}/startpos.esf"))).ok()?;
+                    wce_terrain_io::attila::cities::read(&map_data, &startpos, &tables).ok().map(Arc::new)
+                })();
+                let _ = out.set(cities);
+            });
+            self.cities = Some((doc, cell));
+        }
+
+        let cities = self.cities.as_ref().and_then(|(_, c)| c.get().cloned().flatten());
 
         if self.trees.as_ref().is_none_or(|(id, _)| *id != doc) {
             wce_foundation::wce_prof!("props.tree_list");
@@ -223,6 +260,35 @@ impl PropModels {
             }
         }
 
+        // The settlements' buildings near the camera: a model unit a world unit (the `.terry`'s props are drawn so, its unit within 5 % of
+        // the world's), at their cell's centre, standing on the ground.
+        self.city_count = 0;
+        if let Some(c) = &cities {
+            let (w, h) = (f64::from(frame.map.width), f64::from(frame.map.height));
+            let (a, b) = (frame.from_map.apply(0.0, 0.0), frame.from_map.apply(1.0, 0.0));
+            let k = ((b.0 - a.0).hypot(b.1 - a.1) * w / c.world.0) as f32;
+            let (cx, cy) = frame.cell_of(f64::from(cam.target.x), f64::from(cam.target.z));
+            for (i, slot) in c.slots.iter().enumerate() {
+                let Some(model) = &slot.model else { continue };
+                let (x, y) = (slot.world.0 / c.world.0 * w, (1.0 - slot.world.1 / c.world.1) * h);
+                if (x - cx).hypot(y - cy) > self.radius_cells {
+                    continue;
+                }
+
+                let (fx, fz) = frame.from_map.apply(x, y);
+                let mut world = Float4x4::IDENTITY;
+                (world.m[0][0], world.m[1][1], world.m[2][2]) = (k, k, k);
+                (world.m[0][3], world.m[1][3], world.m[2][3]) = (fx as f32, frame.lift(fx, fz), fz as f32);
+                let p16 = DEFAULT_INSTANCE_PARAMS;
+                let mesh = MeshInstance {
+                    model: model.clone(), casts_shadow: true, lod: true, p4: [p16[0], p16[1], p16[2], p16[3]], p5: [p16[4], p16[5], p16[6], p16[7]],
+                    p6: [p16[8], p16[9], p16[10], p16[11]], p7: [p16[12], p16[13], p16[14], p16[15]], burning: false,
+                };
+                out.push((CITY_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
+                self.city_count += 1;
+            }
+        }
+
         if self.layer == 0 || e.scene.layer(self.layer).is_none() {
             self.layer = e.scene.add_layer(doc, "prop models");
             self.drawn.clear();
@@ -247,7 +313,7 @@ impl PropModels {
         });
         e.scene.remove_ranges(&gone);
 
-        self.count = out.len() - self.tree_count;
+        self.count = out.len() - self.tree_count - self.city_count;
         for (k, world, payload, item) in out {
             if self.drawn.contains_key(&k) {
                 continue;

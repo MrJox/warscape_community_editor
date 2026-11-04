@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+rpfm_lib.workspace = true
 rayon = "1"
 thiserror = "2"
 wce_foundation = { path = "../wce_foundation" }

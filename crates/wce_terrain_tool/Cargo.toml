@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+rpfm_lib.workspace = true
 wce_editor = { path = "../wce_editor" }
 wce_editor_core = { path = "../wce_editor_core" }
 wce_formats = { path = "../wce_formats" }
