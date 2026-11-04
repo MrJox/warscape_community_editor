@@ -298,11 +298,22 @@ fn section_dirs(plan: &Plan, (a, b): (f64, f64)) -> ([f64; 2], [f64; 2]) {
         [dx / l, dz / l]
     };
 
-    // At an attached end, the building's axis (the solver's line leaves along it: the joint is straight).
-    let span = (b - a).min(1.0);
+    // At an attached end, the building's axis (the solver's line leaves along it: the joint is straight). At a corner, from a unit in:
+    // the sample on the corner is rounded (Amon Calen's prow: 2 degrees off, the mitre's cut 0.4 m past the bisector at the inner edge).
     let n = plan.samples.len();
-    let start = if a < 1e-9 && plan.end_planes[0].is_some() { plan.samples[0].dir } else { d(a, a + span) };
-    let end = if b > plan.length - 1e-9 && plan.end_planes[1].is_some() { plan.samples[n - 1].dir } else { d(b - span, b) };
+    let ((a0, a1), (b0, b1)) = end_spans(plan, (a, b));
+    let start = if a < 1e-9 && plan.end_planes[0].is_some() { plan.samples[0].dir } else { d(a0, a1) };
+    let end = if b > plan.length - 1e-9 && plan.end_planes[1].is_some() { plan.samples[n - 1].dir } else { d(b0, b1) };
+    (start, end)
+}
+
+/// The stretches a section's directions at its ends are measured over: its first and last unit, a unit in from an end at a corner (or a
+/// quarter of a short section).
+fn end_spans(plan: &Plan, (a, b): (f64, f64)) -> ((f64, f64), (f64, f64)) {
+    let span = ((b - a) / 4.0).min(1.0);
+    let corner = |s: f64| plan.corners.iter().any(|&(c, _)| (c - s).abs() < 1e-6);
+    let start = if corner(a) { (a + span, a + 2.0 * span) } else { (a, a + span) };
+    let end = if corner(b) { (b - 2.0 * span, b - span) } else { (b - span, b) };
     (start, end)
 }
 
@@ -412,16 +423,19 @@ impl<'a> PieceWarp<'a> {
         // The level exactly, from inside this piece (its neighbour's level, a whole step's, never leaks in at its ends).
         let (p0, p1) = self.piece.s;
         let level = |t: f64| wall_level(self.plan, t.clamp(p0 + 1e-4, (p1 - 1e-4).max(p0 + 1e-4)));
-        if s < a {
-            let at = sample_at(self.plan, a);
+        // Near and past an end the line goes straight on along the end's direction, from where that is measured (at a corner a unit in:
+        // the corner's own sample is rounded).
+        let ((a0, _), (_, b1)) = end_spans(self.plan, (a, b));
+        if s < a0 {
+            let at = sample_at(self.plan, a0);
             let d = self.dirs.0;
-            return ([at.centre[0] + d[0] * (s - a), at.centre[1] + d[1] * (s - a)], d, level(a));
+            return ([at.centre[0] + d[0] * (s - a0), at.centre[1] + d[1] * (s - a0)], d, level(s.max(a)));
         }
 
-        if s > b {
-            let at = sample_at(self.plan, b);
+        if s > b1 {
+            let at = sample_at(self.plan, b1);
             let d = self.dirs.1;
-            return ([at.centre[0] + d[0] * (s - b), at.centre[1] + d[1] * (s - b)], d, level(b));
+            return ([at.centre[0] + d[0] * (s - b1), at.centre[1] + d[1] * (s - b1)], d, level(s.min(b)));
         }
 
         let at = sample_at(self.plan, s);
@@ -796,6 +810,49 @@ mod tests {
                 let d = (c[0] - joint[0]).hypot(c[1] - joint[1]);
                 assert!(d < 1e-3, "bastion at {:.0}: the piece next to it is {d:.4} off", r.s.0);
                 assert!(angle(yaw, r.yaw).abs() < 1e-3, "bastion at {:.0}: the piece next to it turns {:.3} degrees", r.s.0, angle(yaw, r.yaw).to_degrees());
+            }
+        }
+    }
+
+    /// At a sharp corner (as Amon Calen's prow, both ways round, several angles, 15 m bases of 20 and 21), what each side keeps of its
+    /// walkway (its pieces and the copies filling the outer side, inside their cut planes) lies on its own side of the bisector: the two
+    /// sides never lie over one another.
+    #[test]
+    fn a_corner_keeps_each_side_on_its_own_side_of_the_bisector() {
+        let ground = |_: f64, _: f64| 0.0;
+        for key in ["gondor_fort_straight", "roman_fort_straight"] {
+            let p = profile(key).unwrap();
+            for (tip, turn) in [([80.0, 40.0], "acute"), ([90.0, 0.0], "wide"), ([80.0, -40.0], "acute right"), ([60.0, 70.0], "sharp")] {
+                let input = WallInput { points: vec![[0.0, 0.0], tip, [160.0, 0.0]], sharp: vec![false, true, false], tolerance: 0.5, ..Default::default() };
+                let plan = solve(&input, p, &ground);
+                assert_eq!(plan.corners.len(), 1, "{key} {turn}");
+                let s = plan.corners[0].0;
+                let c = sample_at(&plan, s).centre;
+                let ps = pieces(&plan, p);
+                let before = ps.iter().position(|q| (q.s.1 - s).abs() < 1e-6).expect("a piece ending at the corner");
+                let (a, b) = (PieceWarp::new(&plan, p, ps[before], &ground), PieceWarp::new(&plan, p, ps[before + 1], &ground));
+                let (da, db) = (a.dirs.1, b.dirs.0);
+                let m = [da[0] + db[0], da[1] + db[1]];
+                let side = |q: [f64; 3]| (q[0] - c[0]) * m[0] + (q[2] - c[1]) * m[1];
+                let (x0, x1) = p.x;
+                for (w, sign) in [(&a, -1.0), (&b, 1.0)] {
+                    let shifts = std::iter::once(0.0).chain(w.overhangs().into_iter().map(f64::from)).collect::<Vec<_>>();
+                    for dx in shifts {
+                        let planes = crate::warp::Shifted { inner: w, dx: dx as f32 }.clip_planes();
+                        for i in 0..=84 {
+                            for z in [1.8, 3.0, 5.0, 7.0, 8.5] {
+                                let x = x0 + (x1 - x0) * f64::from(i) / 84.0;
+                                if !crate::warp::inside(&planes, [x as f32, 15.0, z as f32]) {
+                                    continue;
+                                }
+
+                                let q = w.scene([x + dx, 15.0, z]);
+                                assert!(side(q) * sign > -0.05, "{key} {turn}: {} keeps x {x:.2} (+{dx}) z {z} at {q:?}, past the bisector by {:.2}",
+                                    if sign < 0.0 { "the side before" } else { "the side after" }, -side(q) * sign);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -25,8 +25,12 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   pieces a metre over each other (platforms, footprints, lines). A mitre's copies filling the outer side bring their collision outlines
   and footprints too, not only their platforms and lines.
 - **Check:** `wall_tech_check [gaps stacked loose]` (the selected walls' pieces in the world: stretches no footprint covers, platforms
-  over one another, formation line ends on no platform; `scripts/tile_wall_tech.txt`). Open: at a sharp corner the two sides' platforms
-  overlap in a band about 0.3 m wide along the mitre (Amon Calen's upper prow).
+  over one another, formation line ends on no platform; `scripts/tile_wall_tech.txt`).
+- **A corner's directions are measured a unit in from it** (2026-11-04): the centre line's sample on a sharp corner is rounded, which
+  turned the mitre's cut 2 degrees: Amon Calen's prow had the inner side of each arm 0.4 m into the other's.
+- **A wall attaches on its building's walkway ends** (`logic::joint_extent_x`: the platforms' x extent, else the logic box when they
+  differ by over 0.5 m), and an attached end goes onto the joint exactly (2026-11-04: the gondor tower's box is -10.53..10.76, its
+  walkways end at +-10.5; walls left a slit of light against it).
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).

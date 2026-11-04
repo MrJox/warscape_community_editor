@@ -221,6 +221,25 @@ pub fn extent_x(bytes: &[u8]) -> Result<(f32, f32), String> {
     Ok((f("min_x"), f("max_x")))
 }
 
+/// The x extent a wall attaches to on a fort piece: where its walkway ends (its platforms' x extent, every piece's intact level), else
+/// its box (`extent_x`) when the two differ by more than half a metre. TDD's gondor pieces' box is -10.53..10.76 while their walkways end
+/// at -10.5 and 10.5: a wall on the box's end left a gap of a quarter of a metre (user, 2026-11-04).
+///
+/// # Errors
+///
+/// The file doesn't read.
+pub fn joint_extent_x(bytes: &[u8]) -> Result<(f32, f32), String> {
+    let (lo, hi) = extent_x(bytes)?;
+    let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
+    let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
+    let xs = v["pieces"].as_array().into_iter().flatten().filter_map(|p| p["destructs"].as_array().and_then(|d| d.first()))
+        .flat_map(|d| d["platforms"].as_array().into_iter().flatten().flat_map(|q| outline(&q["vertices"])).map(|q| q[0]).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let (wlo, whi) = xs.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    let near = |w: f32, b: f32| (w - b).abs() <= 0.5;
+    Ok((if near(wlo, lo) { wlo } else { lo }, if near(whi, hi) { whi } else { hi }))
+}
+
 /// One end of a fort piece where another joins it: the middle of the joint (the outer side of the end's cap platform, piece frame), the
 /// direction the wall leaves the piece there (x, z, unit) and the wall-walk's height at the joint.
 #[derive(Clone, Copy, Debug, PartialEq)]

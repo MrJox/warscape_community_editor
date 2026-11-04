@@ -99,15 +99,15 @@ impl Tile {
         self.tscene().doc().elements().iter().any(|e| e.name == WALL_SPLINE)
     }
 
-    /// The x extent of a building's frame: its logic file's box (`<key>_tech.cs2.parsed`, the frame the vanilla walls join on), else its
-    /// model's bounds. Read once per key.
+    /// The x extent a wall attaches to on a building: its joints, else its logic file's box (`wce_walls::logic::joint_extent_x` on
+    /// `<key>_tech.cs2.parsed`), else its model's bounds. Read once per key.
     fn frame_extent(&self, key: &str) -> Option<(f64, f64)> {
         if let Some(v) = self.wall_preview.extents.borrow().get(key) {
             return *v;
         }
 
         let logic = self.files.as_deref().and_then(|f| f.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok());
-        let from_logic = logic.and_then(|b| wce_walls::logic::extent_x(&b).ok()).map(|(a, b)| (f64::from(a), f64::from(b))).filter(|(a, b)| b > a);
+        let from_logic = logic.and_then(|b| wce_walls::logic::joint_extent_x(&b).ok()).map(|(a, b)| (f64::from(a), f64::from(b))).filter(|(a, b)| b > a);
         let from_model = || self.building_model(key).filter(|m| m.ok && m.bmax.x > m.bmin.x).map(|m| (f64::from(m.bmin.x), f64::from(m.bmax.x)));
         let v = from_logic.or_else(from_model);
 
