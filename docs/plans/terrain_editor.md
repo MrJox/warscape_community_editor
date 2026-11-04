@@ -377,8 +377,11 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      empty file keeps its number); the files no location names (879 on `main_rome_map`) kept. `built_scene_check` (gate
      `rome2_built_scene`): all seven maps' blm and 8 304 named deployment files byte for byte through the scene. Checked in the app: a
      new BCA and a zone on `main_gaul` export the blm and `deployment_0504.xml`.
-   Left for Rome 2: the seven `main_*` maps' placements (a version 6 tile map, no tile list); the normals after an LF edit (the packs'
-   stay); a launch.
+   - The seven `main_*` maps' placements: their version 6 tile maps seen as a tile list (`TileMap::placements`) in the Placements
+     section, the tile map made again from the list after an edit (`TileMap::with_placements`: `place_tile`'s cover, an origin cell's
+     64-cell chunk number in bytes 10 and 11, the flip byte kept): all seven byte for byte from their own placements
+     (`tile_map_rebuild_check`, gate `rome2_tile_map_rebuild` with `WCE_ROME2_DB`). Checked in the app: a road removed on `main_gaul`.
+   Left for Rome 2: the normals and `tile_map.png` after an edit (the packs' stay); a launch.
 
 ## Risks
 

@@ -12,6 +12,7 @@
 #   WCE_BIN    folder with the built wce binary for the scripted app gates (default target/release, or $CARGO_TARGET_DIR/release)
 #   WCE_CBS    a dump_cbs.py output for env_vs_dump (skipped when missing)
 #   WCE_ROME2  Rome 2's folder: its gates run too (skipped when not set)
+#   WCE_ROME2_DB  Rome 2's tile database in the kit's format (the Terrain tool's packs tree: <cache>/neighbours/rome_2_*/raw_data/terrain/tiles/battle/_tile_database)
 #   WCE_BOB_KIT  a scratch Assembly Kit BOB_Terrain ran in: the Heights & Normals and Tilemap gates compare with its outputs (skipped when not set)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -139,6 +140,8 @@ if [ -n "${WCE_ROME2:-}" ]; then
     run rome2_map_built_roundtrip ex_rome2 wce_terrain_io map_built_roundtrip_check --game "$WCE_ROME2" --vanilla
     run rome2_built_lf ex_rome2 wce_terrain_io built_lf_check "$WCE_ROME2" --vanilla
     run rome2_built_scene ex_rome2 wce_terrain_io built_scene_check "$WCE_ROME2" --vanilla
+    # The campaign battle maps' tile maps made again from their placements (the database: the Terrain tool's packs tree, WCE_ROME2_DB)
+    [ -n "${WCE_ROME2_DB:-}" ] && run rome2_tile_map_rebuild ex_rome2 wce_tile tile_map_rebuild_check "$WCE_ROME2" "$WCE_ROME2_DB"
     if [ "$CORPUS" = 1 ]; then
         run rome2_tile_binary_roundtrip_all ex wce_tile_io tile_binary_roundtrip_check "$WCE_ROME2/data"
         run rome2_tile_decompile_all ex_rome2 wce_tile_io tile_decompile_check "$WCE_ROME2"

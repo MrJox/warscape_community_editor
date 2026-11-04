@@ -2,7 +2,10 @@
 //! terrain_editor.md, Phase 9): the files a map's folder holds there, into the model and back.
 //!
 //! - `lf_height_map.dds` (L16, a 128-byte header): the land LF, editable ([`MapModel::lf`], `LfRole::Land`);
-//! - `terrain.tile_list`: the placements, editable ([`MapModel::tile_list`]; written back byte for byte unedited, every version);
+//! - `terrain.tile_list`: the placements, editable ([`MapModel::tile_list`]; written back byte for byte unedited, every version); a map
+//!   with a version 6 tile map instead (the seven `main_*`) has its placements as a tile list too (`TileMap::placements`), the tile
+//!   map made again from them after an edit (`TileMap::with_placements`, with the tile database: all seven byte for byte unedited,
+//!   `tile_map_rebuild_check`; `tile_map.png` is not made again);
 //! - `locations.blm` (version 7) with `deployment/`: the battle locations and their deployments as a scene ([`MapModel::project`],
 //!   [`scene`]; the files carried too: written again only after an edit, the files no location names kept as they were);
 //! - every other file carried as it is (the tile list or tile map, `locations.blm`, the deployment files, the sea LF, the normals...).
@@ -29,6 +32,9 @@ const LF: &str = "lf_height_map.dds";
 const CHMF: &str = "lf_height_map.data";
 const LIST: &str = "terrain.tile_list";
 const BLM: &str = "locations.blm";
+
+/// The placements of a version 6 tile map (no file: the tile map is theirs).
+pub const TILE_MAP_VIEW: &str = "tile_map.tiles (placements)";
 
 /// The scene's name (no file: the locations and deployments are its files).
 pub const SCENE: &str = "locations.blm (scene)";
@@ -66,6 +72,13 @@ pub fn read(name: &str, files: &MapFiles) -> Result<MapModel> {
         }
     }
 
+    // A version 6 tile map's placements (the seven `main_*` maps).
+    if m.tile_list.is_none()
+        && let Some(map) = tile_map(&m).filter(|t| t.version < 8)
+    {
+        m.tile_list = Some(Item::new(TILE_MAP_VIEW, map.placements(), Blob::Bytes(Arc::from(&[][..]))));
+    }
+
     // The battle locations as a scene (the seven `main_*` maps).
     if let Some(blm) = locations(&m) {
         let mut deployments = BTreeMap::new();
@@ -81,6 +94,12 @@ pub fn read(name: &str, files: &MapFiles) -> Result<MapModel> {
     }
 
     Ok(m)
+}
+
+/// The map's tile map, read.
+fn tile_map(m: &MapModel) -> Option<wce_tile::battle_map::tile_map::TileMap> {
+    let read = |n: &str| m.carried.iter().find(|(p, _)| p.eq_ignore_ascii_case(n)).and_then(|(_, b)| b.bytes().ok());
+    wce_tile::battle_map::tile_map::TileMap::parse(&read("tile_map.index")?, &read("tile_map.tiles")?).ok()
 }
 
 /// The map's `locations.blm`, version 7 (Rome 2's).
@@ -119,12 +138,13 @@ pub fn chmf(field: &PagedU16, cells: (u32, u32), shipped: Option<&[u8]>) -> Opti
     Some(m.write())
 }
 
-/// The model's files: the carried ones as they were, an edited LF's DDS and CHMF made again.
+/// The model's files: the carried ones as they were, an edited LF's DDS and CHMF made again, edited placements and locations written.
+/// `db`: the tile database a version 6 tile map's edited placements need (none: the tile map is left as it was).
 ///
 /// # Errors
 ///
 /// The LF's original file can't be read.
-pub fn write(m: &MapModel) -> Result<MapFiles> {
+pub fn write(m: &MapModel, db: Option<&wce_tile::battle_map::tile_db::TileDatabase>) -> Result<MapFiles> {
     let mut folder: BTreeMap<String, Blob> = m.carried.clone();
     if let Some(p) = m.project.as_ref().filter(|p| p.edited())
         && let Some(original) = locations(m)
@@ -138,8 +158,20 @@ pub fn write(m: &MapModel) -> Result<MapFiles> {
     }
 
     if let Some(t) = &m.tile_list {
-        let blob = if t.edited() { Blob::Bytes(Arc::from(t.get().write())) } else { t.origin.clone() };
-        folder.insert(t.path.clone(), blob);
+        if t.path == TILE_MAP_VIEW {
+            if t.edited()
+                && let (Some(db), Some(map)) = (db, tile_map(m))
+            {
+                let (index, tiles) = map.with_placements(t.get(), db).write();
+                for (name, bytes) in [("tile_map.index", index), ("tile_map.tiles", tiles)] {
+                    let key = folder.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned().unwrap_or_else(|| name.to_owned());
+                    folder.insert(key, Blob::Bytes(Arc::from(bytes)));
+                }
+            }
+        } else {
+            let blob = if t.edited() { Blob::Bytes(Arc::from(t.get().write())) } else { t.origin.clone() };
+            folder.insert(t.path.clone(), blob);
+        }
     }
     for (_, item) in &m.lf {
         if !item.edited() {
@@ -198,10 +230,10 @@ mod tests {
 
         let mut m = read("x", &files).unwrap();
         assert!(m.built && m.lf.len() == 1 && m.carried.len() == 1);
-        assert!(changed(&files, &write(&m).unwrap()).is_empty());
+        assert!(changed(&files, &write(&m, None).unwrap()).is_empty());
 
         m.lf[0].1.edit().set(3, 3, 9000);
-        let out = write(&m).unwrap();
+        let out = write(&m, None).unwrap();
         let diff = changed(&files, &out);
         assert_eq!(diff.len(), 1, "the DDS only (no size for a CHMF: the tile list does not read)");
         let back = l16(&out.folder[LF].bytes().unwrap()).unwrap();
