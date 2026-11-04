@@ -1613,8 +1613,17 @@ impl Tool for TerrainTool {
         }
 
         let frame = self.view.frame().filter(|_| self.shown != 0);
-        self.terry.update(e, self.shown, frame.clone());
-        self.layout.update(e, self.shown, frame.clone());
+        {
+            wce_foundation::wce_prof!("terrain_tool.terry");
+            self.terry.update(e, self.shown, frame.clone());
+        }
+
+        {
+            wce_foundation::wce_prof!("terrain_tool.layout");
+            self.layout.update(e, self.shown, frame.clone());
+        }
+
+        wce_foundation::wce_prof!("terrain_tool.props");
         self.props.update(e, self.shown, frame);
     }
 
@@ -2021,8 +2030,16 @@ impl Tool for TerrainTool {
                     }
                 }
 
+                // The trees' own heights against the ground they are stood on (the list's units): their median and spread.
+                let mut d: Vec<f32> = t.props.heights.iter().map(|(y, g)| g - y).collect();
+                d.sort_by(f32::total_cmp);
+                let q = |f: f32| d.get(((d.len() as f32 * f) as usize).min(d.len().saturating_sub(1))).copied().unwrap_or(0.0);
+                let mut r: Vec<f32> = t.props.heights.iter().filter(|(y, _)| y.abs() > 0.05).map(|(y, g)| g / y).collect();
+                r.sort_by(f32::total_cmp);
+                let rq = |f: f32| r.get(((r.len() as f32 * f) as usize).min(r.len().saturating_sub(1))).copied().unwrap_or(0.0);
                 CommandResult::success(format!(
-                    "prop models {}: {} props and {} trees within {} cells (as of the last frame)", if t.props.on { "on" } else { "off" }, t.props.count, t.props.tree_count, t.props.radius_cells
+                    "prop models {}: {} props and {} trees within {} cells (as of the last frame); ground - tree y (list units) 10/50/90 %: {:.3} {:.3} {:.3}; ground / tree y: {:.3} {:.3} {:.3}",
+                    if t.props.on { "on" } else { "off" }, t.props.count, t.props.tree_count, t.props.radius_cells, q(0.1), q(0.5), q(0.9), rq(0.1), rq(0.5), rq(0.9)
                 ))
             })
         });

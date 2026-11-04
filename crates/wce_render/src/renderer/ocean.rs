@@ -530,7 +530,10 @@ impl Renderer {
             self.water.ocean.sea_bed = None;
         }
 
-        self.ocean_sea_bed(scene);
+        // The campaign water reads no sea bed (68 to 118 ms to build it again as the camera moved over the campaign map).
+        if campaign.is_none() {
+            self.ocean_sea_bed(scene);
+        }
         self.ocean_neutral();
         self.ocean_sea_state();
 

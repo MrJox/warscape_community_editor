@@ -1154,7 +1154,7 @@ impl Renderer {
 
         if self.game == super::game::RenderGame::Rome2 {
             let ents = self.terrain_surface_entities(scene);
-            let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision(), scene.terrain_revision());
+            let key = (std::ptr::from_ref(scene) as usize, terrain_set_key(&ents), scene.terrain_revision());
             if key != self.terrain.materials_key {
                 self.terrain.materials_key = key;
                 self.update_terrain_materials(&ents);
@@ -1189,7 +1189,7 @@ impl Renderer {
         let ents = self.terrain_surface_entities(scene);
 
         // The materials (and texture arrays) the scene's terrains use stay; the others go. Only when the terrains changed.
-        let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision(), scene.terrain_revision());
+        let key = (std::ptr::from_ref(scene) as usize, terrain_set_key(&ents), scene.terrain_revision());
         if key != self.terrain.materials_key {
             self.terrain.materials_key = key;
             self.update_terrain_materials(&ents);
@@ -1208,12 +1208,17 @@ impl Renderer {
         let ents = ents.to_vec();
         self.terrain.material_epoch += 1;
         let epoch = self.terrain.material_epoch;
-        for e in &ents {
-            if let Payload::Terrain(Terrain { material: Some(material), .. }) = &e.payload {
-                self.build_terrain_material(material);
-                if let Some(g) = self.terrain.mat.get_mut(&material.id) {
-                    g.used = epoch;
-                }
+        // Each material once (a campaign view has thousands of terrains over a few hundred materials; per terrain, joining its texture
+        // paths below cost 11 ms a frame while the camera moved).
+        let mut seen = std::collections::HashSet::new();
+        let materials: Vec<&Arc<TerrainMaterial>> = ents.iter().filter_map(|e| match &e.payload {
+            Payload::Terrain(Terrain { material: Some(m), .. }) => seen.insert(m.id).then_some(m),
+            _ => None,
+        }).collect();
+        for material in &materials {
+            self.build_terrain_material(material);
+            if let Some(g) = self.terrain.mat.get_mut(&material.id) {
+                g.used = epoch;
             }
         }
 
@@ -1226,10 +1231,7 @@ impl Renderer {
 
         self.terrain.custom.retain(|_, g| g.used + MATERIAL_KEEP > epoch);
 
-        let arrays: std::collections::BTreeSet<(String, bool)> = ents.iter().filter_map(|e| match &e.payload {
-            Payload::Terrain(Terrain { material: Some(m), .. }) => Some([(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)]),
-            _ => None,
-        }).flatten().collect();
+        let arrays: std::collections::HashSet<(String, bool)> = materials.iter().flat_map(|m| [(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)]).collect();
         self.terrain.arrays.retain(|k, _| arrays.contains(k));
     }
 
@@ -1249,7 +1251,9 @@ impl Renderer {
         let custom_vs = self.shader(super::terrain_custom::CUSTOM_GEOM_VS);
         let how = custom_vs.as_deref().map_or(CustomDraw::None, CustomDraw::Depth);
         self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL, how);
+        self.gpu_timer.mark("terrain surface 2");
         self.draw_terrain_surface(&ents, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0, how);
+        self.gpu_timer.mark("terrain blend meshes");
         self.ctx.set_input_layout(Some(&geom_il));
 
         // The terrain-blend meshes' view-space depth (`geometry_30`): the resolve places them with it.
@@ -1274,6 +1278,8 @@ impl Renderer {
         }
 
         // ---- 2. The blend boxes.
+        wce_prof!("terrain.from_blend");
+        self.gpu_timer.mark("terrain blend boxes");
         let el = [
             element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
             element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 0, true),
@@ -1489,6 +1495,8 @@ impl Renderer {
         self.draw_custom_material(&ents);
 
         // ---- 3. The resolve: the terrain pixels into the G-buffer.
+        wce_prof!("terrain.from_resolve");
+        self.gpu_timer.mark("terrain resolve");
         let Payload::Terrain(first) = &ents[0].payload else { return };
         let Some(m) = first.material.clone() else { return };
         let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
@@ -1835,4 +1843,10 @@ impl Renderer {
         self.upload();
         triangles
     }
+}
+
+/// Which terrain entities a frame draws (their ids hashed): the materials are brought up to date when these change, not on every structural
+/// change of the scene (a campaign's prop models and trees coming and going as the camera moved cost 11 ms a frame).
+fn terrain_set_key(ents: &[&wce_scene::render_scene::Entity]) -> u64 {
+    ents.iter().fold(0xCBF2_9CE4_8422_2325u64 ^ ents.len() as u64, |h, e| (h ^ u64::from(e.id)).wrapping_mul(0x0100_0000_01B3))
 }

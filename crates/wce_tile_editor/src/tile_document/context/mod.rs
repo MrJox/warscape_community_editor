@@ -518,13 +518,13 @@ impl Frame {
         self.runs_by_climate([key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK], |o, _, _| o == 0)
     }
 
-    /// The cells a chunk draws: its own nobody covers and those of its placements (which reach out of it by up to the largest tile), but
-    /// those in `except`.
-    fn owned(&self, key: ChunkKey, except: &[[i32; 4]]) -> Vec<([i32; 4], u8)> {
+    /// The cells a chunk draws, but those in `except`: those of its placements (which reach out of it by up to the largest tile) when
+    /// `placed`, else its own nobody covers.
+    fn owned(&self, key: ChunkKey, except: &[[i32; 4]], placed: bool) -> Vec<([i32; 4], u8)> {
         let (me, c) = (self.owner_of(key), [key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK]);
         let inside = |x: i32, y: i32| x >= c[0] && x < c[2] && y >= c[1] && y < c[3];
         let cut = |x: i32, y: i32| except.iter().any(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]);
-        self.runs_by_climate([c[0], c[1], c[2] + self.reach, c[3] + self.reach], |o, x, y| (o == me || (o == 0 && inside(x, y))) && !cut(x, y))
+        self.runs_by_climate([c[0], c[1], c[2] + self.reach, c[3] + self.reach], |o, x, y| (if placed { o == me } else { o == 0 && inside(x, y) }) && !cut(x, y))
     }
 
     /// The LF ground over a rectangle of map cells: a grid of zero heights on the LF's lattice (the shader adds the LF), the plain material
@@ -658,6 +658,11 @@ impl Frame {
             return false;
         }
 
+        // A campaign map's sea tiles are its open sea, wherever the land LF is (south of Rome it stands out of the water under some).
+        if self.climates.kind == "campaign" {
+            return true;
+        }
+
         let r = p.rect();
         let mut v: Vec<f64> = (r[1] * 4..r[3] * 4).flat_map(|y| (r[0] * 4..r[2] * 4).map(move |x| (x, y)))
             .map(|(x, y)| self.map.lf_metres((f64::from(x) + 0.5) / 4.0, (f64::from(y) + 0.5) / 4.0))
@@ -732,7 +737,8 @@ impl Frame {
                 }
             }
 
-            out.extend(self.owned(key, &cut).into_iter().map(|(r, c)| self.ground(r, true, c)));
+            out.extend(self.owned(key, &cut, true).into_iter().map(|(r, c)| self.ground(r, true, c)));
+            out.extend(self.owned(key, &cut, false).into_iter().map(|(r, c)| self.uncovered_ground(r, true, c)));
             return out;
         }
 
@@ -749,10 +755,21 @@ impl Frame {
         }
 
         for (r, c) in self.uncovered(key) {
-            out.push(self.ground(r, false, c));
+            out.push(self.uncovered_ground(r, false, c));
         }
 
         out
+    }
+
+    /// The ground of cells no tile covers. On a campaign map those are its open sea (the tile map's deep sea, no tile of its own): on the
+    /// sea's LF as a sea tile is (`on_sea`). The land LF there holds what its painters left under the water: south of Rome a dome of
+    /// sand stood out of the sea where the game has open water.
+    fn uncovered_ground(&self, r: [i32; 4], far: bool, c: u8) -> (Float4x4, Payload) {
+        let (world, ground) = self.ground(r, far, c);
+        match ground {
+            Payload::Terrain(t) if self.climates.kind == "campaign" => self.on_sea(world, t),
+            g => (world, g),
+        }
     }
 
     /// A line for the report: the LF under the open tile.
