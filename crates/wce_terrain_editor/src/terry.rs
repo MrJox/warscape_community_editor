@@ -75,6 +75,51 @@ impl Command<Option<MapModel>> for TerryAttrCommand {
     }
 }
 
+/// One attribute set on several entities (the Inspector on a multi-selection): one step on the history; the steps of one gesture merge.
+pub struct TerryAttrsCommand {
+    pub edits: Vec<TerryAttrCommand>,
+    pub key: u64,
+}
+
+impl Command<Option<MapModel>> for TerryAttrsCommand {
+    fn name(&self) -> String {
+        format!("{} on {} entities", self.edits.first().map_or_else(String::new, |e| e.name()), self.edits.len())
+    }
+
+    fn apply(&mut self, model: &mut Option<MapModel>) {
+        for e in &mut self.edits {
+            e.apply(model);
+        }
+    }
+
+    fn revert(&mut self, model: &mut Option<MapModel>) {
+        for e in self.edits.iter_mut().rev() {
+            e.revert(model);
+        }
+    }
+
+    fn merge_key(&self) -> u64 {
+        self.key
+    }
+
+    fn merge_from(&mut self, next: &dyn Command<Option<MapModel>>) -> bool {
+        let Some(n) = next.as_any().downcast_ref::<Self>() else { return false };
+        if n.edits.len() != self.edits.len() || n.edits.iter().zip(&self.edits).any(|(a, b)| a.id != b.id || a.component != b.component || a.attr != b.attr) {
+            return false;
+        }
+
+        for (a, b) in self.edits.iter_mut().zip(&n.edits) {
+            a.after.clone_from(&b.after);
+        }
+
+        true
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// Entities added or removed: the splices that did it (made with `TerryProject::insert_entities` / `remove_entities`, already in the
 /// document when pushed: applying them again is skipped the first time).
 pub struct TerrySpliceCommand {

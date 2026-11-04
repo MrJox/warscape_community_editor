@@ -300,6 +300,98 @@ impl Document for MapDocument {
     }
 
     /// An entity's name and its components' attributes: numbers, vectors, switches, the enumerated ones as choices.
+    /// Several entities: the components they all have, each attribute they all have (the first's value, with how many differ); an edit
+    /// sets it on all of them, one step on the history. Three-number attributes (positions, rotations) are shown, not edited.
+    fn inspect_many(&mut self, items: &[wce_scene::render_scene::SourceRef], ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
+        use crate::terry::{TerryAttrCommand, TerryAttrsCommand};
+        let Some(p) = self.project() else { return false };
+        let ents: Vec<wce_terrain::terry::TerryEntity> = items.iter().filter_map(|s| p.entity(s.item).cloned()).collect();
+        if ents.len() < 2 {
+            return false;
+        }
+
+        let revision = self.terry_revision.clone();
+        ins.section(&format!("{} entities", ents.len()));
+        let mut kinds: Vec<String> = ents.iter().map(|e| p.kind(e).name()).collect();
+        kinds.sort();
+        kinds.dedup();
+        ins.text("kinds", "kinds", &kinds.join(", "));
+        let mut edit: Option<(String, String, String)> = None;
+        for (cname, c) in &ents[0].components {
+            let all: Vec<usize> = ents.iter().filter_map(|e| p.component(e, cname)).collect();
+            if all.len() != ents.len() {
+                continue;
+            }
+
+            ins.section(cname);
+            let attrs: Vec<String> = p.doc.elements()[*c].attrs.iter().map(|a| a.name.clone()).collect();
+            for a in attrs {
+                let values: Vec<Option<String>> = all.iter().map(|&k| p.doc.get(k, &a)).collect();
+                if values.iter().any(Option::is_none) {
+                    continue;
+                }
+
+                let values: Vec<String> = values.into_iter().flatten().collect();
+                let v = values[0].clone();
+                let differ = values.iter().filter(|x| **x != v).count();
+                let label = if differ == 0 { a.clone() } else { format!("{a} ({differ} differ)") };
+                let field = format!("many.{cname}.{a}");
+                let nums: Vec<f64> = v.split_whitespace().filter_map(|t| t.parse().ok()).collect();
+                let all_numbers = !v.is_empty() && nums.len() == v.split_whitespace().count();
+                let mut set = |after: String| edit = Some((cname.clone(), a.clone(), after));
+                if v == "true" || v == "false" {
+                    let mut b = v == "true";
+                    if ins.edit_bool(&field, &label, &mut b) {
+                        set(b.to_string());
+                    }
+                } else if !choices_of(&a).is_empty() {
+                    let mut list: Vec<String> = choices_of(&a).iter().map(|s| (*s).to_owned()).collect();
+                    if !list.contains(&v) {
+                        list.push(v.clone());
+                    }
+
+                    let mut k = list.iter().position(|x| *x == v).unwrap_or(0) as i32;
+                    if ins.edit_choice(&field, &label, &mut k, &list) {
+                        set(list[k.max(0) as usize].clone());
+                    }
+                } else if all_numbers && nums.len() == 1 {
+                    let mut f = nums[0] as f32;
+                    if ins.edit_float(&field, &label, &mut f, 1.0, -1.0e9, 1.0e9) {
+                        set(wce_terrain::terry::number_text(f64::from(f)));
+                    }
+                } else if all_numbers {
+                    ins.text(&field, &label, &v);
+                } else {
+                    let mut t = v.clone();
+                    if ins.edit_string(&field, &label, &mut t) {
+                        set(t);
+                    }
+                }
+            }
+        }
+
+        let ended = ins.gesture_ended();
+        if let Some((component, attr, after)) = edit {
+            let mut key: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in component.bytes().chain(attr.bytes()).chain(ents.iter().flat_map(|e| e.id.to_le_bytes())) {
+                key = (key ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+            }
+
+            let edits = ents.iter().filter_map(|e| {
+                let c = p.component(e, &component)?;
+                let before = p.doc.get(c, &attr)?;
+                Some(TerryAttrCommand { id: e.id, component: component.clone(), attr: attr.clone(), before, after: after.clone(), key: 0, revision: revision.clone() })
+            }).collect();
+            self.push_terry(Box::new(TerryAttrsCommand { edits, key: key | 1 }));
+        }
+
+        if ended {
+            self.history.break_merge();
+        }
+
+        true
+    }
+
     fn inspect(&mut self, item: wce_scene::render_scene::SourceRef, ins: &mut dyn wce_editor_core::inspector::Inspector) {
         use crate::terry::TerryAttrCommand;
         let Some(p) = self.project() else { return };
