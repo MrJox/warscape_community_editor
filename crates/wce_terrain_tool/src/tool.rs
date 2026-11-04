@@ -52,7 +52,7 @@ impl Loaded {
     fn document(self) -> Box<MapDocument> {
         let mut d = MapDocument::new(self.name, self.source, self.model, self.placed, self.locations, self.db);
         d.fill_messages = self.messages;
-        d.unit = UNIT;
+        d.terry_frame = if map_kind(&d.name).0 == MapKind::Campaign { wce_terrain_editor::document::TerryFrame::campaign(d.placed.width, d.placed.height) } else { wce_terrain_editor::document::TerryFrame::BATTLE };
         Box::new(d)
     }
 }
@@ -159,6 +159,13 @@ pub(crate) fn kit_map_dir(raw: &std::path::Path, name: &str) -> PathBuf {
 /// The tile database folder of a kind of map.
 fn database_dir(kind: MapKind) -> &'static str {
     if kind == MapKind::Campaign { "terrain/tiles/campaign/_tile_database" } else { "terrain/tiles/battle/_tile_database" }
+}
+
+/// A tile database's `RENDER_PARAMS` `lf_height` and `vertical_offset` (its `_settings.xml`).
+fn render_lf(settings: &std::path::Path) -> Option<(f64, f64)> {
+    let doc = wce_formats::xml_doc::XmlDoc::parse(std::fs::read(settings).ok()?).ok()?;
+    let e = doc.elements().iter().position(|el| el.name == "RENDER_PARAMS")?;
+    Some((doc.get(e, "lf_height")?.trim().parse().ok()?, doc.get(e, "vertical_offset")?.trim().parse().ok()?))
 }
 
 /// A kit's campaign maps (folders with a `tile_map.png`), as the map list names them.
@@ -329,6 +336,15 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
 
     // The sea tiles stand on the map's sea LF (the Tile tool's map context keeps them on a flat -20 m).
     Arc::make_mut(&mut placed).sea_lf = sea;
+
+    // The LF's metres: the tile database's RENDER_PARAMS (the campaign's 712 and 38.28; a battle map keeps 3000 and 20).
+    let kind = map_kind(&i.name).0;
+    if kind == MapKind::Campaign
+        && let Some((h, o)) = render_lf(&i.raw.join(database_dir(kind)).join("_settings.xml"))
+    {
+        let m = Arc::make_mut(&mut placed);
+        (m.lf_height, m.vertical_offset) = (h, o);
+    }
 
     Ok(Loaded { name: i.name.clone(), source, model, placed, locations, db, messages })
 }
@@ -659,7 +675,7 @@ impl TerrainTool {
         let (p, raw) = self.cursor?;
         let f = self.view.frame()?;
         let (cx, cy) = f.cell_of(f64::from(p.x), f64::from(p.z));
-        let metres = f64::from(raw) / 65535.0 * wce_tile::battle_map::context::LF_HEIGHT - wce_tile::battle_map::context::VERTICAL_OFFSET;
+        let metres = f64::from(raw) / 65535.0 * f.map.lf_height - f.map.vertical_offset;
         Some(format!("LF under the cursor: cell {cx:.2}, {cy:.2}, {metres:.2} m (raw {raw:.1})"))
     }
 }
@@ -699,10 +715,11 @@ impl TerrainTool {
         LfBrush { brush, aspect: f64::from(self.paint.aspect).max(0.05), rotation: f64::from(self.paint.rotation_deg).to_radians() }
     }
 
-    /// The operation of a dab (raw units of the brush's field: the sea LF spans 400 m, the land's 3000 m).
+    /// The operation of a dab (raw units of the brush's field: the sea LF spans 400 m, the land's its map's: 3000 m, 712 on the campaign).
     fn op(&self, target: f64) -> LfOp {
         use wce_tile::battle_map::context::{LF_HEIGHT, SEA_LF_HEIGHT};
-        let raw = f64::from(self.paint.amount_m) / if self.paint.sea { SEA_LF_HEIGHT } else { LF_HEIGHT } * 65535.0;
+        let land = self.view.frame().map_or(LF_HEIGHT, |f| f.map.lf_height);
+        let raw = f64::from(self.paint.amount_m) / if self.paint.sea { SEA_LF_HEIGHT } else { land } * 65535.0;
         match self.paint.op {
             1 => LfOp::Raise(-raw),
             2 => LfOp::Smooth,
@@ -1248,9 +1265,8 @@ impl Tool for TerrainTool {
             && let Some(i) = self.map_panel.input.filter(|i| i.pressed)
             && let Some(d) = e.docs.find_as::<MapDocument>(self.shown)
         {
-            let (w, h) = (f64::from(d.placed.width / 2), f64::from(d.placed.height / 2));
-            let cell = wce_terrain_editor::document::TERRY_CELL;
-            let at = [(i.cell.0 as f64 + 0.5 - w) * cell, (h - (i.cell.1 as f64 + 0.5)) * cell];
+            let (x, z) = d.terry_frame.of_cell(i.cell.0 as f64 + 0.5, i.cell.1 as f64 + 0.5, d.placed.width, d.placed.height);
+            let at = [x, z];
             if let Some(m) = self.terry.click(e, self.shown, at) {
                 e.status(&m, false);
             }
@@ -1317,8 +1333,11 @@ impl Tool for TerrainTool {
         // A `.terry` creation click on the ground.
         if self.terry.claims_left_button() && ev.button == 0 {
             if ev.kind == wce_editor::tool::ViewportEventKind::Press {
-                if let Some((p, _)) = self.cursor {
-                    let at = [f64::from(p.x) * UNIT, f64::from(p.z) * UNIT];
+                if let Some((p, _)) = self.cursor
+                    && let Some(d) = e.docs.find_as::<MapDocument>(self.shown)
+                {
+                    let (x, z) = d.terry_frame.from_frame(f64::from(p.x), f64::from(p.z));
+                    let at = [x, z];
                     if let Some(m) = self.terry.click(e, self.shown, at) {
                         e.status(&m, false);
                     }
@@ -1811,7 +1830,8 @@ impl Tool for TerrainTool {
                     (Some("move"), 4) => match (hex(&a[1]), a[2].parse::<f64>(), a[3].parse::<f64>(), e.docs.find_as_mut::<MapDocument>(doc)) {
                         (Some(id), Ok(dx), Ok(dz), Some(d)) => {
                             let mut m = wce_foundation::math::Float4x4::IDENTITY;
-                            (m.m[0][3], m.m[2][3]) = ((dx / UNIT) as f32, (dz / UNIT) as f32);
+                            let u = d.terry_frame.unit;
+                            (m.m[0][3], m.m[2][3]) = ((dx / u) as f32, (dz / u) as f32);
                             let src = wce_scene::render_scene::SourceRef { doc, item: id };
                             wce_editor_core::document::Document::transform_items(d, &[src], &m, 0x7e57_0001 ^ id);
                             let p = d.project().and_then(|p| p.entity(id).and_then(|x| p.local_position(x)));

@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use wce_foundation::math::{Float3, Float4x4};
 use wce_scene::render_scene::{LfMap, LfSamples, Payload, RenderScene, Terrain, TerrainImage, TerrainMaterial, Water, WaterVertex};
-use wce_tile::battle_map::context::{Affine2, CELL, LF_HEIGHT, LfField, MapPlacement, PlacedMap, SEA_LF_HEIGHT, Spot, VERTICAL_OFFSET};
+use wce_tile::battle_map::context::{Affine2, CELL, LfField, MapPlacement, PlacedMap, SEA_LF_HEIGHT, Spot};
 
 use super::{MATERIAL_IDS, NORMAL_IDS, next_id};
 use crate::terrain_bake::TerrainLook;
@@ -167,6 +167,7 @@ fn position(m: &Float4x4) -> (f64, f64) {
 /// A field of the map (its LF, its sea LF) in the open frame, on the field's own lattice (the frame's axes are the map's turned by whole
 /// quarter turns, so its samples are the map's pixels): `LF * height - VERTICAL_OFFSET` m, relative to the median LF under the open tile.
 fn lf_map(map: &PlacedMap, f: Option<&LfField>, height: f64, from_map: &Affine2, to_map: &Affine2, lf_level: f64, unit: f64) -> Option<LfMap> {
+    let vertical_offset = map.vertical_offset;
     let f = f.filter(|f| f.w > 1 && f.h > 1)?;
     let (ppx, ppy) = (f64::from(f.w) / f64::from(map.width), f64::from(f.h) / f64::from(map.height));
     let s = CELL / ppx;
@@ -188,7 +189,7 @@ fn lf_map(map: &PlacedMap, f: Option<&LfField>, height: f64, from_map: &Affine2,
     });
 
     let mut lf = LfMap {
-        x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values: LfSamples::new(values), scale: (height / unit) as f32, offset: ((VERTICAL_OFFSET + lf_level) / unit) as f32,
+        x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values: LfSamples::new(values), scale: (height / unit) as f32, offset: ((vertical_offset + lf_level) / unit) as f32,
         id: next_id(&NORMAL_IDS), ..Default::default()
     };
 
@@ -356,7 +357,7 @@ impl Frame {
         let to_map = me.to_map();
         let from_map = to_map.inverse();
         let (lf_level, lf_range) = if rq.cells == (0, 0) { (0.0, 0.0) } else { map.lf_stats(open) };
-        let lf = lf_map(&map, map.lf.as_ref(), LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
+        let lf = lf_map(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
         let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
 
         let index = MapIndex::new(&map, open);
@@ -566,7 +567,7 @@ impl Frame {
     /// ground was land, rose 18 cm against the quays and fought with them as the camera moved. A deviation from the game's arithmetic: ground
     /// less than 6.9 cm above the sea counts as sea bed.
     pub fn bias_y(&self) -> f32 {
-        ((LF_HEIGHT / 65535.0 * 1.5 - self.lf_level) / self.unit) as f32
+        ((self.map.lf_height / 65535.0 * 1.5 - self.lf_level) / self.unit) as f32
     }
 
     /// The sea: one plane at 0 m over the cells within `reach` of a frame point (ASSUMPTION: the battle sea is at 0 m; the LF's lowest value is
@@ -641,7 +642,7 @@ impl Frame {
         match &self.sea_lf {
             Some(sea) => (frame, Payload::Terrain(Terrain { lf: Some(sea.clone()), ..t })),
             None => {
-                frame.m[1][3] = self.sea_y() - (VERTICAL_OFFSET / self.unit) as f32;
+                frame.m[1][3] = self.sea_y() - (self.map.vertical_offset / self.unit) as f32;
                 (frame, Payload::Terrain(Terrain { lf: None, ..t }))
             }
         }
