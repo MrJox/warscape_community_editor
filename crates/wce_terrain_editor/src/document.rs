@@ -52,8 +52,58 @@ pub struct MapDocument {
     /// The `.terry` scene: its revision (moves with every edit), the view's metres a scene unit, and the gizmo's gesture (its id, the
     /// items' positions when it started, the move so far: metres).
     pub terry_revision: crate::terry::TerryRevision,
-    pub unit: f64,
+    /// How the `.terry`'s coordinates sit on the view's frame.
+    pub terry_frame: TerryFrame,
     gesture: Option<Gesture>,
+}
+
+/// How a map's `.terry` coordinates sit on the view's frame (scene units, 128 a cell, the map's centre at 0): `frame = (terry - origin)
+/// / unit` in x and z; `cell`: a map cell in `.terry` units. A battle map's `.terry` is in metres from the map's centre, 256 a cell
+/// (docs/re/terry.md); a campaign map's from its bottom-left corner, z north, 0.32 a cell (the campaign database's `unit_scale` 0.2 x
+/// 1.6: its props' x reach 649.9 on a map 2032 cells wide, 650.24; the game's `prop_marker.markers` has the same numbers).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TerryFrame {
+    pub unit: f64,
+    pub origin: [f64; 2],
+    pub cell: f64,
+
+    /// The `.terry`'s y is not the view's height (the campaign's): entities stand on the LF.
+    pub y_from_lf: bool,
+}
+
+impl TerryFrame {
+    pub const BATTLE: Self = Self { unit: 2.0, origin: [0.0, 0.0], cell: TERRY_CELL, y_from_lf: false };
+
+    /// A campaign map `w` x `h` cells.
+    pub fn campaign(w: u32, h: u32) -> Self {
+        let cell = 0.32;
+        Self { unit: cell / 128.0, origin: [f64::from(w) / 2.0 * cell, f64::from(h) / 2.0 * cell], cell, y_from_lf: true }
+    }
+
+    /// A `.terry` point (x, z) in the frame.
+    pub fn to_frame(&self, x: f64, z: f64) -> (f64, f64) {
+        ((x - self.origin[0]) / self.unit, (z - self.origin[1]) / self.unit)
+    }
+
+    /// A frame point (x, z) in the `.terry`'s coordinates.
+    pub fn from_frame(&self, x: f64, z: f64) -> (f64, f64) {
+        (x * self.unit + self.origin[0], z * self.unit + self.origin[1])
+    }
+
+    /// A `.terry` point's map cell (x right, y down) on a map `w` x `h` cells (its centre at `w / 2`, `h / 2`, whole cells).
+    pub fn cell_of(&self, x: f64, z: f64, w: u32, h: u32) -> (f64, f64) {
+        ((x - self.origin[0]) / self.cell + f64::from(w / 2), f64::from(h / 2) - (z - self.origin[1]) / self.cell)
+    }
+
+    /// A map cell's point in the `.terry`'s coordinates.
+    pub fn of_cell(&self, cx: f64, cy: f64, w: u32, h: u32) -> (f64, f64) {
+        ((cx - f64::from(w / 2)) * self.cell + self.origin[0], (f64::from(h / 2) - cy) * self.cell + self.origin[1])
+    }
+
+    /// A coordinate snapped to the cell grid (`k`: 0 x, 1 z).
+    pub fn snap(&self, v: f64, k: usize) -> f64 {
+        ((v - self.origin[k]) / self.cell).round() * self.cell + self.origin[k]
+    }
 }
 
 /// A gizmo gesture on `.terry` entities: its id, the items' positions when it started, the move so far (metres).
@@ -76,7 +126,7 @@ fn choices_of(attr: &str) -> &'static [&'static str] {
 impl MapDocument {
     pub fn new(name: String, source: MapSource, model: Option<MapModel>, placed: Arc<PlacedMap>, locations: Option<BattleLocations>, db: Arc<TileDatabase>) -> Self {
         Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db, save_dir: None, message: None, cells: Arc::default(), fill_messages: vec![],
-            terry_revision: Arc::default(), unit: 1.0, gesture: None,
+            terry_revision: Arc::default(), terry_frame: TerryFrame::BATTLE, gesture: None,
         }
     }
 
@@ -116,14 +166,16 @@ impl MapDocument {
         let p = self.project()?;
         p.entity(id)?;
         let w = p.world_position(id);
-        let u = self.unit.max(1e-9);
-        Some(wce_foundation::math::Float3::new((w[0] / u) as f32, (w[1] / u) as f32, (w[2] / u) as f32))
+        let t = self.terry_frame;
+        let (x, z) = t.to_frame(w[0], w[2]);
+        let y = if t.y_from_lf { self.lf_metres_at(w[0], w[2]) / 2.0 } else { w[1] / t.unit.max(1e-9) };
+        Some(wce_foundation::math::Float3::new(x as f32, y as f32, z as f32))
     }
 
     /// The LF height (metres) under a `.terry` point (metres from the map's centre).
     pub fn lf_metres_at(&self, x: f64, z: f64) -> f64 {
-        let (w, h) = (f64::from(self.placed.width / 2), f64::from(self.placed.height / 2));
-        self.placed.lf_metres(x / TERRY_CELL + w, h - z / TERRY_CELL)
+        let (cx, cy) = self.terry_frame.cell_of(x, z, self.placed.width, self.placed.height);
+        self.placed.lf_metres(cx, cy)
     }
 
     /// A cell layer of the model to paint on (its index in `MapModel::layers`; the file is marked edited); the finished stroke goes on the
@@ -485,7 +537,7 @@ impl Document for MapDocument {
     /// the LF; one undo step a gesture.
     fn transform_items(&mut self, items: &[wce_scene::render_scene::SourceRef], delta: &wce_foundation::math::Float4x4, gesture: u64) {
         use crate::terry::TerryAttrCommand;
-        let u = self.unit;
+        let u = self.terry_frame.unit;
         let d = [f64::from(delta.m[0][3]) * u, f64::from(delta.m[1][3]) * u, f64::from(delta.m[2][3]) * u];
         if self.gesture.as_ref().is_none_or(|g| g.0 != gesture) {
             let starts = self.project().map(|p| items.iter().filter_map(|i| Some((i.item, p.local_position(p.entity(i.item)?)?))).collect()).unwrap_or_default();
@@ -503,7 +555,7 @@ impl Document for MapDocument {
             let mut l = [start[0] + acc[0], start[1] + acc[1], start[2] + acc[2]];
             if p.component(e, "ECTileAlignment").is_some() {
                 for k in [0, 2] {
-                    l[k] = ((parent[k] + l[k]) / TERRY_CELL).round() * TERRY_CELL - parent[k];
+                    l[k] = self.terry_frame.snap(parent[k] + l[k], k / 2) - parent[k];
                 }
             }
 

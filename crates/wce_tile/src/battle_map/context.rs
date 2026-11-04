@@ -147,9 +147,14 @@ impl LfField {
 }
 
 /// A battle map's placements.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PlacedMap {
     pub name: String,
+
+    /// The LF's metres: `LF * lf_height - vertical_offset` (the tile database's `RENDER_PARAMS`: a battle map's 3000 and 20, the
+    /// campaign's 712 and 38.28).
+    pub lf_height: f64,
+    pub vertical_offset: f64,
     pub width: u32,
     pub height: u32,
     pub placements: Vec<MapPlacement>,
@@ -163,6 +168,15 @@ pub struct PlacedMap {
 
     /// The database's climates by index (a placement's `climate`).
     pub climates: Vec<String>,
+}
+
+impl Default for PlacedMap {
+    fn default() -> Self {
+        Self {
+            name: String::new(), lf_height: LF_HEIGHT, vertical_offset: VERTICAL_OFFSET, width: 0, height: 0, placements: vec![], lf: None, sea_lf: None,
+            unknown: vec![], climates: vec![],
+        }
+    }
 }
 
 /// The database's climate names by index.
@@ -277,7 +291,7 @@ impl PlacedMap {
 
     /// The LF height in metres at a map point in cells (0 without a field).
     pub fn lf_metres(&self, x: f64, y: f64) -> f64 {
-        self.lf.as_ref().map_or(0.0, |f| f.metres(x, y, self.width, self.height))
+        self.lf.as_ref().map_or(0.0, |f| (f.metres(x, y, self.width, self.height) + VERTICAL_OFFSET) / LF_HEIGHT * self.lf_height - self.vertical_offset)
     }
 
     /// The median and range (max - min) of the LF over a cell rectangle, sampled every quarter cell. The median: the campaign LF is flat

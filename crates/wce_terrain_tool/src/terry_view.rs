@@ -12,7 +12,7 @@ use wce_foundation::math::{Float3, Float4x4};
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, OverlayVertex, Payload, SourceRef, overlay_colour};
 use wce_terrain::terry::{EntityKind, TerryProject};
 use wce_terrain_editor::MapDocument;
-use wce_terrain_editor::document::TERRY_CELL;
+use wce_terrain_editor::document::{TERRY_CELL, TerryFrame};
 use wce_terrain_editor::terry::TerrySpliceCommand;
 use wce_tile_editor::tile_document::context::Frame;
 
@@ -77,15 +77,15 @@ fn style(p: &TerryProject, id: u64, kind: &EntityKind) -> (usize, [f32; 4]) {
 }
 
 /// A line along the ground (frame units): the points lifted onto the LF, every segment cut into pieces a cell long at most.
-fn on_ground(frame: &Frame, pts: &[[f64; 2]], closed: bool, unit: f64, colour: u32, out: &mut Vec<OverlayVertex>) {
+fn on_ground(frame: &Frame, pts: &[[f64; 2]], closed: bool, tf: TerryFrame, colour: u32, out: &mut Vec<OverlayVertex>) {
     let n = pts.len();
     let segments = if closed { n } else { n.saturating_sub(1) };
-    let step = TERRY_CELL / 2.0;
+    let step = tf.cell / 2.0;
     for k in 0..segments {
         let (a, b) = (pts[k], pts[(k + 1) % n]);
         let pieces = ((b[0] - a[0]).hypot(b[1] - a[1]) / step).ceil().max(1.0) as usize;
         let at = |t: f64| {
-            let (x, z) = ((a[0] + (b[0] - a[0]) * t) / unit, (a[1] + (b[1] - a[1]) * t) / unit);
+            let (x, z) = tf.to_frame(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
             Float3::new(x as f32, frame.lift(x, z) + 1.0, z as f32)
         };
 
@@ -111,19 +111,19 @@ fn overlay(d: &MapDocument, frame: &Frame, id: u64, show: [bool; 4]) -> Option<O
     let mut lines = vec![];
     if let Some([rw, rh]) = p.rectangle(e) {
         let (x0, x1, z0, z1) = (w[0] - rw / 2.0, w[0] + rw / 2.0, w[2] - rh / 2.0, w[2] + rh / 2.0);
-        on_ground(frame, &[[x0, z0], [x1, z0], [x1, z1], [x0, z1]], true, d.unit, colour, &mut lines);
+        on_ground(frame, &[[x0, z0], [x1, z0], [x1, z1], [x0, z1]], true, d.terry_frame, colour, &mut lines);
     }
 
     if let Some((pts, closed)) = p.polyline(e) {
         let pts: Vec<[f64; 2]> = pts.iter().map(|q| [w[0] + q[0], w[2] + q[1]]).collect();
-        on_ground(frame, &pts, closed, d.unit, colour, &mut lines);
+        on_ground(frame, &pts, closed, d.terry_frame, colour, &mut lines);
     }
 
     if lines.is_empty() {
         // A spot: a small cross.
-        let r = TERRY_CELL / 4.0;
-        on_ground(frame, &[[w[0] - r, w[2]], [w[0] + r, w[2]]], false, d.unit, colour, &mut lines);
-        on_ground(frame, &[[w[0], w[2] - r], [w[0], w[2] + r]], false, d.unit, colour, &mut lines);
+        let r = d.terry_frame.cell / 4.0;
+        on_ground(frame, &[[w[0] - r, w[2]], [w[0] + r, w[2]]], false, d.terry_frame, colour, &mut lines);
+        on_ground(frame, &[[w[0], w[2] - r], [w[0], w[2] + r]], false, d.terry_frame, colour, &mut lines);
     }
 
     Some(Overlay { lines, depth_test: false, ..Default::default() })
@@ -136,7 +136,7 @@ impl TerryView {
         let Some(d) = e.docs.find_as::<MapDocument>(doc) else { return self.clear(e) };
         let Some(p) = d.project() else { return self.clear(e) };
         let cam = e.viewport.camera();
-        let at = [f64::from(cam.target.x) * d.unit, f64::from(cam.target.z) * d.unit];
+        let at = { let (x, z) = d.terry_frame.from_frame(f64::from(cam.target.x), f64::from(cam.target.z)); [x, z] };
         let revision = d.terry_revision.load(std::sync::atomic::Ordering::Relaxed);
         let fresh = self.built.is_some_and(|(bd, br, bs, brad, bc)| {
             bd == doc && br == revision && bs == self.show && brad == self.radius_m && (bc[0] - at[0]).hypot(bc[1] - at[1]) < f64::from(self.radius_m) / 4.0
@@ -172,7 +172,7 @@ impl TerryView {
         let Some(d) = e.docs.find_as::<MapDocument>(doc) else { return };
         let draft = (self.mode == Mode::NewDeploymentZone && !self.points.is_empty()).then(|| {
             let mut lines = vec![];
-            on_ground(&frame, &self.points, false, d.unit, overlay_colour(1.0, 1.0, 0.3, 1.0), &mut lines);
+            on_ground(&frame, &self.points, false, d.terry_frame, overlay_colour(1.0, 1.0, 0.3, 1.0), &mut lines);
             Overlay { lines, depth_test: false, pickable: false, ..Default::default() }
         });
 
@@ -186,8 +186,9 @@ impl TerryView {
             let mut lines = vec![];
             for (k, q) in pts.iter().enumerate() {
                 let picked = self.picked == Some((id, k));
-                let (r, c) = if picked { (TERRY_CELL / 3.0, overlay_colour(1.0, 0.25, 0.25, 1.0)) } else { (TERRY_CELL / 6.0, overlay_colour(1.0, 1.0, 0.3, 1.0)) };
-                on_ground(&frame, &[[q[0] - r, q[1] - r], [q[0] + r, q[1] - r], [q[0] + r, q[1] + r], [q[0] - r, q[1] + r]], true, d.unit, c, &mut lines);
+                let cell = d.terry_frame.cell;
+                let (r, c) = if picked { (cell / 3.0, overlay_colour(1.0, 0.25, 0.25, 1.0)) } else { (cell / 6.0, overlay_colour(1.0, 1.0, 0.3, 1.0)) };
+                on_ground(&frame, &[[q[0] - r, q[1] - r], [q[0] + r, q[1] - r], [q[0] + r, q[1] + r], [q[0] - r, q[1] + r]], true, d.terry_frame, c, &mut lines);
             }
 
             Some(Overlay { lines, depth_test: false, pickable: false, ..Default::default() })
