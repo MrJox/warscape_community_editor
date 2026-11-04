@@ -41,6 +41,9 @@ A file not edited is written back as its original blob (a file on disk is copied
   byte. Rome 2 (vanilla, `WCE_GAME_KEY=rome_2`, 2026-11-04): CHMF (111), deployment XML (8 168), `locations.blm` (7, version 7),
   `terrain.tile_list` (104: versions 7 to 9; Rome 2's loader fn 0x115b9940: 14-byte placements, a rectangle list, version 7's strings
   UTF-16, version 9's last section kept verbatim) and `tile_map` (7, version 6: the index's chunk table and the cells' unknown bytes
-  kept), all byte for byte (`wce_tile::battle_map::tile_list` / `tile_map`).
+  kept), all byte for byte (`wce_tile::battle_map::tile_list` / `tile_map`). Rome 2's `locations.blm` (version 7): after the types a
+  104-byte block and a u32 a cell (two u16 masks, as Attila's `.mask0` / `.mask1`); a location's id `0xffff0000 + n` names
+  `deployment/deployment_NNNN.xml` (some files no location names: 879 on `main_rome_map`); its deployment files have CRLF line
+  endings and an `orientation` after an area's boundaries on some maps (`built_scene_check`).
 - In `scripts/gates.sh`: `map_roundtrip` (one settlement map), `map_built_roundtrip` (the vanilla packs); `--corpus` adds
   `map_roundtrip_all`.

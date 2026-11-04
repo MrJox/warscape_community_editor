@@ -368,8 +368,17 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      `terrain.tile_list` (the Placements section, `terrain_placements`: select, variation, turn, remove, move, place a database tile;
      inside the map, on no other placement; the bounds made again); Save into the projects' `working_data/terrain/battles/<map>` (read
      first next time); export of the files that differ from the packs. The refill keeps a campaign map's LF metres (it reset them).
-   Left for Rome 2: the battle locations and deployments (`locations.blm` version 7, the deployment XMLs) as editable entities; the
-   seven `main_*` maps' placements (a version 6 tile map, no tile list); the normals after an LF edit (the packs' stay); a launch.
+   - Rome 2's battle locations and deployments (the seven `main_*` maps: `locations.blm` version 7, `deployment/`) as a `.terry` scene
+     (`wce_terrain_io::built::scene`), so the entity tools work on them (BCAs, catchment regions, deployment zones and regions,
+     Outliner, Inspector, gizmo, creation): a location is a BCA at the middle of its centre cell, its region placed and sized so that
+     its rectangle comes back; a location's id `0xffff0000 + n` is its deployment file's number. Written back (after an edit only): the
+     blm in the file's type order (new types after; its per-cell masks kept: two u16 a cell, Rome 2's `.mask0` / `.mask1`, from the
+     tiles, not the locations), the deployment files numbered in entity order (CRLF, an area's `orientation` kept, a location with an
+     empty file keeps its number); the files no location names (879 on `main_rome_map`) kept. `built_scene_check` (gate
+     `rome2_built_scene`): all seven maps' blm and 8 304 named deployment files byte for byte through the scene. Checked in the app: a
+     new BCA and a zone on `main_gaul` export the blm and `deployment_0504.xml`.
+   Left for Rome 2: the seven `main_*` maps' placements (a version 6 tile map, no tile list); the normals after an LF edit (the packs'
+   stay); a launch.
 
 ## Risks
 
