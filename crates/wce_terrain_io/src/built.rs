@@ -3,6 +3,8 @@
 //!
 //! - `lf_height_map.dds` (L16, a 128-byte header): the land LF, editable ([`MapModel::lf`], `LfRole::Land`);
 //! - `terrain.tile_list`: the placements, editable ([`MapModel::tile_list`]; written back byte for byte unedited, every version);
+//! - `locations.blm` (version 7) with `deployment/`: the battle locations and their deployments as a scene ([`MapModel::project`],
+//!   [`scene`]; the files carried too: written again only after an edit, the files no location names kept as they were);
 //! - every other file carried as it is (the tile list or tile map, `locations.blm`, the deployment files, the sea LF, the normals...).
 //!
 //! Written back: the files as they were, but for an edited LF its DDS (the header kept, the samples the model's) and its CHMF
@@ -10,6 +12,8 @@
 //! region's tag maximum the shipped one or the region's new maximum, the higher (Rome 2's tags hold the tiles' relief, which the LF
 //! alone does not give: with them kept, 110 of its 111 maps' CHMFs come out byte for byte from their DDS, `built_lf_check`). A shipped
 //! CHMF of another region layout is kept as it was (`settlement_preset`). ASSUMPTION: a lowered region keeps its old tag maximum.
+
+pub mod scene;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -24,6 +28,10 @@ use crate::{MapFiles, Result, file_error};
 const LF: &str = "lf_height_map.dds";
 const CHMF: &str = "lf_height_map.data";
 const LIST: &str = "terrain.tile_list";
+const BLM: &str = "locations.blm";
+
+/// The scene's name (no file: the locations and deployments are its files).
+pub const SCENE: &str = "locations.blm (scene)";
 
 /// The samples of an L16 DDS (a 128-byte header, then the rows): its size and field.
 fn l16(bytes: &[u8]) -> Option<PagedU16> {
@@ -58,7 +66,27 @@ pub fn read(name: &str, files: &MapFiles) -> Result<MapModel> {
         }
     }
 
+    // The battle locations as a scene (the seven `main_*` maps).
+    if let Some(blm) = locations(&m) {
+        let mut deployments = BTreeMap::new();
+        for (path, blob) in &m.carried {
+            let n = path.strip_prefix("deployment/").and_then(|f| f.strip_prefix("deployment_")).and_then(|f| f.strip_suffix(".xml")).and_then(|f| f.parse::<u32>().ok());
+            if let Some(n) = n {
+                deployments.insert(n, wce_tile::vegetation::ca_xml::parse(&blob.bytes()?));
+            }
+        }
+
+        let p = scene::scene(&blm, &deployments).map_err(|e| file_error(BLM, e))?;
+        m.project = Some(Item::new(SCENE, p, Blob::Bytes(Arc::from(&[][..]))));
+    }
+
     Ok(m)
+}
+
+/// The map's `locations.blm`, version 7 (Rome 2's).
+fn locations(m: &MapModel) -> Option<wce_tile::battle_map::locations::BattleLocations> {
+    let b = m.carried.iter().find(|(p, _)| p.eq_ignore_ascii_case(BLM))?.1.bytes().ok()?;
+    wce_tile::battle_map::locations::BattleLocations::parse(&b).ok().filter(|l| l.version == 7)
 }
 
 /// The map's size in cells: its tile list's battle size, else its tile map's.
@@ -98,6 +126,17 @@ pub fn chmf(field: &PagedU16, cells: (u32, u32), shipped: Option<&[u8]>) -> Opti
 /// The LF's original file can't be read.
 pub fn write(m: &MapModel) -> Result<MapFiles> {
     let mut folder: BTreeMap<String, Blob> = m.carried.clone();
+    if let Some(p) = m.project.as_ref().filter(|p| p.edited())
+        && let Some(original) = locations(m)
+    {
+        let (blm, deployments) = scene::write(p.get(), &original);
+        let key = folder.keys().find(|k| k.eq_ignore_ascii_case(BLM)).cloned().unwrap_or_else(|| BLM.to_owned());
+        folder.insert(key, Blob::Bytes(Arc::from(blm)));
+        for (name, bytes) in deployments {
+            folder.insert(name, Blob::Bytes(Arc::from(bytes)));
+        }
+    }
+
     if let Some(t) = &m.tile_list {
         let blob = if t.edited() { Blob::Bytes(Arc::from(t.get().write())) } else { t.origin.clone() };
         folder.insert(t.path.clone(), blob);
