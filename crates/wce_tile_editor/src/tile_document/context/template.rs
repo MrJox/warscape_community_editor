@@ -296,8 +296,13 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
     let height = |_: f64, _: f64| 0.0f32;
     let own = Grid::sample(nx, nz, -o, -o, step, &height);
 
-    // The blend map is the bordered tile's (a cell around it), as a scene tile's.
-    let tif = wce_tile::sources::file_any_case(dir, "blend_map.tif").ok_or_else(|| format!("no blend_map.tif in {}", dir.display()))?;
+    // The blend map is the bordered tile's (a cell around it), as a scene tile's. Some variations have none (Attila's `cliff_custom`
+    // `6x2_l0_r0/ad`: only the mesh; the packs ship no blend for any of them): the mesh alone, no ground material.
+    let Some(tif) = wce_tile::sources::file_any_case(dir, "blend_map.tif") else {
+        let mut tpl = Template { extent: (ex, ez), own, material: None, custom: Some(Arc::new(mesh)), load_s: t0.elapsed().as_secs_f64(), ..Default::default() };
+        tpl.finish();
+        return Ok(tpl);
+    };
     let blend = wce_tile::blend_field::BlendField::read(&tif).map_err(|e| format!("{}: {e}", tif.display()))?;
     let settings = entry.file().parent().and_then(Path::parent).map(|p| p.join("_settings.xml"));
     let kit = settings.and_then(|s| wce_formats::tile_climate::ClimateList::load(&s).ok()).unwrap_or_default();
@@ -381,8 +386,15 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
         .collect();
 
     if stretch != 1.0 {
-        for (w, _) in &mut entities {
+        for (w, p) in &mut entities {
             w.m[1][3] *= stretch;
+            // A river's surface follows the tile's ground: its heights in the same units, stretched as the ground is (else it sinks under
+            // a campaign tile's ground and shows only in its dips).
+            if let Payload::Water(water) = p {
+                for v in &mut water.verts {
+                    v.y *= stretch;
+                }
+            }
         }
     }
 

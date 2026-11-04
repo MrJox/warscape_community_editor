@@ -258,7 +258,7 @@ pub fn bake_terrain_colour(req: &BakeRequest, blend: Option<&BlendField>, climat
 
     let climate = climates.find(&req.look.climate).or_else(|| climates.find("default"));
     let folder = climate.map_or_else(|| climates.default_folder(), |c| climates.folder_of(c));
-    let groups = group_names(&req.groups);
+    let groups = group_names(&req.groups).map(|g| climates.group_of(climate, g));
     let exists = |p: &str| files.exists(p);
 
     let mut layers = vec![];

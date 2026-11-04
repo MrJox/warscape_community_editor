@@ -74,7 +74,8 @@ impl PacksTree {
             p.name.to_lowercase().bytes().chain(len.to_le_bytes()).fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
         });
 
-        Self { vfs, kit, root: cache.join(format!("{key}_{packs:016x}")), built: std::sync::OnceLock::new() }
+        // `_2`: the decompiler's tiles changed (a campaign tile's rivers in its own unit); the older trees are not these.
+        Self { vfs, kit, root: cache.join(format!("{key}_{packs:016x}_2")), built: std::sync::OnceLock::new() }
     }
 
     fn get(&self) -> Result<&(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String> {

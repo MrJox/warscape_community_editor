@@ -168,6 +168,16 @@ impl ClimateList {
         self.find(name).map_or_else(|| self.default_folder(), |c| self.folder_of(c))
     }
 
+    /// The texture group a tile's group name stands for under a climate: `climate` (many campaign tiles' groups, the roads' all four)
+    /// is the climate's own `texture_set` (`europe` -> `grass_b`), the `default` climate's when it has none; any other name is itself.
+    pub fn group_of<'a>(&'a self, climate: Option<&'a Climate>, group: &'a str) -> &'a str {
+        if !group.eq_ignore_ascii_case("climate") {
+            return group;
+        }
+
+        [climate, self.find("default")].into_iter().flatten().map(|c| c.texture_set.as_str()).find(|s| !s.is_empty()).unwrap_or(group)
+    }
+
     /// [`climate_texture_path`] for this list's kind of textures.
     pub fn texture_path(&self, climate_folder: &str, group: &str, variation: i32, season: &str, normal: bool, exists: impl Fn(&str) -> bool) -> Option<String> {
         texture_path_in(&self.default_folder(), climate_folder, group, variation, season, normal, exists)

@@ -41,6 +41,35 @@ struct RiverPoint {
     cout: [f64; 3],
 }
 
+/// A river's points from BOB's `river_spline<n>.xml` (game units across; a `SPLINE` per segment, POINT0 .. POINT3 the point, its
+/// controlOut, the next point's controlIn and the next point; width, foam and flow the segment's start point's on all four, alpha_fade
+/// the point's own on POINT0 and POINT3), heights / `up` from the file's (its heights are the scene's / `height`). `None` when it has no
+/// segment.
+fn file_river_points(text: &[u8], height: f64, up: f64) -> Option<Vec<RiverPoint>> {
+    let doc = wce_formats::XmlDoc::parse(text.to_vec()).ok()?;
+    let els = doc.elements();
+    let num = |e: usize, n: &str| doc.get(e, n).and_then(|v| strtod(&v)).unwrap_or(0.0);
+    let at = |e: usize| [num(e, "x"), num(e, "y") * height / up, num(e, "z")];
+    let mut pts: Vec<RiverPoint> = vec![];
+    for s in (0..els.len()).filter(|&i| els[i].name == "SPLINE") {
+        let corner = |k: usize| els[s].children.iter().copied().find(|&c| els[c].name == format!("POINT{k}"));
+        let (Some(p0), Some(p1), Some(p2), Some(p3)) = (corner(0), corner(1), corner(2), corner(3)) else { continue };
+        let (width, foam, flow) = (num(p0, "width"), num(p0, "foam_amount"), num(p0, "flow_speed"));
+        match pts.last_mut() {
+            Some(last) => (last.cout, last.width, last.foam, last.flow) = (at(p1), width, foam, flow),
+            None => {
+                let [x, y, z] = at(p0);
+                pts.push(RiverPoint { x, y, z, width, foam, fade: num(p0, "alpha_fade"), flow, cin: at(p0), cout: at(p1) });
+            }
+        }
+
+        let [x, y, z] = at(p3);
+        pts.push(RiverPoint { x, y, z, width, foam, fade: num(p3, "alpha_fade"), flow, cin: at(p2), cout: at(p3) });
+    }
+
+    (pts.len() >= 2).then_some(pts)
+}
+
 /// A piece's own transform inside its building: the position (scene units), the euler angles (radians) and the scale.
 pub(crate) fn piece_local(p: &PieceProps) -> Float4x4 {
     let w = WorldTransform { position: Double3::new(f64::from(p.position[0]), f64::from(p.position[1]), f64::from(p.position[2])), rotation: euler_matrix(Double3::new(f64::from(p.euler[0]), f64::from(p.euler[1]), f64::from(p.euler[2]))) };
@@ -550,6 +579,16 @@ impl Tile {
         }
 
         let u = self.unit();
+        // Across: a campaign tile's scene is in its database's unit (0.2: BOB's river_spline<n>.xml has its x and z / 0.2, a battle tile's
+        // / 2); up: the project's unit (a map's view stretches a campaign tile's heights, `tile_project::height_unit`). A campaign river is
+        // drawn from its file when it has one (and is not edited since), as the game has it: many of the kit's campaign tile.ted rivers were edited after their file
+        // was written (4x2_varient1's: 9 straight points 37 m up, its file 32 points along the carved bed, 1.48 m down), and the file's
+        // width is the full width of BOB's ribbon (the packs' river block has 70 for a file's 70), TEd's times 5 or times 1 by the TEd that
+        // wrote it (`river_files::Factors`). Without a file: TEd's points, the width times 5. A battle river's are TEd's, its width the full
+        // width in metres (docs/re/water.md).
+        let across = wce_tile::tile_project::height_unit(&self.project.dir);
+        let campaign = across < u;
+        let mut river_index = 0;
         let rome2 = self.files.as_ref().and_then(|f| f.game()).is_some_and(|g| g.key == "rome_2");
         let (mut rivers, mut ribbons) = (0, 0);
         let mut new_water = vec![];
@@ -560,22 +599,30 @@ impl Tile {
                 continue;
             }
 
+            let file = self.project.dir.join(format!("river_spline{river_index}.xml"));
+            river_index += 1;
+            // Its file while the river is as it was loaded or saved (an edit is drawn from TEd's points until the save writes its file).
+            let unedited = self.project.river_texts.get(river_index - 1).is_some_and(|t| *t == sc.element_text(e));
+            let text = (campaign && unedited).then(|| std::fs::read(&file).ok()).flatten();
+            let from_file = text.as_deref().and_then(|t| file_river_points(t, wce_tile::river_files::Factors::of(sc, e, Some(t)).height, u));
+            let wide = if campaign { 1.0 / across } else { 1.0 };
             let w = world_transform(sc, e);
-            let mut pts = vec![];
-            for &c in els[e].children.iter().filter(|&&c| els[c].name == "points") {
+            let mut pts = from_file.unwrap_or_default();
+            let ted = pts.is_empty();
+            for &c in els[e].children.iter().filter(|&&c| ted && els[c].name == "points") {
                 for &p in els[c].children.iter().filter(|&&p| els[p].name == "point") {
                     let vec = |name: &str| sc.doc().get(p, name).and_then(|v| parse_vec3(&v, ""));
                     let Some(pos) = vec("position") else { continue };
                     let world = |q: Double3| {
                         let p = w.position + w.rotation * q;
-                        [p.x / u, p.y / u, p.z / u]
+                        [p.x / across, p.y / u, p.z / across]
                     };
 
                     let num = |n: &str, d: f64| sc.doc().get(p, n).filter(|v| !v.is_empty()).map_or(d, |v| strtod(&v).unwrap_or(0.0));
                     let wp = world(pos);
                     pts.push(RiverPoint {
                         x: wp[0], y: wp[1], z: wp[2], cin: world(vec("controlIn").unwrap_or(pos)), cout: world(vec("controlOut").unwrap_or(pos)),
-                        width: num("width", 1.0), foam: num("foam_amount", 0.1), fade: num("alpha_fade", 1.0), flow: num("flow_speed", 0.5),
+                        width: num("width", 1.0) * wide, foam: num("foam_amount", 0.1), fade: num("alpha_fade", 1.0), flow: num("flow_speed", 0.5),
                     });
                 }
             }
