@@ -533,7 +533,23 @@ pub fn tree_pop() {
     call!(sys::igTreePop())
 }
 
+/// Headers a script asked to open (`gui_open_header`): opened the next time each is drawn.
+static OPEN_HEADERS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Opens the collapsing header `label` the next time it is drawn (for scripts: captures of a panel's sections).
+pub fn open_header(label: &str) {
+    OPEN_HEADERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(label.to_owned());
+}
+
 pub fn collapsing_header(label: &str, flags: i32) -> bool {
+    {
+        let mut open = OPEN_HEADERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(k) = open.iter().position(|l| l == label) {
+            open.remove(k);
+            set_next_item_open(true, COND_ALWAYS);
+        }
+    }
+
     let c = cs(label);
     call!(sys::igCollapsingHeader_TreeNodeFlags(c.as_ptr(), flags))
 }

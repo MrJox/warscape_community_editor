@@ -1049,6 +1049,15 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("gui_open_header", "gui_open_header <label>", "open a panel's collapsing header (its label, words joined by spaces) the next time it is drawn: for captures of its sections", |_, a| {
+        if a.is_empty() {
+            return fail("usage: gui_open_header <label>");
+        }
+
+        gui::open_header(&a.join(" "));
+        ok("")
+    });
+
     c.add("show_panel", "show_panel <name>", "show a panel and bring it to the front of its tab group", |e, a| {
         let Some(name) = a.first() else { return fail("usage: show_panel <viewport|outliner|inspector|assets|log|history|commands>") };
         let n = name.to_lowercase();
