@@ -365,8 +365,12 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      startpos code): each slot's building from the startpos (`data/campaigns/<campaign>/startpos.esf`), its model from the settlement
      display tables by the owner's faction, subculture or culture, at its cell of the map's `map_data.esf` (the hex grid in the world of
      the tree list); drawn near the camera with the props, a model unit a world unit, standing on the ground. `cities_check`: 745 slots,
-     408 buildings with a model (every one in the packs). ASSUMPTIONS: a model at its cell's centre, unturned. Left: the 109 buildings
-     whose slot has no cell, the empty slots, the sprawl pieces, walls and attachment points, Thrones' and Rome 2's startposes.
+     408 buildings with a model (every one in the packs). ASSUMPTIONS: a model at its cell's centre, unturned. 2026-11-05: the slots
+     paired with the map's cells by kind (a region without a port has no port slot), checked against the startpos's own slot cells
+     (745 agree, none differ): the 109 buildings without a cell found, 517 drawn; the aqueducts of the regions with an aqueduct
+     building (`campaign_settlement_display_aqueducts`: Ravenna's). Left: the empty slots, the sprawl pieces, walls and attachment
+     points (the startpos's sprawl, footprint and wall cells, `campaign_settlement_display_sprawl_pieces`), Thrones' and Rome 2's
+     startposes.
    - The roads at the campaign's start (2026-11-05; `wce_terrain_io::attila::roads`, docs/re/terry.md "Roads"): each region's level
      from its buildings' road effect in the startpos against `campaign_map_roads`' thresholds, the kit's `roads_climate` tiles upgraded
      by `tile_upgrades.xml`'s `road0_to_road<n>` in the view only (`MapDocument::shown_placed`; the files keep the kit's tiles); the
