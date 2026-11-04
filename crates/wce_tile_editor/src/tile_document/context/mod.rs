@@ -173,6 +173,33 @@ fn lf_map(map: &PlacedMap, f: Option<&LfField>, height: f64, from_map: &Affine2,
     let s = CELL / ppx;
     let b = bounds(from_map, 0.0, 0.0, f64::from(f.w - 1) / ppx, f64::from(f.h - 1) / ppy);
     let (nx, nz) = (((b[2] - b[0]) / s).round() as i32 + 1, ((b[3] - b[1]) / s).round() as i32 + 1);
+    // The frame lays the field's samples out one to one (the Terrain tool's: the map's own frame, rows the other way up): the field's
+    // samples themselves, shared (the campaign's LF is 375 MB), else resampled.
+    let sample = |i: f64, j: f64| { let (cx, cy) = to_map.apply(b[0] + i * s, b[1] + j * s); (cx * ppx, cy * ppy) };
+    let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3;
+    let same_size = u32::try_from(nx).ok() == Some(f.w) && u32::try_from(nz).ok() == Some(f.h);
+    let last_y = f64::from(f.h - 1);
+    let shared = if !same_size {
+        None
+    } else if near(sample(0.0, 0.0), (0.0, last_y)) && near(sample(1.0, 0.0), (1.0, last_y)) && near(sample(0.0, 1.0), (0.0, last_y - 1.0)) {
+        Some(true)
+    } else if near(sample(0.0, 0.0), (0.0, 0.0)) && near(sample(1.0, 0.0), (1.0, 0.0)) && near(sample(0.0, 1.0), (0.0, 1.0)) {
+        Some(false)
+    } else {
+        None
+    };
+
+    if let Some(flip) = shared {
+        let mut lf = LfMap {
+            x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values: LfSamples::shared(f.values.clone(), flip), scale: (height / unit) as f32,
+            offset: ((vertical_offset + lf_level) / unit) as f32, id: next_id(&NORMAL_IDS), ..Default::default()
+        };
+
+        lf_normals(&mut lf);
+        return Some(lf);
+    }
+
+    let field = f.values.read();
     let mut values = vec![0u16; (nx * nz) as usize];
     values.par_chunks_mut(nx as usize).enumerate().for_each(|(j, row)| {
         for (i, v) in row.iter_mut().enumerate() {
@@ -181,12 +208,13 @@ fn lf_map(map: &PlacedMap, f: Option<&LfField>, height: f64, from_map: &Affine2,
             let (x0, y0) = (px.floor() as u32, py.floor() as u32);
             let (x1, y1) = ((x0 + 1).min(f.w - 1), (y0 + 1).min(f.h - 1));
             let (fx, fy) = (px - f64::from(x0), py - f64::from(y0));
-            let at = |x: u32, y: u32| f64::from(f.values[(y * f.w + x) as usize]);
+            let at = |x: u32, y: u32| f64::from(field[(y * f.w + x) as usize]);
             let top = at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx;
             let bottom = at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx;
             *v = (top * (1.0 - fy) + bottom * fy).round() as u16;
         }
     });
+    drop(field);
 
     let mut lf = LfMap {
         x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values: LfSamples::new(values), scale: (height / unit) as f32, offset: ((vertical_offset + lf_level) / unit) as f32,
@@ -360,6 +388,7 @@ impl Frame {
         let (lf_level, lf_range) = if rq.cells == (0, 0) { (0.0, 0.0) } else { map.lf_stats(open) };
         let lf = lf_map(&map, map.lf.as_ref(), map.lf_height, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
         let sea_lf = lf_map(&map, map.sea_lf.as_ref(), SEA_LF_HEIGHT, &from_map, &to_map, lf_level, rq.unit).map(Arc::new);
+        wce_foundation::log::info(format!("map context: the frame's LF maps made, {}", wce_foundation::heap::note()));
 
         let index = MapIndex::new(&map, open);
         // A campaign map's tiles (`terrain/tiles/campaign/...`) take the campaign database's climates and textures.

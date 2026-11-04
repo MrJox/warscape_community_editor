@@ -109,9 +109,21 @@ pub fn build_images(db: &TileDatabase, images: &MapImages) -> (TileMap, TileList
 }
 
 /// A map's images (a kit map as the Terrain tool holds it) filled with the tiles of `db`: its placements, with `lf` (its LF, which
-/// `images.lf` holds as 0 .. 1) and BOB's messages.
+/// `images.lf` holds as 0 .. 1) and BOB's messages. Images without an LF take `lf`'s, read under its lock for the LF step alone (the
+/// fill before it takes a minute on the campaign map, while the LF may be painted).
 pub fn place_images(db: &TileDatabase, name: &str, images: &MapImages, lf: Option<context::LfField>) -> (context::PlacedMap, Vec<String>) {
-    let fill = fill_images(db, images);
+    let fill = match (&lf, images.lf.is_none() && images.lf_u16.is_none()) {
+        (Some(f), true) => {
+            let mut fill = TileMapFill::new(db, images);
+            fill.build(images.explicit_tiles);
+            let v = f.values.read();
+            fill.calculate_lf_min_maxs_u16(&v, f.w, f.h);
+            drop(v);
+            fill
+        }
+
+        _ => fill_images(db, images),
+    };
     let list = tile_list(db, &fill, images.campaign);
     (context::PlacedMap::from_tile_list(name, &list, db, lf), fill.messages)
 }
@@ -185,7 +197,7 @@ pub fn load_snow_map(map: &Path, season: &str) -> Option<(u32, u32, Vec<u8>)> {
 pub fn load_kit_map(db: &TileDatabase, map: &Path) -> Result<context::PlacedMap, String> {
     let (list, _) = fill_kit_map(db, map)?;
     let lf = std::fs::read(map.join("lf_heights.tif")).ok().and_then(|b| TiffFile::parse(&b).ok()).filter(|t| t.bits_per_sample == 16 && t.samples_per_pixel == 1)
-        .map(|t| context::LfField { w: t.width, h: t.height, values: t.pixels.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() });
+        .map(|t| context::LfField::new(t.width, t.height, t.pixels.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()));
     let name = map.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     Ok(context::PlacedMap::from_tile_list(&name, &list, db, lf))
 }
@@ -199,7 +211,7 @@ pub fn l16_dds_heights(b: &[u8]) -> Option<context::LfField> {
 
     let (h, w) = (u32_at(12)?, u32_at(16)?);
     let data = b.get(128..128 + w as usize * h as usize * 2)?;
-    Some(context::LfField { w, h, values: data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() })
+    Some(context::LfField::new(w, h, data.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()))
 }
 
 /// A shipped map (the campaign's `terrain/battles/main_attila_map`): its `tile_map.index` / `.tiles` and `lf_height_map.dds`.

@@ -359,9 +359,9 @@ fn land_near_centre(lf: &wce_scene::render_scene::LfMap) -> Option<Float3> {
         .map(|(x, z, _, h)| Float3::new(x, h, z))
 }
 
-/// A model's field as the map context's (the same rows).
+/// A model's field as the map context's: the same samples, shared.
 fn lf_field(f: &wce_terrain::paged::PagedU16) -> LfField {
-    LfField { w: f.width(), h: f.height(), values: f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() }
+    LfField::shared(f.grid().clone())
 }
 
 /// Reads a map (a worker's job).
@@ -405,8 +405,10 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
             let dir = kit_map_dir(&i.raw, &i.name);
             let files = wce_terrain_io::MapFiles::from_dir(&dir).map_err(|e| e.to_string())?;
             let model = wce_terrain_io::attila::read(map_kind(&i.name).1, map_kind(&i.name).0, &files).map_err(|e| e.to_string())?;
+            log::info(format!("terrain open {}: model read, {}", i.name, wce_foundation::heap::note()));
             let inputs = crate::refill::FillInputs::of(&model).ok_or_else(|| format!("{}: no tile_map.png", dir.display()))?;
             let (placed, messages) = inputs.fill(&db, &i.name);
+            log::info(format!("terrain open {}: filled, {}", i.name, wce_foundation::heap::note()));
             let sea = model.lf(LfRole::Sea).map(|f| lf_field(f.get()));
             (Arc::new(placed), None, MapSource::Kit(dir), Some(model), sea, messages)
         }

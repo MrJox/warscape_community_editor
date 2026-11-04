@@ -368,7 +368,7 @@ impl TileTool {
         ];
         // A flat LF 100 m up: as on an inland map, above the sea (with none the tiles sit 20 m under it, where the game never puts them).
         let level = ((100.0 + wce_tile::battle_map::context::VERTICAL_OFFSET) / wce_tile::battle_map::context::LF_HEIGHT * 65535.0).round() as u16;
-        let lf = wce_tile::battle_map::context::LfField { w: 1, h: 1, values: vec![level].into() };
+        let lf = wce_tile::battle_map::context::LfField::new(1, 1, vec![level]);
         let map = PlacedMap {
             name: format!("link candidate {}", t.location), width: (x1 - x0) as u32, height: (y1 - y0) as u32, placements, lf: Some(lf), sea_lf: None, unknown: vec![],
             climates: db.climates.iter().map(|c| c.name.clone()).collect(), ..Default::default()

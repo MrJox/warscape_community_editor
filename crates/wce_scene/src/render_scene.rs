@@ -394,30 +394,113 @@ impl Default for Terrain {
 
 /// An LF map's samples, shared by every terrain on the map and edited in place (the Terrain tool's brushes): a revision that moves with
 /// every edit and the samples changed since the renderer last took them (`take_dirty`), so that it updates only those on the GPU.
-#[derive(Debug, Default)]
+///
+/// Its own samples, or a map's shared grid (`SampleGrid`: the Terrain tool's model edits them, the scene reads them; a campaign map's
+/// 375 MB once instead of three times), read rows upside down when the map's rows run the other way (the LF's row 0 is its north edge,
+/// the scene's sample row 0 its lowest z).
+#[derive(Debug)]
 pub struct LfSamples {
-    values: std::sync::RwLock<Vec<u16>>,
+    store: LfStore,
     revision: std::sync::atomic::AtomicU64,
     dirty: std::sync::Mutex<Option<[i32; 4]>>,
 }
 
+#[derive(Debug)]
+enum LfStore {
+    Own(std::sync::RwLock<Vec<u16>>),
+    Shared { grid: Arc<wce_foundation::samples::SampleGrid>, flip: bool },
+}
+
+impl Default for LfSamples {
+    fn default() -> Self {
+        Self { store: LfStore::Own(std::sync::RwLock::default()), revision: Default::default(), dirty: Default::default() }
+    }
+}
+
+/// The samples to read, row by row as the map has them (`LfMap::nx` a row): indexed like a slice.
+pub enum LfRead<'a> {
+    Own(std::sync::RwLockReadGuard<'a, Vec<u16>>),
+    Shared { v: wce_foundation::samples::GridRead<'a>, w: usize, h: usize, flip: bool },
+}
+
+impl LfRead<'_> {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Own(v) => v.len(),
+            Self::Shared { v, .. } => v.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Sample row `j` (`nx` samples a row: the map's).
+    pub fn row(&self, j: usize, nx: usize) -> &[u16] {
+        match self {
+            Self::Own(v) => &v[j * nx..(j + 1) * nx],
+            Self::Shared { v, w, h, flip } => {
+                let r = if *flip { h - 1 - j } else { j };
+                &v[r * w..(r + 1) * w]
+            }
+        }
+    }
+}
+
+impl std::ops::Index<usize> for LfRead<'_> {
+    type Output = u16;
+
+    fn index(&self, k: usize) -> &u16 {
+        match self {
+            Self::Own(v) => &v[k],
+            Self::Shared { v, w, h, flip } => {
+                if *flip {
+                    let (j, i) = (k / w, k % w);
+                    &v[(h - 1 - j) * w + i]
+                } else {
+                    &v[k]
+                }
+            }
+        }
+    }
+}
+
 impl LfSamples {
     pub fn new(values: Vec<u16>) -> Arc<Self> {
-        Arc::new(Self { values: std::sync::RwLock::new(values), ..Default::default() })
+        Arc::new(Self { store: LfStore::Own(std::sync::RwLock::new(values)), ..Default::default() })
+    }
+
+    /// A map's shared samples, its rows read upside down when `flip`.
+    pub fn shared(grid: Arc<wce_foundation::samples::SampleGrid>, flip: bool) -> Arc<Self> {
+        Arc::new(Self { store: LfStore::Shared { grid, flip }, ..Default::default() })
+    }
+
+    /// Whether these are `grid`'s samples.
+    pub fn shares(&self, grid: &Arc<wce_foundation::samples::SampleGrid>) -> bool {
+        matches!(&self.store, LfStore::Shared { grid: g, .. } if Arc::ptr_eq(g, grid))
     }
 
     /// The samples, row by row (`LfMap::nx` a row).
-    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, Vec<u16>> {
-        self.values.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+    pub fn read(&self) -> LfRead<'_> {
+        match &self.store {
+            LfStore::Own(v) => LfRead::Own(v.read().unwrap_or_else(std::sync::PoisonError::into_inner)),
+            LfStore::Shared { grid, flip } => LfRead::Shared { v: grid.read(), w: grid.width() as usize, h: grid.height() as usize, flip: *flip },
+        }
     }
 
-    /// Changes samples: `f` gets them all (row by row, `nx` a row); `rect` (i0, j0, i1, j1, end exclusive) is what it changed.
+    /// Changes samples: `f` gets them all (row by row, `nx` a row); `rect` (i0, j0, i1, j1, end exclusive) is what it changed. Samples of
+    /// their own only (a shared grid is changed by its owner, then [`Self::touched`]).
     pub fn edit(&self, rect: [i32; 4], f: impl FnOnce(&mut [u16])) {
-        {
-            let mut v = self.values.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let LfStore::Own(v) = &self.store {
+            let mut v = v.write().unwrap_or_else(std::sync::PoisonError::into_inner);
             f(&mut v);
         }
 
+        self.touched(rect);
+    }
+
+    /// Samples changed by their owner (i0, j0, i1, j1, end exclusive; the map's rows): the revision moves on, the renderer updates them.
+    pub fn touched(&self, rect: [i32; 4]) {
         let mut d = self.dirty.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *d = Some(d.map_or(rect, |o| [o[0].min(rect[0]), o[1].min(rect[1]), o[2].max(rect[2]), o[3].max(rect[3])]));
         self.revision.fetch_add(1, std::sync::atomic::Ordering::Release);
@@ -468,12 +551,12 @@ impl PartialEq for LfMap {
 }
 
 impl LfMap {
-    fn value_in(&self, v: &[u16], i: i32, j: i32) -> f32 {
+    fn value_in(&self, v: &LfRead<'_>, i: i32, j: i32) -> f32 {
         f32::from(v[(j.clamp(0, self.nz - 1) * self.nx + i.clamp(0, self.nx - 1)) as usize])
     }
 
     /// The height at a world point (scene units), from the samples `v` (a `values.read()`).
-    pub fn height_in(&self, v: &[u16], x: f32, z: f32) -> f32 {
+    pub fn height_in(&self, v: &LfRead<'_>, x: f32, z: f32) -> f32 {
         if self.nx < 1 || self.nz < 1 || v.is_empty() {
             return -self.offset;
         }
@@ -505,7 +588,7 @@ impl LfMap {
         let (j0, j1) = (j(z0.min(z1)), (j(z0.max(z1)) + 1).min(self.nz - 1));
         let (mut lo, mut hi) = (u16::MAX, 0u16);
         for jj in j0..=j1 {
-            for &v in &values[(jj * self.nx + i0) as usize..=(jj * self.nx + i1) as usize] {
+            for &v in &values.row(jj as usize, self.nx as usize)[i0 as usize..=i1 as usize] {
                 lo = lo.min(v);
                 hi = hi.max(v);
             }
@@ -523,7 +606,7 @@ impl LfMap {
 
     /// Texel (c, r) of the normal map from the samples `v`: its centre wraps to a point of the map (x = u * world, z = -v * world, give or
     /// take whole turns), the normal from the heights' central differences one texel apart; RGBA bytes as `normal` holds them.
-    pub fn normal_texel(&self, v: &[u16], c: i32, r: i32) -> [u8; 4] {
+    pub fn normal_texel(&self, v: &LfRead<'_>, c: i32, r: i32) -> [u8; 4] {
         let k = self.normal_k.max(1);
         let (w, h) = self.normal_size();
         let s = self.step * k as f32;
