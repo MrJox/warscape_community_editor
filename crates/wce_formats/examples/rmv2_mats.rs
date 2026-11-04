@@ -39,7 +39,7 @@ fn main() {
             }
         }
 
-        println!("{i}: {:?} '{}' verts {} lo {:?} hi {:?} tex {:?}", mesh.material_type(), block.material().name(), v.len(), lo, hi, tex);
+        println!("{i}: {:?} {:?} '{}' verts {} lo {:?} hi {:?} tex {:?}", mesh.material_type(), block.material().vertex_format(), block.material().name(), v.len(), lo, hi, tex);
         let mat = block.material();
         let v4: Vec<(i32, [f32; 4])> = mat.params_vector4df32().iter().map(|(k, v)| (*k, [v.x, v.y, v.z, v.w])).collect();
         println!("   params string {:?} f32 {:?} i32 {:?} vec4 {:?}", mat.params_string(), mat.params_f32(), mat.params_i32(), v4);

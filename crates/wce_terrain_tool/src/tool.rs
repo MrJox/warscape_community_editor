@@ -2007,6 +2007,26 @@ impl Tool for TerrainTool {
             })
         });
 
+        c.add("terrain_props", "terrain_props [on|off] [radius cells]", "the Terrain tool: a campaign's prop models and trees near the camera: set, then how many it drew", |e, a| {
+            with_terrain(e, |t, _| {
+                for v in a {
+                    match v.as_str() {
+                        "on" => t.props.on = true,
+                        "off" => t.props.on = false,
+                        n => {
+                            if let Ok(r) = n.parse() {
+                                t.props.radius_cells = r;
+                            }
+                        }
+                    }
+                }
+
+                CommandResult::success(format!(
+                    "prop models {}: {} props and {} trees within {} cells (as of the last frame)", if t.props.on { "on" } else { "off" }, t.props.count, t.props.tree_count, t.props.radius_cells
+                ))
+            })
+        });
+
         c.add("terrain_validate", "terrain_validate", "the Terrain tool: the shown map's checks (the Validation section): a count, then each finding", |e, _| {
             with_terrain(e, |t, e| {
                 let m = t.validate(e);

@@ -777,6 +777,8 @@ impl ModelInner {
                 (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
                 (MaterialType::Grass, VertexFormat::Grass) => (MeshKind::Grass, VertexFormat::Grass),
                 (MaterialType::Water, VertexFormat::Uk8) => (MeshKind::Water, VertexFormat::Uk8),
+                // A campaign's tree clumps (`rigidcampaignvegetation.hlsl`): drawn as static meshes, see below.
+                (MaterialType::CampaignVegetation, VertexFormat::Uk12) => (MeshKind::Standard, VertexFormat::Static),
                 _ => return None,
             };
 
@@ -795,9 +797,24 @@ impl ModelInner {
                 _ => 32,
             };
 
+            // A campaign tree clump's vertex (version 6 `Uk12`) is (position, u) and (normal, v), f16; its vertex shader draws the
+            // position times 0.4 (`rigidcampaignvegetation.hlsl` vs30_main), turned by the instance's angle and leaning towards the camera
+            // (not done here), and its pixel shader cuts the diffuse's alpha at 0.5 (the material's alpha mode 1).
+            let clump = *mesh.material_type() == MaterialType::CampaignVegetation;
             let mut vertices = Vec::with_capacity(mesh.vertices().len() * stride as usize);
             for vertex in mesh.vertices() {
                 let mtype = if format == VertexFormat::Static { MaterialType::DefaultMaterial } else { *mesh.material_type() };
+                if clump {
+                    let mut v = vertex.clone();
+                    let (p, n) = (*vertex.position(), *vertex.normal());
+                    (v.texture_coordinate_mut().x, v.texture_coordinate_mut().y) = (p.w, n.w);
+                    let q = v.position_mut();
+                    (q.x, q.y, q.z, q.w) = (p.x * 0.4, p.y * 0.4, p.z * 0.4, 1.0);
+                    v.normal_mut().w = 0.0;
+                    v.write(&mut vertices, 6, format, mtype).ok()?;
+                    continue;
+                }
+
                 vertex.write(&mut vertices, 6, format, mtype).ok()?;
             }
 
