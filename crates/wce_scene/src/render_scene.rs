@@ -909,10 +909,23 @@ pub struct RenderScene {
     /// the ground there). A tile's centre; (0, 0) for a scene drawn around its own origin.
     pub battle_centre: [f32; 2],
 
+    /// A campaign map's sea colour (its `lf_sea_colour.dds`): the sea planes are drawn with the game's campaign water shader, which
+    /// colours the water from it. None: the battle's ocean.
+    pub campaign_sea: Option<CampaignSea>,
+
     /// Where the ground, buildings, decals and trees take snow, and how much (a map context's season snow map; none: the weather's alone).
     /// Set with [`Self::set_snow`].
     snow: Option<SnowRegions>,
     ground_overlay: Option<GroundOverlay>,
+}
+
+/// A campaign map's sea colour map: the texture (a packs path) and the frame rectangle it covers, from its south-west corner (x, z; scene
+/// units; the texture's bottom left) over `size` east and north (scene units).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CampaignSea {
+    pub colour: String,
+    pub corner: [f32; 2],
+    pub size: [f32; 2],
 }
 
 /// A picture laid over the ground in the editor's view (the Terrain tool's map layers; never in the game view): a frame point's texel is
@@ -985,6 +998,7 @@ impl Default for RenderScene {
             game_units: 1.0,
             sea_level: 0.0,
             battle_centre: [0.0, 0.0],
+            campaign_sea: None,
             snow: None,
             ground_overlay: None,
         }

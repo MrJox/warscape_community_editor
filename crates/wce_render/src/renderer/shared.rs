@@ -80,6 +80,9 @@ pub(crate) struct SharedResources {
     pub instance_ids_srv: Option<ID3D11ShaderResourceView>,
     pub white_srv: Option<ID3D11ShaderResourceView>,
     pub black_srv: Option<ID3D11ShaderResourceView>,
+
+    /// Black, alpha 1: an overlay that leaves what it is laid over (the campaign water's `colour * a + rgb`).
+    pub opaque_black_srv: Option<ID3D11ShaderResourceView>,
     pub overlay_none_srv: Option<ID3D11ShaderResourceView>,
     pub jitter_srv: Option<ID3D11ShaderResourceView>,
 
@@ -122,6 +125,7 @@ impl SharedResources {
         r.instance_ids_srv = immutable_srv(dev, 1024, 1, DXGI_FORMAT_R32_UINT, &[0; 4096]);
         r.white_srv = solid_srv(dev, DXGI_FORMAT_R8G8B8A8_UNORM, &0xFFFF_FFFFu32.to_le_bytes());
         r.black_srv = solid_srv(dev, DXGI_FORMAT_R8G8B8A8_UNORM, &0u32.to_le_bytes());
+        r.opaque_black_srv = solid_srv(dev, DXGI_FORMAT_R8G8B8A8_UNORM, &0xFF00_0000u32.to_le_bytes());
 
         // No overlay: colour 0, alpha 1 (the lighting of terrain pixels, material id bit 0, is overlay.rgb + lit * overlay.a).
         r.overlay_none_srv = solid_srv(dev, DXGI_FORMAT_R8G8B8A8_UNORM, &0xFF00_0000u32.to_le_bytes());
