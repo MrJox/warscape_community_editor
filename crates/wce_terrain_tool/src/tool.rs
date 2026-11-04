@@ -200,13 +200,17 @@ pub struct TerrainTool {
     packs: Option<Arc<PacksTree>>,
     provider: Option<TileProvider>,
     db: Option<(Vec<PathBuf>, Arc<TileDatabase>)>,
+
+    /// The export on its way, and the last one done (what Launch in game ships).
+    export: Option<crate::export::ExportJob>,
+    exported: Option<crate::export::Exported>,
 }
 
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
             maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
-            status: String::new(), packs: None, provider: None, db: None,
+            status: String::new(), packs: None, provider: None, db: None, export: None, exported: None,
         }
     }
 }
@@ -578,6 +582,7 @@ impl TerrainTool {
         let terry_was = self.terry.claims_left_button();
         self.terry.draw_section(e, self.shown);
         self.draw_validation(e);
+        self.draw_export(e);
 
         // One left-button mode at a time: the one just turned on.
         if self.paint.on && !lf_was {
@@ -993,6 +998,68 @@ impl TerrainTool {
         }
     }
 
+    /// Export starts a build of the shown map on a worker (one at a time).
+    pub(crate) fn start_export(&mut self, e: &mut Editor) -> Result<String, String> {
+        if self.export.is_some() {
+            return Err("an export is on its way".to_owned());
+        }
+
+        let d = e.docs.find_as::<MapDocument>(self.shown).ok_or("no map shown")?;
+        let db = d.db.clone();
+        let job = crate::export::start(e, self.shown, db, &kit_roots(e))?;
+        let m = format!("exporting {}...", job.map);
+        self.export = Some(job);
+        Ok(m)
+    }
+
+    /// The export, when it is done: its result for the status bar.
+    fn follow_export(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
+        let r = self.export.as_ref()?.poll()?;
+        self.export = None;
+        let r = r.map(|x| {
+            let m = crate::export::summary(&x);
+            self.exported = Some(x);
+            m
+        });
+
+        match &r {
+            Ok(m) => e.status(m, false),
+            Err(err) => e.status(&format!("export: {err}"), true),
+        }
+
+        Some(r)
+    }
+
+    fn draw_export(&mut self, e: &mut Editor) {
+        if !gui::collapsing_header("Export", 0) {
+            return;
+        }
+
+        let can = e.docs.find_as::<MapDocument>(self.shown).is_some_and(|d| d.model().is_some());
+        if let Some(j) = &self.export {
+            gui::text_colored([1.0, 0.8, 0.3, 1.0], &format!("exporting {}... {:.0} s", j.map, j.started.elapsed().as_secs_f64()));
+        }
+
+        gui::begin_disabled(!can || self.export.is_some());
+        if gui::button("Export built files") {
+            match self.start_export(e) {
+                Ok(m) => e.status(&m, false),
+                Err(err) => e.status(&err, true),
+            }
+        }
+
+        gui::end_disabled();
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("What BOB_Terrain builds (tile map, battle field, LF heights, locations.blm and its masks, deployment files), made from the map as it is, loose under the output folder and as a mod pack");
+        }
+
+        if !can {
+            gui::text_disabled("Open a kit map (not one of the game's packs) to export it.");
+        } else if let Some(x) = &self.exported {
+            gui::text_disabled(&format!("last: {} files, {}", x.files.len(), x.pack.display()));
+        }
+    }
+
     fn draw_paint_section(&mut self, e: &mut Editor) {
         let can = e.docs.find_as::<MapDocument>(self.shown).is_some_and(|d| d.lf_field(LfRole::Land).is_some());
         if !gui::collapsing_header("LF brush", 0) {
@@ -1244,6 +1311,7 @@ impl Tool for TerrainTool {
         self.follow_lf_edits(e);
         self.follow_cell_edits(e);
         self.follow_refill(e);
+        self.follow_export(e);
         let frame = self.view.frame().filter(|_| self.shown != 0);
         self.terry.update(e, self.shown, frame);
     }
@@ -1458,6 +1526,31 @@ impl Tool for TerrainTool {
                     None => CommandResult::fail("no cells changed (no kit map, no such layer, or outside it)"),
                 }
             })
+        });
+
+        c.add("terrain_export", "terrain_export [--wait]", "the Terrain tool: export the shown kit map's built files (loose under the output folder and as a pack); --wait: until done", |e, a| {
+            let started = with_terrain(e, |t, e| match t.start_export(e) {
+                Ok(m) => CommandResult::success(m),
+                Err(err) => CommandResult::fail(err),
+            });
+
+            if !started.ok || !a.iter().any(|v| v == "--wait") {
+                return started;
+            }
+
+            loop {
+                let r = with_terrain(e, |t, e| match t.follow_export(e) {
+                    Some(Ok(m)) => CommandResult::success(m),
+                    Some(Err(err)) => CommandResult::fail(err),
+                    None => CommandResult::success("busy"),
+                });
+
+                if !(r.ok && r.message == "busy") {
+                    return r;
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
         });
 
         c.add("terrain_refill_wait", "terrain_refill_wait [seconds]", "the Terrain tool: waits for the fill run again after a cell edit (scripts)", |e, a| {
