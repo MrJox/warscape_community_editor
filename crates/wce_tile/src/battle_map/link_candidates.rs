@@ -154,7 +154,7 @@ mod tests {
 
     fn tile(location: &str, w: i32, h: i32, set: usize, targets: Vec<(usize, i32, i32)>, links: Vec<(usize, i32, i32, LinkTest)>) -> Tile {
         Tile {
-            location: location.to_owned(), set: Some(set), width: w, height: h, colour: [0.0; 3], mask: vec![], random_rotatable: true, variations: vec![],
+            location: location.to_owned(), set: Some(set), width: w, height: h, colour: [0.0; 3], mask: vec![], random_rotatable: true, encampable: false, variations: vec![],
             links: links.into_iter().map(|(s, x, y, test)| Link { set: Some(s), x, y, test, is_entry: false }).collect(),
             link_targets: targets.into_iter().map(|(s, x, y)| LinkTarget { set: Some(s), x, y }).collect(), id: 0,
         }
