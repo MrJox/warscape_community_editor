@@ -288,8 +288,10 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      tile, zones of no BCA.
    - Against BOB: an edited `.terry` (two BCAs, a zone pair) through BOB's Terrain processor: `locations.blm` lists the BCAs at the cells
      the model puts them, `deployment_0000.xml` has the zones' boundaries as the model computes them.
-   Left: editing a polyline's points (moving, adding), the Inspector on several entities at once, the other creation modes (circle, spline,
-   river, prop, VFX: campaign maps, Phase 8), `locations.blm`'s rounding of the rectangles (Phase 7).
+   **2026-11-04**: a polyline's points edited (the left-button mode "edit the selected polyline's points": pick and move, Shift+click
+   adds, Ctrl+click removes; `TerryProject::set_polyline`, `terrain_terry points`), the Inspector on several entities (`inspect_many`:
+   the shared attributes, one history step for all); `locations.blm`'s rounding found (Phase 7). Left: the other creation modes
+   (circle, spline, river, prop, VFX: campaign maps, Phase 8).
 6. **BCA generation**: the spec, the generator, its errors file; Thrones' Terry's output as the oracle.
    **Progress 2026-11-04.** Done (docs/re/terry.md, "The BCA generator"):
    - `wce_terrain::bca`: Terry's generator ported from Thrones' TWeak DLL: the spec, the BCAs (infield, restrictions, border, names),
@@ -301,7 +303,8 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      last digit of about 290 of 11 000 points. Gate `bca_<map>` (`WCE_BCA_ORACLE`). The campaign battle map in 3.2 s.
    - The Terrain tool: "Generate battle catchment areas" (`terrain_terry generate`): the procedural BCAs replaced, one step on the
      history; on `main_attila_map` 24 895 BCAs with 1 778 zones in place of 24 882.
-   DEVIATIONS: the y of the generated entities is the LF's (Terry's is the terrain's, tiles included); the errors go to the status line,
+   DEVIATIONS (kept): the y of the generated entities is the LF's (Terry's is the terrain's, tiles included: the editor has the tiles'
+   heights only near the camera; no built file reads y: the blm, deployment files and masks use x and z); the errors go to the status line,
    not an errors file (where Terry writes it is not known; it wrote none for the oracle). Left: Attila has no oracle (its shipped
    project was made from other inputs: 97 % of its zones agree), the deployment masks are unchecked against Terry (Thrones' kit has
    none).
@@ -318,8 +321,12 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      (`terrain/battles/<map>/`) and as `terrain_<map>.pack`. "Launch in game" (`terrain_launch [<id>] [--dry-run]`): the export (made
      again when the map changed) in the launch pack, a battle at the selected BCA (else the first) through the Tile tool's launch.
      Dry run checked on `main_attila_map` (315 MB pack, Thermopylae at 0.438976, 0.536534).
-   DEVIATIONS: the LF normal chunks are not made (an edited map keeps the game's; a map the game lacks has none); the launch's battle is
-   one unit a side, summer, day, dry. Left: a real launch (not run here: it takes the screen; the user's to try), the normal chunks.
+   The LF normal chunks (`wce_terrain_io::attila::normals`, 2026-11-04): the game's are DXT5 windows of the kit's `normal.dds`, which is
+   no function of the LF alone (correlation 0.2 to 0.3: the tiles' relief, most likely); an edited LF gets the chunks its edit reaches,
+   `normal.dds` where the LF is unchanged and the LF's own normals over the edited samples (ASSUMPTION: their scale, the editor's);
+   `normals_check`. An unedited LF: none (the game's stay).
+   DEVIATIONS: a map the game lacks gets no chunks unless its LF is edited; the launch's battle is one unit a side, summer, day, dry.
+   Left: a real launch (not run here: it takes the screen; the user's to try).
 8. **Campaign maps** (in scope, after the battle maps): `terrain/campaigns/<map>`: props, VFX, environment volumes, season masks, the layout map;
    the 375 MB LF paged from disk.
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
