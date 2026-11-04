@@ -1080,6 +1080,11 @@ impl TerrainTool {
             return Err("the game launched before is still running".to_owned());
         }
 
+        let name = e.docs.find_as::<MapDocument>(self.shown).ok_or("no map shown")?.name.clone();
+        if map_kind(&name).0 == MapKind::Campaign {
+            return Err("Launch in game starts a battle: a campaign map's export is a mod pack to load in the launcher".to_owned());
+        }
+
         let spot = crate::launch::spot(e, self.shown, id)?;
         let d = e.docs.find_as::<MapDocument>(self.shown).ok_or("no map shown")?;
         let fresh = self.exported.as_ref().is_some_and(|x| x.map == d.name && x.revision == wce_editor_core::document::Document::history(d).version());
