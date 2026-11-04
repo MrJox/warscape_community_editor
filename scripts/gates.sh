@@ -101,8 +101,14 @@ if [ -n "$BOBKIT" ] && [ -d "$BOBKIT/working_data/terrain/battles" ]; then
         [ -f "$BOBKIT/working_data/terrain/battles/$m/tile_map.index" ] && run "tilemap_$m" ex wce_tile tile_map_check "$BOBKIT/raw_data/terrain" "$m" "$BOBKIT/working_data/terrain/battles/$m"
     done
 fi
+# Terry's BCA generator (wce_terrain::bca) against a .terry Thrones' Terry generated (docs/re/terry.md, "The BCA generator"): WCE_BCA_ORACLE a
+# folder with <map>_generated.terry and tile_map/ (the tile map Terry read: the game packs' tile_map.index and .tiles), WCE_BCA_KIT its kit,
+# WCE_BCA_MAP the map (skipped without them)
+if [ -n "${WCE_BCA_ORACLE:-}" ] && [ -n "${WCE_BCA_KIT:-}" ] && [ -n "${WCE_BCA_MAP:-}" ]; then
+    run "bca_$WCE_BCA_MAP" env BCA_TILEMAP="$WCE_BCA_ORACLE/tile_map" bash -c "$(declare -f ex); ROOT='$ROOT'; ex wce_terrain bca_check '$WCE_BCA_KIT/raw_data/terrain' '$WCE_BCA_MAP' '$WCE_BCA_KIT/editor_working_data/Terry/bca_generation_spec.xml' '$WCE_BCA_ORACLE/${WCE_BCA_MAP}_generated.terry'"
+fi
 if [ "$CORPUS" = 1 ]; then
-    run roundtrip     ex wce_formats roundtrip "$MANIFEST" "$GAME"
+    run roundtrip    ex wce_formats roundtrip "$MANIFEST" "$GAME"
     run map_roundtrip_all ex wce_terrain_io map_roundtrip_check "$MAPRAW"   # every battle and campaign map folder of the kit (about 25 s)
     run scene_check   ex wce_tile scene_check "$GAME"   # every tile.ted of both kits
     run tile_roundtrip_all ex wce_tile_io tile_roundtrip_check "$GAME"   # every TEd project of the kit(s) through the model and back (about 2 min)

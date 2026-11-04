@@ -90,6 +90,16 @@ pub fn fill_kit_map(db: &TileDatabase, map: &Path) -> Result<(TileList, Vec<Stri
     Ok((tile_list(db, &fill), fill.messages))
 }
 
+/// A kit battle map's tile instances as BOB's fill leaves them (the battle field, in its order), and the map's size in cells.
+///
+/// # Errors
+///
+/// The map's tile map can't be read.
+pub fn kit_battle_field(db: &TileDatabase, map: &Path) -> Result<(u32, u32, Vec<fill::Placement>), String> {
+    let fill = fill(db, map)?;
+    Ok((fill.w, fill.h, fill.battle_field()))
+}
+
 /// A map's images (a kit map as the Terrain tool holds it) filled with the tiles of `db`: its placements, with `lf` (its LF, which
 /// `images.lf` holds as 0 .. 1) and BOB's messages.
 pub fn place_images(db: &TileDatabase, name: &str, images: &MapImages, lf: Option<context::LfField>) -> (context::PlacedMap, Vec<String>) {
