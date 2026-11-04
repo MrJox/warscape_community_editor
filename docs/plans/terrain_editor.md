@@ -374,3 +374,5 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    (a later item of Phase 9 or its own step).
 6. **Thrones references**: the user sends screenshots and runs when a phase needs them; ask then, with the list of what is needed.
 7. **BCA generation**: in the first version (Phase 6 is part of the battle map release, not optional).
+8. **After Phase 8** (2026-11-04): a campaign launch stays a nice-to-have (not now); the LF paged from disk comes last, once the rest of
+   the plan is done.
