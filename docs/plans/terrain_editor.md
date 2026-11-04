@@ -335,10 +335,22 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    - The whole campaign build (docs/re/terry.md, "Campaign maps"): the markers with the kit's transform, the environment collection, the
      LF DDSs and CHMF, the fill with shared geometry and `also_place_tile_set`, the campaign blm and masks. `build_check
      campaigns/main_attila_map` (gate `build_campaign_<map>`): 13 of 13 of BOB's files byte for byte, 21 s.
-   - Export of a campaign map: under `terrain/campaigns/<map>/` and as `terrain_<map>.pack` (not run in the app yet); Launch in game
-     refuses it (it starts a battle).
-   Left: the render modes of shared geometry (0x100 /
-   0x600 / 0x300: every placement is drawn whole), season masks and the layout map, making and editing campaign entities, the LF paged.
+   - Export of a campaign map: under `terrain/campaigns/<map>/` and as `terrain_<map>.pack` (run in the app: 15 files, 287 MB, 31 s);
+     Launch in game refuses it (it starts a battle).
+   - Campaign entities: new prop (model, scale), VFX (effect) and environment volume (lighting, radii) at a click, with the kit's
+     components (`terrain_terry prop | vfx | ev`); editing through the Inspector and the gizmo as before. ASSUMPTION: a new prop's y from
+     the LF by the kit's props' least-squares line (theirs follow the tiles' geometry).
+   - Seasons: Terry's season filter (entities whose `ECSeasonMask` leaves the season out hidden). The season-mask and layout layers are
+     painted in the Map panel as the other cell layers; the game ships neither (`masks.xml` and the `season_mask_*.png` are the kit's
+     own). The snow masks: the map folder's `snow_mask/*.tga` built into the game's `snow_mask_*.dds` (L8).
+   - The layout guide: `layout_map.png`'s legend colours (`layout_map_legend.xml`) outlined on the ground near the camera
+     (`terrain_layout`). DEVIATION: outlines, not Terry's guide models.
+   - Render modes: the geometry-only placements (0x100) are left out of the view; the textured tiles over them draw with their own mesh
+     (ASSUMPTION: the bits' meaning, from how BOB sets them).
+   - Memory: the LF shared between the placed map and the fill (`LfField` over an `Arc`): opening the campaign map 4.25 -> 3.34 GB
+     private.
+   Left: the LF paged from disk (still three copies of the campaign's 375 MB: the model's pages, the placed map's rows, the scene's
+   samples), the game's own use of the render modes (shared meshes under textured tiles), a campaign launch.
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
    games when their profiles come (their Terry is another tool: out of this seam's first pass).
 
