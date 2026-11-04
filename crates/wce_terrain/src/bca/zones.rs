@@ -157,85 +157,219 @@ pub fn battle_inset(unit: f32) -> i32 {
     (1024.0 * 64.0 / (unit * 128.0 * 8.0) + 1.0) as i32
 }
 
-/// A region of the 8 x 8 cells around a centre, at `UNITS` a cell: (x, y) from -512.
+/// A region of the 8 x 8 cells around a centre, at `UNITS` a cell: (x, y) from -512; a bit a unit, row by row.
 struct Region {
-    bits: Vec<bool>,
+    bits: Vec<u64>,
+
+    /// The rows filled (y0, y1 exclusive, from 0).
+    rows: (i32, i32),
 }
 
 const SIDE: i32 = 8 * UNITS;
+const WORDS: usize = (SIDE / 64) as usize;
+
+/// A band of the y-x banded form: rows y0 ..= y1, its spans (x0, x1 inclusive), from -512.
+type Band = (i32, i32, Vec<(i32, i32)>);
 
 impl Region {
     fn new() -> Self {
-        Self { bits: vec![false; (SIDE * SIDE) as usize] }
+        Self { bits: vec![0; WORDS * SIDE as usize], rows: (SIDE, 0) }
     }
 
     fn fill(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, clip: (i32, i32)) {
         let (lo, hi) = (clip.0 + SIDE / 2, clip.1 + SIDE / 2);
         let (x0, x1) = ((x0 + SIDE / 2).max(lo), (x1 + SIDE / 2).min(hi + 1));
         let (y0, y1) = ((y0 + SIDE / 2).max(lo), (y1 + SIDE / 2).min(hi + 1));
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+
+        self.rows = (self.rows.0.min(y0), self.rows.1.max(y1));
         for y in y0..y1 {
-            for x in x0..x1 {
-                self.bits[(y * SIDE + x) as usize] = true;
+            let row = &mut self.bits[y as usize * WORDS..(y as usize + 1) * WORDS];
+            let mut x = x0;
+            while x < x1 {
+                let (w, b) = ((x / 64) as usize, x % 64);
+                let n = (64 - b).min(x1 - x);
+                let m = if n == 64 { u64::MAX } else { ((1u64 << n) - 1) << b };
+                row[w] |= m;
+                x += n;
             }
         }
     }
 
-    /// Its rectangles in Qt's y-x banded form: rows of maximal spans, rows with the same spans merged (x0, y0, x1, y1 inclusive).
-    fn rects(&self) -> Vec<(i32, i32, i32, i32)> {
-        let spans = |y: i32| {
-            let mut out = vec![];
-            let mut x = 0;
-            while x < SIDE {
-                if self.bits[(y * SIDE + x) as usize] {
-                    let s = x;
-                    while x < SIDE && self.bits[(y * SIDE + x) as usize] {
-                        x += 1;
-                    }
+    #[cfg(test)]
+    fn clear(&mut self, x: i32, y: i32) {
+        let (x, y) = (x + SIDE / 2, y + SIDE / 2);
+        self.bits[y as usize * WORDS + (x / 64) as usize] &= !(1u64 << (x % 64));
+    }
 
-                    out.push((s, x - 1));
-                } else {
-                    x += 1;
-                }
-            }
-
-            out
-        };
-
+    /// A row's maximal spans (from 0, inclusive).
+    fn spans(&self, y: i32) -> Vec<(i32, i32)> {
+        let row = &self.bits[y as usize * WORDS..(y as usize + 1) * WORDS];
         let mut out = vec![];
-        let mut y = 0;
-        while y < SIDE {
-            let s = spans(y);
-            let mut y1 = y;
-            while y1 + 1 < SIDE && spans(y1 + 1) == s {
-                y1 += 1;
+        let mut x = 0;
+        while x < SIDE {
+            let (w, b) = ((x / 64) as usize, x % 64);
+            let v = row[w] >> b;
+            if v == 0 {
+                x = (w as i32 + 1) * 64;
+                continue;
             }
 
-            let o = SIDE / 2;
-            out.extend(s.iter().map(|&(a, b)| (a - o, y - o, b - o, y1 - o)));
-            y = y1 + 1;
+            let tz = v.trailing_zeros() as i32;
+            if tz > 0 {
+                x += tz;
+                continue;
+            }
+
+            let ones = (!v).trailing_zeros() as i32;
+            let run = ones.min(64 - b);
+            match out.last_mut() {
+                Some((_, e)) if *e == x - 1 => *e = x + run - 1,
+                _ => out.push((x, x + run - 1)),
+            }
+
+            x += run;
         }
 
         out
     }
-}
 
-/// Directed unit edges by start point, each start's ends in insertion order (std::multimap).
-type Edges = BTreeMap<(i32, i32), Vec<(i32, i32)>>;
+    /// Its y-x banded form (Qt's QRegion): rows of maximal spans, rows with the same spans merged.
+    fn bands(&self) -> Vec<Band> {
+        let o = SIDE / 2;
+        let mut out: Vec<Band> = vec![];
+        let mut last: Option<(i32, Vec<(i32, i32)>)> = None;
+        for y in self.rows.0..self.rows.1 {
+            let s = self.spans(y);
+            match out.last_mut() {
+                Some(b) if !s.is_empty() && last.as_ref().is_some_and(|(ly, ls)| *ly == y - 1 && *ls == s) => b.1 = y - o,
+                _ if !s.is_empty() => out.push((y - o, y - o, s.iter().map(|&(a, b)| (a - o, b - o)).collect())),
+                _ => {}
+            }
 
-/// Adds an edge, or cancels its reverse (fn 0x1005c450).
-fn add_edge(m: &mut Edges, a: (i32, i32), b: (i32, i32)) {
-    if let Some(v) = m.get_mut(&b)
-        && let Some(i) = v.iter().position(|&e| e == a)
-    {
-        v.remove(i);
-        if v.is_empty() {
-            m.remove(&b);
+            last = Some((y, s));
         }
 
-        return;
+        out
     }
 
-    m.entry(a).or_default().push(b);
+    /// Its rectangles (x0, y0, x1, y1 inclusive), band by band, left to right.
+    #[cfg(test)]
+    fn rects(&self) -> Vec<(i32, i32, i32, i32)> {
+        self.bands().iter().flat_map(|(y0, y1, s)| s.iter().map(|&(a, b)| (a, *y0, b, *y1)).collect::<Vec<_>>()).collect()
+    }
+}
+
+/// Directed unit edges by start point, each start's ends in the order Terry inserts them (std::multimap).
+type Edges = BTreeMap<(i32, i32), Vec<(i32, i32)>>;
+
+/// The parts of the spans `a` no span of `b` covers (both sorted, inclusive).
+fn uncovered(a: &[(i32, i32)], b: &[(i32, i32)]) -> Vec<(i32, i32)> {
+    let mut out = vec![];
+    for &(s, e) in a {
+        let mut x = s;
+        for &(bs, be) in b {
+            if be < x || bs > e {
+                continue;
+            }
+
+            if bs > x {
+                out.push((x, bs - 1));
+            }
+
+            x = x.max(be + 1);
+        }
+
+        if x <= e {
+            out.push((x, e));
+        }
+    }
+
+    out
+}
+
+/// The region's boundary as fn 0x1005c990 leaves it: every rectangle's sides as directed unit edges (its top left to right, bottom right
+/// to left, then its right side down and left side up, x by x and y by y), an edge meeting its reverse cancelling both (fn 0x1005c450).
+/// Built from the bands directly: sides never cancel, a band's top only against the band just above's bottom.
+fn edges(region: &Region) -> Edges {
+    let bands = region.bands();
+    let mut timed: BTreeMap<(i32, i32), Vec<((usize, i64), (i32, i32))>> = BTreeMap::new();
+    let mut put = |a: (i32, i32), b: (i32, i32), t: (usize, i64)| timed.entry(a).or_default().push((t, b));
+    let mut rect = 0usize;
+    let mut first: Vec<usize> = vec![];
+    for (y0, y1, s) in &bands {
+        first.push(rect);
+        for &(x0, x1) in s {
+            let w = i64::from(x1 - x0 + 1);
+            for y in *y0..=*y1 {
+                let j = i64::from(y - y0);
+                put((x1 + 1, y), (x1 + 1, y + 1), (rect, 2 * w + 2 * j));
+                put((x0, y + 1), (x0, y), (rect, 2 * w + 2 * j + 1));
+            }
+
+            rect += 1;
+        }
+    }
+
+    for (k, (y0, y1, s)) in bands.iter().enumerate() {
+        let above = (k > 0 && bands[k - 1].1 + 1 == *y0).then(|| bands[k - 1].2.as_slice()).unwrap_or(&[]);
+        let below = (k + 1 < bands.len() && bands[k + 1].0 == y1 + 1).then(|| bands[k + 1].2.as_slice()).unwrap_or(&[]);
+        let index = |x: i32| first[k] + s.iter().position(|&(a, b)| a <= x && x <= b).unwrap_or(0);
+        for (a, b) in uncovered(s, above) {
+            for x in a..=b {
+                let r = index(x);
+                put((x, *y0), (x + 1, *y0), (r, 2 * i64::from(x - s[r - first[k]].0)));
+            }
+        }
+
+        for (a, b) in uncovered(s, below) {
+            for x in a..=b {
+                let r = index(x);
+                put((x + 1, y1 + 1), (x, y1 + 1), (r, 2 * i64::from(x - s[r - first[k]].0) + 1));
+            }
+        }
+    }
+
+    timed.into_iter().map(|(k, mut v)| {
+        v.sort_by_key(|e| e.0);
+        (k, v.into_iter().map(|e| e.1).collect())
+    }).collect()
+}
+
+/// fn 0x1005c990 as it is: each edge added, its reverse cancelled (the reference for `edges`).
+#[cfg(test)]
+fn edges_by_insertion(region: &Region) -> Edges {
+    let mut m = Edges::new();
+    let mut add = |a: (i32, i32), b: (i32, i32)| {
+        if let Some(v) = m.get_mut(&b)
+            && let Some(i) = v.iter().position(|&e| e == a)
+        {
+            v.remove(i);
+            if v.is_empty() {
+                m.remove(&b);
+            }
+
+            return;
+        }
+
+        m.entry(a).or_default().push(b);
+    };
+
+    for (x0, y0, x1, y1) in region.rects() {
+        for x in x0..=x1 {
+            add((x, y0), (x + 1, y0));
+            add((x + 1, y1 + 1), (x, y1 + 1));
+        }
+
+        for y in y0..=y1 {
+            add((x1 + 1, y), (x1 + 1, y + 1));
+            add((x0, y + 1), (x0, y));
+        }
+    }
+
+    m
 }
 
 fn remove_edge(m: &mut Edges, a: (i32, i32), b: (i32, i32)) {
@@ -262,18 +396,7 @@ fn build(arena: &[Node], i: usize) -> Polygon {
 
 /// The Zonifier (fn 0x1005da20): a region's polygons with their holes, in units.
 fn zonify(region: &Region) -> Vec<Polygon> {
-    let mut edges = Edges::new();
-    for (x0, y0, x1, y1) in region.rects() {
-        for x in x0..=x1 {
-            add_edge(&mut edges, (x, y0), (x + 1, y0));
-            add_edge(&mut edges, (x + 1, y1 + 1), (x, y1 + 1));
-        }
-
-        for y in y0..=y1 {
-            add_edge(&mut edges, (x1 + 1, y), (x1 + 1, y + 1));
-            add_edge(&mut edges, (x0, y + 1), (x0, y));
-        }
-    }
+    let mut edges = edges(region);
 
     // Trace: arena of polygons (points, children), the top-level list.
     let mut arena: Vec<Node> = vec![];
@@ -306,7 +429,8 @@ fn zonify(region: &Region) -> Vec<Polygon> {
         arena.push((pts, vec![]));
     }
 
-    let total = |arena: &[Node], i: usize| build(arena, i).area();
+    // Each polygon's area with its holes' (fn 0x1005c1a0's sum: its own, then its holes' as they come).
+    let mut areas: Vec<f32> = (0..arena.len()).map(|i| build(&arena, i).area()).collect();
 
     // Holes: from each polygon's rightmost vertex step right to a polygon of the other sign.
     let mut list: Vec<usize> = (0..arena.len()).collect();
@@ -327,7 +451,7 @@ fn zonify(region: &Region) -> Vec<Polygon> {
         while x <= max_x {
             if let Some(&q) = seen.get(&(x as i32, vy))
                 && q != p
-                && (total(&arena, q) < 0.0) != (total(&arena, p) < 0.0)
+                && (areas[q] < 0.0) != (areas[p] < 0.0)
             {
                 outer = Some(q);
                 break;
@@ -339,6 +463,7 @@ fn zonify(region: &Region) -> Vec<Polygon> {
         match outer {
             Some(q) => {
                 arena[q].1.push(p);
+                areas[q] += areas[p];
                 list.remove(k);
             }
             None => k += 1,
@@ -422,6 +547,8 @@ pub fn zones(
     }
 
     let clip_to = (-SIDE / 2 + inset, SIDE / 2 - 1 - inset);
+    let mut memo = HashMap::new();
+    let mut restricted = |p: &Placement| *memo.entry((p.tile, p.variation)).or_insert_with(|| in_list(db, &dep.restriction, p));
     let mut region = Region::new();
     for &i in &gathered {
         let p = &instances[i];
@@ -446,7 +573,7 @@ pub fn zones(
             }
         }
 
-        if in_list(db, &dep.restriction, p) {
+        if restricted(p) {
             continue;
         }
 
@@ -518,7 +645,7 @@ mod tests {
         let mut r = region(&[(0, 0, 30, 30)]);
         for y in 10..20 {
             for x in 10..20 {
-                r.bits[((y + SIDE / 2) * SIDE + x + SIDE / 2) as usize] = false;
+                r.clear(x, y);
             }
         }
 
@@ -534,6 +661,30 @@ mod tests {
         let mut p = Polygon { points: vec![(0.0, 0.0), (5.0, 0.01), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)], children: vec![] };
         p.simplify(0.05);
         assert_eq!(p.points, vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
+    }
+
+    /// The edges built from the bands are fn 0x1005c990's, insertion order at pinch points included, on random regions.
+    #[test]
+    fn edges_from_bands_are_the_inserted_ones() {
+        let mut seed = 12345u64;
+        let mut rnd = |n: i32| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((seed >> 33) % n as u64) as i32
+        };
+
+        for _ in 0..300 {
+            let mut r = Region::new();
+            for _ in 0..1 + rnd(12) {
+                let (x, y) = (rnd(40) - 20, rnd(40) - 20);
+                r.fill(x, y, x + 1 + rnd(12), y + 1 + rnd(12), (-SIDE / 2, SIDE / 2 - 1));
+            }
+
+            for _ in 0..rnd(30) {
+                r.clear(rnd(40) - 20, rnd(40) - 20);
+            }
+
+            assert_eq!(edges(&r), edges_by_insertion(&r));
+        }
     }
 
     #[test]
