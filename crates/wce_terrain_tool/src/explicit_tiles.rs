@@ -130,6 +130,12 @@ impl ExplicitPanel {
             return;
         };
 
+        if m.built {
+            gui::text_wrapped("A map of a game without kit maps (Rome 2) is edited in its built form: its tiles in the Placements section, its LF with the LF brush.");
+            self.placing = false;
+            return;
+        }
+
         // The list, a row each: select, turn, remove.
         let tiles: Vec<ExplicitTile> = m.explicit.as_ref().map(|x| x.get().tiles().cloned().collect()).unwrap_or_default();
         if tiles.is_empty() {

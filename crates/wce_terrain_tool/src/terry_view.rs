@@ -311,7 +311,11 @@ impl TerryView {
 
         let Some(d) = e.docs.find_as::<MapDocument>(doc) else { return };
         let Some(p) = d.project() else {
-            gui::text_disabled("Open a kit map with a .terry project to edit its entities.");
+            gui::text_disabled(if d.model().is_some_and(|m| m.built) {
+                "This map has no battle locations (Rome 2's campaign battle maps, main_*, have them)."
+            } else {
+                "Open a kit map with a .terry project to edit its entities."
+            });
             self.mode = Mode::Select;
             return;
         };
