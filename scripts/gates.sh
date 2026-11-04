@@ -105,6 +105,12 @@ if [ -n "$BOBKIT" ] && [ -d "$BOBKIT/working_data/terrain/battles" ]; then
         [ -f "$BOBKIT/working_data/terrain/battles/$m/tile_map.index" ] && run "build_$m" ex wce_terrain_io build_check "$BOBKIT/raw_data" "$m" "$BOBKIT/working_data/terrain/battles/$m"
     done
 fi
+# The same of the kit's campaign maps BOB built (Terry file on terrain/campaigns/<map>: the markers, environment, LF and the fill)
+if [ -n "$BOBKIT" ] && [ -d "$BOBKIT/working_data/terrain/campaigns" ]; then
+    for m in $(ls "$BOBKIT/working_data/terrain/campaigns"); do
+        [ -f "$BOBKIT/working_data/terrain/campaigns/$m/tile_map.index" ] && run "build_campaign_$m" ex wce_terrain_io build_check "$BOBKIT/raw_data" "campaigns/$m" "$BOBKIT/working_data/terrain/campaigns/$m"
+    done
+fi
 # Terry's BCA generator (wce_terrain::bca) against a .terry Thrones' Terry generated (docs/re/terry.md, "The BCA generator"): WCE_BCA_ORACLE a
 # folder with <map>_generated.terry and tile_map/ (the tile map Terry read: the game packs' tile_map.index and .tiles), WCE_BCA_KIT its kit,
 # WCE_BCA_MAP the map (skipped without them)

@@ -73,7 +73,7 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
     let lf: Option<(Vec<u16>, u32, u32)> = land.map(|f| (f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect(), f.width(), f.height()));
     let images = MapImages {
         width: w, height: h, tile_map: &tile_rgb, climate_map: climate.as_deref(), explicit_tiles: explicit.as_deref(), lf: None,
-        lf_u16: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)),
+        lf_u16: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)), campaign: m.kind == wce_terrain::MapKind::Campaign,
     };
 
     let (tile_map, tile_list, messages) = wce_tile::battle_map::build_images(inputs.db, &images);

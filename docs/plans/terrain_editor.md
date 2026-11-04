@@ -329,6 +329,14 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    Left: a real launch (not run here: it takes the screen; the user's to try).
 8. **Campaign maps** (in scope, after the battle maps): `terrain/campaigns/<map>`: props, VFX, environment volumes, season masks, the layout map;
    the 375 MB LF paged from disk.
+   **Progress 2026-11-04.** Done:
+   - The Terrain tool opens the kit's campaign maps (`campaigns/<map>`): the campaign tile database, the LF at its scale, the `.terry`'s
+     frame (0.32 a cell from the bottom-left corner, z north), the props, VFX and environment volumes as overlays.
+   - The whole campaign build (docs/re/terry.md, "Campaign maps"): the markers with the kit's transform, the environment collection, the
+     LF DDSs and CHMF, the fill with shared geometry and `also_place_tile_set`, the campaign blm and masks. `build_check
+     campaigns/main_attila_map` (gate `build_campaign_<map>`): 13 of 13 of BOB's files byte for byte, 21 s.
+   Left: export and save of a campaign map (the export's folder is `terrain/battles/<map>`), the render modes of shared geometry (0x100 /
+   0x600 / 0x300: every placement is drawn whole), season masks and the layout map, making and editing campaign entities, the LF paged.
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
    games when their profiles come (their Terry is another tool: out of this seam's first pass).
 

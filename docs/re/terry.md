@@ -220,8 +220,38 @@ image base 0x10000000).
 - The editor: `wce_terrain::lf_patch`, the Terrain tool's "Apply per-tile LF patches" (`terrain_lf_patches`). ASSUMPTION: the mask and
   the LF are read as 0 .. 1 of 65535, so the value written is the mask's raw sample (the masks hold only 0 and 65535).
 
+## Campaign maps (Ghidra, 2026-11-04)
+
+BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scratch kit), every one of its 13 files made byte for byte by
+`wce_terrain_io::attila::build` (`build_check campaigns/main_attila_map`, gate `build_campaign_<map>`):
+
+- **`prop_marker.markers`** (`PROP_MARKER` v9, class 645566, repository 645563): BOB_Terrain's fn 0x10037b00 per `ECPropMesh`, in
+  entity order. The model path (after `working_data/` when it has one) is the group; the matrix is the kit's `ECTransform::world_transform`
+  (QtToolUtility; below); the flags are the four visibility getters, the season mask, and 0x10, the fauna bit, when the path holds
+  `/fauna/` (case-sensitive: `unknown_74` in our layout, 1694 records). Groups in the engine's marker table order.
+- **The transform** (QtToolUtility, all f32 SSE): `on_rotation_changed` (rva 0x190e0) takes the Euler degrees, `d * f32(pi) * f32(1 /
+  180) * 0.5` each, `CA::ca_sincos` (x87 `fsin` / `fcos`, rounded to f32), then the quaternion `x = (cz cy) sx - (sz sy) cx`, `y = (sz cy)
+  sx + (cz sy) cx`, `z = (sz cy) cx - (cz sy) sx`, `w = (sz sy) sx + (cz cy) cx` (products left to right). `update_transform` (rva
+  0x1b0a0): `x2 = 2x` ..., the rotation `[[1 - yy - zz, xy - wz, xz + wy], [xy + wz, 1 - xx - zz, yz - wx], [xz - wy, yz + wx, 1 - xx -
+  yy]]` (`xx = x2 * x`, `xy = y * x2`, `wz = w2 * z` ...; `1 - a - b` left to right), times the scale on each column, the translation in the
+  last column; full 4 x 4 products, so a zero entry comes out +0. A marker's row `i` is the transform's column `i`.
+- **`particle_emitter_marker.markers`** (`PARTICLE_EMITTER_MARKER` v9, class 618864): per `ECVFX` the same matrix, `autoplay`, the
+  visibility flags, `scale` and the seasons.
+- **`environment_collection.xml`**: the `ECEnvironmentVolume`s, outer radius 0 the global lighting, the others spheres (`%f`); CRLF lines.
+- **The LF**: `lf_height_map.dds` the 16256 x 11528 LF's 2 x 2 box average, `lf_height_map_lq.dds` its 4 x 4 one: each output sample
+  the block's samples as `a * f32(1 / 65535)` summed row by row from 0 in f32, divided by the block's size, times 65535, truncated (not a
+  chain of halvings: that is ±1 off). `lf_height_map.data`: CHMF v5 of a sample a cell, the LF point-sampled at each cell's corner (every
+  8th sample; converted as the DDS's), 16 x 16 samples a region, the last row of regions past the map holding the LF's edge samples; the
+  header's two counts 1 and 8 (the samples a cell and the LF's samples a cell, ASSUMPTION), which a decoder reading them as samples a
+  cell takes for 16 x 128.
+- **The fill**: as a battle map's (docs/re/battle_maps.md) with the campaign database's shared geometry and `also_place_tile_set`; the
+  battle field has the campaign's header (`is_campaign` 1, LF position 0, 0, origin offset 0, -height).
+- `locations.blm` is 28 bytes (`BLMF`, 8, 0, width, height, 0, 0) and both masks empty.
+
 ## Open
 
+- The campaign render modes: a geometry-layer tile (0x100) under a texture-only one (0x600), and the sea added under a coast (0x300).
+  The editor draws every placement whole (the game files' campaign view did already).
 - Where the game's 736 normal chunks come from (and an encoder for them).
 - The falloff models' formulas (`Radius Sin`, `Radius Sin Sin`) and `OpSimpleChannel0`'s properties.
 - The BCA generator: the deployment masks (none in Thrones' kit: their file name is a runtime string, `deployment_mask.png` assumed), the
