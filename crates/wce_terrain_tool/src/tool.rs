@@ -206,6 +206,7 @@ pub struct TerrainTool {
 
     /// The `.terry` scene drawn and its creation modes.
     terry: crate::terry_view::TerryView,
+    layout: crate::layout_view::LayoutView,
 
     /// The last checks of the shown map.
     findings: Vec<crate::validate::Finding>,
@@ -255,7 +256,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None, campaign_db: None, export: None, exported: None, launch_after_export: None, launched: None,
         }
     }
@@ -641,6 +642,7 @@ impl TerrainTool {
         self.explicit.draw_section(e, self.shown);
         let terry_was = self.terry.claims_left_button();
         self.terry.draw_section(e, self.shown);
+        self.layout.draw_controls(e, self.shown);
         self.draw_validation(e);
         self.draw_export(e);
 
@@ -1446,7 +1448,8 @@ impl Tool for TerrainTool {
         }
 
         let frame = self.view.frame().filter(|_| self.shown != 0);
-        self.terry.update(e, self.shown, frame);
+        self.terry.update(e, self.shown, frame.clone());
+        self.layout.update(e, self.shown, frame);
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
@@ -1767,6 +1770,24 @@ impl Tool for TerrainTool {
 
                     _ => CommandResult::fail(usage),
                 }
+            })
+        });
+
+        c.add("terrain_layout", "terrain_layout [on|off] [radius cells]", "the Terrain tool: the campaign layout guide (layout_map.png's legend colours outlined near the camera): set, then how many cells it drew", |e, a| {
+            with_terrain(e, |t, _| {
+                for v in a {
+                    match v.as_str() {
+                        "on" => t.layout.on = true,
+                        "off" => t.layout.on = false,
+                        n => {
+                            if let Ok(r) = n.parse() {
+                                t.layout.radius_cells = r;
+                            }
+                        }
+                    }
+                }
+
+                CommandResult::success(format!("layout guide {}: {} cells within {} cells (as of the last frame)", if t.layout.on { "on" } else { "off" }, t.layout.cells_drawn, t.layout.radius_cells))
             })
         });
 
