@@ -1,7 +1,8 @@
 //! Export (docs/plans/terrain_editor.md, Phase 7): a kit map's built files (`wce_terrain_io::attila::build`: what BOB_Terrain's
 //! `Tilemap` and `Heights & Normals` write, and `tile_map.png`) made from the map as it is in the editor, on a worker, written two ways:
 //!
-//! - loose, under the output folder as the packs hold them: `<output>/terrain/battles/<map>/...` (the deployment files in `deployment/`);
+//! - loose, under the output folder as the packs hold them: `<output>/terrain/battles/<map>/...` (the deployment files in `deployment/`), a
+//!   campaign map's under `terrain/campaigns/<map>/`;
 //! - a mod pack `<output>/terrain_<map>.pack` with the same paths.
 //!
 //! The game's LF normal chunks are not made: a map of the game's packs keeps its own, a map the game doesn't have has none.
@@ -52,14 +53,24 @@ fn kit_file(roots: &[PathBuf], rel: &str) -> Vec<u8> {
     roots.iter().find_map(|r| std::fs::read(r.join(rel)).ok()).unwrap_or_default()
 }
 
-/// The pack's paths: the map's files under `terrain/battles/<map>/`.
+/// A map's folder in the packs (`terrain/battles/<map>`, a campaign map's `terrain/campaigns/<map>`) and its bare name.
+pub fn game_folder(map: &str) -> (String, &str) {
+    match crate::tool::map_kind(map) {
+        (wce_terrain::MapKind::Campaign, n) => (format!("terrain/campaigns/{n}"), n),
+        (_, n) => (format!("terrain/battles/{n}"), n),
+    }
+}
+
+/// The pack's paths: the map's files under its folder in the packs.
 pub fn pack_files(map: &str, files: &[(String, Vec<u8>)]) -> Vec<(String, Vec<u8>)> {
-    files.iter().map(|(rel, b)| (format!("terrain/battles/{map}/{rel}"), b.clone())).collect()
+    let (folder, _) = game_folder(map);
+    files.iter().map(|(rel, b)| (format!("{folder}/{rel}"), b.clone())).collect()
 }
 
 /// Writes an export's files loose and as a pack (`profile`: the game's, for the pack format).
 fn write(out: &Path, map: &str, files: &[(String, Vec<u8>)], profile: &wce_vfs::GameProfile) -> Result<(PathBuf, PathBuf), String> {
-    let folder = out.join("terrain").join("battles").join(map);
+    let (game, name) = game_folder(map);
+    let folder = out.join(&game);
     for (rel, bytes) in files {
         let path = folder.join(rel);
         if let Some(p) = path.parent() {
@@ -69,7 +80,7 @@ fn write(out: &Path, map: &str, files: &[(String, Vec<u8>)], profile: &wce_vfs::
         std::fs::write(&path, bytes).map_err(|err| format!("{}: {err}", path.display()))?;
     }
 
-    let pack = out.join(format!("terrain_{map}.pack"));
+    let pack = out.join(format!("terrain_{name}.pack"));
     wce_vfs::mod_pack::write_new(profile, &pack, &pack_files(map, files))?;
     Ok((folder, pack))
 }
