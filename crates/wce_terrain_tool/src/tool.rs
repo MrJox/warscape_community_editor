@@ -185,6 +185,10 @@ struct OpenInputs {
     db: Arc<TileDatabase>,
     files: Option<Arc<dyn Files>>,
     packs: Option<Arc<PacksTree>>,
+
+    /// A game without kit maps (Rome 2): the pack map is edited in its built form, from this folder when it has a saved copy (the
+    /// projects' `working_data/terrain/battles/<map>`), else from the packs.
+    built: Option<PathBuf>,
 }
 
 pub struct TerrainTool {
@@ -277,8 +281,34 @@ pub(crate) fn kit_roots(e: &Editor) -> Vec<PathBuf> {
 
 /// Where a kit map saves: its folder in the projects' kit layout (a map of the packs: nowhere, it is read-only).
 fn save_dir(e: &Editor, d: &MapDocument) -> Option<PathBuf> {
-    d.model()?;
+    let m = d.model()?;
+    if m.built {
+        return Some(built_dir(e, &d.name));
+    }
+
     Some(kit_map_dir(&e.settings_ref().kit_projects_dir().join("raw_data"), &d.name))
+}
+
+/// Where a built map (a pack map of a game without kit maps) is saved: the projects' `working_data/terrain/battles/<map>`.
+pub(crate) fn built_dir(e: &Editor, name: &str) -> PathBuf {
+    let folder = name.strip_suffix(wce_map_view::maps::GAME_FILES).unwrap_or(name);
+    e.settings_ref().kit_projects_dir().join("working_data/terrain/battles").join(folder)
+}
+
+/// A built map's files: its saved copy's, else the packs' folder's.
+fn built_files(i: &OpenInputs, folder: &str) -> Result<wce_terrain_io::MapFiles, String> {
+    if let Some(dir) = i.built.as_ref().filter(|d| d.join("lf_height_map.dds").is_file()) {
+        return wce_terrain_io::MapFiles::from_dir(dir).map_err(|e| e.to_string());
+    }
+
+    let files = i.files.as_ref().ok_or("no game files")?;
+    let prefix = format!("{folder}/");
+    let mut out = vec![];
+    for p in files.list(&prefix, "") {
+        out.push((p[prefix.len()..].to_owned(), files.read(&p)?));
+    }
+
+    Ok(wce_terrain_io::MapFiles::from_bytes(out))
 }
 
 /// The kit with the battle tile database (its `raw_data`).
@@ -322,9 +352,23 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
 
     let (mut placed, locations, source, model, sea, messages) = match packs_folder {
         Some(folder) => {
-            let (placed, locations) = load_map(&i.name, i.game_dir, &i.raw, &db, i.files.as_deref())?;
+            let (mut placed, locations) = load_map(&i.name, i.game_dir, &i.raw, &db, i.files.as_deref())?;
             let sea = i.files.as_ref().and_then(|f| f.read(&format!("{folder}/lf_sea_height_map.dds")).ok()).and_then(|b| l16_dds_heights(&b));
-            (placed, locations, MapSource::Packs(folder), None, sea, vec![])
+            // A game without kit maps: the built files are the model (its LF the one shown: a saved copy's edits).
+            let model = match &i.built {
+                Some(_) => {
+                    let m = wce_terrain_io::built::read(&i.name, &built_files(i, &folder)?).map_err(|e| e.to_string())?;
+                    if let Some(f) = m.lf(LfRole::Land) {
+                        Arc::make_mut(&mut placed).lf = Some(lf_field(f.get()));
+                    }
+
+                    Some(m)
+                }
+
+                None => None,
+            };
+
+            (placed, locations, MapSource::Packs(folder), model, sea, vec![])
         }
 
         // A kit map: its files into the model, the model filled as BOB fills the files (the same fill runs again after an edit).
@@ -423,7 +467,8 @@ impl TerrainTool {
 
             let raw = self.packs.as_ref().ok_or("no game files")?.raw()?;
             let db = self.databases_of(std::slice::from_ref(&raw), map_kind(name).0)?;
-            return Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone() });
+            let built = Some(built_dir(e, name));
+            return Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone(), built });
         }
 
         let roots = kit_roots(e);
@@ -432,7 +477,7 @@ impl TerrainTool {
             .ok_or("no Assembly Kit with a battle tile database in the settings")?;
         // Every kit's tiles (a project's few and the Assembly Kit's): the project's database alone misses the map's tiles.
         let db = self.databases_of(&roots, map_kind(name).0)?;
-        Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone() })
+        Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone(), built: None })
     }
 
     /// Starts reading a map.
