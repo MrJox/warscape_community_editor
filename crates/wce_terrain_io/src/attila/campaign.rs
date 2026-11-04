@@ -9,6 +9,10 @@
 //! - `environment_collection.xml`: the environment volumes (`ECEnvironmentVolume`): one of outer radius 0 the global lighting, the others
 //!   spheres (position, radii; `%f`); CRLF lines.
 //!
+//! - `snow_mask_<season>[n].dds` (not BOB's: the game's are art converted, `snow_mask_wi.dds` of `main_attila_map` agreeing with the kit's
+//!   `snow_mask/snow_mask_wi.tga` on 87 % of its cells, an older version of it): each `snow_mask/snow_mask_*.tga` of the map's folder as
+//!   L8 (the TGA's red, rows top-down), the game's header (`snow_mask_dds`).
+//!
 //! The groups are in the order of the engine's marker table (`wce_tile_io::attila::compile::text_key_group_order`).
 
 use wce_formats::markers::{KeyPart, MarkerGroup, MarkersFile, Value, record_from_fields};
@@ -151,6 +155,77 @@ pub fn particle_markers(p: &TerryProject) -> Result<Vec<u8>, String> {
     Ok(markers("PARTICLE_EMITTER_MARKER", PARTICLE_CLASS, records))
 }
 
+/// The built name of a map folder's snow mask art (`snow_mask/snow_mask_wi.tga` -> `snow_mask_wi.dds`), none for other files.
+pub fn snow_mask_name(path: &str) -> Option<String> {
+    let p = path.replace('\\', "/").to_lowercase();
+    let name = p.strip_prefix("snow_mask/")?.strip_suffix(".tga")?;
+    (name.starts_with("snow_mask_") && !name.contains('/')).then(|| format!("{name}.dds"))
+}
+
+/// A TGA's pixels as RGBA rows top-down (uncompressed or RLE; true colour of 24 / 32 bits or grey of 8).
+///
+/// # Errors
+///
+/// Another kind of TGA, a truncated one.
+pub fn tga_rgba(b: &[u8]) -> Result<(u32, u32, Vec<[u8; 4]>), String> {
+    let h = b.get(..18).ok_or("truncated TGA")?;
+    let (kind, w, ht, bpp, desc) = (h[2], u16::from_le_bytes([h[12], h[13]]), u16::from_le_bytes([h[14], h[15]]), h[16], h[17]);
+    if ![2, 3, 10, 11].contains(&kind) || ![8, 24, 32].contains(&bpp) || h[1] != 0 {
+        return Err(format!("TGA of type {kind}, {bpp} bits: not supported"));
+    }
+
+    let n = usize::from(w) * usize::from(ht);
+    let size = usize::from(bpp / 8);
+    let px = |c: &[u8]| if size == 1 { [c[0], c[0], c[0], 255] } else { [c[2], c[1], c[0], if size == 4 { c[3] } else { 255 }] };
+    let mut at = 18 + usize::from(h[0]);
+    let mut out = Vec::with_capacity(n);
+    if kind < 9 {
+        let data = b.get(at..at + n * size).ok_or("truncated TGA")?;
+        out.extend(data.chunks_exact(size).map(px));
+    } else {
+        while out.len() < n {
+            let head = *b.get(at).ok_or("truncated TGA")?;
+            let count = usize::from(head & 0x7f) + 1;
+            at += 1;
+            if head & 0x80 != 0 {
+                let c = px(b.get(at..at + size).ok_or("truncated TGA")?);
+                out.extend(std::iter::repeat_n(c, count));
+                at += size;
+            } else {
+                let data = b.get(at..at + count * size).ok_or("truncated TGA")?;
+                out.extend(data.chunks_exact(size).map(px));
+                at += count * size;
+            }
+        }
+
+        out.truncate(n);
+    }
+
+    // Bottom-up unless the descriptor's top-left bit.
+    if desc & 0x20 == 0 {
+        let row = usize::from(w);
+        out = out.chunks(row).rev().flatten().copied().collect();
+    }
+
+    Ok((u32::from(w), u32::from(ht), out))
+}
+
+/// A snow mask's DDS from its TGA art: L8 of the red channel, the game's header (linear size, `DDPF_LUMINANCE`, no mips).
+///
+/// # Errors
+///
+/// The TGA can't be read.
+pub fn snow_mask_dds(tga: &[u8]) -> Result<Vec<u8>, String> {
+    let (w, h, px) = tga_rgba(tga)?;
+    let mut v = [0u32; 31];
+    (v[0], v[1], v[2], v[3], v[4]) = (0x7c, 0x8_1007, h, w, w * h);
+    (v[18], v[19], v[21], v[22], v[26]) = (0x20, 0x2_0000, 8, 0xff, 0x1000);
+    let mut out = b"DDS ".to_vec();
+    out.extend(v.iter().flat_map(|x| x.to_le_bytes()));
+    out.extend(px.iter().map(|p| p[0]));
+    Ok(out)
+}
+
 /// `environment_collection.xml`.
 pub fn environment_collection(p: &TerryProject) -> Vec<u8> {
     let f = wce_terrain::deployment::printf_f;
@@ -173,4 +248,40 @@ pub fn environment_collection(p: &TerryProject) -> Vec<u8> {
     }
 
     format!("<ENVIRONMENT_COLLECTION serialise_version='1' global_lighting='{global}'>\n\t<ENVIRONMENT_SPHERES>\n{spheres}\t</ENVIRONMENT_SPHERES>\n</ENVIRONMENT_COLLECTION>\n").replace('\n', "\r\n").into_bytes()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 2 x 2 TGA of `kind` (2 raw, 10 RLE), 24 bits, bottom-up: the rows bottom (red, green) then top (blue, white).
+    fn tga(kind: u8, data: &[u8]) -> Vec<u8> {
+        let mut b = vec![0, 0, kind, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 24, 0];
+        b.extend_from_slice(data);
+        b
+    }
+
+    #[test]
+    fn tga_rows_top_down() {
+        let raw = tga(2, &[0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255]);
+        let (w, h, px) = tga_rgba(&raw).unwrap();
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(px, vec![[0, 0, 255, 255], [255, 255, 255, 255], [255, 0, 0, 255], [0, 255, 0, 255]]);
+
+        // RLE: a run of two reds, then two raw pixels.
+        let rle = tga(10, &[0x81, 0, 0, 255, 0x01, 255, 0, 0, 255, 255, 255]);
+        let (_, _, px) = tga_rgba(&rle).unwrap();
+        assert_eq!(px, vec![[0, 0, 255, 255], [255, 255, 255, 255], [255, 0, 0, 255], [255, 0, 0, 255]]);
+    }
+
+    #[test]
+    fn snow_mask() {
+        let dds = snow_mask_dds(&tga(2, &[0, 0, 200, 0, 0, 100, 0, 0, 50, 0, 0, 25])).unwrap();
+        assert_eq!(dds.len(), 128 + 4);
+        assert_eq!(&dds[128..], &[50, 25, 200, 100]);
+        let u = |o: usize| u32::from_le_bytes(dds[o..o + 4].try_into().unwrap());
+        assert_eq!((u(8), u(12), u(16), u(20), u(80), u(88), u(92), u(108)), (0x8_1007, 2, 2, 4, 0x2_0000, 8, 0xff, 0x1000));
+        assert_eq!(snow_mask_name("snow_mask/snow_mask_wi.tga").as_deref(), Some("snow_mask_wi.dds"));
+        assert_eq!(snow_mask_name("snow_mask_wi.tga"), None);
+    }
 }
