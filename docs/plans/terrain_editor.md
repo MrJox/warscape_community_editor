@@ -372,9 +372,12 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      by `tile_upgrades.xml`'s `road0_to_road<n>` in the view only (`MapDocument::shown_placed`; the files keep the kit's tiles); the
      Terrain panel's "roads at the campaign's start" and `terrain_roads [on|off]`. `roads_check`: main_attila 161 / 54 / 9 regions at
      levels 0 / 1 / 2 (Roma 2, stone, as the game's first turn shows), 2747 road tiles upgraded; the 186 settlements' cells all in
-     their own region. ASSUMPTION: a tile takes the highest level of the road cells under it.
-   Left: a campaign launch (noted, not for now); from the campaign's rendering: a level-0 road's look (its `climate` texture group
-   resolves to the climate's ground texture, so it hardly shows), the settlements' sprawl and walls, Thrones' and Rome 2's
+     their own region. ASSUMPTION: a tile takes the highest level of the road cells under it. A level-0 road hardly shows, as its
+     tiles' blend maps have it (100 % the climate's ground).
+   - The farmland at the campaign's start (2026-11-05; the same module and switch): `dynamic_resources.esf`'s areas whose region has
+     an agriculture building of the area's level (ASSUMPTION: chain level >= area level; 17 of 531 areas on main_attila, 721 tiles)
+     take `tile_upgrades.xml`'s farmland group.
+   Left: a campaign launch (noted, not for now); from the campaign's rendering: the settlements' sprawl and walls, Thrones' and Rome 2's
    startposes, the trees' size and lean, the mountains' look, the seasons' snow masks, the GPU's terrain cost (smaller rings for
    campaign maps).
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later

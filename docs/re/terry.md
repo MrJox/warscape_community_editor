@@ -290,8 +290,21 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
     bends, 21 and 42 junctions; 15 027 cells), byte 6 the river's (10 770 cells); bytes 1 to 4 not read (byte 2 has 13 values, byte 3
     5, byte 4 9: ground or climate kinds, ASSUMPTION). The game keeps 8 bytes a cell at run time, a road edge as `'~'` minus its level
     (`FUN_10b9d440`).
-  The editor draws them so in the view (Terrain panel: "roads at the campaign's start"). ASSUMPTION: a tile takes the highest level of
-  the road cells under it.
+  The editor draws them so in the view (Terrain panel: "roads and farmland at the campaign's start"). ASSUMPTION: a tile takes the
+  highest level of the road cells under it.
+  - A level-0 road hardly shows, as the data has it: `roads_climate`'s tiles have `climate` on all four channels and their
+    `blend_map.tif` is 100 % one layer (channel 1, variation 2: the climate's ground), so only their heights and normals differ from
+    the ground. `roads` paints its strip with `sand_a` (3 % of a 2x2 straight), `roads_stone` with `farm` variation 1 (7 %).
+- **Farmland** (2026-11-05): `campaign_maps/<map>/dynamic_resources.esf` (`CAMPAIGN_DYNAMIC_RESOURCES`, version text `20141114153252`
+  on `main_attila_map`): `REGION_RESOURCE_INFO_BLOCK` groups (u16 0xfe00 + a `REGIONS_BLOCK` index; 182), each with
+  `REGION_RESOURCE_INFO_AREAS_BLOCK` groups (a building superchain, u32 level 1..3, an upgrade group; 531: all `att_sch_agriculture`,
+  317 `farmland_mediterranean`, 214 `farmland_northern`) holding `REGION_RESOURCE_AREAS_BLOCK` u16 arrays of hex cells (col, row; row 0
+  the south edge: their region byte is the block's region). The engine reads them in `FUN_10bfce40` / `FUN_10c009a0` / `FUN_10c013a0`
+  (an area: +4 the superchain, +8 the level, +0x18 the group, +0x14 its cell lists); the comparison with the region's buildings was not
+  found. ASSUMPTION: an area is farmland when the region has a building of the superchain whose chain level (`building_levels.level`:
+  `generic_1` 0, the `_2`s 1) reaches the area's level (main_attila: 17 of 531 areas, 721 tiles; with chain level + 1, 66). Its grass,
+  mud and snow tiles take the group's (`grass_03\1x1` -> `farmland_northern\1x1`, a tile of 100 % `farm` variation 0: striped fields,
+  dark olive like the grass), by the area of the tile's centre cell (ASSUMPTION). The view draws it with the roads.
 - **Forests**: `campaign_maps/<map>/display/trees/trees.campaign_tree_list` (packs only): u32 version 3, f32 bounds (0, 0, 678.5,
   556.14 on the main map: x east, z north over the whole map, not square to its cells), u32 models, per model a u16-length path and a u32
   count of 15-byte trees (f32 x y z, u8 0/1, u8 0..5, u8 15). By the bounds all but 6 of 17 576 sampled trees stand on land

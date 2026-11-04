@@ -23,7 +23,37 @@ fn main() {
     let map_data = vfs.read(&format!("campaign_maps/{map}/map_data.esf")).expect("map_data.esf");
     let startpos = std::fs::read(std::path::Path::new(&a[0]).join(format!("data/campaigns/{campaign}/startpos.esf"))).expect("startpos.esf");
     let upgrades = vfs.read("terrain/tiles/campaign/tile_upgrades.xml").expect("tile_upgrades.xml");
-    let roads = read(&map_data, &startpos, &upgrades, &tables).expect("roads");
+    let dynamic = vfs.read(&format!("campaign_maps/{map}/dynamic_resources.esf")).ok();
+    let roads = read(&map_data, &startpos, &upgrades, &tables, dynamic.as_deref()).expect("roads");
+    println!("farmland: {} areas reached, {} not, {} hex cells", roads.areas_on, roads.areas_off, roads.farms.len());
+
+    // The regions' highest level in each superchain the areas name, and how many areas each rule would reach.
+    let buildings = wce_terrain_io::attila::roads::region_buildings(&startpos).expect("buildings");
+    let areas = dynamic.as_deref().map(|d| wce_terrain_io::attila::roads::dynamic_resources(d).expect("areas")).unwrap_or_default();
+    let mut tiers = std::collections::BTreeMap::<String, usize>::new();
+    let (mut level_rule, mut tier_rule) = (0, 0);
+    for a in &areas {
+        let best = roads.hex.regions.get(a.region).and_then(|r| buildings.get(r)).into_iter().flatten()
+            .filter_map(|b| tables.chain_levels.get(b).filter(|(sc, _)| *sc == a.superchain).map(|(_, l)| (*l, b.clone())))
+            .max();
+        if a.level == 1 {
+            *tiers.entry(best.as_ref().map_or("none".to_owned(), |(l, b)| format!("{l} {b}"))).or_default() += 1;
+        }
+
+        level_rule += usize::from(best.as_ref().is_some_and(|(l, _)| *l >= a.level));
+        tier_rule += usize::from(best.as_ref().is_some_and(|(l, _)| *l + 1 >= a.level));
+    }
+
+    println!("areas reached: chain level >= area level {level_rule}, chain level + 1 >= area level {tier_rule}");
+    let mut shown = std::collections::BTreeSet::new();
+    for a in &areas {
+        let best = roads.hex.regions.get(a.region).and_then(|r| buildings.get(r)).into_iter().flatten()
+            .filter_map(|b| tables.chain_levels.get(b).filter(|(sc, _)| *sc == a.superchain).map(|(_, l)| *l)).max();
+        if best.is_some_and(|l| l >= a.level) && shown.insert(a.region) && shown.len() <= 8 {
+            println!("  farmland: {} level {} {} cells, first {:?}", roads.hex.regions[a.region], a.level, a.cells.len(), a.cells.first());
+        }
+    }
+    println!("regions' best agriculture building (per level-1 area): {tiers:?}");
     println!("hex {} x {}, {} regions; regions a level {:?}; upgrade groups {:?}", roads.hex.w, roads.hex.h, roads.hex.regions.len(), roads.level_counts(),
         roads.upgrades.groups.iter().map(|(k, v)| format!("{k} {}", v.len())).collect::<Vec<_>>());
 

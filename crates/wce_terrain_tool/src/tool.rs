@@ -388,11 +388,13 @@ fn campaign_roads(i: &OpenInputs) -> Option<Arc<wce_terrain_io::attila::roads::C
         let startpos = std::fs::read(i.install.as_ref().ok_or("no game folder")?.join(format!("data/campaigns/{campaign}/startpos.esf"))).map_err(|e| format!("startpos.esf: {e}"))?;
         const UPGRADES: &str = "terrain/tiles/campaign/tile_upgrades.xml";
         let upgrades = std::fs::read(i.raw.join(UPGRADES)).ok().or_else(|| files.read(UPGRADES).ok().map(|b| b.to_vec())).ok_or("no tile_upgrades.xml")?;
-        wce_terrain_io::attila::roads::read(&map_data, &startpos, &upgrades, &tables)
+        let dynamic = files.read(&format!("campaign_maps/{name}/dynamic_resources.esf")).ok();
+        wce_terrain_io::attila::roads::read(&map_data, &startpos, &upgrades, &tables, dynamic.as_deref())
     })();
     match r {
         Ok(roads) => {
-            log::info(format!("terrain open {}: roads at the start, regions a level {:?} ({:.1} s)", i.name, roads.level_counts(), started.elapsed().as_secs_f64()));
+            log::info(format!("terrain open {}: roads at the start, regions a level {:?}; farmland areas {} of {} ({:.1} s)", i.name, roads.level_counts(),
+                roads.areas_on, roads.areas_on + roads.areas_off, started.elapsed().as_secs_f64()));
             Some(Arc::new(roads))
         }
 
@@ -700,7 +702,7 @@ impl TerrainTool {
         let id = self.shown;
         let Some(d) = e.docs.find_as_mut::<MapDocument>(id).filter(|d| d.view_roads.is_some()) else { return };
         let mut on = d.roads_at_start;
-        if gui::checkbox("roads at the campaign's start", &mut on) {
+        if gui::checkbox("roads and farmland at the campaign's start", &mut on) {
             d.roads_at_start = on;
             self.start_view(e, id);
         }
@@ -2072,12 +2074,21 @@ impl Tool for TerrainTool {
                 }
 
                 let on = d.roads_at_start;
-                let swapped = if on { roads.apply(&d.placed).1 } else { 0 };
+                let (swapped, farmed, first) = if on {
+                    let (m, s, f) = roads.apply(&d.placed);
+                    // The first few farmland tiles' cells (to look at them).
+                    let first: Vec<String> = m.placements.iter().zip(&d.placed.placements).filter(|(a, b)| a.location != b.location && a.location.to_lowercase().contains("farmland"))
+                        .take(3).map(|(a, _)| format!("({}, {}) {}", a.x, a.y, a.location)).collect();
+                    (s, f, first)
+                } else {
+                    (0, 0, vec![])
+                };
                 if on != was {
                     t.start_view(e, id);
                 }
 
-                CommandResult::success(format!("roads at the start {}: regions a level {:?}, {swapped} road tiles upgraded", if on { "on" } else { "off" }, roads.level_counts()))
+                CommandResult::success(format!("roads at the start {}: regions a level {:?}, {swapped} road tiles upgraded, {farmed} tiles farmland{}", if on { "on" } else { "off" }, roads.level_counts(),
+                    if first.is_empty() { String::new() } else { format!(" (first at cells {})", first.join("; ")) }))
             })
         });
 
