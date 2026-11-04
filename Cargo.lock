@@ -2469,6 +2469,7 @@ version = "0.0.1"
 dependencies = [
  "rayon",
  "wce_formats",
+ "wce_foundation",
  "wce_tile",
  "wce_tile_model",
 ]
@@ -2492,8 +2493,10 @@ name = "wce_terrain_io"
 version = "0.0.1"
 dependencies = [
  "rayon",
+ "rpfm_lib",
  "thiserror",
  "wce_formats",
+ "wce_foundation",
  "wce_terrain",
  "wce_tile",
  "wce_tile_io",
@@ -2505,6 +2508,7 @@ dependencies = [
 name = "wce_terrain_tool"
 version = "0.0.1"
 dependencies = [
+ "rpfm_lib",
  "wce_editor",
  "wce_editor_core",
  "wce_formats",
