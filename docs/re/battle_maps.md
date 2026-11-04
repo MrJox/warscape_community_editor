@@ -51,8 +51,16 @@ battle_map_check`, oracles from BOB's Terrain processor; the campaign map takes 
 - **Heights** (`calculate_lf_min_maxs`): per placed tile, the min / max of the lf height field (`lf_heights.tif` / 65535) over the tile's
   box grown by 2 cells, in map fractions clamped to 0..1, times the field's size, all in single precision, the start truncated (on the campaign map, 1437 rows at 4 pixels per
   cell, a start of 92 comes out as 91.99999 and takes one more row).
+- **Shared geometry** (scans 1 and 2, the campaign database: most land sets share `grass_01`, `sea` itself): the candidates are tiles of
+  a set whose `shared_geometry` is its own name, placed on the geometry layer (bits 0x100) without the set boxes or the link map. In the
+  fit (0x10281115) a cell must hold a tile set whose set is the tile set's shared geometry or has the same shared geometry. A tile-layer
+  cell over a geometry tile then takes 0x600.
+- **`also_place_tile_set`** (`BATTLE_TILE_MAP::add_tile`, 0x1027ad40; `sea_coast`, `river_mouth`, `cliff_custom`: `sea`): after a
+  placement, the first 1 x 1 tile of that set (database order, none of the tile's own set) goes on each of the tile's valid cells (rows,
+  then columns, rotated as the tile): variation 0, rotation 0x10, not flipped, render mode 0x300, the tile's climate and LF range.
+- Exact on the campaign map `campaigns/main_attila_map` (618 743 placements, `tile_map.tiles` 117 MB).
 - Not ported: resource tiles (scan 8 reads `EmpireDesignData/campaign_maps/<campaign>/dynamic_resources.png`, which the kit lacks; BOB
-  then skips the scan), custom geometry, `also_place_tile_set`, shared geometry.
+  then skips the scan), custom geometry (0x300 / 0x700 in `place_tile`; no kit tile has it).
 
 ## BOB's output: `terrain.tile_list` (game reader fn 0x118ff250)
 

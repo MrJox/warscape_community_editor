@@ -61,6 +61,8 @@ impl FillInputs {
         let lf = self.lf.as_ref().map(|f| (f.values.as_slice(), f.w, f.h));
         let images = MapImages {
             width: self.w, height: self.h, tile_map: &self.tiles, climate_map: self.climate.as_deref(), explicit_tiles: self.explicit.as_deref(), lf: None, lf_u16: lf,
+            // The header only: the placements are the same.
+            campaign: false,
         };
 
         place_images(db, name, &images, self.lf.clone())

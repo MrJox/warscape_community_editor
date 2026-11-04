@@ -51,6 +51,7 @@ fn fill<'a>(db: &'a TileDatabase, map: &Path) -> Result<TileMapFill<'a>, String>
     let images = MapImages {
         width: w, height: h, tile_map: &tiles, climate_map: climate.as_ref().map(|c| c.2.as_slice()), explicit_tiles: explicit.as_deref(),
         lf: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)), lf_u16: None,
+        campaign: false,
     };
 
     Ok(fill_images(db, &images))
@@ -87,7 +88,7 @@ pub fn fill_kit_tile_map(db: &TileDatabase, map: &Path) -> Result<(TileMap, Vec<
 /// Fails when the map's tile map can't be read.
 pub fn fill_kit_map(db: &TileDatabase, map: &Path) -> Result<(TileList, Vec<String>), String> {
     let fill = fill(db, map)?;
-    Ok((tile_list(db, &fill), fill.messages))
+    Ok((tile_list(db, &fill, false), fill.messages))
 }
 
 /// A kit battle map's tile instances as BOB's fill leaves them (the battle field, in its order), and the map's size in cells.
@@ -103,7 +104,7 @@ pub fn kit_battle_field(db: &TileDatabase, map: &Path) -> Result<(u32, u32, Vec<
 /// BOB's `Tilemap` of a map's images: the final tile map, the battle field (`terrain.tile_list`) and BOB's messages.
 pub fn build_images(db: &TileDatabase, images: &MapImages) -> (TileMap, TileList, Vec<String>) {
     let fill = fill_images(db, images);
-    let list = tile_list(db, &fill);
+    let list = tile_list(db, &fill, images.campaign);
     (fill.tile_map(), list, fill.messages)
 }
 
@@ -111,12 +112,13 @@ pub fn build_images(db: &TileDatabase, images: &MapImages) -> (TileMap, TileList
 /// `images.lf` holds as 0 .. 1) and BOB's messages.
 pub fn place_images(db: &TileDatabase, name: &str, images: &MapImages, lf: Option<context::LfField>) -> (context::PlacedMap, Vec<String>) {
     let fill = fill_images(db, images);
-    let list = tile_list(db, &fill);
+    let list = tile_list(db, &fill, images.campaign);
     (context::PlacedMap::from_tile_list(name, &list, db, lf), fill.messages)
 }
 
-/// The battle field of a fill as BOB writes it (`terrain.tile_list`).
-fn tile_list(db: &TileDatabase, fill: &TileMapFill) -> TileList {
+/// The battle field of a fill as BOB writes it (`terrain.tile_list`); a campaign map's (`TILE_MAP::build_battle_field`, 0x102e3640) has
+/// its LF at 0, 0 and its origin offset 0, -height.
+fn tile_list(db: &TileDatabase, fill: &TileMapFill, campaign: bool) -> TileList {
     let (w, h) = (fill.w, fill.h);
     let placements = fill.battle_field();
     let mut list = TileList {
@@ -128,8 +130,13 @@ fn tile_list(db: &TileDatabase, fill: &TileMapFill) -> TileList {
         battle_centre: [w / 2, h / 2],
         origin_offset: [-((w / 2) as f32), -((h / 2) as f32)],
         bounds: [i32::MAX, i32::MAX, i32::MIN, i32::MIN],
+        is_campaign: campaign,
         ..Default::default()
     };
+
+    if campaign {
+        (list.lf_position, list.origin_offset) = ([0.0, 0.0], [0.0, -(h as f32)]);
+    }
 
     for p in &placements {
         let name = db.tile_location_of(p.tile, p.variation);

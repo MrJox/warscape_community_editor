@@ -2,7 +2,8 @@
 //! rotation goes on every cell, from the map's `tile_map.png` (a tile set, tile or variation colour per cell) and `climate_map.png`, then the
 //! battle field the Terrain processor writes as `terrain.tile_list`.
 //!
-//! Not ported yet: resource tiles (no kit map has their input), custom geometry, `also_place_tile_set` and shared geometry tiles (no vanilla tile set has one).
+//! Not ported yet: resource tiles (no kit map has their input) and custom geometry (no kit tile has it). Shared geometry and
+//! `also_place_tile_set` are the campaign database's (docs/re/battle_maps.md).
 
 use super::tile_db::{LinkTest, SET_BIT, TileDatabase, VARIATION_BIT};
 
@@ -97,6 +98,9 @@ pub struct MapImages<'a> {
     /// `f32(v) * (1 / 65535)`).
     pub lf: Option<(&'a [f32], u32, u32)>,
     pub lf_u16: Option<(&'a [u16], u32, u32)>,
+
+    /// A campaign map (`terrain/campaigns`): the battle field's header is the campaign's (`BATTLE_TILE_MAP::is_campaign`).
+    pub campaign: bool,
 }
 
 pub struct TileMapFill<'a> {
@@ -598,9 +602,19 @@ impl<'a> TileMapFill<'a> {
                             break;
                         }
                     } else if shared {
-                        // No vanilla tile set shares geometry.
-                        ok[r] = false;
-                        break;
+                        // A set cell whose set is the tile set's shared geometry or shares the same (0x10281115).
+                        let shared_of = |s: usize| db.set_from_name(&db.sets[s].shared_geometry);
+                        let mine = tile.set.and_then(shared_of);
+                        let cell_set = if cid & SET_BIT != 0 { db.set_from_id(cid) } else { None };
+                        let fits = match (mine, cell_set) {
+                            (Some(a), Some(b)) => shared_of(b).is_some_and(|c| a == b || a == c),
+                            _ => false,
+                        };
+
+                        if !fits {
+                            ok[r] = false;
+                            break;
+                        }
                     } else {
                         if cid & SET_BIT == 0 && !db.tiles_match(cid, tile.id) {
                             ok[r] = false;
@@ -891,7 +905,7 @@ impl<'a> TileMapFill<'a> {
                 }
 
                 let (tile, variation) = self.placed[(cell.index - 1) as usize];
-                out.push(Placement {
+                self.add_tile(&mut out, Placement {
                     tile, variation, x: cell.origin_x as i16, y: cell.origin_y as i16,
                     flags: (cell.rotation & 0xf0) | if cell.flipped { 4 } else { 0 } | (cell.layer_bits & 0x700),
                     climate: cell.climate, lf: [cell.lf_min, cell.lf_max],
@@ -900,5 +914,38 @@ impl<'a> TileMapFill<'a> {
         }
 
         out
+    }
+
+    /// `BATTLE_TILE_MAP::add_tile` (0x1027ad40): the placement, then, when its tile's set has an `also_place_tile_set`, the first 1 x 1 tile
+    /// of that set (database order; none of the tile's own set) on each of the tile's cells: variation 0, rotation 0, not flipped, render
+    /// mode 0x300, the tile's climate and LF range.
+    fn add_tile(&self, out: &mut Vec<Placement>, p: Placement) {
+        let db = self.db;
+        let tile = &db.tiles[p.tile];
+        let rotation = p.flags & 0xf0;
+        out.push(p.clone());
+        let Some(set) = tile.set else { return };
+        let also = &db.sets[set].also_place_tile_set;
+        if also.is_empty() {
+            return;
+        }
+
+        let Some(under) = db.tiles.iter().position(|t| t.width == 1 && t.height == 1 && t.set.is_some_and(|s| db.sets[s].name == *also)) else { return };
+        if db.tiles[under].set == tile.set {
+            return;
+        }
+
+        for sy in 0..tile.height {
+            for sx in 0..tile.width {
+                if !tile.subtile_masked_valid(sx, sy) {
+                    continue;
+                }
+
+                let (dx, dy) = rotate_in_tile_space(tile.width, tile.height, rotation, sx, sy);
+                self.add_tile(out, Placement {
+                    tile: under, variation: 0, x: p.x + dx as i16, y: p.y + dy as i16, flags: 0x10 | 0x300, climate: p.climate, lf: p.lf,
+                });
+            }
+        }
     }
 }
