@@ -2,9 +2,9 @@
 //! "Deployment zones"), for one configuration:
 //!
 //! 1. the tile instances of the 8 x 8 cells around the centre (-4 .. 3, fn 0x1005a860), each one's region (fn 0x1005b250): its
-//!    variation's deployment mask for the configuration (none in the kits: not read here); a tile in the deployment's `restriction`
-//!    list gives none, any other its unmasked subtiles; in 1/128 of a cell, turned with the instance (its flip ignored), relative to the
-//!    centre cell's corner;
+//!    variation's deployment mask's region for the configuration, else for -1 ([`DeploymentMask`]); without one a tile in the
+//!    deployment's `restriction` list gives none, any other its unmasked subtiles; in 1/128 of a cell, turned with the instance (its flip
+//!    ignored), relative to the centre cell's corner;
 //! 2. their union, cut to the battle rectangle (fn 0x10057700: -512 .. 511 inset by `1024 * 64 / (unit * 128 * 8) + 1`, 33 for a unit
 //!    of 2);
 //! 3. the Zonifier (fn 0x1005da20): the region's boundary as directed unit edges (each rectangle of the region's y-x banded form: its
@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use wce_tile::battle_map::fill::{Placement, rotate_in_tile_space};
 use wce_tile::battle_map::tile_db::TileDatabase;
 
-use super::{DeploymentSpec, Spec, in_list};
+use super::{DeploymentMask, DeploymentSpec, Spec, in_list};
 
 /// A region's resolution: units a cell.
 pub const UNITS: i32 = 128;
@@ -399,10 +399,12 @@ fn split(zones: &[Polygon], width: f32) -> Option<(Polygon, Polygon)> {
     Some((sa, sb))
 }
 
-/// The zones of a BCA centred on `centre` for a deployment: its two zones (or fewer) and its errors.
+/// The zones of a BCA centred on `centre` for a deployment and a configuration (-1: the one of a deployment without `dual_config`): its
+/// two zones (or fewer) and its errors.
+#[allow(clippy::too_many_arguments)]
 pub fn zones(
-    spec: &Spec, dep: &DeploymentSpec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement], cells: &[i32], centre: (i32, i32),
-    inset: i32,
+    spec: &Spec, dep: &DeploymentSpec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement], cells: &[i32],
+    masks: &HashMap<(usize, usize), DeploymentMask>, config: i32, centre: (i32, i32), inset: i32,
 ) -> (Vec<Polygon>, Vec<String>) {
     let mut gathered = vec![];
     for dy in -4..4 {
@@ -423,18 +425,38 @@ pub fn zones(
     let mut region = Region::new();
     for &i in &gathered {
         let p = &instances[i];
+        let t = &db.tiles[p.tile];
+        let rot = p.flags & 0xf0;
+        if let Some(m) = masks.get(&(p.tile, p.variation)) {
+            let mut rects = m.key(config);
+            if rects.is_empty() && config != -1 {
+                rects = m.key(-1);
+            }
+
+            if !rects.is_empty() {
+                let (tw, th) = (t.width * UNITS, t.height * UNITS);
+                let (ox, oy) = ((i32::from(p.x) - centre.0) * UNITS, (i32::from(p.y) - centre.1) * UNITS);
+                for &(x0, y0, x1, y1) in rects {
+                    let a = rotate_in_tile_space(tw, th, rot, x0, y0);
+                    let b = rotate_in_tile_space(tw, th, rot, x1, y1);
+                    region.fill(ox + a.0.min(b.0), oy + a.1.min(b.1), ox + a.0.max(b.0) + 1, oy + a.1.max(b.1) + 1, clip_to);
+                }
+
+                continue;
+            }
+        }
+
         if in_list(db, &dep.restriction, p) {
             continue;
         }
 
-        let t = &db.tiles[p.tile];
         for sy in 0..t.height {
             for sx in 0..t.width {
                 if !t.subtile_masked_valid(sx, sy) {
                     continue;
                 }
 
-                let (rx, ry) = rotate_in_tile_space(t.width, t.height, p.flags & 0xf0, sx, sy);
+                let (rx, ry) = rotate_in_tile_space(t.width, t.height, rot, sx, sy);
                 let (cx, cy) = (i32::from(p.x) + rx - centre.0, i32::from(p.y) + ry - centre.1);
                 region.fill(cx * UNITS, cy * UNITS, (cx + 1) * UNITS, (cy + 1) * UNITS, clip_to);
             }
