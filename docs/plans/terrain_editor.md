@@ -387,10 +387,15 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      1). Thrones' `vik_attila_map` opens in the Terrain tool with them; its look against the game is not checked (screenshots
      needed). Rome 2's campaign maps are not opened by the Terrain tool (out of the plan's scope so far); Rome 2 has no
      `has_aqueduct`, so its aqueducts are not drawn.
-   Left: a campaign launch (noted, not for now); from the campaign's rendering: the settlements' sprawl and walls (decoded, which
-   neighbour an edge bit is not: docs/re/terry.md "Settlement sprawl"), the trees' size and lean and the mountains' look (against
-   the game's screenshots), the seasons and their snow masks (docs/re/terrain.md: the resolve's mask layers not traced), Thrones'
-   campaign look (screenshots), the GPU's terrain cost (smaller rings for campaign maps).
+   - 2026-11-05 (later): the settlement models' scale (0.405 world units a model unit, from their footprint decal: they were 2.5
+     times too big, ports reaching into the sea) and the cells' centres (RPFM's `world_position`; half a cell off before); the roads
+     and farmland applied by hex cell centres, as the game's `FUN_10b28060` does; a campaign map's season in the view (Terrain panel,
+     `terrain_season`): the season's ground textures and, in winter, the map's snow mask through the resolve's snow layer; the tile
+     cache keeps a material's campaign flag (cached campaign tiles resolved as battle tiles).
+   Left: a campaign launch (noted, not for now); from the campaign's rendering: the settlement buildings' turn (an integer of the
+   runtime slot, not stored: docs/re/terry.md "Settlement models"), the sprawl pieces (grown at run time by chance), the farmland's
+   level rule (ASSUMPTION), the trees' size and lean and the mountains' look (against the game's screenshots), Thrones' campaign
+   look (screenshots), the GPU's terrain cost (smaller rings for campaign maps).
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
    games when their profiles come (their Terry is another tool: out of this seam's first pass).
    **Progress 2026-11-04.** Done:
