@@ -42,6 +42,13 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   path over it): flat on each tread (`mesh::treads`: the upward faces of its wood across at least half its width), a short slope (at most
   0.25) just before each riser on its lower side, from the walkway's height before to its height after (`pieces::stepped_platforms`);
   the base's hull goes down 0.35 under the stair, from 0.3 in from its ends, so the platforms lie above it.
+- **Platforms meet edge to edge** (`logic::weld_platforms`, 2026-11-05: the game joins platforms on shared edges, as the stepped
+  bastion's stair shares its top edge's corners with the landing; ours met the walkway's pieces partway along their edges, and units
+  did not go from the walkway onto the stair): each level's platforms of every piece, corners within 1 cm made one, a corner on another
+  platform's edge made a corner of it too (379 such meetings on Amon Calen before).
+- **A corner's faces land on the bisector exactly** (`PieceWarp::s_at`, 2026-11-05): the straight shear in the base's frame left a
+  curved arm's face off the bisector (a slit along Amon Calen's prow, 7 cm 3 m in); the points within 3 of a face are moved along the
+  wall onto it, both pieces taking the same corner and bisector.
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).

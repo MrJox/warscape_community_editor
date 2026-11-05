@@ -229,6 +229,27 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
         piece_index += 1;
     }
 
+    // Each level's platforms, of all the pieces, welded together (an end cap's platforms are a piece of their own).
+    let levels = v["pieces"].as_array().into_iter().flatten().map(|p| p["destructs"].as_array().map_or(0, Vec::len)).max().unwrap_or(0);
+    for k in 0..levels {
+        let mut all = vec![];
+        let mut counts = vec![];
+        for piece in array_mut(&mut v, "pieces") {
+            let ps = piece["destructs"].get(k).and_then(|d| d["platforms"].as_array()).cloned().unwrap_or_default();
+            counts.push(ps.len());
+            all.extend(ps);
+        }
+
+        weld_platforms(&mut all);
+        let mut rest = all.into_iter();
+        for (piece, n) in array_mut(&mut v, "pieces").zip(counts) {
+            let mine = rest.by_ref().take(n).collect::<Vec<_>>();
+            if let Some(d) = piece["destructs"].get_mut(k) {
+                d["platforms"] = Value::Array(mine);
+            }
+        }
+    }
+
     warp_box(&mut v["bounding_box"], warp, step);
     warp_transforms(&mut v, warp);
 
@@ -621,6 +642,67 @@ fn warp_footprint(ring: &mut Value, warp: &dyn Warp, step: f32, planes: &[[f32; 
     *ring = Value::Array(out);
 }
 
+/// How near two platform corners are one, and a corner is on another platform's edge.
+const WELD: f32 = 0.01;
+
+/// A level's platforms joined as the game's are, edge to edge (the game connects platforms on shared edges: the stepped bastion's stair
+/// shares its top edge's two corners with the landing; ours met the walkway's pieces partway along their edges, and units did not go
+/// from one to the other; user 2026-11-05): corners within `WELD` of each other become one point, and a corner on another platform's
+/// edge becomes a corner of that edge too. Their order, their count and everything else is kept.
+fn weld_platforms(platforms: &mut [Value]) {
+    let mut outlines = platforms.iter().map(|p| outline(&p["vertices"])).collect::<Vec<_>>();
+
+    // One point for corners that are one (the first met stands for them).
+    let mut points: Vec<[f32; 3]> = vec![];
+    for o in &mut outlines {
+        for q in o.iter_mut() {
+            match points.iter().find(|p| (0..3).all(|i| (p[i] - q[i]).abs() <= WELD)) {
+                Some(p) => *q = *p,
+                None => points.push(*q),
+            }
+        }
+    }
+
+    // Every corner lying on an edge (not at its ends) goes into it, in order along it.
+    for o in &mut outlines {
+        let others = points.iter().copied().filter(|p| !o.contains(p)).collect::<Vec<_>>();
+        let mut out = vec![];
+        for i in 0..o.len() {
+            let (a, b) = (o[i], o[(i + 1) % o.len()]);
+            out.push(a);
+            let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            if len2 < 1e-8 {
+                continue;
+            }
+
+            let mut on = others.iter().filter_map(|&p| {
+                let t = ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / len2;
+                let off = [a[0] + d[0] * t - p[0], a[1] + d[1] * t - p[1], a[2] + d[2] * t - p[2]];
+                let dist = (off[0] * off[0] + off[1] * off[1] + off[2] * off[2]).sqrt();
+                (t > 1e-4 && t < 1.0 - 1e-4 && dist <= WELD).then_some((t, p))
+            }).collect::<Vec<_>>();
+            on.sort_by(|x, y| x.0.total_cmp(&y.0));
+            out.extend(on.into_iter().map(|(_, p)| p));
+        }
+
+        // A snap may have made two corners in a row one.
+        out.dedup();
+        if out.len() > 1 && out.first() == out.last() {
+            out.pop();
+        }
+
+        *o = out;
+    }
+
+    // A sliver the snap folded into a line keeps its own outline (the firing lines name the platforms by their place: none goes).
+    for (p, o) in platforms.iter_mut().zip(outlines) {
+        if o.len() >= 3 {
+            p["vertices"] = json!({ "outline": o.into_iter().map(point3).collect::<Vec<_>>() });
+        }
+    }
+}
+
 /// A collision hull (`collision_3d`: vertices, triangles) as polygons cut along x at `cuts`, cut to the half-planes, warped. A cut through
 /// an edge gives the same point to both triangles on it (worked out from the edge's ends in one order), so the hull stays closed. Under
 /// each `sinks` stair (its x range, the heights lowered) inside `sink_z`, the hull goes down by `SINK` from `SINK_IN` in from its ends.
@@ -942,6 +1024,23 @@ mod tests {
         let wrong = pts.iter().filter(|p| p[1] > 14.0).filter(|p| !(if p[0] > 2.0 + SINK_IN - 1e-3 && p[0] < 6.0 - SINK_IN + 1e-3 { (p[1] - (15.0 - SINK)).abs() < 1e-4 } else { (p[1] - 15.0).abs() < 1e-4 })).collect::<Vec<_>>();
         assert!(wrong.is_empty(), "{wrong:?}");
         assert!(pts.iter().filter(|p| p[1] < 1.0).all(|p| p[1] == 0.0));
+    }
+
+    /// Platforms meet edge to edge: a corner of one on the other's edge becomes a corner there too, corners a few millimetres apart
+    /// become one (a stair's end against the walkway's pieces).
+    #[test]
+    fn platforms_are_welded_edge_to_edge() {
+        let quad = |pts: [[f32; 3]; 4]| json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": pts.iter().map(|&p| point3(p)).collect::<Vec<_>>() } });
+        let mut ps = vec![
+            quad([[0.0, 15.0, 0.0], [1.0, 15.0, 0.0], [1.0, 15.0, 2.0], [0.0, 15.0, 2.0]]),
+            quad([[1.0, 15.0, 0.0], [2.0, 15.0, 0.0], [2.0, 15.0, 0.7], [1.0, 15.0, 0.7]]),
+            quad([[1.0, 15.0, 0.7], [2.0, 15.0, 0.7], [2.0, 15.0, 2.003], [1.0, 15.0, 2.003]]),
+        ];
+        weld_platforms(&mut ps);
+        let a = outline(&ps[0]["vertices"]);
+        assert_eq!(a, vec![[0.0, 15.0, 0.0], [1.0, 15.0, 0.0], [1.0, 15.0, 0.7], [1.0, 15.0, 2.0], [0.0, 15.0, 2.0]]);
+        assert_eq!(outline(&ps[2]["vertices"])[3], [1.0, 15.0, 2.0], "the corner 3 mm off is the other's");
+        assert_eq!(outline(&ps[1]["vertices"]).len(), 4);
     }
 
     #[test]
