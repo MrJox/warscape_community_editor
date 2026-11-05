@@ -1,4 +1,5 @@
-//! A campaign map's props drawn as their models near the camera (the `.terry`'s `ECPropMesh` entities: `ECMesh model_path`), each with
+//! A campaign map's props drawn as their models near the camera (the `.terry`'s `ECPropMesh` entities: `ECMesh model_path`; without a
+//! `.terry`, the packs' `prop_marker.markers`), each with
 //! the transform the export writes for it (`wce_terrain_io::attila::campaign::matrix`, the kit's `ECTransform`: its rotation and scale in
 //! `.terry` units, so a model is scaled by 1 / the frame's unit into the view) and standing on the drawn ground. Drawn again when the
 //! scene changes or the camera moves on; pickable (a click selects the prop). The overlays stay (their crosses mark the props too far
@@ -100,6 +101,45 @@ impl CampaignTrees {
 /// What the drawn models are of: document, `.terry` revision, the cell the camera's target was in.
 type Built = (DocumentId, u64, (i64, i64));
 
+/// A prop: its key (a `.terry` entity's id, else MARKER_KEY | its record), `.terry` position, model and transform (`campaign::matrix`'s
+/// layout), and the item a click selects (u64::MAX: none).
+struct Prop {
+    key: u64,
+    at: [f64; 3],
+    model: String,
+    matrix: [f32; 16],
+    item: u64,
+}
+
+/// The key of a prop of the packs' markers.
+const MARKER_KEY: u64 = 1 << 59;
+
+/// The props of a campaign map's `prop_marker.markers` in the packs (records with a `transform`, their group's key the model).
+fn marker_props(bytes: &[u8]) -> Vec<Prop> {
+    use wce_formats::markers::{KeyPart, MarkersFile, Value};
+    let Ok(f) = MarkersFile::parse(bytes) else { return vec![] };
+    let mut model_of = vec![String::new(); f.records.len()];
+    for g in f.groups.iter().flatten() {
+        let key = g.key.iter().find_map(|k| match k {
+            KeyPart::Wide(w) => Some(String::from_utf16_lossy(w)),
+            KeyPart::Narrow(n) => Some(String::from_utf8_lossy(n).into_owned()),
+            KeyPart::U32(_) => None,
+        }).unwrap_or_default();
+        for &i in &g.indices {
+            if let Some(m) = model_of.get_mut(i as usize) {
+                m.clone_from(&key);
+            }
+        }
+    }
+
+    model_of.into_iter().enumerate().filter(|(_, m)| !m.is_empty()).filter_map(|(i, model)| {
+        let fields = f.fields(i).ok()?;
+        let Some(Value::Matrix(matrix)) = fields.into_iter().find(|(n, _)| *n == "transform").map(|(_, v)| v) else { return None };
+        let at = [f64::from(matrix[12]), f64::from(matrix[13]), f64::from(matrix[14])];
+        Some(Prop { key: MARKER_KEY | i as u64, at, model: model.to_lowercase().replace('\\', "/"), matrix, item: u64::MAX })
+    }).collect()
+}
+
 pub struct PropModels {
     pub on: bool,
 
@@ -112,9 +152,11 @@ pub struct PropModels {
     built: Option<Built>,
     pub count: usize,
 
-    /// The shown map's props (document, `.terry` revision; per prop its id, world position and model), made again when the `.terry` changes:
-    /// walking its 14 644 entities for their world positions at every camera step cost up to 100 ms.
-    props: Option<(DocumentId, u64, Vec<(u64, [f64; 3], String)>)>,
+    /// The shown map's props (document, `.terry` revision; per prop its key, `.terry` position, model and transform), made again when the
+    /// `.terry` changes: walking its 14 644 entities for their world positions at every camera step cost up to 100 ms. A map without a
+    /// `.terry` (Rome 2's built campaign maps) has the packs' `prop_marker.markers` (the same frame and transforms: what BOB makes of a
+    /// `.terry`); its props are not pickable.
+    props: Option<(DocumentId, u64, Vec<Prop>)>,
 
     /// The shown campaign's trees (its document; none: no list).
     trees: Option<(DocumentId, Option<Arc<CampaignTrees>>)>,
@@ -194,10 +236,20 @@ impl PropModels {
 
         if self.props.as_ref().is_none_or(|(id, rev, _)| *id != doc || *rev != key.1) {
             wce_foundation::wce_prof!("props.index");
-            let list = p.map(|p| p.entities.iter().filter_map(|x| match p.kind(x) {
-                EntityKind::Prop(model) if !model.is_empty() => Some((x.id, p.world_position(x.id), model.to_lowercase().replace('\\', "/"))),
-                _ => None,
-            }).collect()).unwrap_or_default();
+            let list = match p {
+                Some(p) => p.entities.iter().filter_map(|x| match p.kind(x) {
+                    EntityKind::Prop(model) if !model.is_empty() => Some(Prop {
+                        key: x.id, at: p.world_position(x.id), model: model.to_lowercase().replace('\\', "/"),
+                        matrix: wce_terrain_io::attila::campaign::matrix(p, x), item: x.id,
+                    }),
+                    _ => None,
+                }).collect(),
+                None => {
+                    let (_, name) = crate::tool::map_kind(&d.name);
+                    e.files().and_then(|f| f.read(&format!("terrain/campaigns/{name}/prop_marker.markers")).ok()).map_or_else(Vec::new, |b| marker_props(&b))
+                }
+            };
+
             self.props = Some((doc, key.1, list));
         }
 
@@ -206,13 +258,12 @@ impl PropModels {
         // (key, world, payload, the item a click selects).
         let mut out: Vec<(u64, Float4x4, Payload, u64)> = vec![];
         let props = self.props.as_ref().map_or(&[][..], |(_, _, l)| l.as_slice());
-        for (id, w, model) in props {
+        for prop in props {
+            let (w, m) = (prop.at, prop.matrix);
             if (w[0] - tx).hypot(w[2] - tz) > r {
                 continue;
             }
 
-            let Some((p, x)) = p.and_then(|p| p.entity(*id).map(|x| (p, x))) else { continue };
-            let m = wce_terrain_io::attila::campaign::matrix(p, x);
             let (fx, fz) = tf.to_frame(w[0], w[2]);
             let mut world = Float4x4::IDENTITY;
             for row in 0..3 {
@@ -227,10 +278,10 @@ impl PropModels {
             world.m[2][3] = fz as f32;
             let p16 = DEFAULT_INSTANCE_PARAMS;
             let mesh = MeshInstance {
-                model: model.clone(), casts_shadow: true, lod: true, p4: [p16[0], p16[1], p16[2], p16[3]], p5: [p16[4], p16[5], p16[6], p16[7]],
+                model: prop.model.clone(), casts_shadow: true, lod: true, p4: [p16[0], p16[1], p16[2], p16[3]], p5: [p16[4], p16[5], p16[6], p16[7]],
                 p6: [p16[8], p16[9], p16[10], p16[11]], p7: [p16[12], p16[13], p16[14], p16[15]], burning: false,
             };
-            out.push((*id, world, Payload::MeshInstance(mesh), *id));
+            out.push((prop.key, world, Payload::MeshInstance(mesh), prop.item));
         }
 
         // The forests near the camera: by cells (the trees' own frame), within the same radius.
