@@ -576,7 +576,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1728,7 +1728,7 @@ dependencies = [
 [[package]]
 name = "rpfm_lib"
 version = "5.3.3"
-source = "git+https://github.com/Frodo45127/rpfm.git?branch=develop#86d4754934884b75e7181c9331270477cb9466f5"
+source = "git+https://github.com/Frodo45127/rpfm.git?branch=develop#250ffc17e44ae089eae5a0f9bd30b283b9fec9de"
 dependencies = [
  "base64 0.22.1",
  "bitflags",
@@ -1784,7 +1784,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2067,7 +2067,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
