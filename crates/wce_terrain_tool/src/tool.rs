@@ -188,8 +188,9 @@ fn campaign_snow(e: &Editor, id: DocumentId, s: &Streamer, season: &str) -> Opti
 }
 
 pub(crate) fn map_kind(name: &str) -> (MapKind, &str) {
+    // A campaign map of the packs (`campaigns/<map> (game files)`) is named by its folder too.
     match name.strip_prefix(CAMPAIGN) {
-        Some(n) => (MapKind::Campaign, n),
+        Some(n) => (MapKind::Campaign, n.strip_suffix(wce_map_view::maps::GAME_FILES).unwrap_or(n)),
         None => (MapKind::Battle, name),
     }
 }
@@ -347,10 +348,13 @@ fn save_dir(e: &Editor, d: &MapDocument) -> Option<PathBuf> {
     Some(kit_map_dir(&e.settings_ref().kit_projects_dir().join("raw_data"), &d.name))
 }
 
-/// Where a built map (a pack map of a game without kit maps) is saved: the projects' `working_data/terrain/battles/<map>`.
+/// Where a built map (a pack map of a game without kit maps) is saved: the projects' `working_data/terrain/battles/<map>` (a campaign map's `working_data/terrain/campaigns/<map>`).
 pub(crate) fn built_dir(e: &Editor, name: &str) -> PathBuf {
-    let folder = name.strip_suffix(wce_map_view::maps::GAME_FILES).unwrap_or(name);
-    e.settings_ref().kit_projects_dir().join("working_data/terrain/battles").join(folder)
+    let working = e.settings_ref().kit_projects_dir().join("working_data/terrain");
+    match map_kind(name) {
+        (MapKind::Campaign, n) => working.join("campaigns").join(n),
+        _ => working.join("battles").join(name.strip_suffix(wce_map_view::maps::GAME_FILES).unwrap_or(name)),
+    }
 }
 
 /// A built map's files: its saved copy's, else the packs' folder's.
@@ -443,7 +447,7 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
     let packs_folder = game_map_folder(&i.name, i.game_dir);
     let db = match (&packs_folder, &i.packs) {
         // A map of the packs names the packs' tiles (a mod's among them): read with their database.
-        (Some(_), Some(p)) => p.raw().ok().and_then(|r| TileDatabase::load(&r.join("terrain/tiles/battle/_tile_database")).ok()).map_or_else(|| i.db.clone(), Arc::new),
+        (Some(_), Some(p)) => p.raw().ok().and_then(|r| TileDatabase::load(&r.join(database_dir(map_kind(&i.name).0))).ok()).map_or_else(|| i.db.clone(), Arc::new),
         _ => i.db.clone(),
     };
 
@@ -550,6 +554,10 @@ impl TerrainTool {
         self.maps.clear();
         if let Some(f) = e.files() {
             self.maps.extend(game_maps(f.as_ref(), e.game().campaign_battle_map, !e.game().features.kit_tiles));
+            // A game without kit maps: its packs' campaign maps too (Rome 2's `terrain/campaigns/<map>/terrain.tile_list`).
+            if !e.game().features.kit_tiles {
+                self.maps.extend(wce_map_view::maps::game_campaign_maps(f.as_ref()));
+            }
         }
 
         for r in &roots {
