@@ -38,6 +38,10 @@ const MAX_LINES: usize = 600_000;
 /// The side of the map cells the overlay is cut in (metres).
 const CELL_M: f32 = 64.0;
 
+/// A footprint drawn on the ground: a point every this many world units, this much above the terrain.
+const FOOT_STEP: f32 = 1.0;
+const FOOT_LIFT: f32 = 0.05;
+
 /// Two footprints that overlap by less than this (metres of the world, as drawn) do not collide: walls that abut.
 const TOUCH: f32 = 0.2;
 
@@ -768,7 +772,7 @@ impl Tile {
         let mut o = Overlay { depth_test: !s.xray, pickable: false, ..Default::default() };
         let collision_bits = TechKind::Collision.bit() | TechKind::Gates.bit();
         for item in placed.model.building.iter().filter(|i| s.on(i.kind)) {
-            emit(&mut o, &placed.world, item, s.fill);
+            self.emit_item(&mut o, &placed.world, item, s.fill);
         }
 
         let force = self.piece_props.iter().any(|(&(el, _), p)| el == e && p.show_collision);
@@ -777,7 +781,7 @@ impl Tile {
             let Some(level) = pick(&piece.levels, want) else { continue };
             let frame = w * piece.local;
             for item in level.items.iter().filter(|i| s.on(i.kind) || (force && collision_bits & i.kind.bit() != 0)) {
-                emit(&mut o, &frame, item, s.fill);
+                self.emit_item(&mut o, &frame, item, s.fill);
             }
         }
 
@@ -801,6 +805,40 @@ impl Tile {
         Some(o)
     }
 
+    /// An item drawn: a footprint laid on the ground under it (its file has no heights: the game lays it on the terrain; drawn at the
+    /// piece's base it floated inside a wall whose foot reaches down a hill, and stepped where the wall's level changes; user
+    /// 2026-11-05), anything else as it is.
+    fn emit_item(&self, o: &mut Overlay, frame: &Float4x4, item: &Item, fill: f32) {
+        let Shape::Lines { pts, closed } = &item.shape else {
+            emit(o, frame, item, fill);
+            return;
+        };
+
+        if item.kind != TechKind::Footprints || pts.len() < 2 {
+            emit(o, frame, item, fill);
+            return;
+        }
+
+        let world = pts.iter().map(|&q| frame.transform_point(q)).collect::<Vec<_>>();
+        let n = if *closed { world.len() } else { world.len() - 1 };
+        let mut draped = vec![];
+        for i in 0..n {
+            let (a, b) = (world[i], world[(i + 1) % world.len()]);
+            let steps = ((b.x - a.x).hypot(b.z - a.z) / FOOT_STEP).ceil().max(1.0) as usize;
+            for k in 0..steps {
+                let t = k as f32 / steps as f32;
+                let (x, z) = (a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t);
+                draped.push(Float3::new(x, self.terrain_height(x, z) + FOOT_LIFT, z));
+            }
+        }
+
+        if !*closed && let Some(&last) = world.last() {
+            draped.push(Float3::new(last.x, self.terrain_height(last.x, last.z) + FOOT_LIFT, last.z));
+        }
+
+        emit(o, &Float4x4::IDENTITY, &Item { kind: item.kind, rgb: item.rgb, shape: Shape::Lines { pts: draped, closed: *closed } }, fill);
+    }
+
     /// A procedural wall's overlay: its preview pieces' logic files (made with them), each piece at its frame and intact. None before its
     /// pieces are made.
     fn tech_wall(&mut self, e: usize, s: &TechSettings) -> Option<Overlay> {
@@ -811,14 +849,14 @@ impl Tile {
             let Some(model) = self.tech_model(&key) else { continue };
             any = true;
             for item in model.building.iter().filter(|i| s.on(i.kind)) {
-                emit(&mut o, &world, item, s.fill);
+                self.emit_item(&mut o, &world, item, s.fill);
             }
 
             for piece in &model.pieces {
                 let Some(level) = pick(&piece.levels, if s.highest { i64::MAX } else { 0 }) else { continue };
                 let frame = world * piece.local;
                 for item in level.items.iter().filter(|i| s.on(i.kind)) {
-                    emit(&mut o, &frame, item, s.fill);
+                    self.emit_item(&mut o, &frame, item, s.fill);
                 }
             }
         }
