@@ -51,7 +51,19 @@ pub struct Splice<'a> {
     /// Its collision outlines and footprints too (a copy of the base filling a mitred corner's outer side: without them the corner had
     /// walkway but no footprint nor hard outline; user 2026-11-04).
     pub shapes_too: bool,
+
+    /// Platforms of its own instead of its logic file's (its frame): a stair's, following its treads.
+    pub platforms: Option<Vec<Value>>,
+
+    /// The base's collision hull at these heights (its frame: the walkway's) is lowered under the part, inside `replaces` and `drop_zy`'s
+    /// z: the stair's platforms lie on its treads, above the hull.
+    pub sink: Option<(f32, f32)>,
 }
+
+/// How far a base's collision hull is lowered under a stair (more than a tread's rise over the walkway's slope), and how far in from
+/// the step's ends it starts going down.
+const SINK: f32 = 0.35;
+const SINK_IN: f32 = 0.3;
 
 impl Splice<'_> {
     /// If a point of the part's frame is in what is brought.
@@ -129,6 +141,7 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
                 let part_planes = sp.warp.clip_planes();
                 let holds = |p: [f32; 3]| sp.holds(p) && inside(&part_planes, p);
                 let theirs = sd["platforms"].as_array().into_iter().flatten().map(|p| vec![p.clone()]).collect::<Vec<_>>();
+                let theirs = sp.platforms.as_ref().map_or(theirs, |ps| ps.iter().map(|p| vec![p.clone()]).collect());
                 let (more, s2) = platform_strips(&theirs, sp.warp, &part_cuts, &holds, platforms.len(), &mut notes);
                 platforms.extend(more);
                 ef.extend(place_lines(sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &part_cuts, &s2, &holds, &mut notes));
@@ -146,9 +159,10 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
 
             // The collision hull bent with the piece (and the corner's copies' hulls with them): it stayed the base's, straight and
             // flat over steps and half a piece off (user 2026-11-04: the stairs showed as not walkable, the hull over their platform).
-            let mut hull = collision_polygons(&d["collision_3d"], warp, cuts, &planes);
+            let sinks = splices.iter().filter_map(|sp| Some((sp.replaces?, sp.sink?))).collect::<Vec<_>>();
+            let mut hull = collision_polygons(&d["collision_3d"], warp, cuts, &planes, &sinks, drop_zy.map(|(z, _)| z));
             for (sp, sd) in &shapes {
-                hull.extend(collision_polygons(&sd["collision_3d"], sp.warp, cuts, &sp.warp.clip_planes()));
+                hull.extend(collision_polygons(&sd["collision_3d"], sp.warp, cuts, &sp.warp.clip_planes(), &[], None));
             }
 
             if d["collision_3d"].is_object() {
@@ -608,8 +622,9 @@ fn warp_footprint(ring: &mut Value, warp: &dyn Warp, step: f32, planes: &[[f32; 
 }
 
 /// A collision hull (`collision_3d`: vertices, triangles) as polygons cut along x at `cuts`, cut to the half-planes, warped. A cut through
-/// an edge gives the same point to both triangles on it (worked out from the edge's ends in one order), so the hull stays closed.
-fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3]]) -> Vec<Vec<[f32; 3]>> {
+/// an edge gives the same point to both triangles on it (worked out from the edge's ends in one order), so the hull stays closed. Under
+/// each `sinks` stair (its x range, the heights lowered) inside `sink_z`, the hull goes down by `SINK` from `SINK_IN` in from its ends.
+fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3]], sinks: &[((f32, f32), (f32, f32))], sink_z: Option<(f32, f32)>) -> Vec<Vec<[f32; 3]>> {
     let verts = c["vertices"].as_array().map(|a| a.iter().map(p3).collect::<Vec<_>>()).unwrap_or_default();
     let tris = c["triangles"].as_array().map(|a| a.iter().filter_map(|t| {
         let i = |k: &str| t[k].as_u64().map(|v| v as usize).filter(|&v| v < verts.len());
@@ -641,7 +656,15 @@ fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3
     };
 
     let (lo, hi) = tris.iter().flatten().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
-    let bounds = cuts.bounds(lo, hi);
+    let mut extra = cuts.at.clone();
+    for &((a, b), _) in sinks {
+        extra.extend([a, b]);
+        if b - a > 2.0 * SINK_IN {
+            extra.extend([a + SINK_IN, b - SINK_IN]);
+        }
+    }
+
+    let bounds = Cuts { step: cuts.step, at: extra }.bounds(lo, hi);
     let mut polys: Vec<Vec<[f32; 3]>> = tris.iter().map(|t| t.to_vec()).collect();
     for &x in &bounds[1..bounds.len().saturating_sub(1)] {
         polys = polys.into_iter().flat_map(|p| [cut(&p, &|q| q[0] - x), cut(&p, &|q| x - q[0])]).filter(|p| p.len() >= 3).collect();
@@ -651,7 +674,13 @@ fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3
         polys = polys.into_iter().map(|p| cut(&p, &|q| a * q[0] + b * q[2] - c)).filter(|p| p.len() >= 3).collect();
     }
 
-    polys.into_iter().map(|p| p.into_iter().map(|q| warp.point(q)).collect()).collect()
+    let sunk = |q: [f32; 3]| {
+        let (z0, z1) = sink_z.unwrap_or((f32::MIN, f32::MAX));
+        let under = sinks.iter().any(|&((a, b), (y0, y1))| q[0] > a + SINK_IN - 1e-3 && q[0] < b - SINK_IN + 1e-3 && b - a > 2.0 * SINK_IN && q[1] >= y0 && q[1] <= y1);
+        if under && q[2] >= z0 && q[2] <= z1 { [q[0], q[1] - SINK, q[2]] } else { q }
+    };
+
+    polys.into_iter().map(|p| p.into_iter().map(|q| warp.point(sunk(q))).collect()).collect()
 }
 
 /// A collision hull written from polygons (triangle fans; degenerate triangles left out): its vertices shared (within a tenth of a
@@ -880,7 +909,8 @@ mod tests {
             "triangles": faces.iter().map(|f| json!({ "vertex_1": f[0], "vertex_2": f[1], "vertex_3": f[2] })).collect::<Vec<_>>(),
         });
         let bend = crate::warp::Bend::turning(-10.0, 10.0, 0.6);
-        let polys = collision_polygons(&hull, &bend, &Cuts { step: 5.0, at: vec![] }, &[]);
+        let flat = hull.clone();
+        let polys = collision_polygons(&hull, &bend, &Cuts { step: 5.0, at: vec![] }, &[], &[], None);
         write_collision(&mut hull, &polys);
 
         let tris = hull["triangles"].as_array().unwrap();
@@ -903,6 +933,15 @@ mod tests {
         }
 
         assert_eq!(hull["bounding_box"]["max_x"].as_f64(), Some(0.0), "an empty box stays empty");
+
+        // Under a stair over x 2..6 the top goes down, from SINK_IN in from its ends; the bottom and the top elsewhere stay (the sides'
+        // points at the cuts are in between).
+        let polys = collision_polygons(&flat, &crate::warp::Identity, &Cuts { step: 5.0, at: vec![] }, &[], &[((2.0, 6.0), (14.5, 15.5))], Some((0.0, 9.0)));
+        let pts = polys.iter().flatten().copied().collect::<Vec<_>>();
+        assert!(pts.iter().any(|p| (p[0] - 4.0).abs() < 1.8 && (p[1] - (15.0 - SINK)).abs() < 1e-4), "nothing sunk");
+        let wrong = pts.iter().filter(|p| p[1] > 14.0).filter(|p| !(if p[0] > 2.0 + SINK_IN - 1e-3 && p[0] < 6.0 - SINK_IN + 1e-3 { (p[1] - (15.0 - SINK)).abs() < 1e-4 } else { (p[1] - 15.0).abs() < 1e-4 })).collect::<Vec<_>>();
+        assert!(wrong.is_empty(), "{wrong:?}");
+        assert!(pts.iter().filter(|p| p[1] < 1.0).all(|p| p[1] == 0.0));
     }
 
     #[test]
