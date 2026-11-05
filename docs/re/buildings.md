@@ -74,6 +74,30 @@ The editor's rule (from the user's description of the game): a damaged wall show
 destroyed stands; an attached building takes the attaching piece's transform and no destruction of its own otherwise. Check: in game,
 destroy one wall of a straight run, then its neighbour, and compare the joint with the editor's (`tile_edit <elem> destruction_level`).
 
+## Logic file fields to decode properly in rpfm (2026-11-05)
+
+Found while generating wall pieces (`wce_walls`); rpfm_lib (`cs2_parsed`, `cs2_collision`) reads and writes them, but under placeholder
+names or with wrong descriptions. To rename and document in rpfm (`~/Proyectos/rpfm`, develop) when it is next worked on.
+
+- **`bin_data`** (per destruction state, `Vec<Vec<i16>>`, rpfm: "unknown binary data, correlates with VFX count"): lists of indices
+  into the state's `collision_3d.triangles`. Together they cover every hull triangle exactly once, and there are always as many lists
+  as `action_vfx` entries (the 15 m straight wall: 7 and 7 over its 104 triangles; the stepped bastion: 3 and 3 over 293; each end
+  strip: 1 and 1, all its triangles). Read: list N is the hull triangles of `action_vfx` N (which effect a hit on that part of the
+  hull plays). ASSUMPTION: the pairing by index was not traced in the exe. Name to give: something like `action_vfx_triangles`. A
+  rewritten hull must keep it in step (each new triangle in its source triangle's lists): with stale lists the cursor and selection
+  over the wall misbehaved. Indices are i16: a hull of more than 32 767 triangles cannot be described.
+- **`bin_data_2`** (`Vec<Vec<i16>>`): empty in every wall piece seen (rpfm: "present in some Three Kingdoms gates"); probably the same
+  for another list of effects.
+- **`collision_3d` triangles** (`CollisionTriangle`): `zero_1`, `zero_2`, `zero_3` are not zero: they are the edge's number in the
+  triangle (0, 1, 2) in every file seen; `face_index_1..3` repeat `face_index`; `across_face_index_N` is the triangle across edge N
+  (-1 on an open edge; the walls' hulls are closed, none). `zero_4` is 0.
+- **`collision_3d`** (`Collision3d`): `uk_1` 1 and `uk_2` 0 in the walls; its `bounding_box` is all zeros in the files seen (the
+  state's own `bounding_box` is the hull's extent).
+- **The state's `uk_2`** -1, **`uk_7`** 0, **`f_1`** 0.0 in every wall piece seen.
+- **Platforms**: `flag_1..3` all false on walls (the editor draws flag_2 as ground, flag_3 as a siege ramp: unconfirmed). The game's
+  pieces join platforms edge to edge (the stepped bastion's stair shares its top edge's two corners with the landing); whether it
+  joins edges that only overlap was not found, so generated pieces weld theirs.
+
 ## Effects from `.meta`
 
 A piece's `<piece file>.meta` (not the `_anim.meta` of the collapses, which hold the collapse's dust and sounds). All 1495 standing
@@ -290,4 +314,5 @@ walls never turn at a joint, only inside a piece (kinks, curves). The exact rule
 | TDD Rohan (timber) | `rohan_wall_straight` (+ `_ladders`, `_ladders_attacker`, `_ladders_definitive`, `_bastion`, `_step_up`) | x -10..10, 4 m thick | y 10, z -2..2, 16 platforms of 5 x 1 m | `_ladders*`: 4-5 `SiegeLadder2` pipes | `_step_up` (10 to 15 m) | 1 |
 | TDD cliff | `persian_cliff_fort_straight` | x -10..10 | y 15, 2 platforms | ? | ? | 1, no firing lines |
 
-`gondor_fort_straight`'s frame is x -10.5..10.8 (pieces overlap their neighbours).
+`gondor_fort_straight`'s logic box is x -10.53..10.76, but its walkways, footprint and meshes end at -10.5 and 10.5 (its frame: 21 long;
+the tower and the other gondor pieces the same).
