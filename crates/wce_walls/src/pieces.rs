@@ -847,6 +847,10 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
     Ok(b)
 }
 
+/// A stair's platforms follow its treads (flat on each, a slope at each riser), or are one slope from end to end as the stepped
+/// bastion's own (user 2026-11-05: units did not even step onto the stairs; a test of one platform instead of many small ones).
+const STEPPED_STAIRS: bool = false;
+
 /// The steepest a stair's platforms slope (rise over run): about 39 degrees, under the stepped bastion's 40.
 const STAIR_SLOPE: f32 = 0.8;
 
@@ -868,6 +872,10 @@ const TREAD_BAND: f32 = 0.4;
 /// where there is no lower tread in the part (the walkway's own level beyond its ends), on the upper one. From the walkway's height at
 /// the part's start to its height at its end (`ends`), over `z`. Without treads, one slope from end to end.
 fn stepped_platforms(treads: &[(f32, f32, f32)], part: (f32, f32), ends: (f32, f32), z: (f32, f32), stretch: f32) -> Vec<serde_json::Value> {
+    if !STEPPED_STAIRS {
+        return vec![stair_quad((part.0, ends.0), (part.1, ends.1), z)];
+    }
+
     // The levels in x order: the walkway before (no run inside the part), the treads inside the part, the walkway after; one level for
     // neighbours within 3 cm (the first or last tread is often the walkway's own height).
     let mut levels: Vec<(f32, f32, f32)> = vec![(ends.0, part.0, part.0)];
@@ -924,11 +932,13 @@ fn stepped_platforms(treads: &[(f32, f32, f32)], part: (f32, f32), ends: (f32, f
         }
     }
 
-    clean.windows(2).filter(|w| w[1].0 - w[0].0 > 1e-4).map(|w| {
-        let ((xa, ya), (xb, yb)) = (w[0], w[1]);
-        serde_json::json!({ "flag_1": false, "flag_2": false, "flag_3": false, "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
-            { "x": xa, "y": ya, "z": z.0 }, { "x": xb, "y": yb, "z": z.0 }, { "x": xb, "y": yb, "z": z.1 }, { "x": xa, "y": ya, "z": z.1 } ] } })
-    }).collect()
+    clean.windows(2).filter(|w| w[1].0 - w[0].0 > 1e-4).map(|w| stair_quad(w[0], w[1], z)).collect()
+}
+
+/// One platform of a stair (its frame): from (x, y) to (x, y) along it, over `z`.
+fn stair_quad((xa, ya): (f32, f32), (xb, yb): (f32, f32), z: (f32, f32)) -> serde_json::Value {
+    serde_json::json!({ "flag_1": false, "flag_2": false, "flag_3": false, "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
+        { "x": xa, "y": ya, "z": z.0 }, { "x": xb, "y": yb, "z": z.0 }, { "x": xb, "y": yb, "z": z.1 }, { "x": xa, "y": ya, "z": z.1 } ] } })
 }
 
 /// If two piece files are of the same piece (`..._pieceNN_...`).
@@ -1102,6 +1112,7 @@ mod tests {
     /// the walkway after, flat on every tread at its height, a slope at each riser no steeper than the bastion's stair; both ways.
     #[test]
     fn a_stairs_platforms_follow_its_treads() {
+        let outline_of = |p: &serde_json::Value| p["vertices"]["outline"].as_array().unwrap().iter().map(|q| (q["x"].as_f64().unwrap() as f32, q["y"].as_f64().unwrap() as f32)).collect::<Vec<_>>();
         let down = [(15.002, 0.0, 0.62), (14.752, 0.62, 1.24), (14.502, 1.24, 1.86), (14.252, 1.86, 2.48), (14.002, 2.48, 3.0)];
         let up = down.iter().map(|&(y, a, b)| (30.0 - y, a, b)).collect::<Vec<_>>();
         // Amon Calen's wall 6 step: its last tread runs to the part's end, 8 cm above the walkway after it.
@@ -1110,6 +1121,14 @@ mod tests {
         let close = [(15.002, 0.0, 0.62), (15.252, 0.62, 1.24), (15.502, 1.24, 1.86), (15.752, 1.86, 3.0)];
         for (treads, ends) in [(down.to_vec(), (15.0, 14.06)), (up, (15.0, 15.94)), (short.to_vec(), (15.0, 14.42)), (close.to_vec(), (14.99, 15.729))] {
             let ps = stepped_platforms(&treads, (0.0, 3.0), ends, (5.1, 8.9), 1.0);
+            if !STEPPED_STAIRS {
+                // One platform, the bastion's way: from the walkway before to the walkway after.
+                assert_eq!(ps.len(), 1);
+                let o = outline_of(&ps[0]);
+                assert_eq!((o[0], o[1]), ((0.0, ends.0), (3.0, ends.1)));
+                continue;
+            }
+
             let outline = |p: &serde_json::Value| p["vertices"]["outline"].as_array().unwrap().iter().map(|q| (q["x"].as_f64().unwrap() as f32, q["y"].as_f64().unwrap() as f32)).collect::<Vec<_>>();
             let segs = ps.iter().map(|p| { let o = outline(p); (o[0], o[1]) }).collect::<Vec<_>>();
             assert_eq!(segs[0].0, (0.0, ends.0), "{segs:?}");
@@ -1147,6 +1166,8 @@ mod tests {
                 }
             }
         }
+
+        assert!(steps > 30, "only {steps} steps");
 
         // Near an attached end the steps keep away from it, off their boundary (Amon Calen's wall 5: the boundary 13 from its tower).
         let mut off = 0;
