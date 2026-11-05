@@ -381,9 +381,16 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
    - The farmland at the campaign's start (2026-11-05; the same module and switch): `dynamic_resources.esf`'s areas whose region has
      an agriculture building of the area's level (ASSUMPTION: chain level >= area level; 17 of 531 areas on main_attila, 721 tiles)
      take `tile_upgrades.xml`'s farmland group.
-   Left: a campaign launch (noted, not for now); from the campaign's rendering: the settlements' sprawl and walls, Thrones' and Rome 2's
-   startposes, the trees' size and lean, the mountains' look, the seasons' snow masks, the GPU's terrain cost (smaller rings for
-   campaign maps).
+   - Thrones and Rome 2 (2026-11-05): their startposes read (the slots' two layouts, Rome 2's display table links): settlements on
+     `vik_attila` (353 models) and Rome 2's `main_rome` (316, its map `main_rome_map`); the roads' rules (Thrones' `vik_road_mod` is
+     given by nothing in vanilla: level 0 everywhere; Rome 2's tier-1 buildings give no road value: all at the first level on turn
+     1). Thrones' `vik_attila_map` opens in the Terrain tool with them; its look against the game is not checked (screenshots
+     needed). Rome 2's campaign maps are not opened by the Terrain tool (out of the plan's scope so far); Rome 2 has no
+     `has_aqueduct`, so its aqueducts are not drawn.
+   Left: a campaign launch (noted, not for now); from the campaign's rendering: the settlements' sprawl and walls (decoded, which
+   neighbour an edge bit is not: docs/re/terry.md "Settlement sprawl"), the trees' size and lean and the mountains' look (against
+   the game's screenshots), the seasons and their snow masks (docs/re/terrain.md: the resolve's mask layers not traced), Thrones'
+   campaign look (screenshots), the GPU's terrain cost (smaller rings for campaign maps).
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
    games when their profiles come (their Terry is another tool: out of this seam's first pass).
    **Progress 2026-11-04.** Done:
