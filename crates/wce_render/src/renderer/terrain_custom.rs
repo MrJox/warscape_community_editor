@@ -93,11 +93,38 @@ impl Renderer {
     /// A mesh's buffers, made the first time it is seen.
     pub(crate) fn build_custom(&mut self, m: &CustomTerrainMesh, epoch: u64) {
         let dev = self.dev.clone();
+        if !self.terrain.custom.contains_key(&m.id) {
+            self.terrain.made += 1;
+        }
+
         let g = self.terrain.custom.entry(m.id).or_insert_with(|| CustomGpu {
             lods: m.lods.iter().map(|l| lod_buffers(&dev, l)).collect(), albedo: m.albedo.clone(), bounds: m.bounds, used: 0,
         });
 
         g.used = epoch;
+    }
+
+    /// A custom-mesh terrain's world box (scene units), lifted by the LF under it; `None` for other terrains and before its mesh is built.
+    pub(crate) fn custom_box(&self, e: &Entity) -> Option<([f32; 3], [f32; 3])> {
+        let Payload::Terrain(t) = &e.payload else { return None };
+        let g = self.terrain.custom.get(&t.custom.as_ref()?.id)?;
+        let w = &self.terrain.placed.get(&e.id)?.world.m;
+        let b = g.bounds;
+        let (mut bmin, mut bmax) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for k in 0..8 {
+            let c = [b[if k & 1 == 0 { 0 } else { 3 }], b[if k & 2 == 0 { 1 } else { 4 }], b[if k & 4 == 0 { 2 } else { 5 }]];
+            for r in 0..3 {
+                let v = w[r][0] * c[0] + w[r][1] * c[1] + w[r][2] * c[2] + w[r][3];
+                (bmin[r], bmax[r]) = (bmin[r].min(v), bmax[r].max(v));
+            }
+        }
+
+        if let Some(lf) = &t.lf {
+            let (lo, hi) = lf.range(bmin[0], bmin[2], bmax[0], bmax[2]);
+            (bmin[1], bmax[1]) = (bmin[1] + lo, bmax[1] + hi);
+        }
+
+        Some((bmin, bmax))
     }
 
     /// The custom meshes of an LF group's terrains (`ids`, among `ents`) with the bound shaders and LF constants, the group's frame moved by
@@ -114,26 +141,10 @@ impl Renderer {
         let mut batches: Vec<((u64, usize), Vec<f32>)> = vec![];
         for e in ents {
             let Payload::Terrain(t) = &e.payload else { continue };
-            let (Some(m), Some(p)) = (&t.custom, self.terrain.placed.get(&e.id)) else { continue };
-            let Some(g) = self.terrain.custom.get(&m.id) else { continue };
+            let Some(m) = &t.custom else { continue };
+            let (Some(p), Some(g)) = (self.terrain.placed.get(&e.id), self.terrain.custom.get(&m.id)) else { continue };
             let w = &p.world.m;
-
-            // The world box of the mesh, lifted by the LF under it.
-            let b = g.bounds;
-            let (mut bmin, mut bmax) = ([f32::MAX; 3], [f32::MIN; 3]);
-            for k in 0..8 {
-                let c = [b[if k & 1 == 0 { 0 } else { 3 }], b[if k & 2 == 0 { 1 } else { 4 }], b[if k & 4 == 0 { 2 } else { 5 }]];
-                for r in 0..3 {
-                    let v = w[r][0] * c[0] + w[r][1] * c[1] + w[r][2] * c[2] + w[r][3];
-                    (bmin[r], bmax[r]) = (bmin[r].min(v), bmax[r].max(v));
-                }
-            }
-
-            if let Some(lf) = &t.lf {
-                let (lo, hi) = lf.range(bmin[0], bmin[2], bmax[0], bmax[2]);
-                (bmin[1], bmax[1]) = (bmin[1] + lo, bmax[1] + hi);
-            }
-
+            let Some((bmin, bmax)) = self.custom_box(e) else { continue };
             if !box_in_frustum(cull, bmin, bmax) {
                 continue;
             }
