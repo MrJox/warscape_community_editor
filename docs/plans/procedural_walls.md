@@ -75,6 +75,11 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **Firing lines are cut to the piece's faces** (2026-11-05: at the prow units crossing near the corner's inner side got stuck; the
   inner side's LowWall and Overflow lines, kept by their middle, reached up to 0.64 past the bisector over the other side's walkway,
   5 of them on Amon Calen's prow). Each part is cut to the mitre (and an attached end's face), a part under 5 cm left out.
+- **A hull cut by a face is closed again** (`logic::hull_caps`, 2026-11-05: soldiers fell through at the prow, on the curved arm's side;
+  its walkway has no crack, platforms at one height, hull under every point and none over it, but both pieces' hulls lay open along
+  the seam): the open edges on a cut plane are chained into loops and filled, facing out, in the group of the hull they close; hull
+  points within 6 mm are one. The game's own hulls are not all closed (the door section 6 open edges, the stepped bastion 3 and 17),
+  so this is not known to be the cause: to confirm in game.
 - **A stair was one platform for a test** (`pieces::STEPPED_STAIRS`, back to true once the winding was found; user 2026-11-05: units did not even step onto the stairs; a test of
   whether the game dislikes many small platforms together): one slope from the walkway's height where the step starts to its height
   where it ends, across the walkway, as the stepped bastion's own stair (Amon Calen: 20 stairs, slopes 6 to 22 degrees). The stepped

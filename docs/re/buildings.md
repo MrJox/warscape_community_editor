@@ -91,6 +91,8 @@ names or with wrong descriptions. To rename and document in rpfm (`~/Proyectos/r
 - **`collision_3d` triangles** (`CollisionTriangle`): `zero_1`, `zero_2`, `zero_3` are not zero: they are the edge's number in the
   triangle (0, 1, 2) in every file seen; `face_index_1..3` repeat `face_index`; `across_face_index_N` is the triangle across edge N
   (-1 on an open edge; the walls' hulls are closed, none). `zero_4` is 0.
+- **Hull winding and closure**: hull triangles face out ((v2 - v1) x (v3 - v1), a positive volume). Most hulls are closed, not all: the
+  door section's intact state has 6 open edges, the stepped bastion's 3 and 17.
 - **`collision_3d`** (`Collision3d`): `uk_1` 1 and `uk_2` 0 in the walls; its `bounding_box` is all zeros in the files seen (the
   state's own `bounding_box` is the hull's extent).
 - **The state's `uk_2`** -1, **`uk_7`** 0, **`f_1`** 0.0 in every wall piece seen.

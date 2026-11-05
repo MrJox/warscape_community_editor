@@ -969,6 +969,11 @@ fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3
         polys = polys.into_iter().map(|(i, p)| (i, cut(&p, &|q| a * q[0] + b * q[2] - c))).filter(|p| p.1.len() >= 3).collect();
     }
 
+    // Closed again where the planes cut it, as the game's hulls are (an open one at a corner's seam let soldiers drop through: user
+    // 2026-11-05).
+    let caps = hull_caps(&polys, planes);
+    polys.extend(caps);
+
     let sunk = |q: [f32; 3]| {
         let (z0, z1) = sink_z.unwrap_or((f32::MIN, f32::MAX));
         let under = sinks.iter().any(|&((a, b), (y0, y1))| q[0] > a + SINK_IN - 1e-3 && q[0] < b - SINK_IN + 1e-3 && b - a > 2.0 * SINK_IN && q[1] >= y0 && q[1] <= y1);
@@ -978,16 +983,163 @@ fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3
     polys.into_iter().map(|(i, p)| (i, p.into_iter().map(|q| warp.point(sunk(q))).collect())).collect()
 }
 
-/// A collision hull written from polygons (triangle fans; degenerate triangles left out): its vertices shared (within a tenth of a
-/// millimetre), every triangle's edges and the triangles across them (-1 on an open edge), as the game's files have them. Per triangle
+/// The caps that close a hull's polygons where `planes` cut them: the edges only one polygon has, lying on a plane, chained into loops,
+/// each filled (ear clipping in the plane) facing out of the kept side (`a x + b z <= c`). Each cap takes the source triangle of the
+/// polygon at its first edge.
+fn hull_caps(polys: &[(usize, Vec<[f32; 3]>)], planes: &[[f32; 3]]) -> Vec<(usize, Vec<[f32; 3]>)> {
+    let key = |p: [f32; 3]| p.map(|v| (v * 1e4).round() as i64);
+    let mut uses: HashMap<([i64; 3], [i64; 3]), usize> = HashMap::new();
+    for (_, p) in polys {
+        for i in 0..p.len() {
+            let (u, v) = (key(p[i]), key(p[(i + 1) % p.len()]));
+            *uses.entry(if u < v { (u, v) } else { (v, u) }).or_default() += 1;
+        }
+    }
+
+    let mut out = vec![];
+    for &[a, b, c] in planes {
+        let on = |p: [f32; 3]| (a * p[0] + b * p[2] - c).abs() < 1e-3;
+        // The open edges on this plane, with the source of their polygon.
+        let mut open: Vec<([f32; 3], [f32; 3], usize)> = vec![];
+        for (src, p) in polys {
+            for i in 0..p.len() {
+                let (u, v) = (p[i], p[(i + 1) % p.len()]);
+                let (ku, kv) = (key(u), key(v));
+                if ku != kv && on(u) && on(v) && uses.get(&if ku < kv { (ku, kv) } else { (kv, ku) }) == Some(&1) {
+                    open.push((u, v, *src));
+                }
+            }
+        }
+
+        // Chained into loops, each edge once (either way round).
+        let mut used = vec![false; open.len()];
+        for start in 0..open.len() {
+            if used[start] {
+                continue;
+            }
+
+            used[start] = true;
+            let (first, mut at, src) = (open[start].0, open[start].1, open[start].2);
+            let mut lp = vec![first];
+            while key(at) != key(first) {
+                lp.push(at);
+                let Some(n) = (0..open.len()).find(|&j| !used[j] && (key(open[j].0) == key(at) || key(open[j].1) == key(at))) else { break };
+                used[n] = true;
+                at = if key(open[n].0) == key(at) { open[n].1 } else { open[n].0 };
+            }
+
+            if lp.len() < 3 || key(at) != key(first) {
+                continue;
+            }
+
+            // In the plane: along it (horizontally) and up. Facing out: the normal along (a, 0, b).
+            let len = a.hypot(b).max(1e-9);
+            let t = [-b / len, a / len];
+            // Facing out (its normal, (v2 - v1) x (v3 - v1) as the game's hull triangles, along (a, 0, b)): the loop's own normal says
+            // which way round it goes.
+            let n = newell(&lp);
+            let lp = if n[0] * a + n[2] * b < 0.0 { lp.into_iter().rev().collect::<Vec<_>>() } else { lp };
+            let flat = lp.iter().map(|p| [p[0] * t[0] + p[2] * t[1], p[1]]).collect::<Vec<_>>();
+            // The loop's points in a straight line with their neighbours (where the cut crossed a face's diagonal) are left out of the
+            // ears and put back into the triangle edge they lie on: the cap then meets the hull at every point, closed.
+            let mut tris = ear_clip_indices(&flat);
+            let on_seg = |p: [f32; 2], a: [f32; 2], b: [f32; 2]| {
+                let (d, e) = ([b[0] - a[0], b[1] - a[1]], [p[0] - a[0], p[1] - a[1]]);
+                let len2 = d[0] * d[0] + d[1] * d[1];
+                let t = (e[0] * d[0] + e[1] * d[1]) / len2.max(1e-12);
+                t > 1e-4 && t < 1.0 - 1e-4 && (e[0] - d[0] * t).hypot(e[1] - d[1] * t) < 1e-4
+            };
+            for p in 0..flat.len() {
+                if tris.iter().any(|t| t.contains(&p)) {
+                    continue;
+                }
+
+                let Some((ti, e)) = tris.iter().enumerate().find_map(|(ti, t)| (0..3).find(|&e| on_seg(flat[p], flat[t[e]], flat[t[(e + 1) % 3]])).map(|e| (ti, e))) else { continue };
+                let t = tris.remove(ti);
+                let (u, v, w) = (t[e], t[(e + 1) % 3], t[(e + 2) % 3]);
+                tris.push([u, p, w]);
+                tris.push([p, v, w]);
+            }
+
+            for [i, j, k] in tris {
+                out.push((src, vec![lp[i], lp[j], lp[k]]));
+            }
+        }
+    }
+
+    out
+}
+
+/// A simple polygon (2D, either way round) cut into triangles (ear clipping): indices into it, in its order of turning.
+fn ear_clip_indices(points: &[[f32; 2]]) -> Vec<[usize; 3]> {
+    let cross = |a: [f32; 2], b: [f32; 2], c: [f32; 2]| (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    let mut idx = (0..points.len()).collect::<Vec<_>>();
+    let area = (0..points.len()).map(|i| { let (p, q) = (points[i], points[(i + 1) % points.len()]); p[0] * q[1] - q[0] * p[1] }).sum::<f32>();
+    let sign = if area >= 0.0 { 1.0 } else { -1.0 };
+    let mut out = vec![];
+    let (mut k, mut stuck) = (0, 0);
+    while idx.len() > 3 && stuck < idx.len() {
+        let n = idx.len();
+        let (ia, ib, ic) = (idx[(k + n - 1) % n], idx[k % n], idx[(k + 1) % n]);
+        let (a, b, c) = (points[ia], points[ib], points[ic]);
+        let turn = cross(a, b, c) * sign;
+        if turn.abs() < 1e-9 {
+            idx.remove(k % n);
+            stuck = 0;
+            k %= idx.len().max(1);
+            continue;
+        }
+
+        let empty = turn > 0.0 && idx.iter().all(|&j| {
+            let p = points[j];
+            j == ia || j == ib || j == ic || p == a || p == b || p == c || !(cross(a, b, p) * sign >= 0.0 && cross(b, c, p) * sign >= 0.0 && cross(c, a, p) * sign >= 0.0)
+        });
+        if empty {
+            out.push([ia, ib, ic]);
+            idx.remove(k % n);
+            stuck = 0;
+        } else {
+            k += 1;
+            stuck += 1;
+        }
+
+        k %= idx.len().max(1);
+    }
+
+    if idx.len() == 3 {
+        out.push([idx[0], idx[1], idx[2]]);
+    }
+
+    out
+}
+
+/// How near two of a hull's points are one.
+const HULL_WELD: f32 = 0.006;
+
+/// A collision hull written from polygons (triangle fans; degenerate triangles left out): its vertices shared (within `HULL_WELD`), every triangle's edges and the triangles across them (-1 on an open edge), as the game's files have them. Per triangle
 /// written, the polygon it is part of.
 fn write_collision(c: &mut Value, polys: &[Vec<[f32; 3]>]) -> Vec<usize> {
-    let mut index: HashMap<[i64; 3], usize> = HashMap::new();
+    // One point for points within `HULL_WELD` (a cut along a hull's own end left cracks of a few millimetres): the first met stands for
+    // them, found through the cells around.
+    let cell = |p: [f32; 3]| p.map(|v| (v / (2.0 * HULL_WELD)).floor() as i64);
+    let mut index: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
     let mut verts: Vec<[f32; 3]> = vec![];
-    let mut id = |p: [f32; 3]| *index.entry(p.map(|v| (v * 1e4).round() as i64)).or_insert_with(|| {
+    let mut id = |p: [f32; 3]| {
+        let c = cell(p);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    if let Some(&found) = index.get(&[c[0] + dx, c[1] + dy, c[2] + dz]).and_then(|l| l.iter().find(|&&i| (0..3).all(|k| (verts[i][k] - p[k]).abs() <= HULL_WELD))) {
+                        return found;
+                    }
+                }
+            }
+        }
+
         verts.push(p);
+        index.entry(c).or_default().push(verts.len() - 1);
         verts.len() - 1
-    });
+    };
 
     let (mut tris, mut from): (Vec<[usize; 3]>, Vec<usize>) = (vec![], vec![]);
     for (k_poly, poly) in polys.iter().enumerate() {
@@ -1368,6 +1520,53 @@ mod tests {
             let pts_a = face.iter().flat_map(|&&(x, y)| [x, y]).collect::<Vec<_>>();
             let pts_b = eb.iter().flat_map(|&(x, y)| [x, y]).collect::<Vec<_>>();
             assert!(pts_a.iter().all(|&q| pts_b.iter().any(|&r| near(q, r))), "{turn}");
+        }
+    }
+
+    /// A hull cut by a corner's face (or an attached end's) is closed again: no open edge, its triangles facing out as the game's (a
+    /// positive volume), the cut filled even where the cross-section is not convex.
+    #[test]
+    fn a_cut_hull_is_closed() {
+        // A wall's cross-section with a parapet (an L, not convex), along x from -10 to 10, wound out as the game's hulls.
+        let section = [[0.0f32, 0.0], [9.0, 0.0], [9.0, 15.0], [2.0, 15.0], [2.0, 17.0], [0.0, 17.0]];
+        let (n, mut verts, mut faces) = (section.len(), vec![], vec![]);
+        for x in [-10.0f32, 10.0] {
+            verts.extend(section.iter().map(|&[z, y]| [x, y, z]));
+        }
+
+        for i in 0..n {
+            let j = (i + 1) % n;
+            faces.push([i, n + i, n + j]);
+            faces.push([i, n + j, j]);
+        }
+
+        let flat = section.iter().map(|&[z, y]| [z, y]).collect::<Vec<_>>();
+        for [a, b, c] in ear_clip_indices(&flat) {
+            faces.push([a, c, b]);
+            faces.push([n + a, n + b, n + c]);
+        }
+
+        let volume = |c: &Value| {
+            let v = c["vertices"].as_array().unwrap().iter().map(p3).collect::<Vec<_>>();
+            c["triangles"].as_array().unwrap().iter().map(|t| {
+                let (a, b, d) = (v[t["vertex_1"].as_u64().unwrap() as usize], v[t["vertex_2"].as_u64().unwrap() as usize], v[t["vertex_3"].as_u64().unwrap() as usize]);
+                a[0] * (b[1] * d[2] - b[2] * d[1]) - a[1] * (b[0] * d[2] - b[2] * d[0]) + a[2] * (b[0] * d[1] - b[1] * d[0])
+            }).sum::<f32>() / 6.0
+        };
+        let mut hull = json!({ "bounding_box": { "min_x": 0.0, "max_x": 0.0, "min_y": 0.0, "max_y": 0.0, "min_z": 0.0, "max_z": 0.0 },
+            "vertices": verts.iter().map(|&p| point3(p)).collect::<Vec<_>>(),
+            "triangles": faces.iter().map(|f| json!({ "vertex_1": f[0], "vertex_2": f[1], "vertex_3": f[2] })).collect::<Vec<_>>() });
+        let flat_hull = hull.clone();
+        write_collision(&mut hull, &faces.iter().map(|f| f.iter().map(|&i| verts[i]).collect::<Vec<_>>()).collect::<Vec<_>>());
+        assert!(volume(&hull) > 0.0, "the test hull is wound out");
+
+        for plane in [[1.0f32, 0.0, 2.0], [1.0, 0.6, 3.0], [-1.0, 0.8, 4.0]] {
+            let polys = collision_polygons(&flat_hull, &crate::warp::Identity, &Cuts { step: 5.0, at: vec![] }, &[plane], &[], None).into_iter().map(|p| p.1).collect::<Vec<_>>();
+            let mut cut = flat_hull.clone();
+            write_collision(&mut cut, &polys);
+            let open = cut["triangles"].as_array().unwrap().iter().flat_map(|t| (1..=3).map(move |k| t[format!("across_face_index_{k}")].as_i64().unwrap())).filter(|&a| a < 0).count();
+            assert_eq!(open, 0, "{plane:?}: open edges");
+            assert!(volume(&cut) > 0.0 && volume(&cut) < volume(&hull), "{plane:?}: volume {} of {}", volume(&cut), volume(&hull));
         }
     }
 
