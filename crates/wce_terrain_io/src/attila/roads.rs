@@ -5,10 +5,12 @@
 //! - A region's road value: the sum of the road effect (`att_effect_building_road`: the effects ending `_building_road`, scope
 //!   `region_to_region_own`, no other source in the db: no technology or effect bundle gives it) of its buildings in the startpos
 //!   (`REGION_SLOT`s' `BUILDING_BASE`, as [`super::cities`] reads them), `building_effects_junction`'s `value`.
-//! - Its level: the last of the campaign's `campaign_map_roads` rows (by `threshold`) whose threshold the value reaches: Attila's main
-//!   campaign `att_road_lv_1` 0, `att_road_lv_2` 10, `att_road_lv_3` 40 (`turns_required_to_upgrade_to` 1: on the first turn already).
-//! - Its tiles: level n > 0 the `road0_to_road<n>` group of `terrain/tiles/campaign/tile_upgrades.xml` (`roads_climate` to `roads`, then
-//!   to `roads_stone`; the linking tile `1x1_straight` has no upgrade and stays), the game's `FUN_1186de70` (empire.retail.dll).
+//! - Its level: how many of the campaign's `campaign_map_roads` thresholds the value reaches: Attila's main campaign `att_road_lv_1` 0,
+//!   `att_road_lv_2` 10, `att_road_lv_3` 40 (`turns_required_to_upgrade_to` 1: on the first turn already), so every region has level 1
+//!   at least (the game's turn-1 screenshots: a pale road in every region, none left as the kit's `roads_climate`).
+//! - Its tiles: level n > 0 the `road0_to_road<n>` group of `terrain/tiles/campaign/tile_upgrades.xml`, the highest there is above it
+//!   (`roads_climate` to `roads` at 1, `roads_stone` at 2 and 3; the linking tile `1x1_straight` has no upgrade and stays), the game's
+//!   `FUN_1186de70` (empire.retail.dll). ASSUMPTION: level 3 takes level 2's group (the file has no `road0_to_road3`).
 //! - Where a road runs: `map_data.esf`'s `HEX_MAP_DATA` (1016 x 720 on `main_attila_map`), 7 bytes a hex cell, row 0 the south edge:
 //!   byte 0 the region (an index into `REGIONS_BLOCK`; 171 there `att_reg_terra_incognita`, the sea and what is off the map), byte 5
 //!   the cell's road edges (a 6-bit mask: 9, 18, 36 straight through, 5, 10, 20, 40, 17, 34 bends), byte 6 its river's.
@@ -43,6 +45,9 @@ const CELL_BYTES: usize = 7;
 fn norm(s: &str) -> String {
     s.replace('/', "\\").trim_end_matches('\\').to_lowercase()
 }
+
+/// A map cell (column, row; row 0 the north edge).
+pub type MapCell = (i32, i32);
 
 /// The db's road rules of a campaign.
 #[derive(Clone, Debug, Default)]
@@ -83,9 +88,10 @@ impl RoadTables {
         Self { thresholds, values, chain_levels }
     }
 
-    /// The level a road value reaches (0 when none).
+    /// The level a road value reaches: how many of the campaign's thresholds it passes (0: none, the kit's `roads_climate`; 1 the
+    /// first row, `att_road_lv_1` at 0, which every region reaches: the game's turn-1 screenshots show a road in every region).
     pub fn level(&self, value: f64) -> usize {
-        self.thresholds.iter().rposition(|&t| value >= t).unwrap_or(0)
+        self.thresholds.iter().filter(|&&t| value >= t).count()
     }
 }
 
@@ -203,6 +209,17 @@ impl HexMap {
     }
 }
 
+/// A startpos's season (its calendar's date: `CAMPAIGN_CALENDAR/DATE`, its second number; Attila's main campaign 0, spring, as the game's
+/// turn 1 has it) and climate stage (`WORLD/CLIMATE`; 0).
+pub fn campaign_start(startpos: &[u8]) -> (Option<u32>, Option<u32>) {
+    let Ok(sp) = ESF::decode(&mut Cursor::new(startpos), &None) else { return (None, None) };
+    let Some(model) = as_record(sp.root_node()).and_then(|r| child(r, "CAMPAIGN_ENV")).and_then(|r| child(r, "CAMPAIGN_MODEL")) else { return (None, None) };
+    let first = |r: &rpfm_lib::files::esf::RecordNode, n: usize| r.children().first().and_then(|g| g.iter().filter(|x| as_record(x).is_none()).filter_map(u32_of).nth(n));
+    let season = child(model, "CAMPAIGN_CALENDAR").and_then(|c| child(c, "DATE")).and_then(|d| first(d, 1));
+    let stage = child(model, "WORLD").and_then(|w| child(w, "CLIMATE")).and_then(|c| first(c, 0));
+    (season, stage)
+}
+
 /// Each region's buildings in a startpos (every slot's, a slot with a cell on the map or not).
 ///
 /// # Errors
@@ -291,6 +308,11 @@ pub struct CampaignRoads {
     /// The resource areas reached and not.
     pub areas_on: usize,
     pub areas_off: usize,
+
+    /// The campaign's start: its season (`seasons`' order: 0 spring, 1 summer, 2 autumn, 3 winter; `CAMPAIGN_CALENDAR/DATE`'s second
+    /// number) and its climate stage (`WORLD/CLIMATE`, Attila's changing climate: the snow masks `snow_mask_<season><stage + 1>`).
+    pub start_season: Option<u32>,
+    pub climate_stage: Option<u32>,
 }
 
 impl CampaignRoads {
@@ -314,7 +336,7 @@ impl CampaignRoads {
             }
         }
 
-        Self { hex, values, levels, upgrades, farms, areas_on, areas_off }
+        Self { hex, values, levels, upgrades, farms, areas_on, areas_off, start_season: None, climate_stage: None }
     }
 
     /// How many regions are at each level.
@@ -344,7 +366,7 @@ impl CampaignRoads {
     /// Per map cell, the highest road level of the road hex cells whose centre lies in it, and the farmland group of the farmland
     /// cells': where the game applies a cell's upgrade group (`FUN_10b28060`: a road cell's level change applies `road<old>_to_road<new>`
     /// at the cell's world position, to the tile there).
-    pub fn upgrade_cells(&self, size: (u32, u32)) -> (HashMap<(i32, i32), usize>, HashMap<(i32, i32), String>) {
+    pub fn upgrade_cells(&self, size: (u32, u32)) -> (HashMap<MapCell, usize>, HashMap<MapCell, String>) {
         let mut roads: HashMap<(i32, i32), usize> = HashMap::new();
         for r in 0..self.hex.h {
             for c in 0..self.hex.w {
@@ -387,7 +409,9 @@ impl CampaignRoads {
                 continue;
             }
 
-            if let Some(dst) = self.upgrades.groups.get(&format!("road0_to_road{level}")).and_then(|g| g.get(&loc)) {
+            // Level n is `road0_to_road<n>`, the highest group there is for the levels above (Attila: three levels, two groups).
+            let top = (1..=level).rev().find(|n| self.upgrades.groups.contains_key(&format!("road0_to_road{n}"))).unwrap_or(0);
+            if let Some(dst) = self.upgrades.groups.get(&format!("road0_to_road{top}")).and_then(|g| g.get(&loc)) {
                 p.location.clone_from(dst);
                 n += 1;
             }
@@ -405,7 +429,9 @@ impl CampaignRoads {
 /// A file can't be read as it should.
 pub fn read(map_data: &[u8], startpos: &[u8], tile_upgrades: &[u8], tables: &RoadTables, dynamic: Option<&[u8]>) -> Result<CampaignRoads, String> {
     let areas = dynamic.map(dynamic_resources).transpose()?.unwrap_or_default();
-    Ok(CampaignRoads::new(HexMap::read(map_data)?, &region_buildings(startpos)?, tables, Upgrades::parse(tile_upgrades), &areas))
+    let mut roads = CampaignRoads::new(HexMap::read(map_data)?, &region_buildings(startpos)?, tables, Upgrades::parse(tile_upgrades), &areas);
+    (roads.start_season, roads.climate_stage) = campaign_start(startpos);
+    Ok(roads)
 }
 
 #[cfg(test)]
@@ -415,7 +441,7 @@ mod tests {
     #[test]
     fn levels_by_threshold() {
         let t = RoadTables { thresholds: vec![0.0, 10.0, 40.0], ..Default::default() };
-        assert_eq!([t.level(0.0), t.level(9.9), t.level(10.0), t.level(39.0), t.level(40.0), t.level(95.0)], [0, 0, 1, 1, 2, 2]);
+        assert_eq!([t.level(-1.0), t.level(0.0), t.level(9.9), t.level(10.0), t.level(39.0), t.level(40.0), t.level(95.0)], [0, 1, 1, 2, 2, 3, 3]);
     }
 
     #[test]

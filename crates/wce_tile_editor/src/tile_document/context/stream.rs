@@ -188,7 +188,13 @@ impl Shared {
                 if cached { stats.from_cache += 1 } else { stats.opened += 1 }
                 stats.open_s += t.load_s;
                 stats.bytes += t.bytes;
-                frame.offer_plain(&t.material);
+                // A campaign map's plain ground (its far ring) from a grass tile, the climates' ground: the first tile to come was any
+                // (a desert's sand laid beige over the whole far ring).
+                let set = key.0.replace('/', "\\").to_lowercase();
+                let campaign = set.contains("\\tiles\\campaign\\");
+                if !campaign || set.split('\\').filter(|s| !s.is_empty()).nth(3).is_some_and(|s| s.starts_with("grass_")) {
+                    frame.offer_plain(&t.material);
+                }
                 Slot::Ready(Arc::new(t), now)
             }
 
