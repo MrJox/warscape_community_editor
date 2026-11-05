@@ -849,7 +849,7 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
 
 /// A stair's platforms follow its treads (flat on each, a slope at each riser), or are one slope from end to end as the stepped
 /// bastion's own (user 2026-11-05: units did not even step onto the stairs; a test of one platform instead of many small ones).
-const STEPPED_STAIRS: bool = false;
+const STEPPED_STAIRS: bool = true;
 
 /// The steepest a stair's platforms slope (rise over run): about 39 degrees, under the stepped bastion's 40.
 const STAIR_SLOPE: f32 = 0.8;

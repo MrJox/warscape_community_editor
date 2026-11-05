@@ -69,7 +69,7 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
     grouped once, boxes holding everything, every joint between pieces sharing edges but one. Open: the sharp corner's mitre (Amon
     Calen's upper prow) shares no edge between its two pieces (the base's slanted platform edges cross each face at different depths);
     to do: both faces' vertices on one grid of depths.
-- **A stair is one platform** (`pieces::STEPPED_STAIRS` false; user 2026-11-05: units did not even step onto the stairs; a test of
+- **A stair was one platform for a test** (`pieces::STEPPED_STAIRS`, back to true once the winding was found; user 2026-11-05: units did not even step onto the stairs; a test of
   whether the game dislikes many small platforms together): one slope from the walkway's height where the step starts to its height
   where it ends, across the walkway, as the stepped bastion's own stair (Amon Calen: 20 stairs, slopes 6 to 22 degrees). The stepped
   profile (flat on each tread, a slope at each riser) stays behind the switch.
