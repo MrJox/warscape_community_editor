@@ -595,6 +595,30 @@ impl Warp for PieceWarp<'_> {
 
         out
     }
+
+    fn corner_faces(&self) -> Vec<crate::warp::CornerFace> {
+        let (scale, x0) = (self.piece.scale, self.profile.x.0);
+        let (sn, cs) = self.piece.yaw.sin_cos();
+        let mut out = vec![];
+        for k in 0..2 {
+            let Some((c, m)) = self.corner_face(k) else { continue };
+            let plane = if k == 0 {
+                let d0 = self.section.0 - self.piece.s.0;
+                [-scale as f32, self.shears.0 as f32, (-(d0 + scale * x0)) as f32]
+            } else {
+                let d1 = self.section.1 - self.piece.s.0;
+                [scale as f32, -self.shears.1 as f32, (d1 + scale * x0) as f32]
+            };
+
+            // The corner and the bisector's direction in the piece's frame (`local`'s turn).
+            let at = self.local([c[0], 0.0, c[1]]);
+            let d = [-m[1], m[0]];
+            let dir = [d[0] * cs + d[1] * sn, -d[0] * sn + d[1] * cs];
+            out.push(crate::warp::CornerFace { plane, at: [at[0] as f32, at[2] as f32], dir: [dir[0] as f32, dir[1] as f32] });
+        }
+
+        out
+    }
 }
 
 /// A step section of a step piece onto its place in a piece: its x range onto the step's distances, z across the wall as the piece, y

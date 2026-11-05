@@ -66,9 +66,12 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
     (wall 1); a step finds room anywhere on the run before when the usual window has none.
   - No joint between pieces falls inside a step (the end caps under it went with the stair).
   - Result: every piece's platforms one connected group by shared edges, no T-junctions, every line on its platform, hull triangles
-    grouped once, boxes holding everything, every joint between pieces sharing edges but one. Open: the sharp corner's mitre (Amon
-    Calen's upper prow) shares no edge between its two pieces (the base's slanted platform edges cross each face at different depths);
-    to do: both faces' vertices on one grid of depths.
+    grouped once, boxes holding everything, every joint between pieces sharing edges (the sharp corner's
+    too, below).
+- **A sharp corner's two pieces share edges across it** (2026-11-05: the base's slanted platform edges crossed each face at points of
+  their own; units could not go round Amon Calen's upper prow): the platforms' points on a corner's face are put on one grid along
+  the bisector, every 0.5 from the corner (`logic::on_face_grid`, after the warp: a grid of depths across each arm drifted apart, 4 cm
+  5.5 m from the tip, where the arms meet the bisector at different angles). The prow's two pieces share 24 edges.
 - **A stair was one platform for a test** (`pieces::STEPPED_STAIRS`, back to true once the winding was found; user 2026-11-05: units did not even step onto the stairs; a test of
   whether the game dislikes many small platforms together): one slope from the walkway's height where the step starts to its height
   where it ends, across the walkway, as the stepped bastion's own stair (Amon Calen: 20 stairs, slopes 6 to 22 degrees). The stepped
