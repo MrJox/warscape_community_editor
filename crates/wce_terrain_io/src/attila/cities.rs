@@ -77,6 +77,9 @@ pub struct Cities {
     /// The hex grid (columns, rows).
     pub grid: (u32, u32),
 
+    /// World units a settlement model unit (the models' footprint decal against the map's hexes: 0.405 on `main_attila_map`).
+    pub model_scale: f64,
+
     pub slots: Vec<CitySlot>,
 
     /// The aqueducts of the regions with an aqueduct building.
@@ -315,10 +318,12 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
     let raw_w = f64::from(grid.0.saturating_sub(1)) * CELL_RAW_WIDTH;
     let raw_h = f64::from(grid.1) * CELL_RAW_HEIGHT + CELL_RAW_HEIGHT / 2.0;
     let (sx, sy) = (world.0 / raw_w, world.1 / raw_h);
+    // A cell's centre: RPFM's `world_position` (raw = world / scale + 4, a hex 8 raw units across: its centre is the raw origin of its
+    // column and row, 4 in, so the world position of column * 6 and row * 8 raw units, odd columns half a row up).
     let centre = |(c, r): (u16, u16)| {
         let x = f64::from(c) * CELL_RAW_WIDTH * sx;
         let y = f64::from(r) * CELL_RAW_HEIGHT * sy + if c % 2 == 1 { CELL_RAW_HEIGHT / 2.0 * sy } else { 0.0 };
-        (x + CELL_RAW_WIDTH / 2.0 * sx, y + CELL_RAW_HEIGHT / 2.0 * sy)
+        (x, y)
     };
 
     // The map's slots by region: main, port (or none), the secondary ones.
@@ -351,7 +356,12 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
         }
     }
 
-    let mut cities = Cities { world, grid, ..Default::default() };
+    // The settlement models' scale: their ground decal (`ProjectedDecalV2`, 5.51 x 5.72 model units on every settlement and port model
+    // measured) is the slot's footprint, the anchor cell and its six neighbours, of hexes 1.1 model units a side; the map's hexes are
+    // regular in world units (6 * sx = 1.5 sides, 8 * sy = sqrt(3) sides: `main_attila_map` 0.4457 a side), so a model unit is
+    // 0.4457 / 1.1 = 0.405 world units.
+    let model_scale = CELL_RAW_WIDTH * sx / 1.5 / 1.1;
+    let mut cities = Cities { world, grid, model_scale, ..Default::default() };
     let (mut no_cell, mut no_model, mut no_building) = (0, 0, 0);
     let (mut from_startpos, mut agree, mut differ) = (0, 0, 0);
     let mut unmatched: HashMap<String, usize> = HashMap::new();

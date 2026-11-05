@@ -263,13 +263,14 @@ impl PropModels {
             }
         }
 
-        // The settlements' buildings near the camera: a model unit a world unit (the `.terry`'s props are drawn so, its unit within 5 % of
-        // the world's), at their cell's centre, standing on the ground.
+        // The settlements' buildings near the camera at their cell's centre, standing on the ground, at the models' scale
+        // (`Cities::model_scale`).
         self.city_count = 0;
         if let Some(c) = &cities {
             let (w, h) = (f64::from(frame.map.width), f64::from(frame.map.height));
             let (a, b) = (frame.from_map.apply(0.0, 0.0), frame.from_map.apply(1.0, 0.0));
-            let k = ((b.0 - a.0).hypot(b.1 - a.1) * w / c.world.0) as f32;
+            // Frame units a model unit: the frame's per world unit times the models' world units a unit (their footprint decal, 0.405).
+            let k = ((b.0 - a.0).hypot(b.1 - a.1) * w / c.world.0 * c.model_scale) as f32;
             let (cx, cy) = frame.cell_of(f64::from(cam.target.x), f64::from(cam.target.z));
             for (i, slot) in c.slots.iter().enumerate() {
                 let Some(model) = &slot.model else { continue };

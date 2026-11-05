@@ -40,7 +40,14 @@ fn main() {
         let (px, py) = (((fx * lw as f64) as usize).min(lw - 1), ((fy * lh as f64) as usize).min(lh - 1));
         let o = 128 + 2 * (py * lw + px);
         let m = f64::from(u16::from_le_bytes([lf[o], lf[o + 1]])) / 65535.0 * lf_height - offset;
-        if m > 0.0 { land += 1 } else { sea += 1 }
+        if m > 0.0 {
+            land += 1;
+        } else {
+            sea += 1;
+            if s.model.is_some() {
+                println!("  in the sea: {} #{} {} cell {:?} world ({:.2}, {:.2}) {m:.0} m {:?}", s.region, s.index, s.kind, s.cell, s.world.0, s.world.1, s.model);
+            }
+        }
         if let Some(model) = &s.model {
             if vfs.read(model).is_ok() { have += 1 } else { missing += 1 }
         }
