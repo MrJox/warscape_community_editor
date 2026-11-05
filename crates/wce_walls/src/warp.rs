@@ -22,6 +22,22 @@ pub trait Warp {
     fn clip_planes(&self) -> Vec<[f32; 3]> {
         vec![]
     }
+
+    /// The faces of mitred corners (where another generated piece meets this one; not an attached end, whose building's joint is its
+    /// own): each as its plane in the source's frame ([`Warp::clip_planes`]'s) and, where [`Warp::point`] puts things, the corner's
+    /// point and the face's direction (x, z), the same line for both pieces of the corner. None by default.
+    fn corner_faces(&self) -> Vec<CornerFace> {
+        vec![]
+    }
+}
+
+/// A mitred corner's face: its plane in the source's frame (`a x + b z = c`), and in the frame points are put in, the corner's point
+/// and the face's direction (x, z, unit).
+#[derive(Clone, Copy, Debug)]
+pub struct CornerFace {
+    pub plane: [f32; 3],
+    pub at: [f32; 2],
+    pub dir: [f32; 2],
 }
 
 /// Another warp with its source moved along x by `dx` first: a copy of the base placed one length (or more) past a piece's end, to fill
@@ -46,6 +62,13 @@ impl Warp for Shifted<'_> {
 
     fn clip_planes(&self) -> Vec<[f32; 3]> {
         self.inner.clip_planes().into_iter().map(|[a, b, c]| [a, b, c - a * self.dx]).collect()
+    }
+
+    fn corner_faces(&self) -> Vec<CornerFace> {
+        self.inner.corner_faces().into_iter().map(|f| {
+            let [a, b, c] = f.plane;
+            CornerFace { plane: [a, b, c - a * self.dx], ..f }
+        }).collect()
     }
 }
 

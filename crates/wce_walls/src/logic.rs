@@ -16,7 +16,7 @@ use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::{Decodeable, Encodeable};
 use serde_json::{Map, Value, json};
 
-use crate::warp::{Cuts, Warp, clip_to, inside, newell, normalised, slice_along_x, subdivide, transform, turn};
+use crate::warp::{CornerFace, Cuts, Warp, clip_to, inside, newell, normalised, slice_along_x, subdivide, transform, turn};
 
 /// What warping a logic file did.
 #[derive(Clone, Debug, Default)]
@@ -563,7 +563,8 @@ fn platform_strips(old: &[Vec<Value>], warp: &dyn Warp, cuts: &Cuts, keep: &dyn 
                 slabs = vec![points.clone()];
             }
 
-            let slabs = slabs.into_iter().map(|s| clip_to(&s, &planes, true)).filter(|s| s.len() >= 3).collect::<Vec<_>>();
+            let faces = warp.corner_faces();
+        let slabs = slabs.into_iter().map(|s| clip_to(&s, &planes, true)).filter(|s| s.len() >= 3).collect::<Vec<_>>();
 
             for s in slabs {
                 let n = s.len() as f32;
@@ -573,7 +574,7 @@ fn platform_strips(old: &[Vec<Value>], warp: &dyn Warp, cuts: &Cuts, keep: &dyn 
                 }
 
                 let x = s.iter().fold((f32::MAX, f32::MIN), |(lo, hi), q| (lo.min(q[0]), hi.max(q[0])));
-                let w = s.iter().map(|&q| warp.point(q)).collect::<Vec<_>>();
+                let w = on_face_grid(&s, &s.iter().map(|&q| warp.point(q)).collect::<Vec<_>>(), &faces);
                 let mut nn = normalised(newell(&w));
                 if nn[0] * normal[0] + nn[1] * normal[1] + nn[2] * normal[2] < 0.0 {
                     nn = [-nn[0], -nn[1], -nn[2]];
@@ -593,6 +594,68 @@ fn platform_strips(old: &[Vec<Value>], warp: &dyn Warp, cuts: &Cuts, keep: &dyn 
     notes.platforms.0 += old.len();
     notes.platforms.1 += new.len();
     (new, strips)
+}
+
+/// The spacing of a corner face's points along it, from the corner (`on_face_grid`).
+const FACE_GRID: f32 = 0.5;
+
+/// A platform's warped points (`w`, from the source's `s`) with those on a corner's faces on one grid along the face, measured from the
+/// corner: each slid along the face to the nearest multiple of `FACE_GRID`, and a point at every multiple along an edge that runs on
+/// the face. Both pieces of a corner, whose faces are the same line, then have the same points on it, and their platforms share edges
+/// across it (user 2026-11-05: the base's slanted platform edges crossed each face at points of its own, and a grid of depths across
+/// each arm drifted apart where the arms meet the bisector at different angles; the corner's two sides shared no edge).
+fn on_face_grid(s: &[[f32; 3]], w: &[[f32; 3]], faces: &[CornerFace]) -> Vec<[f32; 3]> {
+    let mut src = s.to_vec();
+    let mut out = w.to_vec();
+    for f in faces {
+        let [a, b, c] = f.plane;
+        let on = |p: [f32; 3]| (a * p[0] + b * p[2] - c).abs() < 1e-3;
+        let along = |q: [f32; 3]| (q[0] - f.at[0]) * f.dir[0] + (q[2] - f.at[1]) * f.dir[1];
+        let snap = |t: f32| (t / FACE_GRID).round() * FACE_GRID;
+        let put = |t: f32, y: f32| [f.at[0] + f.dir[0] * t, y, f.at[1] + f.dir[1] * t];
+        let (mut ns, mut nw) = (vec![], vec![]);
+        for i in 0..out.len() {
+            let j = (i + 1) % out.len();
+            if !on(src[i]) {
+                ns.push(src[i]);
+                nw.push(out[i]);
+                continue;
+            }
+
+            let (tp, tq) = (snap(along(out[i])), snap(along(out[j])));
+            ns.push(src[i]);
+            nw.push(put(tp, out[i][1]));
+            if on(src[j]) {
+                let n = ((tq - tp) / FACE_GRID).round() as i32;
+                for k in 1..n.abs() {
+                    let t = tp + FACE_GRID * (k * n.signum()) as f32;
+                    let u = ((t - tp) / (tq - tp)).clamp(0.0, 1.0);
+                    ns.push(src[i]);
+                    nw.push(put(t, out[i][1] + (out[j][1] - out[i][1]) * u));
+                }
+            }
+        }
+
+        // Points made one by the snap.
+        let mut keep_s = vec![];
+        let mut keep_w: Vec<[f32; 3]> = vec![];
+        for (p, q) in ns.into_iter().zip(nw) {
+            if keep_w.last() != Some(&q) {
+                keep_s.push(p);
+                keep_w.push(q);
+            }
+        }
+
+        if keep_w.len() > 1 && keep_w.first() == keep_w.last() {
+            keep_w.pop();
+            keep_s.pop();
+        }
+
+        src = keep_s;
+        out = keep_w;
+    }
+
+    out
 }
 
 /// Firing lines cut where the platforms are (a line along the wall, the length of the piece, would be a chord of a curve: off the
@@ -1195,6 +1258,59 @@ mod tests {
         wind_as_the_game(&mut ours);
         assert!(area(&ours) < 0.0);
         assert_eq!(outline(&ours["vertices"])[0], [0.0, 15.0, 9.0]);
+    }
+
+    /// At a sharp corner the two pieces' platforms meet edge to edge on the bisector (the gondor base, its slanted platform edge too, as
+    /// Amon Calen's upper prow): every edge one has on the face, the other has as well.
+    #[test]
+    fn a_corners_two_sides_share_their_edges() {
+        use crate::pieces::{PieceWarp, cuts_of, pieces};
+        use crate::profile::profile;
+        use crate::solver::{WallInput, solve};
+        let ground = |_: f64, _: f64| 0.0;
+        let p = profile("gondor_fort_straight").unwrap();
+        let quad = |pts: &[[f32; 3]]| json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": pts.iter().map(|&q| point3(q)).collect::<Vec<_>>() } });
+        // gondor_fort_straight's walkway platforms (piece01, intact).
+        let base = vec![
+            vec![quad(&[[-10.5, 15.0, 8.5], [10.5, 15.0, 8.5], [10.5, 15.0, 3.25], [8.005, 15.0, 3.25]])],
+            vec![quad(&[[8.005, 15.0, 3.25], [8.005, 15.0, 1.8], [-8.005, 15.0, 3.25], [-10.5, 15.0, 8.5]])],
+            vec![quad(&[[8.005, 15.0, 1.8], [-8.005, 15.0, 1.8], [-8.005, 15.0, 3.25]])],
+            vec![quad(&[[-8.005, 15.0, 3.25], [-10.5, 15.0, 3.25], [-10.5, 15.0, 8.5]])],
+        ];
+        for (tip, turn) in [([80.0, 40.0], "left"), ([80.0, -40.0], "right"), ([60.0, 70.0], "sharp")] {
+            let input = WallInput { points: vec![[0.0, 0.0], tip, [160.0, 0.0]], sharp: vec![false, true, false], tolerance: 0.5, ..Default::default() };
+            let plan = solve(&input, p, &ground);
+            let s = plan.corners[0].0;
+            let ps = pieces(&plan, p);
+            let i = ps.iter().position(|q| (q.s.1 - s).abs() < 1e-6).unwrap();
+            let edges = |k: usize| {
+                let w = PieceWarp::new(&plan, p, ps[k], &ground);
+                let mut notes = LogicNotes::default();
+                let cuts = cuts_of(&plan, &ps[k], p);
+                let (mut platforms, _) = platform_strips(&base, &w, &cuts, &|_| true, 0, &mut notes);
+                // The copies of the base filling the corner's outer side, as `pieces::make_piece` brings them.
+                for dx in w.overhangs() {
+                    let copy = crate::warp::Shifted { inner: &w, dx };
+                    platforms.extend(platform_strips(&base, &copy, &cuts, &|_| true, 0, &mut notes).0);
+                }
+                let (sn, cs) = ps[k].yaw.sin_cos();
+                let scene = |q: [f32; 3]| { let (x, z) = (f64::from(q[0]), f64::from(q[2])); [ps[k].origin[0] + x * cs - z * sn, ps[k].origin[2] + x * sn + z * cs] };
+                platforms.iter().flat_map(|pl| { let o = outline(&pl["vertices"]).into_iter().map(scene).collect::<Vec<_>>(); (0..o.len()).map(move |j| (o[j], o[(j + 1) % o.len()])).collect::<Vec<_>>() }).collect::<Vec<_>>()
+            };
+            let (ea, eb) = (edges(i), edges(i + 1));
+            let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 0.005;
+            let on_b = |p: [f64; 2]| eb.iter().any(|&(x, y)| near(p, x) || near(p, y));
+            let face = ea.iter().filter(|&&(x, y)| on_b(x) && on_b(y) && (x[0] - y[0]).hypot(x[1] - y[1]) > 0.05).collect::<Vec<_>>();
+            assert!(face.len() >= 4, "{turn}: only {} edges on the face", face.len());
+            for &&(x, y) in &face {
+                assert!(eb.iter().any(|&(u, v)| (near(x, u) && near(y, v)) || (near(x, v) && near(y, u))), "{turn}: the edge {x:?} {y:?} is not the other side's");
+            }
+
+            // Every point one side has on the face, the other has too (no edge of one ends inside an edge of the other).
+            let pts_a = face.iter().flat_map(|&&(x, y)| [x, y]).collect::<Vec<_>>();
+            let pts_b = eb.iter().flat_map(|&(x, y)| [x, y]).collect::<Vec<_>>();
+            assert!(pts_a.iter().all(|&q| pts_b.iter().any(|&r| near(q, r))), "{turn}");
+        }
     }
 
     #[test]
