@@ -106,6 +106,13 @@ Budgets (to check with a perf gate on `main_attila_map`, RX 7900 XTX and the int
 distance while painting; a dab of radius 256 px under 2 ms CPU; the map open in under 10 s from the cache (Phase 0 measures what it is
 now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for the campaign battle map.
 
+Measured 2026-11-05 (the Alps from 9 000 units up, rings 24 / 48 / 96, 1600 x 960, no vsync): 68.8 ms a frame, CPU-bound on the terrain
+passes, became 13.7 ms (73 fps). Each of the 21 terrain passes a frame walked all 11 000 terrains: they are now in clusters that a pass
+culls by its frustum. Each 64-cell patch was a draw: a campaign tile is now one 256-cell patch, and flat patches share a vertex buffer.
+The frame's terrain list is reused while nothing it depends on changes. Now about even between CPU and GPU (16 M triangles: the near
+tiles at full grid); the next cuts would be a tile's level of detail by distance within it, and the blend boxes' per-material binds
+(`terrain.from_blend`, 1.8 ms).
+
 ## Rendering
 
 - The game's look: the map context's passes, unchanged in what they draw. The tile window is the near ring around the focus; the mid and
