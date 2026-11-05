@@ -377,6 +377,31 @@ pub(crate) struct TerrainMatGpu {
     used: u64,
 }
 
+/// What the resolve binds for a campaign map's season snow (`Renderer::campaign_snow_layer`).
+struct SnowLayer {
+    mask: Option<ID3D11ShaderResourceView>,
+    array: Option<ID3D11ShaderResourceView>,
+
+    /// The mask's world size (game units) and the uv offset; the snow group's repeat (game units).
+    world: [f32; 2],
+    offset: f32,
+    repeat: f32,
+}
+
+/// A campaign map's season snow for the resolve: the snow group's four variations as a texture array (layer 0 of the resolve's extra
+/// layers) and the season's snow mask as an R8 texture (its green, the burnt ground's layer, stays 0), its rows rolled by `roll` so the
+/// resolve's one uv offset fits both axes (the mask sampler wraps).
+#[derive(Default)]
+struct CampaignSnowGpu {
+    key: (String, String, String),
+    mask: Vec<u8>,
+    w: u32,
+    h: u32,
+    roll: Option<i64>,
+    mask_srv: Option<ID3D11ShaderResourceView>,
+    array: Option<ID3D11ShaderResourceView>,
+}
+
 /// The terrain pass's state.
 #[derive(Default)]
 pub(crate) struct TerrainGpuState {
@@ -413,6 +438,9 @@ pub(crate) struct TerrainGpuState {
 
     /// The climates' texture arrays by (paths, sRGB): the materials of a scene's tiles mostly use the same ones.
     arrays: BTreeMap<(String, bool), Texture>,
+
+    /// A campaign map's season snow (`RenderScene::campaign_snow`) as the resolve reads it.
+    campaign_snow: Option<CampaignSnowGpu>,
 
     /// Material updates so far (a material no terrain uses stays for MATERIAL_KEEP more: a streamed chunk that goes from mid to near and
     /// back would make its maps again).
@@ -863,6 +891,70 @@ impl Renderer {
         }
     }
 
+    /// A campaign map's season snow as the resolve draws it: its mask (read once, its rows rolled again when the render origin moves) and
+    /// the snow group's array (made once a mask, group and season). The resolve's mask uv is `(x / W + o, -z / H + o)` of the position
+    /// relative to the render origin, one offset `o` for both axes: o = (origin.x - corner.x) / W fits x exactly, and the mask's rows are
+    /// rolled by the rest of z's ((origin.z - corner.z - H) / H + o of a height; the sampler wraps), within a row. None without a mask.
+    fn campaign_snow_layer(&mut self, s: &wce_scene::render_scene::CampaignSnow) -> Option<SnowLayer> {
+        let key = (s.mask.clone(), s.group.clone(), s.season.clone());
+        if self.terrain.campaign_snow.as_ref().is_none_or(|c| c.key != key) {
+            let mut c = CampaignSnowGpu { key, ..Default::default() };
+            // The game's masks are L8 DDS: a 128-byte header (height at 12, width at 16), then a byte a cell, row 0 the north edge.
+            if let Ok(b) = self.files.read(&s.mask) {
+                let at = |o: usize| b.get(o..o + 4).map_or(0, |v| u32::from_le_bytes([v[0], v[1], v[2], v[3]]));
+                let (h, w) = (at(12), at(16));
+                let n = w as usize * h as usize;
+                if n > 0 && b.len() >= 128 + n {
+                    (c.mask, c.w, c.h) = (b[128..128 + n].to_vec(), w, h);
+                } else {
+                    self.error(format!("campaign snow: {} is not an L8 mask", s.mask));
+                }
+            }
+
+            let slices: Vec<Option<Vec<u8>>> = (0..4).map(|v| {
+                // The variations are the snow's amounts (their alpha: Attila's 1, 55, 189, 255), so a missing season takes the same
+                // variation's summer (the group ships only `_su`).
+                [format!("{}/{v}_{}_diffuse.dds", s.group, s.season), format!("{}/{v}_su_diffuse.dds", s.group), format!("{}/0_{}_diffuse.dds", s.group, s.season)]
+                    .iter().find_map(|p| self.files.read(p).ok())
+            }).collect();
+            let refs: Vec<Option<&[u8]>> = slices.iter().map(|b| b.as_deref()).collect();
+            let (t, bad) = crate::texture::load_dds_array(&self.dev, &refs, true, false);
+            c.array = t.srv;
+            wce_foundation::log::info(format!("campaign snow: {} {} x {}, the {} group's {} of 4 variations ({bad} unusable), array {}", s.mask, c.w, c.h, s.group,
+                slices.iter().filter(|b| b.is_some()).count(), if c.array.is_some() { "made" } else { "not made" }));
+            self.terrain.campaign_snow = Some(c);
+        }
+
+        let (u, o) = (self.camera.units, self.camera.origin);
+        let (w, h) = (s.size[0], s.size[1]);
+        let c = self.terrain.campaign_snow.as_mut()?;
+        if c.mask.is_empty() || c.array.is_none() || w <= 0.0 || h <= 0.0 {
+            return None;
+        }
+
+        let offset = (o.x - s.corner[0]) / w;
+        let rest = (o.z - s.corner[1] - h) / h + offset;
+        let roll = ((f64::from(rest) * f64::from(c.h)).round() as i64).rem_euclid(i64::from(c.h));
+        if c.roll != Some(roll) {
+            // Row r of the texture holds the mask's row r - roll.
+            let (cw, ch) = (c.w as usize, c.h as usize);
+            let mut px = vec![0u8; cw * ch];
+            for r in 0..ch {
+                let src = (r as i64 - roll).rem_euclid(ch as i64) as usize;
+                px[r * cw..(r + 1) * cw].copy_from_slice(&c.mask[src * cw..(src + 1) * cw]);
+            }
+
+            let td = D3D11_TEXTURE2D_DESC {
+                Width: c.w, Height: c.h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            };
+            c.mask_srv = self.dev.create_texture_2d(&td, Some(&[InitData::new(&px, c.w)])).ok().and_then(|t| self.dev.create_shader_resource_view(&t, None).ok());
+            c.roll = Some(roll);
+        }
+
+        Some(SnowLayer { mask: c.mask_srv.clone(), array: c.array.clone(), world: [w * u, h * u], offset, repeat: super::tiling(s.pixel_scale, super::ORIGIN_REACH * u) })
+    }
+
     /// The height texture of the terrains without an LF map: zero everywhere.
     fn lf_zero(&mut self) -> Option<ID3D11ShaderResourceView> {
         if self.terrain.lf_zero.is_none() {
@@ -1200,7 +1292,7 @@ impl Renderer {
             return;
         }
 
-        self.draw_terrain_material(&ents, scene.snow(), [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps]);
+        self.draw_terrain_material(&ents, scene.snow(), scene.campaign_snow.as_ref(), [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps]);
     }
 
     /// Brings the GPU materials and texture arrays up to date with the scene's terrains (dropping those no terrain uses).
@@ -1237,7 +1329,7 @@ impl Renderer {
     }
 
     /// The material terrain's passes (surface, blend boxes, resolve) over its entities.
-    fn draw_terrain_material(&mut self, ents: &[&wce_scene::render_scene::Entity], snow: Option<&wce_scene::render_scene::SnowRegions>, shaders: [std::rc::Rc<GameShader>; 7]) {
+    fn draw_terrain_material(&mut self, ents: &[&wce_scene::render_scene::Entity], snow: Option<&wce_scene::render_scene::SnowRegions>, campaign_snow: Option<&wce_scene::render_scene::CampaignSnow>, shaders: [std::rc::Rc<GameShader>; 7]) {
         let ents = ents.to_vec();
         let [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps] = shaders;
         let Some(geom_il) = self.layout(&geom_vs, "terrain_geom", &geom_layout()) else { return };
@@ -1510,8 +1602,24 @@ impl Renderer {
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         self.ctx.set_input_layout(Some(&il));
 
+        // A campaign map's season snow: the resolve's first extra layer (its mask's red), the snow group at slots 0..3 of its own array,
+        // the mask at the far maps' uv (world xz / g_world_dimensions, v flipped, plus g_far_world_read_uv_offset).
+        let snow_layer = if m.campaign { campaign_snow.and_then(|s| self.campaign_snow_layer(s)) } else { None };
         let cbs = &mut self.cbs;
-        cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[1.0e6, 1.0e6]);
+        match &snow_layer {
+            Some(l) => {
+                cbs.set_f("vs_height_map_cb", "g_world_dimensions", &l.world);
+                cbs.set_f("ps_height_map_cb", "g_far_world_read_uv_offset", &[l.offset]);
+                // Element 0 of the layers' (metres per repeat, outfield scale, mid-distance strength), read at the mapping's + 1.
+                let mut arr = [0.0f32; 8];
+                arr[0] = l.repeat;
+                (arr[1], arr[2]) = (1.0, 1.0);
+                cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &arr);
+            }
+
+            None => cbs.set_f("vs_height_map_cb", "g_world_dimensions", &[1.0e6, 1.0e6]),
+        }
+
         cbs.set_f("vs_height_map_cb", "g_far_terrain_scale", &[1.0]);
         cbs.set_f("vs_height_map_cb", "g_layer1_texture_index", &[0.0]);
         cbs.set_f("vs_height_map_cb", "g_layer2_texture_index", &[0.0]);
@@ -1531,10 +1639,11 @@ impl Renderer {
         bind_srv(ctx, &res_ps, "s_depth_map", self.terrain.viewz.srv.as_ref());
         bind_srv(ctx, &res_ps, "s_far_diffuse_map", g.black.srv.as_ref());
         bind_srv(ctx, &res_ps, "s_far_normal_map", g.lf_normal.srv.as_ref());
-        bind_srv(ctx, &res_ps, "s_mask_map", g.black.srv.as_ref());
+        bind_srv(ctx, &res_ps, "s_mask_map", snow_layer.as_ref().map_or(g.black.srv.as_ref(), |l| l.mask.as_ref()));
         bind_srv(ctx, &res_ps, "s_shroud", self.res.white_srv.as_ref());
         bind_srv(ctx, &res_ps, "s_snow_normals", snow.as_ref());
-        bind_srv(ctx, &res_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
+        // The resolve reads its diffuse array only for the mask's layers.
+        bind_srv(ctx, &res_ps, "t_diffuse_array", snow_layer.as_ref().map_or(g.diffuse.srv.as_ref(), |l| l.array.as_ref()));
         let dc = dc.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.white_srv.clone());
         let dn = dn.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| g.lf_normal.srv.clone());
         bind_srv(ctx, &res_ps, "s_mid_distance_detail_map_colour", dc.as_ref());

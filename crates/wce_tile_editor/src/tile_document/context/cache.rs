@@ -89,6 +89,8 @@ pub fn key(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Option<&Path>)
         h = fnv(h, b"campaign heights 0.2");
         // And its `climate` texture groups resolved (`ClimateList::group_of`), its rivers stretched with the ground and across in its unit.
         h = fnv(h, b"climate group = texture_set, rivers stretched, rivers in the campaign unit, drawn from their files");
+        // And its materials keep their campaign flag (the resolve's g_is_campaign and the campaign's snow layer: it was dropped).
+        h = fnv(h, b"material campaign flag");
     }
     for (p, len, time) in &files {
         h = fnv(h, p.as_bytes());
@@ -180,7 +182,7 @@ impl W {
 fn write_material(w: &mut W, m: &TerrainMaterial) {
     let TerrainMaterial {
         x0, z0, x1, z1, y0, y1, blend, index, normal, alpha, normal_id: _, normal_dirty: _, blend_id: _, blend_dirty: _, diffuse, normal_tex, pixel_scale, outfield_scale, mid_strength, smoothness, reflectivity,
-        detail_colour, detail_normal, campaign: _, id: _,
+        detail_colour, detail_normal, campaign, id: _,
     } = m;
     for v in [x0, z0, x1, z1, y0, y1] {
         w.f64(*v);
@@ -200,6 +202,7 @@ fn write_material(w: &mut W, m: &TerrainMaterial) {
 
     w.str(detail_colour);
     w.str(detail_normal);
+    w.bool(*campaign);
 }
 
 fn write_payload(w: &mut W, p: &Payload) -> bool {
@@ -415,6 +418,7 @@ fn read_material(r: &mut R) -> Result<TerrainMaterial, String> {
     m.reflectivity = r.f32_array()?;
     m.detail_colour = r.str()?;
     m.detail_normal = r.str()?;
+    m.campaign = r.bool()?;
     m.id = next_id(&MATERIAL_IDS);
     m.normal_id = next_id(&NORMAL_IDS);
     Ok(m)
