@@ -290,11 +290,32 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
     bends, 21 and 42 junctions; 15 027 cells), byte 6 the river's (10 770 cells); bytes 1 to 4 not read (byte 2 has 13 values, byte 3
     5, byte 4 9: ground or climate kinds, ASSUMPTION). The game keeps 8 bytes a cell at run time, a road edge as `'~'` minus its level
     (`FUN_10b9d440`).
-  The editor draws them so in the view (Terrain panel: "roads and farmland at the campaign's start"). ASSUMPTION: a tile takes the
-  highest level of the road cells under it.
+  The editor draws them so in the view (Terrain panel: "roads and farmland at the campaign's start").
+  - 2026-11-05, how the game applies them (`FUN_10b28060`): it keeps a road level per hex cell (a hash keyed `row * 1016 + column`);
+    when a cell's level changes it formats `road%u_to_road%u` (old, new) and has the terrain apply that group at the cell's world
+    position (vtable +0x10c): the tile under the cell's centre. A tile upgraded no longer matches another cell's `road0_to_` group, so
+    a tile takes the level of the first of its road cells the game updates. The editor: the highest level of the road cells whose
+    centres lie in the tile (ASSUMPTION: the order is not known); a tile without one stays (main_attila: 1 605 road tiles upgraded).
+    Farmland the same way, by its area cells' centres (483 tiles).
   - A level-0 road hardly shows, as the data has it: `roads_climate`'s tiles have `climate` on all four channels and their
     `blend_map.tif` is 100 % one layer (channel 1, variation 2: the climate's ground), so only their heights and normals differ from
     the ground. `roads` paints its strip with `sand_a` (3 % of a 2x2 straight), `roads_stone` with `farm` variation 1 (7 %).
+- **Settlement models** (2026-11-05): a slot's building stands at its anchor cell's centre (RPFM's `MapScale::world_position`: with
+  raw = world / scale + 4, the centre is column * 6, row * 8 raw units, odd columns 4 up) at 0.405 world units a model unit: every
+  settlement and port model has a ground decal (`ProjectedDecalV2`, 5.51 x 5.72 model units: `model_bounds`) the size of the slot's
+  footprint (the anchor and its six neighbours) for hexes 1.1 model units a side, and the map's hexes are regular, 0.4457 world units a
+  side. The game turns each slot's building by an integer of the runtime slot (+8) times 60 degrees (`FUN_10b29540`, placing with
+  `FUN_10b23a80`); the startpos stores no turn (`REGION_SLOT`'s numbers are the same on every slot; `esf_leaves`), nor do the map's
+  slot positions (a slot's several `SLOT_POSITIONS_BLOCK` cells are candidates, not a direction: `slot_positions`). Not found: what sets
+  it. `roman_city_minor_1`'s decal is 5.72 x 5.51 (turned 90 degrees from the others'), so the turns differ by model.
+- **Sprawl pieces at run time** (2026-11-05, `FUN_10af6ae0`, from `FUN_10b29d90`): a runtime sprawl hex with a level (0: none) gets
+  on water `sea_sprawl_navy_dock` (a dock hex), else `sea_sprawl_edge_<coast shape>` for shapes 3, 7, 15, 31 or `sea_sprawl_default`;
+  on land `sprawl_edge_<shape digits>` (`sprawl_edge_0` without edges) or `sprawl_abandoned_hex`; turned by a byte of the hex times
+  60 degrees (`DAT_11b2b7d8` = 1.0471976). The levels and shapes are the runtime sprawl's (`SPRAWL_GROWTH_CONTROLLER`,
+  `settlement_expansion_expand_sprawl_into_next_slot_chance`, `..._upgrade_slot_sprawl_chance`): grown by chance, not in the
+  startpos. The startpos's `SPRAWL_HEX_MAP_DATA` fields (RPFM's `world/writer/regions.rs`): column, row, in a footprint, in a zone,
+  the map's two edge masks, water, the road mask (edges to other sprawl cells), its shape and rotation, the zones' slots, the coast
+  mask (edges to water), its shape and rotation.
 - **Settlement sprawl** (2026-11-05, read, not drawn): the startpos's `SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/
   SETTLEMENT_EXPANSION_MAP_DATA` (its region's key) holds per slot `SLOT_MAP_DATA` (u32 index: 0 the main slot, 1 the port, then the
   secondary ones; u16 column, row; 65535 unset) with `SLOT_FOOTPRINT_ARRAY`, `SLOT_ZOE_ARRAY` and `SLOT_WALL_ARRAY` hex cells, and
@@ -302,13 +323,12 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   - field 2 bool (6 048 set), field 3 bool: in the settlement's area (13 702), field 10 u32: the slot it belongs to (a bit: 1 to 64);
   - fields 4 to 9: a road through the cell: 4 and 5 edge masks, 7 their union, 8 a canonical pattern (1, 5, 9, 21...) and 9 its
     rotation: 7 = rotl6(8, 9) on all 2 948 cells with one (9, 18, 36 the straight ones as in `HEX_MAP_DATA`'s road byte);
-  - fields 11 to 13: the sprawl's edge: 11 a 6-bit mask, 12 a canonical one (1, 3, 7, 15, 31: `sprawl_edge_1`, `_12`, `_123`,
-    `_1234`, `_12345` of `campaign_settlement_display_sprawl_pieces`) and 13 its rotation: 11 = rotl6(12, 13) on all 1 524 cells.
+  - fields 11 to 13: the coast piece (RPFM: the edges to water cells, outside every campaign region), its shape (1, 3, 7, 15, 31) and
+    rotation: 11 = rotl6(12, 13) on all 1 524 cells.
   The pieces' models: `campaign_settlement_display_building_ids` rows with `sprawl_piece_type` and `sprawl_piece_level` (1 to 3) by
   culture or subculture (`barbarian_sprawl_edge_12_lvl1`, `roman_sprawl_edge_12_lvl1`...; walls `wall_12`, towers
-  `AP_barbarian_connecting_tower`). Not drawn yet: which neighbour an edge bit is (the cells outside the settlement's area explain the
-  mask on only 442 of 1 524 cells, with bit 0 north and the bits clockwise; other readings less), so the pieces' turn, and which
-  `sprawl_piece_level` a settlement shows, are not known.
+  `AP_barbarian_connecting_tower`). The neighbour order is RPFM's (`coords.rs`: direction 0 is (0, +1), then clockwise). Not drawn:
+  the pieces a settlement shows are its runtime sprawl's (above).
 - **Farmland** (2026-11-05): `campaign_maps/<map>/dynamic_resources.esf` (`CAMPAIGN_DYNAMIC_RESOURCES`, version text `20141114153252`
   on `main_attila_map`): `REGION_RESOURCE_INFO_BLOCK` groups (u16 0xfe00 + a `REGIONS_BLOCK` index; 182), each with
   `REGION_RESOURCE_INFO_AREAS_BLOCK` groups (a building superchain, u32 level 1..3, an upgrade group; 531: all `att_sch_agriculture`,
