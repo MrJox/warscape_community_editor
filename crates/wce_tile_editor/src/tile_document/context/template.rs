@@ -274,10 +274,9 @@ pub fn load_any_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: 
     if wce_tile::sources::custom_mesh(dir).is_some() { load_custom_template(dir, look, files) } else { load_template(dir, look, trees, game_kit, files) }
 }
 
-/// Opens a custom-mesh tile (the `cliff_custom` set: no scene, no height map): its mesh (the kit's CS2), on the map's LF, with the material
+/// Opens a custom-mesh tile (the `cliff_custom` set: no scene, no height map): its mesh (the kit's CS2, else the packs' model), on the map's LF, with the material
 /// of its blend map projected onto it. Its heights are zero: they draw nothing (the game draws no patches for such a tile) but the floor
 /// under the sea beside the mesh (`Frame::place`).
-/// TODO: the packs' form (`custom_mesh.rigid_model_v2`, `blend.dds`, `index.dds`) for a tile no kit has; every Attila cliff is in the kit.
 pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dyn Files>>) -> Result<Template, String> {
     let t0 = std::time::Instant::now();
     let found = wce_tile::tile_project::find_tile_info(dir);
@@ -288,11 +287,21 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
     let o = f64::from(OVERLAP_STEPS) * step;
     let (nx, nz) = (((ex + 2.0 * o) / step).round() as i32 + 1, ((ez + 2.0 * o) / step).round() as i32 + 1);
 
-    let cs2 = wce_tile::sources::file_any_case(dir, wce_tile::sources::CUSTOM_MESH_CS2).ok_or_else(|| format!("no custom_mesh.cs2 in {}", dir.display()))?;
-    let parsed = wce_formats::cas2::Cas2File::parse(&std::fs::read(&cs2).map_err(|e| format!("{}: {e}", cs2.display()))?).map_err(|e| format!("{}: {e}", cs2.display()))?;
     let files = files.ok_or("no game files (the ground's textures)")?;
     let albedo = super::custom_mesh::albedo(super::custom_mesh::CLIFF_TEXTURE, &look.climate, files.as_ref());
-    let mesh = super::custom_mesh::from_cs2(&parsed, albedo, next_id(&MATERIAL_IDS), ez as f32).map_err(|e| format!("{}: {e}", cs2.display()))?;
+    // The kit's CS2, else the packs' model (a tile no kit has: Rome 2's).
+    let mesh = match wce_tile::sources::file_any_case(dir, wce_tile::sources::CUSTOM_MESH_CS2) {
+        Some(cs2) => {
+            let parsed = wce_formats::cas2::Cas2File::parse(&std::fs::read(&cs2).map_err(|e| format!("{}: {e}", cs2.display()))?).map_err(|e| format!("{}: {e}", cs2.display()))?;
+            super::custom_mesh::from_cs2(&parsed, albedo, next_id(&MATERIAL_IDS), ez as f32).map_err(|e| format!("{}: {e}", cs2.display()))?
+        }
+
+        None => {
+            let model = wce_tile::sources::file_any_case(dir, wce_tile::sources::CUSTOM_MESH_MODEL).ok_or_else(|| format!("no custom mesh in {}", dir.display()))?;
+            let bytes = std::fs::read(&model).map_err(|e| format!("{}: {e}", model.display()))?;
+            super::custom_mesh::from_model(&bytes, albedo, next_id(&MATERIAL_IDS), ez as f32).map_err(|e| format!("{}: {e}", model.display()))?
+        }
+    };
     let height = |_: f64, _: f64| 0.0f32;
     let own = Grid::sample(nx, nz, -o, -o, step, &height);
 
