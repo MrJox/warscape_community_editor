@@ -139,7 +139,8 @@ impl PropModels {
     pub fn update(&mut self, e: &mut Editor, doc: DocumentId, frame: Option<Arc<Frame>>) {
         let Some(frame) = frame.filter(|_| self.on) else { return self.clear(e) };
         let Some(d) = e.docs.find_as::<MapDocument>(doc) else { return self.clear(e) };
-        let Some(p) = d.project() else { return self.clear(e) };
+        // A map without a `.terry` (Rome 2's built campaign maps) still has its settlements and forests.
+        let p = d.project();
         let tf = d.terry_frame;
         if !tf.y_from_lf {
             // Battle maps: their props come with the tiles.
@@ -193,10 +194,10 @@ impl PropModels {
 
         if self.props.as_ref().is_none_or(|(id, rev, _)| *id != doc || *rev != key.1) {
             wce_foundation::wce_prof!("props.index");
-            let list = p.entities.iter().filter_map(|x| match p.kind(x) {
+            let list = p.map(|p| p.entities.iter().filter_map(|x| match p.kind(x) {
                 EntityKind::Prop(model) if !model.is_empty() => Some((x.id, p.world_position(x.id), model.to_lowercase().replace('\\', "/"))),
                 _ => None,
-            }).collect();
+            }).collect()).unwrap_or_default();
             self.props = Some((doc, key.1, list));
         }
 
@@ -210,7 +211,7 @@ impl PropModels {
                 continue;
             }
 
-            let Some(x) = p.entity(*id) else { continue };
+            let Some((p, x)) = p.and_then(|p| p.entity(*id).map(|x| (p, x))) else { continue };
             let m = wce_terrain_io::attila::campaign::matrix(p, x);
             let (fx, fz) = tf.to_frame(w[0], w[2]);
             let mut world = Float4x4::IDENTITY;
