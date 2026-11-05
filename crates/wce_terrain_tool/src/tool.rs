@@ -160,6 +160,28 @@ fn campaign_sea(e: &Editor, id: DocumentId, s: &Streamer) -> Option<wce_scene::r
     (size[0] > 0.0 && size[1] > 0.0).then(|| wce_scene::render_scene::CampaignSea { colour, corner: [sw.0 as f32, sw.1 as f32], size })
 }
 
+/// A campaign map's season snow (`terrain/campaigns/<map>/snow_mask_<season>.dds` in the packs: Attila ships winter's) over the map's
+/// cells in the view's frame, with the campaign climates' `snow` group (`terrain/textures/campaign/default/snow`) at the kit's
+/// `blend_pixel_scale` for it (620 without the kit's `_settings.xml`). None for a battle map, or a season without a mask.
+fn campaign_snow(e: &Editor, id: DocumentId, s: &Streamer, season: &str) -> Option<wce_scene::render_scene::CampaignSnow> {
+    let d = e.docs.find_as::<MapDocument>(id)?;
+    let (MapKind::Campaign, name) = map_kind(&d.name) else { return None };
+    let mask = format!("terrain/campaigns/{name}/snow_mask_{season}.dds");
+    e.files().filter(|f| f.exists(&mask))?;
+    let pixel_scale = kit_roots(e).iter()
+        .find_map(|r| wce_formats::tile_climate::ClimateList::load(&r.join(database_dir(MapKind::Campaign)).join("_settings.xml")).ok())
+        .and_then(|c| c.find("default").and_then(|d| d.find("snow")).map(|t| t.blend_pixel_scale as f32))
+        .filter(|&v| v > 0.0)
+        .unwrap_or(620.0);
+    let f = s.frame();
+    let (w, h) = (f64::from(f.map.width), f64::from(f.map.height));
+    let (sw, ne) = (f.from_map.apply(0.0, h), f.from_map.apply(w, 0.0));
+    let size = [(ne.0 - sw.0) as f32, (ne.1 - sw.1) as f32];
+    (size[0] > 0.0 && size[1] > 0.0).then(|| wce_scene::render_scene::CampaignSnow {
+        mask, corner: [sw.0 as f32, sw.1 as f32], size, group: "terrain/textures/campaign/default/snow".to_owned(), season: season.to_owned(), pixel_scale,
+    })
+}
+
 pub(crate) fn map_kind(name: &str) -> (MapKind, &str) {
     match name.strip_prefix(CAMPAIGN) {
         Some(n) => (MapKind::Campaign, n),
@@ -220,6 +242,9 @@ pub struct TerrainTool {
     maps_for: Vec<PathBuf>,
     rings: Rings,
     overview: bool,
+
+    /// A campaign map's season in the view (`sp`, `su`, `au`, `wi`): the ground's textures of that season and its snow mask.
+    season: String,
 
     /// The Map panel (the active map from above).
     map_panel: crate::map_panel::MapPanel,
@@ -285,7 +310,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), placements: Default::default(), props: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, season: "su".to_owned(), map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), placements: Default::default(), props: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None, campaign_db: None, export: None, exported: None, launch_after_export: None, launched: None,
         }
     }
@@ -591,7 +616,7 @@ impl TerrainTool {
             unit: if map_kind(&d.name).0 == MapKind::Campaign { 0.2 } else { UNIT },
             near: self.rings.near, mid: self.rings.mid, far: self.view.far_ring(self.rings.far),
             raw_root: database_root(e).or_else(|| self.packs.as_ref().and_then(|p| p.raw().ok()))?, tile_roots: roots,
-            game_kit: whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)), look: TerrainLook::default(), trees: true, plain: None,
+            game_kit: whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)), look: TerrainLook { season: self.season.clone(), ..TerrainLook::default() }, trees: true, plain: None,
             groups: None, cache: Some(cache::cache_dir()), provider: self.provider.clone(),
         })
     }
@@ -672,6 +697,7 @@ impl TerrainTool {
 
         self.light(e, id);
         e.scene.campaign_sea = campaign_sea(e, id, &s);
+        e.scene.campaign_snow = campaign_snow(e, id, &s, &self.season);
         let lift = s.frame().lift(0.0, 0.0);
         let start = s.frame().lf.as_ref().and_then(|lf| land_near_centre(lf));
         self.pick = s.frame().lf.clone().map(LfPick::new);
@@ -697,9 +723,32 @@ impl TerrainTool {
         self.view.stream(e, &self.rings);
     }
 
+    /// A campaign map's season in the view: its ground textures and snow (the view built again when it changes).
+    fn set_season(&mut self, e: &mut Editor, season: &str) {
+        if self.season != season {
+            season.clone_into(&mut self.season);
+            let id = self.shown;
+            if id != 0 {
+                self.start_view(e, id);
+            }
+        }
+    }
+
     /// A campaign map's "roads at the start" switch (the view built again when it changes).
     fn draw_roads_control(&mut self, e: &mut Editor) {
         let id = self.shown;
+        if e.docs.find_as::<MapDocument>(id).is_some_and(|d| map_kind(&d.name).0 == MapKind::Campaign) {
+            const SEASONS: [(&str, &str); 4] = [("sp", "spring"), ("su", "summer"), ("au", "autumn"), ("wi", "winter")];
+            let mut k = SEASONS.iter().position(|x| x.0 == self.season).unwrap_or(1) as i32;
+            if gui::combo("season##terrain_season", &mut k, &SEASONS.iter().map(|x| x.1).collect::<Vec<_>>()) {
+                self.set_season(e, SEASONS[k.clamp(0, 3) as usize].0);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The campaign map's season in the view: the ground's textures of that season and, in winter, the map's snow (snow_mask_wi.dds, the terrain resolve's snow layer). The view only.");
+            }
+        }
+
         let Some(d) = e.docs.find_as_mut::<MapDocument>(id).filter(|d| d.view_roads.is_some()) else { return };
         let mut on = d.roads_at_start;
         if gui::checkbox("roads and farmland at the campaign's start", &mut on) {
@@ -1649,6 +1698,7 @@ impl Tool for TerrainTool {
         if self.shown != 0 && e.docs.find(self.shown).is_none() {
             self.view.clear(e);
             e.scene.campaign_sea = None;
+            e.scene.campaign_snow = None;
             self.cameras.remove(&self.shown);
             self.shown = 0;
         }
@@ -2089,6 +2139,19 @@ impl Tool for TerrainTool {
 
                 CommandResult::success(format!("roads at the start {}: regions a level {:?}, {swapped} road tiles upgraded, {farmed} tiles farmland{}", if on { "on" } else { "off" }, roads.level_counts(),
                     if first.is_empty() { String::new() } else { format!(" (first at cells {})", first.join("; ")) }))
+            })
+        });
+
+        c.add("terrain_season", "terrain_season [sp|su|au|wi]", "the Terrain tool: a campaign map's season in the view (its ground textures and snow mask); then which", |e, a| {
+            with_terrain(e, |t, e| {
+                match a.first().map(String::as_str) {
+                    Some(v @ ("sp" | "su" | "au" | "wi")) => t.set_season(e, v),
+                    None => {}
+                    Some(_) => return CommandResult::fail("usage: terrain_season [sp|su|au|wi]"),
+                }
+
+                let snow = e.scene.campaign_snow.as_ref().map_or("no snow mask".to_owned(), |s| format!("snow {}", s.mask));
+                CommandResult::success(format!("season {} ({snow}, as of the last view)", t.season))
             })
         });
 

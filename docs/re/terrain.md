@@ -319,9 +319,15 @@ the group in `default` and in every climate), `terrain/textures/campaign/default
   packs, readable) is sampled at the far maps' uv (world xz / (`g_world_dimensions` * `g_far_terrain_scale`), y flipped, plus
   `g_far_world_read_uv_offset`); where its green is not 0 it blends the diffuse array's group `g_layer2_texture_index` at variation
   (g - 0.25) * 4, where its red is not 0 the group `g_layer1_texture_index` at (r - 0.25) * 4, both by the albedo's alpha. Set in
-  `FUN_118839d0` from two getters (`FUN_1070d310`, `FUN_107cdb70`: field reads of objects the decompiler doesn't name). Not traced:
-  which texture `s_mask_map` is on the campaign and which groups the two layers are (the campaign's `default` climate lists `snow` and
-  `burnt_ground` besides its ground groups).
+  `FUN_118839d0` from two getters (`FUN_1070d310`, `FUN_107cdb70`). The groups (`FUN_11812c20`, building the campaign's texture group
+  list): +0x80 the index of `snow`, +0x84 of `burnt_ground` (`FUN_107cdb70` reads +0x84: layer 2), so layer 1 (the mask's red) is the
+  snow and layer 2 (its green) the burnt ground (razed land, a runtime state). The snow group's four variations are its amounts, in
+  their alpha (`terrain/textures/campaign/default/snow/<v>_su_diffuse.dds`: mean alpha 1, 55, 189, 255; colour (157, 176, 197); the
+  group ships summer only), picked by (mask - 0.25) * 4, the colour lerped over the ground by gloss.z / normal.w times that alpha.
+  The editor (2026-11-05): a campaign map's season (Terrain panel, `terrain_season`) gives the ground's `<v>_<season>` textures and,
+  where the map has `snow_mask_<season>.dds` (`main_attila_map`: winter's, an L8 of 2032 x 1441 cells, values 0, 65, 128, 196, 255),
+  the resolve's snow layer: the mask as R8 (green 0: no burnt ground at a start), the snow group as the resolve's own diffuse array.
+  The resolve's mask uv has one offset for both axes: the editor fits x with it and rolls the mask's rows for z (the sampler wraps).
 - **Snow on the ground (2026-10-22, from the DXBC of `ps30_terrain_to_gbuffer_ss`):** the resolve reads `g_snowing_intensity` and `g_wind`
   of `weather_shared` (`g_season_type` and `g_snow_mask` are unused there). With intensity i > 0 it perturbs the normal with
   `s_snow_normals` (uv = xz * 0.0005 and * 0.07), and where the normal faces away from the wind (direction (wind.x, -1, wind.y)) beyond a

@@ -996,10 +996,30 @@ pub struct RenderScene {
     /// colours the water from it. None: the battle's ocean.
     pub campaign_sea: Option<CampaignSea>,
 
+    /// A campaign map's season snow: the terrain resolve's extra layer from the season's `snow_mask_<season>.dds` (none: no snow).
+    pub campaign_snow: Option<CampaignSnow>,
+
     /// Where the ground, buildings, decals and trees take snow, and how much (a map context's season snow map; none: the weather's alone).
     /// Set with [`Self::set_snow`].
     snow: Option<SnowRegions>,
     ground_overlay: Option<GroundOverlay>,
+}
+
+/// A campaign map's season snow, as the game's terrain resolve draws it (docs/re/terrain.md, "Snow"): where the season's snow mask (an L8
+/// DDS over the map's cells, row 0 the north edge) is above 0 the resolve lays the `snow` texture group over the ground, its variation
+/// (mask - 0.25) * 4. The mask covers the frame rectangle from its south-west corner (x, z; scene units) over `size`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CampaignSnow {
+    pub mask: String,
+    pub corner: [f32; 2],
+    pub size: [f32; 2],
+
+    /// The snow group's folder (`terrain/textures/campaign/default/snow`), its variations `<v>_<season>_diffuse.dds`.
+    pub group: String,
+    pub season: String,
+
+    /// The group's `blend_pixel_scale` (the climate's texture list), as a material layer's.
+    pub pixel_scale: f32,
 }
 
 /// A campaign map's sea colour map: the texture (a packs path) and the frame rectangle it covers, from its south-west corner (x, z; scene
@@ -1082,6 +1102,7 @@ impl Default for RenderScene {
             sea_level: 0.0,
             battle_centre: [0.0, 0.0],
             campaign_sea: None,
+            campaign_snow: None,
             snow: None,
             ground_overlay: None,
         }
