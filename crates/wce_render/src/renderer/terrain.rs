@@ -46,9 +46,23 @@ fn geom_layout() -> [InputElement; 4] {
     ]
 }
 
-/// Cells a side of a patch (65 x 65 vertices). Its level of detail is chosen per patch: larger patches change how a tile looks at a
-/// distance (the map context's mid ring draws its tiles' coarse heights, one patch a tile).
+/// Cells a side of a patch (65 x 65 vertices; a campaign tile's are CAMPAIGN_PATCH_CELLS). Its level of detail is chosen per patch:
+/// larger patches change how a tile looks at a distance (the map context's mid ring draws its tiles' coarse heights, one patch a tile).
 pub const PATCH_CELLS: i32 = 64;
+
+/// Cells a side of a campaign tile's patch: its whole 256-cell tile in one (a draw a tile, where 64-cell patches made a campaign view's
+/// near ring 3 000 draws a pass, CPU-bound on the draws alone).
+const CAMPAIGN_PATCH_CELLS: i32 = 256;
+
+/// The patch side a terrain's heights are cut into.
+fn patch_cells(t: &Terrain) -> i32 {
+    if t.material.as_ref().is_some_and(|m| m.campaign) { CAMPAIGN_PATCH_CELLS } else { PATCH_CELLS }
+}
+
+/// The index format of a patch side's grid (16 bits while its vertices fit).
+fn patch_index_format(cells: i32) -> DXGI_FORMAT {
+    if (cells + 1) * (cells + 1) <= 65536 { DXGI_FORMAT_R16_UINT } else { DXGI_FORMAT_R32_UINT }
+}
 
 /// A patch at this many grid steps from the eye starts to skip vertices (see draw_terrain_patches).
 const LOD_STEPS: f32 = 128.0;
@@ -59,7 +73,7 @@ const MATERIAL_KEEP: u64 = 32;
 /// The instance buffer's size.
 pub(crate) const INSTANCE_BYTES: usize = 64 * 4096;
 
-/// A patch of a heights buffer: its cells (`cx` x `cz` from cell (pi, pj) * PATCH_CELLS), its height range and its vertex buffer, the 65 x 65
+/// A patch of a heights buffer: its cells (`cx` x `cz` from cell (pi, pj) * the side), its height range and its vertex buffer, the (side + 1)²
 /// grid of (x, height, z) with x, z in cells of the patch (the game's `vsIn_P0`: geom_new takes the high-frequency height from the vertex).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HfPatch {
@@ -70,6 +84,9 @@ pub(crate) struct HfPatch {
     lo: f32,
     hi: f32,
     vb: Option<ID3D11Buffer>,
+
+    /// A flat patch's height: its vertex buffer is the shared flat one (heights 0), its instances raised by it.
+    level: Option<f32>,
 }
 
 /// The patches of one heights buffer: every placement of a tile draws the same ones with its own instance rows.
@@ -83,11 +100,19 @@ pub(crate) struct HfGeo {
     ox: f32,
     oz: f32,
     patches: Vec<HfPatch>,
+
+    /// Cells a side of its patches (`patch_cells`).
+    cells: i32,
 }
 
 impl HfGeo {
+    /// An empty one for a terrain's grid.
+    fn new(t: &Terrain) -> Self {
+        Self { nx: t.nx, nz: t.nz, step: t.step, ox: t.origin_x, oz: t.origin_z, cells: patch_cells(t), ..Default::default() }
+    }
+
     fn same_grid(&self, t: &Terrain) -> bool {
-        self.nx == t.nx && self.nz == t.nz && self.step == t.step && self.ox == t.origin_x && self.oz == t.origin_z && self.heights.len() == t.heights.len()
+        self.cells == patch_cells(t) && self.nx == t.nx && self.nz == t.nz && self.step == t.step && self.ox == t.origin_x && self.oz == t.origin_z && self.heights.len() == t.heights.len()
     }
 }
 
@@ -101,6 +126,12 @@ struct PlacedPatch {
     cz: i32,
     patch: usize,
     row: [f32; 12],
+
+    /// Cells a side of its buffer's patches.
+    cells: i32,
+
+    /// Its vertex buffer's address: the patches of one buffer, and every flat patch (they share one), draw as one batch.
+    vb: usize,
 }
 
 /// A terrain entity's geometry as its world matrix places it (cached until the matrix, the buffer or the LF change).
@@ -165,40 +196,60 @@ struct LfDraw {
 /// A material's blend boxes this frame (with the LF map their terrains read): the instance rows.
 type MaterialBoxes = (Arc<TerrainMaterial>, Option<Arc<LfMap>>, Vec<f32>, bool);
 
-/// One patch's vertex buffer: the 65 x 65 grid (x, height, z), x and z in cells of the patch; past the grid's last row or column the vertices
+/// One patch's vertex buffer: the (cells + 1)² grid (x, height, z), x and z in cells of the patch; past the grid's last row or column the vertices
 /// repeat its edge (the index buffers of a smaller patch never reach them).
-fn hf_patch_vb(dev: &ID3D11Device, t: &Terrain, pi: i32, pj: i32) -> Option<ID3D11Buffer> {
-    let mut v = Vec::with_capacity(((PATCH_CELLS + 1) * (PATCH_CELLS + 1) * 3) as usize);
-    for z in 0..=PATCH_CELLS {
-        let j = (pj * PATCH_CELLS + z).min(t.nz - 1);
-        for x in 0..=PATCH_CELLS {
-            let i = (pi * PATCH_CELLS + x).min(t.nx - 1);
+fn hf_patch_vb(dev: &ID3D11Device, t: &Terrain, pi: i32, pj: i32, cells: i32) -> (Option<ID3D11Buffer>, Option<f32>) {
+    // A flat patch (its grid's heights all one value: a campaign's LF ground, its shared-geometry tiles) is the same grid wherever it
+    // is: one buffer of heights 0 for all of them, its height in its instances, so they draw as one batch (they were a draw call each).
+    let at = |x: i32, z: i32| t.height_at((pi * cells + x).min(t.nx - 1), (pj * cells + z).min(t.nz - 1));
+    let h0 = at(0, 0);
+    let flat = (0..=cells).all(|z| (0..=cells).all(|x| at(x, z).to_bits() == h0.to_bits()));
+    if flat {
+        let mut shared = FLAT_PATCH.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((_, vb)) = shared.iter().find(|(c, _)| *c == cells) {
+            return (Some(vb.clone()), Some(h0));
+        }
+
+        let v: Vec<f32> = (0..=cells).flat_map(|z| (0..=cells).flat_map(move |x| [x as f32, 0.0, z as f32])).collect();
+        let vb = immutable_buffer(dev, &f32_bytes(&v), D3D11_BIND_VERTEX_BUFFER);
+        if let Some(vb) = &vb {
+            shared.push((cells, vb.clone()));
+        }
+
+        return (vb, Some(h0));
+    }
+
+    let mut v = Vec::with_capacity(((cells + 1) * (cells + 1) * 3) as usize);
+    for z in 0..=cells {
+        let j = (pj * cells + z).min(t.nz - 1);
+        for x in 0..=cells {
+            let i = (pi * cells + x).min(t.nx - 1);
             v.extend([x as f32, t.height_at(i, j), z as f32]);
         }
     }
 
-    immutable_buffer(dev, &f32_bytes(&v), D3D11_BIND_VERTEX_BUFFER)
+    (immutable_buffer(dev, &f32_bytes(&v), D3D11_BIND_VERTEX_BUFFER), None)
 }
 
 /// A heights buffer's patches from `g` (empty, or the same grid's from an older buffer: only the patches whose heights differ are made
 /// again). The device is free-threaded: a loading thread may run it.
 fn fill_hf(dev: &ID3D11Device, mut g: HfGeo, t: &Terrain) -> HfGeo {
-    let (cx, cz) = (t.nx - 1, t.nz - 1);
-    let (px, pz) = ((cx + PATCH_CELLS - 1) / PATCH_CELLS, (cz + PATCH_CELLS - 1) / PATCH_CELLS);
+    let (cx, cz, cells) = (t.nx - 1, t.nz - 1, g.cells);
+    let (px, pz) = ((cx + cells - 1) / cells, (cz + cells - 1) / cells);
     let reuse = g.patches.len() == (px * pz) as usize;
     if !reuse {
         g.patches = (0..px * pz).map(|k| HfPatch { pi: k % px, pj: k / px, ..Default::default() }).collect();
     }
 
     for p in &mut g.patches {
-        (p.cx, p.cz) = (PATCH_CELLS.min(cx - p.pi * PATCH_CELLS), PATCH_CELLS.min(cz - p.pj * PATCH_CELLS));
+        (p.cx, p.cz) = (cells.min(cx - p.pi * cells), cells.min(cz - p.pj * cells));
     }
 
     let (old_h, nx) = (g.heights.clone(), t.nx as usize);
     let patches = std::mem::take(&mut g.patches);
     g.patches = patches.into_iter().map(|mut p| {
-        let (i0, i1) = ((p.pi * PATCH_CELLS) as usize, (p.pi * PATCH_CELLS + p.cx) as usize);
-        let (j0, j1) = ((p.pj * PATCH_CELLS) as usize, (p.pj * PATCH_CELLS + p.cz) as usize);
+        let (i0, i1) = ((p.pi * cells) as usize, (p.pi * cells + p.cx) as usize);
+        let (j0, j1) = ((p.pj * cells) as usize, (p.pj * cells + p.cz) as usize);
         let dirty = !reuse || p.vb.is_none() || t.heights.is_empty() || old_h.len() != t.heights.len()
             || (j0..=j1).any(|j| t.heights[j * nx + i0..=j * nx + i1].iter().zip(&old_h[j * nx + i0..=j * nx + i1]).any(|(a, b)| a.to_bits() != b.to_bits()));
         if dirty {
@@ -211,7 +262,7 @@ fn fill_hf(dev: &ID3D11Device, mut g: HfGeo, t: &Terrain) -> HfGeo {
             }
 
             (p.lo, p.hi) = (lo, hi);
-            p.vb = hf_patch_vb(dev, t, p.pi, p.pj);
+            (p.vb, p.level) = hf_patch_vb(dev, t, p.pi, p.pj, cells);
         }
 
         p
@@ -402,6 +453,42 @@ struct CampaignSnowGpu {
     array: Option<ID3D11ShaderResourceView>,
 }
 
+/// A map keyed by an id or an address, hashed by a multiply: the frame's walk looks its 20 000 terrains up in several of them, and
+/// with SipHash the walk took 6.5 ms, 4.6 with this.
+pub(crate) type IdMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<IdHasher>>;
+
+/// A set of ids or addresses ([`IdMap`]'s hash).
+pub(crate) type IdSet<K> = std::collections::HashSet<K, std::hash::BuildHasherDefault<IdHasher>>;
+
+/// [`IdMap`]'s hash: each integer multiplied in, the high half folded into the low (the table picks buckets by the low bits).
+#[derive(Default)]
+pub(crate) struct IdHasher(u64);
+
+impl std::hash::Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(u64::from(v));
+    }
+
+    fn write_u64(&mut self, v: u64) {
+        let h = (self.0.rotate_left(5) ^ v).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = h ^ (h >> 32);
+    }
+
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+}
+
 /// The terrain pass's state.
 #[derive(Default)]
 pub(crate) struct TerrainGpuState {
@@ -412,19 +499,19 @@ pub(crate) struct TerrainGpuState {
     pub failed: bool,
 
     /// The patches of the heights buffers by key, and each terrain entity's placement of its buffer.
-    hf: HashMap<usize, HfGeo>,
+    hf: IdMap<usize, HfGeo>,
 
     /// The loading threads' work: what they finished, the buffers and materials they are making, and when a buffer they made came (kept a
     /// while for its chunk, which goes on the scene after).
     jobs: Arc<std::sync::Mutex<TerrainJobs>>,
-    hf_pending: std::collections::HashSet<usize>,
+    hf_pending: IdSet<usize>,
     hf_made: HashMap<usize, u64>,
     mat_pending: std::collections::HashSet<u64>,
-    pub(crate) placed: HashMap<EntityId, Placed>,
+    pub(crate) placed: IdMap<EntityId, Placed>,
     pub(crate) mat: BTreeMap<u64, TerrainMatGpu>,
 
     /// The custom meshes by id (`terrain_custom`).
-    pub(crate) custom: HashMap<u64, super::terrain_custom::CustomGpu>,
+    pub(crate) custom: IdMap<u64, super::terrain_custom::CustomGpu>,
 
     /// The map context terrains left out for want of a material or heights, said once each.
     unusable_logged: std::collections::HashSet<EntityId>,
@@ -450,13 +537,25 @@ pub(crate) struct TerrainGpuState {
     /// bookkeeping (texture paths joined per terrain) cost 3 ms a frame with a map context's 192 tiles.
     materials_key: (usize, u64, u64),
     /// Index buffers of a patch of cx x cz cells at a stride, and their index counts.
-    grid_ib: BTreeMap<(i32, i32, i32), (Option<ID3D11Buffer>, u32)>,
+    grid_ib: BTreeMap<(i32, i32, i32, i32), (Option<ID3D11Buffer>, u32)>,
     entities: Vec<EntityId>,
 
     /// The frame's number (`begin_terrain_frame`) and the terrain entities made ready in it (`terrain_surface_entities`): the material pass
     /// and every shadow cascade take the same list, made once a frame (made per view, a map's 5 500 terrains cost 0.46 ms each time).
     frame: u64,
     surface: Option<(u64, Vec<EntityId>)>,
+
+    /// That list's entities by where they are (indices into it): a view walks the clusters in its frustum, not every terrain (a campaign
+    /// view's 11 000 terrains, walked by each of its 21 terrain passes, cost 13 ms a frame).
+    clusters: Vec<TerrainCluster>,
+
+    /// What that list was made from, and the LF maps its terrains read: the next frame with the same takes it as it is (made again,
+    /// every frame's walk of a campaign view's 20 000 terrains cost 4.6 ms).
+    surface_from: Option<SurfaceFrom>,
+    surface_lfs: Vec<Arc<LfMap>>,
+
+    /// Counts the changes to the geometry the terrains are placed on (buffers and custom meshes made or dropped).
+    pub(crate) made: u64,
     pub(crate) viewz: Target,
     pub(crate) acc: [Target; 3],
     rt_w: u32,
@@ -633,10 +732,11 @@ impl Renderer {
         let exclusive = old.is_some_and(|k| !self.terrain.placed.iter().any(|(&other, p)| other != id && p.key == k));
         let g = match old.filter(|_| exclusive).and_then(|k| self.terrain.hf.remove(&k)) {
             Some(g) if g.same_grid(t) => g,
-            _ => HfGeo { nx: t.nx, nz: t.nz, step: t.step, ox: t.origin_x, oz: t.origin_z, ..Default::default() },
+            _ => HfGeo::new(t),
         };
 
         self.terrain.hf.insert(key, fill_hf(&self.dev, g, t));
+        self.terrain.made += 1;
 
         // Whoever placed the old buffer places the new one again.
         if let Some(p) = self.terrain.placed.get_mut(&id) {
@@ -667,10 +767,11 @@ impl Renderer {
             }
 
             // The patch grid's point (x, h, z) in cells is the entity's (ox + x step, h, oz + z step).
-            let (ox, oz) = (g.ox + (p.pi * PATCH_CELLS) as f32 * g.step, g.oz + (p.pj * PATCH_CELLS) as f32 * g.step);
+            let (ox, oz) = (g.ox + (p.pi * g.cells) as f32 * g.step, g.oz + (p.pj * g.cells) as f32 * g.step);
             let mut row = [0.0f32; 12];
+            let level = p.level.unwrap_or(0.0);
             for r in 0..3 {
-                row[r * 4..r * 4 + 4].copy_from_slice(&[w[r][0] * g.step, w[r][1], w[r][2] * g.step, w[r][0] * ox + w[r][2] * oz + w[r][3]].map(|v| v * units));
+                row[r * 4..r * 4 + 4].copy_from_slice(&[w[r][0] * g.step, w[r][1], w[r][2] * g.step, w[r][0] * ox + w[r][1] * level + w[r][2] * oz + w[r][3]].map(|v| v * units));
             }
 
             // The world box of the patch's corners; the shader moves the surface by up to 9 cm.
@@ -693,7 +794,8 @@ impl Renderer {
                 (placed.bmin[r], placed.bmax[r]) = (placed.bmin[r].min(bmin[r]), placed.bmax[r].max(bmax[r]));
             }
 
-            placed.patches.push(PlacedPatch { bmin, bmax, cx: p.cx, cz: p.cz, patch: k, row });
+            let vb = p.vb.as_ref().map_or(0, |b| b.as_raw() as usize);
+            placed.patches.push(PlacedPatch { bmin, bmax, cx: p.cx, cz: p.cz, patch: k, row, vb, cells: g.cells });
         }
 
         // The blend box: the material's rectangle turned and moved with the entity (not scaled: the tile tool's z scale is in the rectangle),
@@ -973,14 +1075,14 @@ impl Renderer {
     /// The index buffer of a patch of `cx` x `cz` cells joining every `k`-th vertex (`k` divides both): blocks of k x k cells, two triangles
     /// each, but the blocks along the patch's edges keep every edge vertex (a fan from the block's centre), so patches at any two strides
     /// meet without cracks.
-    fn terrain_grid_ib(&mut self, cx: i32, cz: i32, k: i32) -> (Option<ID3D11Buffer>, u32) {
-        if let Some(ib) = self.terrain.grid_ib.get(&(cx, cz, k)) {
+    fn terrain_grid_ib(&mut self, cells: i32, cx: i32, cz: i32, k: i32) -> (Option<ID3D11Buffer>, u32) {
+        if let Some(ib) = self.terrain.grid_ib.get(&(cells, cx, cz, k)) {
             return ib.clone();
         }
 
-        let row = PATCH_CELLS + 1;
-        let v = |x: i32, z: i32| (z * row + x) as u16;
-        let mut idx = Vec::<u16>::with_capacity((cx * cz * 6) as usize);
+        let row = cells + 1;
+        let v = |x: i32, z: i32| (z * row + x) as u32;
+        let mut idx = Vec::<u32>::with_capacity((cx * cz * 6) as usize);
         let mut z0 = 0;
         while z0 < cz {
             let mut x0 = 0;
@@ -995,7 +1097,7 @@ impl Renderer {
                     // The perimeter clockwise (up the left side, along the top, down the right, back along the bottom), every vertex on a patch
                     // edge, the corners only elsewhere; a fan from the centre (clockwise too).
                     let mut ring = vec![];
-                    let side = |ring: &mut Vec<u16>, fine: bool, from: (i32, i32), dir: (i32, i32)| {
+                    let side = |ring: &mut Vec<u32>, fine: bool, from: (i32, i32), dir: (i32, i32)| {
                         let n = if fine { k } else { 1 };
                         let st = k / n;
                         for i in 0..n {
@@ -1019,9 +1121,15 @@ impl Renderer {
             z0 += k;
         }
 
-        let ib = immutable_buffer(&self.dev, &idx.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER);
+        let bytes: Vec<u8> = if patch_index_format(cells) == DXGI_FORMAT_R16_UINT {
+            idx.iter().flat_map(|&i| (i as u16).to_le_bytes()).collect()
+        } else {
+            idx.iter().flat_map(|i| i.to_le_bytes()).collect()
+        };
+
+        let ib = immutable_buffer(&self.dev, &bytes, D3D11_BIND_INDEX_BUFFER);
         let out = (ib, idx.len() as u32);
-        self.terrain.grid_ib.insert((cx, cz, k), out.clone());
+        self.terrain.grid_ib.insert((cells, cx, cz, k), out.clone());
         out
     }
 
@@ -1116,6 +1224,7 @@ impl Renderer {
             self.terrain.hf_pending.remove(&key);
             self.terrain.hf_made.insert(key, frame);
             self.terrain.hf.insert(key, g);
+            self.terrain.made += 1;
         }
     }
 
@@ -1129,7 +1238,7 @@ impl Renderer {
         if !hf && t.nx >= 2 && t.nz >= 2 && self.terrain.hf_pending.insert(key) {
             let (dev, t, jobs) = (crate::model_cache::SharedDevice(self.dev.clone()), t.clone(), self.terrain.jobs.clone());
             io_pool().post(move || {
-                let g = fill_hf(dev.device(), HfGeo { nx: t.nx, nz: t.nz, step: t.step, ox: t.origin_x, oz: t.origin_z, ..Default::default() }, &t);
+                let g = fill_hf(dev.device(), HfGeo::new(&t), &t);
                 jobs.lock().unwrap_or_else(|p| p.into_inner()).hf.push((key, g));
             }, 0.0);
         }
@@ -1220,6 +1329,7 @@ impl Renderer {
             keys.extend(self.terrain.hf_made.keys());
 
             self.terrain.hf.retain(|k, _| keys.contains(k));
+            self.terrain.made += 1;
             self.terrain.lf.retain(|id, _| lfs.contains(id));
         }
 
@@ -1323,6 +1433,7 @@ impl Renderer {
         }
 
         self.terrain.custom.retain(|_, g| g.used + MATERIAL_KEEP > epoch);
+        self.terrain.made += 1;
 
         let arrays: std::collections::HashSet<(String, bool)> = materials.iter().flat_map(|m| [(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)]).collect();
         self.terrain.arrays.retain(|k, _| arrays.contains(k));
@@ -1330,7 +1441,8 @@ impl Renderer {
 
     /// The material terrain's passes (surface, blend boxes, resolve) over its entities.
     fn draw_terrain_material(&mut self, ents: &[&wce_scene::render_scene::Entity], snow: Option<&wce_scene::render_scene::SnowRegions>, campaign_snow: Option<&wce_scene::render_scene::CampaignSnow>, shaders: [std::rc::Rc<GameShader>; 7]) {
-        let ents = ents.to_vec();
+        let all = ents.to_vec();
+        let ents = self.terrain_in_view(ents, &self.camera.main_view_proj);
         let [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps] = shaders;
         let Some(geom_il) = self.layout(&geom_vs, "terrain_geom", &geom_layout()) else { return };
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
@@ -1343,9 +1455,15 @@ impl Renderer {
         // A custom-mesh tile's mesh instead of its patches (`terrain_custom`).
         let custom_vs = self.shader(super::terrain_custom::CUSTOM_GEOM_VS);
         let how = custom_vs.as_deref().map_or(CustomDraw::None, CustomDraw::Depth);
-        self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL, how);
+        {
+            wce_prof!("terrain.surface_1");
+            self.draw_terrain_surface(&ents, &geom_vs, &geom_ps, &zw_rtv, &ds_depth, TERRAIN_STENCIL, how);
+        }
         self.gpu_timer.mark("terrain surface 2");
-        self.draw_terrain_surface(&ents, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0, how);
+        {
+            wce_prof!("terrain.surface_2");
+            self.draw_terrain_surface(&ents, &geom_vs, &depth_ps, &viewz_rtv, &ds_equal, 0, how);
+        }
         self.gpu_timer.mark("terrain blend meshes");
         self.ctx.set_input_layout(Some(&geom_il));
 
@@ -1390,7 +1508,7 @@ impl Renderer {
         self.ctx.set_input_layout(Some(&il));
 
         // A campaign tile's resolve: the resolve's one campaign switch is global (it skips the weather's snow on the ground).
-        let campaign = ents.iter().any(|e| matches!(&e.payload, Payload::Terrain(t) if t.material.as_ref().is_some_and(|m| m.campaign)));
+        let campaign = all.iter().any(|e| matches!(&e.payload, Payload::Terrain(t) if t.material.as_ref().is_some_and(|m| m.campaign)));
 
         // The boxes in view by material and LF map (a context's placements of one tile share their material): one bind, the boxes as instances.
         let mut by_material: Vec<MaterialBoxes> = vec![];
@@ -1590,7 +1708,7 @@ impl Renderer {
         // ---- 3. The resolve: the terrain pixels into the G-buffer.
         wce_prof!("terrain.from_resolve");
         self.gpu_timer.mark("terrain resolve");
-        let Payload::Terrain(first) = &ents[0].payload else { return };
+        let Payload::Terrain(first) = &all[0].payload else { return };
         let Some(m) = first.material.clone() else { return };
         let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
         let el = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
@@ -1723,10 +1841,26 @@ impl Renderer {
             return ids.iter().filter_map(|&id| scene.find(id)).collect();
         }
 
+        let from = self.surface_from(scene);
+        if self.terrain.surface_from.as_ref() == Some(&from)
+            && let Some((frame, ids)) = &mut self.terrain.surface
+        {
+            *frame = self.terrain.frame;
+            return ids.iter().filter_map(|&id| scene.find(id)).collect();
+        }
+
+        wce_prof!("terrain.surface_entities.made");
         let mut ents = vec![];
+        let mut lfs: Vec<Arc<LfMap>> = vec![];
         for id in self.terrain.entities.clone() {
             let Some(e) = scene.find(id) else { continue };
             let Payload::Terrain(t) = &e.payload else { continue };
+            if let Some(lf) = &t.lf
+                && !lfs.iter().any(|l| l.id == lf.id)
+            {
+                lfs.push(lf.clone());
+            }
+
             self.build_hf(id, t);
             if let Some(m) = &t.custom
                 && !self.terrain.custom.contains_key(&m.id)
@@ -1745,7 +1879,103 @@ impl Renderer {
         }
 
         self.terrain.surface = Some((self.terrain.frame, ents.iter().map(|e| e.id).collect()));
+        self.terrain.clusters = self.terrain_clusters(&ents);
+        self.terrain.surface_lfs = lfs;
+        self.terrain.surface_from = Some(self.surface_from(scene));
         ents
+    }
+
+    /// What the frame's terrain list depends on (`terrain_surface_entities`): the scene and every change to it, its terrains, the LF maps'
+    /// samples, the camera's units and render origin, the geometry made.
+    fn surface_from(&self, scene: &RenderScene) -> SurfaceFrom {
+        let o = self.camera.origin;
+        SurfaceFrom {
+            scene: std::ptr::from_ref(scene) as usize,
+            revision: scene.revision(),
+            entities: self.terrain.entities.iter().fold(0xCBF2_9CE4_8422_2325u64 ^ self.terrain.entities.len() as u64, |h, &id| (h ^ u64::from(id)).wrapping_mul(0x0100_0000_01B3)),
+            units: self.camera.units.to_bits(),
+            origin: [o.x.to_bits(), o.y.to_bits(), o.z.to_bits()],
+            made: self.terrain.made,
+            lfs: self.terrain.surface_lfs.iter().map(|lf| (lf.id, lf.values.revision())).collect(),
+        }
+    }
+
+    /// The frame's terrain list (`terrain_surface_entities`) in clusters: a grid of CLUSTER_GRID x CLUSTER_GRID over the list's extent, each
+    /// entity in the cell of its box's centre, each cluster boxed around its entities' patches, blend box and custom mesh. An entity
+    /// without a box is in a cluster of its own that every view takes.
+    fn terrain_clusters(&self, ents: &[&wce_scene::render_scene::Entity]) -> Vec<TerrainCluster> {
+        let boxes: Vec<Option<([f32; 3], [f32; 3])>> = ents.iter().map(|e| {
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            let mut add = |a: [f32; 3], b: [f32; 3]| {
+                for r in 0..3 {
+                    (lo[r], hi[r]) = (lo[r].min(a[r]), hi[r].max(b[r]));
+                }
+            };
+
+            if let Some(p) = self.terrain.placed.get(&e.id) {
+                if !p.patches.is_empty() {
+                    add(p.bmin, p.bmax);
+                }
+
+                if let Some((_, b, _)) = p.blend_box {
+                    add([b[0], b[1], b[2]], [b[3], b[4], b[5]]);
+                }
+            }
+
+            if let Some((a, b)) = self.custom_box(e) {
+                add(a, b);
+            }
+
+            (lo[0] <= hi[0] && lo.iter().chain(&hi).all(|v| v.is_finite())).then_some((lo, hi))
+        }).collect();
+
+        let (mut x0, mut z0, mut x1, mut z1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for (lo, hi) in boxes.iter().flatten() {
+            let (cx, cz) = (0.5 * (lo[0] + hi[0]), 0.5 * (lo[2] + hi[2]));
+            (x0, z0, x1, z1) = (x0.min(cx), z0.min(cz), x1.max(cx), z1.max(cz));
+        }
+
+        let n = CLUSTER_GRID as f32;
+        let cell = |v: f32, a: f32, b: f32| if b > a { (((v - a) / (b - a) * n) as usize).min(CLUSTER_GRID - 1) } else { 0 };
+        let mut grid: Vec<TerrainCluster> = (0..=CLUSTER_GRID * CLUSTER_GRID).map(|_| TerrainCluster::default()).collect();
+        for (k, b) in boxes.iter().enumerate() {
+            let c = match b {
+                Some((lo, hi)) => {
+                    let c = &mut grid[cell(0.5 * (lo[2] + hi[2]), z0, z1) * CLUSTER_GRID + cell(0.5 * (lo[0] + hi[0]), x0, x1)];
+                    for r in 0..3 {
+                        (c.bmin[r], c.bmax[r]) = (c.bmin[r].min(lo[r]), c.bmax[r].max(hi[r]));
+                    }
+
+                    c
+                }
+                None => {
+                    let c = &mut grid[CLUSTER_GRID * CLUSTER_GRID];
+                    c.always = true;
+                    c
+                }
+            };
+
+            c.ents.push(k);
+        }
+
+        grid.retain(|c| !c.ents.is_empty());
+        grid
+    }
+
+    /// The entities of `ents` (the frame's list, `terrain_surface_entities`) in the clusters within `cull` (scene units), in the list's
+    /// order; all of them when `ents` is some other list.
+    pub(crate) fn terrain_in_view<'e>(&self, ents: &[&'e wce_scene::render_scene::Entity], cull: &Float4x4) -> Vec<&'e wce_scene::render_scene::Entity> {
+        let same = self.terrain.surface.as_ref().is_some_and(|(frame, ids)| {
+            *frame == self.terrain.frame && ids.len() == ents.len() && self.terrain.clusters.iter().map(|c| c.ents.len()).sum::<usize>() == ents.len()
+        });
+
+        if !same {
+            return ents.to_vec();
+        }
+
+        let mut pick: Vec<usize> = self.terrain.clusters.iter().filter(|c| c.always || box_in_frustum(cull, c.bmin, c.bmax)).flat_map(|c| c.ents.iter().copied()).collect();
+        pick.sort_unstable();
+        pick.into_iter().map(|k| ents[k]).collect()
     }
 
     /// The terrain into the bound shadow cascade, as the game casts it: the patches with rigidterrain's `vs30_shadow_new` (geom_new's
@@ -1759,6 +1989,7 @@ impl Renderer {
         };
 
         let ents = self.terrain_surface_entities(scene);
+        let ents = self.terrain_in_view(&ents, view_proj);
         let il = if rome2 { self.layout(&vs, "terrain_shadow_rome2", &super::terrain_rome2::geom_layout()) } else { self.layout(&vs, "terrain_shadow", &geom_layout()) };
         let Some(il) = il else { return 0 };
         if ents.is_empty() {
@@ -1811,7 +2042,10 @@ impl Renderer {
             // vs_height_map_cb: the LF window (unorm 0..1 times the map's scale, less its offset, in game units), its size and the world's,
             // the offset that puts it where it is; the high-frequency height comes from the vertices (the instance rows are in game units).
             let d = match &lf {
-                Some(lf) => self.lf_draw(lf, eye),
+                Some(lf) => {
+                    wce_prof!("terrain.patches.lf_draw");
+                    self.lf_draw(lf, eye)
+                }
                 // No LF: the frame of the render origin.
                 None => LfDraw { srv: self.lf_zero(), n: 2.0, width: 1.0e6, scale: 0.0, offset: 0.0, uv_offset: 0.0, shift: [origin.x, origin.z] },
             };
@@ -1847,8 +2081,10 @@ impl Renderer {
             bind_sampler(&self.ctx, vs, "s_low_res_height_map", self.states.s_clamp_point.as_ref());
 
             // The batches: (buffer, patch, stride) -> instance rows.
-            let mut batches: Vec<(usize, usize, i32, i32, i32, Vec<f32>)> = vec![];
-            let mut at: HashMap<(usize, usize, i32), usize> = HashMap::new();
+            let batching = wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
+            let mut batches: Vec<(usize, usize, [i32; 3], i32, Vec<f32>)> = vec![];
+            // By vertex buffer, patch size and stride: the flat patches of every buffer share one vertex buffer (`hf_patch_vb`).
+            let mut at: HashMap<(usize, i32, i32), usize> = HashMap::new();
             for e in &group {
                 let custom = matches!(&e.payload, Payload::Terrain(t) if t.custom.is_some());
                 if material_only || custom {
@@ -1876,7 +2112,7 @@ impl Renderer {
                         let (dx, dy, dz) = (eye.x.clamp(lo[0], hi[0]) - eye.x, eye.y.clamp(lo[1], hi[1]) - eye.y, eye.z.clamp(lo[2], hi[2]) - eye.z);
                         let d = (dx * dx + dy * dy + dz * dz).sqrt() / (LOD_STEPS * p.step);
                         let mut k = 1;
-                        while k < PATCH_CELLS && d >= (2 * k) as f32 && pp.cx % (2 * k) == 0 && pp.cz % (2 * k) == 0 {
+                        while k < pp.cells && d >= (2 * k) as f32 && pp.cx % (2 * k) == 0 && pp.cz % (2 * k) == 0 {
                             k *= 2;
                         }
 
@@ -1885,39 +2121,41 @@ impl Renderer {
                         1
                     };
 
-                    let slot = *at.entry((p.key, pp.patch, k)).or_insert_with(|| {
-                        batches.push((p.key, pp.patch, pp.cx, pp.cz, k, vec![]));
+                    let slot = *at.entry((pp.vb, pp.cx * 4096 + pp.cz, k)).or_insert_with(|| {
+                        batches.push((p.key, pp.patch, [pp.cells, pp.cx, pp.cz], k, vec![]));
                         batches.len() - 1
                     });
 
                     // Into the group's frame.
                     let mut row = pp.row;
                     (row[3], row[7], row[11]) = (row[3] - sx * units, row[7] - origin.y * units, row[11] - sz * units);
-                    batches[slot].5.extend(row);
+                    batches[slot].4.extend(row);
                 }
             }
 
+            drop(batching);
+            wce_prof!("terrain.patches.draw");
             // Every batch's rows in the instance buffer at once, each drawn from its first; more than it holds, a buffer's worth at a time.
             let Some(inst_vb) = self.terrain.inst_vb.clone() else { continue };
             let capacity = INSTANCE_BYTES / 48;
-            let total = batches.iter().map(|b| b.5.len() / 12).sum::<usize>();
+            let total = batches.iter().map(|b| b.4.len() / 12).sum::<usize>();
             let mut first = vec![None; batches.len()];
             if total <= capacity {
-                let all = batches.iter().flat_map(|b| b.5.iter().copied()).collect::<Vec<f32>>();
+                let all = batches.iter().flat_map(|b| b.4.iter().copied()).collect::<Vec<f32>>();
                 if self.ctx.map(&inst_vb, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut ms| ms.write(0, &all)) {
                     let mut n = 0u32;
                     for (k, b) in batches.iter().enumerate() {
                         first[k] = Some(n);
-                        n += (b.5.len() / 12) as u32;
+                        n += (b.4.len() / 12) as u32;
                     }
                 }
             }
 
-            for (k, (key, patch, cx, cz, stride, rows)) in batches.into_iter().enumerate() {
+            for (k, (key, patch, [cells, cx, cz], stride, rows)) in batches.into_iter().enumerate() {
                 let Some(vb) = self.terrain.hf.get(&key).and_then(|g| g.patches.get(patch)).and_then(|p| p.vb.clone()) else { continue };
-                let (ib, index_count) = self.terrain_grid_ib(cx, cz, stride);
+                let (ib, index_count) = self.terrain_grid_ib(cells, cx, cz, stride);
                 self.ctx.set_vertex_buffers(0, &[Some(vb), Some(inst_vb.clone())], &[12, 48], &[0, 0]);
-                self.ctx.set_index_buffer(ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
+                self.ctx.set_index_buffer(ib.as_ref(), patch_index_format(cells), 0);
                 let count = (rows.len() / 12) as u32;
                 if let Some(first) = first[k] {
                     self.ctx.draw_indexed_instanced(index_count, count, 0, 0, first);
@@ -1937,6 +2175,7 @@ impl Renderer {
             }
 
             if !matches!(how, CustomDraw::None) {
+                wce_prof!("terrain.patches.custom");
                 triangles += self.draw_custom_meshes(&group, how, cull, [sx, sz]);
                 if let Some(il) = &geom_il {
                     self.ctx.set_input_layout(Some(il));
@@ -1954,6 +2193,49 @@ impl Renderer {
         triangles
     }
 }
+
+/// What a frame's terrain list was made from (`surface_from`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SurfaceFrom {
+    scene: usize,
+    revision: u64,
+    entities: u64,
+    units: u32,
+    origin: [u32; 3],
+    made: u64,
+    lfs: Vec<(u64, u64)>,
+}
+
+/// Clusters a side of the frame's terrain grid (`terrain_clusters`).
+const CLUSTER_GRID: usize = 16;
+
+/// Terrain entities near one another (`terrain_clusters`): indices into the frame's list and the box around them (scene units).
+#[derive(Clone, Debug)]
+pub(crate) struct TerrainCluster {
+    bmin: [f32; 3],
+    bmax: [f32; 3],
+    ents: Vec<usize>,
+
+    /// Entities without a box: in every view.
+    always: bool,
+}
+
+impl Default for TerrainCluster {
+    fn default() -> Self {
+        Self { bmin: [f32::MAX; 3], bmax: [f32::MIN; 3], ents: vec![], always: false }
+    }
+}
+
+/// The vertex buffer every flat patch shares (`hf_patch_vb`).
+struct FlatPatch(std::sync::Mutex<Vec<(i32, ID3D11Buffer)>>);
+
+// SAFETY: a D3D11 buffer is a free-threaded device child (the device is never made single-threaded); the mutex guards the slot.
+unsafe impl Sync for FlatPatch {}
+
+static FLAT_PATCH: FlatPatch = FlatPatch(std::sync::Mutex::new(Vec::new()));
+
+/// The patch batching's profile slot (a scope ended before the function's end).
+static BATCH_SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
 
 /// Which terrain entities a frame draws (their ids hashed): the materials are brought up to date when these change, not on every structural
 /// change of the scene (a campaign's prop models and trees coming and going as the camera moved cost 11 ms a frame).
