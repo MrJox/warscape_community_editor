@@ -84,6 +84,52 @@ pub fn warp_mesh_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32, 
     encode(&mut model)
 }
 
+/// A stair's treads in its meshes: the upward faces (of the wood blocks when the model has any) with their middle over `x` and `z`, by
+/// level (within 3 cm): each level's height and the x it spans, in x order. A level across less than half of `z` is no tread (a beam's
+/// top beside the stair).
+pub fn treads(meshes: &[&[u8]], x: (f32, f32), z: (f32, f32)) -> Vec<(f32, f32, f32)> {
+    let mut faces: Vec<(f32, f32, f32, f32, f32)> = vec![];
+    for bytes in meshes {
+        let Ok(model) = decode(bytes) else { continue };
+        let Some(lod) = model.lods().first() else { continue };
+        let wood = lod.mesh_blocks().iter().any(is_wood);
+        for block in lod.mesh_blocks().iter().filter(|b| !wood || is_wood(b)) {
+            let pivot = block.material().v_pivot();
+            let (v, ix) = (block.mesh().vertices(), block.mesh().indices());
+            for t in ix.chunks(3) {
+                let c = t.iter().map(|&i| {
+                    let q = v[i as usize].position();
+                    [q.x + pivot.x, q.y + pivot.y, q.z + pivot.z]
+                }).collect::<Vec<_>>();
+                let (u, w) = ([c[1][0] - c[0][0], c[1][1] - c[0][1], c[1][2] - c[0][2]], [c[2][0] - c[0][0], c[2][1] - c[0][1], c[2][2] - c[0][2]]);
+                let n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+                let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+                let mid = [(c[0][0] + c[1][0] + c[2][0]) / 3.0, (c[0][1] + c[1][1] + c[2][1]) / 3.0, (c[0][2] + c[1][2] + c[2][2]) / 3.0];
+                if len < 1e-4 || n[1] / len < 0.9 || mid[0] < x.0 || mid[0] > x.1 || mid[2] < z.0 || mid[2] > z.1 {
+                    continue;
+                }
+
+                let (lo, hi) = c.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
+                let (zlo, zhi) = c.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[2]), hi.max(p[2])));
+                faces.push((mid[1], lo, hi, zlo, zhi));
+            }
+        }
+    }
+
+    faces.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut levels: Vec<(f32, f32, f32, f32, f32)> = vec![];
+    for (y, lo, hi, zlo, zhi) in faces {
+        match levels.last_mut() {
+            Some(l) if (y - l.0).abs() < 0.03 => *l = (l.0.max(y), l.1.min(lo), l.2.max(hi), l.3.min(zlo), l.4.max(zhi)),
+            _ => levels.push((y, lo, hi, zlo, zhi)),
+        }
+    }
+
+    let mut out = levels.into_iter().filter(|l| l.4 - l.3 >= 0.5 * (z.1 - z.0)).map(|l| (l.0, l.1, l.2)).collect::<Vec<_>>();
+    out.sort_by(|a, b| a.1.total_cmp(&b.1));
+    out
+}
+
 /// If a block is wood (its diffuse texture's name says so).
 fn is_wood(block: &rpfm_lib::files::rigidmodel::MeshBlock) -> bool {
     block.material().textures().iter().any(|t| matches!(t.tex_type(), rpfm_lib::files::rigidmodel::materials::TextureType::Diffuse) && file_name(t.path()).contains("wood"))

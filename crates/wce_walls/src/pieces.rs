@@ -619,6 +619,9 @@ struct InPiece<'a> {
 
     /// The stair's slope over `part` (y at its two ends) and how near it what is brought lies.
     band: Option<(f32, f32, f32)>,
+
+    /// The walkway's height at the part's ends (the step piece's frame).
+    ends: (f32, f32),
 }
 
 /// The step sections that fall in a piece (each clipped to the piece; a section across two pieces is brought in two halves).
@@ -652,6 +655,7 @@ fn steps_in<'a>(warp: &'a PieceWarp<'a>, sources: StepFiles<'a>, across: Option<
             files,
             warp: SlabWarp { inner: warp, x, walk, own_rise, s: st.s, from: st.from, to: st.to, across },
             band: profile.slab_band.map(|h| (walk_at(part.0), walk_at(part.1), h as f32)),
+            ends: (walk_at(part.0), walk_at(part.1)),
         });
     }
 
@@ -720,10 +724,15 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
             let own = bytes.clone();
             // The walkable surfaces are always the step's own where it is (one surface under the units: the base's walkway, sloped over
             // the step, under a 15 m wall's stair too, had them stuck); the meshes are cut only where the family's step replaces them.
+            // A stair across the walkway walks on its treads (user 2026-11-04: units did not path over one slope through them, partly
+            // under them): its platforms follow them, the base's hull sunk under it.
+            let walk = warp.profile.walkway as f32;
             let mut splices = sections.iter().filter_map(|sec| {
-                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, replaces: Some(sec.drop), per_piece: false, shapes_too: false })
+                let platforms = walk_z.and(zy).map(|((z0, z1), _)| stepped_platforms(&stair_treads(sec, (z0, z1)), sec.part, sec.ends, (z0, z1)));
+                let sink = platforms.as_ref().map(|_| (walk - 0.5, walk + 0.5));
+                sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, replaces: Some(sec.drop), per_piece: false, shapes_too: false, platforms, sink })
             }).collect::<Vec<_>>();
-            splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, replaces: None, per_piece: true, shapes_too: true }));
+            splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, replaces: None, per_piece: true, shapes_too: true, platforms: None, sink: None }));
             *bytes = logic::warp_logic_with(bytes, warp, &cuts, drop_zy, &splices)?.0;
         } else if *name == zones_name && logic_too {
             *bytes = zones::warp_zones(&String::from_utf8_lossy(bytes), warp, cuts.step)?.into_bytes();
@@ -737,6 +746,54 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
     }
 
     Ok(b)
+}
+
+/// A step section's treads (`mesh::treads`) from its step piece's first piece, intact: over the part brought, inside the stair's z.
+fn stair_treads(sec: &InPiece, z: (f32, f32)) -> Vec<(f32, f32, f32)> {
+    let meshes = sec.files.files.iter().filter(|(n, _)| is_piece_mesh(n) && level_of(n) == 1 && n.contains("_piece01_")).map(|(_, b)| b.as_slice()).collect::<Vec<_>>();
+    mesh::treads(&meshes, sec.part, z)
+}
+
+/// The platforms of a stair (its frame) that follow its treads: flat on each, a short slope just before each riser (on the lower
+/// side) to the next; from the walkway's height at the part's start to its height at its end (`ends`), over `z`. Without treads, one
+/// slope from end to end.
+fn stepped_platforms(treads: &[(f32, f32, f32)], part: (f32, f32), ends: (f32, f32), z: (f32, f32)) -> Vec<serde_json::Value> {
+    // The levels in x order: the walkway before, the treads inside the part, the walkway after; one level for neighbours within 3 cm.
+    let mut levels: Vec<(f32, f32, f32)> = vec![(ends.0, part.0, part.0)];
+    for &(y, a, b) in treads.iter().filter(|t| t.2 > part.0 + 1e-3 && t.1 < part.1 - 1e-3) {
+        levels.push((y, a.max(part.0), b.min(part.1)));
+    }
+
+    levels.push((ends.1, part.1, part.1));
+    let mut merged: Vec<(f32, f32, f32)> = vec![];
+    for l in levels {
+        match merged.last_mut() {
+            Some(m) if (l.0 - m.0).abs() < 0.03 => m.2 = m.2.max(l.2),
+            _ => merged.push(l),
+        }
+    }
+
+    // The profile along x: flat, then the riser's slope.
+    let mut pts: Vec<(f32, f32)> = vec![(part.0, merged[0].0)];
+    for w in merged.windows(2) {
+        let ((ya, _, a1), (yb, b0, _)) = (w[0], w[1]);
+        let e = ((a1 + b0) / 2.0).clamp(part.0, part.1);
+        let room = (b0 - a1).abs().max(0.0) + 0.1;
+        let len = room.clamp(0.1, 0.25);
+        // The slope on the lower side of the riser, kept inside the part (at its ends, on the tread's own side).
+        let (p, q) = if yb > ya { (e - len, e) } else { (e, e + len) };
+        let (p, q) = if p < part.0 { (part.0, part.0 + len) } else if q > part.1 { (part.1 - len, part.1) } else { (p, q) };
+        let last = pts.last().map_or(part.0, |l| l.0);
+        pts.push((p.max(last), ya));
+        pts.push((q.max(p.max(last)), yb));
+    }
+
+    pts.push((part.1, merged.last().map_or(ends.1, |l| l.0)));
+    pts.windows(2).filter(|w| w[1].0 - w[0].0 > 1e-3).map(|w| {
+        let ((xa, ya), (xb, yb)) = (w[0], w[1]);
+        serde_json::json!({ "flag_1": false, "flag_2": false, "flag_3": false, "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
+            { "x": xa, "y": ya, "z": z.0 }, { "x": xb, "y": yb, "z": z.0 }, { "x": xb, "y": yb, "z": z.1 }, { "x": xa, "y": ya, "z": z.1 } ] } })
+    }).collect()
 }
 
 /// If two piece files are of the same piece (`..._pieceNN_...`).
@@ -880,6 +937,28 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// A stair's platforms follow its treads (as Amon Calen's wall 9 step: 0.25 down every 0.6): one surface from the walkway before to
+    /// the walkway after, flat on every tread at its height, a short slope at each riser; both ways.
+    #[test]
+    fn a_stairs_platforms_follow_its_treads() {
+        let down = [(15.002, 0.0, 0.62), (14.752, 0.62, 1.24), (14.502, 1.24, 1.86), (14.252, 1.86, 2.48), (14.002, 2.48, 3.0)];
+        let up = down.iter().map(|&(y, a, b)| (30.0 - y, a, b)).collect::<Vec<_>>();
+        for (treads, ends) in [(down.to_vec(), (15.0, 14.06)), (up, (15.0, 15.94))] {
+            let ps = stepped_platforms(&treads, (0.0, 3.0), ends, (5.1, 8.9));
+            let outline = |p: &serde_json::Value| p["vertices"]["outline"].as_array().unwrap().iter().map(|q| (q["x"].as_f64().unwrap() as f32, q["y"].as_f64().unwrap() as f32)).collect::<Vec<_>>();
+            let segs = ps.iter().map(|p| { let o = outline(p); (o[0], o[1]) }).collect::<Vec<_>>();
+            assert_eq!(segs[0].0, (0.0, 15.0), "{segs:?}");
+            assert_eq!(segs.last().unwrap().1, (3.0, ends.1), "{segs:?}");
+            assert!(segs.windows(2).all(|w| w[0].1 == w[1].0), "not one surface: {segs:?}");
+            for &(y, a, b) in &treads[1..treads.len() - 1] {
+                let flat = segs.iter().filter(|(p, q)| (p.1 - y).abs() < 1e-4 && (q.1 - y).abs() < 1e-4).map(|(p, q)| q.0 - p.0).sum::<f32>();
+                assert!(flat > 0.3 && flat <= b - a + 0.25, "tread at {y}: flat for {flat}: {segs:?}");
+            }
+
+            assert!(segs.iter().filter(|(p, q)| (p.1 - q.1).abs() > 1e-4).all(|(p, q)| q.0 - p.0 <= 0.25 + 1e-4), "a long slope: {segs:?}");
         }
     }
 

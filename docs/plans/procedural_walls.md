@@ -38,6 +38,10 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   half a piece off its frame; the stairs showed as not walkable under the mouse, the hull over their platform): cut where the platforms
   are, cut at corners and attached ends, warped, its edges and the triangles across them made again (`logic::collision_polygons`,
   `write_collision`); the corners' copies bring theirs.
+- **A stair's platforms follow its treads** (user 2026-11-04: one slope through the treads lay partly under them, units still did not
+  path over it): flat on each tread (`mesh::treads`: the upward faces of its wood across at least half its width), a short slope (at most
+  0.25) just before each riser on its lower side, from the walkway's height before to its height after (`pieces::stepped_platforms`);
+  the base's hull goes down 0.35 under the stair, from 0.3 in from its ends, so the platforms lie above it.
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).
