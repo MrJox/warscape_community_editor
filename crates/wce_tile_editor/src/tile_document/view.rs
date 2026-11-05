@@ -934,6 +934,11 @@ impl Tile {
             self.water_dirty = true;
             self.links_dirty = true;
             self.nogo_dirty = true;
+
+            // The buildings' footprints lie on the ground.
+            if self.display.tech.on(super::TechKind::Footprints) {
+                self.tech_changed();
+            }
         }
 
         // The scene's terrain lets go of its material and skin: the maps are written in place below instead of copied (they are shared until
