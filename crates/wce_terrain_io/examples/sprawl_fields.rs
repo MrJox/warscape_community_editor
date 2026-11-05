@@ -28,7 +28,7 @@ fn val(n: &NodeType) -> Option<i64> {
     })
 }
 
-fn walk<'a>(r: &'a RecordNode, region: &str, out: &mut Vec<(String, Vec<i64>)>) {
+fn walk(r: &RecordNode, region: &str, out: &mut Vec<(String, Vec<i64>)>) {
     let mut here = region.to_owned();
     for g in r.children() {
         if r.name() == "SETTLEMENT_EXPANSION_MAP_DATA"
@@ -72,7 +72,7 @@ fn main() {
     }
 
     let mut c: Vec<_> = combos.into_iter().collect();
-    c.sort_by(|x, y| y.1.cmp(&x.1));
+    c.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (v, n) in c.iter().take(25) {
         println!("  {v:?} x{n}");
     }

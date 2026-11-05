@@ -1,6 +1,8 @@
 //! A campaign's settlements as the game shows them at its start: each settlement slot's building, from the startpos, as the model the
-//! settlement display tables give it, at the slot's cell of the campaign map. Attila's main campaign for now (Thrones and Rome 2 store
-//! their startposes otherwise).
+//! settlement display tables give it, at the slot's cell of the campaign map. Attila's and Thrones' startposes (the same records) and
+//! Rome 2's (its slots' `BUILDING_MANAGER/BUILDING`, which names the building's faction; its display tables link a building level to
+//! a model by the id row's `key` and `display_building_key`): `cities_check` on `main_attila` 517 models, `vik_attila` 353,
+//! Rome 2's `main_rome` (map `main_rome_map`) 316.
 //!
 //! The sources, as RPFM's startpos code reads them (`rpfm_extensions::startpos`: `settlements`, `extract::regions`, `coords`):
 //! - the campaign map's `map_data.esf`: the world's size (`REGIONS_DATA`'s second `Coord2d`; 678.5 x 556.14 on `main_attila_map`), the hex
@@ -152,6 +154,25 @@ fn first_cell(r: &RecordNode) -> Option<(u16, u16)> {
     })
 }
 
+/// A startpos slot's type (`primary`, `port`, `secondary`...), its building and, when the slot names it, the building's faction:
+/// Attila's and Thrones' `REGION_BUILDING_MANAGER+3` and `REGION_BUILDING_MANAGER/BUILDING_BASE ^+2`; Rome 2's `BUILDING_MANAGER+3` and
+/// `BUILDING_MANAGER/BUILDING` `^+4` (its faction `^+5`).
+pub(crate) fn slot_of(slot: &RecordNode) -> (String, Option<String>, Option<String>) {
+    let Some(sg) = slot.children().first() else { return (String::new(), None, None) };
+    let text = |n: Option<&NodeType>| n.and_then(str_of).filter(|s| !s.is_empty()).map(str::to_owned);
+    if let Some(m) = child(slot, "REGION_BUILDING_MANAGER") {
+        let building = child(m, "BUILDING_BASE").and_then(|b| b.children().first().and_then(|bg| text(leaf(bg, None, 2))));
+        return (text(leaf(sg, Some("REGION_BUILDING_MANAGER"), 3)).unwrap_or_default(), building, None);
+    }
+
+    if let Some(m) = child(slot, "BUILDING_MANAGER") {
+        let b = child(m, "BUILDING").and_then(|b| b.children().first());
+        return (text(leaf(sg, Some("BUILDING_MANAGER"), 3)).unwrap_or_default(), b.and_then(|bg| text(leaf(bg, None, 4))), b.and_then(|bg| text(leaf(bg, None, 5))));
+    }
+
+    (String::new(), None, None)
+}
+
 /// A settlement's slot cells in the startpos (`SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/SETTLEMENT_EXPANSION_MAP_DATA`: its
 /// `SLOT_MAP_DATA`, the main slot and the port, and its `SECONDARY_SLOT_ARRAY`'s): the slot's index (the leading u32) -> its cell.
 fn startpos_slot_cells(settlement: &RecordNode) -> HashMap<usize, (u16, u16)> {
@@ -228,16 +249,19 @@ impl DisplayTables {
 
         for r in rows("campaign_settlement_display_building_ids_tables") {
             let level = get(&r, "building_level_key");
+            // Attila's row names its model id; Rome 2's row key is its model id (`display_building_key` of the next table).
+            let model = Some(get(&r, "building_model_id")).filter(|m| !m.is_empty()).unwrap_or_else(|| get(&r, "key"));
             if !level.is_empty() {
-                t.ids.entry(level).or_default().push([get(&r, "faction"), get(&r, "sub_culture"), get(&r, "culture"), get(&r, "building_model_id")]);
+                t.ids.entry(level).or_default().push([get(&r, "faction"), get(&r, "sub_culture"), get(&r, "culture"), model]);
             }
         }
 
         for r in rows("campaign_settlement_display_buildings_tables") {
             let flagged = ["is_slum", "is_sieged", "is_blockaded"].iter().any(|k| get(&r, k) == "true");
             let path = get(&r, "building_path").replace('\\', "/").to_lowercase();
+            let id = Some(get(&r, "model_id")).filter(|m| !m.is_empty()).unwrap_or_else(|| get(&r, "display_building_key"));
             if !flagged && !path.is_empty() {
-                t.models.entry(get(&r, "model_id")).or_insert(path);
+                t.models.entry(id).or_insert(path);
             }
         }
 
@@ -343,10 +367,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             let slots = child(manager, "REGION_SLOT_ARRAY").into_iter().flat_map(|a| a.children().iter().flatten().filter_map(as_record)).filter(|r| r.name() == "REGION_SLOT");
             let mut secondary = 0;
             for (index, slot) in slots.enumerate() {
-                let Some(sg) = slot.children().first() else { continue };
-                let kind = leaf(sg, Some("REGION_BUILDING_MANAGER"), 3).and_then(str_of).unwrap_or_default().to_owned();
-                let building = child(slot, "REGION_BUILDING_MANAGER").and_then(|m| child(m, "BUILDING_BASE"))
-                    .and_then(|b| b.children().first().and_then(|bg| leaf(bg, None, 2).and_then(str_of))).filter(|b| !b.is_empty()).map(str::to_owned);
+                let (kind, building, faction) = slot_of(slot);
                 if building.as_ref().is_some_and(|b| tables.with_aqueduct.contains(b)) {
                     aqueduct_regions.insert(key.to_owned());
                 }
@@ -375,7 +396,8 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                     continue;
                 };
 
-                let model = building.as_deref().and_then(|b| tables.model(b, &owner)).map(str::to_owned);
+                // The owner: the region's settlement's (Attila, Thrones), else the building's own (Rome 2's slots name it).
+                let model = building.as_deref().and_then(|b| tables.model(b, faction.as_deref().filter(|_| owner.is_empty()).unwrap_or(&owner))).map(str::to_owned);
                 match (&building, &model) {
                     (None, _) => no_building += 1,
                     (Some(b), None) => {
@@ -395,7 +417,7 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
     cities.notes.push(format!("slot cells: map data and startpos agree on {agree}, differ on {differ}; {from_startpos} from the startpos alone; {} aqueducts of {} in {} regions {:?}",
         cities.aqueducts.len(), tables.aqueducts.len(), aqueduct_regions.len(), aqueduct_regions));
     let mut top: Vec<(String, usize)> = unmatched.into_iter().collect();
-    top.sort_by(|a, b| b.1.cmp(&a.1));
+    top.sort_by_key(|t| std::cmp::Reverse(t.1));
     if !top.is_empty() {
         cities.notes.push(format!("without a model: {}", top.iter().take(8).map(|(b, n)| format!("{b} x{n}")).collect::<Vec<_>>().join(", ")));
     }

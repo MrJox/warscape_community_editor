@@ -66,7 +66,8 @@ impl RoadTables {
             .collect();
         thresholds.sort_by(f64::total_cmp);
         let values = table_rows(schema, "building_effects_junction_tables", list, read).iter()
-            .filter(|r| r.get("effect").is_some_and(|e| e.ends_with("_building_road")))
+            // Attila's `att_effect_building_road`; Thrones' `vik_road_mod` (in the db, given by nothing in vanilla: its roads stay level 0).
+            .filter(|r| r.get("effect").is_some_and(|e| e.ends_with("_building_road") || e.ends_with("_road_mod")))
             .filter_map(|r| Some((r.get("building")?.clone(), r.get("value")?.parse::<f64>().ok()?)))
             .fold(HashMap::new(), |mut m: HashMap<String, f64>, (b, v)| {
                 *m.entry(b).or_default() += v;
@@ -205,9 +206,7 @@ pub fn region_buildings(startpos: &[u8]) -> Result<HashMap<String, Vec<String>>,
             let list = out.entry(key.to_owned()).or_default();
             let slots = child(manager, "REGION_SLOT_ARRAY").into_iter().flat_map(|a| a.children().iter().flatten().filter_map(as_record)).filter(|r| r.name() == "REGION_SLOT");
             for slot in slots {
-                let building = child(slot, "REGION_BUILDING_MANAGER").and_then(|m| child(m, "BUILDING_BASE"))
-                    .and_then(|b| b.children().first().and_then(|bg| leaf(bg, None, 2).and_then(str_of))).filter(|b| !b.is_empty());
-                list.extend(building.map(str::to_owned));
+                list.extend(super::cities::slot_of(slot).1);
             }
         }
     }
