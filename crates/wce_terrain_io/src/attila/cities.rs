@@ -225,19 +225,25 @@ fn edge_piece(mask: u32) -> (u32, u32) {
     (shape, (0..6).find(|&k| rot(shape, k) == mask).unwrap_or(0))
 }
 
-/// The main slot's wall walk in the startpos (`SETTLEMENT_EXPANSION_MAP_DATA/SLOT_MAP_DATA` of index 0, its `SLOT_WALL_ARRAY`).
-fn main_wall_walk(data: &RecordNode) -> Option<Vec<(u16, u16)>> {
-    let slot = data.children().iter().flatten().filter_map(as_record).filter(|r| r.name() == "SLOT_MAP_DATA")
-        .find(|r| r.children().first().and_then(|g| g.iter().find_map(u32_of)) == Some(0))?;
-    let walls = child(slot, "SLOT_WALL_ARRAY")?;
-    let cells: Vec<(u16, u16)> = walls.children().iter().filter_map(|g| {
-        let mut v = g.iter().filter_map(|n| match n {
-            NodeType::U16(x) => Some(*x),
-            _ => None,
-        });
-        Some((v.next()?, v.next()?))
-    }).collect();
-    (cells.len() > 2).then_some(cells)
+/// Every slot's wall walk in the startpos (`SETTLEMENT_EXPANSION_MAP_DATA`'s `SLOT_MAP_DATA` and its `SECONDARY_SLOT_ARRAY`'s, their
+/// `SLOT_WALL_ARRAY`), each in order; none of fewer than three cells.
+fn wall_walks(data: &RecordNode) -> Vec<Vec<(u16, u16)>> {
+    let walk = |slot: &RecordNode| -> Option<Vec<(u16, u16)>> {
+        let walls = child(slot, "SLOT_WALL_ARRAY")?;
+        let cells: Vec<(u16, u16)> = walls.children().iter().filter_map(|g| {
+            let mut v = g.iter().filter_map(|n| match n {
+                NodeType::U16(x) => Some(*x),
+                _ => None,
+            });
+            Some((v.next()?, v.next()?))
+        }).collect();
+        (cells.len() > 2).then_some(cells)
+    };
+
+    let records = data.children().iter().flatten().filter_map(as_record);
+    let primary = records.clone().filter(|r| r.name() == "SLOT_MAP_DATA");
+    let secondary = records.filter(|r| r.name() == "SECONDARY_SLOT_ARRAY").flat_map(|a| a.children().iter().flatten().filter_map(as_record)).filter(|r| r.name() == "SLOT_MAP_DATA");
+    primary.chain(secondary).filter_map(walk).collect()
 }
 
 /// A settlement's slot cells in the startpos (`SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/SETTLEMENT_EXPANSION_MAP_DATA`: its
@@ -548,21 +554,24 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                 }
             }
 
-            // The walls of a major settlement (RPFM: Attila walls its major settlements): its main slot's wall walk (`SLOT_WALL_ARRAY`, in
-            // order), each cell a `wall_<shape>` of the directions to the walk's previous and next cells, `gatehouse_` where a road
-            // crosses (`river_gatehouse_` a river), `_inverse` when the edge before its turn leads out of the zone (a straight 14 is turned
-            // half a turn instead), as the game's `FUN_10aecb70` / `FUN_10af7850` choose them. ASSUMPTION: the inside test on the main
-            // slot's zone; towers not drawn.
+            // The walls of a major settlement (RPFM: Attila walls its major settlements): every slot's wall walk (`SLOT_WALL_ARRAY`, in
+            // order), the cells on the outer edge of the zones' union only (ASSUMPTION: the game drops the walls between touching zones),
+            // each cell a `wall_<shape>` of the directions to the walk's previous and next cells, `gatehouse_` where a road crosses
+            // (`river_gatehouse_` a river), `_inverse` when the edge before its turn leads out of the zones (a straight 14 is turned half a
+            // turn instead), as the game's `FUN_10aecb70` / `FUN_10af7850` choose them; a connecting tower between two cells of a walk.
             let main = tiers.get(&0).copied();
             let walled = cities.slots.iter().rev().take_while(|s| s.region == key).any(|s| s.index == 0 && s.building.as_deref().is_some_and(|b| b.contains("_major_")));
-            if let (true, Some(tier), Some(walk)) = (walled, main, expansion.and_then(main_wall_walk)) {
+            let walks = expansion.map(wall_walks).unwrap_or_default();
+            let inside = |c: (u16, u16)| cell_info.get(&c).is_some_and(|i| i.0 != 0);
+            let outer = |c: (u16, u16)| (0..6).any(|d| !hex_neighbour(c, d).is_some_and(inside));
+            let on_wall: std::collections::HashSet<(u16, u16)> = walks.iter().flatten().copied().filter(|&c| outer(c)).collect();
+            if let (true, Some(tier), false) = (walled, main, on_wall.is_empty()) {
                 // The wall's cells hold no sprawl.
-                let on_wall: std::collections::HashSet<(u16, u16)> = walk.iter().copied().collect();
                 cities.sprawl.retain(|p| p.region != key || !on_wall.contains(&p.cell));
                 let level = tier.div_ceil(2).clamp(1, 3);
-                let inside = |c: (u16, u16)| cell_info.get(&c).is_some_and(|i| i.0 & 1 != 0);
+                for walk in &walks {
                 let n = walk.len();
-                for (i, &cell) in walk.iter().enumerate() {
+                for (i, &cell) in walk.iter().enumerate().filter(|(_, c)| on_wall.contains(c)) {
                     let (prev, next) = (walk[(i + n - 1) % n], walk[(i + 1) % n]);
                     let mask = [prev, next].iter().filter_map(|&o| hex_direction(cell, o)).fold(0u32, |m, d| m | (1 << d));
                     if mask.count_ones() != 2 {
@@ -586,6 +595,19 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                         .or_else(|| tables.sprawl_model(&piece.replacen(kind, "wall_", 1), level, &faction))
                         .map(str::to_owned);
                     cities.sprawl.push(SprawlPiece { region: key.to_owned(), cell, world: centre(cell), piece, level, turn, model });
+                }
+
+                // A connecting tower between each two cells of the walk (`FUN_10aecb70`: halfway, turned by the step's direction, half a
+                // turn more when the edge before it leads out of the zone; `FUN_10af7610` names it `tower`).
+                for (i, &cell) in walk.iter().enumerate().filter(|(_, c)| on_wall.contains(c)) {
+                    let next = walk[(i + 1) % n];
+                    let Some(d) = hex_direction(cell, next).filter(|_| on_wall.contains(&next)) else { continue };
+                    let zone_mask = (0..6).filter(|&e| hex_neighbour(cell, e).is_some_and(inside)).fold(0u32, |m, e| m | (1 << e));
+                    let turn = if zone_mask & (1 << ((d + 5) % 6)) == 0 { (d + 3) % 6 } else { d };
+                    let (a, b) = (centre(cell), centre(next));
+                    let model = tables.sprawl_model("tower", level, &faction).map(str::to_owned);
+                    cities.sprawl.push(SprawlPiece { region: key.to_owned(), cell, world: ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0), piece: "tower".to_owned(), level, turn, model });
+                }
                 }
             }
         }
