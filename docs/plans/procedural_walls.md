@@ -73,6 +73,10 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   whether the game dislikes many small platforms together): one slope from the walkway's height where the step starts to its height
   where it ends, across the walkway, as the stepped bastion's own stair (Amon Calen: 20 stairs, slopes 6 to 22 degrees). The stepped
   profile (flat on each tread, a slope at each riser) stays behind the switch.
+- **Platforms go round as the game's** (2026-11-05, comparing the stepped bastion with ours: every game platform is clockwise from
+  above, ours were too but for all 20 stairs, built the other way round; neighbours run a shared edge opposite ways only when both
+  follow it). Every generated platform is turned to it after the weld (`logic::wind_as_the_game`). Slivers are taken out in door
+  sections too (pipes name no platforms).
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).

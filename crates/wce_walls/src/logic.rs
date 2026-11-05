@@ -305,6 +305,9 @@ pub fn warp_logic_framed(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Op
             if let Some(d) = piece["destructs"].get_mut(k) {
                 d["platforms"] = Value::Array(mine);
                 drop_folded(d);
+                for p in array_mut(d, "platforms") {
+                    wind_as_the_game(p);
+                }
             }
         }
     }
@@ -766,14 +769,23 @@ fn weld_platforms(platforms: &mut [Value]) {
     }
 }
 
-/// A level's platforms the weld folded (a sliver: fewer than 3 corners, or no area) taken out, its firing lines' platforms renumbered
-/// (a line on a folded one goes to the platform under its middle, else the nearest). A level with pipes is left as it is (they may name
-/// platforms too).
-fn drop_folded(d: &mut Value) {
-    if d["pipes"].as_array().is_some_and(|p| !p.is_empty()) {
-        return;
+/// A platform's corners in the order the game's go round (every platform of the game's pieces, its stairs too: clockwise seen from
+/// above, a negative area over x and z). Two neighbours then run their shared edge opposite ways; the stairs, made the other way round,
+/// were the only platforms that did not, and units never stepped onto them (user 2026-11-05).
+fn wind_as_the_game(p: &mut Value) {
+    let o = outline(&p["vertices"]);
+    let area = (0..o.len()).map(|i| {
+        let (a, b) = (o[(i + o.len() - 1) % o.len()], o[i]);
+        a[0] * b[2] - b[0] * a[2]
+    }).sum::<f32>();
+    if area > 0.0 {
+        p["vertices"] = json!({ "outline": o.into_iter().rev().map(point3).collect::<Vec<_>>() });
     }
+}
 
+/// A level's platforms the weld folded (a sliver: fewer than 3 corners, or no area) taken out, its firing lines' platforms renumbered
+/// (a line on a folded one goes to the platform under its middle, else the nearest). Pipes name no platforms (a polyline and its type).
+fn drop_folded(d: &mut Value) {
     let Some(platforms) = d["platforms"].as_array().cloned() else { return };
     let outlines = platforms.iter().map(|p| outline(&p["vertices"])).collect::<Vec<_>>();
     let folded = |o: &[[f32; 3]]| o.len() < 3 || area_xz(o) < 1e-4;
@@ -1164,6 +1176,25 @@ mod tests {
         assert_eq!(a, vec![[0.0, 15.0, 0.0], [1.0, 15.0, 0.0], [1.0, 15.0, 0.7], [1.0, 15.0, 2.0], [0.0, 15.0, 2.0]]);
         assert_eq!(outline(&ps[2]["vertices"])[3], [1.0, 15.0, 2.0], "the corner 3 mm off is the other's");
         assert_eq!(outline(&ps[1]["vertices"]).len(), 4);
+    }
+
+    /// Platforms go round the game's way (clockwise from above: a negative area over x, z): one made the other way is turned round, one
+    /// made the game's way is kept.
+    #[test]
+    fn platforms_go_round_the_games_way() {
+        let quad = |pts: [[f32; 3]; 4]| json!({ "vertices": { "outline": pts.iter().map(|&p| point3(p)).collect::<Vec<_>>() } });
+        let area = |p: &Value| { let o = outline(&p["vertices"]); (0..o.len()).map(|i| { let (a, b) = (o[(i + o.len() - 1) % o.len()], o[i]); a[0] * b[2] - b[0] * a[2] }).sum::<f32>() };
+        // The stepped bastion's stair, as the game has it.
+        let mut game = quad([[5.8, 15.0, 9.0], [5.8, 15.0, 5.0], [-6.2, 25.0, 5.0], [-6.2, 25.0, 9.0]]);
+        let before = game.clone();
+        wind_as_the_game(&mut game);
+        assert_eq!(game, before);
+        assert!(area(&game) < 0.0);
+
+        let mut ours = quad([[0.0, 15.0, 5.0], [3.0, 14.0, 5.0], [3.0, 14.0, 9.0], [0.0, 15.0, 9.0]]);
+        wind_as_the_game(&mut ours);
+        assert!(area(&ours) < 0.0);
+        assert_eq!(outline(&ours["vertices"])[0], [0.0, 15.0, 9.0]);
     }
 
     #[test]

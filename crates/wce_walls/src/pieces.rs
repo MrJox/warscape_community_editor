@@ -935,10 +935,11 @@ fn stepped_platforms(treads: &[(f32, f32, f32)], part: (f32, f32), ends: (f32, f
     clean.windows(2).filter(|w| w[1].0 - w[0].0 > 1e-4).map(|w| stair_quad(w[0], w[1], z)).collect()
 }
 
-/// One platform of a stair (its frame): from (x, y) to (x, y) along it, over `z`.
+/// One platform of a stair (its frame): from (x, y) to (x, y) along it, over `z`; its corners round the way the game's go (clockwise
+/// from above, as the stepped bastion's stair: `logic::wind_as_the_game`).
 fn stair_quad((xa, ya): (f32, f32), (xb, yb): (f32, f32), z: (f32, f32)) -> serde_json::Value {
     serde_json::json!({ "flag_1": false, "flag_2": false, "flag_3": false, "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
-        { "x": xa, "y": ya, "z": z.0 }, { "x": xb, "y": yb, "z": z.0 }, { "x": xb, "y": yb, "z": z.1 }, { "x": xa, "y": ya, "z": z.1 } ] } })
+        { "x": xa, "y": ya, "z": z.1 }, { "x": xb, "y": yb, "z": z.1 }, { "x": xb, "y": yb, "z": z.0 }, { "x": xa, "y": ya, "z": z.0 } ] } })
 }
 
 /// If two piece files are of the same piece (`..._pieceNN_...`).

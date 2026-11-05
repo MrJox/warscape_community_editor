@@ -97,6 +97,11 @@ names or with wrong descriptions. To rename and document in rpfm (`~/Proyectos/r
 - **Platforms**: `flag_1..3` all false on walls (the editor draws flag_2 as ground, flag_3 as a siege ramp: unconfirmed). The game's
   pieces join platforms edge to edge (the stepped bastion's stair shares its top edge's two corners with the landing); whether it
   joins edges that only overlap was not found, so generated pieces weld theirs.
+- **Platform winding**: every platform of the game's pieces (the walls', the door section's, the stepped bastion's, its sloped stair
+  too) lists its corners clockwise seen from above: a negative area over x and z (x right, z up). Two neighbours then run their shared
+  edge in opposite directions, as half-edges. Generated platforms are turned to it (`wce_walls::logic::wind_as_the_game`); the stairs,
+  made the other way round, were the only platforms that did not follow it. Worth a doc comment on rpfm's `Platform`.
+- **Pipes** name no platforms: a polyline (`line.outline`) and its `line_type` (`WallDoorTeleport`, ...).
 
 ## Effects from `.meta`
 
