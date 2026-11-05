@@ -438,9 +438,15 @@ fn runs(samples: &[Sample], tolerance: f64, min_run: f64, ends: [Option<f64>; 2]
         i = j + 1;
     }
 
-    // The far end attached: its run is at the given level.
+    // The far end attached: its run is at the given level. A short end run whose neighbour is within `tolerance` of that level makes
+    // the neighbour take it too: no step squeezed against the building, where it has no room (Amon Calen's wall 1: 0.13 up within the
+    // last metre, a near vertical riser at its tower).
     if let (Some(h), Some(last)) = (ends[1], out.last_mut()) {
         last.level = h;
+        let n = out.len();
+        if n >= 2 && out[n - 1].s.1 - out[n - 1].s.0 < min_run && (out[n - 2].level - h).abs() <= tolerance {
+            out[n - 2].level = h;
+        }
     }
 
     // Neighbouring runs at the same level are one.
@@ -595,6 +601,18 @@ fn steps(runs: &mut Vec<Run>, samples: &[Sample], corners: &[f64], fixed: [bool;
             t += STEP;
         }
 
+        // No room there (the boundary near an attached end or a corner): anywhere on the run before, from a quarter of `min_run` in (a
+        // step squeezed against a tower made a near vertical riser there: Amon Calen's wall 1).
+        if best.is_none() {
+            let mut t = if chain == 0 { a.s.0 } else { a.s.0 + q };
+            while t <= hi + 1e-9 {
+                if free(t, t + span) && best.is_none_or(|b| cost(t) < cost(b)) {
+                    best = Some(t);
+                }
+                t += STEP;
+            }
+        }
+
         let mut s = best.unwrap_or_else(|| {
             warnings.push(format!("at {boundary:.0}: no place for the step(s) away from a corner or an attached end"));
             (boundary - span / 2.0).clamp(a.s.0, (b.s.1 - span).max(a.s.0))
@@ -667,6 +685,18 @@ fn level_at(runs: &[Run], steps: &[Step], s: f64) -> f64 {
         }
 
         return chain.iter().rev().find(|st| st.s.1 < s).map_or(first.from, |st| st.to);
+    }
+
+    // Between steps, the level the last one before left (else the first one after starts from): a step is placed where the runs allow,
+    // not on the runs' boundary, and the runs' levels by their own ends put the walkway back up (or down) right after it and again at the
+    // boundary: two cliffs, units could not walk off the stair (user 2026-11-05, Amon Calen's wall 5: down 0.67 at 131..133, up 0.67 at
+    // 133, down again at 137.5).
+    if let Some(st) = steps.iter().filter(|st| st.s.1 < s).max_by(|a, b| a.s.1.total_cmp(&b.s.1)) {
+        return st.to;
+    }
+
+    if let Some(st) = steps.iter().filter(|st| st.s.0 > s).min_by(|a, b| a.s.0.total_cmp(&b.s.0)) {
+        return st.from;
     }
 
     runs.iter().find(|r| s <= r.s.1 + STEP / 2.0).or(runs.last()).map_or(0.0, |r| r.level)

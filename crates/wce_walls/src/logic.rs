@@ -88,6 +88,16 @@ pub fn warp_logic(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<(Vec<u8>
 ///
 /// A file doesn't read, or the result doesn't write back.
 pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Option<((f32, f32), (f32, f32))>, splices: &[Splice]) -> Result<(Vec<u8>, LogicNotes), String> {
+    warp_logic_framed(bytes, warp, cuts, drop_zy, splices, None)
+}
+
+/// [`warp_logic_with`], the base's platforms cut to its frame's x (`frame`): a piece's walkway ends on its joints exactly (some bases'
+/// run a little past theirs, and the next piece's edges were 4 or 5 cm off: not one edge for units to cross; user 2026-11-05).
+///
+/// # Errors
+///
+/// The file doesn't read, or doesn't write back.
+pub fn warp_logic_framed(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Option<((f32, f32), (f32, f32))>, splices: &[Splice], frame: Option<(f32, f32)>) -> Result<(Vec<u8>, LogicNotes), String> {
     let step = cuts.step;
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
     let mut v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
@@ -126,7 +136,17 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
             // The base's platforms less what the steps replace: cut out of them (a platform wider than the step's cross-section keeps the
             // rest of its width), so the walkway and a step never lie one over the other.
             // Grouped by the platform they come from: the firing lines' `parent_index` counts the platforms as they were.
-            let old = carve_platforms(d["platforms"].as_array().map_or(&[][..], Vec::as_slice), &drop, drop_zy);
+            let mut old = carve_platforms(d["platforms"].as_array().map_or(&[][..], Vec::as_slice), &drop, drop_zy);
+            if let Some((x0, x1)) = frame {
+                for group in &mut old {
+                    for p in group.iter_mut() {
+                        let o = half_plane(&half_plane(&outline(&p["vertices"]), 0, x0, false), 0, x1, true);
+                        p["vertices"] = json!({ "outline": o.into_iter().map(point3).collect::<Vec<_>>() });
+                    }
+
+                    group.retain(|p| outline(&p["vertices"]).len() >= 3);
+                }
+            }
             let on_planes = |p: [f32; 3]| inside(&planes, p);
             let (mut platforms, strips) = platform_strips(&old, warp, cuts, &on_planes, 0, &mut notes);
             let lines = d["ef_lines"].as_array().cloned().unwrap_or_default();
@@ -160,13 +180,49 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
             // The collision hull bent with the piece (and the corner's copies' hulls with them): it stayed the base's, straight and
             // flat over steps and half a piece off (user 2026-11-04: the stairs showed as not walkable, the hull over their platform).
             let sinks = splices.iter().filter_map(|sp| Some((sp.replaces?, sp.sink?))).collect::<Vec<_>>();
-            let mut hull = collision_polygons(&d["collision_3d"], warp, cuts, &planes, &sinks, drop_zy.map(|(z, _)| z));
+            // `bin_data` groups the hull's triangles by their indices (the straight wall's 7 groups cover its 104 triangles once each;
+            // a piece's single group, all of them): each new triangle goes into the groups of the triangle it was cut from (user
+            // 2026-11-05: the remade hull kept the base's groups, 440 of 544 triangles in none, the 104 named others).
+            let groups_of = |bins: &Value| {
+                let mut of: HashMap<usize, Vec<usize>> = HashMap::new();
+                for (g, list) in bins.as_array().into_iter().flatten().enumerate() {
+                    for t in list.as_array().into_iter().flatten().filter_map(Value::as_u64) {
+                        of.entry(t as usize).or_default().push(g);
+                    }
+                }
+
+                of
+            };
+            let group_count = |bins: &Value| bins.as_array().map_or(0, Vec::len);
+            let mut groups = group_count(&d["bin_data"]);
+            let base_of = groups_of(&d["bin_data"]);
+            let (mut hull, mut hull_groups) = (vec![], vec![]);
+            for (t, poly) in collision_polygons(&d["collision_3d"], warp, cuts, &planes, &sinks, drop_zy.map(|(z, _)| z)) {
+                hull_groups.push(base_of.get(&t).cloned().unwrap_or_default());
+                hull.push(poly);
+            }
+
             for (sp, sd) in &shapes {
-                hull.extend(collision_polygons(&sd["collision_3d"], sp.warp, cuts, &sp.warp.clip_planes(), &[], None));
+                let of = groups_of(&sd["bin_data"]);
+                groups = groups.max(group_count(&sd["bin_data"]));
+                for (t, poly) in collision_polygons(&sd["collision_3d"], sp.warp, cuts, &sp.warp.clip_planes(), &[], None) {
+                    hull_groups.push(of.get(&t).cloned().unwrap_or_default());
+                    hull.push(poly);
+                }
             }
 
             if d["collision_3d"].is_object() {
-                write_collision(&mut d["collision_3d"], &hull);
+                let from = write_collision(&mut d["collision_3d"], &hull);
+                if groups > 0 {
+                    let mut bins = vec![vec![]; groups];
+                    for (t, &p) in from.iter().enumerate() {
+                        for &g in &hull_groups[p] {
+                            bins[g].push(t);
+                        }
+                    }
+
+                    d["bin_data"] = json!(bins);
+                }
             }
 
             for (sp, mut sd) in shapes {
@@ -215,15 +271,17 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
                 l["direction"] = json!({ "x": t[0], "y": t[1] });
             }
 
-            if d["bin_data"].as_array().is_some_and(|b| !b.is_empty()) {
-                notes.warnings.push(format!("{name}: bin_data kept as it is (not understood)"));
-            }
-
             if d["gates"].as_array().is_some_and(|b| !b.is_empty()) {
                 notes.warnings.push(format!("{name}: gates kept as they are"));
             }
 
             warp_box(&mut d["bounding_box"], warp, step);
+
+            // The level's box holds all of it (the game's is its hull's extent): a corner's copies, merged in from a length away, were
+            // outside it by up to a whole piece.
+            let mut pts = d["collision_3d"]["vertices"].as_array().map(|a| a.iter().map(p3).collect::<Vec<_>>()).unwrap_or_default();
+            pts.extend(d["platforms"].as_array().into_iter().flatten().flat_map(|p| outline(&p["vertices"])));
+            grow_box(&mut d["bounding_box"], &pts);
         }
 
         piece_index += 1;
@@ -246,11 +304,18 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
             let mine = rest.by_ref().take(n).collect::<Vec<_>>();
             if let Some(d) = piece["destructs"].get_mut(k) {
                 d["platforms"] = Value::Array(mine);
+                drop_folded(d);
             }
         }
     }
 
     warp_box(&mut v["bounding_box"], warp, step);
+    let corners = v["pieces"].as_array().into_iter().flatten().flat_map(|p| p["destructs"].as_array().into_iter().flatten()).flat_map(|d| {
+        let b = &d["bounding_box"];
+        let f = |k: &str| b[k].as_f64().unwrap_or(0.0) as f32;
+        [[f("min_x"), f("min_y"), f("min_z")], [f("max_x"), f("max_y"), f("max_z")]]
+    }).collect::<Vec<_>>();
+    grow_box(&mut v["bounding_box"], &corners);
     warp_transforms(&mut v, warp);
 
     let mut parsed: Cs2Parsed = serde_json::from_value(v).map_err(|e| e.to_string())?;
@@ -695,18 +760,63 @@ fn weld_platforms(platforms: &mut [Value]) {
         *o = out;
     }
 
-    // A sliver the snap folded into a line keeps its own outline (the firing lines name the platforms by their place: none goes).
+    // A sliver the snap folded into a line stays so (`drop_folded` takes it out): its neighbours' corners are one now, their edges shared.
     for (p, o) in platforms.iter_mut().zip(outlines) {
-        if o.len() >= 3 {
-            p["vertices"] = json!({ "outline": o.into_iter().map(point3).collect::<Vec<_>>() });
+        p["vertices"] = json!({ "outline": o.into_iter().map(point3).collect::<Vec<_>>() });
+    }
+}
+
+/// A level's platforms the weld folded (a sliver: fewer than 3 corners, or no area) taken out, its firing lines' platforms renumbered
+/// (a line on a folded one goes to the platform under its middle, else the nearest). A level with pipes is left as it is (they may name
+/// platforms too).
+fn drop_folded(d: &mut Value) {
+    if d["pipes"].as_array().is_some_and(|p| !p.is_empty()) {
+        return;
+    }
+
+    let Some(platforms) = d["platforms"].as_array().cloned() else { return };
+    let outlines = platforms.iter().map(|p| outline(&p["vertices"])).collect::<Vec<_>>();
+    let folded = |o: &[[f32; 3]]| o.len() < 3 || area_xz(o) < 1e-4;
+    if !outlines.iter().any(|o| folded(o)) {
+        return;
+    }
+
+    let mut new_index = vec![None; outlines.len()];
+    let mut kept = vec![];
+    for (i, (p, o)) in platforms.into_iter().zip(&outlines).enumerate() {
+        if !folded(o) {
+            new_index[i] = Some(kept.len());
+            kept.push(p);
         }
     }
+
+    let kept_outlines = kept.iter().map(|p| outline(&p["vertices"])).collect::<Vec<_>>();
+    let under = |m: [f32; 3]| {
+        let ring = |o: &[[f32; 3]]| o.iter().map(|q| [q[0], q[2]]).collect::<Vec<_>>();
+        kept_outlines.iter().position(|o| in_ring(&ring(o), [m[0], m[2]])).or_else(|| {
+            (0..kept_outlines.len()).min_by(|&a, &b| {
+                let d = |o: &[[f32; 3]]| o.iter().map(|q| (q[0] - m[0]).hypot(q[2] - m[2])).fold(f32::MAX, f32::min);
+                d(&kept_outlines[a]).total_cmp(&d(&kept_outlines[b]))
+            })
+        })
+    };
+
+    for l in array_mut(d, "ef_lines") {
+        let old = l["parent_index"].as_u64().unwrap_or(0) as usize;
+        let (s, e) = (p3(&l["start"]), p3(&l["end"]));
+        let mid = [(s[0] + e[0]) / 2.0, (s[1] + e[1]) / 2.0, (s[2] + e[2]) / 2.0];
+        if let Some(n) = new_index.get(old).copied().flatten().or_else(|| under(mid)) {
+            l["parent_index"] = json!(n);
+        }
+    }
+
+    d["platforms"] = Value::Array(kept);
 }
 
 /// A collision hull (`collision_3d`: vertices, triangles) as polygons cut along x at `cuts`, cut to the half-planes, warped. A cut through
 /// an edge gives the same point to both triangles on it (worked out from the edge's ends in one order), so the hull stays closed. Under
 /// each `sinks` stair (its x range, the heights lowered) inside `sink_z`, the hull goes down by `SINK` from `SINK_IN` in from its ends.
-fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3]], sinks: &[((f32, f32), (f32, f32))], sink_z: Option<(f32, f32)>) -> Vec<Vec<[f32; 3]>> {
+fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3]], sinks: &[((f32, f32), (f32, f32))], sink_z: Option<(f32, f32)>) -> Vec<(usize, Vec<[f32; 3]>)> {
     let verts = c["vertices"].as_array().map(|a| a.iter().map(p3).collect::<Vec<_>>()).unwrap_or_default();
     let tris = c["triangles"].as_array().map(|a| a.iter().filter_map(|t| {
         let i = |k: &str| t[k].as_u64().map(|v| v as usize).filter(|&v| v < verts.len());
@@ -747,13 +857,14 @@ fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3
     }
 
     let bounds = Cuts { step: cuts.step, at: extra }.bounds(lo, hi);
-    let mut polys: Vec<Vec<[f32; 3]>> = tris.iter().map(|t| t.to_vec()).collect();
+    // Each polygon with the triangle it was cut from.
+    let mut polys: Vec<(usize, Vec<[f32; 3]>)> = tris.iter().enumerate().map(|(i, t)| (i, t.to_vec())).collect();
     for &x in &bounds[1..bounds.len().saturating_sub(1)] {
-        polys = polys.into_iter().flat_map(|p| [cut(&p, &|q| q[0] - x), cut(&p, &|q| x - q[0])]).filter(|p| p.len() >= 3).collect();
+        polys = polys.into_iter().flat_map(|(i, p)| [(i, cut(&p, &|q| q[0] - x)), (i, cut(&p, &|q| x - q[0]))]).filter(|p| p.1.len() >= 3).collect();
     }
 
     for &[a, b, c] in planes {
-        polys = polys.into_iter().map(|p| cut(&p, &|q| a * q[0] + b * q[2] - c)).filter(|p| p.len() >= 3).collect();
+        polys = polys.into_iter().map(|(i, p)| (i, cut(&p, &|q| a * q[0] + b * q[2] - c))).filter(|p| p.1.len() >= 3).collect();
     }
 
     let sunk = |q: [f32; 3]| {
@@ -762,12 +873,13 @@ fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3
         if under && q[2] >= z0 && q[2] <= z1 { [q[0], q[1] - SINK, q[2]] } else { q }
     };
 
-    polys.into_iter().map(|p| p.into_iter().map(|q| warp.point(sunk(q))).collect()).collect()
+    polys.into_iter().map(|(i, p)| (i, p.into_iter().map(|q| warp.point(sunk(q))).collect())).collect()
 }
 
 /// A collision hull written from polygons (triangle fans; degenerate triangles left out): its vertices shared (within a tenth of a
-/// millimetre), every triangle's edges and the triangles across them (-1 on an open edge), as the game's files have them.
-fn write_collision(c: &mut Value, polys: &[Vec<[f32; 3]>]) {
+/// millimetre), every triangle's edges and the triangles across them (-1 on an open edge), as the game's files have them. Per triangle
+/// written, the polygon it is part of.
+fn write_collision(c: &mut Value, polys: &[Vec<[f32; 3]>]) -> Vec<usize> {
     let mut index: HashMap<[i64; 3], usize> = HashMap::new();
     let mut verts: Vec<[f32; 3]> = vec![];
     let mut id = |p: [f32; 3]| *index.entry(p.map(|v| (v * 1e4).round() as i64)).or_insert_with(|| {
@@ -775,13 +887,14 @@ fn write_collision(c: &mut Value, polys: &[Vec<[f32; 3]>]) {
         verts.len() - 1
     });
 
-    let mut tris: Vec<[usize; 3]> = vec![];
-    for poly in polys {
+    let (mut tris, mut from): (Vec<[usize; 3]>, Vec<usize>) = (vec![], vec![]);
+    for (k_poly, poly) in polys.iter().enumerate() {
         let ids = poly.iter().map(|&p| id(p)).collect::<Vec<_>>();
         for k in 1..ids.len().saturating_sub(1) {
             let t = [ids[0], ids[k], ids[k + 1]];
             if t[0] != t[1] && t[1] != t[2] && t[0] != t[2] {
                 tris.push(t);
+                from.push(k_poly);
             }
         }
     }
@@ -818,6 +931,16 @@ fn write_collision(c: &mut Value, polys: &[Vec<[f32; 3]>]) {
 
     c["vertices"] = Value::Array(verts.into_iter().map(point3).collect());
     c["triangles"] = Value::Array(triangles);
+    from
+}
+
+/// A box (`min_x` .. `max_z`) grown to hold these points.
+fn grow_box(b: &mut Value, pts: &[[f32; 3]]) {
+    for (i, (lo, hi)) in [("min_x", "max_x"), ("min_y", "max_y"), ("min_z", "max_z")].into_iter().enumerate() {
+        let (a, z) = pts.iter().fold((b[lo].as_f64().unwrap_or(0.0) as f32, b[hi].as_f64().unwrap_or(0.0) as f32), |(a, z), p| (a.min(p[i]), z.max(p[i])));
+        b[lo] = json!(a);
+        b[hi] = json!(z);
+    }
 }
 
 /// A box (`min_x` .. `max_z`) around the warp of the old one (its edges sampled every `step` metres along x).
@@ -992,7 +1115,7 @@ mod tests {
         });
         let bend = crate::warp::Bend::turning(-10.0, 10.0, 0.6);
         let flat = hull.clone();
-        let polys = collision_polygons(&hull, &bend, &Cuts { step: 5.0, at: vec![] }, &[], &[], None);
+        let polys = collision_polygons(&hull, &bend, &Cuts { step: 5.0, at: vec![] }, &[], &[], None).into_iter().map(|p| p.1).collect::<Vec<_>>();
         write_collision(&mut hull, &polys);
 
         let tris = hull["triangles"].as_array().unwrap();
@@ -1019,7 +1142,7 @@ mod tests {
         // Under a stair over x 2..6 the top goes down, from SINK_IN in from its ends; the bottom and the top elsewhere stay (the sides'
         // points at the cuts are in between).
         let polys = collision_polygons(&flat, &crate::warp::Identity, &Cuts { step: 5.0, at: vec![] }, &[], &[((2.0, 6.0), (14.5, 15.5))], Some((0.0, 9.0)));
-        let pts = polys.iter().flatten().copied().collect::<Vec<_>>();
+        let pts = polys.iter().flat_map(|p| p.1.iter().copied()).collect::<Vec<_>>();
         assert!(pts.iter().any(|p| (p[0] - 4.0).abs() < 1.8 && (p[1] - (15.0 - SINK)).abs() < 1e-4), "nothing sunk");
         let wrong = pts.iter().filter(|p| p[1] > 14.0).filter(|p| !(if p[0] > 2.0 + SINK_IN - 1e-3 && p[0] < 6.0 - SINK_IN + 1e-3 { (p[1] - (15.0 - SINK)).abs() < 1e-4 } else { (p[1] - 15.0).abs() < 1e-4 })).collect::<Vec<_>>();
         assert!(wrong.is_empty(), "{wrong:?}");

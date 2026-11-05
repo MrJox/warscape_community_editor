@@ -101,9 +101,28 @@ pub fn pieces(plan: &Plan, profile: &Profile) -> Vec<Piece> {
 
             let n = (l / len).round().max(1.0) as usize;
             let piece = l / n as f64;
-            for k in 0..n {
-                let s0 = p0 + piece * k as f64;
-                out.push(piece_at(s0, s0 + piece, None));
+            let mut cuts = (1..n).map(|k| p0 + piece * k as f64).collect::<Vec<_>>();
+
+            // No joint inside a step (or within `JOINT_CLEAR` of it): a stair split between two pieces lost the end caps under it,
+            // the walkway's way from one piece to the next (user 2026-11-05). The cut goes to the nearer side, the pieces kept at
+            // least half a length.
+            for k in 0..cuts.len() {
+                let c = cuts[k];
+                let Some(st) = plan.steps.iter().find(|st| !st.whole && c > st.s.0 - JOINT_CLEAR && c < st.s.1 + JOINT_CLEAR) else { continue };
+                let (lo, hi) = (if k == 0 { p0 } else { cuts[k - 1] }, if k + 1 < cuts.len() { cuts[k + 1] } else { p1 });
+                let options = [st.s.0 - JOINT_CLEAR, st.s.1 + JOINT_CLEAR];
+                let fits = |x: f64| x - lo >= len / 2.0 && hi - x >= len / 2.0;
+                let mut options = options.into_iter().filter(|&x| fits(x)).collect::<Vec<_>>();
+                options.sort_by(|a, b| (a - c).abs().total_cmp(&(b - c).abs()));
+                if let Some(&x) = options.first() {
+                    cuts[k] = x;
+                }
+            }
+
+            let mut s0 = p0;
+            for s1 in cuts.into_iter().chain(std::iter::once(p1)) {
+                out.push(piece_at(s0, s1, None));
+                s0 = s1;
             }
         }
     }
@@ -276,6 +295,9 @@ pub fn sample_at(plan: &Plan, s: f64) -> Sample {
         level: l(a.level, b.level),
     }
 }
+
+/// How far a joint between two pieces stays from a step (`pieces`).
+const JOINT_CLEAR: f64 = 0.5;
 
 /// Over how much of the wall before a corner's face its points are moved onto the bisector (`PieceWarp::s_at`).
 const FACE_BLEND: f64 = 3.0;
@@ -798,14 +820,21 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
             // under them): its platforms follow them, the base's hull sunk under it.
             let walk = warp.profile.walkway as f32;
             let mut splices = sections.iter().filter_map(|sec| {
-                let platforms = walk_z.and(zy).map(|((z0, z1), _)| stepped_platforms(&stair_treads(sec, (z0, z1)), sec.part, sec.ends, (z0, z1)));
+                let stretch = ((sec.warp.s.1 - sec.warp.s.0) / (sec.warp.x.1 - sec.warp.x.0).max(1e-9)) as f32;
+                let platforms = walk_z.and(zy).map(|((z0, z1), _)| stepped_platforms(&stair_treads(sec, (z0, z1)), sec.part, sec.ends, (z0, z1), stretch));
                 let sink = platforms.as_ref().map(|_| (walk - 0.5, walk + 0.5));
                 sec.files.files.get(&sec.files.logic_name()).map(|l| logic::Splice { logic: l, warp: &sec.warp, x: sec.part, zy, band: sec.band, replaces: Some(sec.drop), per_piece: false, shapes_too: false, platforms, sink })
             }).collect::<Vec<_>>();
             splices.extend(shifted.iter().map(|w| logic::Splice { logic: &own, warp: w, x: base_x, zy: None, band: None, replaces: None, per_piece: true, shapes_too: true, platforms: None, sink: None }));
-            *bytes = logic::warp_logic_with(bytes, warp, &cuts, drop_zy, &splices)?.0;
+            *bytes = logic::warp_logic_framed(bytes, warp, &cuts, drop_zy, &splices, Some(base_x))?.0;
         } else if *name == zones_name && logic_too {
-            *bytes = zones::warp_zones(&String::from_utf8_lossy(bytes), warp, cuts.step)?.into_bytes();
+            // A stair across the walkway lies in one zone region, as the stepped bastion's.
+            let text = String::from_utf8_lossy(bytes).into_owned();
+            let text = match across {
+                Some((_, (t0, t1))) => zones::reshape_for_steps(&text, &sections.iter().map(|sec| sec.drop).collect::<Vec<_>>(), (t0 as f32, t1 as f32)),
+                None => text,
+            };
+            *bytes = zones::warp_zones(&text, warp, cuts.step)?.into_bytes();
         } else if !name.ends_with(".meta") {
             drop.push(name.clone());
         }
@@ -818,17 +847,29 @@ pub fn make_piece(base: &BuildingFiles, key: &str, warp: &PieceWarp, steps: Step
     Ok(b)
 }
 
-/// A step section's treads (`mesh::treads`) from its step piece's first piece, intact: over the part brought, inside the stair's z.
+/// The steepest a stair's platforms slope (rise over run): about 39 degrees, under the stepped bastion's 40.
+const STAIR_SLOPE: f32 = 0.8;
+
+/// A step section's treads (`mesh::treads`) from its step piece's first piece, intact: over the part brought, inside the stair's z, and
+/// near the stair's slope (within `TREAD_BAND`; another upward face of the bastion 0.6 under it, over the stair's last stretch, was
+/// taken for a tread and the stair went down past the walkway: Amon Calen's wall 6).
 fn stair_treads(sec: &InPiece, z: (f32, f32)) -> Vec<(f32, f32, f32)> {
     let meshes = sec.files.files.iter().filter(|(n, _)| is_piece_mesh(n) && level_of(n) == 1 && n.contains("_piece01_")).map(|(_, b)| b.as_slice()).collect::<Vec<_>>();
-    mesh::treads(&meshes, sec.part, z)
+    let ((x0, x1), (y0, y1)) = (sec.part, sec.ends);
+    let line = |x: f32| y0 + (y1 - y0) * ((x - x0) / (x1 - x0).max(1e-6));
+    mesh::treads(&meshes, sec.part, z).into_iter().filter(|&(y, a, b)| (y - line((a.max(x0) + b.min(x1)) / 2.0)).abs() <= TREAD_BAND).collect()
 }
 
-/// The platforms of a stair (its frame) that follow its treads: flat on each, a short slope just before each riser (on the lower
-/// side) to the next; from the walkway's height at the part's start to its height at its end (`ends`), over `z`. Without treads, one
-/// slope from end to end.
-fn stepped_platforms(treads: &[(f32, f32, f32)], part: (f32, f32), ends: (f32, f32), z: (f32, f32)) -> Vec<serde_json::Value> {
-    // The levels in x order: the walkway before, the treads inside the part, the walkway after; one level for neighbours within 3 cm.
+/// How far from the stair's slope a tread lies at most (its rise is 0.25).
+const TREAD_BAND: f32 = 0.4;
+
+/// The platforms of a stair (its frame) that follow its treads: flat on each, and at each riser a slope no steeper than `STAIR_SLOPE`
+/// (measured on the wall: `stretch` is the wall's length per unit of the stair's frame) on the lower tread, at most nine tenths of it;
+/// where there is no lower tread in the part (the walkway's own level beyond its ends), on the upper one. From the walkway's height at
+/// the part's start to its height at its end (`ends`), over `z`. Without treads, one slope from end to end.
+fn stepped_platforms(treads: &[(f32, f32, f32)], part: (f32, f32), ends: (f32, f32), z: (f32, f32), stretch: f32) -> Vec<serde_json::Value> {
+    // The levels in x order: the walkway before (no run inside the part), the treads inside the part, the walkway after; one level for
+    // neighbours within 3 cm (the first or last tread is often the walkway's own height).
     let mut levels: Vec<(f32, f32, f32)> = vec![(ends.0, part.0, part.0)];
     for &(y, a, b) in treads.iter().filter(|t| t.2 > part.0 + 1e-3 && t.1 < part.1 - 1e-3) {
         levels.push((y, a.max(part.0), b.min(part.1)));
@@ -838,28 +879,52 @@ fn stepped_platforms(treads: &[(f32, f32, f32)], part: (f32, f32), ends: (f32, f
     let mut merged: Vec<(f32, f32, f32)> = vec![];
     for l in levels {
         match merged.last_mut() {
-            Some(m) if (l.0 - m.0).abs() < 0.03 => m.2 = m.2.max(l.2),
+            Some(m) if (l.0 - m.0).abs() < 0.03 => *m = (m.0, m.1.min(l.1), m.2.max(l.2)),
             _ => merged.push(l),
         }
     }
 
-    // The profile along x: flat, then the riser's slope.
+    // The ends at the walkway's own heights (a tread within 3 cm merged with it kept its own: the stair's top 2.3 cm off the walkway,
+    // too far to be joined to it; Amon Calen's wall 1).
+    if let Some(f) = merged.first_mut() {
+        f.0 = ends.0;
+    }
+
+    if let Some(l) = merged.last_mut() {
+        l.0 = ends.1;
+    }
+
+    let run = |l: &(f32, f32, f32)| (l.2 - l.1).max(0.0);
     let mut pts: Vec<(f32, f32)> = vec![(part.0, merged[0].0)];
     for w in merged.windows(2) {
-        let ((ya, _, a1), (yb, b0, _)) = (w[0], w[1]);
-        let e = ((a1 + b0) / 2.0).clamp(part.0, part.1);
-        let room = (b0 - a1).abs().max(0.0) + 0.1;
-        let len = room.clamp(0.1, 0.25);
-        // The slope on the lower side of the riser, kept inside the part (at its ends, on the tread's own side).
-        let (p, q) = if yb > ya { (e - len, e) } else { (e, e + len) };
-        let (p, q) = if p < part.0 { (part.0, part.0 + len) } else if q > part.1 { (part.1 - len, part.1) } else { (p, q) };
-        let last = pts.last().map_or(part.0, |l| l.0);
-        pts.push((p.max(last), ya));
-        pts.push((q.max(p.max(last)), yb));
+        let (lo, hi) = (w[0], w[1]);
+        let e = ((lo.2 + hi.1) / 2.0).clamp(part.0, part.1);
+        let dy = hi.0 - lo.0;
+        let want = dy.abs() / (STAIR_SLOPE * stretch.max(1e-6));
+
+        // On the lower tread (before the riser going up, after it going down); without room there, on the upper.
+        let (lower, upper) = if dy > 0.0 { (lo, hi) } else { (hi, lo) };
+        let on_lower = run(&lower) > 1e-3;
+        let len = want.min(0.9 * if on_lower { run(&lower) } else { run(&upper) }).max(1e-3);
+        let before = (dy > 0.0) == on_lower;
+        let (p, q) = if before { ((e - len).max(part.0), e) } else { (e, (e + len).min(part.1)) };
+        pts.push((p, lo.0));
+        pts.push((q, hi.0));
     }
 
     pts.push((part.1, merged.last().map_or(ends.1, |l| l.0)));
-    pts.windows(2).filter(|w| w[1].0 - w[0].0 > 1e-3).map(|w| {
+
+    // In order along x, nothing doubled.
+    let mut clean: Vec<(f32, f32)> = vec![];
+    for (x, y) in pts {
+        let x = clean.last().map_or(x, |l: &(f32, f32)| x.max(l.0));
+        match clean.last() {
+            Some(l) if (x - l.0).abs() < 1e-4 && (y - l.1).abs() < 1e-4 => {}
+            _ => clean.push((x, y)),
+        }
+    }
+
+    clean.windows(2).filter(|w| w[1].0 - w[0].0 > 1e-4).map(|w| {
         let ((xa, ya), (xb, yb)) = (w[0], w[1]);
         serde_json::json!({ "flag_1": false, "flag_2": false, "flag_3": false, "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
             { "x": xa, "y": ya, "z": z.0 }, { "x": xb, "y": yb, "z": z.0 }, { "x": xb, "y": yb, "z": z.1 }, { "x": xa, "y": ya, "z": z.1 } ] } })
@@ -882,7 +947,7 @@ pub fn level_of(name: &str) -> u32 {
 mod tests {
     use super::*;
     use crate::profile::profile;
-    use crate::solver::{WallInput, solve};
+    use crate::solver::{WallInput, solve, wall_level};
 
     fn plan_of(points: &[[f64; 2]], ground: &dyn Fn(f64, f64) -> f64) -> (Plan, &'static Profile) {
         let p = profile("barbarian_fort_straight").unwrap();
@@ -1034,25 +1099,113 @@ mod tests {
     }
 
     /// A stair's platforms follow its treads (as Amon Calen's wall 9 step: 0.25 down every 0.6): one surface from the walkway before to
-    /// the walkway after, flat on every tread at its height, a short slope at each riser; both ways.
+    /// the walkway after, flat on every tread at its height, a slope at each riser no steeper than the bastion's stair; both ways.
     #[test]
     fn a_stairs_platforms_follow_its_treads() {
         let down = [(15.002, 0.0, 0.62), (14.752, 0.62, 1.24), (14.502, 1.24, 1.86), (14.252, 1.86, 2.48), (14.002, 2.48, 3.0)];
         let up = down.iter().map(|&(y, a, b)| (30.0 - y, a, b)).collect::<Vec<_>>();
-        for (treads, ends) in [(down.to_vec(), (15.0, 14.06)), (up, (15.0, 15.94))] {
-            let ps = stepped_platforms(&treads, (0.0, 3.0), ends, (5.1, 8.9));
+        // Amon Calen's wall 6 step: its last tread runs to the part's end, 8 cm above the walkway after it.
+        let short = [(15.002, 0.0, 0.62), (14.752, 0.62, 1.24), (14.502, 1.24, 3.0)];
+        // Amon Calen's wall 1 step: its last tread 2.3 cm off the walkway after it, one level with it.
+        let close = [(15.002, 0.0, 0.62), (15.252, 0.62, 1.24), (15.502, 1.24, 1.86), (15.752, 1.86, 3.0)];
+        for (treads, ends) in [(down.to_vec(), (15.0, 14.06)), (up, (15.0, 15.94)), (short.to_vec(), (15.0, 14.42)), (close.to_vec(), (14.99, 15.729))] {
+            let ps = stepped_platforms(&treads, (0.0, 3.0), ends, (5.1, 8.9), 1.0);
             let outline = |p: &serde_json::Value| p["vertices"]["outline"].as_array().unwrap().iter().map(|q| (q["x"].as_f64().unwrap() as f32, q["y"].as_f64().unwrap() as f32)).collect::<Vec<_>>();
             let segs = ps.iter().map(|p| { let o = outline(p); (o[0], o[1]) }).collect::<Vec<_>>();
-            assert_eq!(segs[0].0, (0.0, 15.0), "{segs:?}");
+            assert_eq!(segs[0].0, (0.0, ends.0), "{segs:?}");
             assert_eq!(segs.last().unwrap().1, (3.0, ends.1), "{segs:?}");
             assert!(segs.windows(2).all(|w| w[0].1 == w[1].0), "not one surface: {segs:?}");
             for &(y, a, b) in &treads[1..treads.len() - 1] {
                 let flat = segs.iter().filter(|(p, q)| (p.1 - y).abs() < 1e-4 && (q.1 - y).abs() < 1e-4).map(|(p, q)| q.0 - p.0).sum::<f32>();
-                assert!(flat > 0.3 && flat <= b - a + 0.25, "tread at {y}: flat for {flat}: {segs:?}");
+                assert!(flat > 0.2 && flat <= b - a + 0.6, "tread at {y}: flat for {flat}: {segs:?}");
             }
 
-            assert!(segs.iter().filter(|(p, q)| (p.1 - q.1).abs() > 1e-4).all(|(p, q)| q.0 - p.0 <= 0.25 + 1e-4), "a long slope: {segs:?}");
+            assert!(segs.iter().all(|(p, q)| (q.1 - p.1).abs() <= STAIR_SLOPE * (q.0 - p.0) + 1e-4), "too steep: {segs:?}");
+            assert!(segs.iter().filter(|(p, q)| (p.1 - q.1).abs() > 1e-4).all(|(p, q)| q.0 - p.0 <= 0.6 + 1e-4), "a long slope: {segs:?}");
         }
+    }
+
+    /// The walkway changes height only on its steps: between them it stays at the level the step before left (a step placed off its
+    /// runs' boundary had the walkway jump back to the run's level after it, and again at the boundary).
+    #[test]
+    fn the_walkway_changes_height_only_on_its_steps() {
+        let grounds: [&dyn Fn(f64, f64) -> f64; 3] = [&|x, _| x * 0.04, &|x, _| 6.0 * (-(x - 70.0) * (x - 70.0) / 900.0).exp(), &|x, _| (x / 23.0).sin() * 2.5];
+        let p = profile("gondorean_fort_straight").unwrap();
+        let mut steps = 0;
+        for ground in grounds {
+            for end in (0..12).map(|k| 120.0 + f64::from(k) * 6.1) {
+                let input = WallInput { points: vec![[0.0, 0.0], [end, 0.0]], sharp: vec![false, false], tolerance: 0.5, ..Default::default() };
+                let plan = solve(&input, p, ground);
+                steps += plan.steps.len();
+                let on_step = |s: f64| plan.steps.iter().any(|st| s >= st.s.0 - 1e-6 && s <= st.s.1 + 1e-6);
+                let mut s = 0.0;
+                while s + 0.25 <= plan.length {
+                    let (a, b) = (wall_level(&plan, s), wall_level(&plan, s + 0.25));
+                    assert!((a - b).abs() < 1e-9 || on_step(s) || on_step(s + 0.25), "wall of {end}: the walkway jumps from {a:.2} to {b:.2} at {s:.2}, off its steps {:?}",
+                        plan.steps.iter().map(|st| (st.s, st.from, st.to)).collect::<Vec<_>>());
+                    s += 0.25;
+                }
+            }
+        }
+
+        // Near an attached end the steps keep away from it, off their boundary (Amon Calen's wall 5: the boundary 13 from its tower).
+        let mut off = 0;
+        for at in (0..16).map(|k| 120.0 + f64::from(k)) {
+            let ground = move |x: f64, _: f64| if x < at { 0.0 } else { -0.7 };
+            let input = WallInput { points: vec![[0.0, 0.0], [150.0, 0.0]], sharp: vec![false, false], tolerance: 0.5, ends: [None, Some(-0.7)], end_planes: [None, Some([1.0, 0.0])], ..Default::default() };
+            let plan = solve(&input, p, &ground);
+            off += plan.steps.iter().filter(|st| st.s.1 < at - 1.0 || st.s.0 > at + 1.0).count();
+            let on_step = |s: f64| plan.steps.iter().any(|st| s >= st.s.0 - 1e-6 && s <= st.s.1 + 1e-6);
+            let mut s = 0.0;
+            while s + 0.25 <= plan.length {
+                let (a, b) = (wall_level(&plan, s), wall_level(&plan, s + 0.25));
+                assert!((a - b).abs() < 1e-9 || on_step(s) || on_step(s + 0.25), "the ground stepping at {at}: the walkway jumps from {a:.2} to {b:.2} at {s:.2}, off its steps {:?}",
+                    plan.steps.iter().map(|st| (st.s, st.from, st.to)).collect::<Vec<_>>());
+                s += 0.25;
+            }
+        }
+
+        assert!(off > 0, "no step off its boundary: the case is not tested");
+    }
+
+    /// An attached end a little above the wall's run (within the tolerance) is met by the run itself, not by a step squeezed against the
+    /// building with no room (Amon Calen's wall 1: 0.13 within its last metre, a near vertical riser).
+    #[test]
+    fn a_small_rise_to_an_attached_end_needs_no_step() {
+        let p = profile("gondorean_fort_straight").unwrap();
+        for len in [100.0, 120.5, 137.0] {
+            let input = WallInput { points: vec![[0.0, 0.0], [len, 0.0]], sharp: vec![false, false], tolerance: 0.5, ends: [None, Some(0.2)], end_planes: [None, Some([1.0, 0.0])], ..Default::default() };
+            // The ground changes in the wall's last metre: a run of its own there, held at the end's level.
+            let ground = move |x: f64, _: f64| if x > len - 0.8 { 0.9 } else { 0.0 };
+            let plan = solve(&input, p, &ground);
+            assert!(plan.runs.len() >= 1 && plan.steps.is_empty(), "wall of {len}: runs {:?} steps {:?}", plan.runs.iter().map(|r| (r.s, r.level)).collect::<Vec<_>>(), plan.steps.iter().map(|st| st.s).collect::<Vec<_>>());
+            assert!((wall_level(&plan, len - 0.1) - 0.2).abs() < 1e-9 && (wall_level(&plan, 1.0) - 0.2).abs() < 1e-9);
+            assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+        }
+    }
+
+    /// No joint between two pieces falls inside a step (a stair split between two pieces lost the end caps under it): on a slope, walls
+    /// of many lengths, every joint at least `JOINT_CLEAR` from every step.
+    #[test]
+    fn joints_keep_off_the_steps() {
+        let ground = |x: f64, _: f64| x * 0.04;
+        let p = profile("gondor_fort_straight").unwrap();
+        let mut steps = 0;
+        for end in (0..30).map(|k| 120.0 + f64::from(k) * 3.7) {
+            let input = WallInput { points: vec![[0.0, 0.0], [end, 0.0]], sharp: vec![false, false], tolerance: 0.5, ..Default::default() };
+            let plan = solve(&input, p, &ground);
+            let ps = pieces(&plan, p);
+            steps += plan.steps.iter().filter(|st| !st.whole).count();
+            for w in ps.windows(2) {
+                let joint = w[0].s.1;
+                assert!(plan.steps.iter().filter(|st| !st.whole).all(|st| joint <= st.s.0 - JOINT_CLEAR + 1e-6 || joint >= st.s.1 + JOINT_CLEAR - 1e-6),
+                    "wall of {end}: a joint at {joint:.2} in a step {:?}", plan.steps.iter().map(|st| st.s).collect::<Vec<_>>());
+            }
+
+            assert!(ps.iter().all(|q| q.scale > 0.5), "a piece too short");
+        }
+
+        assert!(steps > 20, "only {steps} steps: the test needs more");
     }
 
     #[test]
