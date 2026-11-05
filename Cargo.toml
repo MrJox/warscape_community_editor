@@ -13,8 +13,8 @@ windows-core = "0.100"
 windows-link = "0.100"
 windows-bindgen = "0.100"
 
-# rpfm_lib from a checkout next to this repo (the formats the editor needs, ahead of rpfm's releases: the RMV2 displacement texture
-# type is on its feature/rmv2_displacement_texture branch). Without one, rpfm's develop branch:
+# rpfm_lib from rpfm's develop branch (ahead of its releases). The path line is for working against a local checkout next to this repo
+# (`../rpfm`) while an rpfm change is not on develop yet; startpos changes are made in rpfm's repo (AGENTS.md).
 rpfm_lib = { git = "https://github.com/Frodo45127/rpfm.git", branch = "develop", default-features = false }
 # rpfm_lib = { path = "../rpfm/rpfm_lib", default-features = false }
 
