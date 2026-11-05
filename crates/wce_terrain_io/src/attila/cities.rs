@@ -85,8 +85,36 @@ pub struct Cities {
     /// The aqueducts of the regions with an aqueduct building.
     pub aqueducts: Vec<Aqueduct>,
 
+    /// The settlements' sprawl at the start (ASSUMPTION: every sprawl cell in the zone of a slot with a building, at a level from its tier).
+    pub sprawl: Vec<SprawlPiece>,
+
     /// What was not found (counts by reason).
     pub notes: Vec<String>,
+}
+
+/// A sprawl piece: a sprawl cell's model, turned by `turn` sixths of a turn clockwise seen from above (the game's `FUN_10b29d90`: the
+/// hex's rotation byte times 60 degrees).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SprawlPiece {
+    pub region: String,
+    pub cell: (u16, u16),
+    pub world: (f64, f64),
+    /// `sprawl_edge_<shape digits>`, `sea_sprawl_edge_<digits>`, `sea_sprawl_default`.
+    pub piece: String,
+    pub level: u32,
+    pub turn: u32,
+    pub model: Option<String>,
+}
+
+/// A building level's tier: the number its key ends with (`att_bld_roman_city_major_3`: 3; 1 without one).
+fn tier_of(building: &str) -> u32 {
+    building.rsplit('_').next().and_then(|t| t.parse().ok()).unwrap_or(1)
+}
+
+/// A piece's name for an edge shape (`FUN_10af6ae0`): its edges' numbers, 1 to 6 (`sprawl_edge_0` without one).
+fn shape_digits(shape: u32) -> String {
+    let d: String = (0..6).filter(|k| shape & (1 << k) != 0).map(|k| char::from(b'1' + k as u8)).collect();
+    if d.is_empty() { "0".to_owned() } else { d }
 }
 
 /// An aqueduct of `campaign_settlement_display_aqueducts`: shown while its region has a building with `has_aqueduct`
@@ -176,6 +204,42 @@ pub(crate) fn slot_of(slot: &RecordNode) -> (String, Option<String>, Option<Stri
     (String::new(), None, None)
 }
 
+/// The neighbour of a hex cell in a direction (RPFM's `coords.rs`: 0 the next row, then clockwise; odd columns half a row up).
+fn hex_neighbour((c, r): (u16, u16), d: u32) -> Option<(u16, u16)> {
+    const ODD: [(i32, i32); 6] = [(0, 1), (1, 1), (1, 0), (0, -1), (-1, 0), (-1, 1)];
+    const EVEN: [(i32, i32); 6] = [(0, 1), (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0)];
+    let (dx, dy) = if c % 2 == 1 { ODD } else { EVEN }.get(d as usize).copied()?;
+    Some((u16::try_from(i32::from(c) + dx).ok()?, u16::try_from(i32::from(r) + dy).ok()?))
+}
+
+/// The direction of a neighbouring cell.
+fn hex_direction(a: (u16, u16), b: (u16, u16)) -> Option<u32> {
+    (0..6).find(|&d| hex_neighbour(a, d) == Some(b))
+}
+
+/// An edge mask as a piece shape and a rotation (RPFM's `EdgePiece::from_mask`: the smallest rotation with its first two edges set, else
+/// the smallest; the rotation the smallest turning it into the mask).
+fn edge_piece(mask: u32) -> (u32, u32) {
+    let rot = |m: u32, k: u32| ((m << k) | (m >> ((6 - k) % 6))) & 63;
+    let shape = (0..6).map(|k| rot(mask, k)).filter(|m| m & 3 == 3).min().unwrap_or_else(|| (0..6).map(|k| rot(mask, k)).min().unwrap_or(0));
+    (shape, (0..6).find(|&k| rot(shape, k) == mask).unwrap_or(0))
+}
+
+/// The main slot's wall walk in the startpos (`SETTLEMENT_EXPANSION_MAP_DATA/SLOT_MAP_DATA` of index 0, its `SLOT_WALL_ARRAY`).
+fn main_wall_walk(data: &RecordNode) -> Option<Vec<(u16, u16)>> {
+    let slot = data.children().iter().flatten().filter_map(as_record).filter(|r| r.name() == "SLOT_MAP_DATA")
+        .find(|r| r.children().first().and_then(|g| g.iter().find_map(u32_of)) == Some(0))?;
+    let walls = child(slot, "SLOT_WALL_ARRAY")?;
+    let cells: Vec<(u16, u16)> = walls.children().iter().filter_map(|g| {
+        let mut v = g.iter().filter_map(|n| match n {
+            NodeType::U16(x) => Some(*x),
+            _ => None,
+        });
+        Some((v.next()?, v.next()?))
+    }).collect();
+    (cells.len() > 2).then_some(cells)
+}
+
 /// A settlement's slot cells in the startpos (`SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/SETTLEMENT_EXPANSION_MAP_DATA`: its
 /// `SLOT_MAP_DATA`, the main slot and the port, and its `SECONDARY_SLOT_ARRAY`'s): the slot's index (the leading u32) -> its cell.
 fn startpos_slot_cells(settlement: &RecordNode) -> HashMap<usize, (u16, u16)> {
@@ -228,6 +292,9 @@ pub struct DisplayTables {
     /// building level -> (faction, subculture, culture, model id) rows.
     pub ids: HashMap<String, Vec<[String; 4]>>,
 
+    /// (sprawl piece type, level) -> (faction, subculture, culture, model id) rows (the same table's `sprawl_piece_type` rows).
+    pub sprawl: HashMap<(String, u32), Vec<[String; 4]>>,
+
     /// model id -> model path (its normal state).
     pub models: HashMap<String, String>,
 
@@ -254,8 +321,14 @@ impl DisplayTables {
             let level = get(&r, "building_level_key");
             // Attila's row names its model id; Rome 2's row key is its model id (`display_building_key` of the next table).
             let model = Some(get(&r, "building_model_id")).filter(|m| !m.is_empty()).unwrap_or_else(|| get(&r, "key"));
+            let row = [get(&r, "faction"), get(&r, "sub_culture"), get(&r, "culture"), model];
+            let piece = get(&r, "sprawl_piece_type");
+            if !piece.is_empty() {
+                t.sprawl.entry((piece, get(&r, "sprawl_piece_level").parse().unwrap_or(0))).or_default().push(row.clone());
+            }
+
             if !level.is_empty() {
-                t.ids.entry(level).or_default().push([get(&r, "faction"), get(&r, "sub_culture"), get(&r, "culture"), model]);
+                t.ids.entry(level).or_default().push(row);
             }
         }
 
@@ -281,10 +354,18 @@ impl DisplayTables {
     }
 
     /// The model of a building level for a faction: the row of its faction, else its subculture, else its culture, else for all.
+    pub fn sprawl_model(&self, piece: &str, level: u32, faction: &str) -> Option<&str> {
+        self.pick(self.sprawl.get(&(piece.to_owned(), level))?, faction)
+    }
+
     pub fn model(&self, building: &str, faction: &str) -> Option<&str> {
+        self.pick(self.ids.get(building)?, faction)
+    }
+
+    /// The model of rows for a faction: the row of its faction, else its subculture, else its culture, else for all.
+    fn pick(&self, rows: &[[String; 4]], faction: &str) -> Option<&str> {
         let sub = self.subculture.get(faction).map_or("", String::as_str);
         let cult = self.culture.get(sub).map_or("", String::as_str);
-        let rows = self.ids.get(building)?;
         let pick = |f: &dyn Fn(&[String; 4]) -> bool| rows.iter().find(|r| f(r));
         let row = pick(&|r| !r[0].is_empty() && r[0] == faction)
             .or_else(|| pick(&|r| r[0].is_empty() && !r[1].is_empty() && r[1] == sub))
@@ -376,6 +457,8 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             let own_cells = g.iter().filter_map(as_record).find(|r| r.name() == "SETTLEMENT").map(startpos_slot_cells).unwrap_or_default();
             let slots = child(manager, "REGION_SLOT_ARRAY").into_iter().flat_map(|a| a.children().iter().flatten().filter_map(as_record)).filter(|r| r.name() == "REGION_SLOT");
             let mut secondary = 0;
+            // The tier of each slot's building, by the startpos's slot index (the sprawl's `zone_slots` bits).
+            let mut tiers: HashMap<usize, u32> = HashMap::new();
             for (index, slot) in slots.enumerate() {
                 let (kind, building, faction) = slot_of(slot);
                 if building.as_ref().is_some_and(|b| tables.with_aqueduct.contains(b)) {
@@ -417,13 +500,100 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                     _ => {}
                 }
 
+                if let (Some(i), Some(b)) = (map_index, &building) {
+                    tiers.insert(i, tier_of(b));
+                }
+
                 cities.slots.push(CitySlot { region: key.to_owned(), index, kind, cell, world: centre(cell), building, model });
+            }
+
+            // The sprawl: the cells of the zones of slots with a building (their bit in `zone_slots`: the startpos's slot index), the
+            // piece the cell's road or coast shape names, turned by its rotation; level from the slot's building tier (ASSUMPTION: the
+            // runtime sprawl's level is grown by chance, not stored).
+            let faction = owner.clone();
+            let expansion = g.iter().filter_map(as_record).find(|r| r.name() == "SETTLEMENT")
+                .and_then(|s| child(s, "SETTLEMENT_EXPANSION_MANAGER")).and_then(|m| child(m, "SETTLEMENT_EXPANSION_MAP_DATA"));
+            // Per sprawl cell: the zones' slots, the map's road and river edges.
+            let mut cell_info: HashMap<(u16, u16), (i64, i64, i64)> = HashMap::new();
+            if let Some(blocks) = expansion.and_then(|d| child(d, "SPRAWL_BLOCK")) {
+                for sg in blocks.children() {
+                    let Some(hex) = sg.iter().filter_map(as_record).find(|r| r.name() == "SPRAWL_HEX_MAP_DATA") else { continue };
+                    let Some(hg) = hex.children().first() else { continue };
+                    let v: Vec<i64> = hg.iter().filter_map(|n| match n {
+                        NodeType::Bool(b) => Some(i64::from(*b.value())),
+                        NodeType::I32(x) => Some(i64::from(*x.value())),
+                        other => u32_of(other).map(i64::from),
+                    }).collect();
+                    // RPFM's writer: column, row, in a footprint, in a zone, the map's two edge masks, water, the road mask, its shape and
+                    // rotation, the zones' slots, the coast mask, its shape and rotation.
+                    let [c, r, in_footprint, in_zone, road_edges, river_edges, water, _, road_shape, road_turn, zone_slots, _, coast_shape, coast_turn] = v[..] else { continue };
+                    cell_info.insert((c as u16, r as u16), (zone_slots, road_edges, river_edges));
+                    if in_zone == 0 || in_footprint != 0 {
+                        continue;
+                    }
+
+                    let Some(tier) = (0..32).filter(|k| zone_slots & (1 << k) != 0).filter_map(|k| tiers.get(&(k as usize)).copied()).max() else { continue };
+                    let level = tier.div_ceil(2).clamp(1, 3);
+                    let (piece, turn) = if water != 0 {
+                        let shape = coast_shape as u32;
+                        let piece = if [3, 7, 15, 31].contains(&shape) { format!("sea_sprawl_edge_{}", shape_digits(shape)) } else { "sea_sprawl_default".to_owned() };
+                        (piece, coast_turn as u32)
+                    } else {
+                        (format!("sprawl_edge_{}", shape_digits(road_shape as u32)), road_turn as u32)
+                    };
+
+                    let cell = (c as u16, r as u16);
+                    let model = tables.sprawl_model(&piece, level, &faction).map(str::to_owned);
+                    cities.sprawl.push(SprawlPiece { region: key.to_owned(), cell, world: centre(cell), piece, level, turn, model });
+                }
+            }
+
+            // The walls of a major settlement (RPFM: Attila walls its major settlements): its main slot's wall walk (`SLOT_WALL_ARRAY`, in
+            // order), each cell a `wall_<shape>` of the directions to the walk's previous and next cells, `gatehouse_` where a road
+            // crosses (`river_gatehouse_` a river), `_inverse` when the edge before its turn leads out of the zone (a straight 14 is turned
+            // half a turn instead), as the game's `FUN_10aecb70` / `FUN_10af7850` choose them. ASSUMPTION: the inside test on the main
+            // slot's zone; towers not drawn.
+            let main = tiers.get(&0).copied();
+            let walled = cities.slots.iter().rev().take_while(|s| s.region == key).any(|s| s.index == 0 && s.building.as_deref().is_some_and(|b| b.contains("_major_")));
+            if let (true, Some(tier), Some(walk)) = (walled, main, expansion.and_then(main_wall_walk)) {
+                // The wall's cells hold no sprawl.
+                let on_wall: std::collections::HashSet<(u16, u16)> = walk.iter().copied().collect();
+                cities.sprawl.retain(|p| p.region != key || !on_wall.contains(&p.cell));
+                let level = tier.div_ceil(2).clamp(1, 3);
+                let inside = |c: (u16, u16)| cell_info.get(&c).is_some_and(|i| i.0 & 1 != 0);
+                let n = walk.len();
+                for (i, &cell) in walk.iter().enumerate() {
+                    let (prev, next) = (walk[(i + n - 1) % n], walk[(i + 1) % n]);
+                    let mask = [prev, next].iter().filter_map(|&o| hex_direction(cell, o)).fold(0u32, |m, d| m | (1 << d));
+                    if mask.count_ones() != 2 {
+                        continue;
+                    }
+
+                    let (shape, rot) = edge_piece(mask);
+                    let zone_mask = (0..6).filter(|&d| hex_neighbour(cell, d).is_some_and(inside)).fold(0u32, |m, d| m | (1 << d));
+                    let edge = 1 << ((rot + 5) % 6);
+                    let outward = zone_mask & edge != edge;
+                    let (roads, rivers) = cell_info.get(&cell).map_or((0, 0), |i| (i.1 as u32, i.2 as u32));
+                    let kind = if roads & !mask != 0 { "gatehouse_" } else if rivers & !mask != 0 { "river_gatehouse_" } else { "wall_" };
+                    let base = format!("{kind}{}", shape_digits(shape));
+                    let (piece, turn) = match (outward, shape) {
+                        (true, 9) => (base, (rot + 3) % 6),
+                        (true, _) => (format!("{base}_inverse"), rot),
+                        _ => (base, rot),
+                    };
+
+                    let model = tables.sprawl_model(&piece, level, &faction)
+                        .or_else(|| tables.sprawl_model(&piece.replacen(kind, "wall_", 1), level, &faction))
+                        .map(str::to_owned);
+                    cities.sprawl.push(SprawlPiece { region: key.to_owned(), cell, world: centre(cell), piece, level, turn, model });
+                }
             }
         }
     }
 
     cities.aqueducts = tables.aqueducts.iter().filter(|a| aqueduct_regions.contains(&a.region)).cloned().collect();
     cities.notes.push(format!("{no_cell} buildings in slots without a cell, {no_building} slots without a building, {no_model} buildings without a model"));
+    cities.notes.push(format!("sprawl: {} pieces, {} with a model", cities.sprawl.len(), cities.sprawl.iter().filter(|p| p.model.is_some()).count()));
     cities.notes.push(format!("slot cells: map data and startpos agree on {agree}, differ on {differ}; {from_startpos} from the startpos alone; {} aqueducts of {} in {} regions {:?}",
         cities.aqueducts.len(), tables.aqueducts.len(), aqueduct_regions.len(), aqueduct_regions));
     let mut top: Vec<(String, usize)> = unmatched.into_iter().collect();

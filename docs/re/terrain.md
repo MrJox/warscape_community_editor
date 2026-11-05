@@ -328,6 +328,10 @@ the group in `default` and in every climate), `terrain/textures/campaign/default
   where the map has `snow_mask_<season>.dds` (`main_attila_map`: winter's, an L8 of 2032 x 1441 cells, values 0, 65, 128, 196, 255),
   the resolve's snow layer: the mask as R8 (green 0: no burnt ground at a start), the snow group as the resolve's own diffuse array.
   The resolve's mask uv has one offset for both axes: the editor fits x with it and rolls the mask's rows for z (the sampler wraps).
+  The masks by climate stage (Attila's changing climate, the startpos's `WORLD/CLIMATE`): `snow_mask_<season><stage + 1>.dds`, else
+  `snow_mask_<season>.dds` (the packs: `sp1`..`sp4`, `au3`, `au4`, `wi1`, `wi3`, `wi`). Turn 1 is spring (`CAMPAIGN_CALENDAR/DATE`'s
+  season 0, `seasons`' order) at stage 0: `snow_mask_sp1`, the snow on the mountain tiles' rings (their peaks are `rock_b` variation 1,
+  pale; the rings under the forests), as the game's screenshots show; the editor opens a campaign map at its start's season.
 - **Snow on the ground (2026-10-22, from the DXBC of `ps30_terrain_to_gbuffer_ss`):** the resolve reads `g_snowing_intensity` and `g_wind`
   of `weather_shared` (`g_season_type` and `g_snow_mask` are unused there). With intensity i > 0 it perturbs the normal with
   `s_snow_normals` (uv = xz * 0.0005 and * 0.07), and where the normal faces away from the wind (direction (wind.x, -1, wind.y)) beyond a

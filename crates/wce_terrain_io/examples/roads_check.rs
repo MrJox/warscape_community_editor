@@ -71,6 +71,11 @@ fn main() {
     for (i, key) in roads.hex.regions.iter().enumerate() {
         if !filter.is_empty() && key.contains(&filter) {
             println!("  {i} {key}: value {} level {}", roads.values[i], roads.levels[i]);
+            if let Ok(b) = wce_terrain_io::attila::roads::region_buildings(&startpos) {
+                for bl in b.get(key).into_iter().flatten() {
+                    println!("      {bl}: {:?}", tables.chain_levels.get(bl));
+                }
+            }
         }
     }
 

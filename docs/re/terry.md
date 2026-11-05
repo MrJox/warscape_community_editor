@@ -275,6 +275,9 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   refraction by depth, plus the sky's reflection; output `colour * overlay.a + overlay.rgb`.
 - **Roads** (2026-11-05): the kit's `tile_map.png` paints every road `roads_climate` (level 0; `main_attila_map`: 59 084 cells of
   (149, 104, 38), none of `roads` or `roads_stone`), and the game upgrades a road's tiles by its region's level:
+  - Levels (corrected 2026-11-05 from the game's turn-1 screenshots: a pale road in every region): a region's level is how many
+    thresholds its value passes, so `att_road_lv_1` (threshold 0) is `road1` (`roads`), `lv_2` `road2` (`roads_stone`), `lv_3` the
+    highest group there is (`road2`; ASSUMPTION); `roads_climate` (`road0`) is never left on Attila's main map.
   - a region's road value is the sum of `att_effect_building_road` (scope `region_to_region_own`; 96 buildings, no technology or
     effect bundle gives it) over its buildings in the startpos; its level the last `campaign_map_roads` row of the campaign whose
     `threshold` it reaches (`main_attila`: `att_road_lv_1` 0, `att_road_lv_2` 10, `att_road_lv_3` 40; `turns_required_to_upgrade_to`
@@ -316,6 +319,16 @@ BOB's `Terry file` and `Tilemap` on `terrain/campaigns/main_attila_map` (a scrat
   startpos. The startpos's `SPRAWL_HEX_MAP_DATA` fields (RPFM's `world/writer/regions.rs`): column, row, in a footprint, in a zone,
   the map's two edge masks, water, the road mask (edges to other sprawl cells), its shape and rotation, the zones' slots, the coast
   mask (edges to water), its shape and rotation.
+- **Sprawl and walls drawn** (2026-11-05): the runtime piece chooser takes the piece's shape and turn from fields of the sprawl hex,
+  and the startpos stores them per cell: on land the road shape and rotation (fields 9, 10: `sprawl_edge_1`, `_13`, `_14`, `_135`...),
+  on water the coast's (13, 14; Attila has no `sea_sprawl` display rows: none drawn). Only the level is runtime (0: none built). The
+  editor draws a piece on every zone cell (not a footprint's) of a slot with a building, at level = the building's tier halved, rounded
+  up, 1 to 3 (ASSUMPTION; Rome, `roman_west_city_major_3`: 2), turned clockwise by its sixths (RPFM's neighbour order runs clockwise
+  from the next row, north). Walls (`FUN_10aecb70`, `FUN_10af7850`): a major settlement's main slot's wall walk (`SLOT_WALL_ARRAY`, in
+  order), each cell `wall_<shape>` of the directions to the walk's neighbours (RPFM's `EdgePiece::from_mask`), `gatehouse_` where the
+  map's road edges cross it, `river_gatehouse_` its river edges, `_inverse` when the edge before its turn ((turn + 5) % 6) leads out of
+  the main zone (a straight `14` turned half a turn instead); the wall's cells hold no sprawl. Towers (`tower`, `end_tower`,
+  `FUN_10af7610`) not drawn. Checked against the game's turn-1 screenshots of Rome and Neapolis (a city filling its zone, walled).
 - **Settlement sprawl** (2026-11-05, read, not drawn): the startpos's `SETTLEMENT/SETTLEMENT_EXPANSION_MANAGER/
   SETTLEMENT_EXPANSION_MAP_DATA` (its region's key) holds per slot `SLOT_MAP_DATA` (u32 index: 0 the main slot, 1 the port, then the
   secondary ones; u16 column, row; 65535 unset) with `SLOT_FOOTPRINT_ARRAY`, `SLOT_ZOE_ARRAY` and `SLOT_WALL_ARRAY` hex cells, and

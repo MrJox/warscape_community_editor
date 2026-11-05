@@ -160,14 +160,19 @@ fn campaign_sea(e: &Editor, id: DocumentId, s: &Streamer) -> Option<wce_scene::r
     (size[0] > 0.0 && size[1] > 0.0).then(|| wce_scene::render_scene::CampaignSea { colour, corner: [sw.0 as f32, sw.1 as f32], size })
 }
 
-/// A campaign map's season snow (`terrain/campaigns/<map>/snow_mask_<season>.dds` in the packs: Attila ships winter's) over the map's
+/// A campaign map's season snow (`terrain/campaigns/<map>/snow_mask_<season><climate stage + 1>.dds`, else `snow_mask_<season>.dds`, in
+/// the packs: Attila ships spring's 1 to 4, autumn's 3 and 4, winter's 1 and 3 and plain) over the map's
 /// cells in the view's frame, with the campaign climates' `snow` group (`terrain/textures/campaign/default/snow`) at the kit's
 /// `blend_pixel_scale` for it (620 without the kit's `_settings.xml`). None for a battle map, or a season without a mask.
 fn campaign_snow(e: &Editor, id: DocumentId, s: &Streamer, season: &str) -> Option<wce_scene::render_scene::CampaignSnow> {
     let d = e.docs.find_as::<MapDocument>(id)?;
     let (MapKind::Campaign, name) = map_kind(&d.name) else { return None };
-    let mask = format!("terrain/campaigns/{name}/snow_mask_{season}.dds");
-    e.files().filter(|f| f.exists(&mask))?;
+    // The climate stage's mask (Attila: `snow_mask_<season><stage + 1>`: turn 1, spring at stage 0, is `snow_mask_sp1`, the mountains'
+    // peaks, as the game shows them), else the season's own (`snow_mask_wi`).
+    let stage = d.view_roads.as_ref().and_then(|r| r.climate_stage).unwrap_or(0);
+    let files = e.files()?;
+    let mask = [format!("terrain/campaigns/{name}/snow_mask_{season}{}.dds", stage + 1), format!("terrain/campaigns/{name}/snow_mask_{season}.dds")]
+        .into_iter().find(|m| files.exists(m))?;
     let pixel_scale = kit_roots(e).iter()
         .find_map(|r| wce_formats::tile_climate::ClimateList::load(&r.join(database_dir(MapKind::Campaign)).join("_settings.xml")).ok())
         .and_then(|c| c.find("default").and_then(|d| d.find("snow")).map(|t| t.blend_pixel_scale as f32))
@@ -624,6 +629,7 @@ impl TerrainTool {
     /// A document read: on the editor's list (the active one: the view follows it).
     fn adopt(&mut self, e: &mut Editor, mut d: Box<MapDocument>) {
         self.status = format!("{}: {}", d.name, d.summary());
+        self.take_start_season(&d);
         d.save_dir = save_dir(e, &d);
         let id = e.docs.add(&mut e.scene, d, "terrain");
         e.docs.set_active(id);
@@ -723,6 +729,14 @@ impl TerrainTool {
         self.view.stream(e, &self.rings);
     }
 
+    /// A campaign map opened: the view's season is its start's (the startpos's calendar; Attila's main campaign spring).
+    fn take_start_season(&mut self, d: &MapDocument) {
+        const SEASONS: [&str; 4] = ["sp", "su", "au", "wi"];
+        if let Some(k) = d.view_roads.as_ref().and_then(|r| r.start_season).filter(|&k| k < 4) {
+            SEASONS[k as usize].clone_into(&mut self.season);
+        }
+    }
+
     /// A campaign map's season in the view: its ground textures and snow (the view built again when it changes).
     fn set_season(&mut self, e: &mut Editor, season: &str) {
         if self.season != season {
@@ -796,6 +810,7 @@ impl TerrainTool {
         let i = self.inputs(e, name)?;
         let mut d = open_map(&i)?.document();
         d.save_dir = save_dir(e, &d);
+        self.take_start_season(&d);
         let summary = format!("{}: {}", d.name, d.summary());
         let rq = self.request(e, &d).ok_or("no kit with a tile database")?;
         let id = e.docs.add(&mut e.scene, d, "terrain");

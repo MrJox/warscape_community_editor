@@ -58,5 +58,12 @@ fn main() {
     }
 
     println!("slot kinds {kinds:?}");
+    let mut pieces = std::collections::BTreeMap::<String, (usize, usize)>::new();
+    for sp in &cities.sprawl {
+        let e = pieces.entry(format!("{} lvl{}", sp.piece, sp.level)).or_default();
+        e.0 += 1;
+        e.1 += usize::from(sp.model.is_some());
+    }
+    println!("sprawl pieces (count, with a model): {pieces:?}");
     println!("on land {land}, in the sea {sea}; models in the packs {have}, missing {missing}");
 }
