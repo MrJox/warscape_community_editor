@@ -392,10 +392,15 @@ now); resident memory besides the tile templates' 1.5 GB budget under 1 GB for t
      and farmland applied by hex cell centres, as the game's `FUN_10b28060` does; a campaign map's season in the view (Terrain panel,
      `terrain_season`): the season's ground textures and, in winter, the map's snow mask through the resolve's snow layer; the tile
      cache keeps a material's campaign flag (cached campaign tiles resolved as battle tiles).
-   Left: a campaign launch (noted, not for now); from the campaign's rendering: the settlement buildings' turn (an integer of the
-   runtime slot, not stored: docs/re/terry.md "Settlement models"), the sprawl pieces (grown at run time by chance), the farmland's
-   level rule (ASSUMPTION), the trees' size and lean and the mountains' look (against the game's screenshots), Thrones' campaign
-   look (screenshots), the GPU's terrain cost (smaller rings for campaign maps).
+   - 2026-11-05 (from the game's turn-1 screenshots): road levels (every region at least `road1`), the start season and climate
+     stage (spring, `snow_mask_sp1`), the far ring's ground from a grass tile, the sprawl (the startpos's pieces and turns, levels
+     from the buildings' tiers: ASSUMPTION) and walls with gatehouses and connecting towers around the zones' union; a campaign
+     weather selector (Terrain panel, `terrain_weather`: the map's lighting files, automatic the season's global lighting).
+   Left: a campaign launch (noted, not for now); the settlement buildings' turn (an integer of the display-side slot, not stored
+   and not found: docs/re/terry.md "Settlement models"), the sprawl's runtime levels, the farmland's level rule and walls around
+   zones without a building (ASSUMPTIONS), the trees' size and lean, Thrones' campaign look (screenshots), the GPU's terrain cost
+   (smaller rings for campaign maps). Startposes for Thrones and Rome 2 and every TDD victory mission type: in RPFM
+   (`rpfm_extensions::startpos`), the TDD missions waiting for TDD's victory missions file.
 9. **Other games**: Thrones (same plugin and formats: an oracle that runs), Rome 2 (`tile_map` v6, `blm` v7, maps only in the packs), later
    games when their profiles come (their Terry is another tool: out of this seam's first pass).
    **Progress 2026-11-04.** Done:
