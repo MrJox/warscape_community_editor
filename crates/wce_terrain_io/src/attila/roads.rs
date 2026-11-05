@@ -173,18 +173,32 @@ impl HexMap {
         self.byte(cell, 5)
     }
 
-    /// The cell at a world position (x east, y north), as RPFM's `MapScale` lays them (odd columns half a cell up).
+    /// The cell at a world position (x east, y north), as the game finds it (RPFM's `MapScale::cell_at`): raw = world / scale + 4,
+    /// columns 6 raw units apart and rows 8, odd columns half a row up; a hex is wider than its column, so in a column's first third the
+    /// positions beyond its slanted edges belong to the previous column's cells.
     pub fn cell_at(&self, x: f64, y: f64) -> Option<(u32, u32)> {
+        const RAW_OFFSET: f64 = 4.0;
         let sx = self.world.0 / (f64::from(self.w.saturating_sub(1)) * CELL_RAW_WIDTH);
         let sy = self.world.1 / (f64::from(self.h) * CELL_RAW_HEIGHT + CELL_RAW_HEIGHT / 2.0);
-        let c = (x / (CELL_RAW_WIDTH * sx)).floor();
-        if !(0.0..f64::from(self.w)).contains(&c) {
-            return None;
+        let (raw_x, raw_y) = (x / sx + RAW_OFFSET, y / sy + RAW_OFFSET);
+        let columns = raw_x / CELL_RAW_WIDTH;
+        let mut column = columns.floor() as i64;
+        let up = if column.rem_euclid(2) == 1 { CELL_RAW_HEIGHT / 2.0 } else { 0.0 };
+        let rows = (raw_y - up) / CELL_RAW_HEIGHT;
+        let mut row = rows.floor() as i64;
+        let into_column = (columns - column as f64) * 3.0;
+        let from_middle = rows - row as f64 - 0.5;
+        if into_column < 1.0 {
+            let odd = column.rem_euclid(2);
+            if into_column <= from_middle * 2.0 {
+                (column, row) = (column - 1, row + odd);
+            } else if into_column <= from_middle * -2.0 {
+                (column, row) = (column - 1, row + odd - 1);
+            }
         }
 
-        let up = if c as u32 % 2 == 1 { CELL_RAW_HEIGHT / 2.0 * sy } else { 0.0 };
-        let r = ((y - up) / (CELL_RAW_HEIGHT * sy)).floor();
-        (0.0..f64::from(self.h)).contains(&r).then_some((c as u32, r as u32))
+        let ok = (0..i64::from(self.w)).contains(&column) && (0..i64::from(self.h)).contains(&row);
+        ok.then_some((column as u32, row as u32))
     }
 }
 
@@ -408,12 +422,15 @@ mod tests {
     #[test]
     fn cells_by_world_position() {
         let hex = HexMap { w: 4, h: 3, world: (18.0, 28.0), regions: vec![], cells: vec![0; 4 * 3 * CELL_BYTES] };
-        // 6 x 8 raw units a cell, the world 18 x 28 raw (3 columns' width past the first, 3.5 rows): a raw unit a world unit.
-        assert_eq!(hex.cell_at(1.0, 1.0), Some((0, 0)));
-        // Column 1 (odd) starts half a cell up: y 3 is below its first row, 5 in it.
-        assert_eq!(hex.cell_at(7.0, 3.0), None);
-        assert_eq!(hex.cell_at(7.0, 5.0), Some((1, 0)));
-        assert_eq!(hex.cell_at(13.0, 17.0), Some((2, 2)));
-        assert_eq!(hex.cell_at(-1.0, 1.0), None);
+        // 6 x 8 raw units a cell, the world 18 x 28 raw (3 columns' width past the first, 3.5 rows): a raw unit a world unit. A cell's
+        // centre (RPFM's `world_position`: column * 6, row * 8, odd columns 4 up) is in it.
+        for (c, r) in [(0u32, 0u32), (1, 0), (1, 1), (2, 2), (3, 2)] {
+            let (x, y) = (f64::from(c) * 6.0, f64::from(r) * 8.0 + if c % 2 == 1 { 4.0 } else { 0.0 });
+            assert_eq!(hex.cell_at(x, y), Some((c, r)), "the centre of {c}, {r}");
+        }
+
+        // Half a column right of a cell's centre is still in it (a hex is 8 raw units across); beyond the map, none.
+        assert_eq!(hex.cell_at(3.0, 0.0), Some((0, 0)));
+        assert_eq!(hex.cell_at(-5.0, 0.0), None);
     }
 }
