@@ -49,6 +49,26 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **A corner's faces land on the bisector exactly** (`PieceWarp::s_at`, 2026-11-05): the straight shear in the base's frame left a
   curved arm's face off the bisector (a slit along Amon Calen's prow, 7 cm 3 m in); the points within 3 of a face are moved along the
   wall onto it, both pieces taking the same corner and bisector.
+- **Audit of a step against the stepped bastion** (user 2026-11-05: units still did not climb the stairs; every part of the logic file
+  checked on Amon Calen, `~/wce_re/scratch/audit`):
+  - `bin_data` groups the hull's triangles (as many groups as `action_vfx`; each triangle in one): the remade hull kept the base's
+    groups (440 of 544 triangles in none); each new triangle now goes into its source triangle's groups.
+  - Each level's box holds its hull and platforms, the building's all its levels (a corner's copies were up to a piece outside).
+  - The zone regions: the bastion has its stair in one region (the inner one, widened around it); ours straddled the two halves. The
+    regions of the straight bases are reshaped around each stair (`zones::reshape_for_steps`).
+  - The stair's platforms: slopes no steeper than 39 degrees measured on the wall (the bastion's own is 40; ours were 68), its ends
+    at the walkway's heights exactly, treads only within 0.4 of its slope (another face 0.6 under it sent it past the walkway).
+  - Slivers the weld folds are taken out and the firing lines renumbered; the base's platforms are cut to the frame (a piece's walkway
+    ends on its joint: some bases' ran 1.5 cm past it).
+  - The walkway's level between steps is the one the last step left (`solver::level_at`): a step placed off its runs' boundary put
+    the walkway back up right after it and down again at the boundary, two cliffs (wall 5: 0.67 each).
+  - A short attached-end run within the tolerance of the run before makes it take its level: no step squeezed against the building
+    (wall 1); a step finds room anywhere on the run before when the usual window has none.
+  - No joint between pieces falls inside a step (the end caps under it went with the stair).
+  - Result: every piece's platforms one connected group by shared edges, no T-junctions, every line on its platform, hull triangles
+    grouped once, boxes holding everything, every joint between pieces sharing edges but one. Open: the sharp corner's mitre (Amon
+    Calen's upper prow) shares no edge between its two pieces (the base's slanted platform edges cross each face at different depths);
+    to do: both faces' vertices on one grid of depths.
 - **The walkway keeps the base's height over the ground** within a tolerance (default 0.5 m, per wall). To revisit after gameplay tests.
 - **Gates and bastions are placed by hand**; a wall runs between them. **Towers and bastions along a wall** come from `wall_defence_every`
   (default 0 = none): the game's pieces as they are, on straight stretches with no step, away from corners (`pieces::defence_slots`).
