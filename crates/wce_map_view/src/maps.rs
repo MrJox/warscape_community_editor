@@ -119,7 +119,25 @@ pub fn game_map_folder(name: &str, game_dir: &str) -> Option<String> {
         return Some(game_dir.to_owned());
     }
 
-    name.strip_suffix(GAME_FILES).map(|f| format!("terrain/battles/{f}"))
+    let f = name.strip_suffix(GAME_FILES)?;
+    Some(match f.strip_prefix(GAME_CAMPAIGN) {
+        Some(c) => format!("terrain/campaigns/{c}"),
+        None => format!("terrain/battles/{f}"),
+    })
+}
+
+/// The prefix of a campaign map of the packs in the list (`campaigns/main_rome_map (game files)`).
+pub const GAME_CAMPAIGN: &str = "campaigns/";
+
+/// The campaign maps in the packs with a `terrain.tile_list` (their built form: a game without kit maps, Rome 2's
+/// `terrain/campaigns/main_rome_map`), as the list names them (`campaigns/<folder> (game files)`).
+pub fn game_campaign_maps(files: &dyn Files) -> Vec<String> {
+    let mut v: Vec<String> = files.list("terrain/campaigns/", "/terrain.tile_list").into_iter()
+        .filter_map(|p| p.strip_suffix("/terrain.tile_list").and_then(|f| f.rsplit('/').next()).map(|f| format!("{GAME_CAMPAIGN}{f}{GAME_FILES}")))
+        .collect();
+    v.sort();
+    v.dedup();
+    v
 }
 
 /// The battle maps in the packs (base game and mods): the folders of `terrain/battles` with a `tile_map.tiles` (`lists`: or a
