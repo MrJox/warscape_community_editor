@@ -13,15 +13,16 @@
 //!   byte 0 the region (an index into `REGIONS_BLOCK`; 171 there `att_reg_terra_incognita`, the sea and what is off the map), byte 5
 //!   the cell's road edges (a 6-bit mask: 9, 18, 36 straight through, 5, 10, 20, 40, 17, 34 bends), byte 6 its river's.
 //!
-//! ASSUMPTION: a tile takes the highest level of the regions of the road cells under it (the game picks a tile's group list in
-//! `FUN_11806d80` / `FUN_1181e380`, not decompiled to that point); a tile without a road cell under it the level at its centre.
+//! A road cell's level change applies `road<old>_to_road<new>` at the cell's centre, to the tile there (`FUN_10b28060`); so a tile takes
+//! the level of the road cells whose centres lie in it (ASSUMPTION: the highest; the game's order of cells is not known), and a tile
+//! without one stays.
 //!
 //! The farmland, the same way: the map's `dynamic_resources.esf` (`CAMPAIGN_DYNAMIC_RESOURCES`) lists per region (its key 0xfe00 + the
 //! region's index) areas of hex cells (row 0 the south edge) with a building superchain, a level and an upgrade group
 //! (`att_sch_agriculture`, 1 to 3, `farmland_mediterranean` or `farmland_northern` on `main_attila_map`). An area is farmland when
 //! the region has a building of that superchain (`building_chains`' `building_superchain`) whose chain level (`building_levels`'
 //! `level`: 0 for `att_bld_all_agriculture_generic_1`, 1 for the `_2`s) reaches the area's: its grass, mud and snow tiles take the
-//! group's farmland tiles. ASSUMPTIONS: that comparison (the game's is not decompiled), and a tile taking the area of its centre cell.
+//! group's farmland tiles, as the roads': the tiles holding an area cell's centre. ASSUMPTION: that comparison (the game's is not decompiled).
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -331,31 +332,32 @@ impl CampaignRoads {
         self.hex.regions.iter().position(|r| r == region).map(|i| self.levels[i])
     }
 
-    /// The level a tile placed over the map's cells `[x0, x1) x [y0, y1)` is drawn at (`w` x `h` the map's cells, row 0 the north edge).
-    pub fn tile_level(&self, rect: [i32; 4], (w, h): (u32, u32)) -> usize {
-        let world = |x: f64, y: f64| (x / f64::from(w) * self.hex.world.0, (1.0 - y / f64::from(h)) * self.hex.world.1);
-        let level = |cell: (u32, u32)| self.levels.get(usize::from(self.hex.region(cell))).copied().unwrap_or(0);
-        let mut best = None;
-        for y in rect[1]..rect[3] {
-            for x in rect[0]..rect[2] {
-                let (wx, wy) = world(f64::from(x) + 0.5, f64::from(y) + 0.5);
-                if let Some(cell) = self.hex.cell_at(wx, wy).filter(|&c| self.hex.road(c) != 0) {
-                    best = Some(best.unwrap_or(0).max(level(cell)));
+    /// The map cell (`w` x `h`, row 0 the north edge) holding a hex cell's centre (RPFM's `world_position`).
+    fn map_cell_of(&self, (c, r): (u32, u32), (w, h): (u32, u32)) -> (i32, i32) {
+        let sx = self.hex.world.0 / (f64::from(self.hex.w.saturating_sub(1)) * CELL_RAW_WIDTH);
+        let sy = self.hex.world.1 / (f64::from(self.hex.h) * CELL_RAW_HEIGHT + CELL_RAW_HEIGHT / 2.0);
+        let x = f64::from(c) * CELL_RAW_WIDTH * sx;
+        let y = f64::from(r) * CELL_RAW_HEIGHT * sy + if c % 2 == 1 { CELL_RAW_HEIGHT / 2.0 * sy } else { 0.0 };
+        ((x / self.hex.world.0 * f64::from(w)).floor() as i32, ((1.0 - y / self.hex.world.1) * f64::from(h)).floor() as i32)
+    }
+
+    /// Per map cell, the highest road level of the road hex cells whose centre lies in it, and the farmland group of the farmland
+    /// cells': where the game applies a cell's upgrade group (`FUN_10b28060`: a road cell's level change applies `road<old>_to_road<new>`
+    /// at the cell's world position, to the tile there).
+    pub fn upgrade_cells(&self, size: (u32, u32)) -> (HashMap<(i32, i32), usize>, HashMap<(i32, i32), String>) {
+        let mut roads: HashMap<(i32, i32), usize> = HashMap::new();
+        for r in 0..self.hex.h {
+            for c in 0..self.hex.w {
+                if self.hex.road((c, r)) != 0 {
+                    let level = self.levels.get(usize::from(self.hex.region((c, r)))).copied().unwrap_or(0);
+                    let e = roads.entry(self.map_cell_of((c, r), size)).or_default();
+                    *e = (*e).max(level);
                 }
             }
         }
 
-        best.unwrap_or_else(|| {
-            let (wx, wy) = world(f64::from(rect[0] + rect[2]) / 2.0, f64::from(rect[1] + rect[3]) / 2.0);
-            self.hex.cell_at(wx, wy).map_or(0, level)
-        })
-    }
-
-    /// The farmland group of the hex cell at a tile's centre (`w` x `h` the map's cells, row 0 the north edge).
-    pub fn tile_farm(&self, rect: [i32; 4], (w, h): (u32, u32)) -> Option<&str> {
-        let (x, y) = (f64::from(rect[0] + rect[2]) / 2.0, f64::from(rect[1] + rect[3]) / 2.0);
-        let cell = self.hex.cell_at(x / f64::from(w) * self.hex.world.0, (1.0 - y / f64::from(h)) * self.hex.world.1)?;
-        self.farms.get(&cell).map(String::as_str)
+        let farms = self.farms.iter().map(|(&cell, g)| (self.map_cell_of(cell, size), g.clone())).collect();
+        (roads, farms)
     }
 
     /// The map with its road tiles swapped for their level's and the tiles on farmland for its group's (the others as they are); the
@@ -363,12 +365,14 @@ impl CampaignRoads {
     pub fn apply(&self, m: &PlacedMap) -> (PlacedMap, usize, usize) {
         let mut out = m.clone();
         let (mut n, mut farmed) = (0, 0);
+        let (roads, farms) = self.upgrade_cells((m.width, m.height));
+        let cells_of = |r: [i32; 4]| (r[1]..r[3]).flat_map(move |y| (r[0]..r[2]).map(move |x| (x, y)));
         for p in &mut out.placements {
             let loc = norm(&p.location);
             if !loc.starts_with(BASE_SET) {
-                if !self.farms.is_empty()
-                    && let Some(dst) = self.tile_farm(p.rect(), (m.width, m.height)).and_then(|g| self.upgrades.groups.get(g)).and_then(|g| g.get(&loc))
-                {
+                // A farmland cell's centre in the tile.
+                let group = cells_of(p.rect()).find_map(|c| farms.get(&c));
+                if let Some(dst) = group.and_then(|g| self.upgrades.groups.get(g)).and_then(|g| g.get(&loc)) {
                     p.location.clone_from(dst);
                     farmed += 1;
                 }
@@ -376,7 +380,9 @@ impl CampaignRoads {
                 continue;
             }
 
-            let level = self.tile_level(p.rect(), (m.width, m.height));
+            // The highest level of the road cells' centres in the tile (ASSUMPTION: the game applies them one by one, and a tile once
+            // upgraded no longer matches a later `road0_to_` group; the order is not known).
+            let level = cells_of(p.rect()).filter_map(|c| roads.get(&c)).copied().max().unwrap_or(0);
             if level == 0 {
                 continue;
             }
