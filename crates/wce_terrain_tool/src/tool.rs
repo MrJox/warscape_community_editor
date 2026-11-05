@@ -678,11 +678,15 @@ impl TerrainTool {
                 text[at + 1..].split(quote).next().map(|s| s.to_lowercase().replace('\\', "/"))
             });
             // The chosen weather, else the global lighting of the view's season (the collection names spring's: `europe_sp` ->
-            // `europe_<season>`), else as named, else the folder's `default.environment`.
+            // `europe_<season>`), else as named, else (a map without a collection: Rome 2's) the folder's season lighting
+            // (`environment/summer.lighting`; ASSUMPTION: the game's choice there; `default.environment` hazed the view), else the
+            // folder's `default.environment`.
             let seasonal = global.as_ref().and_then(|g| g.rsplit_once("_sp.").map(|(a, b)| format!("{a}_{}.{b}", self.season)));
+            let season_name = match self.season.as_str() { "sp" => "spring", "au" => "autumn", "wi" => "winter", _ => "summer" };
             let file = self.weather.clone().filter(|f| files.exists(f))
                 .or_else(|| seasonal.filter(|f| files.exists(f)))
                 .or_else(|| global.filter(|f| files.exists(f)))
+                .or_else(|| Some(format!("{dir}/environment/{season_name}.lighting")).filter(|f| files.exists(f)))
                 .or_else(|| Some(format!("{dir}/default.environment")).filter(|f| files.exists(f)));
             if let Some(file) = file {
                 match e.set_weather_preview(Some(&file)) {
