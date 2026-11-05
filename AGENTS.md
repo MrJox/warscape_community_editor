@@ -2,7 +2,7 @@
 
 Warscape Community Editor is an all-in-one Total War editor for weather, battle and campaign tiles and terrain tilemaps, units, cinematics, and related content. Use Rust (a Cargo workspace, one crate per layer under `crates/`) with VS Code; the editor must run natively on Windows, macOS, and Linux. It is currently developed for Total War ATTILA but the architecture must be designed in a way that would allow to easily support other Total War games (starting from Rome 2 and ending with Pharaoh Dynasties).
 
-Use RPFM to read game and mod data from packs. Changes that depend on the startpos (reading, generating or extending `startpos.esf`, its record layouts, victory objectives) are done in RPFM's repo (`rpfm_extensions::startpos`), not here; the editor takes them through the `rpfm_lib` dependency (RPFM's `develop` branch). Use only the game's shaders. Keep visuals accurate and faithful to the game's rendering; deviations require explicit human permission.
+Use RPFM to read game and mod data from packs. Use only the game's shaders. Keep visuals accurate and faithful to the game's rendering; deviations require explicit human permission.
 
 For Total War development and modding in Claude Code, it is recommended to install the [Attila Modding Marketplace](https://github.com/MrJox/attila-modding-marketplace).
 
