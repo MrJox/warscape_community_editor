@@ -689,6 +689,33 @@ fn place_lines(old: &[Value], warp: &dyn Warp, cuts: &Cuts, strips: &[Vec<Strip>
         }
     }
 
+    // Each part cut to the piece's faces (a corner's mitre, an attached end): a part kept by its middle reached past the bisector over
+    // the other side's walkway, and units sent there stuck at the corner's inner side (user 2026-11-05).
+    let planes = warp.clip_planes();
+    let parts = parts.into_iter().filter_map(|mut l| {
+        let (mut s, mut e) = (p3(&l["start"]), p3(&l["end"]));
+        for &[a, b, c] in &planes {
+            let (fs, fe) = (a * s[0] + b * s[2] - c, a * e[0] + b * e[2] - c);
+            if fs > 1e-4 && fe > 1e-4 {
+                return None;
+            }
+
+            if fs > 1e-4 || fe > 1e-4 {
+                let t = fs / (fs - fe);
+                let m = [s[0] + (e[0] - s[0]) * t, s[1] + (e[1] - s[1]) * t, s[2] + (e[2] - s[2]) * t];
+                if fs > 1e-4 { s = m } else { e = m }
+            }
+        }
+
+        if (e[0] - s[0]).hypot(e[2] - s[2]) < 0.05 {
+            return None;
+        }
+
+        set_p3(&mut l["start"], s);
+        set_p3(&mut l["end"], e);
+        Some(l)
+    }).collect::<Vec<_>>();
+
     let mut out = vec![];
     for l in &parts {
         let (s, e) = (p3(&l["start"]), p3(&l["end"]));
@@ -1304,6 +1331,37 @@ mod tests {
             assert!(face.len() >= 4, "{turn}: only {} edges on the face", face.len());
             for &&(x, y) in &face {
                 assert!(eb.iter().any(|&(u, v)| (near(x, u) && near(y, v)) || (near(x, v) && near(y, u))), "{turn}: the edge {x:?} {y:?} is not the other side's");
+            }
+
+            // The firing lines along the inner side (LowWall, Overflow: the length of the piece) stay on their own side of the bisector,
+            // nothing reaching over the other side's walkway.
+            let c = crate::pieces::sample_at(&plan, s).centre;
+            let lines = [8.5f32, 7.5, 6.5].map(|z| json!({ "start": { "x": 10.34, "y": 15.0, "z": z }, "end": { "x": -10.34, "y": 15.0, "z": z },
+                "direction": { "x": 0.0, "y": 0.0, "z": 0.38 }, "parent_index": 0 }));
+            for (k, sign) in [(i, -1.0), (i + 1, 1.0)] {
+                let w = PieceWarp::new(&plan, p, ps[k], &ground);
+                let cuts = cuts_of(&plan, &ps[k], p);
+                let mut notes = LogicNotes::default();
+                let mut out = vec![];
+                let (_, strips) = platform_strips(&base, &w, &cuts, &|_| true, 0, &mut notes);
+                out.extend(place_lines(&lines, &w, &cuts, &strips, &|q| crate::warp::inside(&w.clip_planes(), q), &mut notes));
+                for dx in w.overhangs() {
+                    let copy = crate::warp::Shifted { inner: &w, dx };
+                    let (_, strips) = platform_strips(&base, &copy, &cuts, &|_| true, 0, &mut notes);
+                    out.extend(place_lines(&lines, &copy, &cuts, &strips, &|q| crate::warp::inside(&copy.clip_planes(), q), &mut notes));
+                }
+
+                let (sn, cs) = ps[k].yaw.sin_cos();
+                let scene = |q: [f32; 3]| { let (x, z) = (f64::from(q[0]), f64::from(q[2])); [ps[k].origin[0] + x * cs - z * sn, ps[k].origin[2] + x * sn + z * cs] };
+                let (da, db) = crate::pieces::section_end_dirs(&plan, s);
+                let m = [da[0] + db[0], da[1] + db[1]];
+                for l in &out {
+                    for key in ["start", "end"] {
+                        let q = scene(p3(&l[key]));
+                        let side = ((q[0] - c[0]) * m[0] + (q[1] - c[1]) * m[1]) * sign;
+                        assert!(side > -0.02, "{turn}: a line of piece {k} reaches {side:.3} past the bisector at {q:?}");
+                    }
+                }
             }
 
             // Every point one side has on the face, the other has too (no edge of one ends inside an edge of the other).
