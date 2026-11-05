@@ -70,7 +70,7 @@ pub fn battle_xml(e: &mut Editor, map: &str, w: u32, h: u32, s: &Spot) -> String
     let weather = BattleWeather { environment: String::new(), season: "Summer", precipitation: "dry", time_of_day: "day", climate: String::new() };
     launch::battle_xml(&Battle {
         map: BattleMap::Position { map: format!("terrain/battles/{map}/"), x: s.cell.0 / f64::from(w.max(1)), y: s.cell.1 / f64::from(h.max(1)), settlement: s.kind.starts_with("settlement") },
-        cells: s.cells, weather, sea_surface: sea_surface.unwrap_or_default(), army: &army, facts: &profile.launch,
+        cells: s.cells, weather, sea_surface: sea_surface.unwrap_or_default(), army: &army, facts: &profile.launch, zones: &[],
     })
 }
 
