@@ -75,6 +75,63 @@ pub fn from_cs2(cs2: &Cas2File, albedo: String, id: u64, depth: f32) -> Result<C
     Ok(CustomTerrainMesh { id, lods, albedo, depth, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]] })
 }
 
+/// An IEEE half's value.
+fn half(bits: u16) -> f32 {
+    let (sign, exp, frac) = (if bits & 0x8000 == 0 { 1.0 } else { -1.0 }, i32::from((bits >> 10) & 0x1f), f32::from(bits & 0x3ff));
+    match exp {
+        0 => sign * frac * 2f32.powi(-24),
+        31 => if frac == 0.0 { sign * f32::INFINITY } else { f32::NAN },
+        _ => sign * (1.0 + frac / 1024.0) * 2f32.powi(exp - 15),
+    }
+}
+
+/// The mesh of the packs' model (BOB's `custom_mesh.rigid_model_v2`, docs/re/battle_maps.md, "Custom-mesh tiles"), the form a tile no
+/// kit has comes in: its levels and their distances, each vertex's position and N0 bytes (rpfm's `uk_1`) as they are, its uv from the
+/// half2 rpfm reads as the bits of an f32 (the next f32 is the 4 zero bytes), the triangles as the model winds them (from_cs2 winds the
+/// CS2's so).
+///
+/// # Errors
+///
+/// The model does not decode, or has no level with triangles.
+pub fn from_model(bytes: &[u8], albedo: String, id: u64, depth: f32) -> Result<CustomTerrainMesh, String> {
+    use rpfm_lib::files::{Decodeable, DecodeableExtraData};
+    let model = rpfm_lib::files::rigidmodel::RigidModel::decode(&mut std::io::Cursor::new(bytes), &Some(DecodeableExtraData::default()))
+        .map_err(|e| e.to_string())?;
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    let mut lods = vec![];
+    for (k, lod) in model.lods().iter().enumerate() {
+        let (mut vertices, mut indices) = (vec![], vec![]);
+        for block in lod.mesh_blocks() {
+            let mesh = block.mesh();
+            let base = vertices.len() as u32;
+            for v in mesh.vertices() {
+                let (p, n, t) = (v.position(), v.uk_1(), v.texture_coordinate().x.to_bits());
+                let position = [p.x, p.y, p.z];
+                for (a, q) in [p.x, CUSTOM_TERRAIN_Y * p.y, depth + p.z].into_iter().enumerate() {
+                    (lo[a], hi[a]) = (lo[a].min(q), hi[a].max(q));
+                }
+
+                vertices.push(CustomTerrainVertex { position, normal: [n.x, n.y, n.z, n.w], uv: [half(t as u16), half((t >> 16) as u16)] });
+            }
+
+            indices.extend(mesh.indices().iter().map(|&i| base + u32::from(i)));
+        }
+
+        if indices.is_empty() {
+            continue;
+        }
+
+        let distance = LOD_DISTANCES.get(k).copied().unwrap_or(f32::MAX);
+        lods.push(CustomTerrainLod { distance, vertices: Arc::new(vertices), indices: Arc::new(indices) });
+    }
+
+    if lods.is_empty() {
+        return Err("the model has no level with triangles".to_owned());
+    }
+
+    Ok(CustomTerrainMesh { id, lods, albedo, depth, bounds: [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]] })
+}
+
 /// The mesh's heights from above (its finest level) on a grid of `nx` x `nz` samples from (`ox`, `oz`) every `step` (scene units of the
 /// tile's frame), as BOB's `hf_height_map.data` is (2 y: game units, the highest surface over each sample); samples the mesh does not
 /// cover get its lowest height (the foot of the cliff, under the sea). The test's check of `CUSTOM_TERRAIN_Y`.

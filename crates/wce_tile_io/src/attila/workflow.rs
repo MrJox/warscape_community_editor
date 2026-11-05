@@ -499,8 +499,16 @@ pub fn neighbour_tile(game: &Game, raw: &Path, location: &str, variation: &str) 
     let folder = format!("{}/{variation}", location.replace('\\', "/").trim_end_matches('/')).to_lowercase();
     let dir = raw.join(&folder);
     // A tile decompiled before the common maps were read (a sea tile without its blend map) is decompiled again.
-    let stale = !game.common_maps(&folder).is_empty() && !dir.join("blend_map.tif").is_file();
-    if wce_tile::tile_project::has_tile(&dir) && !stale {
+    let mut stale = !game.common_maps(&folder).is_empty() && !dir.join("blend_map.tif").is_file();
+    // A custom-mesh tile (the cliffs: BOB's `custom_mesh.rigid_model_v2` and no scene; Rome 2's campaign ones ship nothing else) opens
+    // from its model; one decompiled before as a scene tile is decompiled again.
+    let model_path = format!("{}/{}", wce_vfs::normalize(&folder).trim_end_matches('/'), wce_tile::sources::CUSTOM_MESH_MODEL);
+    let custom = wce_vfs::files::Files::exists(game.files.as_ref(), &model_path);
+    if custom && wce_tile::sources::custom_mesh(&dir).is_none() && wce_tile::tile_project::has_tile(&dir) {
+        stale = true;
+    }
+
+    if (wce_tile::tile_project::has_tile(&dir) || (custom && wce_tile::sources::custom_mesh(&dir).is_some())) && !stale {
         return Ok(dir);
     }
 
@@ -510,6 +518,18 @@ pub fn neighbour_tile(game: &Game, raw: &Path, location: &str, variation: &str) 
 
     let files = game.exported_from_packs(&folder)?;
     let (dir, _) = open_exported(game, &files, &folder, raw.parent().unwrap_or(raw))?;
+    if custom {
+        // The model, and the blend map the decompile made (its ground); not the scene, which would make it a scene tile.
+        let model = game.files.read(&model_path).map_err(|e| format!("{model_path}: {e}"))?;
+        std::fs::write(dir.join(wce_tile::sources::CUSTOM_MESH_MODEL), &model[..]).map_err(|e| format!("{}: {e}", dir.display()))?;
+        for scene in [wce_tile::project_files::TED_FILE, wce_tile::project_files::WCE_FILE] {
+            let p = dir.join(scene);
+            if p.is_file() {
+                std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+            }
+        }
+    }
+
     Ok(dir)
 }
 

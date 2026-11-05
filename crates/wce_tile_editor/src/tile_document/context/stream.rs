@@ -188,6 +188,10 @@ impl Shared {
                 if cached { stats.from_cache += 1 } else { stats.opened += 1 }
                 stats.open_s += t.load_s;
                 stats.bytes += t.bytes;
+                if t.material.is_none() {
+                    wce_foundation::log::info(format!("map context: {}\\{}: no ground material ({})", key.0, key.1, if t.custom.is_some() { "custom mesh" } else { "scene tile" }));
+                }
+
                 // A campaign map's plain ground (its far ring) from a grass tile, the climates' ground: the first tile to come was any
                 // (a desert's sand laid beige over the whole far ring).
                 let set = key.0.replace('/', "\\").to_lowercase();
