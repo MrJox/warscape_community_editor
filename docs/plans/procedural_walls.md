@@ -72,6 +72,9 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   their own; units could not go round Amon Calen's upper prow): the platforms' points on a corner's face are put on one grid along
   the bisector, every 0.5 from the corner (`logic::on_face_grid`, after the warp: a grid of depths across each arm drifted apart, 4 cm
   5.5 m from the tip, where the arms meet the bisector at different angles). The prow's two pieces share 24 edges.
+- **Firing lines are cut to the piece's faces** (2026-11-05: at the prow units crossing near the corner's inner side got stuck; the
+  inner side's LowWall and Overflow lines, kept by their middle, reached up to 0.64 past the bisector over the other side's walkway,
+  5 of them on Amon Calen's prow). Each part is cut to the mitre (and an attached end's face), a part under 5 cm left out.
 - **A stair was one platform for a test** (`pieces::STEPPED_STAIRS`, back to true once the winding was found; user 2026-11-05: units did not even step onto the stairs; a test of
   whether the game dislikes many small platforms together): one slope from the walkway's height where the step starts to its height
   where it ends, across the walkway, as the stepped bastion's own stair (Amon Calen: 20 stairs, slopes 6 to 22 degrees). The stepped

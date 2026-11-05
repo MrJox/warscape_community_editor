@@ -314,6 +314,15 @@ pub fn sections(plan: &Plan) -> Vec<(f64, f64)> {
     cuts.windows(2).filter(|w| w[1] - w[0] > 1e-6).map(|w| (w[0], w[1])).collect()
 }
 
+/// The directions on either side of the corner at `s` (the section before's end, the section after's start): its bisector's normal is
+/// their sum. For the tests.
+#[cfg(test)]
+pub(crate) fn section_end_dirs(plan: &Plan, s: f64) -> ([f64; 2], [f64; 2]) {
+    let all = sections(plan);
+    let i = all.iter().position(|sec| (sec.1 - s).abs() < 1e-6).expect("a section ending there");
+    (section_dirs(plan, all[i]).1, section_dirs(plan, all[i + 1]).0)
+}
+
 /// A section's direction at its start and end (from the first and last unit of it, so a corner's averaging doesn't bend it).
 fn section_dirs(plan: &Plan, (a, b): (f64, f64)) -> ([f64; 2], [f64; 2]) {
     let d = |p: f64, q: f64| {
