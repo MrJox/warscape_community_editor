@@ -251,6 +251,9 @@ pub struct TerrainTool {
     /// A campaign map's season in the view (`sp`, `su`, `au`, `wi`): the ground's textures of that season and its snow mask.
     season: String,
 
+    /// A campaign map's weather (a lighting or environment file of its folder); none: the map's global lighting of the season.
+    weather: Option<String>,
+
     /// The Map panel (the active map from above).
     map_panel: crate::map_panel::MapPanel,
 
@@ -315,7 +318,7 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, season: "su".to_owned(), map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), placements: Default::default(), props: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
+            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, season: "su".to_owned(), weather: None, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), placements: Default::default(), props: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
             status: String::new(), packs: None, provider: None, db: None, campaign_db: None, export: None, exported: None, launch_after_export: None, launched: None,
         }
     }
@@ -666,7 +669,13 @@ impl TerrainTool {
                 let quote = text[at..].chars().next()?;
                 text[at + 1..].split(quote).next().map(|s| s.to_lowercase().replace('\\', "/"))
             });
-            let file = global.filter(|f| files.exists(f)).or_else(|| Some(format!("{dir}/default.environment")).filter(|f| files.exists(f)));
+            // The chosen weather, else the global lighting of the view's season (the collection names spring's: `europe_sp` ->
+            // `europe_<season>`), else as named, else the folder's `default.environment`.
+            let seasonal = global.as_ref().and_then(|g| g.rsplit_once("_sp.").map(|(a, b)| format!("{a}_{}.{b}", self.season)));
+            let file = self.weather.clone().filter(|f| files.exists(f))
+                .or_else(|| seasonal.filter(|f| files.exists(f)))
+                .or_else(|| global.filter(|f| files.exists(f)))
+                .or_else(|| Some(format!("{dir}/default.environment")).filter(|f| files.exists(f)));
             if let Some(file) = file {
                 match e.set_weather_preview(Some(&file)) {
                     Ok(_) => log::info(format!("terrain: the map's lighting {file}")),
@@ -729,6 +738,28 @@ impl TerrainTool {
         self.view.stream(e, &self.rings);
     }
 
+    /// A campaign map's weathers: its folder's lighting files (`lighting/`, `environment/`) and `default.environment`.
+    fn campaign_weathers(e: &Editor, d: &MapDocument) -> Vec<String> {
+        let (MapKind::Campaign, name) = map_kind(&d.name) else { return vec![] };
+        let Some(files) = e.files() else { return vec![] };
+        let dir = format!("terrain/campaigns/{name}");
+        let mut v: Vec<String> = ["lighting", "environment"].iter().flat_map(|f| files.list(&format!("{dir}/{f}/"), ".lighting")).map(|s| s.to_owned()).collect();
+        v.sort();
+        v.extend(Some(format!("{dir}/default.environment")).filter(|f| files.exists(f)));
+        v
+    }
+
+    /// A campaign map's weather in the view (none: the season's global lighting); the view lit again.
+    fn set_weather(&mut self, e: &mut Editor, weather: Option<String>) {
+        if self.weather != weather {
+            self.weather = weather;
+            let id = self.shown;
+            if id != 0 {
+                self.light(e, id);
+            }
+        }
+    }
+
     /// A campaign map opened: the view's season is its start's (the startpos's calendar; Attila's main campaign spring).
     fn take_start_season(&mut self, d: &MapDocument) {
         const SEASONS: [&str; 4] = ["sp", "su", "au", "wi"];
@@ -759,7 +790,20 @@ impl TerrainTool {
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip("The campaign map's season in the view: the ground's textures of that season and, in winter, the map's snow (snow_mask_wi.dds, the terrain resolve's snow layer). The view only.");
+                gui::set_tooltip("The campaign map's season in the view: the ground's textures of that season and the map's snow mask of the season and climate stage (snow_mask_<season><stage + 1>.dds, the terrain resolve's snow layer). The view only.");
+            }
+
+            let weathers = e.docs.find_as::<MapDocument>(id).map(|d| Self::campaign_weathers(e, d)).unwrap_or_default();
+            let mut names = vec!["automatic (the season's)".to_owned()];
+            names.extend(weathers.iter().map(|w| w.rsplit('/').next().unwrap_or(w).to_owned()));
+            let mut k = self.weather.as_ref().and_then(|w| weathers.iter().position(|x| x == w)).map_or(0, |p| p as i32 + 1);
+            if gui::combo("weather##terrain_weather", &mut k, &names.iter().map(String::as_str).collect::<Vec<_>>()) {
+                let pick = if k <= 0 { None } else { weathers.get(k as usize - 1).cloned() };
+                self.set_weather(e, pick);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The campaign map's weather: its lighting files (lighting/<climate>_<season>[n], environment/<season>) or default.environment. Automatic: the global lighting (environment_collection.xml) of the view's season, as the game lights the campaign.");
             }
         }
 
@@ -2167,6 +2211,24 @@ impl Tool for TerrainTool {
 
                 let snow = e.scene.campaign_snow.as_ref().map_or("no snow mask".to_owned(), |s| format!("snow {}", s.mask));
                 CommandResult::success(format!("season {} ({snow}, as of the last view)", t.season))
+            })
+        });
+
+        c.add("terrain_weather", "terrain_weather [list | auto | <file or file name>]", "the Terrain tool: a campaign map's weather in the view (its lighting files; auto: the season's global lighting); then which", |e, a| {
+            with_terrain(e, |t, e| {
+                let Some(d) = e.docs.find_as::<MapDocument>(t.shown) else { return CommandResult::fail("no map shown") };
+                let weathers = TerrainTool::campaign_weathers(e, d);
+                match a.first().map(String::as_str) {
+                    None => {}
+                    Some("list") => return CommandResult::success(weathers.join("; ")),
+                    Some("auto") => t.set_weather(e, None),
+                    Some(w) => match weathers.iter().find(|x| x.as_str() == w || x.ends_with(&format!("/{w}"))) {
+                        Some(f) => t.set_weather(e, Some(f.clone())),
+                        None => return CommandResult::fail(format!("no weather {w} (terrain_weather list)")),
+                    },
+                }
+
+                CommandResult::success(format!("weather {}", t.weather.as_deref().unwrap_or("automatic (the season's global lighting)")))
             })
         });
 
