@@ -277,6 +277,9 @@ pub fn sample_at(plan: &Plan, s: f64) -> Sample {
     }
 }
 
+/// Over how much of the wall before a corner's face its points are moved onto the bisector (`PieceWarp::s_at`).
+const FACE_BLEND: f64 = 3.0;
+
 /// The most a mitre shears per unit across the wall: a turn of about 168 degrees (an internal angle of 12); sharper ones are clamped and
 /// noted. The outer side is only stretched and the inner side cut, so a large shear doesn't fold the piece.
 pub const MAX_SHEAR: f64 = 10.0;
@@ -391,6 +394,73 @@ impl<'a> PieceWarp<'a> {
         self.piece.s.0 + (x - self.profile.x.0) * self.piece.scale
     }
 
+    /// Where along the wall a point of the base's frame goes: `s_of`, and near a corner's face, moved so that the face (the cut planes'
+    /// straight shear) lands exactly on the corner's bisector, the move fading out over `FACE_BLEND` before it. On a curved arm the
+    /// shear alone left the face off the bisector, more the further in (user 2026-11-05: a slit of light along Amon Calen's prow).
+    fn s_at(&self, x: f64, z: f64) -> f64 {
+        let mut s = self.s_of(x, z);
+        for k in 0..2 {
+            let Some((c, m)) = self.corner_face(k) else { continue };
+            let (lin, shear) = if k == 1 { (self.section.1, self.shears.1) } else { (self.section.0, self.shears.0) };
+            let lin = lin + shear * z;
+            let gap = if k == 1 { lin - s } else { s - lin };
+            if gap >= FACE_BLEND {
+                continue;
+            }
+
+            let w = if gap <= 0.0 { 1.0 } else { 1.0 - gap / FACE_BLEND };
+            s += (self.on_face(c, m, lin, z) - lin) * w;
+        }
+
+        s
+    }
+
+    /// A corner face at the section's start (0) or end (1): the corner and the bisector's normal, the same from both pieces of the
+    /// corner (the two arms' lines from a unit in, met halfway).
+    fn corner_face(&self, k: usize) -> Option<([f64; 2], [f64; 2])> {
+        let all = sections(self.plan);
+        let i = all.iter().position(|&s| s == self.section)?;
+        let j = if k == 1 { i + 1 } else { i.checked_sub(1)? };
+        let (before, after) = if k == 1 { (all[i], *all.get(j)?) } else { (all[j], all[i]) };
+        let corner = before.1;
+        let (da, db) = (section_dirs(self.plan, before).1, section_dirs(self.plan, after).0);
+        let (_, b1) = end_spans(self.plan, before).1;
+        let (a0, _) = end_spans(self.plan, after).0;
+        let (pa, pb) = (sample_at(self.plan, b1).centre, sample_at(self.plan, a0).centre);
+        let ca = [pa[0] + da[0] * (corner - b1), pa[1] + da[1] * (corner - b1)];
+        let cb = [pb[0] - db[0] * (a0 - corner), pb[1] - db[1] * (a0 - corner)];
+        let m = [da[0] + db[0], da[1] + db[1]];
+        let l = m[0].hypot(m[1]);
+        (l > 1e-9).then(|| ([(ca[0] + cb[0]) / 2.0, (ca[1] + cb[1]) / 2.0], [m[0] / l, m[1] / l]))
+    }
+
+    /// Where along the wall the point `z` across it lies on the plane through `c` of normal `m`, from `s0` (a few secant steps).
+    fn on_face(&self, c: [f64; 2], m: [f64; 2], s0: f64, z: f64) -> f64 {
+        let f = |s: f64| {
+            let (p, dir, _) = self.along(s);
+            let n = [-dir[1], dir[0]];
+            (p[0] + n[0] * z - c[0]) * m[0] + (p[1] + n[1] * z - c[1]) * m[1]
+        };
+
+        let (mut a, mut b) = (s0, s0 + 0.25);
+        let (mut fa, mut fb) = (f(a), f(b));
+        for _ in 0..12 {
+            if (fb - fa).abs() < 1e-12 {
+                break;
+            }
+
+            let next = b - fb * (b - a) / (fb - fa);
+            (a, fa) = (b, fb);
+            b = next;
+            fb = f(b);
+            if fb.abs() < 1e-7 {
+                break;
+            }
+        }
+
+        if (b - s0).abs() < 4.0 { b } else { s0 }
+    }
+
     /// The shifts (along x of the base's frame) of the copies of the base that fill the outer side of this piece's mitred ends: past its
     /// end for a face there, before its start for one there, as many lengths as the face reaches across the wall's depth.
     pub fn overhangs(&self) -> Vec<f32> {
@@ -445,7 +515,7 @@ impl<'a> PieceWarp<'a> {
 
     /// A point of the base's frame in the scene.
     pub fn scene(&self, [x, y, z]: [f64; 3]) -> [f64; 3] {
-        let (c, dir, level) = self.along(self.s_of(x, z));
+        let (c, dir, level) = self.along(self.s_at(x, z));
         let z_axis = [-dir[1], dir[0]];
         let (wx, wz) = (c[0] + z_axis[0] * z, c[1] + z_axis[1] * z);
         let (bottom, split) = self.profile.foot;
@@ -475,7 +545,7 @@ impl Warp for PieceWarp<'_> {
     }
 
     fn yaw(&self, [x, _, z]: [f32; 3]) -> f32 {
-        let (_, dir, _) = self.along(self.s_of(f64::from(x), f64::from(z)));
+        let (_, dir, _) = self.along(self.s_at(f64::from(x), f64::from(z)));
         (dir[1].atan2(dir[0]) - self.piece.yaw) as f32
     }
 
@@ -905,8 +975,18 @@ mod tests {
         let ground = |_: f64, _: f64| 0.0;
         for key in ["gondor_fort_straight", "roman_fort_straight"] {
             let p = profile(key).unwrap();
-            for (tip, turn) in [([80.0, 40.0], "acute"), ([90.0, 0.0], "wide"), ([80.0, -40.0], "acute right"), ([60.0, 70.0], "sharp")] {
-                let input = WallInput { points: vec![[0.0, 0.0], tip, [160.0, 0.0]], sharp: vec![false, true, false], tolerance: 0.5, ..Default::default() };
+            let cases: [(Vec<[f64; 2]>, &str); 5] = [
+                (vec![[0.0, 0.0], [80.0, 40.0], [160.0, 0.0]], "acute"),
+                (vec![[0.0, 0.0], [90.0, 0.0], [160.0, 0.0]], "wide"),
+                (vec![[0.0, 0.0], [80.0, -40.0], [160.0, 0.0]], "acute right"),
+                (vec![[0.0, 0.0], [60.0, 70.0], [160.0, 0.0]], "sharp"),
+                // The arm after the corner curves away from it (Amon Calen's prow).
+                (vec![[0.0, 0.0], [80.0, 40.0], [130.0, 30.0], [160.0, -10.0]], "curved arm"),
+            ];
+            for (points, turn) in cases {
+                let mut sharp = vec![false; points.len()];
+                sharp[1] = true;
+                let input = WallInput { points, sharp, tolerance: 0.5, ..Default::default() };
                 let plan = solve(&input, p, &ground);
                 assert_eq!(plan.corners.len(), 1, "{key} {turn}");
                 let s = plan.corners[0].0;
@@ -918,6 +998,19 @@ mod tests {
                 let m = [da[0] + db[0], da[1] + db[1]];
                 let side = |q: [f64; 3]| (q[0] - c[0]) * m[0] + (q[2] - c[1]) * m[1];
                 let (x0, x1) = p.x;
+
+                // Each side's cut face lies on the bisector: the two meet there, with no slit between them.
+                let mlen = m[0].hypot(m[1]);
+                for (w, end) in [(&a, 1usize), (&b, 0usize)] {
+                    let (shear, face_s) = if end == 1 { (w.shears.1, w.section.1) } else { (w.shears.0, w.section.0) };
+                    for z in [-6.0, 0.0, 3.0, 6.0, 9.0, 12.0] {
+                        let s_face = face_s + shear * z;
+                        let x = x0 + (s_face - w.piece.s.0) / w.piece.scale;
+                        let q = w.scene([x, 15.0, z]);
+                        assert!(side(q).abs() / mlen < 0.02, "{key} {turn}: the {} face at z {z} is {:.3} off the bisector", if end == 1 { "end" } else { "start" }, side(q) / mlen);
+                    }
+                }
+
                 for (w, sign) in [(&a, -1.0), (&b, 1.0)] {
                     let shifts = std::iter::once(0.0).chain(w.overhangs().into_iter().map(f64::from)).collect::<Vec<_>>();
                     for dx in shifts {
