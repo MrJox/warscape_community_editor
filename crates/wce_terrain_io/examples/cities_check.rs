@@ -65,5 +65,10 @@ fn main() {
         e.1 += usize::from(sp.model.is_some());
     }
     println!("sprawl pieces (count, with a model): {pieces:?}");
+    if !filter.is_empty() {
+        let walls: Vec<(u16, u16)> = cities.sprawl.iter().filter(|p| p.region.contains(&filter) && (p.piece.starts_with("wall_") || p.piece.contains("gatehouse"))).map(|p| p.cell).collect();
+        let span = |f: fn(&(u16, u16)) -> u16| (walls.iter().map(f).min(), walls.iter().map(f).max());
+        println!("walls of {filter}: {} cells, columns {:?}, rows {:?}", walls.len(), span(|c| c.0), span(|c| c.1));
+    }
     println!("on land {land}, in the sea {sea}; models in the packs {have}, missing {missing}");
 }
