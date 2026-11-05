@@ -444,7 +444,19 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
      large maps, 27 of 94) and one chunk of a 512-sample LF with a 32-pixel margin; the 67 small maps whose normal map is not the LF's size
      (one chunk of 320, 640 or 1152 pixels) keep the game's. `built_normals_check` (gates `rome2_built_normals_<map>`): away from the edit
      within 0.2 of the shipped chunk, every changed normal moving out of a raised hill.
-   Left for Rome 2: `tile_map.png` after an edit (the packs' stays); a launch.
+   - Rome 2's campaign maps from the packs (2026-11-05): a game without kit maps lists `terrain/campaigns/<map>/terrain.tile_list` as
+     `campaigns/<map> (game files)` (`wce_map_view::maps::game_campaign_maps`; the Terrain tool only, not the Tile tool's map
+     context), read with the packs' campaign tile database and saved under the projects' `working_data/terrain/campaigns/<map>`.
+     `main_rome_map` (2032 x 1441 cells, 383 033 placements, LF 8128 x 5764) and `main_gaul` (880 x 761) open, with their roads at the
+     start. The campaign cliffs (`cliff_custom`, only BOB's `custom_mesh.rigid_model_v2` in the packs) open as custom-mesh tiles from the
+     model (`custom_mesh::from_model`; they were left out for want of a material). The settlements, forests and props no longer need a
+     `.terry`: props from the packs' `prop_marker.markers` (9 614 on `main_rome_map`). Lighting: a folder without
+     `environment_collection.xml` takes `environment/<season>.lighting` (ASSUMPTION; `default.environment` hazed the view).
+   Left for Rome 2: `tile_map.png` after an edit (the packs' stays); a launch. Its campaign maps: the sprawl pieces (the db names
+   `testdata/campaigntestdata/models/...` models no pack has: the game's real ones not looked up), the sky under the season lighting
+   (black), the other campaigns' folders checked one by one (`main_emperor`, `main_greek`, `main_punic`, `main_invasion`,
+   `prologue_map_01`), editing and export of a campaign map in its built form (the save path exists, not exercised), the map list's
+   selection after `terrain_open` (shows the first entry).
 
 ## Risks
 
