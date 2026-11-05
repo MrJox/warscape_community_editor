@@ -80,6 +80,12 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   the seam): the open edges on a cut plane are chained into loops and filled, facing out, in the group of the hull they close; hull
   points within 6 mm are one. The game's own hulls are not all closed (the door section 6 open edges, the stepped bastion 3 and 17),
   so this is not known to be the cause: to confirm in game.
+- **Platforms merged where they can be** (`logic::merge_platforms`, 2026-11-05: at the prow soldiers spun on the spot near the inner
+  side and kept falling on the curved arm, where the platforms were thinnest; user's idea: fewer moves from platform to platform). The
+  game's fort pieces have 2530 platforms: none concave, 11 under 0.2 across, at most 6 corners, median area 8.6. Ours were 3961 on
+  Amon Calen: 406 under 0.2, median 3.6. After the weld, neighbours in one plane with the same flags that share edges and stay
+  convex become one, the thinnest first, firing lines renumbered: 2094 platforms, 135 under 0.2 (mostly the stairs' treads and risers),
+  median 6.0; the prow's two pieces 68 to 23. Corners other platforms share stay on the outlines, so some have up to 12 (the game's 6).
 - **A stair was one platform for a test** (`pieces::STEPPED_STAIRS`, back to true once the winding was found; user 2026-11-05: units did not even step onto the stairs; a test of
   whether the game dislikes many small platforms together): one slope from the walkway's height where the step starts to its height
   where it ends, across the walkway, as the stepped bastion's own stair (Amon Calen: 20 stairs, slopes 6 to 22 degrees). The stepped

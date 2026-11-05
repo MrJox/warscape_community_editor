@@ -103,6 +103,8 @@ names or with wrong descriptions. To rename and document in rpfm (`~/Proyectos/r
   too) lists its corners clockwise seen from above: a negative area over x and z (x right, z up). Two neighbours then run their shared
   edge in opposite directions, as half-edges. Generated platforms are turned to it (`wce_walls::logic::wind_as_the_game`); the stairs,
   made the other way round, were the only platforms that did not follow it. Worth a doc comment on rpfm's `Platform`.
+- **Platform shapes**: in the fort pieces (TDD's pack, 2530 platforms) every platform is convex, has at most 6 corners (3 or 4 nearly
+  all), and only 11 are under 0.2 across (median area 8.6). Whether the game needs that was not traced.
 - **Pipes** name no platforms: a polyline (`line.outline`) and its `line_type` (`WallDoorTeleport`, ...).
 
 ## Effects from `.meta`

@@ -308,6 +308,8 @@ pub fn warp_logic_framed(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Op
                 for p in array_mut(d, "platforms") {
                     wind_as_the_game(p);
                 }
+
+                merge_platforms(d);
             }
         }
     }
@@ -858,6 +860,110 @@ fn weld_platforms(platforms: &mut [Value]) {
         p["vertices"] = json!({ "outline": o.into_iter().map(point3).collect::<Vec<_>>() });
     }
 }
+
+/// A level's neighbouring platforms merged where they lie in one plane, have the same flags, share edges and stay convex, the thinnest
+/// first, their firing lines renumbered. The game's pieces have few, solid, convex platforms (2530 in the fort pieces: none concave, 11
+/// under 0.2 across); cutting along a wall left hundreds of strips and slivers, and at a corner soldiers spun from one to another or
+/// fell where they were thinnest (user 2026-11-05). Corners on the outline stay, even in a straight line: other platforms share them.
+fn merge_platforms(d: &mut Value) {
+    let Some(mut list) = d["platforms"].as_array().cloned() else { return };
+    let n0 = list.len();
+    let mut map: Vec<usize> = (0..n0).collect();
+    let mut outlines = list.iter().map(|p| outline(&p["vertices"])).collect::<Vec<_>>();
+    let mut alive = vec![true; n0];
+    let flags = |p: &Value| (p["flag_1"].as_bool(), p["flag_2"].as_bool(), p["flag_3"].as_bool());
+    let width = |o: &[[f32; 3]]| {
+        let per = (0..o.len()).map(|i| { let (a, b) = (o[i], o[(i + 1) % o.len()]); (b[0] - a[0]).hypot(b[2] - a[2]) }).sum::<f32>();
+        2.0 * area_xz(o) / per.max(1e-6)
+    };
+
+    loop {
+        let mut order = (0..n0).filter(|&i| alive[i]).collect::<Vec<_>>();
+        order.sort_by(|&a, &b| width(&outlines[a]).total_cmp(&width(&outlines[b])));
+        let mut merged = false;
+        'all: for &i in &order {
+            let mut partners = order.iter().copied().filter(|&j| j != i && flags(&list[i]) == flags(&list[j])).collect::<Vec<_>>();
+            partners.sort_by(|&a, &b| width(&outlines[a]).total_cmp(&width(&outlines[b])));
+            for j in partners {
+                if let Some(o) = merged_outline(&outlines[i], &outlines[j]) {
+                    outlines[i] = o;
+                    alive[j] = false;
+                    map.iter_mut().filter(|m| **m == j).for_each(|m| *m = i);
+                    merged = true;
+                    break 'all;
+                }
+            }
+        }
+
+        if !merged {
+            break;
+        }
+    }
+
+    // What is left, in order.
+    let mut index = vec![0; n0];
+    let mut kept = vec![];
+    for i in (0..n0).filter(|&i| alive[i]) {
+        index[i] = kept.len();
+        let mut p = std::mem::take(&mut list[i]);
+        p["vertices"] = json!({ "outline": outlines[i].iter().map(|&v| point3(v)).collect::<Vec<_>>() });
+        kept.push(p);
+    }
+
+    for l in array_mut(d, "ef_lines") {
+        if let Some(&m) = map.get(l["parent_index"].as_u64().unwrap_or(0) as usize) {
+            l["parent_index"] = json!(index[m]);
+        }
+    }
+
+    d["platforms"] = Value::Array(kept);
+}
+
+/// Two platforms' outline as one, when they lie in one plane, share one run of edges (each the other way round) and the result is convex.
+fn merged_outline(a: &[[f32; 3]], b: &[[f32; 3]]) -> Option<Vec<[f32; 3]>> {
+    const NEAR: f32 = 1e-3;
+    let same = |p: [f32; 3], q: [f32; 3]| (0..3).all(|k| (p[k] - q[k]).abs() < NEAR);
+
+    // In one plane: b's points on a's.
+    let n = normalised(newell(a));
+    if n.iter().all(|v| v.abs() < 1e-6) || b.iter().any(|q| ((q[0] - a[0][0]) * n[0] + (q[1] - a[0][1]) * n[1] + (q[2] - a[0][2]) * n[2]).abs() > 2e-3) {
+        return None;
+    }
+
+    // The directed edges of both less those that meet their reverse; what is left must be one loop.
+    let edges = a.iter().enumerate().map(|(i, &p)| (p, a[(i + 1) % a.len()])).chain(b.iter().enumerate().map(|(i, &p)| (p, b[(i + 1) % b.len()]))).collect::<Vec<_>>();
+    let open = edges.iter().copied().filter(|&(p, q)| !edges.iter().any(|&(u, v)| same(p, v) && same(q, u))).collect::<Vec<_>>();
+    if open.len() == edges.len() || open.len() < 3 {
+        return None;
+    }
+
+    let mut out = vec![open[0].0];
+    let mut at = open[0].1;
+    while !same(at, out[0]) {
+        if out.len() > open.len() {
+            return None;
+        }
+
+        out.push(at);
+        at = open.iter().find(|e| same(e.0, at))?.1;
+    }
+
+    if out.len() != open.len() {
+        return None;
+    }
+
+    // Convex, either way round, with corners in a straight line allowed; going round once.
+    let turns = (0..out.len()).map(|i| {
+        let (p, q, r) = (out[(i + out.len() - 1) % out.len()], out[i], out[(i + 1) % out.len()]);
+        let (u, v) = ([q[0] - p[0], q[2] - p[2]], [r[0] - q[0], r[2] - q[2]]);
+        (u[0] * v[1] - u[1] * v[0]) / (u[0].hypot(u[1]) * v[0].hypot(v[1])).max(1e-9)
+    }).collect::<Vec<_>>();
+    let convex = turns.iter().all(|&t| t <= CONVEX) || turns.iter().all(|&t| t >= -CONVEX);
+    convex.then_some(out)
+}
+
+/// How much (the sine of the angle) a merged platform's outline may turn the wrong way at a corner: float noise on a straight edge.
+const CONVEX: f32 = 2e-3;
 
 /// A platform's corners in the order the game's go round (every platform of the game's pieces, its stairs too: clockwise seen from
 /// above, a negative area over x and z). Two neighbours then run their shared edge opposite ways; the stairs, made the other way round,
@@ -1568,6 +1674,39 @@ mod tests {
             assert_eq!(open, 0, "{plane:?}: open edges");
             assert!(volume(&cut) > 0.0 && volume(&cut) < volume(&hull), "{plane:?}: volume {} of {}", volume(&cut), volume(&hull));
         }
+    }
+
+    /// Neighbouring platforms become one where they stay flat together and convex, the firing lines following; a step in height or a
+    /// concave result keeps them apart.
+    #[test]
+    fn platforms_merge_where_they_stay_convex() {
+        let plat = |pts: &[[f32; 3]]| json!({ "flag_1": false, "flag_2": false, "flag_3": false, "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": pts.iter().map(|&p| point3(p)).collect::<Vec<_>>() } });
+        // Clockwise from above, as the game's: x back along z 0, x on along z 2.
+        let strip = |x0: f32, x1: f32, y: f32| plat(&[[x1, y, 0.0], [x0, y, 0.0], [x0, y, 2.0], [x1, y, 2.0]]);
+        let line = |parent: usize| json!({ "start": { "x": 0.0, "y": 15.0, "z": 1.0 }, "end": { "x": 1.0, "y": 15.0, "z": 1.0 }, "direction": { "x": 0.0, "y": 0.0, "z": 1.0 }, "parent_index": parent });
+
+        // Three strips in a row, one higher beyond them: the three are one, its line on it, the higher one's on what it became.
+        let mut d = json!({ "platforms": [strip(0.0, 0.1, 15.0), strip(0.1, 3.0, 15.0), strip(3.0, 3.05, 15.0), strip(3.05, 5.0, 15.5)], "ef_lines": [line(0), line(2), line(3)] });
+        merge_platforms(&mut d);
+        let ps = d["platforms"].as_array().unwrap();
+        assert_eq!(ps.len(), 2, "{ps:?}");
+        let parents = d["ef_lines"].as_array().unwrap().iter().map(|l| l["parent_index"].as_u64().unwrap() as usize).collect::<Vec<_>>();
+        assert_eq!(parents[0], parents[1]);
+        assert_ne!(parents[0], parents[2]);
+        let flat = outline(&ps[parents[0]]["vertices"]);
+        assert!(flat.iter().all(|q| q[1] == 15.0) && (area_xz(&flat) - 6.1).abs() < 1e-3, "{flat:?}");
+
+        // An L: its two arms stay two platforms (no platform of the game's is concave).
+        let mut d = json!({ "platforms": [strip(0.0, 4.0, 15.0), plat(&[[1.0, 15.0, 2.0], [0.0, 15.0, 2.0], [0.0, 15.0, 5.0], [1.0, 15.0, 5.0]])], "ef_lines": [] });
+        merge_platforms(&mut d);
+        assert_eq!(d["platforms"].as_array().unwrap().len(), 2);
+
+        // A corner a third platform shares, in a straight line on the merged outline, stays.
+        let mut d = json!({ "platforms": [plat(&[[1.0, 15.0, 0.0], [0.0, 15.0, 0.0], [0.0, 15.0, 2.0], [1.0, 15.0, 2.0]]), plat(&[[2.0, 15.0, 0.0], [1.0, 15.0, 0.0], [1.0, 15.0, 2.0], [2.0, 15.0, 2.0]])], "ef_lines": [] });
+        merge_platforms(&mut d);
+        let o = outline(&d["platforms"][0]["vertices"]);
+        assert_eq!(d["platforms"].as_array().unwrap().len(), 1);
+        assert!(o.contains(&[1.0, 15.0, 0.0]) && o.contains(&[1.0, 15.0, 2.0]), "{o:?}");
     }
 
     #[test]
