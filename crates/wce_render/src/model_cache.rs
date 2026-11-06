@@ -642,11 +642,12 @@ fn pose_first_frame(model: &mut RigidModel, stem: &str, read: &SharedReader) {
     let dir = |m: &Float4x4, v: [f32; 3]| [0, 1, 2].map(|r| m.m[r][0] * v[0] + m.m[r][1] * v[1] + m.m[r][2] * v[2]);
     for lod in model.lods_mut() {
         for block in lod.mesh_blocks_mut() {
-            let weighted = *block.material().vertex_format() == VertexFormat::Weighted;
+            let two_bones = *block.material().vertex_format() == VertexFormat::Weighted;
+            let weighted = two_bones || *block.material().vertex_format() == VertexFormat::Cinematic;
             let bone = usize::try_from(*block.material().i_matrix_index()).ok().filter(|&b| b < skin.len()).unwrap_or(0);
             for v in block.mesh_mut().vertices_mut() {
                 let m = if weighted {
-                    let (idx, w) = (*v.bone_indices(), *v.weights());
+                    let (idx, w) = (*v.bone_indices(), crate::anim_pose::vertex_weights(two_bones, (*v.weights()).into()));
                     let mut m = Float4x4 { m: [[0.0; 4]; 4] };
                     let mut total = 0.0;
                     for k in 0..4 {

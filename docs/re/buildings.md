@@ -53,7 +53,7 @@ rpfm_lib reads only the header. Layout, checked to the byte on battering_ram_lig
 inverse bind pose.
 
 Posing (CPU, once at load): a rigid mesh by its bone's world matrix (the material's `i_matrix_index`, else bone 0); a weighted mesh
-by `sum(weight * bone world * inverse bind)` over its vertex bones. Then the static rigid shaders draw it.
+by `sum(weight * bone world * inverse bind)` over its vertex bones (two-bone weights: `anim_pose::vertex_weights`). Then the static rigid shaders draw it.
 **ASSUMPTION**: the game skins these with its weighted shaders on the GPU; the result for a still pose is the same geometry. Not
 checked against a capture.
 
