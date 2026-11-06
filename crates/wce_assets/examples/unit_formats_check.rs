@@ -65,14 +65,15 @@ fn main() {
     }
 
     let (mut metas, mut kinds) = (Tally::default(), BTreeMap::<String, usize>::new());
-    for path in vfs.list("", ".meta").into_iter().filter(|p| p.starts_with("animations") || p.starts_with("variantmeshes")) {
+    for path in vfs.list("", ".meta") {
         let bytes = vfs.read(path).expect("readable");
         let meta = Meta::decode(&bytes);
         for e in meta.iter().flat_map(|m| &m.entries) {
             *kinds.entry(e.kind.clone()).or_default() += 1;
         }
 
-        metas.add(path, meta.is_some_and(|m| m.encode() == bytes));
+        // A file too short for a header holds nothing (a few buildings'): meta_effects treats it as no effects.
+        metas.add(path, bytes.len() < 8 || meta.is_some_and(|m| m.encode() == bytes));
     }
 
     let (mut meshes, mut names) = (Tally::default(), BTreeMap::<String, usize>::new());
