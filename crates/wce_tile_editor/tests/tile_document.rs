@@ -640,7 +640,7 @@ fn a_flip_leaves_a_splines_unused_handles_turns_a_walls_side_and_mirrors_a_shelt
 
     let text = TED.replace(
         r#"<AI_HINT_POLYGON_INSTANCE"#,
-        r#"<SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="r" surface_mode="MSM_FREEFORM" orientation="euler(0,0.4,0)">
+        r#"<SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="r" surface_mode="MSM_FREEFORM" orientation="euler(0,0.4,0)" wce_river_height="game">
                             <points>
                                 <point position="0,0,0" controlIn="0,0,0" controlOut="4,0,0"/>
                                 <point position="10,0,0" controlIn="6,0,1" controlOut="14,0,-1"/>
@@ -700,13 +700,13 @@ fn a_flip_keeps_what_follows_the_landscape_as_high_above_the_ground() {
     // The height map of `open` rises along x, so the other side of the plane is higher.
     let text = TED.replace(
         r#"<AI_HINT_POLYGON_INSTANCE"#,
-        r#"<SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="land" surface_mode="MSM_LANDSCAPE" orientation="euler(0,0,0)">
+        r#"<SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="land" surface_mode="MSM_LANDSCAPE" orientation="euler(0,0,0)" wce_river_height="game">
                             <points>
                                 <point position="0,1,0" controlIn="0,0,0" controlOut="4,1,0"/>
                                 <point position="10,2,0" controlIn="6,2,1" controlOut="0,0,0"/>
                             </points>
                         </SplineRiverInstance>
-                        <SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="free" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)">
+                        <SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="free" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)" wce_river_height="game">
                             <points>
                                 <point position="0,1,0" controlIn="0,0,0" controlOut="4,1,0"/>
                                 <point position="10,2,0" controlIn="6,2,1" controlOut="0,0,0"/>
@@ -749,6 +749,63 @@ fn a_flip_keeps_what_follows_the_landscape_as_high_above_the_ground() {
     for (p, y) in points(&d, free).iter().zip(&free_y) {
         assert!((world(&d, free, p.position).y - y).abs() < 1e-6, "a freeform one keeps its height");
     }
+}
+
+#[test]
+fn a_flipped_river_of_teds_goes_where_the_game_has_it_and_keeps_its_real_heights() {
+    use wce_tile::river_files::{Factors, RIVER_HEIGHT_ATTR, river_files};
+    use wce_tile::splines;
+    use wce_tile::world_transform::world_transform;
+    use wce_tile_editor::tile_document::FlipPlane;
+
+    // No mark and no file yet: as TEd's today, at scene / 1.25 in the game.
+    let text = TED.replace(
+        r#"<AI_HINT_POLYGON_INSTANCE"#,
+        r#"<SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,10,10)" name="r" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)">
+                            <points>
+                                <point position="0,0,0" controlIn="0,0,0" controlOut="4,0,0"/>
+                                <point position="10,5,0" controlIn="6,5,1" controlOut="0,0,0"/>
+                            </points>
+                        </SplineRiverInstance>
+                        <AI_HINT_POLYGON_INSTANCE"#,
+    );
+    let (dir, _) = open();
+    std::fs::write(dir.path().join("tile.ted"), text).unwrap();
+    let mut d = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
+    let original = self::text(&d);
+    let sc = d.tile().tscene();
+    let river = sc.find_all("SplineRiverInstance")[0];
+    let layer = sc.find_all("LayerInstance")[0];
+    assert_eq!(Factors::of(sc, river, None).height, 1.25, "TEd's");
+
+    let world = |d: &TileDocument, e: usize| {
+        let w = world_transform(d.tile().tscene(), e);
+        splines::read(d.tile().tscene(), e).iter().map(|p| (w.position + w.rotation * p.position).y).collect::<Vec<_>>()
+    };
+
+    let source = world(&d, river);
+    let plane = FlipPlane { x: 40.0, z: 0.0, angle: 0.0 };
+
+    // A copy: the source stays as it was, the copy has in the scene the height the source has in game.
+    let copy = d.flip(&[river], plane, Some(layer)).unwrap()[0];
+    let sc = d.tile().tscene();
+    assert!(sc.doc().get(river, RIVER_HEIGHT_ATTR).is_none());
+    assert_eq!(sc.doc().get(copy, RIVER_HEIGHT_ATTR).as_deref(), Some("game"));
+    assert_eq!(Factors::of(sc, copy, None).height, 1.0);
+    for (a, b) in source.iter().zip(world(&d, copy)) {
+        assert!((a / 1.25 - b).abs() < 1e-6, "{a} / 1.25 against {b}");
+    }
+
+    // Their files: both at the same height for the game.
+    let files = river_files(d.tile().tscene(), None, false);
+    let first_y = |t: &[u8]| {
+        let t = String::from_utf8_lossy(t).into_owned();
+        t.split(" y=\"").nth(1).unwrap().split('"').next().unwrap().parse::<f64>().unwrap()
+    };
+    assert_eq!(first_y(&files[0].1), first_y(&files[1].1), "the same height in game");
+
+    d.history_mut().undo();
+    assert_eq!(self::text(&d), original, "undo gives the file back");
 }
 
 #[test]

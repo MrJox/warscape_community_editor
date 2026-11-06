@@ -3,11 +3,13 @@
 //! A model cannot be mirrored (the game ignores a building's scale, docs/re/buildings.md), so an item keeps its own handedness: it goes to
 //! its mirrored place with its heading reflected, as a rotation. What holds other items is not turned, each item inside goes to its own
 //! mirrored place: turned as one, a group's layout would come out rotated, not mirrored. Polygons and splines have their points mirrored,
-//! and a procedural wall its side too: left and right of its line change places, and its outer face has to stay the outer one.
+//! and a procedural wall its side too: left and right of its line change places, and its outer face has to stay the outer one. A river of
+//! TEd's goes where the game has it and takes its real heights: its file's factor would pull it down on raised ground (`river_files`).
 
 use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_tile::new_instances::WALL_SPLINE;
 use wce_tile::properties::parse_bool;
+use wce_tile::river_files::RIVER_HEIGHT_ATTR;
 use wce_tile::splines;
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{set_world_position, set_world_rotation, world_transform};
@@ -76,6 +78,9 @@ struct Target {
 
     /// A procedural wall's `wall_flip` to write.
     wall_flip: Option<bool>,
+
+    /// A river that has its real heights from now on.
+    keeps_heights: bool,
 }
 
 /// An element and all that it holds, parents first.
@@ -87,7 +92,21 @@ fn with_contents(sc: &TedScene, e: usize, out: &mut Vec<usize>) {
 }
 
 impl TileDocument {
-    fn flip_targets(&self, roots: &[usize], plane: FlipPlane) -> Vec<Target> {
+    /// What the rivers among `elems` and all they hold divide their heights by in the game, in document order.
+    fn river_factors(&self, elems: &[usize]) -> Vec<f64> {
+        let t = self.tile();
+        let sc = t.tscene();
+        let mut all = vec![];
+        for &e in elems {
+            with_contents(sc, e, &mut all);
+        }
+
+        all.into_iter().filter(|&e| sc.type_of(e) == "SplineRiverInstance").map(|e| t.river_height_factor(e)).collect()
+    }
+
+    /// `factors`: the rivers' ([`Self::river_factors`], of the elements a copy was made from).
+    fn flip_targets(&self, roots: &[usize], plane: FlipPlane, factors: &[f64]) -> Vec<Target> {
+        let mut factors = factors.iter().copied();
         let t = self.tile();
         let sc = t.tscene();
         let u = t.unit();
@@ -105,9 +124,11 @@ impl TileDocument {
             let landscape = t.placement_of_attr(e) == Placement::Landscape;
             let ground = |p: Double3| f64::from(t.terrain_height((p.x / u) as f32, (p.z / u) as f32)) * u;
             let rise = |p: Double3| if landscape { ground(plane.mirror(p, u)) - ground(p) } else { 0.0 };
+            let river = sc.type_of(e) == "SplineRiverInstance";
+            let factor = if river { factors.next().unwrap_or(1.0) } else { 1.0 };
             let lifted = |p: Double3, by: f64| {
                 let q = plane.mirror(p, u);
-                Double3::new(q.x, q.y + by, q.z)
+                Double3::new(q.x, q.y / factor + by, q.z)
             };
 
             let spline = if wce_tile::splines::is_spline(sc.type_of(e)) {
@@ -136,7 +157,8 @@ impl TileDocument {
                 position.y = ground(position);
             }
 
-            Target { elem: e, position, rotation, points, spline, target, wall_flip }
+            let keeps_heights = river && t.rivers_keep_heights() && sc.doc().get(e, RIVER_HEIGHT_ATTR).is_none();
+            Target { elem: e, position, rotation, points, spline, target, wall_flip, keeps_heights }
         }).collect()
     }
 
@@ -169,6 +191,10 @@ impl TileDocument {
             if let Some(flip) = t.wall_flip {
                 sc.set_attr(t.elem, "wall_flip", if flip { "true" } else { "false" });
             }
+
+            if t.keeps_heights {
+                sc.set_attr(t.elem, RIVER_HEIGHT_ATTR, "game");
+            }
         }
 
         Ok(())
@@ -188,6 +214,7 @@ impl TileDocument {
         }
 
         let items = copy_into.map(|_| self.copy_items(&roots));
+        let factors = self.river_factors(&roots);
         if let Some(into) = copy_into {
             self.check_structure(&[], Some(into))?;
         }
@@ -199,7 +226,7 @@ impl TileDocument {
                 _ => roots,
             };
 
-            let targets = self.flip_targets(&roots, plane);
+            let targets = self.flip_targets(&roots, plane, &factors);
             self.apply_flip(&targets)?;
             Ok((roots, targets.iter().map(|t| t.elem).collect()))
         })();
