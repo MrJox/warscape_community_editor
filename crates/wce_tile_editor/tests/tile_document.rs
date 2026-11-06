@@ -370,6 +370,25 @@ fn the_scale_gizmo_works_on_everything_with_a_scale() {
 }
 
 #[test]
+fn a_fill_is_the_general_value_times_its_types() {
+    use wce_tile_editor::tile_document::PolygonLook;
+
+    let mut look = PolygonLook::default();
+    assert_eq!(look.fill_of("NOGO_REGION_POLYGON_INSTANCE"), 0.3);
+    look.fill = 0.8;
+    look.set_type_factor("NOGO_REGION_POLYGON_INSTANCE", 0.5);
+    look.set_type_factor("ZONE_POLYGON_INSTANCE", 0.0);
+    assert_eq!(look.fill_of("NOGO_REGION_POLYGON_INSTANCE"), 0.4);
+    assert_eq!(look.fill_of("ZONE_POLYGON_INSTANCE"), 0.0);
+    assert_eq!(look.fill_of("AI_HINT_POLYGON_INSTANCE"), 0.8, "a type untouched follows the general value");
+
+    // Back at 1 it is not kept, so a reset look compares equal.
+    look.set_type_factor("NOGO_REGION_POLYGON_INSTANCE", 1.0);
+    look.set_type_factor("ZONE_POLYGON_INSTANCE", 1.0);
+    assert!(look.type_fill.is_empty());
+}
+
+#[test]
 fn the_steps_of_a_drag_are_one_entry() {
     let (_dir, mut d) = open();
     let original = text(&d);

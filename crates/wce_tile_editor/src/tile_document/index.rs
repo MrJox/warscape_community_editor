@@ -37,6 +37,12 @@ pub fn style_of(t: &str) -> TileTypeStyle {
     }
 }
 
+/// The types of polygon drawn filled.
+pub const FILLED_TYPES: [&str; 11] = [
+    "AI_HINT_POLYGON_INSTANCE", "CaptureLocationPolygonInstance", "CivilianDeploymentZone", "DEPLOYMENT_ZONE_POLYGON_INSTANCE", "EF_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE",
+    "LiteBuildingZone", "NOGO_REGION_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "ZONE_POLYGON_INSTANCE",
+];
+
 /// A polygon type's colour (its cover's fill and edges), and the lines' (splines, separators).
 pub fn polygon_colour(t: &str) -> [f32; 3] {
     match t {
