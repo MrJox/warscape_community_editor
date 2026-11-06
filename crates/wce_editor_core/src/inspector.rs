@@ -83,11 +83,10 @@ pub trait Inspector {
         false
     }
 
-    /// A row of buttons in the value column, side by side and the same width, after `label` (empty: none): each `(field, text, enabled)`.
-    /// The one clicked.
-    fn buttons(&mut self, label: &str, buttons: &[(&str, &str, bool)]) -> Option<usize> {
-        let _ = label;
-        let clicked = buttons.iter().map(|&(field, text, enabled)| self.button(field, text, enabled)).collect::<Vec<_>>();
+    /// Buttons on the line of the last row, after its field, then `note`: each `(field, icon, tooltip, enabled)`. The one clicked.
+    fn row_buttons(&mut self, buttons: &[(&str, &str, &str, bool)], note: &str) -> Option<usize> {
+        let _ = note;
+        let clicked = buttons.iter().map(|&(field, _, tip, enabled)| self.button(field, tip, enabled)).collect::<Vec<_>>();
         clicked.iter().position(|&c| c)
     }
 

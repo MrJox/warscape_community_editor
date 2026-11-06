@@ -2692,7 +2692,6 @@ impl TileDocument {
             }
 
             ins.text("model", "model", &model);
-            self.fire_rows(e, ins);
         }
 
         let sc = self.tile().tscene();
@@ -2721,6 +2720,9 @@ impl TileDocument {
             }
 
             self.property_row(e, prop, ins);
+            if prop.attr == "burn" && self.tile().tscene().type_of(e) == "BUILDING_INSTANCE" {
+                self.fire_controls(e, ins);
+            }
         }
 
         // What the file has and the grid does not show.
@@ -2741,19 +2743,21 @@ impl TileDocument {
     }
 
     /// A building's fire preview (fire.rs): where the sequence is, and playing or stopping it. Not an edit: the file keeps its values.
-    fn fire_rows(&mut self, e: usize, ins: &mut dyn Inspector) {
-        let state = match self.tile().fire_time(e) {
+    /// The burning sequence's preview, on the `burn` row: play, stop and where it is.
+    fn fire_controls(&mut self, e: usize, ins: &mut dyn Inspector) {
+        let time = self.tile().fire_time(e);
+        let state = match time {
             Some(t) => {
                 let (amount, stage) = super::fire::fire_at(t);
-                let what = if stage == 1 { "flames" } else if t < super::fire::STAGE_ONE_SECONDS + super::fire::STAGE_TWO_SECONDS { "collapse, smoke" } else { "burnt" };
-                format!("{t:.0} s: {what}, char {amount:.2}")
+                let what = if stage == 1 { "flames" } else if t < super::fire::STAGE_ONE_SECONDS + super::fire::STAGE_TWO_SECONDS { "collapse" } else { "burnt" };
+                format!("{t:.0} s: {what} {amount:.2}")
             }
 
             None => "not burning".to_owned(),
         };
 
-        ins.text("fire", "fire preview", &state);
-        match ins.buttons("", &[("fire_play", "Play", true), ("fire_stop", "Stop", self.tile().fire_time(e).is_some())]) {
+        // Lucide's play and square (`wce_editor::icons`).
+        match ins.row_buttons(&[("fire_play", "\u{e13c}", "Play the fire", true), ("fire_stop", "\u{e167}", "Stop the fire", time.is_some())], &state) {
             Some(0) => {
                 let now = self.tile().fire_now();
                 self.tile_mut().fire_start(e, now);
