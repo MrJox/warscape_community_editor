@@ -2965,7 +2965,7 @@ const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
         a("tile.cut", "Tile", "Cut", &["Ctrl+X"]),
         a("tile.paste", "Tile", "Paste at the mouse", &["Ctrl+V"]),
         a("tile.paste_in_place", "Tile", "Paste in place", &["Ctrl+Shift+V"]),
-        a("tile.quick_add", "Tile", "Add here... (the quick-add popup)", &["Shift+A"]),
+        a("tile.quick_add", "Tile", "Add here... (the quick-add popup)", &["Space"]),
         a("tile.turn_placing", "Tile: placing and drawing", "Turn what is placed", &["R"]),
         a("tile.turn_placing_back", "Tile: placing and drawing", "Turn what is placed back", &["Shift+R"]),
         a("tile.finish_drawing", "Tile: placing and drawing", "Finish drawing", &["Enter", "KeypadEnter"]),
