@@ -129,13 +129,28 @@ and `destruction_vfx_*` bursts on the damaged states).
 The editor plays: untagged effects except `destruction_vfx_*`; `ip_fire` effects while the building burns (its `burn` property, or a
 piece's own), and then also the engine's `burning_entity` over the piece's mesh (below, "The flames"); nothing else. Placed at `piece world * translation(position) * rotation`, scale `scale / unit` like a placed VFXInstance.
 **ASSUMPTIONS**, to check in game:
-- untagged effects play all the time (the torches burn at deployment, by day too);
+- untagged effects play whenever the piece is serviced (the code agrees, "What gates a piece's effects"; by day too is not checked in game);
 - `destruction_vfx_*` bursts play once when a piece reaches the level, not on a battle that starts with the building already damaged;
 - `ip_fire` means "while the building is on fire", and a tile's `burn = true` building starts burning;
 - `capture` plays on a captured capture point, `fire_transition` / `fire` during the burning sequence;
 - the effect's `scale` multiplies like a VFXInstance's scale;
 - the string flag and the bone (-1 on almost all; 0 on 21 entries) are not used: what they do is unknown (the flag may be "attached to
   a bone" or "looping").
+
+### What gates a piece's effects (2026-11-07, Attila's `empire.retail.dll`)
+
+`FUN_104cc000` sorts a `.meta` entry by its tag: `ip_fire`, `ip_smoke`, `ip_smoke_post`, `ip_fire_collapsed`, `ip_collapsed` (bit 1), `fire` (bit 2), `fire_transition` (bit 4). `FUN_104b2a80`
+walks the entries each time a piece is serviced: bit 1 is skipped there (`FUN_10d52250` plays those), bit 2 needs its `param_5`, bit 4 `param_6` as well; **an untagged entry passes**, and starts once
+its start time has passed (0 and 0: at once). The torches' entries are untagged and their string flag is `false`, so nothing in the `.meta` makes a torch conditional. `FUN_104b2a80` runs from the
+draw of a piece or standalone entity (`FUN_10464ce0`, `FUN_105340c0`): after a view test (vtable +0x84), for a piece that is shown (flag 1 of +0x7a; +0xdc for the entity) in mode 1 or 3 (2 is the
+collapse). No night, weather, season or owner test was found on this path. Not traced: the code that makes the attached buildings of `file_refs`, or which object the entity list of `FUN_10534060` is.
+
+`torch_sconce` and `torch_ground_post` are placed per fort piece by its logic file, per destruction state: 67 of the 191 fort pieces of the kit's tables have any (298 `file_refs`, all pieces of the
+vanilla packs), 202 on state 0 and 96 on state 1, none on later ones. Bridging columns, end caps and most joiners have none, and a damaged piece usually keeps fewer: walls are not lit evenly by data.
+
+`library_vfx_fire_torch` has no time of day or weather property either, `EventEnable` false and infinite life. Its limits, camera distance in metres by `gfx_effects_quality` (3, 2, lower; CullDistances
+`w` stops the emitter, ParticleCullDistances `z` to `w` fades its particles): Fire 110 / 80 / 50 (fade 40-90 / 30-60 / 20-40), Smoke_heavy 150 / 120 / 90, Embers 50 / 22 / off, Distortion 32 / 32 / off,
+the light 250. The scale of `FUN_11506600`'s Rome 2 rule (`docs/re/rome2_vfx.md`) was not checked for Attila. So the flames are gone well before the wall is: beyond 90 m at the highest setting.
 
 ## Collapses between levels
 
