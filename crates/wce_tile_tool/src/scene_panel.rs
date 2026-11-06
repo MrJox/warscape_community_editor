@@ -364,7 +364,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
             }
         }
 
-        gui::same_line();
+        gui::same_line_or_wrap(gui::button_width("Group"));
         gui::begin_disabled(sel.is_empty());
         let into = tool.new_items_layer(d);
         if gui::button("Group") {
@@ -375,7 +375,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
             gui::set_tooltip("Put the selected items into a new instance group in the working layer (Ctrl+G)");
         }
 
-        gui::same_line();
+        gui::same_line_or_wrap(gui::button_width("Ungroup"));
         let sc = d.tile().tscene();
         let has_group = sel.iter().any(|&s| matches!(sc.type_of(s), "UserInstanceGroup" | "INSTANCE_GROUP"));
         gui::begin_disabled(!has_group);
@@ -389,10 +389,10 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
             gui::set_tooltip("Take the selected instance groups apart into the working layer (Ctrl+U)");
         }
 
-        gui::same_line();
+        gui::same_line_or_wrap(gui::button_width("Delete"));
         let delete = gui::button("Delete");
         gui::end_disabled();
-        gui::same_line();
+        gui::same_line_or_wrap(gui::button_width("Duplicate"));
         gui::begin_disabled(!one_layer);
         if gui::button("Duplicate")
             && let Err(err) = d.duplicate_layer(sel[0])
@@ -401,8 +401,9 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         }
 
         gui::end_disabled();
-        gui::same_line();
-        gui::text_disabled(&format!("{} selected", sel.len()));
+        let count = format!("{} selected", sel.len());
+        gui::same_line_or_wrap(gui::calc_text_size(&count).x);
+        gui::text_disabled(&count);
         if delete {
             tool.request_delete(e);
         }
