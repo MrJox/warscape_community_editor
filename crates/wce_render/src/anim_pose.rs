@@ -1,4 +1,4 @@
-//! A building animation's first frame: the pose the editor draws a mesh that only exists as an animation in (the siege engines' wheels,
+//! Posing: the weights of a skinned vertex, and a building animation's first frame: the pose the editor draws a mesh that only exists as an animation in (the siege engines' wheels,
 //! `..._left_wheel_looped_anim`, and their weighted bodies, `..._weighted_anim`). A tile's siege engine stands still, so its first frame is
 //! what a battle shows before it moves.
 //!
@@ -90,6 +90,12 @@ pub fn skin_matrices(pose: &Pose, binds: Option<&[Float4x4]>) -> Vec<Float4x4> {
     }).collect()
 }
 
+/// A vertex's four bone weights as the game's vertex shaders use them. A two-bone vertex (`Weighted`) stores one weight: `vs30_main` gives
+/// the second bone `1 - w`, and rpfm_lib's second weight is the vertex's unused byte. A `Cinematic` vertex's four add up as stored.
+pub fn vertex_weights(two_bones: bool, w: [f32; 4]) -> [f32; 4] {
+    if two_bones { [w[0], 1.0 - w[0], 0.0, 0.0] } else { w }
+}
+
 /// For checks: how far the skinning matrices are from the identity (0: the first frame is the bind pose).
 pub fn distance_from_bind(skin: &[Float4x4]) -> f32 {
     let id = Float4x4::IDENTITY;
@@ -100,6 +106,12 @@ pub fn distance_from_bind(skin: &[Float4x4]) -> f32 {
 mod tests {
     use super::*;
     use wce_foundation::math::inverse;
+
+    #[test]
+    fn two_bone_weights_add_up() {
+        assert_eq!(vertex_weights(true, [0.25, 0.0, 0.0, 0.0]), [0.25, 0.75, 0.0, 0.0]);
+        assert_eq!(vertex_weights(false, [0.5, 0.25, 0.25, 0.0]), [0.5, 0.25, 0.25, 0.0]);
+    }
 
     #[test]
     fn bone_matrix_turns_about_x() {

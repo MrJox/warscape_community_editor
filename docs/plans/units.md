@@ -5,7 +5,7 @@ historical battle scripting), the Cinematic tool (the most pressing, after the t
 decided). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
-State: investigated and decided 2026-11-06 (decisions at the end). Nothing is implemented. The scratch scripts and disassembly are in
+State: investigated and decided 2026-11-06 (decisions at the end). Step 1's CPU spike is done; the renderer has nothing yet. The scratch scripts and disassembly are in
 `~/wce_re/scratch/units`.
 
 ## What the game does
@@ -21,7 +21,9 @@ Checked on Attila's vanilla packs unless marked **ASSUMPTION**.
   (`variant_animation_size`, cb2), so `x = texel % width`, `y = texel / width`.
 - The instance's offset is the first `TEXCOORD` after its world rows: `v9.x` in the 2-bone shader, `v10.x` in the 4-bone one, because the
   4-bone vertex has one input more (POSITION0..6 against POSITION0..5). The world matrix is the three instance rows before it.
-- 2-bone vertex: bone indices in `v1.z`, `v1.y` as bytes (`* 255.01`), weight in `v1.x`, the second weight `1 - w`. 4-bone: `v1` indices.
+- 2-bone vertex: bone indices in bytes 0 and 1, the first bone's weight in byte 2, the second bone's `1 - w`. rpfm_lib's second weight is
+  byte 3, always 0 (sums down to 0.5): `anim_pose::vertex_weights` is the rule, and the raw bytes go to the GPU as stored. A 4-bone vertex
+  has four indices and three weights in the shader, the last `1 - sum`; as stored, the four add up to 1.
   Position, normal and both tangent vectors are all skinned with the same blend.
 - The palette holds skin matrices (`pose * inverse bind`). The engine's `WEIGHTED_MESH_ANIMATION_TEXTURE_CACHE` confirms it: each
   `TEXTURE_LINE_STACK` pairs a texture line and offset with a `matrix_stack` and an `inv_t_pose`, filled in parallel into a ring of
@@ -53,17 +55,24 @@ a static mesh posed once on the CPU (`pose_first_frame`) and rejects every other
 lights have `ps30_skinlm_*` entries next to the `slm` one the renderer uses (`DIR_LIGHT_PS`). Faction colours are `rigid_faction_colours`
 (three in `faction_colours`) against `s_colour_mask_map`.
 
-Not known yet: which material and flags pick which entry, how the instance inputs after the offset are used (`v9.yzw`, `v10`..`v13`, passed
-to the pixel shader), and how the light pass separates skin pixels. See step 1.
+Instance inputs, from `ps30_gbuffer` and `ps30_gbuffer_skin` (2-bone numbering): `v12` is the tint, rgb with `.w` 1, 2 or 3 picking the
+colour mask channel it applies to (VMD `TINT`, `mask0..2`), read by `ps30_gbuffer` only; `v9.y` scales the fourth faction colour; `v10.zw`
+blend the colour and gloss towards something (**ASSUMPTION**: dirt and blood levels; 0 leaves them alone); `v11.y` reaches the pixel shader
+unused here; the pixel selection id is `t1` at `instance id + cb1[4].w`, as the rigid shaders. Skin puts its mask in the third target, which
+is how the light pass can tell it.
+
+Not known: the engine's choice of entry. The names suggest material to family (Weighted, WeightedDirtmap -> `weightedwithdirt`,
+WeightedDecal -> `weightedwithdecal`), `_skin` for the WeightedSkin types, `_noclip` by the alpha mode. **ASSUMPTION** until screenshots
+agree. Which light entry reads the third target (`skinlm` or the `slm` in use) is step 4's first question.
 
 ### Animations
 
 - 6,225 `.anim` (226 MB): 6,194 version 5, all of which match the layout to the byte. 3,880 use `rome_man_game`.
-- 31 are version 4: same structure, UTF-16 strings. `wce_formats::anim` rejects them, and they include archers firing from walls.
-- **Bones without a track keep the skeleton's pose.** A normal clip has 6 translation tracks (`bn_hips`, `bn_weapon_01..05`) and 32
-  rotation tracks of 50 bones. The other translations, and the fingers, eyelids, eyes and jaw, come from the skeleton
-  (`animations/skeletons/<name>.anim`, frame 0). **ASSUMPTION** by structure (zero translations would collapse the body), and the spec says
-  identity. `wce_formats::anim` fills identity, right for buildings, wrong for units: this must change.
+- 31 are version 4: same structure, UTF-16 strings, decoded too. They include archers firing from walls.
+- **Bones without a track keep the skeleton's pose**, not the identity the format spec says. A normal clip has 6 translation tracks
+  (`bn_hips`, `bn_weapon_01..05`) and 32 rotation tracks of 50 bones. The other translations, and the fingers, eyelids, eyes and jaw, come
+  from the skeleton (`animations/skeletons/<name>.anim`, frame 0): `Animation::on_skeleton`. Checked by `unit_pose_check`: bone lengths stay
+  exact with it and change by 0.44 without it.
 - Convention checked: `world = parent world * local` over frame 0 of `rome_man_game.anim`, times its `.bone_inv_trans_mats`, gives the
   identity for all 50 bones within 1.4e-4. So `anim_pose::inverse_binds` and the bind pose are right.
 - `rome_man` (105 bones, with the face) shares its first 50 bones and their order with `rome_man_game`, so a battle clip drives a cinematic
@@ -82,8 +91,11 @@ to the pixel shader), and how the light pass separates skin pixels. See step 1.
   `VARIANT_MESH_REFERENCE` (`definition`), `SLOT` (`name`, `attach_point`), `TINT` (`red`, `green`, `blue`, `random_range`). A slot with
   several children picks one (**ASSUMPTION**: uniform random); a variant nests its own slots.
 - `attach_point`: `weapon_01..05` (the root bones `bn_weapon_NN`, which clips animate) and `crest_centre` (**ASSUMPTION**: an attachment
-  point in the helmet's RMV2, as `material.attachment_points`). Static weapons have no bone indices, so they
-  must follow the bone rigidly (**ASSUMPTION**, as a rigid building part).
+  point in the helmet's RMV2, as `material.attachment_points`). Static weapons and shields follow the bone's world matrix: checked, shield on
+  the forearm and sword in the hand in the stand and walk clips.
+- Mounts: a rider's table names its mount's (`mount_table rome_mount_horse_sword_shield`), as it names `skeleton_type_cinematic rome_man`.
+  Rider and horse clips (`RIDER_STAND` with the horse's `STAND`) are in one frame with one origin and the same length: both figures at the same
+  world matrix fit, feet by the flanks, hands at the neck, no offset. Checked with `horse_rider_stand` and `horse_stand`.
 - DB: `land_units` (`man_animation`, `man_entity`...) -> `battle_animations_table` -> animation table; `unit_variants` (`unit`,
   `faction`, `variant`, `height_scale`, `height_variation`) -> `variants` -> VMD file; `mounts` (`animation`, `entity`, `variant`).
   `.texture_array` is a text list of texture paths (decals).
@@ -97,8 +109,8 @@ Later games differ (`.anim` v6+, binary fragments, `wsmodel`): the seams go behi
 
 Each step ends with something visible and a gate (a Cargo example) or a shot.
 
-1. **Spike, black box first.** Pose a real soldier and a walk cycle on the CPU with the track fallback and look at it. Read the instance
-   inputs in `weighted.hlsl` and how the engine picks entries (short static RE). A game capture to compare, if the user can take one.
+1. **Spike** (done 2026-11-06). `unit_pose_check` poses a real soldier and a horse with its rider on the CPU, with no GPU, and draws them.
+   It found the track fallback and the two-bone weights; it stays as the reference for step 3's gate.
 2. **Formats** (`wce_formats`, as rpfm_lib decodes headers only): `.anim` complete (names, skeleton, v4, fallback to a skeleton, track
    lookups kept compact), `.meta` tags, VMD with a lossless model for a later editor, fragments and animation tables. Byte-identical round
    trips where a file will be written (VMD at least).
@@ -121,7 +133,7 @@ The first goal is steps 1 to 7 with units standing or idling for reference. Step
 idle needs comes first (one slot, loops, hand poses); blending and the rest of the slots can wait for the Cinematic tool.
 
 Mounts move earlier than the first draft had them: comparing cavalry with infantry needs a horse and its rider together in step 5, standing
-at least. How the rider sits on the mount is not traced (the rider clips' frame, `mounts`' `entity` and `variant`); it belongs in step 1.
+at least. It costs little: the clips already fit (see Assembly); what is left is `mounts`' `variant` to the horse's VMD.
 
 Out of scope: battle simulation, formations, pathing, sounds and blood, dismemberment, imposters, real cloth simulation.
 

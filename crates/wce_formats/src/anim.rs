@@ -1,11 +1,12 @@
-//! Building animations (`.anim`, version 5; rpfm_lib reads the header only): the siege engines' working animations and the buildings'
-//! collapses between two destruction levels.
+//! Animations (`.anim`, versions 4 and 5; rpfm_lib reads the header only): units, and the buildings' working animations and collapses.
 //!
-//! Layout: u32 version (5), u32 (0), f32 frame rate, string skeleton name (`building` / `generic`), f32 end time, u32 bone count; per bone
+//! Layout: u32 version, u32 (bone table version), f32 frame rate, string skeleton name, f32 end time, u32 bone count; per bone
 //! its name (string) and parent (i32, -1 for a root); per bone the index of its translation track, then per bone the index of its rotation
 //! track (i32, -1: none); u32 translation track count, u32 rotation track count, u32 frame count; per frame the translations (3 f32 each)
-//! then the rotations (4 i16 each, x y z w over 32767). Checked on battering_ram_light and roman_fort_straight: the data sizes match the files
-//! to the byte.
+//! then the rotations (4 i16 each, x y z w over 32767). Version 4 is the same with UTF-16 strings. The data sizes of all of Attila's version
+//! 5 files match to the byte.
+//!
+//! A bone without a track keeps its skeleton's pose (`on_skeleton`), not the identity: a unit's clip moves 6 of its 50 bones and turns 32.
 
 /// A bone's local transform: translation, rotation quaternion (x y z w, normalised).
 pub type BoneLocal = ([f32; 3], [f32; 4]);
@@ -15,7 +16,16 @@ pub type BoneLocal = ([f32; 3], [f32; 4]);
 pub struct Animation {
     pub fps: f32,
     pub end: f32,
+
+    /// The skeleton's name (`rome_man_game`, `horse_r2`, `building`).
+    pub skeleton: String,
+
+    /// The bones' names.
+    pub bones: Vec<String>,
     pub parents: Vec<i32>,
+
+    /// Per bone, whether it has a translation track and a rotation track.
+    pub tracked: Vec<(bool, bool)>,
     pub frames: Vec<Vec<BoneLocal>>,
 }
 
@@ -47,9 +57,15 @@ impl Reader<'_> {
         self.take(2).map(|s| i16::from_le_bytes([s[0], s[1]]))
     }
 
-    fn string(&mut self) -> Option<()> {
+    /// A string with a u16 length, in characters: UTF-16 when `wide`, else one byte each.
+    fn string(&mut self, wide: bool) -> Option<String> {
         let n = self.take(2).map(|s| u16::from_le_bytes([s[0], s[1]]) as usize)?;
-        self.take(n).map(|_| ())
+        if wide {
+            let b = self.take(n * 2)?;
+            Some(String::from_utf16_lossy(&b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>()))
+        } else {
+            self.take(n).map(|b| String::from_utf8_lossy(b).into_owned())
+        }
     }
 }
 
@@ -62,18 +78,21 @@ impl Animation {
     /// Decodes a `.anim`; `None` when it isn't one this reads. `max_frames` limits how many frames are read (1: the first frame only).
     pub fn decode(bytes: &[u8], max_frames: usize) -> Option<Self> {
         let mut r = Reader { b: bytes, p: 0 };
-        if r.u32()? != 5 {
+        let version = r.u32()?;
+        if version != 4 && version != 5 {
             return None;
         }
 
+        let wide = version == 4;
         r.u32()?;
         let fps = r.f32()?;
-        r.string()?;
+        let skeleton = r.string(wide)?;
         let end = r.f32()?;
         let n = r.u32()? as usize;
+        let mut bones = Vec::with_capacity(n.min(4096));
         let mut parents = Vec::with_capacity(n.min(4096));
         for _ in 0..n {
-            r.string()?;
+            bones.push(r.string(wide)?);
             parents.push(r.i32()?);
         }
 
@@ -95,7 +114,27 @@ impl Animation {
             }).collect());
         }
 
-        Some(Self { fps, end, parents, frames })
+        let tracked = tmap.iter().zip(&rmap).map(|(t, q)| (*t >= 0, *q >= 0)).collect();
+        Some(Self { fps, end, skeleton, bones, parents, tracked, frames })
+    }
+
+    /// Gives the bones without a track their pose in `skeleton` (`animations/skeletons/<name>.anim`, whose first frame is the bind pose),
+    /// by name.
+    pub fn on_skeleton(&mut self, skeleton: &Animation) {
+        let Some(rest) = skeleton.frames.first() else { return };
+        let of: Vec<Option<BoneLocal>> = self.bones.iter().map(|b| skeleton.bones.iter().position(|n| n == b).and_then(|i| rest.get(i)).copied()).collect();
+        for frame in &mut self.frames {
+            for (i, (t, q)) in frame.iter_mut().enumerate() {
+                let Some((rt, rq)) = of[i] else { continue };
+                if !self.tracked[i].0 {
+                    *t = rt;
+                }
+
+                if !self.tracked[i].1 {
+                    *q = rq;
+                }
+            }
+        }
     }
 
     /// How long it plays, in seconds: its end time, else its frames at its rate.
