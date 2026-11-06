@@ -188,7 +188,8 @@ const SIMPLE_MESH: &[Prop] = base3d![
 
 const DECAL: &[Prop] = base3d![p("scale", Kind::Vec3), p("parallax_scale", Kind::Float), p("tiled", Kind::Bool)];
 
-const VEGETATION: &[Prop] = base3d![p("key", Kind::Text)];
+// The scale of a tree is a byte in the tree lists, times 127 (`ListTree::scale_byte`): past 2 it wraps. TEd's grid does not show it.
+const VEGETATION: &[Prop] = base3d![p("key", Kind::Text), p("scale", Kind::Slider(0.0, 2.0))];
 
 const VFX: &[Prop] = base3d![
     p("vfx", Kind::Text),

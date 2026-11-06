@@ -268,6 +268,7 @@ impl Command<Tile> for TedSpliceCommand {
 
 /// One property of the Property Editor: the attribute texts of one element (the property and its twin) are replaced, undo puts the old bytes
 /// back. The steps of one drag of a slider merge.
+#[derive(Clone)]
 pub(crate) struct TedAttrCommand {
     pub name: String,
     pub elem: usize,
@@ -366,15 +367,23 @@ impl Command<Tile> for TedAttrsCommand {
     }
 
     fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
-        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.edits.len() == self.edits.len()) else { return false };
-        let same = n.edits.iter().zip(&self.edits).all(|(a, b)| a.elem == b.elem && a.steps.len() == b.steps.len() && a.steps.iter().zip(&b.steps).all(|(x, y)| x.0 == y.0));
-        if !same {
+        let Some(n) = next.as_any().downcast_ref::<Self>() else { return false };
+
+        // A step of a drag may leave out an item whose value did not change this time (at the end of its range), or bring in a new one.
+        let same_attrs = |a: &TedAttrCommand, b: &TedAttrCommand| a.steps.len() == b.steps.len() && a.steps.iter().zip(&b.steps).all(|(x, y)| x.0 == y.0);
+        if n.edits.iter().any(|t| self.edits.iter().any(|m| m.elem == t.elem && !same_attrs(m, t))) {
             return false;
         }
 
-        for (mine, theirs) in self.edits.iter_mut().zip(&n.edits) {
-            for (m, t) in mine.steps.iter_mut().zip(&theirs.steps) {
-                m.2.clone_from(&t.2);
+        for theirs in &n.edits {
+            match self.edits.iter_mut().find(|m| m.elem == theirs.elem) {
+                Some(mine) => {
+                    for (m, t) in mine.steps.iter_mut().zip(&theirs.steps) {
+                        m.2.clone_from(&t.2);
+                    }
+                }
+
+                None => self.edits.push(theirs.clone()),
             }
         }
 

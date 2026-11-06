@@ -322,6 +322,54 @@ fn a_buildings_scale_works_only_as_a_prop() {
 }
 
 #[test]
+fn the_scale_gizmo_works_on_everything_with_a_scale() {
+    use wce_foundation::math::Float4x4;
+
+    let (_dir, mut d) = open();
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let add = |d: &mut TileDocument, tag: &str, scale: &str| {
+        let attrs = [("key", "k"), ("scale", scale), ("surface_mode", "MSM_FREEFORM"), ("flags", " OIF_VISIBLE|OIF_ACTIVE")].map(|(k, v)| (k.to_owned(), v.to_owned()));
+        let mut scene = wce_tile::ted_scene::TedScene::parse_any(d.tile().tscene().save()).unwrap();
+        scene.add_instance(Some(layer), tag, &attrs).unwrap();
+        scene.save()
+    };
+
+    // A fresh document of the tile with the four types in it.
+    let text = add(&mut d, "SIMPLE_MESH_INSTANCE", "vector(1,2,3)");
+    std::fs::write(_dir.path().join("tile.ted"), text).unwrap();
+    let mut d = TileDocument::new(TileProject::open(_dir.path()).unwrap(), None);
+    for (tag, scale) in [("ProjectedDecalInstance", "vector(12,20,-3)"), ("VFXInstance", "0.15"), ("VEGETATION_INSTANCE", "1")] {
+        let text = add(&mut d, tag, scale);
+        std::fs::write(_dir.path().join("tile.ted"), text).unwrap();
+        d = TileDocument::new(TileProject::open(_dir.path()).unwrap(), None);
+    }
+
+    let find = |d: &TileDocument, tag: &str| d.tile().tscene().find_all(tag)[0];
+    let (mesh, decal, vfx, tree) = (find(&d, "SIMPLE_MESH_INSTANCE"), find(&d, "ProjectedDecalInstance"), find(&d, "VFXInstance"), find(&d, "VEGETATION_INSTANCE"));
+    let items = [mesh, decal, vfx, tree].map(|e| SourceRef { doc: d.id(), item: item_of(e) });
+    let scale = |d: &TileDocument, e: usize| d.tile().tscene().doc().get(e, "scale").unwrap();
+    let before = d.history().size();
+
+    // All at once, one undo entry; steps of a drag do not add up; the axis that moved most drives the single numbers.
+    d.scale_items(&items, [3.0, 1.0, 1.0], &Float4x4::IDENTITY, 7);
+    d.scale_items(&items, [1.5, 2.0, 1.0], &Float4x4::IDENTITY, 7);
+    assert_eq!(scale(&d, mesh), "vector(1.5,4,3)");
+    assert_eq!(scale(&d, decal), "vector(18,40,-3)", "a decal's z stays negative");
+    assert_eq!(scale(&d, vfx), "0.3");
+    assert_eq!(scale(&d, tree), "2");
+    assert_eq!(d.history().size(), before + 1);
+
+    // A tree stops where its byte would wrap.
+    d.scale_items(&items, [5.0; 3], &Float4x4::IDENTITY, 8);
+    assert_eq!(scale(&d, tree), "2");
+    assert_eq!(scale(&d, vfx), "1.5");
+
+    d.history_mut().undo();
+    d.history_mut().undo();
+    assert_eq!((scale(&d, mesh), scale(&d, vfx), scale(&d, tree)), ("vector(1,2,3)".to_owned(), "0.15".to_owned(), "1".to_owned()));
+}
+
+#[test]
 fn the_steps_of_a_drag_are_one_entry() {
     let (_dir, mut d) = open();
     let original = text(&d);
