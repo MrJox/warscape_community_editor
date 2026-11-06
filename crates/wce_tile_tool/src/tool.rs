@@ -4017,6 +4017,14 @@ impl Tool for TileTool {
         self.drag_box(e, from, to, done);
     }
 
+    fn tool_gizmo(&self, e: &Editor, dragging: bool) -> Option<wce_foundation::math::Float4x4> {
+        self.flip_gizmo(e, dragging)
+    }
+
+    fn tool_gizmo_moved(&mut self, _: &mut Editor, frame: &wce_foundation::math::Float4x4) {
+        self.flip_gizmo_moved(frame);
+    }
+
     fn claims_left_button(&self, _e: &Editor) -> bool {
         self.flip.is_some() || self.mode != TileMode::Select || self.drawing || self.grabbing || self.placing.is_some() || self.box_select.armed
     }

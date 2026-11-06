@@ -1666,7 +1666,11 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add("tile_flip_mode", "tile_flip_mode", "enter Flip mode for the selection, the plane through its centre", |e, _| with_tile(e, |t, e| t.begin_flip(e).map_or_else(fail, ok)));
-    c.add("tile_flip_plane", "tile_flip_plane <x m> <z m> <angle>", "where Flip mode's plane is", |e, a| {
+    c.add("tile_flip_plane", "tile_flip_plane [<x m> <z m> <angle>]", "where Flip mode's plane is", |e, a| {
+        if a.is_empty() {
+            return with_tile(e, |t, _| t.flip.map_or_else(|| fail("not in Flip mode"), |f| ok(format!("plane {:.3} {:.3} {:.2}", f.plane.x, f.plane.z, f.plane.angle))));
+        }
+
         let [x, z, angle] = [0, 1, 2].map(|i| a.get(i).and_then(|v| number(v)));
         let (Some(x), Some(z), Some(angle)) = (x, z, angle) else { return fail("usage: tile_flip_plane <x m> <z m> <angle>") };
         with_tile(e, |t, _| match &mut t.flip {
