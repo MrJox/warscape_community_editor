@@ -479,6 +479,19 @@ impl DrawSet {
         self.world[item as usize] = [world.m[0], world.m[1], world.m[2]];
     }
 
+    /// An item's POSITION6 (its burn): the other parameters and its batch stay.
+    pub fn set_p6(&mut self, item: u32, p6: [f32; 4]) {
+        let i = item as usize;
+        if self.flags[i] & PARAMS == 0 {
+            self.flags[i] |= PARAMS;
+            self.params_index[i] = (self.params.len() / 16) as u32;
+            self.params.extend_from_slice(&DEFAULT_INSTANCE_PARAMS);
+        }
+
+        let at = self.params_index[i] as usize * 16;
+        self.params[at + 8..at + 12].copy_from_slice(&p6);
+    }
+
     /// The world matrix and model-space bounds of an item (the selection outline).
     pub fn item_box(&self, item: u32) -> Option<(Float4x4, Float3, Float3)> {
         let w = self.world.get(item as usize)?;

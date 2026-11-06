@@ -56,6 +56,7 @@ pub(crate) struct SceneDraws {
     pub terrain_revision: u64,
     pub model_revision: u64,
     pub moved_cursor: u64,
+    pub burn_cursor: u64,
 
     /// The scene's structure log as far as the sets follow it, and the first entity id they have not seen (a map context streams chunks
     /// in and out: their entities are added and removed without rebuilding the 100 000 items).
@@ -275,12 +276,24 @@ impl Renderer {
         }
     }
 
+    /// The items whose burn changed since the last frame.
+    fn follow_burns(&mut self, scene: &RenderScene) {
+        let Some(ids) = scene.burn_since(&mut self.draw_lists.burn_cursor) else { return };
+        for id in ids {
+            let Some(&item) = self.draw_lists.item_of_entity.get(id as usize).filter(|&&item| item != NO_ITEM) else { continue };
+            if let Some(Payload::MeshInstance(mi)) = scene.find(id).map(|e| &e.payload) {
+                self.draw_lists.draws.set_p6(item, mi.p6);
+            }
+        }
+    }
+
     /// The mesh entities of visible layers, as culling items. Models still loading (live runs) are requested nearest first and picked up
     /// when they finish; fixed-step runs wait for every model so that frame N is the same every run.
     pub(crate) fn build_draws(&mut self, scene: &RenderScene, eye: Float3) {
         let scene_id = scene as *const RenderScene as usize;
         let same = self.draw_lists.scene_id == scene_id && self.draw_lists.revision == scene.structure_revision();
         if same && (self.draw_lists.waiting == 0 || self.models.revision() == self.draw_lists.model_revision) {
+            self.follow_burns(scene);
             // Nothing structural changed: patch the entities that only moved (a dragged building) instead of rebuilding 100 000 items.
             let mut rebuild_terrain = self.draw_lists.terrain_revision != scene.terrain_revision();
             if let Some(moved) = scene.moved_since(&mut self.draw_lists.moved_cursor) {
@@ -316,6 +329,7 @@ impl Renderer {
 
         // Everything is rebuilt from the current state: forget what was logged.
         let _ = scene.moved_since(&mut self.draw_lists.moved_cursor);
+        let _ = scene.burn_since(&mut self.draw_lists.burn_cursor);
         let _ = scene.structure_since(&mut self.draw_lists.structure_cursor);
         self.draw_lists.next_entity = scene.next_id();
         self.draw_lists.draws.clear();
@@ -436,6 +450,8 @@ impl Renderer {
         if legacy_gone || legacy_new {
             self.build_terrain_draws(scene);
         }
+
+        self.follow_burns(scene);
 
         // What moved meanwhile (the items added above are where their entities are already).
         if let Some(moved) = scene.moved_since(&mut self.draw_lists.moved_cursor) {

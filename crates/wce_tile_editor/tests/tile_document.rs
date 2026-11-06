@@ -862,6 +862,39 @@ fn a_flip_of_a_prefab_reference_stays_a_reference_with_its_items_as_overrides_an
 }
 
 #[test]
+fn a_fires_char_moves_the_instances_and_nothing_else() {
+    use wce_scene::render_scene::{Payload, RenderScene};
+
+    let (_dir, mut d) = open_with_house();
+    let mut scene = RenderScene::default();
+    let layer = scene.add_layer(d.id(), "tile");
+    d.publish(&mut scene, layer);
+    let building = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let burn = |scene: &RenderScene| scene.entities().iter().find_map(|e| match &e.payload {
+        Payload::MeshInstance(mi) if e.source.item == item_of(building) => Some((mi.p6[0], mi.burning)),
+        _ => None,
+    }).unwrap();
+
+    d.tile_mut().update_fire(&mut scene, 0.0);
+    d.tile_mut().fire_start(building, 0.0);
+    d.tile_mut().update_fire(&mut scene, 0.1);
+    assert!(burn(&scene).1, "it burns");
+
+    let structure = scene.structure_revision();
+    let mut cursor = 0;
+    let _ = scene.burn_since(&mut cursor);
+    let was = burn(&scene).0;
+    d.tile_mut().update_fire(&mut scene, 9.0);
+    assert!(burn(&scene).0 > was, "the char moves");
+    assert_eq!(scene.structure_revision(), structure, "nothing is built again");
+    assert!(!scene.burn_since(&mut cursor).unwrap().is_empty(), "the renderer is told");
+
+    // The next stage changes what plays: that is built.
+    d.tile_mut().update_fire(&mut scene, 20.0);
+    assert!(scene.structure_revision() != structure);
+}
+
+#[test]
 fn a_flip_mirrors_places_and_headings_undoes_at_once_and_can_copy() {
     use wce_tile::world_transform::world_transform;
     use wce_tile_editor::tile_document::FlipPlane;

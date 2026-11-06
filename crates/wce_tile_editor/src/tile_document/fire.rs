@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use wce_scene::render_scene::RenderScene;
+use wce_scene::render_scene::{EntityId, Payload, RenderScene};
 
 use super::Tile;
 
@@ -106,11 +106,33 @@ impl Tile {
             let stage_changed = before.is_none_or(|b| b.1 != look.1);
             if before.is_none_or(|b| (b.0 - look.0).abs() > 0.002) || stage_changed {
                 self.fire.shown.insert(e, look);
-                self.fire_refresh(e, stage_changed);
+                if stage_changed {
+                    self.fire_refresh(e, true);
+                } else {
+                    self.fire_char(scene, e);
+                }
             }
         }
 
         self.flush_pieces(scene);
+    }
+
+    /// A building's char moved: its pieces' instances follow, nothing else does (publishing them made the renderer build its draws and
+    /// overlays again many times a second: the preview's stutter). A piece that is not drawn as burning yet goes the long way.
+    fn fire_char(&mut self, scene: &mut RenderScene, elem: usize) {
+        let first = self.first_entity.get(elem).copied().unwrap_or(0);
+        for k in (0..self.entity_count.get(elem).copied().map_or(0, usize::from)).filter(|_| first != 0) {
+            if self.collapse_target(elem, k).is_some() {
+                continue;
+            }
+
+            let id = first + k as EntityId;
+            let (p6, burning) = self.burn_of(elem, &self.piece_props_or_building(elem, k));
+            match scene.find(id).map(|e| &e.payload) {
+                Some(Payload::MeshInstance(mi)) if mi.burning == burning => scene.update_burn(id, p6),
+                _ => self.piece_pending.push((elem, k)),
+            }
+        }
     }
 
     /// Publishes a building's pieces again (and its effects when `effects`).
