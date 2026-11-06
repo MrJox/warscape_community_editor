@@ -164,6 +164,32 @@ pub struct Sdl3Platform {
     frame: i32,
 }
 
+/// Keeps the windows without a horizontal scrollbar from scrolling sideways. Dear ImGui lets a window whose content is wider than it scroll
+/// sideways, by the wheel or by bringing an item into view, whether or not it shows a bar, and a line of text too long for its panel
+/// then slides the whole panel out of sight with no way to see why. Done between frames: the wheel is applied in `NewFrame`, from these
+/// values, and with no sideways range it goes to the window behind.
+fn pin_sideways_scroll() {
+    let scrolls = (dear_imgui_sys::ImGuiWindowFlags_HorizontalScrollbar | dear_imgui_sys::ImGuiWindowFlags_AlwaysHorizontalScrollbar) as i32;
+
+    // SAFETY: the context is current and between frames, and `Windows` holds its live windows.
+    unsafe {
+        let Some(g) = dear_imgui_sys::igGetCurrentContext().as_ref() else { return };
+        if g.Windows.Data.is_null() {
+            return;
+        }
+
+        for &w in std::slice::from_raw_parts(g.Windows.Data, g.Windows.Size as usize) {
+            if let Some(w) = w.as_mut()
+                && w.Flags & scrolls == 0
+            {
+                w.ScrollMax.x = 0.0;
+                w.Scroll.x = 0.0;
+                w.ScrollTarget.x = f32::MAX;
+            }
+        }
+    }
+}
+
 impl Sdl3Platform {
 
     /// The backend for one window.
@@ -264,6 +290,7 @@ impl Sdl3Platform {
     /// Before a frame: display size, frame time, the mouse leaving, the cursor shape and text input.
     pub fn new_frame(&mut self, imgui: &mut Context) {
         self.frame += 1;
+        pin_sideways_scroll();
         let (mut w, mut h, mut pw, mut ph) = (0, 0, 0, 0);
         // SAFETY: plain SDL calls on the live window.
         let (now, freq) = unsafe {
