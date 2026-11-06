@@ -633,6 +633,102 @@ fn an_item_added_or_removed_leaves_the_scene_as_a_new_publish_would_without_maki
 }
 
 #[test]
+fn a_flip_leaves_a_splines_unused_handles_turns_a_walls_side_and_mirrors_a_shelters_target() {
+    use wce_tile::splines;
+    use wce_tile::world_transform::world_transform;
+    use wce_tile_editor::tile_document::FlipPlane;
+
+    let text = TED.replace(
+        r#"<AI_HINT_POLYGON_INSTANCE"#,
+        r#"<SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="r" surface_mode="MSM_FREEFORM" orientation="euler(0,0.4,0)">
+                            <points>
+                                <point position="0,0,0" controlIn="0,0,0" controlOut="4,0,0"/>
+                                <point position="10,0,0" controlIn="6,0,1" controlOut="14,0,-1"/>
+                                <point position="20,0,5" controlIn="16,0,5" controlOut="0,0,0"/>
+                            </points>
+                        </SplineRiverInstance>
+                        <WceWallSpline flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(0,0,0)" name="w" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)" polygon_closed="0" wall_base="barbarian_fort_straight">
+                            <points>
+                                <point position="60,0,60"/>
+                                <point position="80,0,60"/>
+                            </points>
+                        </WceWallSpline>
+                        <CivilianShelter flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(30,0,30)" name="s" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)" target="vector(35,0,32)"/>
+                        <AI_HINT_POLYGON_INSTANCE"#,
+    );
+    let (dir, _) = open();
+    std::fs::write(dir.path().join("tile.ted"), text).unwrap();
+    let mut d = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
+    let original = self::text(&d);
+    let unit = d.tile().unit();
+    let sc = d.tile().tscene();
+    let (river, wall, shelter) = (sc.find_all("SplineRiverInstance")[0], sc.find_all("WceWallSpline")[0], sc.find_all("CivilianShelter")[0]);
+    let world = |d: &TileDocument, p: Double3| {
+        let w = world_transform(d.tile().tscene(), river);
+        w.position + w.rotation * p
+    };
+
+    let before = splines::read(d.tile().tscene(), river);
+    let (mid, handle) = (world(&d, before[1].position), world(&d, before[1].control_out));
+    let plane = FlipPlane { x: 50.0, z: 0.0, angle: 0.0 };
+    let mirrored = |p: Double3| Double3::new(2.0 * 50.0 * unit - p.x, p.y, p.z);
+    let near = |a: Double3, b: Double3| (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3 && (a.z - b.z).abs() < 1e-3;
+
+    d.flip(&[river, wall, shelter], plane, None).unwrap();
+
+    let after = splines::read(d.tile().tscene(), river);
+    assert!(near(world(&d, after[1].position), mirrored(mid)), "{:?}", world(&d, after[1].position));
+    assert!(near(world(&d, after[1].control_out), mirrored(handle)), "the handles go with the points");
+    assert_eq!(after[0].control_in, Double3::ZERO, "an unused handle stays unused");
+    assert_eq!(after[2].control_out, Double3::ZERO, "an unused handle stays unused");
+
+    assert_eq!(d.tile().tscene().doc().get(wall, "wall_flip").as_deref(), Some("true"), "its outer face stays the outer one");
+    let target = d.tile().tscene().doc().get(shelter, "target").unwrap();
+    let t = wce_tile::ted_scene::parse_vec3(&target, "vector").unwrap();
+    assert!(near(t, Double3::new(100.0 * unit - 35.0, 0.0, 32.0)), "{target}");
+
+    d.history_mut().undo();
+    assert_eq!(self::text(&d), original, "undo gives the file back");
+}
+
+#[test]
+fn a_flip_of_a_prefab_reference_stays_a_reference_with_its_items_as_overrides_and_its_copy_is_refused_inside_one() {
+    use wce_tile::project_files::PREFAB_ATTR;
+    use wce_tile::world_transform::world_transform;
+    use wce_tile_editor::tile_document::FlipPlane;
+
+    let text = TED.replace(
+        r#"<AI_HINT_POLYGON_INSTANCE"#,
+        r#"<UserInstanceGroup flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(100,0,100)" name="g" surface_mode="MSM_FREEFORM" orientation="euler(0,0.5,0)" wce_prefab="set">
+                            <children>
+                                <BUILDING_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,0)" name="in1" surface_mode="MSM_FREEFORM" orientation="euler(0,0.3,0)" key="house"/>
+                            </children>
+                        </UserInstanceGroup>
+                        <AI_HINT_POLYGON_INSTANCE"#,
+    );
+    let (dir, _) = open();
+    std::fs::write(dir.path().join("tile.ted"), text).unwrap();
+    let mut d = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
+    let original = self::text(&d);
+    let unit = d.tile().unit();
+    let sc = d.tile().tscene();
+    let (group, item) = (sc.find_all("UserInstanceGroup")[0], sc.find_all("BUILDING_INSTANCE")[1]);
+    let p = world_transform(sc, item).position;
+    let plane = FlipPlane { x: 50.0, z: 0.0, angle: 0.0 };
+
+    d.flip(&[group], plane, None).unwrap();
+    let q = world_transform(d.tile().tscene(), item).position;
+    assert!((q.x - (100.0 * unit - p.x)).abs() < 1e-3 && (q.z - p.z).abs() < 1e-3, "{q:?}");
+    assert_eq!(d.tile().tscene().doc().get(group, PREFAB_ATTR).as_deref(), Some("set"), "still a reference");
+    d.history_mut().undo();
+    assert_eq!(self::text(&d), original);
+
+    // A copy cannot go into a reference: its items are values only.
+    assert!(d.flip(&[item], plane, Some(group)).is_err());
+    assert_eq!(self::text(&d), original);
+}
+
+#[test]
 fn a_flip_mirrors_places_and_headings_undoes_at_once_and_can_copy() {
     use wce_tile::world_transform::world_transform;
     use wce_tile_editor::tile_document::FlipPlane;
