@@ -425,7 +425,7 @@ pub fn expand_prefabs(mut text: Vec<u8>, contents: &dyn Fn(&str) -> Option<Vec<u
 }
 
 /// The editor's attributes a polyfill turns into what TEd holds (reported as polyfilled, not as dropped).
-const POLYFILLED_ATTRS: [&str; 3] = [PREFAB_ATTR, SURFACE_ATTR, ROTATION_ATTR];
+const POLYFILLED_ATTRS: [&str; 4] = [PREFAB_ATTR, SURFACE_ATTR, ROTATION_ATTR, crate::river_files::RIVER_HEIGHT_ATTR];
 
 /// An item placed on another thing ("Entity: Above"): `wce_surface="entity"`, kept as freeform at the height it was put at.
 pub const SURFACE_ATTR: &str = "wce_surface";
@@ -502,6 +502,12 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
     let tilted = count(ROTATION_ATTR, "surface");
     if tilted != 0 {
         report.polyfilled.push(format!("{tilted} item(s) tilted to their surface written with that orientation"));
+    }
+
+    // - a river with its real heights keeps them in its river file, which is what the game reads (until TEd saves it again).
+    let rivers = (0..scene.doc().elements().len()).filter(|&e| scene.doc().get(e, crate::river_files::RIVER_HEIGHT_ATTR).is_some()).count();
+    if rivers != 0 {
+        report.polyfilled.push(format!("{rivers} river(s) with their real heights in their river files: a save in TEd lowers them again"));
     }
 
     // Elements TEd lacks, the outermost of each (with what is inside), last first so that the indices stay valid.

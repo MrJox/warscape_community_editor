@@ -34,6 +34,11 @@ pub fn rivers(scene: &TedScene) -> Vec<usize> {
     scene.find_all("SplineRiverInstance")
 }
 
+/// A river whose file has its real heights (`wce_river_height="game"`), not the scene's over 1.25: the game draws a river at its file's
+/// height, in the ground's metres, so TEd's factor pulls every river towards 0 and one on raised ground goes under it (docs/re/water.md).
+/// The rivers the editor makes have it; those without it keep their file's factor, as they join their neighbours at those heights.
+pub const RIVER_HEIGHT_ATTR: &str = "wce_river_height";
+
 /// How a file's numbers relate to tile.ted: the file's width is the point's times `width`, its height the scene height divided by `height`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Factors {
@@ -48,6 +53,11 @@ impl Factors {
     /// The factors of a river's existing file (its first point against the river's first point) when they are ones TEd has used (width
     /// 0.5, 1 or 5; height 1.25 or 1), else today's.
     pub fn of(scene: &TedScene, river: usize, existing: Option<&[u8]>) -> Self {
+        let found = Self::of_file(scene, river, existing);
+        Self { height: if scene.doc().get(river, RIVER_HEIGHT_ATTR).is_some() { 1.0 } else { found.height }, ..found }
+    }
+
+    fn of_file(scene: &TedScene, river: usize, existing: Option<&[u8]>) -> Self {
         let (Some(text), Some((w, y))) = (existing, first_point(scene, river)) else { return Self::TODAY };
         let text = String::from_utf8_lossy(text);
         let attr = |name: &str| {

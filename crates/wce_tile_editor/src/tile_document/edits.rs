@@ -1691,6 +1691,10 @@ impl TileDocument {
                 let at = local(pts[0]);
                 let positions = pts.iter().map(|&p| local(p) - at).collect::<Vec<_>>();
                 let mut n = NewInstance::new(kind).position(at).attr("lf_offset", wce_tile::ted_scene::format_number(at.y));
+                if kind == "SplineRiverInstance" && self.tile().rivers_keep_heights() {
+                    n = n.attr(wce_tile::river_files::RIVER_HEIGHT_ATTR, "game");
+                }
+
                 n.points = wce_tile::splines::new_points(&positions).into_iter().map(|p| {
                     let mut q = NewPoint::at(p.position);
                     q.attrs.insert("controlIn".to_owned(), wce_tile::new_instances::point_text(p.control_in));

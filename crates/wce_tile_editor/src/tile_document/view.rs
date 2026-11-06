@@ -557,9 +557,26 @@ impl Tile {
         &self.water_note
     }
 
+    /// Whether this tile's rivers can have their real heights (`RIVER_HEIGHT_ATTR`): a battle tile's, whose heights were measured in game.
+    pub(crate) fn rivers_keep_heights(&self) -> bool {
+        wce_tile::tile_project::height_unit(&self.project.dir) >= self.unit()
+    }
+
+    /// What a river's scene heights are divided by in its file, which is where the game has it (`river_files::Factors`). 1 in a campaign
+    /// tile, whose rivers are drawn from their files.
+    pub(crate) fn river_height_factor(&self, elem: usize) -> f64 {
+        if !self.rivers_keep_heights() {
+            return 1.0;
+        }
+
+        let sc = self.tscene();
+        let file = wce_tile::river_files::rivers(sc).iter().position(|&r| r == elem).and_then(|n| std::fs::read(self.project.dir.join(format!("river_spline{n}.xml"))).ok());
+        wce_tile::river_files::Factors::of(sc, elem, file.as_deref()).height
+    }
+
     /// Rivers: every SplineRiverInstance is a chain of Bezier segments (point i's position and controlOut, point i+1's controlIn and position,
-    /// all local to the instance in scene units); the ribbon follows it with the point's width, at the spline's own height, landscape or freeform:
-    /// the exported river_spline*.xml the game reads has the points' stored heights and no terrain_offset. terrain_offset is the point's height
+    /// all local to the instance in scene units); the ribbon follows it with the point's width, at the height the game has it, landscape or
+    /// freeform: the exported river_spline*.xml the game reads has the points' stored heights over its factor and no terrain_offset. terrain_offset is the point's height
     /// over the ground under it when TEd placed it (osgiliath minor: 23 of 26 points to the millimetre; up to 0.8 m off where the ground changed
     /// since). Adding it to the ground under every sample lifted the water of osgiliath minor's second river over the ford it starts on.
     /// The sea plane: TEd draws the sea at 0 m over every tile, whatever its tile set, as context (it is not in the file); so does this, over
@@ -600,6 +617,7 @@ impl Tile {
             }
 
             let file = self.project.dir.join(format!("river_spline{river_index}.xml"));
+            let vertical = self.river_height_factor(e);
             river_index += 1;
             // Its file while the river is as it was loaded or saved (an edit is drawn from TEd's points until the save writes its file).
             let unedited = self.project.river_texts.get(river_index - 1).is_some_and(|t| *t == sc.element_text(e));
@@ -615,7 +633,7 @@ impl Tile {
                     let Some(pos) = vec("position") else { continue };
                     let world = |q: Double3| {
                         let p = w.position + w.rotation * q;
-                        [p.x / across, p.y / u, p.z / across]
+                        [p.x / across, p.y / vertical / u, p.z / across]
                     };
 
                     let num = |n: &str, d: f64| sc.doc().get(p, n).filter(|v| !v.is_empty()).map_or(d, |v| strtod(&v).unwrap_or(0.0));
