@@ -90,9 +90,24 @@ pub fn skin_matrices(pose: &Pose, binds: Option<&[Float4x4]>) -> Vec<Float4x4> {
     }).collect()
 }
 
-/// A palette for the weighted shaders: per bone the three rows of its skinning matrix.
+/// A palette for the weighted shaders: per bone the three rows of its skinning matrix. The same rows of a pose's bones carry the static parts
+/// (`SkinnedInstance::bones`).
 pub fn palette(skin: &[Float4x4]) -> Vec<[f32; 12]> {
     skin.iter().map(|m| std::array::from_fn(|i| m.m[i / 4][i % 4])).collect()
+}
+
+/// A skeleton's pose: per bone its world matrix (model space), from its local transforms.
+pub fn world_pose(parents: &[i32], locals: &[wce_formats::anim::BoneLocal]) -> Vec<Float4x4> {
+    let mut out: Vec<Float4x4> = Vec::with_capacity(locals.len());
+    for (i, (t, q)) in locals.iter().enumerate() {
+        let local = bone_matrix(*t, *q);
+        out.push(match usize::try_from(parents[i]).ok().filter(|&p| p < i) {
+            Some(p) => out[p] * local,
+            None => local,
+        });
+    }
+
+    out
 }
 
 /// A vertex's four bone weights as the game's vertex shaders use them. A two-bone vertex (`Weighted`) stores one weight: `vs30_main` gives

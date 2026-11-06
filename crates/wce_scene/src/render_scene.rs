@@ -135,7 +135,20 @@ pub struct SkinnedPart {
     /// The decal's textures (VFS paths of the `.dds`), for the Weighted*Decal* materials.
     pub decal_diffuse: Option<String>,
     pub decal_normal: Option<String>,
+
+    /// The faction colour each channel of the colour mask takes (0 to 2).
+    pub masks: [u8; 3],
+
+    /// A part that isn't skinned (a shield, a weapon, a crest): the entry of [`SkinnedInstance::bones`] that carries it. Without one its static
+    /// meshes follow their material's bone and its weighted ones are skinned; with one, only its static meshes are drawn.
+    pub bone: Option<u32>,
+
+    /// Between that bone and the model (3 x 4 rows).
+    pub offset: [f32; 12],
 }
+
+/// The rows of the identity, as [`SkinnedPart::offset`].
+pub const SKINNED_NO_OFFSET: [f32; 12] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
 
 /// A skinned model (a unit): meshes sharing one bone palette, through the game's weighted shaders. The entity's matrix places it.
 #[derive(Clone, Debug, PartialEq)]
@@ -144,6 +157,9 @@ pub struct SkinnedInstance {
 
     /// Per bone the three rows of its skinning matrix (pose * inverse bind). Instances sharing the same `Arc` share one palette on the GPU.
     pub palette: std::sync::Arc<Vec<[f32; 12]>>,
+
+    /// Per bone the three rows of its pose (model space): what carries the static parts.
+    pub bones: std::sync::Arc<Vec<[f32; 12]>>,
     pub casts_shadow: bool,
 
     /// The material masks' colours (`rigid_faction_colours`).

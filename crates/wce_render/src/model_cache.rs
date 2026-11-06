@@ -110,6 +110,9 @@ pub enum MeshKind {
     /// The same with the WeightedSkin materials: the skin entries, whose pixels the skin lighting draws.
     WeightedSkin,
 
+    /// A static mesh with a decal (Decal, DecalDirtmap: shields), loaded with MODEL_SKINNED_SUFFIX: `rigidwithdecalmesh`, `rigidwithdecaldirtmesh`.
+    RigidDecal,
+
     /// TiledDirtmap: rigidtileddirtmapmesh, rigidstandard plus a tiled dirt map (`s_detail_map` at uv * `g_uv2_tile_interval`) faded by an
     /// alpha mask (`s_alpha_mask` at the second uv).
     TiledDirtmap,
@@ -168,6 +171,9 @@ pub struct GpuMesh {
     /// A weighted mesh's material has a dirt map (`weightedwithdirt`) or a decal (`weightedwithdecal`), or both (`weightedwithdecaldirt`).
     pub dirt: bool,
     pub decal: bool,
+
+    /// The material's bone (`i_matrix_index`; -1 for none): what carries a static mesh of a skinned model.
+    pub bone: i32,
 
     /// A decal's rectangle in the mesh's uv (`g_decal_uv_rect_coords`, the material's vector 0).
     pub decal_rect: [f32; 4],
@@ -643,7 +649,7 @@ fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::f
         })
 }
 
-/// A weighted material: its mesh kind, whether it has a dirt map and whether it has a decal; `None` for the others.
+/// A material of a skinned model's own: its mesh kind, whether it has a dirt map and whether it has a decal; `None` for the others.
 fn weighted_material(material: MaterialType) -> Option<(MeshKind, bool, bool)> {
     Some(match material {
         MaterialType::Weighted => (MeshKind::Weighted, false, false),
@@ -654,6 +660,8 @@ fn weighted_material(material: MaterialType) -> Option<(MeshKind, bool, bool)> {
         MaterialType::WeightedSkinDirtmap => (MeshKind::WeightedSkin, true, false),
         MaterialType::WeightedSkinDecal => (MeshKind::WeightedSkin, false, true),
         MaterialType::WeightedSkinDecalDirtmap => (MeshKind::WeightedSkin, true, true),
+        MaterialType::Decal => (MeshKind::RigidDecal, false, true),
+        MaterialType::DecalDirtmap => (MeshKind::RigidDecal, true, true),
         _ => return None,
     })
 }
@@ -807,7 +815,8 @@ impl ModelInner {
             let weighted = weighted_material(*mesh.material_type());
             let (dirt, decal) = weighted.map_or((false, false), |(_, dirt, decal)| (dirt, decal));
             let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
-                (_, f @ (VertexFormat::Weighted | VertexFormat::Cinematic)) if skinned && weighted.is_some() => (weighted?.0, *f),
+                (_, f @ (VertexFormat::Weighted | VertexFormat::Cinematic | VertexFormat::Static)) if skinned && weighted.is_some() => (weighted?.0, *f),
+                (MaterialType::DefaultMaterial | MaterialType::Dirtmap, VertexFormat::Static) if skinned => (if *mesh.material_type() == MaterialType::Dirtmap { MeshKind::Dirtmap } else { MeshKind::Standard }, VertexFormat::Static),
                 _ if skinned => return None,
                 (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
                 (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
@@ -925,6 +934,7 @@ impl ModelInner {
                 kind,
                 dirt,
                 decal,
+                bone: *material.i_matrix_index(),
                 decal_rect: material.params_vector4df32().iter().find(|(id, _)| *id == 0).map_or([0.0, 0.0, 1.0, 1.0], |(_, v)| [v.x, v.y, v.z, v.w]),
                 uv2_tile: if dirt || matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
                 tint: tree_tint(material),
@@ -1585,6 +1595,7 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         kind: MeshKind::Standard,
         dirt: false,
         decal: false,
+        bone: -1,
         decal_rect: [0.0; 4],
         uv2_tile: [0.0; 2],
         tint: [1.0; 12],
