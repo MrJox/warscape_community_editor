@@ -391,7 +391,7 @@ fn a_fill_is_the_general_value_times_its_types() {
 #[test]
 fn a_preview_turns_without_being_made_again_and_as_the_item_will_be() {
     use wce_scene::render_scene::RenderScene;
-    use wce_tile_editor::tile_document::turned;
+    use wce_tile_editor::tile_document::{tilted, turned};
 
     let (_dir, mut d) = open_with_house();
     let mut scene = RenderScene::default();
@@ -401,27 +401,43 @@ fn a_preview_turns_without_being_made_again_and_as_the_item_will_be() {
     let at = Float3::new(20.0, 3.0, 30.0);
     let shown = |s: &RenderScene| s.entities().iter().filter(|e| e.transient).map(|e| (e.id, e.world)).collect::<Vec<_>>();
 
-    d.tile_mut().set_preview(&mut scene, Some(&text), at, 0.0);
+    d.tile_mut().set_preview(&mut scene, Some(&text), at, 0.0, None);
     let (before, structure) = (shown(&scene), scene.structure_revision());
     assert!(!before.is_empty(), "the preview shows");
 
-    d.tile_mut().set_preview(&mut scene, Some(&text), at, 37.0);
+    d.tile_mut().set_preview(&mut scene, Some(&text), at, 37.0, None);
     let by_yaw = shown(&scene);
     assert_eq!(by_yaw.iter().map(|e| e.0).collect::<Vec<_>>(), before.iter().map(|e| e.0).collect::<Vec<_>>(), "the same entities");
     assert_eq!(scene.structure_revision(), structure, "nothing was made again");
     assert!(by_yaw[0].1 != before[0].1, "it turned");
 
     // What a click places, shown from its turned text.
-    d.tile_mut().set_preview(&mut scene, Some(&turned(&text, 37.0)), at, 0.0);
+    d.tile_mut().set_preview(&mut scene, Some(&turned(&text, 37.0)), at, 0.0, None);
     let placed = shown(&scene);
     assert_eq!(placed.len(), by_yaw.len());
-    for (a, b) in by_yaw.iter().zip(&placed) {
-        for r in 0..3 {
-            for c in 0..4 {
-                assert!((a.1.m[r][c] - b.1.m[r][c]).abs() < 1e-3, "[{r}][{c}]: {:?} for {:?}", a.1.m, b.1.m);
+    let same = |a: &[(u32, wce_foundation::math::Float4x4)], b: &[(u32, wce_foundation::math::Float4x4)]| {
+        assert_eq!(a.len(), b.len());
+        for (a, b) in a.iter().zip(b) {
+            for r in 0..3 {
+                for c in 0..4 {
+                    assert!((a.1.m[r][c] - b.1.m[r][c]).abs() < 1e-3, "[{r}][{c}]: {:?} for {:?}", a.1.m, b.1.m);
+                }
             }
         }
-    }
+    };
+
+    same(&by_yaw, &placed);
+
+    // Tilted to a surface as well: the same entities again, and what a click places: turned, then tilted.
+    let normal = Double3::new(0.3, 1.0, -0.2);
+    d.tile_mut().set_preview(&mut scene, Some(&text), at, 0.0, None);
+    let (before, structure) = (shown(&scene), scene.structure_revision());
+    d.tile_mut().set_preview(&mut scene, Some(&text), at, 37.0, Some(normal));
+    let by_matrix = shown(&scene);
+    assert_eq!(by_matrix.iter().map(|e| e.0).collect::<Vec<_>>(), before.iter().map(|e| e.0).collect::<Vec<_>>(), "the same entities");
+    assert_eq!(scene.structure_revision(), structure, "nothing was made again");
+    d.tile_mut().set_preview(&mut scene, Some(&tilted(&turned(&text, 37.0), normal)), at, 0.0, None);
+    same(&by_matrix, &shown(&scene));
 }
 
 /// What a scene shows of the items: (item, kind, its matrix's bits), sorted.

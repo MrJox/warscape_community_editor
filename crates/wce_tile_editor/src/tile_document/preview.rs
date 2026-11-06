@@ -5,11 +5,12 @@
 //! instances' models, decals and effects, a marker box for the others and the outlines of its polygons, the whole at the cursor (instances
 //! standing on the terrain where their surface mode says so). Its entities are not pickable and are not in the document.
 
-use wce_foundation::math::{Double3, Float3, Float4x4, rotation_y};
+use wce_foundation::math::{Double3, Double3x3, Float3, Float4x4, rotation_y};
 use wce_scene::render_scene::{Decal, EntityId, MeshInstance, Overlay, Payload, RenderScene, VfxEmitter, overlay_colour};
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, world_transform};
 
+use super::draft::tilt_to;
 use super::index::{matrix_of, piece_copy, static_piece, vegetation_model};
 use super::{TERRAIN, Tile, scene_key};
 
@@ -23,7 +24,7 @@ pub(crate) struct Preview {
     lines: Vec<(Float3, Float3)>,
     entities: Vec<EntityId>,
     overlay: EntityId,
-    at: Option<(Float3, f32)>,
+    at: Option<(Float3, Float4x4)>,
     scene_key: usize,
 }
 
@@ -72,9 +73,10 @@ impl Tile {
 
     /// Shows `text` (an element as `insert_element_text` takes it) at `at` (world metres, on the ground), or nothing (`None`). Reading the
     /// text again only when it changed; moving it is cheap.
-    /// `yaw` (degrees about the vertical) turns what `text` shows: a matrix of what is there, so that turning it, every frame of an Alt drag,
-    /// does not make it again as a new text would.
-    pub fn set_preview(&mut self, scene: &mut RenderScene, text: Option<&[u8]>, at: Float3, yaw: f32) {
+    /// `yaw` (degrees about the vertical) turns what `text` shows and `normal` then tilts it to a surface (`draft::tilted`), the order a
+    /// click has them in: a matrix of what is there, so that neither makes it again as a new text would, every frame of an Alt drag or of
+    /// the mouse going over the ground.
+    pub fn set_preview(&mut self, scene: &mut RenderScene, text: Option<&[u8]>, at: Float3, yaw: f32, normal: Option<Double3>) {
         let key = scene_key(scene);
         let gone = self.preview.scene_key != key || self.preview.entities.iter().chain([&self.preview.overlay]).any(|&e| e != 0 && scene.find(e).is_none());
         let Some(text) = text else {
@@ -102,12 +104,17 @@ impl Tile {
             self.preview.at = None;
         }
 
-        if self.preview.at == Some((at, yaw)) {
+        let mut tilt = Float4x4::IDENTITY;
+        for (row, r) in tilt.m.iter_mut().zip(normal.map_or(Double3x3::IDENTITY, tilt_to).m) {
+            row[..3].copy_from_slice(&r.map(|v| v as f32));
+        }
+
+        let turn = tilt * rotation_y(yaw.to_radians());
+        if self.preview.at == Some((at, turn)) {
             return;
         }
 
-        self.preview.at = Some((at, yaw));
-        let turn = rotation_y(yaw.to_radians());
+        self.preview.at = Some((at, turn));
         for (item, &e) in self.preview.items.iter().zip(&self.preview.entities) {
             let mut m = turn * item.local;
             let (x, z) = (m.m[0][3] + at.x, m.m[2][3] + at.z);
