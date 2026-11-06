@@ -218,7 +218,7 @@ fn model_text(doc: &XmlDoc, building: usize, attrs: &[(&str, &str)], piece: &str
     for (name, default) in attrs {
         let value = match *name {
             "key" => piece.as_bytes().to_vec(),
-            "scale" => b"vector(1,1,1)".to_vec(),
+            "scale" => own("scale").unwrap_or_else(|| b"vector(1,1,1)".to_vec()),
             "name" => {
                 let mut n = own("name").unwrap_or_default();
                 n.extend_from_slice(format!("_{k}{PROP_PIECE_SUFFIX}").as_bytes());
@@ -309,6 +309,12 @@ mod tests {
         assert!(out.contains(">\n    <SIMPLE_MESH_INSTANCE"), "each on its line at the building's indent: {out}");
         assert!(XmlDoc::parse(out.into_bytes()).is_ok());
         assert_eq!(report, PropExport { buildings: 1, pieces: 2, kept: vec![], water_after: 1 });
+    }
+
+    #[test]
+    fn a_scaled_building_gives_scaled_models() {
+        let (out, _) = apply(scene("scale=\"vector(2,0.5,1)\" wce_export_as_prop=\"true\"").into_bytes(), Some(&models_in)).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap().matches("scale=\"vector(2,0.5,1)\"").count(), 2);
     }
 
     #[test]
