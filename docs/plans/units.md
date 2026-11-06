@@ -68,7 +68,8 @@ agree. Which light entry reads the third target (`skinlm` or the `slm` in use) i
 ### Animations
 
 - 6,225 `.anim` (226 MB): 6,194 version 5, all of which match the layout to the byte. 3,880 use `rome_man_game`.
-- 31 are version 4: same structure, UTF-16 strings, decoded too. They include archers firing from walls.
+- 31 are version 4 (siege towers, archers firing from walls): UTF-16 strings and no track tables. After the bones, two bit sets of the
+  moving bones, the frame count, then per frame every bone's translation and rotation in f32, so they need no skeleton.
 - **Bones without a track keep the skeleton's pose**, not the identity the format spec says. A normal clip has 6 translation tracks
   (`bn_hips`, `bn_weapon_01..05`) and 32 rotation tracks of 50 bones. The other translations, and the fingers, eyelids, eyes and jaw, come
   from the skeleton (`animations/skeletons/<name>.anim`, frame 0): `Animation::on_skeleton`. Checked by `unit_pose_check`: bone lengths stay
