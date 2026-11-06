@@ -196,6 +196,14 @@ centre lies inside the volume's box (in the volume's frame), spawns the volumetr
 Check: in a siege battle, watch a wall section collapse from intact to destroyed, and compare with the editor's
 (`tile_edit <elem> destruction_level 2` on an intact wall).
 
+## A building's scale (2026-11-06, in game)
+
+The building list's record has a `scale` (a vec3), and TEd has no such property and writes 1. **The game ignores it**: on `plains/8x8/8x8_aa`, vanilla,
+`christian_church_1` at scales 1, 2, 0.5 and (1, 2.5, 1) in `building_list` (the floats checked in the exported file) all stood at the same size in a
+battle. The same four as prop markers (`wce_tile::export_as_prop`) were scaled, the non-uniform one too, behaved as props (no collision, no damage), and
+at scale 1 matched the building in size and height. So a building can be scaled only as a prop, and not by TEd's restriction: the game's. Not tried: the
+`scale` of a `Building` in a BMD (the escalation layers), and the matrix a prop marker takes beyond scale (shear).
+
 ## Look properties (2026-10-27)
 
 TEd (`~/wce_re/ted_proj`) and the kit's Warscape.AssemblyKit.dll (`~/wce_re/bob_proj`):
