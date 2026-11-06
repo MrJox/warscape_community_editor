@@ -57,7 +57,9 @@ Each editor is a Cargo feature of `wce_app`, so a release builds only the editor
 
 Pushing a tag `vX.Y.Z` that matches the workspace version (`[workspace.package] version` in `Cargo.toml`) runs
 `.github/workflows/release.yml`: it builds `wce.exe` for Windows and publishes a GitHub release with `wce-X.Y.Z-windows-x64.zip`. A tag with a
-pre-release part (`v0.2.0-beta.1`) is published as a pre-release.
+pre-release part (`v0.2.0-beta.1`) is published as a pre-release. Nightly builds run daily at 02:00 UTC (whenever new commits
+land on master) and on demand via `.github/workflows/nightly.yml`, publishing pre-releases tagged `v<version>-nightly.YYYYMMDD`
+with `wce-<version>-nightly.YYYYMMDD-windows-x64.zip`.
 
 Help > Update Manager manages the editor's updates and rpfm's schemas. It looks for a newer release when an interactive session starts
 (release builds; Settings > General > Updates turns it off or includes pre-releases). On Windows it downloads the zip with a progress bar,

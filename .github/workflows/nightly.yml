@@ -1,0 +1,155 @@
+# Builds a Windows nightly release every day at 02:00 UTC (if there are new commits on master)
+# or on demand via workflow_dispatch.
+#
+# Releases are tagged as `v<version>-nightly.YYYYMMDD` and marked as GitHub pre-releases,
+# matching the semver naming convention expected by `crates/wce_updater` when pre-releases are enabled.
+
+name: Nightly Release
+
+on:
+  schedule:
+    # 02:00 UTC every day
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check for new commits
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: check
+        name: Check if master has new commits
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual trigger: proceeding with nightly build."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Find the newest tag matching v*-nightly.*
+          latest_nightly_tag=$(git tag -l "v*-nightly.*" --sort=-creatordate | head -n 1)
+          if [ -z "$latest_nightly_tag" ]; then
+            echo "No previous nightly tag found: proceeding with build."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Latest nightly tag: $latest_nightly_tag"
+          count=$(git rev-list "${latest_nightly_tag}..HEAD" --count)
+          echo "Commits on HEAD since $latest_nightly_tag: $count"
+
+          if [ "$count" -gt 0 ]; then
+            echo "New commits detected ($count). Proceeding with build."
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No new commits since $latest_nightly_tag: skipping nightly build."
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows:
+    name: Windows build
+    needs: check
+    if: needs.check.outputs.should_build == 'true'
+    runs-on: windows-2022
+    # windows-latest ships only Visual Studio 2026; .cargo/config.toml pins the VS 2022 generator.
+
+    env:
+      # A short target path, so that SDL's MSBuild compiler check can create its temporary files (README, Windows).
+      CARGO_TARGET_DIR: C:\t
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Compute nightly version and update Cargo.toml
+        shell: bash
+        run: |
+          date=$(date -u +'%Y%m%d')
+          base_version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "wce_app") | .version')
+
+          # Parse major.minor.patch
+          IFS='.' read -r major minor patch <<< "$base_version"
+
+          # If the current workspace base version is already an official release tag (e.g. v0.0.1),
+          # the upcoming nightly pre-release targets the next patch version.
+          if git rev-parse "v${base_version}" >/dev/null 2>&1; then
+            next_patch=$((patch + 1))
+            nightly_version="${major}.${minor}.${next_patch}-nightly.${date}"
+          else
+            nightly_version="${base_version}-nightly.${date}"
+          fi
+
+          tag_name="v${nightly_version}"
+          echo "Base version: ${base_version}"
+          echo "Nightly version: ${nightly_version}"
+          echo "Tag name: ${tag_name}"
+
+          echo "VERSION=${nightly_version}" >> "$GITHUB_ENV"
+          echo "TAG_NAME=${tag_name}" >> "$GITHUB_ENV"
+
+          # Update [workspace.package] version in root Cargo.toml so the built binary knows its nightly version
+          sed -i "s/^version = \"${base_version}\"/version = \"${nightly_version}\"/" Cargo.toml
+
+          # Verify Cargo.toml was updated
+          updated_version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "wce_app") | .version')
+          if [ "${updated_version}" != "${nightly_version}" ]; then
+            echo "::error::Cargo.toml version update failed: expected ${nightly_version}, got ${updated_version}"
+            exit 1
+          fi
+
+      - name: Build
+        run: cargo build --release -p wce_app
+
+      # SDL3 links statically, so wce.exe needs no SDL3.dll beside it.
+      - name: Package
+        shell: pwsh
+        run: |
+          $dist = New-Item -ItemType Directory -Force dist
+          Copy-Item "$env:CARGO_TARGET_DIR\release\wce.exe" $dist
+          Copy-Item README.md, THIRD_PARTY.md $dist
+          Compress-Archive -Path "$dist\*" -DestinationPath "wce-$env:VERSION-windows-x64.zip"
+
+      - name: Publish the nightly release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
+          name: Warscape Community Editor Nightly ${{ env.VERSION }}
+          files: wce-${{ env.VERSION }}-windows-x64.zip
+          prerelease: true
+          make_latest: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Prune old nightly releases (keep last 14)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --exclude-drafts --limit 100 --json tagName,isPrerelease | \
+            jq -r '.[] | select(.isPrerelease and (.tagName | test("nightly"))) | .tagName' | \
+            tail -n +15 | while read -r tag; do
+              if [ -n "$tag" ]; then
+                echo "Deleting old nightly release and tag: $tag"
+                gh release delete "$tag" --yes --cleanup-tag || true
+              fi
+            done
+

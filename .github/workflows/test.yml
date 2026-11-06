@@ -31,11 +31,11 @@ jobs:
           rustup default stable
           git config --global --add safe.directory '*'
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The CMake step skips what its stamps in the prefix say is built.
       - name: Cache DXVK-native and vkd3d
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: build/_deps/prefix
           key: linux-deps-${{ hashFiles('cmake/linux_deps.cmake', 'CMakeLists.txt') }}
@@ -61,7 +61,7 @@ jobs:
       CARGO_TARGET_DIR: C:\t
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
