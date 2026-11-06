@@ -4,12 +4,12 @@
 //! TODO: collide with the buildings' real collision meshes (their cs2 hard collision, `docs/re/buildings.md`) instead of their models'
 //! bounding boxes: a box shuts a courtyard or the space under an arch.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use wce_editor_core::camera_controller::CameraWorld;
 use wce_foundation::math::{Float3, Float4x4, inverse, length};
 use wce_render::model_cache::{ModelCache, State};
-use wce_scene::render_scene::{Payload, RenderScene};
+use wce_scene::render_scene::{EntityId, Payload, RenderScene};
 
 use crate::coords::GroundProbe;
 
@@ -25,30 +25,38 @@ struct Obstacle {
     bmax: Float3,
 }
 
-/// The models' boxes of a scene, in buckets over the ground, read again when the scene changes (or while models are still loading).
+/// The models' boxes of a scene, in buckets over the ground, read again when its structure changes, an obstacle moves (or while models are
+/// still loading). Not when anything else moves: a preview follows the mouse, and reading every box again for it cost a frame's worth of
+/// time at every step of the mouse.
 #[derive(Default)]
 pub struct ObstacleProbe {
     key: (usize, u64),
+    moved: u64,
     missing: bool,
     frames: u32,
+    ids: HashSet<EntityId>,
     boxes: Vec<Obstacle>,
     buckets: HashMap<(i32, i32), Vec<u32>>,
 }
 
 impl ObstacleProbe {
     fn refresh(&mut self, scene: &RenderScene, models: &ModelCache) {
-        let key = (std::ptr::from_ref(scene) as usize, scene.revision());
+        let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision());
+        let moved = scene.moved_since(&mut self.moved);
+        let obstacle_moved = moved.is_none_or(|ids| ids.iter().any(|id| self.ids.contains(id)));
         self.frames += 1;
-        if key == self.key && !(self.missing && self.frames >= 60) {
+        if key == self.key && !obstacle_moved && !(self.missing && self.frames >= 60) {
             return;
         }
 
+        wce_foundation::wce_prof!("camera.obstacles_refresh");
         (self.key, self.missing, self.frames) = (key, false, 0);
+        self.ids.clear();
         self.boxes.clear();
         self.buckets.clear();
         for e in scene.entities() {
             let Payload::MeshInstance(mi) = &e.payload else { continue };
-            if !scene.drawable(e) {
+            if !scene.drawable(e) || e.transient {
                 continue;
             }
 
@@ -76,6 +84,7 @@ impl ObstacleProbe {
             }
 
             let n = self.boxes.len() as u32;
+            self.ids.insert(e.id);
             self.boxes.push(Obstacle { world: e.world, to_local: inverse(&e.world), bmin: m.bmin, bmax: m.bmax });
             for i in (lo[0] / BUCKET).floor() as i32..=(hi[0] / BUCKET).floor() as i32 {
                 for j in (lo[1] / BUCKET).floor() as i32..=(hi[1] / BUCKET).floor() as i32 {

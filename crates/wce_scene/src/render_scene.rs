@@ -928,6 +928,9 @@ pub struct Entity {
 
     /// Not pickable (an inactive layer's instances).
     pub locked: bool,
+
+    /// Not a thing of the world: a preview of what a click would place. Drawn, but nothing stands on it or bumps into it.
+    pub transient: bool,
     pub payload: Payload,
 }
 
@@ -1232,7 +1235,7 @@ impl RenderScene {
         }
 
         self.index[id as usize] = self.entities.len() as u32;
-        self.entities.push(Entity { id, layer, world, source, visible: true, locked: false, payload });
+        self.entities.push(Entity { id, layer, world, source, visible: true, locked: false, transient: false, payload });
 
         // Not logged: an entity added has an id past the last one a consumer saw.
         self.revision += 1;
