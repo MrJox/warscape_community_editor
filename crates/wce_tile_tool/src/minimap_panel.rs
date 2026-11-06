@@ -20,7 +20,7 @@ use wce_tile_editor::terrain_bake::{BakedColour, TerrainView};
 use wce_tile_editor::tile_document::TileDocument;
 use wce_tile_editor::tile_document::minimap::MinimapSiege;
 
-use crate::ground_views::{AUTO_NOGO_TIP, chip, season_name, view_items, view_name};
+use crate::ground_views::{AUTO_NOGO_TIP, begin_chip_popup, chip, season_name, view_items, view_name};
 use crate::tool::document_id;
 
 /// The side of the pictures made for the minimap, at most.
@@ -464,14 +464,14 @@ impl MinimapUi {
         gui::set_cursor_screen_pos(v2(lo.x + 6.0, lo.y + 6.0));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         let mut over = false;
-        if gui::begin_child("##minimapchip", v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
+        if gui::begin_pill("##minimapchip") {
             let tip = format!("Minimap: {}\nClick: the ground views, the heights or nothing", base_name(self.base));
             if chip(self.base != Base::Ground(TerrainView::Colour), icons::LAYERS, "minimapbase", &tip) {
                 gui::open_popup("minimapbase");
             }
 
             over = gui::is_item_hovered();
-            if gui::begin_popup("minimapbase") {
+            if begin_chip_popup("minimapbase") {
                 gui::text_disabled("Minimap");
                 let current = match self.base {
                     Base::Ground(v) => Some(v),

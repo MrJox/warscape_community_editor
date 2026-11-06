@@ -8,7 +8,7 @@ use wce_editor::editor::Editor;
 use wce_editor::{gui, icons};
 use wce_tile_editor::tile_document::{GROUPS, KINDS, TechKind, TechScope, TechSettings, TileDocument};
 
-use crate::ground_views::chip;
+use crate::ground_views::{begin_chip_popup, chip};
 use crate::tool::{TileTool, document_id};
 
 const SCOPE_TIP: &str = "All buildings: every building within the range of the camera (the nearest first; a limit keeps a whole city from being drawn).\n\
@@ -43,12 +43,12 @@ impl TileTool {
         tip.push_str("\nClick: choose what of the buildings' logic files to draw (collision, platforms, pipes, formation lines, emitters ...)");
         gui::set_cursor_screen_pos(gui::v2(origin.x + size.x - self.ground_chip_width - self.tech_chip_width - 12.0, origin.y + top));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
-        if gui::begin_child("##techchip", gui::v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
+        if gui::begin_pill("##techchip") {
             if chip(s.any(), icons::SQUARE_DASHED, "techviews", &tip) {
                 gui::open_popup("techviews");
             }
 
-            if gui::begin_popup("techviews") {
+            if begin_chip_popup("techviews") {
                 self.draw_tech_popup(e, id);
                 gui::end_popup();
             }

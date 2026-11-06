@@ -14,6 +14,7 @@ use std::path::Path;
 use rpfm_lib::files::Decodeable;
 use rpfm_lib::files::asset_variation_db::AssetVariationDb;
 use wce_editor::editor::Editor;
+use wce_editor::chips::{begin_chip_popup, chip};
 use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
 use wce_foundation::log;
@@ -485,26 +486,13 @@ impl WeatherUi {
             let value = self.choice.query.get(category).cloned().unwrap_or_default();
             let values = env.category(category).map(|m| m.values().clone()).unwrap_or_default();
             // Icon only (lit while it filters); the value in the tooltip.
-            if !value.is_empty() {
-                let h = theme::palette().highlight;
-                gui::push_style_color(gui::COL_TEXT, gui::v4(h[0], h[1], h[2], h[3]));
-            }
-
-            let clicked = gui::small_button(&format!("{icon}##chip{category}"));
-            if !value.is_empty() {
-                gui::pop_style_color(1);
-            }
-
-            if clicked {
+            let tip = format!("{label}: {}", if value.is_empty() { "any" } else { &value });
+            if chip(!value.is_empty(), icon, &format!("button{category}"), &tip) {
                 gui::open_popup(&format!("chip{category}"));
             }
 
-            if gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{label}: {}", if value.is_empty() { "any" } else { &value }));
-            }
-
-            gui::same_line();
-            if gui::begin_popup(&format!("chip{category}")) {
+            gui::same_line_touching();
+            if begin_chip_popup(&format!("chip{category}")) {
                 gui::text_disabled(label);
                 if gui::selectable("any", value.is_empty(), 0) {
                     changed = Some((category, String::new()));
@@ -525,22 +513,15 @@ impl WeatherUi {
         }
 
         let file = e.weather_preview().map(str::to_owned);
-        if gui::small_button(&format!("{}##weatherfile", icons::CLOUD_SUN)) {
+        let tip = format!("Lit by {}\nClick: every filter and file (the Weather panel)", file.as_deref().unwrap_or("the default light"));
+        if chip(false, icons::CLOUD_SUN, "weatherfile", &tip) {
             e.pending_focus = Some("Weather".to_owned());
         }
 
-        if gui::is_item_hovered() {
-            gui::set_tooltip(&format!("Lit by {}\nClick: every filter and file (the Weather panel)", file.as_deref().unwrap_or("the default light")));
-        }
-
         if let Some(f) = file {
-            gui::same_line();
-            if gui::small_button(&format!("{}##editweather", icons::PENCIL)) {
+            gui::same_line_touching();
+            if chip(false, icons::PENCIL, "editweather", "Edit it in the Weather tool: a copy in the output folder, which the tile follows (and keeps)") {
                 self.edit(e, &f);
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip("Edit it in the Weather tool: a copy in the output folder, which the tile follows (and keeps)");
             }
         }
 
