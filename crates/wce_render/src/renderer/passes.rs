@@ -270,7 +270,7 @@ impl Renderer {
     /// Binds a mesh's material for a rigid or tree pixel shader: its textures in the shader's slots, the dirt maps' names, the tiled dirt's
     /// repeats, a tree's tint and season.
     pub(crate) fn bind_mesh_material(&mut self, ps: &Rc<GameShader>, slots: &[Option<u32>; TEX_SLOTS], m: &GpuMesh) {
-        if matches!(m.kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
+        if m.dirt || matches!(m.kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
             self.cbs.set_f("rigid_config_PS", "g_uv2_tile_interval", &m.uv2_tile);
             self.upload();
         }
@@ -283,7 +283,7 @@ impl Renderer {
         }
 
         // rigidwithdirtmesh names its dirt map and mask differently.
-        if m.kind == MeshKind::Dirtmap {
+        if m.dirt || m.kind == MeshKind::Dirtmap {
             let srv = |t: usize| m.tex[t].read().ok().and_then(|tex| tex.srv.clone());
             bind_srv(&self.ctx, ps, "s_decal_dirt_map", srv(crate::model_cache::TEX_DETAIL).as_ref());
             bind_srv(&self.ctx, ps, "s_decal_dirt_mask", srv(crate::model_cache::TEX_ALPHA_MASK).as_ref());
@@ -384,9 +384,17 @@ impl Renderer {
     }
 
     pub(crate) fn pass_directional_light(&mut self) {
-        let Some(ps) = self.scene_shader(DIR_LIGHT_PS) else { return };
+        self.directional_light(DIR_LIGHT_PS, 1);
+        if self.skin_drawn() {
+            self.directional_light(DIR_LIGHT_SKIN_PS, SKIN_STENCIL);
+        }
+    }
+
+    /// The sun over one lighting model's pixels.
+    fn directional_light(&mut self, shader: &str, stencil: u32) {
+        let Some(ps) = self.scene_shader(shader) else { return };
         self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv_read_depth().as_ref());
-        self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), 1);
+        self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), stencil);
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
 
         self.cbs.set_f("shroud_PS", "g_shroud_enabled", &[0.0]);
@@ -918,7 +926,7 @@ impl Renderer {
 
         // Fog over geometry only (stencil 1): sky pixels keep the sky.
         self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv_read_depth().as_ref());
-        self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), 1);
+        self.ctx.set_depth_stencil_state(self.states.ds_geometry.as_ref(), 1);
         self.ctx.set_blend_state(self.states.bs_alpha.as_ref());
 
         self.upload();

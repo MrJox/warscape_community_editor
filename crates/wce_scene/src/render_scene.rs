@@ -128,8 +128,13 @@ pub struct SkinnedPart {
     /// VFS path of the .rigid_model_v2.
     pub model: String,
 
-    /// rgb, and in `.w` the colour mask channel it applies to (1 to 3; 0: none).
+    /// rgb, and in `.w` the colour mask channel it applies to (1 to 3). 0: no tint, the mask takes the faction colours; any other: the mask's
+    /// other channels stay white.
     pub tint: [f32; 4],
+
+    /// The decal's textures (VFS paths of the `.dds`), for the Weighted*Decal* materials.
+    pub decal_diffuse: Option<String>,
+    pub decal_normal: Option<String>,
 }
 
 /// A skinned model (a unit): meshes sharing one bone palette, through the game's weighted shaders. The entity's matrix places it.

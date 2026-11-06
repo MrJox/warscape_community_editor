@@ -137,6 +137,9 @@ pub(crate) const FADED_PASSES: [(MeshKind, &str); 4] = [
 
 pub(crate) const DIR_LIGHT_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef";
 
+/// The sun on skin pixels (`SKIN_STENCIL`): G-buffer channel 2 not squared, channel 3 the skin mask.
+pub(crate) const DIR_LIGHT_SKIN_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_skinlm_highdef";
+
 /// The environment specular pass (DEFERRED_ENVIRONMENT_SPECULAR_SHADER, full resolution; the game runs their MSAA variants) and its blurs.
 pub(crate) const ENV_SPECULAR_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model_full_res";
 pub(crate) const REFLECTION_BLUR_X_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_x";
@@ -257,6 +260,12 @@ pub(crate) const DECAL_RECEIVER: u8 = 0x80;
 
 /// The stencil bits below the decal bit: what the lights, the fog and the terrain's resolve compare.
 pub(crate) const STENCIL_LOW: u8 = 0x7F;
+
+/// The stencil of skin pixels, which only the skin lighting draws. The engine registers its lighting by model, each with a number (default 0,
+/// slm 1, ulm 2, skinlm 3; REFLECTION_LIGHTING_SHADER, fn 0x116e4b60) and its lights compare with mask 3, so its skin is stencil 3 (**ASSUMPTION**:
+/// read from those, not captured). Here bit 1 marks the terrain (`TERRAIN_STENCIL`), so skin has a bit of its own; compared with `STENCIL_LOW`
+/// it isn't 1, so the standard lighting leaves it, and the tests of all geometry (`States::ds_geometry`) compare bit 0.
+pub(crate) const SKIN_STENCIL: u32 = 0x41;
 
 /// The terrain surface's and the TerrainBlend meshes' stencil: 2 (the terrain pixels the blend boxes and the resolve take), and decals.
 pub(crate) const TERRAIN_STENCIL: u32 = 2 | DECAL_RECEIVER as u32;

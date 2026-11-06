@@ -49,7 +49,7 @@ fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
         ib: None,
         index_count: 0,
         alpha_mode: 0,
-        stride: 32,
+        stride: 32, dirt: false, decal: false, decal_rect: [0.0; 4],
         kind: Default::default(),
         uv2_tile: [0.0; 2],
         tint: [1.0; 12],

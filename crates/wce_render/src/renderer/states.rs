@@ -18,6 +18,9 @@ pub(crate) struct States {
     /// The texture filtering the quality samplers were made for.
     pub filtering: i32,
     pub ds_gbuffer: Option<ID3D11DepthStencilState>,
+
+    /// What covers all the geometry, skin too (compare with 1): `ds_light` is the standard lighting's.
+    pub ds_geometry: Option<ID3D11DepthStencilState>,
     pub ds_sky: Option<ID3D11DepthStencilState>,
     pub ds_light: Option<ID3D11DepthStencilState>,
     pub ds_off: Option<ID3D11DepthStencilState>,
@@ -110,6 +113,8 @@ impl States {
         d.BackFace = equal;
         d.StencilReadMask = super::STENCIL_LOW;
         st.ds_light = dev.create_depth_stencil_state(&d).ok();
+        d.StencilReadMask = 1;
+        st.ds_geometry = dev.create_depth_stencil_state(&d).ok();
         d.StencilReadMask = 0xFF;
         d.StencilEnable = false.into();
         st.ds_off = dev.create_depth_stencil_state(&d).ok();
