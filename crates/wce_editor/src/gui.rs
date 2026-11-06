@@ -178,6 +178,19 @@ pub fn same_line() {
     call!(sys::igSameLine(0.0, -1.0))
 }
 
+/// On the same line if an item `width` wide still fits there, else on the next (so a row of items wraps instead of overflowing its window).
+pub fn same_line_or_wrap(width: f32) {
+    same_line();
+    if content_region_avail().x < width {
+        new_line();
+    }
+}
+
+/// The width of a button with this label.
+pub fn button_width(label: &str) -> f32 {
+    calc_text_size(label).x + 2.0 * call!((*sys::igGetStyle()).FramePadding.x)
+}
+
 pub fn same_line_at(x: f32) {
     call!(sys::igSameLine(x, -1.0))
 }
