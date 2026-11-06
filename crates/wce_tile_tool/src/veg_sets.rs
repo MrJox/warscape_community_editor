@@ -336,6 +336,6 @@ fn set_rows(set: &mut VegetationSet) {
     }
 
     gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
-    gui::text_wrapped("Ctrl + click or Ctrl + Enter on a tree in Create or Shift+A adds it here.");
+    gui::text_wrapped("Ctrl + click or Ctrl + Enter on a tree in Create or Space adds it here.");
     gui::pop_style_color(1);
 }
