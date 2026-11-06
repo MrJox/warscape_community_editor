@@ -5,6 +5,7 @@ pub mod camera_world;
 pub mod chips;
 pub mod commands;
 pub mod coords;
+pub mod gizmo_reach;
 pub mod editor;
 pub mod gui;
 pub mod icons;
