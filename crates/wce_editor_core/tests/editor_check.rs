@@ -460,6 +460,27 @@ fn command_registry_and_scripts() {
     assert!(t.failed() && host.calls == 1 && t.error().contains("bad"), "a failing line stops the script with its line number");
 }
 
+/// A flat ground at y = 0 in a scene of two game units per scene unit, as a tile's.
+struct HalfScaleWorld;
+
+impl CameraWorld for HalfScaleWorld {
+    fn ground(&mut self, _x: f32, _z: f32) -> Option<f32> {
+        Some(0.0)
+    }
+
+    fn ray_ground(&mut self, _o: Float3, _d: Float3) -> Option<Float3> {
+        None
+    }
+
+    fn push_out(&mut self, p: Float3, _r: f32) -> Float3 {
+        p
+    }
+
+    fn game_units(&self) -> f32 {
+        2.0
+    }
+}
+
 /// A flat ground at y = 0 and one 10 m box at (50, 0..10, 0).
 struct FlatWorld;
 
@@ -520,6 +541,9 @@ fn cameras() {
     g.set_camera(&Camera { eye: Float3::new(0.0, 300.0, 0.0), target: Float3::new(0.0, 0.0, 10.0), ..Camera::default() });
     g.update(&CameraInput { dt: 0.01, ..Default::default() }, &CameraOptions { game_limits: true, ..opts }, &mut FlatWorld);
     assert!((g.camera().eye.y - GAME_MAX_HEIGHT).abs() < 1e-3, "the game's limits hold the height");
+    g.set_camera(&Camera { eye: Float3::new(0.0, 300.0, 0.0), target: Float3::new(0.0, 0.0, 10.0), ..Camera::default() });
+    g.update(&CameraInput { dt: 0.01, ..Default::default() }, &CameraOptions { game_limits: true, ..opts }, &mut HalfScaleWorld);
+    assert!((g.camera().eye.y - GAME_MAX_HEIGHT / 2.0).abs() < 1e-3, "the limits are in game units: half as many in a half-scale scene");
 
     // Smoothing: the view catches up over a few frames.
     let mut s = TotalWarCamera::default();

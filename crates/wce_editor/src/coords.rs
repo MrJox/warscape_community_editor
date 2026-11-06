@@ -4,9 +4,9 @@
 
 use std::collections::HashMap;
 
-use wce_foundation::math::{Float3, normalize};
+use wce_foundation::math::{Float3, length, normalize};
 use wce_scene::camera::Camera;
-use wce_scene::render_scene::{EntityId, Payload, RenderScene};
+use wce_scene::render_scene::{EntityId, Payload, RenderScene, Water};
 
 use crate::gui;
 
@@ -49,11 +49,34 @@ impl BattleFrame {
 /// The side of the grid the terrains are bucketed on (scene units).
 const BUCKET: f32 = 256.0;
 
-/// The scene's terrains by the grid squares their bounds touch, made again when the scene's structure or terrains change.
+/// A sea plane: its height and its rectangle.
+#[derive(Clone, Copy, Debug)]
+struct SeaPlane {
+    y: f32,
+    lo: [f32; 2],
+    hi: [f32; 2],
+}
+
+impl SeaPlane {
+    fn of(w: &Water) -> Option<Self> {
+        let first = w.verts.first()?;
+        let start = Self { y: first.y, lo: [first.x, first.z], hi: [first.x, first.z] };
+        Some(w.verts.iter().fold(start, |s, v| Self {
+            y: s.y.max(v.y), lo: [s.lo[0].min(v.x), s.lo[1].min(v.z)], hi: [s.hi[0].max(v.x), s.hi[1].max(v.z)],
+        }))
+    }
+
+    fn covers(&self, x: f32, z: f32) -> bool {
+        (self.lo[0]..=self.hi[0]).contains(&x) && (self.lo[1]..=self.hi[1]).contains(&z)
+    }
+}
+
+/// The scene's terrains by the grid squares their bounds touch and its sea planes, made again when the scene's structure or terrains change.
 #[derive(Default)]
 pub struct GroundProbe {
     key: (usize, u64, u64),
     buckets: HashMap<(i32, i32), Vec<EntityId>>,
+    seas: Vec<SeaPlane>,
 
     /// The last cursor ray (eye, direction) and what it hit.
     last: Option<([f32; 6], Option<Float3>)>,
@@ -69,11 +92,21 @@ impl GroundProbe {
         self.key = key;
         self.last = None;
         self.buckets.clear();
+        self.seas.clear();
         for e in scene.entities() {
-            let Payload::Terrain(t) = &e.payload else { continue };
-            if !scene.drawable(e) || t.nx < 2 || t.nz < 2 {
+            if !scene.drawable(e) {
                 continue;
             }
+
+            let t = match &e.payload {
+                Payload::Terrain(t) if t.nx >= 2 && t.nz >= 2 => t,
+                Payload::Water(w) if !w.river => {
+                    self.seas.extend(SeaPlane::of(w));
+                    continue;
+                }
+
+                _ => continue,
+            };
 
             // The grid's corners in the world (the matrix turns and scales xz, the heights do not move them).
             let (x1, z1) = (t.origin_x + (t.nx - 1) as f32 * t.step, t.origin_z + (t.nz - 1) as f32 * t.step);
@@ -109,6 +142,41 @@ impl GroundProbe {
     pub fn ground_at(&mut self, scene: &RenderScene, x: f32, z: f32) -> Option<f32> {
         self.refresh(scene);
         self.ground(scene, x, z)
+    }
+
+    /// What the cameras stand on at a point: the ground, or the sea where it is over it (or off the terrains).
+    pub fn surface_at(&mut self, scene: &RenderScene, x: f32, z: f32) -> Option<f32> {
+        self.refresh(scene);
+        let sea = self.seas.iter().filter(|s| s.covers(x, z)).map(|s| s.y).reduce(f32::max);
+        match (self.ground(scene, x, z), sea) {
+            (Some(g), Some(s)) => Some(g.max(s)),
+            (g, s) => g.or(s),
+        }
+    }
+
+    /// Where a ray meets the ground or the sea first (out to `far`). From under a sea, its surface is not in the way.
+    pub fn surface_hit(&mut self, scene: &RenderScene, eye: Float3, dir: Float3, far: f32) -> Option<Float3> {
+        let ground = self.hit(scene, eye, dir, far);
+        let dir = normalize(dir);
+        if dir.y >= 0.0 {
+            return ground;
+        }
+
+        let sea = self
+            .seas
+            .iter()
+            .filter(|s| eye.y > s.y)
+            .filter_map(|s| {
+                let t = (s.y - eye.y) / dir.y;
+                let p = eye + dir * t;
+                (t < far && s.covers(p.x, p.z)).then_some((t, p))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+
+        match (ground, sea) {
+            (Some(g), Some((t, p))) => Some(if length(g - eye) <= t { g } else { p }),
+            (g, s) => g.or(s.map(|(_, p)| p)),
+        }
     }
 
     /// Where a ray meets the ground first (out to `far`): steps that grow with the distance, then halvings of the step that crossed.
@@ -195,4 +263,40 @@ pub fn draw(origin: gui::Vec2, size: gui::Vec2, lines: &[String]) {
     }
 
     dl.pop_clip_rect();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wce_foundation::math::Float4x4;
+    use wce_scene::render_scene::{SourceRef, WaterVertex};
+
+    fn scene_with(river: bool) -> RenderScene {
+        let v = |x: f32, z: f32| WaterVertex { x, y: 3.0, z, ..Default::default() };
+        let water = Water { river, verts: vec![v(-10.0, -10.0), v(10.0, -10.0), v(-10.0, 10.0), v(10.0, 10.0)], indices: vec![0, 2, 1, 1, 2, 3], ..Default::default() };
+        let mut scene = RenderScene::default();
+        let layer = scene.add_layer(1, "test");
+        scene.add(layer, Float4x4::IDENTITY, Payload::Water(water), SourceRef { doc: 1, item: 1 });
+        scene
+    }
+
+    #[test]
+    fn the_sea_is_ground_for_the_cameras_only() {
+        let scene = scene_with(false);
+        let mut probe = GroundProbe::default();
+        assert_eq!(probe.surface_at(&scene, 0.0, 0.0), Some(3.0), "the sea holds the camera");
+        assert_eq!(probe.surface_at(&scene, 20.0, 0.0), None, "nothing past its edge");
+        assert_eq!(probe.ground_at(&scene, 0.0, 0.0), None, "the cursor's ground stays the terrain");
+
+        let down = Float3::new(0.0, -1.0, 0.0);
+        let hit = probe.surface_hit(&scene, Float3::new(1.0, 8.0, 2.0), down, 1000.0);
+        assert_eq!(hit, Some(Float3::new(1.0, 3.0, 2.0)), "a ray stops on the sea");
+        assert_eq!(probe.surface_hit(&scene, Float3::new(1.0, 1.0, 2.0), down, 1000.0), None, "not from under it");
+    }
+
+    #[test]
+    fn rivers_are_not_ground() {
+        let scene = scene_with(true);
+        assert_eq!(GroundProbe::default().surface_at(&scene, 0.0, 0.0), None);
+    }
 }

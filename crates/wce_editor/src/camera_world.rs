@@ -1,5 +1,5 @@
-//! What the viewport's cameras stand on and bump into ([`CameraWorld`]): the terrain (the coordinates' ground probe) and the models'
-//! bounding boxes.
+//! What the viewport's cameras stand on and bump into ([`CameraWorld`]): the terrain and the sea (the coordinates' ground probe) and the
+//! models' bounding boxes.
 //!
 //! TODO: collide with the buildings' real collision meshes (their cs2 hard collision, `docs/re/buildings.md`) instead of their models'
 //! bounding boxes: a box shuts a courtyard or the space under an arch.
@@ -148,11 +148,11 @@ pub struct ViewportWorld<'a> {
 
 impl CameraWorld for ViewportWorld<'_> {
     fn ground(&mut self, x: f32, z: f32) -> Option<f32> {
-        self.ground.ground_at(self.scene, x, z)
+        self.ground.surface_at(self.scene, x, z)
     }
 
     fn ray_ground(&mut self, origin: Float3, dir: Float3) -> Option<Float3> {
-        self.ground.hit(self.scene, origin, dir, self.far)
+        self.ground.surface_hit(self.scene, origin, dir, self.far)
     }
 
     fn push_out(&mut self, centre: Float3, radius: f32) -> Float3 {
@@ -160,5 +160,9 @@ impl CameraWorld for ViewportWorld<'_> {
             Some(m) => self.obstacles.push_out(self.scene, m, centre, radius),
             None => centre,
         }
+    }
+
+    fn game_units(&self) -> f32 {
+        self.scene.game_units
     }
 }
