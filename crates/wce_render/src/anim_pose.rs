@@ -96,12 +96,12 @@ pub fn palette(skin: &[Float4x4]) -> Vec<[f32; 12]> {
     skin.iter().map(|m| std::array::from_fn(|i| m.m[i / 4][i % 4])).collect()
 }
 
-/// A skeleton's pose: per bone its world matrix (model space), from its local transforms.
+/// A skeleton's pose: per bone its world matrix (model space), from its local transforms. A bone past `parents` has no parent.
 pub fn world_pose(parents: &[i32], locals: &[wce_formats::anim::BoneLocal]) -> Vec<Float4x4> {
     let mut out: Vec<Float4x4> = Vec::with_capacity(locals.len());
     for (i, (t, q)) in locals.iter().enumerate() {
         let local = bone_matrix(*t, *q);
-        out.push(match usize::try_from(parents[i]).ok().filter(|&p| p < i) {
+        out.push(match parents.get(i).and_then(|&p| usize::try_from(p).ok()).filter(|&p| p < i) {
             Some(p) => out[p] * local,
             None => local,
         });

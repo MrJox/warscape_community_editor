@@ -4,6 +4,9 @@
 //! leaves nothing there), the unit must change no pixel outside those vertices' box, and its shadow must show. Writes one `.ppm` per case.
 //!
 //!   cargo run --release -p wce_render --example unit_render_check -- <out dir> [environment path in the packs]      (the game folder: the settings or WCE_GAME)
+//!
+//! `WCE_MODS` (packs, comma separated) mounts mods, `WCE_UNITS` (`unit:faction`, comma separated) runs just those whole units, `WCE_UNIT_FIND` lists
+//! the units whose key has a word.
 
 use std::io::Cursor;
 use std::path::Path;
@@ -12,17 +15,19 @@ use std::sync::Arc;
 use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::rigidmodel::vertices::VertexFormat;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
+use rpfm_lib::schema::Schema;
 use wce_d3d11::*;
 use wce_formats::anim::Animation;
 use wce_formats::xml_doc::XmlDoc;
 use wce_foundation::math::{Float3, Float4x4};
-use wce_foundation::settings::Settings;
-use wce_render::anim_pose::{inverse_binds, palette, vertex_weights, world_pose};
+use wce_foundation::settings::{Settings, rpfm_schema_path};
+use wce_render::anim_pose::{inverse_binds, palette, vertex_weights};
 use wce_render::files::Files;
 use wce_render::gpu_adapter::choose_adapter;
 use wce_render::render_target::RenderTarget;
 use wce_render::renderer::{Renderer, ViewParams};
-use wce_render::unit_assembly::{Attach, assemble};
+use wce_render::unit_animation::UnitModel;
+use wce_render::unit_catalog::UnitCatalog;
 use wce_scene::camera::Camera;
 use wce_scene::environment::read_environment;
 use wce_scene::render_scene::{MODEL_SKINNED_SUFFIX, Payload, SKINNED_NO_OFFSET, RenderScene, SkinnedInstance, SkinnedPart, SourceRef, Terrain};
@@ -43,8 +48,8 @@ const CINEMATIC: [&str; 1] = ["variantmeshes/_variantmodels/man/skin/att_cine_ge
 const CLOAK: [&str; 1] = ["variantmeshes/_variantmodels/man/cloak/eastern_overcloak_03.rigid_model_v2"];
 /// WeightedDecalDirtmap, alpha-tested: `weightedwithdecaldirt`, with no decal given.
 const GREAVES: [&str; 1] = ["variantmeshes/_variantmodels/man/greaves/steppe_leather_greaves.rigid_model_v2"];
-const LEGION: &str = "variantmeshes/variantmeshdefinitions/att_rom_legio_comitatenses_west.variantmeshdefinition";
-const STAND: &str = "animations/rome2/human/battle/sword_and_shield/stand/sws_stand.anim";
+/// The whole units: infantry and cavalry, `unit:faction`. `WCE_UNITS` replaces them.
+const UNITS: [&str; 2] = ["att_rom_legio_comitatenses:att_fact_western_roman_empire", "att_rom_equites_promoti:att_fact_western_roman_empire"];
 const WALK: &str = "animations/rome2/human/battle/sword_and_shield/locomotion/sws_walk_124_cm.anim";
 
 struct Gpu {
@@ -166,85 +171,100 @@ struct Case {
     yaw: f32,
 }
 
-/// The test's soldiers, whole: a definition assembled by seed, standing, side by side. Checks that the seeds differ and draw, and leaves a picture
-/// to compare with the game's. Returns the failures.
+/// Whole units from the DB, side by side: `(unit, faction)`, a few soldiers of each, standing, each with his mount. Checks that they load and that
+/// the seeds differ, and leaves pictures to compare with the game's. Returns the failures.
 fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::environment::EnvironmentParams, out: &Path) -> Result<usize, String> {
     let read = |p: &str| vfs.read(p).ok();
-    let skeleton = Animation::decode(&vfs.read(&format!("{MAN}.anim")).expect("the skeleton"), 1).expect("a skeleton");
-    let binds = inverse_binds(&vfs.read(&format!("{MAN}.bone_inv_trans_mats")).expect("the binds")).expect("binds");
-    let mut clip = Animation::decode(&vfs.read(STAND).expect("the clip"), usize::MAX).expect("a clip");
-    clip.on_skeleton(&skeleton);
-    let pose = world_pose(&skeleton.parents, &clip.sample(0.3));
-    let skin: Vec<Float4x4> = pose.iter().zip(&binds).map(|(w, i)| *w * *i).collect();
-    let (shared_palette, bones) = (Arc::new(palette(&skin)), Arc::new(palette(&pose)));
-    let bone_of = |name: &str| skeleton.bones.iter().position(|b| b == name).map(|i| i as u32);
+    let schema_path = rpfm_schema_path(vfs.profile()).ok_or("no rpfm schema")?;
+    let schema = Schema::load(&schema_path, None).map_err(|e| e.to_string())?;
+    let catalog = UnitCatalog::load(vfs, &schema)?;
+    println!("catalog: {} units, {} land units, {} mounts, {} factions, {} tables", catalog.units().len(), catalog.land_units.len(), catalog.mounts.len(), catalog.colours.len(), catalog.tables.len());
+    if let Ok(find) = std::env::var("WCE_UNIT_FIND") {
+        let found: Vec<&str> = catalog.units().into_iter().filter(|u| u.contains(&find)).take(30).collect();
+        println!("units with '{find}': {found:?}");
+    }
 
-    let mut scene = RenderScene::default();
-    let layer = scene.add_layer(1, "Unit");
-    scene.add(layer, Float4x4::IDENTITY, Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)), SourceRef { doc: 1, item: 0 });
-    scene.environment.active = Some(env.clone());
-    let mut wanted: Vec<String> = vec![];
-    let mut different = std::collections::BTreeSet::new();
-    let count = 7;
-    for k in 0..count {
-        let unit = assemble(&read, LEGION, 1000 + k as u64).ok_or("the definition does not assemble")?;
-        if k == 0 {
-            println!("legion: {} parts, missing {:?}", unit.parts.len(), unit.missing);
-            for p in &unit.parts {
-                println!("  {} {:?} masks {:?} tint {:?} decal {:?}", p.model.rsplit('/').next().unwrap_or_default(), p.attach, p.masks, p.tint, p.decal_diffuse.as_deref().and_then(|d| d.rsplit('/').next()));
+    let units: Vec<String> = std::env::var("WCE_UNITS").map_or_else(|_| UNITS.iter().map(|u| (*u).to_owned()).collect(), |v| v.split(',').map(str::to_owned).collect());
+    let mut failures = 0;
+    for (shot, unit) in units.iter().enumerate() {
+        let (unit, faction) = unit.split_once(':').unwrap_or((unit, ""));
+        let mut scene = RenderScene::default();
+        let layer = scene.add_layer(1, "Unit");
+        scene.add(layer, Float4x4::IDENTITY, Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)), SourceRef { doc: 1, item: 0 });
+        scene.environment.active = Some(env.clone());
+        let count = 5;
+        let mut wanted: Vec<String> = vec![];
+        let mut different = std::collections::BTreeSet::new();
+        let mut extent = 2.0f32;
+        for k in 0..count {
+            let model = match UnitModel::load(&read, &catalog, unit, faction, 1000 + k as u64) {
+                Ok(m) => m,
+                Err(e) => {
+                    println!("FAIL: {unit}: {e}");
+                    failures += 1;
+                    break;
+                }
+            };
+
+            if k == 0 {
+                let e = catalog.entry(unit, faction).expect("the unit");
+                println!("{unit}: variant {}, skeleton {}, mount {}, {} parts, clip {} ({} s), missing {:?}", e.variant, model.man.rig.skeleton.skeleton, model.mount.as_ref().map_or("none", |m| m.rig.skeleton.skeleton.as_str()), model.man.parts.parts.len(), model.man.clip.anim.bones.len(), model.man.clip.anim.duration(), model.man.parts.missing);
+            }
+
+            wanted.extend(model.models());
+            different.insert(model.man.parts.parts.iter().map(|p| p.model.clone()).collect::<Vec<_>>().join("|"));
+            if model.mount.is_some() {
+                extent = 3.2;
+            }
+
+            for (scale, instance) in model.instances(0.3, true) {
+                let mut world = Float4x4::IDENTITY;
+                for r in 0..3 {
+                    world.m[r][r] = scale;
+                }
+
+                world.m[0][3] = (k as f32 - (count - 1) as f32 * 0.5) * extent * 0.65;
+                world.m[2][3] = (k % 2) as f32 * 1.1;
+                scene.add(layer, world, Payload::SkinnedInstance(instance), SourceRef { doc: 1, item: 1 + k as u64 });
             }
         }
 
-        different.insert(unit.parts.iter().map(|p| p.model.clone()).collect::<Vec<_>>().join("|"));
-        let parts = unit.parts.iter().map(|p| {
-            wanted.push(p.model.clone());
-            let (bone, offset) = match &p.attach {
-                Attach::None => (None, SKINNED_NO_OFFSET),
-                Attach::Bone(name) => (bone_of(name), SKINNED_NO_OFFSET),
-                Attach::Point { bone, matrix } => (Some(*bone), *matrix),
-            };
+        if wanted.is_empty() {
+            continue;
+        }
 
-            SkinnedPart { model: p.model.clone(), tint: p.tint, decal_diffuse: p.decal_diffuse.clone(), decal_normal: p.decal_normal.clone(), masks: p.masks, bone, offset }
-        }).collect();
-        let instance = SkinnedInstance {
-            parts, palette: shared_palette.clone(), bones: bones.clone(), casts_shadow: true,
-            faction_colours: [[0.32, 0.05, 0.07], [0.85, 0.65, 0.25], [0.12, 0.17, 0.42], [0.0; 3]], faction_scale: 0.0,
-        };
-
-        let mut world = Float4x4::IDENTITY;
-        world.m[0][3] = (k as f32 - (count - 1) as f32 * 0.5) * 1.15;
-        world.m[2][3] = (k % 2) as f32 * 1.1;
-        scene.add(layer, world, Payload::SkinnedInstance(instance), SourceRef { doc: 1, item: 1 + k as u64 });
+        let (w, h) = (1280, 640);
+        let target = Float3::new(0.0, extent * 0.5, 0.0);
+        let cam = Camera { target, eye: Float3::new(-extent * 0.6, extent * 1.15, extent * 2.6), ..Default::default() };
+        let mut r = Renderer::new(&gpu.dev, &gpu.ctx, files.clone()).map_err(|e| e.0)?;
+        let mut rt = RenderTarget::new(&gpu.dev, w, h);
+        wanted.sort();
+        wanted.dedup();
+        let parts: Vec<&str> = wanted.iter().map(String::as_str).collect();
+        println!("{unit}: waiting for {} models", parts.len());
+        wait_for(&mut r, &scene, &cam, &mut rt, &parts)?;
+        println!("{unit}: loaded, {} triangles", r.draw_stats().triangles);
+        frames(&mut r, &scene, &cam, &mut rt, 40);
+        write_ppm_sized(&out.join(format!("unit{shot}.ppm")), &rt.read_rgba8(&gpu.dev, &gpu.ctx).unwrap_or_default(), w, h);
+        println!("{unit}: {} of {count} soldiers differ", different.len());
+        failures += usize::from(different.is_empty());
     }
 
-    let (w, h) = (1280, 640);
-    let target = Float3::new(0.0, 1.05, 0.0);
-    let cam = Camera { target, eye: Float3::new(-1.2, 2.3, 5.2), ..Default::default() };
-    let mut r = Renderer::new(&gpu.dev, &gpu.ctx, files.clone()).map_err(|e| e.0)?;
-    let mut rt = RenderTarget::new(&gpu.dev, w, h);
-    wanted.sort();
-    wanted.dedup();
-    let parts: Vec<&str> = wanted.iter().map(String::as_str).collect();
-    wait_for(&mut r, &scene, &cam, &mut rt, &parts)?;
-    frames(&mut r, &scene, &cam, &mut rt, 40);
-    write_ppm_sized(&out.join("legion.ppm"), &rt.read_rgba8(&gpu.dev, &gpu.ctx).unwrap_or_default(), w, h);
-    let side = Camera { target: Float3::new(-2.5, 1.2, 0.0), eye: Float3::new(-6.0, 1.9, 0.6), ..Default::default() };
-    frames(&mut r, &scene, &side, &mut rt, 20);
-    write_ppm_sized(&out.join("legion_side.ppm"), &rt.read_rgba8(&gpu.dev, &gpu.ctx).unwrap_or_default(), w, h);
-    println!("legion: {} of {count} soldiers differ", different.len());
-    Ok(usize::from(different.len() < 2))
+    Ok(failures)
 }
 
 fn run(out: &Path, env_path: &str) -> Result<usize, String> {
     let gpu = make_device().ok_or("no Direct3D 11 device")?;
     let game = Settings::load_default().game_dir().ok_or("the game folder is not set (in the settings or WCE_GAME)")?;
     let mut config = Config::new(game, GameProfile::from_env().clone());
-    config.use_mods = false;
+    config.use_mods = std::env::var("WCE_MODS").is_ok();
+    config.mod_packs = std::env::var("WCE_MODS").ok().map(|m| m.split(',').map(str::to_owned).collect());
     let vfs: Arc<Vfs> = Arc::new(Vfs::mount(&config).map_err(|e| e.to_string())?);
     let files: Arc<dyn Files> = vfs.clone();
     let env_doc = XmlDoc::parse(vfs.read(env_path).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let env = read_environment(&env_doc);
     let mut failures = 0;
+    let only_units = std::env::var("WCE_UNITS").is_ok();
     for case in [
         Case { name: "bind", parts: &BODY, clip: None, yaw: 0.5 },
         Case { name: "walk", parts: &BODY, clip: Some((WALK, 0.3)), yaw: 1.2 },
@@ -252,6 +272,10 @@ fn run(out: &Path, env_path: &str) -> Result<usize, String> {
         Case { name: "cloak", parts: &CLOAK, clip: Some((WALK, 0.3)), yaw: 2.6 },
         Case { name: "greaves", parts: &GREAVES, clip: Some((WALK, 0.3)), yaw: 0.5 },
     ] {
+        if only_units {
+            break;
+        }
+
         let mut scene = RenderScene::default();
         let layer = scene.add_layer(1, "Unit");
         scene.add(layer, Float4x4::IDENTITY, Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)), SourceRef { doc: 1, item: 0 });
