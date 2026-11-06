@@ -5,7 +5,7 @@ historical battle scripting), the Cinematic tool (the most pressing, after the t
 decided). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
-State: investigated and decided 2026-11-06 (decisions at the end). Step 1's CPU spike is done; the renderer has nothing yet. The scratch scripts and disassembly are in
+State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 and 2 are done; the renderer has nothing yet. The scratch scripts and disassembly are in
 `~/wce_re/scratch/units`.
 
 ## What the game does
@@ -82,14 +82,17 @@ agree. Which light entry reads the third target (`skinlm` or the `slm` in use) i
 - Fragments (`animations/animation_fragments/*.txt`, plain text, 126) map 71 slots (`STAND`, `WALK_1`, `FIRE`...) to clips, with several
   clips per slot, `.meta` and `.snd.meta` paths and flags (`blend_in_time`, `weapon_bone_N = on`).
   `animations/animation_tables/animation_tables.txt` groups fragments by name with their `skeleton_type`.
-- Clip `.meta` tags: `WEAPON_RHAND`, `WEAPON_LHAND`, `RHAND_POSE`, `LHAND_POSE`, `SPLICE`, `SOUND_TRIGGER`, `IMPACT_POS`, `BLOOD`,
-  `WOUNDED_POSE`. Finger poses come from these, which is why clips have no finger tracks. `anim_meta.rs` reads other tags and the campaign
-  `hand_poses` folders hold the poses; the battle mapping is not traced.
+- Clip `.meta` entries (27 kinds, `anim_meta::Meta`), by count: sounds, `RHAND_POSE` / `LHAND_POSE`, `WEAPON_RHAND` / `LHAND` / `HIP` / `ON`, `SPLICE`
+  (another clip over part of this one), `BLOOD`, `PROP`, `ANIMATED_PROP`. Bows are `ANIMATED_PROP`s: the bow's model with its own clip,
+  on a bone. Finger poses come from the hand entries, which is why clips have no finger tracks. A pose number's clip is not traced (the
+  campaign's `hand_poses` folders hold such poses).
 
 ### Assembly
 
 - `variantmeshdefinition` is XML: `VARIANT_MESH` (`model`, `decal_diffuse`, `decal_normal`, `imposter_model`, `mask0..2`),
-  `VARIANT_MESH_REFERENCE` (`definition`), `SLOT` (`name`, `attach_point`), `TINT` (`red`, `green`, `blue`, `random_range`). A slot with
+  `VARIANT_MESH_REFERENCE` (`definition`), `SLOT` (`name`, `attach_point`, `probability`: 0 to 1, how often it is filled, **ASSUMPTION**),
+  `TINT` (`red`, `green`, `blue`, `random_range`), `META_DATA` (text: `female`). TDD ships 11 definitions that aren't well-formed XML
+  (doubled quotes, stray end tags): the loader skips them with a warning. One `mask3`, ignored. A slot with
   several children picks one (**ASSUMPTION**: uniform random); a variant nests its own slots.
 - `attach_point`: `weapon_01..05` (the root bones `bn_weapon_NN`, which clips animate) and `crest_centre` (**ASSUMPTION**: an attachment
   point in the helmet's RMV2, as `material.attachment_points`). Static weapons and shields follow the bone's world matrix: checked, shield on
@@ -112,9 +115,9 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
 
 1. **Spike** (done 2026-11-06). `unit_pose_check` poses a real soldier and a horse with its rider on the CPU, with no GPU, and draws them.
    It found the track fallback and the two-bone weights; it stays as the reference for step 3's gate.
-2. **Formats** (`wce_formats`, as rpfm_lib decodes headers only): `.anim` complete (names, skeleton, v4, fallback to a skeleton, track
-   lookups kept compact), `.meta` tags, VMD with a lossless model for a later editor, fragments and animation tables. Byte-identical round
-   trips where a file will be written (VMD at least).
+2. **Formats** (done 2026-11-06, `wce_formats`): `anim` (versions 4 and 5, whole), `anim_meta::Meta` (every kind, encodes back to the byte),
+   `variant_mesh` (a tree over an `XmlDoc`, so an edit touches only its value), `anim_tables`. Gate `unit_formats_check`, over every file of
+   Attila, Rome 2 and Attila with TDD: no failures. It does not check meanings: the fields step 6 reads are still named by position.
 3. **Skinned draw path.** `model_cache` keeps weighted vertices as stored (strides 28 and 32) in a skinned `GpuModel`; a skinned scene kind
    (`Kind::SkinnedInstance` is declared and unbuilt; it needs a `Payload`); `R32G32B32A32_FLOAT` palette texture, written
    once a frame with lines allocated per instance, identical pose + skeleton shared; G-buffer and shadow passes through `weightedcommon`;
