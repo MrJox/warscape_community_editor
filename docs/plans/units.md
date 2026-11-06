@@ -5,8 +5,8 @@ historical battle scripting), the Cinematic tool (the most pressing, after the t
 decided). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
-State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3 and 5 are done and step 4's code: the renderer draws whole soldiers assembled from
-their definitions, with materials and skin lighting. Step 4's comparison with the game has begun (screenshots in `~/wce_re/scratch/units/ref`).
+State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3 and 5 are done, step 4's code, and step 6's idle: the renderer draws whole units from the DB, a mount under
+a rider, with materials and skin lighting, standing and looping their idle, TDD's trolls too. Step 4's comparison with the game has begun (screenshots in `~/wce_re/scratch/units/ref`).
 Nothing places a unit yet outside the check. The scratch scripts and disassembly are in
 `~/wce_re/scratch/units`.
 
@@ -136,14 +136,17 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    in a tile. Picking: the G-buffer's id target gets 0, and the id pass doesn't know them; `ref_human` needs one of those in step 7.
 4. **Materials.** Done but for the comparison with the game's screenshots: the four families, dirt, decals (their textures come with the part,
    from the VMD in step 5), faction colours, tints, skin lighting for the sun and point lights.
-5. **Assembly** (done 2026-11-07 but height scale, mounts and a tile). `unit_assembly::assemble`: a definition and a seed give a soldier's parts:
+5. **Assembly** (done 2026-11-07 but a tile). `unit_assembly::assemble`: a definition and a seed give a soldier's parts:
    slots by `probability`, references, tints, mask remaps, decals (`.texture_array`s pick one). Static parts (shields, weapons, crests) are in the
    `SkinnedInstance` too, on a bone (`SkinnedInstance::bones`) or an attachment point of their parent's model, and `renderer/skinned.rs` draws
    them through the rigid shaders with their own decal and colours: `rigidwithdecalmesh`, `rigidwithdecaldirtmesh` are drawn nowhere else.
-   The picks use the editor's generator, so a seed is not the game's soldier. Left: `height_scale` / `height_variation`, a horse with its
-   rider, the whole model in a tile (metres in game, `1 / unit_scale` in the tile scene), weighted weapons (bows are `ANIMATED_PROP`s, step 6).
-6. **Animator.** A pure function `(unit, clip, time) -> pose`, so a timeline can scrub it: slots from fragments, loops, blending, hand
-   poses, weapon bone flags. Time comes from outside; no global clock.
+   The picks use the editor's generator, so a seed is not the game's soldier. `unit_catalog` reads `unit_variants`, `main_units`, `land_units`,
+   `mounts`, `factions` and the animation tables, mods included; a unit's mount is a second figure at the same origin. Left: the whole model in
+   a tile (metres in game, `1 / unit_scale` in the tile scene), weighted weapons (bows are `ANIMATED_PROP`s, step 6).
+6. **Animator.** `unit_animation::UnitModel`: `instances(t)` is a pure function of the time, so a timeline can scrub it. Done: slots from
+   the table's fragments, loops, hand poses (a clip's `RHAND_POSE` / `LHAND_POSE` numbers are the `HAND_POSE_*` slots in the engine's order,
+   `BATTLE_ENTITY_ANIMATION_TYPE`), the rig of the clip's own skeleton (TDD's trolls: the table says `rome_man_game`, the clip `humanoid04f_s068`).
+   Left: blending, a slot's other variations, `weapon_bone_N` flags, `SPLICE`s, `ANIMATED_PROP`s (bows).
 7. **First consumers.** `ref_human` in the Tile tool (decisions below); a small viewer in the Unit tool as the test bench, dev-only
    (`TODO(pre-release)`). Tested with infantry, cavalry and TDD's trolls.
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
