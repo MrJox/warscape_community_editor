@@ -1300,7 +1300,7 @@ impl TileTool {
         // The scene as the editor holds it (the prefab references with their contents), as TEd's.
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         let project_dir = d.project().dir.clone();
-        let text = d.tile().tscene().save();
+        let text = d.text_for_export(false)?;
         let walls = if d.tile().has_walls() { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
         Ok(ExportInputs { files, kit, game, pending, project_dir, text, walls })
@@ -1321,7 +1321,7 @@ impl TileTool {
 
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         let dir = d.project().dir.clone();
-        let text = d.tile().tscene().save();
+        let text = d.text_for_export(false)?;
 
         // A tile with procedural walls: lowered to buildings of their own, whose pieces and rows go into the pack with the tile.
         let (folder, notes) = if d.tile().has_walls() {

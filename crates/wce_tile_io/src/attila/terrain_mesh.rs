@@ -1058,7 +1058,7 @@ pub fn water_fields(raw: &wce_tile_model::Tile, raw_data: &std::path::Path, mode
     let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &n, links)?;
     super::tile_links::blend_links(raw, raw_data, &linking, &mut heights, w, h)?;
     let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t), super::river::RiverFormat::Attila);
-    let planes = super::compile::instances(raw, "SIMPLE_MESH_INSTANCE");
+    let planes = super::compile::water_planes(raw);
     let water = (!river.triangles.is_empty() || !planes.is_empty()).then(|| {
         let verts = river.vertices.iter().map(|v| Vertex { x: v[0], h: v[1], z: v[2], normal: [0.0; 3], alpha: 0.0, fringe: false }).collect::<Vec<_>>();
         let mut water = vec![-1000.0f32; w * h];
@@ -1157,7 +1157,7 @@ pub fn terrain_files(
 
     // `hf_water_map.data` (`FUN_10089b80`): a field of -1000, the river's triangles rasterised into it (as the terrain's), then the
     // water planes; none without either.
-    let planes = super::compile::instances(raw, "SIMPLE_MESH_INSTANCE");
+    let planes = super::compile::water_planes(raw);
     if !river.triangles.is_empty() || !planes.is_empty() {
         let verts = river.vertices.iter().map(|v| Vertex { x: v[0], h: v[1], z: v[2], normal: [0.0; 3], alpha: 0.0, fringe: false }).collect::<Vec<_>>();
         let mut water = vec![-1000.0f32; w * h];

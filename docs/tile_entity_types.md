@@ -11,7 +11,7 @@ nearest layer above it with an export type says (`LayerExportType_Normal`: the t
 
 | Type | In the kit | Create | Edit | Drawn | Exported |
 |---|---:|---|---|---|---|
-| `BUILDING_INSTANCE` | 1,896,156 | yes (Create panel) | properties | the building's model pieces (a wire box when the key has no model) | building lists, escalation BMDs, outlines |
+| `BUILDING_INSTANCE` | 1,896,156 | yes (Create panel) | properties | the building's model pieces (a wire box when the key has no model) | building lists, escalation BMDs, outlines; with Export as prop, prop markers (docs/editor.md) |
 | `VEGETATION_INSTANCE` | 1,404,435 | yes (Create: click; a tree key) | properties | the tree model, as a list tree of the shown climate | through the tree lists (vegetation generator) |
 | `ProjectedDecalInstance` | 1,921,915 | yes (Create: click; a decal key) | properties | the decal | `prop_marker.markers` |
 | `POINT_LIGHT_INSTANCE` | 166,054 | yes (Create: click) | properties | the light (and a cross marker) | `point_light_marker.markers` |
