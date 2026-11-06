@@ -553,10 +553,17 @@ fn cameras() {
         let want = normalize(free.camera().target - free.camera().eye);
         let mut b = OrbitCamera::default();
         b.set_orbit(yaw, pitch, 3.0, target);
-        b.update(&CameraInput { dt: 0.01, ..Default::default() }, &solid, &mut FlatWorld);
-        let c = b.camera();
-        assert!(length(normalize(c.target - c.eye) - want) < 1e-3, "yaw {yaw}: the view turned: {:?} for {want:?}", normalize(c.target - c.eye));
-        assert!(FlatWorld.push_out(c.eye, 1.0) == c.eye, "yaw {yaw}: the eye is out of the box: {:?}", c.eye);
+        let (mut last, mut largest) = (b.camera().eye, 0.0f32);
+        for _ in 0..120 {
+            b.update(&CameraInput { dt: 1.0 / 60.0, ..Default::default() }, &solid, &mut FlatWorld);
+            let c = b.camera();
+            assert!(length(normalize(c.target - c.eye) - want) < 1e-3, "yaw {yaw}: the view turned: {:?} for {want:?}", normalize(c.target - c.eye));
+            largest = largest.max(length(c.eye - last));
+            last = c.eye;
+        }
+
+        assert!(FlatWorld.push_out(last, 1.0) == last, "yaw {yaw}: the eye is out of the box: {last:?}");
+        assert!(largest < 1.8, "yaw {yaw}: it eases out, it does not jump: {largest} m in a frame");
     }
 
     // Smoothing: the view catches up over a few frames.
