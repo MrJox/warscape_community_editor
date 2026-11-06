@@ -5,8 +5,9 @@ historical battle scripting), the Cinematic tool (the most pressing, after the t
 decided). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
-State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3 are done and step 4's code: the renderer draws skinned models with their
-materials and skin lighting. What is left of step 4 is comparing with the game's screenshots. Nothing places a unit yet outside the check. The scratch scripts and disassembly are in
+State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3 and 5 are done and step 4's code: the renderer draws whole soldiers assembled from
+their definitions, with materials and skin lighting. Step 4's comparison with the game has begun (screenshots in `~/wce_re/scratch/units/ref`).
+Nothing places a unit yet outside the check. The scratch scripts and disassembly are in
 `~/wce_re/scratch/units`.
 
 ## What the game does
@@ -135,8 +136,12 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    in a tile. Picking: the G-buffer's id target gets 0, and the id pass doesn't know them; `ref_human` needs one of those in step 7.
 4. **Materials.** Done but for the comparison with the game's screenshots: the four families, dirt, decals (their textures come with the part,
    from the VMD in step 5), faction colours, tints, skin lighting for the sun and point lights.
-5. **Assembly.** VMD resolved by a seed into parts: weighted parts on the body's palette, static parts on their bone, height scale. The
-   whole model at the right scale in a tile (metres in game, `1 / unit_scale` in the tile scene).
+5. **Assembly** (done 2026-11-07 but height scale, mounts and a tile). `unit_assembly::assemble`: a definition and a seed give a soldier's parts:
+   slots by `probability`, references, tints, mask remaps, decals (`.texture_array`s pick one). Static parts (shields, weapons, crests) are in the
+   `SkinnedInstance` too, on a bone (`SkinnedInstance::bones`) or an attachment point of their parent's model, and `renderer/skinned.rs` draws
+   them through the rigid shaders with their own decal and colours: `rigidwithdecalmesh`, `rigidwithdecaldirtmesh` are drawn nowhere else.
+   The picks use the editor's generator, so a seed is not the game's soldier. Left: `height_scale` / `height_variation`, a horse with its
+   rider, the whole model in a tile (metres in game, `1 / unit_scale` in the tile scene), weighted weapons (bows are `ANIMATED_PROP`s, step 6).
 6. **Animator.** A pure function `(unit, clip, time) -> pose`, so a timeline can scrub it: slots from fragments, loops, blending, hand
    poses, weapon bone flags. Time comes from outside; no global clock.
 7. **First consumers.** `ref_human` in the Tile tool (decisions below); a small viewer in the Unit tool as the test bench, dev-only
@@ -159,7 +164,9 @@ Out of scope: battle simulation, formations, pathing, sounds and blood, dismembe
   kit's raw files, so it is a real unit, not a prop. Editor only: never in TEd's files or an export. Better storage waits for historical
   battles.
 - **Unit:** a default per game, which the user can switch to any other, to test differently sized units. Attila's default:
-  `att_rom_legio_comitatenses`. Nothing may assume a human skeleton: TDD brings its own (`rom_troll_v2`, `humanoid01d`, `gob_cave_troll`'s
+  `att_rom_legio_comitatenses_west`, what `unit_variants` gives the Western Romans' `att_rom_comitatenses`-type units; the bare
+  `att_rom_legio_comitatenses` has one body and no hair, and no unit uses it. A unit's definition comes from `unit_variants` (`unit`, `faction`),
+  not from its name. Nothing may assume a human skeleton: TDD brings its own (`rom_troll_v2`, `humanoid01d`, `gob_cave_troll`'s
   VMD), so the skeleton comes from the model and the animation table, not from a constant.
 - **Priority:** units for reference first, close-ups later. No crowd target for now.
 - **Oracle:** screenshots of the game, taken by the user; RenderDoc does not work here. The skin lighting is the riskiest part to match

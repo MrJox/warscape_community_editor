@@ -17,14 +17,15 @@ use wce_formats::anim::Animation;
 use wce_formats::xml_doc::XmlDoc;
 use wce_foundation::math::{Float3, Float4x4};
 use wce_foundation::settings::Settings;
-use wce_render::anim_pose::{inverse_binds, palette, vertex_weights};
+use wce_render::anim_pose::{inverse_binds, palette, vertex_weights, world_pose};
 use wce_render::files::Files;
 use wce_render::gpu_adapter::choose_adapter;
 use wce_render::render_target::RenderTarget;
 use wce_render::renderer::{Renderer, ViewParams};
+use wce_render::unit_assembly::{Attach, assemble};
 use wce_scene::camera::Camera;
 use wce_scene::environment::read_environment;
-use wce_scene::render_scene::{MODEL_SKINNED_SUFFIX, Payload, RenderScene, SkinnedInstance, SkinnedPart, SourceRef, Terrain};
+use wce_scene::render_scene::{MODEL_SKINNED_SUFFIX, Payload, SKINNED_NO_OFFSET, RenderScene, SkinnedInstance, SkinnedPart, SourceRef, Terrain};
 use wce_vfs::{Config, GameProfile, Vfs};
 
 const W: u32 = 512;
@@ -42,6 +43,8 @@ const CINEMATIC: [&str; 1] = ["variantmeshes/_variantmodels/man/skin/att_cine_ge
 const CLOAK: [&str; 1] = ["variantmeshes/_variantmodels/man/cloak/eastern_overcloak_03.rigid_model_v2"];
 /// WeightedDecalDirtmap, alpha-tested: `weightedwithdecaldirt`, with no decal given.
 const GREAVES: [&str; 1] = ["variantmeshes/_variantmodels/man/greaves/steppe_leather_greaves.rigid_model_v2"];
+const LEGION: &str = "variantmeshes/variantmeshdefinitions/att_rom_legio_comitatenses_west.variantmeshdefinition";
+const STAND: &str = "animations/rome2/human/battle/sword_and_shield/stand/sws_stand.anim";
 const WALK: &str = "animations/rome2/human/battle/sword_and_shield/locomotion/sws_walk_124_cm.anim";
 
 struct Gpu {
@@ -147,7 +150,11 @@ fn wait_for(r: &mut Renderer, scene: &RenderScene, cam: &Camera, target: &mut Re
 }
 
 fn write_ppm(path: &Path, rgba: &[u8]) {
-    let mut out = format!("P6\n{W} {H}\n255\n").into_bytes();
+    write_ppm_sized(path, rgba, W, H);
+}
+
+fn write_ppm_sized(path: &Path, rgba: &[u8], w: u32, h: u32) {
+    let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
     out.extend(rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]));
     std::fs::write(path, out).expect("written");
 }
@@ -157,6 +164,75 @@ struct Case {
     parts: &'static [&'static str],
     clip: Option<(&'static str, f32)>,
     yaw: f32,
+}
+
+/// The test's soldiers, whole: a definition assembled by seed, standing, side by side. Checks that the seeds differ and draw, and leaves a picture
+/// to compare with the game's. Returns the failures.
+fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::environment::EnvironmentParams, out: &Path) -> Result<usize, String> {
+    let read = |p: &str| vfs.read(p).ok();
+    let skeleton = Animation::decode(&vfs.read(&format!("{MAN}.anim")).expect("the skeleton"), 1).expect("a skeleton");
+    let binds = inverse_binds(&vfs.read(&format!("{MAN}.bone_inv_trans_mats")).expect("the binds")).expect("binds");
+    let mut clip = Animation::decode(&vfs.read(STAND).expect("the clip"), usize::MAX).expect("a clip");
+    clip.on_skeleton(&skeleton);
+    let pose = world_pose(&skeleton.parents, &clip.sample(0.3));
+    let skin: Vec<Float4x4> = pose.iter().zip(&binds).map(|(w, i)| *w * *i).collect();
+    let (shared_palette, bones) = (Arc::new(palette(&skin)), Arc::new(palette(&pose)));
+    let bone_of = |name: &str| skeleton.bones.iter().position(|b| b == name).map(|i| i as u32);
+
+    let mut scene = RenderScene::default();
+    let layer = scene.add_layer(1, "Unit");
+    scene.add(layer, Float4x4::IDENTITY, Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)), SourceRef { doc: 1, item: 0 });
+    scene.environment.active = Some(env.clone());
+    let mut wanted: Vec<String> = vec![];
+    let mut different = std::collections::BTreeSet::new();
+    let count = 7;
+    for k in 0..count {
+        let unit = assemble(&read, LEGION, 1000 + k as u64).ok_or("the definition does not assemble")?;
+        if k == 0 {
+            println!("legion: {} parts, missing {:?}", unit.parts.len(), unit.missing);
+            for p in &unit.parts {
+                println!("  {} {:?} masks {:?} tint {:?} decal {:?}", p.model.rsplit('/').next().unwrap_or_default(), p.attach, p.masks, p.tint, p.decal_diffuse.as_deref().and_then(|d| d.rsplit('/').next()));
+            }
+        }
+
+        different.insert(unit.parts.iter().map(|p| p.model.clone()).collect::<Vec<_>>().join("|"));
+        let parts = unit.parts.iter().map(|p| {
+            wanted.push(p.model.clone());
+            let (bone, offset) = match &p.attach {
+                Attach::None => (None, SKINNED_NO_OFFSET),
+                Attach::Bone(name) => (bone_of(name), SKINNED_NO_OFFSET),
+                Attach::Point { bone, matrix } => (Some(*bone), *matrix),
+            };
+
+            SkinnedPart { model: p.model.clone(), tint: p.tint, decal_diffuse: p.decal_diffuse.clone(), decal_normal: p.decal_normal.clone(), masks: p.masks, bone, offset }
+        }).collect();
+        let instance = SkinnedInstance {
+            parts, palette: shared_palette.clone(), bones: bones.clone(), casts_shadow: true,
+            faction_colours: [[0.32, 0.05, 0.07], [0.85, 0.65, 0.25], [0.12, 0.17, 0.42], [0.0; 3]], faction_scale: 0.0,
+        };
+
+        let mut world = Float4x4::IDENTITY;
+        world.m[0][3] = (k as f32 - (count - 1) as f32 * 0.5) * 1.15;
+        world.m[2][3] = (k % 2) as f32 * 1.1;
+        scene.add(layer, world, Payload::SkinnedInstance(instance), SourceRef { doc: 1, item: 1 + k as u64 });
+    }
+
+    let (w, h) = (1280, 640);
+    let target = Float3::new(0.0, 1.05, 0.0);
+    let cam = Camera { target, eye: Float3::new(-1.2, 2.3, 5.2), ..Default::default() };
+    let mut r = Renderer::new(&gpu.dev, &gpu.ctx, files.clone()).map_err(|e| e.0)?;
+    let mut rt = RenderTarget::new(&gpu.dev, w, h);
+    wanted.sort();
+    wanted.dedup();
+    let parts: Vec<&str> = wanted.iter().map(String::as_str).collect();
+    wait_for(&mut r, &scene, &cam, &mut rt, &parts)?;
+    frames(&mut r, &scene, &cam, &mut rt, 40);
+    write_ppm_sized(&out.join("legion.ppm"), &rt.read_rgba8(&gpu.dev, &gpu.ctx).unwrap_or_default(), w, h);
+    let side = Camera { target: Float3::new(-2.5, 1.2, 0.0), eye: Float3::new(-6.0, 1.9, 0.6), ..Default::default() };
+    frames(&mut r, &scene, &side, &mut rt, 20);
+    write_ppm_sized(&out.join("legion_side.ppm"), &rt.read_rgba8(&gpu.dev, &gpu.ctx).unwrap_or_default(), w, h);
+    println!("legion: {} of {count} soldiers differ", different.len());
+    Ok(usize::from(different.len() < 2))
 }
 
 fn run(out: &Path, env_path: &str) -> Result<usize, String> {
@@ -188,8 +264,8 @@ fn run(out: &Path, env_path: &str) -> Result<usize, String> {
         let mut rt = RenderTarget::new(&gpu.dev, W, H);
         let skin = skin_of(&vfs, case.clip);
         let mut instance = SkinnedInstance {
-            parts: case.parts.iter().map(|p| SkinnedPart { model: (*p).to_owned(), tint: [0.0; 4], decal_diffuse: None, decal_normal: None }).collect(),
-            palette: Arc::new(palette(&skin)), casts_shadow: false,
+            parts: case.parts.iter().map(|p| SkinnedPart { model: (*p).to_owned(), tint: [0.0; 4], decal_diffuse: None, decal_normal: None, masks: [0, 1, 2], bone: None, offset: SKINNED_NO_OFFSET }).collect(),
+            palette: Arc::new(palette(&skin)), bones: Arc::new(vec![]), casts_shadow: false,
             faction_colours: [[0.7, 0.1, 0.1], [0.8, 0.7, 0.3], [0.2, 0.2, 0.6], [0.0; 3]], faction_scale: 0.0,
         };
 
@@ -248,6 +324,7 @@ fn run(out: &Path, env_path: &str) -> Result<usize, String> {
         }
     }
 
+    failures += legion(&gpu, &vfs, &files, &env, out)?;
     Ok(failures)
 }
 

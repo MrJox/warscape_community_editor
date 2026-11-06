@@ -16,6 +16,7 @@ pub mod sea_surface;
 pub mod renderer;
 pub mod shader_lib;
 pub mod texture;
+pub mod unit_assembly;
 pub mod wind;
 
 /// An error of the renderer: what failed, in words.
