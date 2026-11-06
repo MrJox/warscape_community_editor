@@ -57,6 +57,7 @@ pub fn type_name(ty: &str) -> &'static str {
         "DeploymentZonePolygonInstanceGroup" => "Deployment zone (64 m square)",
         "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => "Deployment zone polygon (drawn)",
         "CaptureLocationInstance" => "Capture location",
+        "CaptureLocationPolygonInstance" => "Capture location",
         "CivilianDeploymentZone" => "Civilian deployment zone",
         "CivilianShelter" => "Civilian shelter",
         "LiteBuildingZone" => "Lite building zone",

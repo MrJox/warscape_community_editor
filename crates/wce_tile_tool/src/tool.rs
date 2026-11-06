@@ -481,6 +481,10 @@ pub struct TileTool {
     /// The ground views' chip's width (ground_views.rs), last frame.
     pub(crate) ground_chip_width: f32,
 
+    /// The Areas chip: its width, and the polygons' look, read from the settings at first use.
+    pub(crate) areas_chip_width: f32,
+    pub(crate) areas: Option<wce_tile_editor::tile_document::PolygonLook>,
+
     /// The building technology chip's width (tech_chip.rs), last frame.
     pub(crate) tech_chip_width: f32,
 
@@ -639,7 +643,7 @@ impl Default for TileTool {
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: 0.75, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            ref_units: Default::default(), drawing: false, ground_chip_width: 0.0, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            ref_units: Default::default(), drawing: false, ground_chip_width: 0.0, areas_chip_width: 0.0, areas: None, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -3496,22 +3500,6 @@ impl Tool for TileTool {
             let t = d.tile_mut();
             let mut changed = false;
             let v = t.display_mut();
-            changed |= gui::menu_item_toggle("Polygons", &mut v.show_polygons);
-            gui::set_next_item_width(160.0);
-            if gui::slider_float("polygon fill", &mut v.polygon_fill, 0.0, 1.0, "%.2f") {
-                t.polygons_changed();
-            }
-
-            let v = t.display_mut();
-            if gui::menu_item_toggle("Polygons over buildings", &mut v.polygon_over_buildings) {
-                t.polygons_changed();
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip("The polygons' fill and edges go smoothly over the buildings; off: they stay on the terrain.");
-            }
-
-            let v = t.display_mut();
             changed |= gui::menu_item_toggle("Distance culling of markers", &mut v.lod);
             gui::menu_item_toggle("Tile border", &mut v.show_border);
             gui::menu_item_toggle("Tint freeform instances", &mut v.tint_freeform);
@@ -3903,12 +3891,14 @@ impl Tool for TileTool {
         // The ground views' chip at the top right, left of the viewport's camera and snap chips, the placement chips (while placing) left of
         // it, beside the compass too (the viewport moves the whole row under it when it does not fit).
         let placing = self.placing.is_some() || self.grabbing;
-        e.viewport.tool_chips_width = self.ground_chip_width + self.tech_chip_width + 4.0 + if placing { 4.0 + self.place_chips_width } else { 0.0 };
+        e.viewport.tool_chips_width = self.ground_chip_width + self.tech_chip_width + self.areas_chip_width + 8.0 + if placing { 4.0 + self.place_chips_width } else { 0.0 };
         let top = e.viewport.chips_top;
         let size = gui::v2(size.x - e.viewport.chips_width - 4.0, size.y);
         self.draw_ground_chip(e, origin, size, top);
         self.draw_tech_chip(e, origin, size, top);
-        self.draw_placement_chips(e, origin, gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - 8.0, size.y), top);
+        self.sync_polygon_look(e);
+        self.draw_areas_chip(e, origin, size, top);
+        self.draw_placement_chips(e, origin, gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 12.0, size.y), top);
         self.draw_box_select(origin);
         self.draw_context_menu(e);
         self.context.draw_minimap(e, origin, size);

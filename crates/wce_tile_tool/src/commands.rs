@@ -3030,6 +3030,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("tile_areas", "tile_areas outline <0..1> | fill <0..1> | type <type> <0..1> | reset", "the Areas chip: the polygons' outlines, fills and a type's fill factor, kept in the settings", |e, a| {
+        const USAGE: &str = "usage: tile_areas outline <0..1> | fill <0..1> | type <type> <0..1> | reset";
+        let value = |i: usize| a.get(i).and_then(|v| v.parse::<f32>().ok()).map(|v| v.clamp(0.0, 1.0));
+        with_tile(e, |t, e| {
+            let mut look = t.polygon_look(e).clone();
+            match (a.first().map(String::as_str), value(1), value(2)) {
+                (Some("outline"), Some(v), _) => look.outline = v,
+                (Some("fill"), Some(v), _) => look.fill = v,
+                (Some("type"), _, Some(v)) => look.set_type_factor(&a[1], v),
+                (Some("reset"), _, _) => look = Default::default(),
+                _ => return fail(USAGE),
+            }
+
+            t.areas = Some(look);
+            t.save_polygon_look(e);
+            ok("")
+        })
+    });
+
     c.add(
         "tile_type", "tile_type <type> on|off|only | tile_type all",
         "the Scene panel's type toggles: list and show a type or not (a view setting), show only that type, or show every type",

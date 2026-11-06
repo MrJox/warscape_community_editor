@@ -1224,10 +1224,11 @@ impl Tile {
             let mut cover = self.cover_for(lo, hi, over);
             let [r, g, b] = polygon_colour(&ty);
             let holes = self.zone_holes(elem);
-            let fill = if holes.is_some() { self.display.polygon_fill } else { 0.0 };
+            let fill = if holes.is_some() { self.display.polygon_look.fill_of(&ty) } else { 0.0 };
+            let outline = self.display.polygon_look.outline;
             let holes = holes.unwrap_or_default();
             let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
-            let look = [r, g, b, fill].iter().fold(mix(u64::from(closed) << 1 | u64::from(spline), points.len() as u64), |h, v| mix(h, u64::from(v.to_bits())));
+            let look = [r, g, b, fill, outline].iter().fold(mix(u64::from(closed) << 1 | u64::from(spline), points.len() as u64), |h, v| mix(h, u64::from(v.to_bits())));
             let look = points.iter().chain(holes.iter().flatten()).fold(look, |h, p| mix(mix(mix(h, u64::from(p.x.to_bits())), u64::from(p.y.to_bits())), u64::from(p.z.to_bits())));
             match &cover.drawn {
                 Some((k, drawn)) if *k == look => o.clone_from(drawn),
@@ -1236,7 +1237,10 @@ impl Tile {
                         cover.fill(&points, &holes, overlay_colour(r, g, b, fill), &mut o);
                     }
 
-                    cover.edges(&points, closed, !spline, overlay_colour(r, g, b, 0.85), &mut o);
+                    if outline > 0.0 {
+                        cover.edges(&points, closed, !spline, overlay_colour(r, g, b, outline), &mut o);
+                    }
+
                     cover.drawn = Some((look, o.clone()));
                 }
             }

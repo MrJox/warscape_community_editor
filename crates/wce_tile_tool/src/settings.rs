@@ -48,6 +48,11 @@ pub struct TileSettings {
     /// The VFX boxes (the VFXInstance markers; the effects still play).
     pub show_vfx_boxes: bool,
 
+    /// The Areas chip: the polygons' fill and outline opacity, and the fill's factor per type (1 when not listed).
+    pub polygon_fill: f32,
+    pub polygon_outline: f32,
+    pub polygon_type_fill: BTreeMap<String, f32>,
+
     /// The battle wind the sea is drawn with (a key of `wind_levels_tables`); empty: the renderer's default.
     pub sea_state: String,
 
@@ -257,6 +262,6 @@ pub struct CameraView {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
+        Self { show_sea: true, show_vfx_boxes: true, polygon_fill: 0.3, polygon_outline: 0.85, polygon_type_fill: BTreeMap::new(), sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
     }
 }

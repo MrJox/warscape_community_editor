@@ -62,7 +62,7 @@ use crate::terrain_bake::{BakedColour, TerrainLook};
 
 pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::prefab_reference_text;
-pub use self::index::style_of;
+pub use self::index::{FILLED_TYPES, polygon_colour, style_of};
 pub use self::view::{LIGHT_RADIUS_HANDLE, SHELTER_TARGET_HANDLE};
 pub use self::tech::{GROUPS, KINDS, TechInfo, TechKind, TechScope, TechSettings, TechStats, WallTechReport, tech_counts};
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
@@ -146,13 +146,47 @@ impl BrushSettings {
     }
 }
 
+/// How the polygons are drawn: the opacity of every outline, of every fill, and a factor on the fill per type (one a type does not have).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolygonLook {
+    pub fill: f32,
+    pub outline: f32,
+    pub type_fill: BTreeMap<String, f32>,
+}
+
+impl Default for PolygonLook {
+    fn default() -> Self {
+        Self { fill: 0.3, outline: 0.85, type_fill: BTreeMap::new() }
+    }
+}
+
+impl PolygonLook {
+    pub fn type_factor(&self, ty: &str) -> f32 {
+        self.type_fill.get(ty).copied().unwrap_or(1.0)
+    }
+
+    /// Sets a type's factor; 1 is the default, not kept.
+    pub fn set_type_factor(&mut self, ty: &str, v: f32) {
+        if (v - 1.0).abs() < 1e-6 {
+            self.type_fill.remove(ty);
+        } else {
+            self.type_fill.insert(ty.to_owned(), v);
+        }
+    }
+
+    /// A type's fill opacity.
+    pub fn fill_of(&self, ty: &str) -> f32 {
+        self.fill * self.type_factor(ty)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TileDisplay {
     pub hidden_types: BTreeSet<String>,
     pub show_polygons: bool,
 
-    /// The closed polygons' fill opacity (0: edges only).
-    pub polygon_fill: f32,
+    /// How the polygons' outlines and fills are drawn.
+    pub polygon_look: PolygonLook,
 
     /// The polygons' cover goes over the buildings (else over the terrain only).
     pub polygon_over_buildings: bool,
@@ -207,7 +241,7 @@ pub struct TileDisplay {
 impl Default for TileDisplay {
     fn default() -> Self {
         Self {
-            hidden_types: BTreeSet::new(), show_polygons: true, polygon_fill: 0.3, polygon_over_buildings: false, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true, tint_freeform: false,
+            hidden_types: BTreeSet::new(), show_polygons: true, polygon_look: PolygonLook::default(), polygon_over_buildings: false, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true, tint_freeform: false,
             show_links: false, show_water: true, show_sea: true, tree_list: DEFAULT_TREE_LIST.to_owned(), tree_list_auto: true, show_grass: true, generate_grass: false, show_auto_nogo: false, tech: TechSettings::default(),
             game_layers: None,
         }
