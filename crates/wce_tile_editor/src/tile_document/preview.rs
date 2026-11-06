@@ -89,6 +89,7 @@ impl Tile {
                 let e = scene.add(self.layer, item.local, item.payload.clone(), self.source(TERRAIN));
                 if let Some(en) = scene.find_mut(e) {
                     en.locked = true;
+                    en.transient = true;
                 }
 
                 self.preview.entities.push(e);
