@@ -10,7 +10,7 @@ use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
 use wce_editor_core::document_manager::DocumentManager;
 use wce_editor_core::inspector::{InspectTarget, Inspector, PropertyPath};
 use wce_editor_core::selection::Selection;
-use wce_foundation::math::{Float3, Float4x4, length, translation};
+use wce_foundation::math::{Float3, Float4x4, length, normalize, translation};
 use wce_scene::render_scene::{LayerId, Overlay, Payload, RenderScene, SourceRef};
 use wce_scene::camera::Camera;
 
@@ -544,6 +544,20 @@ fn cameras() {
     g.set_camera(&Camera { eye: Float3::new(0.0, 300.0, 0.0), target: Float3::new(0.0, 0.0, 10.0), ..Camera::default() });
     g.update(&CameraInput { dt: 0.01, ..Default::default() }, &CameraOptions { game_limits: true, ..opts }, &mut HalfScaleWorld);
     assert!((g.camera().eye.y - GAME_MAX_HEIGHT / 2.0).abs() < 1e-3, "the limits are in game units: half as many in a half-scale scene");
+
+    // The orbit camera at an obstacle: it stops there, looking the same way (pushed out sideways, it turned).
+    for (yaw, pitch) in [(0.3, 0.1), (1.2, 0.2), (2.6, 0.05), (4.0, 0.15), (5.5, 0.3)] {
+        let (solid, target) = (CameraOptions { respect_collisions: true, ..opts }, Float3::new(46.0, 5.0, 0.0));
+        let mut free = OrbitCamera::default();
+        free.set_orbit(yaw, pitch, 3.0, target);
+        let want = normalize(free.camera().target - free.camera().eye);
+        let mut b = OrbitCamera::default();
+        b.set_orbit(yaw, pitch, 3.0, target);
+        b.update(&CameraInput { dt: 0.01, ..Default::default() }, &solid, &mut FlatWorld);
+        let c = b.camera();
+        assert!(length(normalize(c.target - c.eye) - want) < 1e-3, "yaw {yaw}: the view turned: {:?} for {want:?}", normalize(c.target - c.eye));
+        assert!(FlatWorld.push_out(c.eye, 1.0) == c.eye, "yaw {yaw}: the eye is out of the box: {:?}", c.eye);
+    }
 
     // Smoothing: the view catches up over a few frames.
     let mut s = TotalWarCamera::default();
