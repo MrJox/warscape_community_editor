@@ -3299,19 +3299,20 @@ impl Tool for TileTool {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let overlay = self.tool_overlay(e, d);
         // The preview: the stroke's trees while the brush paints, else what a click places.
-        let (preview, at) = if self.painting_trees(e) {
-            (self.stroke_preview(e), Float3::default())
+        let (preview, at, yaw) = if self.painting_trees(e) {
+            // The stroke's trees are where they are, turned as they are.
+            (self.stroke_preview(e), Float3::default(), 0.0)
         } else if self.terrain_hit && (e.viewport.hovered || self.preview_forced) {
-            (self.placing_text(e), self.place_point().0)
+            (self.placing_preview(e), self.place_point().0, self.preview_yaw())
         } else {
-            (None, self.place_point().0)
+            (None, self.place_point().0, 0.0)
         };
 
         let now = e.clock.time();
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().update_fire(&mut e.scene, now);
         d.tile_mut().update_view(&mut e.scene, eye);
-        d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at);
+        d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at, yaw);
         let hot = if self.light_drag.is_some() {
             Some(wce_tile_editor::tile_document::LIGHT_RADIUS_HANDLE)
         } else if self.target_drag.is_some() {
