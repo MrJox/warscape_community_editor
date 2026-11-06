@@ -2753,13 +2753,14 @@ impl TileDocument {
         };
 
         ins.text("fire", "fire preview", &state);
-        if ins.button("fire_play", "Play the fire", true) {
-            let now = self.tile().fire_now();
-            self.tile_mut().fire_start(e, now);
-        }
+        match ins.buttons("", &[("fire_play", "Play", true), ("fire_stop", "Stop", self.tile().fire_time(e).is_some())]) {
+            Some(0) => {
+                let now = self.tile().fire_now();
+                self.tile_mut().fire_start(e, now);
+            }
 
-        if ins.button("fire_stop", "Stop the fire", self.tile().fire_time(e).is_some()) {
-            self.tile_mut().fire_stop(Some(e));
+            Some(_) => self.tile_mut().fire_stop(Some(e)),
+            None => {}
         }
     }
 

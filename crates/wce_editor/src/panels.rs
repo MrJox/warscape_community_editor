@@ -132,6 +132,28 @@ impl Inspector for ImGuiInspector {
         clicked && enabled
     }
 
+    fn buttons(&mut self, label: &str, buttons: &[(&str, &str, bool)]) -> Option<usize> {
+        let row = buttons.first().map_or("", |b| b.0);
+        self.label(row, label, false);
+        let gap = gui::item_spacing().x;
+        let width = (gui::content_region_avail().x - gap * (buttons.len() as f32 - 1.0)) / buttons.len().max(1) as f32;
+        let mut clicked = None;
+        for (i, &(field, text, enabled)) in buttons.iter().enumerate() {
+            if i != 0 {
+                gui::same_line();
+            }
+
+            gui::begin_disabled(!enabled);
+            if gui::button_sized(&format!("{text}{}", self.id(field)), gui::v2(width, 0.0)) && enabled {
+                clicked = Some(i);
+            }
+
+            gui::end_disabled();
+        }
+
+        clicked
+    }
+
     fn section(&mut self, title: &str) {
         gui::separator_text(title);
     }
