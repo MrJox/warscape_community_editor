@@ -84,6 +84,9 @@ pub enum TileMode {
     Ground,
 }
 
+/// A building key's category.
+type PackCategories = Arc<std::collections::HashMap<String, String>>;
+
 /// What the water depth view shows (its tooltip).
 pub(crate) const WATER_VIEW_TIP: &str = "The water's depth over the ground, as BOB works out the tile's water map (hf_water_map.data) from the rivers and \
     water planes: cyan shallow to dark blue 6 m and deeper, dark where there is no water. The edges of the areas painted as deep water \
@@ -485,6 +488,9 @@ pub struct TileTool {
     pub(crate) areas_chip_width: f32,
     pub(crate) areas: Option<wce_tile_editor::tile_document::PolygonLook>,
 
+    /// The buildings' categories in the packs, and what they were read from.
+    pack_categories: Option<(Arc<wce_vfs::Vfs>, PackCategories)>,
+
     /// The building technology chip's width (tech_chip.rs), last frame.
     pub(crate) tech_chip_width: f32,
 
@@ -643,7 +649,7 @@ impl Default for TileTool {
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: 0.75, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            ref_units: Default::default(), drawing: false, ground_chip_width: 0.0, areas_chip_width: 0.0, areas: None, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            ref_units: Default::default(), drawing: false, ground_chip_width: 0.0, areas_chip_width: 0.0, pack_categories: None, areas: None, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -4043,6 +4049,10 @@ impl Tool for TileTool {
         let mut tables = vec![projects.join("raw_data")];
         tables.extend(e.settings_ref().assembly_kit_raw_dirs());
         doc.set_building_tables(tables);
+        if let Some(categories) = self.pack_building_categories(e) {
+            doc.set_pack_categories(categories);
+        }
+
         doc.set_projects_root(Some(projects));
         if let Some(w) = doc.exclusion_warning() {
             log::error(format!("{}: {w}", doc.title()));
@@ -4066,6 +4076,23 @@ impl Tool for TileTool {
 pub(crate) fn tiles_kit(e: &Editor) -> Option<PathBuf> {
     let raw = e.settings_ref().assembly_kit_raw_dirs().into_iter().find(|raw| raw.join("terrain/tiles").is_dir())?;
     raw.parent().map(Path::to_path_buf)
+}
+
+impl TileTool {
+    /// The buildings' categories in the mounted packs, read once for them (none without rpfm's schema: the Assembly Kits' tables alone).
+    fn pack_building_categories(&mut self, e: &Editor) -> Option<PackCategories> {
+        let vfs = e.vfs()?.clone();
+        if let Some((mounted, categories)) = &self.pack_categories
+            && Arc::ptr_eq(mounted, &vfs)
+        {
+            return Some(categories.clone());
+        }
+
+        let schema = walls_schema(e).ok()?;
+        let categories = Arc::new(wce_tile_io::attila::game_data::building_categories_in_packs(&vfs, &schema));
+        self.pack_categories = Some((vfs, categories.clone()));
+        Some(categories)
+    }
 }
 
 /// rpfm's schema of the current game, for the procedural walls' database rows (`walls_schema_path`).

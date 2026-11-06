@@ -68,6 +68,14 @@ impl TileDocument {
         tile.building_db = std::cell::OnceCell::new();
     }
 
+    /// The buildings' categories in the game's packs (`wce_tile_io::attila::game_data::building_categories_in_packs`): the last source
+    /// of the table, after the kits.
+    pub fn set_pack_categories(&mut self, categories: std::sync::Arc<std::collections::HashMap<String, String>>) {
+        let tile = self.tile_mut();
+        tile.pack_categories = Some(categories);
+        tile.building_db = std::cell::OnceCell::new();
+    }
+
     pub fn projects_root(&self) -> Option<&Path> {
         self.tile().projects_root.as_deref()
     }

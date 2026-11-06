@@ -47,6 +47,45 @@ pub fn default_schema_path(game: &GameProfile) -> Option<PathBuf> {
     wce_foundation::settings::rpfm_schema_path(game)
 }
 
+/// The rows of the packs' `battlefield_buildings` tables: key (lower case), category and destruction thresholds, a mod's rows (TDD's tables
+/// are in its main pack) before the game's.
+fn building_table_rows(vfs: &Vfs, schema: &Schema, warnings: &mut Vec<String>) -> Vec<(String, String, Vec<f32>)> {
+    wce_foundation::wce_prof!("game_data.tables");
+    let is_mod = |path: &str| vfs.owner(path).is_some_and(|p| vfs.packs()[p].is_mod);
+    let mut rows = vec![];
+    for n in vfs.list("db/battlefield_buildings_tables/", "") {
+        let Ok(bytes) = vfs.read(n) else { continue };
+        let mut extra = DecodeableExtraData::default();
+        extra.set_schema(Some(schema));
+        extra.set_table_name(Some("battlefield_buildings_tables"));
+        let Ok(db) = DB::decode(&mut Cursor::new(&bytes), &Some(extra)) else {
+            warnings.push(format!("{n}: does not decode with the schema"));
+            continue;
+        };
+
+        let col = |c: &str| db.column_position_by_name(c);
+        let (Some(k), Some(cat), Some(th)) = (col("key"), col("category"), col("destruct_thresholds")) else { continue };
+        for row in db.data().iter() {
+            let values = row[th].data_to_string().split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
+            rows.push((is_mod(n), row[k].data_to_string().to_lowercase(), row[cat].data_to_string().into_owned(), values));
+        }
+    }
+
+    rows.sort_by_key(|r| !r.0);
+    rows.into_iter().map(|(_, key, category, values)| (key, category, values)).collect()
+}
+
+/// The buildings' categories in the mounted packs, a mod's over the game's: what the Assembly Kits' tables do not have, which a mod's buildings
+/// are not in.
+pub fn building_categories_in_packs(vfs: &Vfs, schema: &Schema) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for (key, category, _) in building_table_rows(vfs, schema, &mut vec![]) {
+        out.entry(key).or_insert(category);
+    }
+
+    out
+}
+
 impl GameData {
     /// Reads a game's folder: its own packs and every mod pack of its data folder (the mods first), as the checks see the game.
     ///
@@ -85,8 +124,6 @@ impl GameData {
             warnings.push("no rpfm schema (Help > Update Manager downloads it): the buildings' categories and destruction thresholds are not known".to_owned());
         }
 
-        let is_mod = |path: &str| vfs.owner(path).is_some_and(|p| vfs.packs()[p].is_mod);
-
         // The destruction levels: the building's collision file lists each piece's destructs, the building's count is the most over its
         // pieces; without one, the same from the models' names (`<piece>_destructNN.rigid_model_v2`).
         let mut pieces: BTreeMap<String, BTreeMap<String, u32>> = BTreeMap::new();
@@ -116,28 +153,7 @@ impl GameData {
             levels.into_iter().flatten().collect()
         };
 
-        // The battlefield_buildings tables; a mod's rows (TDD's tables are in its main pack) before the game's.
-        let mut rows: Vec<(bool, String, String, Vec<f32>)> = vec![];
-        if let Some(schema) = &schema {
-            wce_foundation::wce_prof!("game_data.tables");
-            for n in vfs.list("db/battlefield_buildings_tables/", "") {
-                let Ok(bytes) = vfs.read(n) else { continue };
-                let mut extra = DecodeableExtraData::default();
-                extra.set_schema(Some(schema));
-                extra.set_table_name(Some("battlefield_buildings_tables"));
-                let Ok(db) = DB::decode(&mut Cursor::new(&bytes), &Some(extra)) else {
-                    warnings.push(format!("{n}: does not decode with the schema"));
-                    continue;
-                };
-
-                let col = |c: &str| db.column_position_by_name(c);
-                let (Some(k), Some(cat), Some(th)) = (col("key"), col("category"), col("destruct_thresholds")) else { continue };
-                for row in db.data().iter() {
-                    let values = row[th].data_to_string().split(',').filter_map(|v| v.trim().parse::<f32>().ok()).collect::<Vec<_>>();
-                    rows.push((is_mod(n), row[k].data_to_string().to_lowercase(), row[cat].data_to_string().into_owned(), values));
-                }
-            }
-        }
+        let rows = schema.as_ref().map_or_else(Vec::new, |schema| building_table_rows(vfs, schema, &mut warnings));
 
         let mut dbs: Vec<(bool, String, TileDatabase)> = vec![];
         let mut xml_databases = BTreeMap::new();
@@ -166,9 +182,8 @@ impl GameData {
         dbs.sort_by_key(|(is_mod, _, _)| !is_mod);
         let mut levels = pieces.into_iter().map(|(k, p)| (k, p.values().copied().max().unwrap_or(1))).collect::<BTreeMap<_, _>>();
         levels.extend(from_cs2);
-        rows.sort_by_key(|r| !r.0);
         let (mut categories, mut thresholds): (BTreeMap<String, String>, BTreeMap<String, Vec<f32>>) = (BTreeMap::new(), BTreeMap::new());
-        for (_, key, category, values) in rows {
+        for (key, category, values) in rows {
             categories.entry(key.clone()).or_insert(category);
             thresholds.entry(key).or_insert(values);
         }

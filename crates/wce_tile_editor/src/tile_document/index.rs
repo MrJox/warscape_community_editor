@@ -314,7 +314,14 @@ impl Tile {
     /// The kits' `battlefield_buildings` tables: the tile's own kit's (a kit's tile), then the projects' kit layout's and the Assembly Kits'
     /// (`TileDocument::set_building_tables`), read on first use.
     pub fn building_db(&self) -> &BuildingDb {
-        self.building_db.get_or_init(|| BuildingDb::load_for_tile(&self.project.dir, &self.building_tables))
+        self.building_db.get_or_init(|| {
+            let mut db = BuildingDb::load_for_tile(&self.project.dir, &self.building_tables);
+            if let Some(packs) = &self.pack_categories {
+                db.add_missing(packs);
+            }
+
+            db
+        })
     }
 
     /// The category of a building key in the kits' `battlefield_buildings` (`fort_wall`, `gate`, `generic` ...); `None` without a kit.
