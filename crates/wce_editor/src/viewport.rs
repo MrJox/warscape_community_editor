@@ -684,7 +684,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         let clear = |id: gui::ImGuiID| if id == button_id { 0 } else { id };
         gui::set_context_ids((clear(ids.0), clear(ids.1), clear(ids.2)));
 
-        // The whole gizmo takes the mouse: inside it but off its handles (ImGuizmo asked with the real position), it is shown the closest one.
+        // The whole gizmo takes the mouse: inside it but off its handles, it is shown the closest one.
         let (right, _, forward) = cam.axes();
         let aspect = w as f32 / h as f32;
         let project = |p: Float3| cam.project(p, aspect).map(|(x, y)| [origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y]);
@@ -693,7 +693,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         let local_axes = parent.is_some() || vp.gizmo == GizmoMode::Scale;
         let axes = if local_axes { [axis(0), axis(1), axis(2)] } else { [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)] };
         let shape = crate::gizmo_reach::Gizmo {
-            project: &project, view: [size.x, size.y], centre, axes, right, forward, size: gizmo_clip,
+            project: &project, view: [size.x, size.y], centre, axes, right, forward, orthographic: cam.is_ortho(), size: gizmo_clip,
         };
 
         let held_offset = vp.gizmo_offset;
@@ -707,12 +707,17 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             gz::ImGuizmo_SetGizmoSizeClipSpace(gizmo_clip);
             gz::ImGuizmo_SetDrawlist(dear_imgui_sys::igGetWindowDrawList() as *mut _);
             gz::ImGuizmo_SetRect(origin.x, origin.y, size.x, size.y);
-            let handles = if vp.gizmo == GizmoMode::Rotate { crate::gizmo_reach::Handles::Rings } else { crate::gizmo_reach::Handles::Axes };
+            let handles = match vp.gizmo {
+                GizmoMode::Translate => crate::gizmo_reach::Handles::Move,
+                GizmoMode::Rotate => crate::gizmo_reach::Handles::Rings,
+                _ => crate::gizmo_reach::Handles::Scale,
+            };
+
             let dragging = gz::ImGuizmo_IsUsing();
             let shown = match held_offset.filter(|_| dragging) {
                 // A drag that began off the handles goes on from where it was shown, by the mouse's movement.
                 Some([x, y]) => Some([mouse_x + x, mouse_y + y]),
-                None if hovered && !dragging && !gz::ImGuizmo_IsOver_Nil() => crate::gizmo_reach::snap(handles, [mouse_x, mouse_y], &shape),
+                None if hovered && !dragging => crate::gizmo_reach::snap(handles, [mouse_x, mouse_y], &shape),
                 None => None,
             };
 
