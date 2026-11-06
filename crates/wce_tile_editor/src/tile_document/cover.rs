@@ -211,9 +211,9 @@ impl Cover {
         }
     }
 
-    /// The edges of a polyline (closing it when `closed`) as ribbons on the cover, with a 1 px line along their middle (it stays visible
-    /// from afar), and a square on each point when `corners` (not on a spline's curve samples).
-    pub fn edges(&self, points: &[Float3], closed: bool, corners: bool, rgba: u32, o: &mut Overlay) {
+    /// The edges of a polyline (closing it when `closed`) as ribbons on the cover in `rgba`, with a 1 px line along their middle in `line`
+    /// (it stays visible from afar), and a square on each point when `corners` (not on a spline's curve samples).
+    pub fn edges(&self, points: &[Float3], closed: bool, corners: bool, rgba: u32, line: u32, o: &mut Overlay) {
         let n = points.len();
         let segments = if closed && n > 2 { n } else { n.saturating_sub(1) };
         let half = RIBBON_M * 0.5;
@@ -235,7 +235,7 @@ impl Cover {
                 o.triangle(p0, p1, q1, rgba);
                 o.triangle(p0, q1, q0, rgba);
                 let lift = Float3::new(0.0, 0.02, 0.0);
-                o.line(on(x0, z0) + lift, on(x1, z1) + lift, rgba | 0xFF00_0000);
+                o.line(on(x0, z0) + lift, on(x1, z1) + lift, line);
             }
         }
 

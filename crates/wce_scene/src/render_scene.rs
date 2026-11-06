@@ -742,6 +742,17 @@ pub struct OverlayVertex {
     pub rgba: u32,
 }
 
+/// The entries of a scene's overlay colour table (`RenderScene::overlay_slots`).
+pub const OVERLAY_SLOTS: usize = 48;
+
+/// A vertex colour that stands for an entry of the scene's overlay colour table, read when it is drawn: what uses one changes colour by
+/// the table alone, without touching its geometry. Alpha 0 and these green and blue bytes (the overlay shader's `SLOT_`) say so: such a
+/// vertex would otherwise not show. Keep the colour as it is: a changed alpha turns it into a plain colour.
+pub fn overlay_slot(slot: usize) -> u32 {
+    debug_assert!(slot < OVERLAY_SLOTS);
+    slot as u32 | 0xAB << 8 | 0xCD << 16
+}
+
 /// An overlay colour from 0..1 channels.
 pub fn overlay_colour(r: f32, g: f32, b: f32, a: f32) -> u32 {
     let q = |v: f32| if v <= 0.0 { 0 } else if v >= 1.0 { 255 } else { (v * 255.0 + 0.5) as u32 };
@@ -1040,6 +1051,9 @@ pub struct RenderScene {
     /// sea at 0 (the terrain lifts land and lowers sea bed by the sign of that height).
     pub sea_level: f32,
 
+    /// The overlay colour table (`overlay_slot`): r, g, b, a in 0..1. Read every frame; no revision follows it.
+    pub overlay_slots: [[f32; 4]; OVERLAY_SLOTS],
+
     /// The battle's centre (x, z; scene units): the game's world origin, above which it renders the environment cube (EnvMapGen, 50 m over
     /// the ground there). A tile's centre; (0, 0) for a scene drawn around its own origin.
     pub battle_centre: [f32; 2],
@@ -1152,6 +1166,7 @@ impl Default for RenderScene {
             world_yaw: 0.0,
             game_units: 1.0,
             sea_level: 0.0,
+            overlay_slots: [[0.0; 4]; OVERLAY_SLOTS],
             battle_centre: [0.0, 0.0],
             campaign_sea: None,
             campaign_snow: None,

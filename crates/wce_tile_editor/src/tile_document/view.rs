@@ -10,7 +10,7 @@ use wce_formats::c_num::strtod;
 use wce_foundation::math::{Double3, Float3, Float4x4, dot, translation};
 use wce_foundation::{log, wce_prof};
 use wce_scene::render_scene::{TerrainImage, Decal, 
-    EntityId, LayerId, LfMap, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour,
+    EntityId, LayerId, LfMap, MeshInstance, Overlay, OverlayVertex, overlay_slot, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour,
 };
 use wce_tile::blend_field::BlendField;
 use wce_tile::height_field::HeightField;
@@ -1224,23 +1224,22 @@ impl Tile {
             let mut cover = self.cover_for(lo, hi, over);
             let [r, g, b] = polygon_colour(&ty);
             let holes = self.zone_holes(elem);
-            let fill = if holes.is_some() { self.display.polygon_look.fill_of(&ty) } else { 0.0 };
-            let outline = self.display.polygon_look.outline;
+            let filled = holes.is_some();
             let holes = holes.unwrap_or_default();
+
+            // The colours are entries of the overlay colour table: a change of the look does not come here.
+            let (fill, outline, line) = super::index::polygon_slots(&ty);
             let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
-            let look = [r, g, b, fill, outline].iter().fold(mix(u64::from(closed) << 1 | u64::from(spline), points.len() as u64), |h, v| mix(h, u64::from(v.to_bits())));
+            let look = [r, g, b, f32::from(u8::from(filled))].iter().fold(mix(u64::from(closed) << 1 | u64::from(spline), points.len() as u64), |h, v| mix(h, u64::from(v.to_bits())));
             let look = points.iter().chain(holes.iter().flatten()).fold(look, |h, p| mix(mix(mix(h, u64::from(p.x.to_bits())), u64::from(p.y.to_bits())), u64::from(p.z.to_bits())));
             match &cover.drawn {
                 Some((k, drawn)) if *k == look => o.clone_from(drawn),
                 _ => {
-                    if closed && points.len() > 2 && fill > 0.0 {
-                        cover.fill(&points, &holes, overlay_colour(r, g, b, fill), &mut o);
+                    if closed && points.len() > 2 && filled {
+                        cover.fill(&points, &holes, overlay_slot(fill), &mut o);
                     }
 
-                    if outline > 0.0 {
-                        cover.edges(&points, closed, !spline, overlay_colour(r, g, b, outline), &mut o);
-                    }
-
+                    cover.edges(&points, closed, !spline, overlay_slot(outline), overlay_slot(line), &mut o);
                     cover.drawn = Some((look, o.clone()));
                 }
             }
@@ -1670,6 +1669,7 @@ impl Tile {
     /// and links when they are stale.
     pub fn update_view(&mut self, scene: &mut RenderScene, eye: Float3) {
         wce_prof!("tile.update_view");
+        scene.overlay_slots = super::index::polygon_slot_table(&self.display.polygon_look);
         if self.scene_key != scene_key(scene) {
             return;
         }

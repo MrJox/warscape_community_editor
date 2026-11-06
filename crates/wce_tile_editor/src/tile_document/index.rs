@@ -43,6 +43,36 @@ pub const FILLED_TYPES: [&str; 11] = [
     "LiteBuildingZone", "NOGO_REGION_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "ZONE_POLYGON_INSTANCE",
 ];
 
+/// The types of polygon and line with entries of their own in the overlay colour table; anything else shares the last.
+const SLOT_TYPES: [&str; 15] = [
+    "AI_HINT_POLYGON_INSTANCE", "CaptureLocationPolygonInstance", "CivilianDeploymentZone", "DEPLOYMENT_ZONE_POLYGON_INSTANCE", "EF_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE",
+    "LiteBuildingZone", "NOGO_REGION_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "ZONE_POLYGON_INSTANCE", "AISeparatorInstance",
+    "SplineRiverInstance", "SEGMENTED_SPLINE_INSTANCE", "WceWallSpline",
+];
+
+/// The outline's opacity at which the line along an edge is opaque: the default look.
+const OPAQUE_LINE: f32 = 0.85;
+
+/// The entries of a type's fill, outline ribbon and the line along it in the overlay colour table: the vertices keep them, so that a
+/// change of the look is a change of the table alone (a slider drag, every frame), not of every polygon's geometry.
+pub(crate) fn polygon_slots(ty: &str) -> (usize, usize, usize) {
+    let i = SLOT_TYPES.iter().position(|t| *t == ty).unwrap_or(SLOT_TYPES.len());
+    (3 * i, 3 * i + 1, 3 * i + 2)
+}
+
+/// The overlay colour table of a look.
+pub(crate) fn polygon_slot_table(look: &super::PolygonLook) -> [[f32; 4]; wce_scene::render_scene::OVERLAY_SLOTS] {
+    let mut table = [[0.0; 4]; wce_scene::render_scene::OVERLAY_SLOTS];
+    for ty in SLOT_TYPES.iter().copied().chain([""]) {
+        let ([r, g, b], (fill, outline, line)) = (polygon_colour(ty), polygon_slots(ty));
+        table[fill] = [r, g, b, look.fill_of(ty)];
+        table[outline] = [r, g, b, look.outline];
+        table[line] = [r, g, b, (look.outline / OPAQUE_LINE).min(1.0)];
+    }
+
+    table
+}
+
 /// A polygon type's colour (its cover's fill and edges), and the lines' (splines, separators).
 pub fn polygon_colour(t: &str) -> [f32; 3] {
     match t {
