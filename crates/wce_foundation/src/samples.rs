@@ -7,8 +7,9 @@
 //! page written to becomes the process's own copy, the file untouched. The campaign map's LF is 375 MB, which the model, the placed map
 //! and the scene each held a copy of (docs/plans/terrain_editor.md, Phase 8).
 //!
-//! A file with a view of it can't be truncated or replaced (Windows): write it only after [`SampleGrid::detach`] (the samples copied into
-//! memory, the view closed).
+//! Write a file with a view of it only after [`SampleGrid::detach`] (the samples copied into memory, the view closed). Windows refuses to
+//! truncate or replace it otherwise. Unix doesn't: a change to the file shows through the pages nobody wrote to, and reading a page a
+//! truncation cut off kills the process (SIGBUS). Replacing it by renaming another file over it is safe there, the view keeps the old file.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -170,12 +171,14 @@ impl SampleGrid {
     }
 }
 
-/// A copy-on-write view of a file's bytes from an offset (Windows); `None` where views are not made.
+/// A copy-on-write view of a file's bytes from an offset (Windows, Unix); `None` where views are not made.
 struct MappedView {
-    #[cfg(windows)]
+    #[cfg(any(windows, unix))]
     base: *mut std::ffi::c_void,
     #[cfg(windows)]
     mapping: *mut std::ffi::c_void,
+    #[cfg(unix)]
+    mapped_bytes: usize,
     ptr: *mut u16,
     len: usize,
 }
@@ -196,7 +199,7 @@ impl MappedView {
         unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, unix)))]
     fn open(_: &std::path::Path, _: u64, _: usize) -> Option<Self> {
         None
     }
@@ -225,6 +228,25 @@ impl MappedView {
             Some(Self { base, mapping, ptr: base.cast::<u8>().add(offset as usize).cast::<u16>(), len: samples })
         }
     }
+
+    #[cfg(unix)]
+    fn open(path: &std::path::Path, offset: u64, samples: usize) -> Option<Self> {
+        use std::os::fd::AsRawFd;
+
+        let file = std::fs::File::open(path).ok()?;
+        let start = usize::try_from(offset).ok()?;
+        let end = start.checked_add(samples.checked_mul(2)?)?;
+        // SAFETY: a new private mapping of a file we opened (it outlives the descriptor, closed on return); a failure is checked.
+        unsafe {
+            // The view starts at the file's start (a view's offset must be a multiple of the page size).
+            let base = posix::mmap(std::ptr::null_mut(), end, posix::PROT_READ | posix::PROT_WRITE, posix::MAP_PRIVATE, file.as_raw_fd(), 0);
+            if base.addr() == posix::MAP_FAILED {
+                return None;
+            }
+
+            Some(Self { base, mapped_bytes: end, ptr: base.cast::<u8>().add(start).cast::<u16>(), len: samples })
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -235,6 +257,32 @@ impl Drop for MappedView {
             win::UnmapViewOfFile(self.base);
             win::CloseHandle(self.mapping);
         }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for MappedView {
+    fn drop(&mut self) {
+        // SAFETY: the mapping was made by `open` and is released once.
+        unsafe {
+            posix::munmap(self.base, self.mapped_bytes);
+        }
+    }
+}
+
+/// The same values on Linux, macOS and the BSDs.
+#[cfg(unix)]
+mod posix {
+    use std::ffi::c_void;
+
+    pub const PROT_READ: i32 = 1;
+    pub const PROT_WRITE: i32 = 2;
+    pub const MAP_PRIVATE: i32 = 2;
+    pub const MAP_FAILED: usize = usize::MAX;
+
+    unsafe extern "C" {
+        pub fn mmap(addr: *mut c_void, bytes: usize, prot: i32, flags: i32, fd: i32, offset: isize) -> *mut c_void;
+        pub fn munmap(addr: *mut c_void, bytes: usize) -> i32;
     }
 }
 
@@ -269,6 +317,7 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         {
             let g = SampleGrid::map_file(&path, 2, 4, 3).unwrap();
+            assert_eq!(g.is_mapped(), cfg!(any(windows, unix)), "a view of the file");
             assert_eq!(g.read()[5], 500);
             g.write()[5] = 1;
             g.touch([1, 1, 2, 2]);
@@ -284,5 +333,48 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         std::fs::write(&path, b"x").unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_file_shorter_than_the_samples_is_refused_and_an_odd_offset_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.bin");
+        std::fs::write(&path, [0u8, 1, 0, 2, 0]).unwrap();
+        assert!(SampleGrid::map_file(&path, 0, 3, 1).is_err());
+
+        let g = SampleGrid::map_file(&path, 1, 2, 1).unwrap();
+        assert!(!g.is_mapped());
+        assert_eq!(&*g.read(), &[0x0001, 0x0002]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_view_keeps_the_file_a_rename_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.bin");
+        std::fs::write(&path, [1u8, 0, 2, 0]).unwrap();
+        let g = SampleGrid::map_file(&path, 0, 2, 1).unwrap();
+
+        let other = dir.path().join("g.bin");
+        std::fs::write(&other, [9u8]).unwrap();
+        std::fs::rename(&other, &path).unwrap();
+        assert_eq!(&*g.read(), &[1, 2]);
+    }
+
+    /// The pages of a large view, written across a page boundary and dropped: the edits stay out of the file.
+    #[test]
+    fn a_view_past_the_first_page_keeps_its_edits_from_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.bin");
+        let bytes: Vec<u8> = (0..20_000u16).flat_map(u16::to_le_bytes).collect();
+        std::fs::write(&path, &bytes).unwrap();
+
+        let g = SampleGrid::map_file(&path, 6, 1000, 19).unwrap();
+        assert_eq!(g.read()[18_999], 19_002);
+        g.write()[2045] = 1;
+        g.write()[18_999] = 2;
+        assert_eq!((g.read()[2045], g.read()[2046], g.read()[18_999]), (1, 2049, 2));
+        drop(g);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 }

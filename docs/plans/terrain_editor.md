@@ -358,7 +358,7 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
      private.
    - The LF paged from disk (2026-11-04): one copy of its samples (`wce_foundation::samples::SampleGrid`) shared by the model
      (`PagedU16`, pages the unit of undo), the placed map (`LfField`) and the scene (`LfSamples`, its rows read upside down); a kit map's
-     LF a copy-on-write view of its TIFF strip (Windows `MapViewOfFile`, `FILE_MAP_COPY`; read into memory elsewhere): the samples nobody
+     LF a copy-on-write view of its TIFF strip (Windows `MapViewOfFile`, `FILE_MAP_COPY`; Unix `mmap`, `MAP_PRIVATE`): the samples nobody
      edited are the file's pages, not the process's memory. A save over the file it was read from detaches the samples first. The
      refill shares the field too (it copied it twice) and locks it for the LF step alone. The campaign map opened: heap 1 572 -> 431 MB,
      settled 3 349 -> 2 209 MB (`mem`, a counting allocator). Most of the private memory left (about 5 GB of 7.8) is the GPU driver's.

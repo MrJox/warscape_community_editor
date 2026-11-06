@@ -332,18 +332,25 @@ impl Document for MapDocument {
             }
 
             // An LF whose samples are a view of this very file (a map opened from the projects folder, saved back): its samples into
-            // memory first (a file with a view of it can't be rewritten).
+            // memory first (a file with a view of it can't be rewritten on Windows; on Unix the write would reach the view).
             for (_, item) in &model.lf {
                 if matches!(&item.origin, wce_tile_model::Blob::File(src) if *src == to) {
                     item.get().grid().detach();
                 }
             }
 
+            // Renamed over the file, never written in place: another document's view of it (the map opened twice) keeps the old file on Unix,
+            // where truncating it would kill the process when that document reads its LF. Windows refuses, as it refuses a write.
+            let temp = to.with_added_extension("wce_tmp");
             match blob {
-                wce_tile_model::Blob::File(src) => std::fs::copy(src, &to).map(|_| ()),
-                wce_tile_model::Blob::Bytes(b) => std::fs::write(&to, b),
+                wce_tile_model::Blob::File(src) => std::fs::copy(src, &temp).map(|_| ()),
+                wce_tile_model::Blob::Bytes(b) => std::fs::write(&temp, b),
             }
-            .map_err(|e| format!("{}: {e}", to.display()))?;
+            .and_then(|()| std::fs::rename(&temp, &to))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&temp);
+                format!("{}: {e}", to.display())
+            })?;
             written += 1;
         }
 
