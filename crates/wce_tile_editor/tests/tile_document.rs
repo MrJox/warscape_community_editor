@@ -692,6 +692,66 @@ fn a_flip_leaves_a_splines_unused_handles_turns_a_walls_side_and_mirrors_a_shelt
 }
 
 #[test]
+fn a_flip_keeps_what_follows_the_landscape_as_high_above_the_ground() {
+    use wce_tile::splines;
+    use wce_tile::world_transform::world_transform;
+    use wce_tile_editor::tile_document::FlipPlane;
+
+    // The height map of `open` rises along x, so the other side of the plane is higher.
+    let text = TED.replace(
+        r#"<AI_HINT_POLYGON_INSTANCE"#,
+        r#"<SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="land" surface_mode="MSM_LANDSCAPE" orientation="euler(0,0,0)">
+                            <points>
+                                <point position="0,1,0" controlIn="0,0,0" controlOut="4,1,0"/>
+                                <point position="10,2,0" controlIn="6,2,1" controlOut="0,0,0"/>
+                            </points>
+                        </SplineRiverInstance>
+                        <SplineRiverInstance flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,10)" name="free" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)">
+                            <points>
+                                <point position="0,1,0" controlIn="0,0,0" controlOut="4,1,0"/>
+                                <point position="10,2,0" controlIn="6,2,1" controlOut="0,0,0"/>
+                            </points>
+                        </SplineRiverInstance>
+                        <AI_HINT_POLYGON_INSTANCE"#,
+    );
+    let (dir, _) = open();
+    std::fs::write(dir.path().join("tile.ted"), text).unwrap();
+    let mut d = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
+    let sc = d.tile().tscene();
+    let (land, free) = (sc.find_all("SplineRiverInstance")[0], sc.find_all("SplineRiverInstance")[1]);
+    let unit = d.tile().unit();
+    let world = |d: &TileDocument, e: usize, p: Double3| {
+        let w = world_transform(d.tile().tscene(), e);
+        w.position + w.rotation * p
+    };
+
+    let ground = |d: &TileDocument, p: Double3| f64::from(d.tile().terrain_height((p.x / unit) as f32, (p.z / unit) as f32)) * unit;
+    let points = |d: &TileDocument, e: usize| splines::read(d.tile().tscene(), e);
+    let (before, before_free) = (points(&d, land), points(&d, free));
+    let above = before.iter().map(|p| world(&d, land, p.position)).map(|p| p.y - ground(&d, p)).collect::<Vec<_>>();
+    let first_y = world(&d, land, before[0].position).y;
+    let handle_above = world(&d, land, before[0].control_out).y - world(&d, land, before[0].position).y;
+    let free_y = before_free.iter().map(|p| world(&d, free, p.position).y).collect::<Vec<_>>();
+
+    d.flip(&[land, free], FlipPlane { x: 40.0, z: 0.0, angle: 0.0 }, None).unwrap();
+
+    let after = points(&d, land);
+    for (p, was) in after.iter().zip(&above) {
+        let q = world(&d, land, p.position);
+        assert!((q.y - ground(&d, q) - was).abs() < 1e-2, "{} above the ground, was {was}", q.y - ground(&d, q));
+    }
+
+    let moved = world(&d, land, after[0].position).y - first_y;
+    assert!(moved.abs() > 0.1, "the ground is another height there: {moved}");
+    assert!((world(&d, land, after[0].control_out).y - world(&d, land, after[0].position).y - handle_above).abs() < 1e-2, "a handle goes with its point");
+    assert_eq!(after[1].control_out, Double3::ZERO);
+
+    for (p, y) in points(&d, free).iter().zip(&free_y) {
+        assert!((world(&d, free, p.position).y - y).abs() < 1e-6, "a freeform one keeps its height");
+    }
+}
+
+#[test]
 fn a_flip_of_a_prefab_reference_stays_a_reference_with_its_items_as_overrides_and_its_copy_is_refused_inside_one() {
     use wce_tile::project_files::PREFAB_ATTR;
     use wce_tile::world_transform::world_transform;
@@ -775,7 +835,10 @@ fn a_flip_mirrors_places_and_headings_undoes_at_once_and_can_copy() {
     let r = world_transform(d.tile().tscene(), in1).rotation;
     let det = r.col(0).x * (r.col(1).y * r.col(2).z - r.col(1).z * r.col(2).y) - r.col(0).y * (r.col(1).x * r.col(2).z - r.col(1).z * r.col(2).x) + r.col(0).z * (r.col(1).x * r.col(2).y - r.col(1).y * r.col(2).x);
     assert!((det - 1.0).abs() < 1e-6, "still a rotation: {det}");
-    assert!(near(world_point(&d, 1), mirrored(q1)), "a polygon's points mirror: {:?}", world_point(&d, 1));
+
+    // On the landscape: its height is the ground's over there (a_flip_keeps_what_follows_the_landscape_as_high_above_the_ground).
+    let p = world_point(&d, 1);
+    assert!(near(Double3::new(p.x, q1.y, p.z), mirrored(q1)), "a polygon's points mirror: {p:?}");
 
     d.history_mut().undo();
     assert_eq!(self::text(&d), original, "undo gives the file back");

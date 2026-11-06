@@ -100,16 +100,29 @@ impl TileDocument {
             let w = world_transform(sc, e);
             let at = |p: Double3| w.position + w.rotation * p;
             let mirrored = |p: Double3| plane.mirror(p, u);
-            let handle = |h: Double3| (h != Double3::ZERO).then(|| mirrored(at(h)));
+
+            // What follows the landscape stays as high above the ground: the other side of the plane can be higher (a river left under it).
+            let landscape = t.placement_of_attr(e) == Placement::Landscape;
+            let ground = |p: Double3| f64::from(t.terrain_height((p.x / u) as f32, (p.z / u) as f32)) * u;
+            let rise = |p: Double3| if landscape { ground(plane.mirror(p, u)) - ground(p) } else { 0.0 };
+            let lifted = |p: Double3, by: f64| {
+                let q = plane.mirror(p, u);
+                Double3::new(q.x, q.y + by, q.z)
+            };
+
             let spline = if wce_tile::splines::is_spline(sc.type_of(e)) {
-                splines::read(sc, e).iter().map(|p| [Some(mirrored(at(p.position))), handle(p.control_in), handle(p.control_out)]).collect()
+                splines::read(sc, e).iter().map(|p| {
+                    let by = rise(at(p.position));
+                    let handle = |h: Double3| (h != Double3::ZERO).then(|| lifted(at(h), by));
+                    [Some(lifted(at(p.position), by)), handle(p.control_in), handle(p.control_out)]
+                }).collect()
             } else {
                 vec![]
             };
 
             let wall_flip = (sc.type_of(e) == WALL_SPLINE).then(|| !sc.doc().get(e, "wall_flip").is_some_and(|v| parse_bool(&v)));
 
-            let points = if spline.is_empty() { sc.polygon_points(e).into_iter().filter_map(|p| sc.point_position(p)).map(|p| mirrored(at(p))).collect() } else { vec![] };
+            let points = if spline.is_empty() { sc.polygon_points(e).into_iter().filter_map(|p| sc.point_position(p)).map(|p| lifted(at(p), rise(at(p)))).collect() } else { vec![] };
 
             // A shelter's target is in the frame of its parent, as its position.
             let pw = parent_transform(sc, e);
@@ -118,9 +131,9 @@ impl TileDocument {
             // Lines and what holds other items are not turned: their points and contents go where they go.
             let holds = !sc.children(e).is_empty() || !sc.polygon_points(e).is_empty();
             let rotation = if holds { w.rotation } else { plane.mirror_rotation(&w.rotation) };
-            let mut position = mirrored(w.position);
-            if !holds && t.placement_of_attr(e) == Placement::Landscape {
-                position.y = f64::from(t.terrain_height((position.x / u) as f32, (position.z / u) as f32)) * u;
+            let mut position = lifted(w.position, rise(w.position));
+            if !holds && landscape {
+                position.y = ground(position);
             }
 
             Target { elem: e, position, rotation, points, spline, target, wall_flip }
