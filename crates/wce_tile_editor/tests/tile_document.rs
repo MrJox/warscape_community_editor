@@ -424,6 +424,113 @@ fn a_preview_turns_without_being_made_again_and_as_the_item_will_be() {
     }
 }
 
+/// What a scene shows of the items: (item, kind, its matrix's bits), sorted.
+fn items_shown(scene: &wce_scene::render_scene::RenderScene) -> Vec<(u64, String, Vec<u32>)> {
+    let mut out = scene.entities().iter().filter(|e| e.source.item != 0).map(|e| (e.source.item, format!("{:?}", e.kind()), e.world.m.iter().flatten().map(|v| v.to_bits()).collect())).collect::<Vec<_>>();
+    out.sort();
+    out
+}
+
+#[test]
+fn an_item_added_or_removed_leaves_the_scene_as_a_new_publish_would_without_making_the_rest_again() {
+    use wce_scene::render_scene::RenderScene;
+    use wce_tile_editor::tile_document::FlipPlane;
+
+    let two_layers = TED.replace(
+        "</LayerInstance>",
+        r#"</LayerInstance>
+                <LayerInstance flags=" OIF_VISIBLE|OIF_ACTIVE" export_type="LayerExportType_Normal" lf_offset="0" position="vector(0,0,0)" name="Later" orientation="euler(0,0,0)">
+                    <children>
+                        <BUILDING_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(80,0,30)" name="b" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)" key="house"/>
+                        <AI_HINT_POLYGON_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(90,0,50)" name="q" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)">
+                            <points>
+                                <point position="0,0,0"/>
+                                <point position="10.0,0,0"/>
+                                <point position="0,0,10"/>
+                            </points>
+                        </AI_HINT_POLYGON_INSTANCE>
+                        <AI_HINT_LOCATOR_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(95,0,55)" name="m" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)"/>
+                    </children>
+                </LayerInstance>"#,
+    );
+    let (dir, _) = open();
+    let tile = dir.path().join("tile.ted");
+    let open_text = |text: &[u8]| {
+        std::fs::write(&tile, text).unwrap();
+        TileDocument::new(TileProject::open(dir.path()).unwrap(), Some(std::sync::Arc::new(HouseFiles)))
+    };
+
+    let mut d = open_text(two_layers.as_bytes());
+    let mut scene = RenderScene::default();
+    let layer = scene.add_layer(d.id(), "tile");
+    let eye = Float3::new(0.0, 100.0, 0.0);
+    d.publish(&mut scene, layer);
+    d.tile_mut().update_view(&mut scene, eye);
+    let fresh = |text: &[u8]| {
+        let mut d = open_text(text);
+        let mut scene = RenderScene::default();
+        let layer = scene.add_layer(d.id(), "tile");
+        d.publish(&mut scene, layer);
+        d.tile_mut().update_view(&mut scene, eye);
+        items_shown(&scene)
+    };
+
+    let follow = |d: &mut TileDocument, scene: &mut RenderScene| {
+        let dirty = d.history_mut().take_dirty();
+        assert!(!dirty.all, "not everything: {}", d.history().name(d.history().position().saturating_sub(1)));
+        d.republish(scene, layer, &dirty);
+        d.tile_mut().update_view(scene, eye);
+    };
+
+    let sc = d.tile().tscene();
+    let (first_layer, a) = (sc.find_all("LayerInstance")[0], sc.find_all("BUILDING_INSTANCE")[0]);
+    let later = sc.find_all("BUILDING_INSTANCE")[1];
+    let terrain_and_later = scene.entities().iter().filter(|e| e.source.item == item_of(later)).map(|e| e.id).collect::<Vec<_>>();
+    assert!(!terrain_and_later.is_empty(), "the building has its pieces");
+    let original = items_shown(&scene);
+
+    // Pasted into the first layer: all that is in the second one takes other numbers.
+    let items = d.copy_items(&[a]);
+    let new = d.paste(&items, first_layer, Float3::new(5.0, 0.0, 5.0)).unwrap();
+    follow(&mut d, &mut scene);
+    assert_eq!(items_shown(&scene), fresh(&text(&d)), "after an insert");
+    let moved = scene.entities().iter().filter(|e| e.source.item == item_of(later + 1)).map(|e| e.id).collect::<Vec<_>>();
+    assert_eq!(moved, terrain_and_later, "the entities stay, with the new number");
+
+    // A flip touches what it moves alone.
+    d.flip(&new, FlipPlane { x: 40.0, z: 0.0, angle: 30.0 }, None).unwrap();
+    follow(&mut d, &mut scene);
+    assert_eq!(items_shown(&scene), fresh(&text(&d)), "after a flip");
+    d.history_mut().undo();
+    follow(&mut d, &mut scene);
+    assert_eq!(items_shown(&scene), fresh(&text(&d)), "after its undo");
+
+    // A copy across, its undo, the redo.
+    let polygon = d.tile().tscene().find_all("AI_HINT_POLYGON_INSTANCE")[0];
+    d.flip(&[polygon], FlipPlane { x: 40.0, z: 0.0, angle: 0.0 }, Some(first_layer)).unwrap();
+    follow(&mut d, &mut scene);
+    assert_eq!(items_shown(&scene), fresh(&text(&d)), "after a copy across");
+    d.history_mut().undo();
+    follow(&mut d, &mut scene);
+    assert_eq!(items_shown(&scene), fresh(&text(&d)), "after its undo");
+    d.history_mut().redo();
+    follow(&mut d, &mut scene);
+    assert_eq!(items_shown(&scene), fresh(&text(&d)), "after its redo");
+    d.history_mut().undo();
+    follow(&mut d, &mut scene);
+
+    // Removed: what it held goes, the numbers come back; undone: it comes back.
+    assert!(d.remove(new[0]));
+    follow(&mut d, &mut scene);
+    assert_eq!(items_shown(&scene), original, "after a removal");
+    d.history_mut().undo();
+    follow(&mut d, &mut scene);
+    assert_eq!(items_shown(&scene), fresh(&text(&d)), "after its undo");
+    d.history_mut().undo();
+    follow(&mut d, &mut scene);
+    assert_eq!(items_shown(&scene), original, "the paste undone");
+}
+
 #[test]
 fn a_flip_mirrors_places_and_headings_undoes_at_once_and_can_copy() {
     use wce_tile::world_transform::world_transform;

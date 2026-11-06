@@ -31,6 +31,7 @@ pub mod kit;
 mod pick;
 mod preview;
 pub mod river_links;
+mod shift;
 pub mod siege;
 mod grass;
 mod vegetation;
@@ -560,6 +561,9 @@ pub struct Tile {
     /// The buildings' technology overlay (tech.rs).
     pub(crate) tech: tech::TechState,
 
+    /// Renumberings of the elements (shift.rs) the scene has not followed yet.
+    pub(crate) shifts: Vec<shift::ElementShift>,
+
     /// The buildings' pieces collapsing between two levels (collapse.rs).
     pub(crate) collapses: collapse::CollapseState,
 
@@ -782,7 +786,7 @@ impl TileDocument {
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), pack_categories: None, building_db: OnceCell::new(), building_tables: vec![], tile_sets: OnceCell::new(), logic_summaries: RefCell::default(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None, normal_image: None, heights_changed: None, terrain_grid: None,
             material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
             last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
-            clip_to_tile: false, material_clip_id: 0, clip_alpha: None, context_lf: None, prefab_cache: HashMap::new(), scale_drag: None, unlocked_reference: None,
+            shifts: vec![], clip_to_tile: false, material_clip_id: 0, clip_alpha: None, context_lf: None, prefab_cache: HashMap::new(), scale_drag: None, unlocked_reference: None,
         };
 
         tile.build_index();
@@ -875,9 +879,16 @@ impl Document for TileDocument {
 
     fn republish(&mut self, scene: &mut RenderScene, layer: LayerId, dirty: &Dirty) {
         let t = self.tile_mut();
-        if dirty.all || t.scene_key != scene_key(scene) {
+        let shifted = dirty.items.contains(&shift::SHIFTED_ITEM);
+        let alone = t.shifts.len() == 1 && dirty.items.iter().all(|&i| i == shift::SHIFTED_ITEM);
+        if dirty.all || t.scene_key != scene_key(scene) || (shifted && !alone) {
             t.rebuild_items(true);
             t.publish_items(scene, layer, true);
+            return;
+        }
+
+        if shifted {
+            t.publish_shift(scene, layer);
             return;
         }
 

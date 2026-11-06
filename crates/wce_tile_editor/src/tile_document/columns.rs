@@ -367,13 +367,15 @@ impl Tile {
             wce_prof!("tile.columns.gather");
             self.placed_columns()
         };
-        let hash = |h: u64, w: &Float4x4, key: &str, e: usize| {
+
+        // Not of the element's number: an insert renumbers the buildings, what they show stays.
+        let hash = |h: u64, w: &Float4x4, key: &str| {
             let h = w.m.iter().flatten().fold(h, |h, v| (h ^ u64::from(v.to_bits())).wrapping_mul(1_099_511_628_211));
-            key.bytes().fold(h ^ e as u64, |h, b| (h ^ u64::from(b)).wrapping_mul(1_099_511_628_211))
+            key.bytes().fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(1_099_511_628_211))
         };
 
-        let signature = placed.iter().fold(placed.len() as u64, |h, (w, key, e)| hash(h, w, key, *e));
-        let signature = pieces.iter().fold(signature ^ pieces.len() as u64, |h, (w, file, e, stage)| hash(h ^ u64::from(*stage), w, file, *e));
+        let signature = placed.iter().fold(placed.len() as u64, |h, (w, key, _)| hash(h, w, key));
+        let signature = pieces.iter().fold(signature ^ pieces.len() as u64, |h, (w, file, _, stage)| hash(h ^ u64::from(*stage), w, file));
         if signature == self.columns.signature && (placed.is_empty() && pieces.is_empty() || !self.columns.by_elem.is_empty()) {
             return;
         }
@@ -400,13 +402,13 @@ impl Tile {
         for (i, (world, key, elem)) in placed.iter().enumerate() {
             let level = i64::from(shared[i]);
             let en = shows.entry(*elem).or_insert_with(|| (0xcbf2_9ce4_8422_2325, vec![], vec![]));
-            en.0 = hash(en.0 ^ level as u64, world, key, *elem);
+            en.0 = hash(en.0 ^ level as u64, world, key);
             en.1.push((*world, key.clone(), level));
         }
 
         for piece in pieces {
             let en = shows.entry(piece.2).or_insert_with(|| (0xcbf2_9ce4_8422_2325, vec![], vec![]));
-            en.0 = hash(en.0 ^ u64::from(piece.3) ^ 0x9e37, &piece.0, &piece.1, piece.2);
+            en.0 = hash(en.0 ^ u64::from(piece.3) ^ 0x9e37, &piece.0, &piece.1);
             en.2.push(piece);
         }
 
@@ -487,6 +489,29 @@ impl Tile {
 
         // No touch: the removals are logged and the entities added are new to the scene's followers; a touch made the renderer build its
         // draws and every overlay again on each frame a building moved.
+    }
+
+    /// The elements were renumbered: what is kept by element follows; the entities of a removed building are gone already.
+    pub(crate) fn columns_shifted(&mut self, map: &super::shift::ElementMap) {
+        map.keys(&mut self.columns.by_elem);
+        map.keys(&mut self.columns.placed);
+        map.set(&mut self.columns.changed);
+        for placed in self.columns.placed.values_mut() {
+            if placed.0.iter().any(|c| map.map(c.2) != Some(c.2)) || placed.1.iter().any(|p| map.map(p.2) != Some(p.2)) {
+                let (mut columns, mut pieces) = (**placed).clone();
+                for c in &mut columns {
+                    c.2 = map.map(c.2).unwrap_or(c.2);
+                }
+
+                for p in &mut pieces {
+                    p.2 = map.map(p.2).unwrap_or(p.2);
+                }
+
+                *placed = Arc::new((columns, pieces));
+            }
+        }
+
+        self.columns.dirty = true;
     }
 
     /// Forgets the columns (the scene they were in is gone).

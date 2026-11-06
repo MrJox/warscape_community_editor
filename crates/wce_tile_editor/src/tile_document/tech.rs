@@ -754,6 +754,17 @@ impl Tile {
         }
     }
 
+    /// The elements were renumbered: what is kept by element follows.
+    pub(crate) fn tech_shifted(&mut self, map: &super::shift::ElementMap) {
+        map.keys(&mut self.tech.built);
+        map.set(&mut self.tech.changed);
+        for (_, members) in self.tech.cells.values_mut() {
+            *members = members.iter().filter_map(|&e| map.map(e)).collect();
+        }
+
+        self.tech.selection = self.tech.selection.iter().filter_map(|&e| map.map(e)).collect();
+    }
+
     /// Takes the overlay's entities off the scene (one logged removal, not a change of everything).
     fn remove_tech_entities(&mut self, scene: &mut RenderScene) {
         let mut ids: Vec<EntityId> = self.tech.cells.drain().map(|(_, (id, _))| id).collect();

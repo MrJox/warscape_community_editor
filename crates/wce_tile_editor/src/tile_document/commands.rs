@@ -12,6 +12,7 @@ use wce_editor_core::command::Command;
 use wce_formats::xml_doc::XmlSplice;
 use wce_foundation::math::Double3;
 
+use super::shift::{ElementShift, SHIFTED_ITEM};
 use super::{BrushKind, BrushSettings, Follow, TERRAIN, Tile, item_of};
 
 /// A move and / or rotation of one element (local position and euler angles); the steps of one gesture merge.
@@ -233,6 +234,39 @@ pub(crate) struct TedSpliceCommand {
     pub sel_before: Vec<u64>,
     pub sel_after: Vec<u64>,
     pub first: bool,
+    pub effect: SpliceEffect,
+}
+
+/// What a splice edit did to the elements, which says how little has to follow it.
+pub(crate) enum SpliceEffect {
+    /// Not known: the index and the scene are built again.
+    Structure,
+
+    /// Only attributes of these elements: no element moved in the list.
+    Touched(Vec<usize>),
+
+    /// These spans of the list with them in (start, length) were added: removed when `added` is false.
+    Shift { spans: Vec<(usize, usize)>, added: bool },
+}
+
+impl TedSpliceCommand {
+    fn changed(&self, t: &mut Tile, forward: bool) {
+        match &self.effect {
+            SpliceEffect::Touched(elems) => {
+                for &e in elems {
+                    t.index_edited(e);
+                }
+
+                return;
+            }
+
+            SpliceEffect::Shift { spans, added } => t.shifts.push(ElementShift { spans: spans.clone(), came: *added == forward }),
+            SpliceEffect::Structure => t.piece_props.clear(),
+        }
+
+        t.idx.valid = false;
+        t.structure_version += 1;
+    }
 }
 
 impl Command<Tile> for TedSpliceCommand {
@@ -247,18 +281,22 @@ impl Command<Tile> for TedSpliceCommand {
             let _ = t.project.scene.apply(&self.record);
         }
 
-        t.idx.valid = false;
-        t.structure_version += 1;
-        t.piece_props.clear();
+        self.changed(t, true);
         t.hint = Some(self.sel_after.clone());
     }
 
     fn revert(&mut self, t: &mut Tile) {
         let _ = t.project.scene.unapply(&self.record);
-        t.idx.valid = false;
-        t.structure_version += 1;
-        t.piece_props.clear();
+        self.changed(t, false);
         t.hint = Some(self.sel_before.clone());
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        match &self.effect {
+            SpliceEffect::Structure => vec![],
+            SpliceEffect::Touched(elems) => elems.iter().map(|&e| item_of(e)).collect(),
+            SpliceEffect::Shift { .. } => vec![SHIFTED_ITEM],
+        }
     }
 
     fn as_any(&self) -> &dyn Any {

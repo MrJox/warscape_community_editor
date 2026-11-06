@@ -1022,7 +1022,7 @@ impl Tile {
         }
     }
 
-    fn add_item_entities(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize) {
+    pub(crate) fn add_item_entities(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize) {
         if !self.shown(elem) {
             return;
         }
@@ -1308,6 +1308,13 @@ impl Tile {
     /// is republished through here, and its maps were left out).
     pub(crate) fn publish_items(&mut self, scene: &mut RenderScene, layer: LayerId, keep_terrain: bool) {
         wce_prof!("tile.publish");
+
+        // The pieces' properties are by element, and this starts from the elements as they are.
+        if !std::mem::take(&mut self.shifts).is_empty() {
+            self.piece_props.clear();
+            self.piece_pending.clear();
+        }
+
         let keep_terrain = keep_terrain && self.scene_key == scene_key(scene) && self.terrain_entity != 0 && scene.find(self.terrain_entity).is_some();
         if keep_terrain {
             scene.clear_layer_except(layer, self.terrain_entity);

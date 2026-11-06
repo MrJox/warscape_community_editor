@@ -287,6 +287,13 @@ impl Tile {
         self.wall_preview.pending.insert(elem, Instant::now());
     }
 
+    /// The elements were renumbered: what is kept by wall follows.
+    pub(crate) fn walls_shifted(&mut self, map: &super::shift::ElementMap) {
+        map.keys(&mut self.wall_preview.entities);
+        map.keys(&mut self.wall_preview.shown_as);
+        map.keys(&mut self.wall_preview.pending);
+    }
+
     /// Every wall's preview is made again (the layer was cleared, or the ground changed).
     pub(crate) fn walls_changed(&mut self) {
         let walls = (0..self.tscene().doc().elements().len()).filter(|&e| self.is_wall(e)).collect::<Vec<_>>();

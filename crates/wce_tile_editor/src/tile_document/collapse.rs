@@ -169,6 +169,11 @@ impl Tile {
         self.collapses.effects.clear();
     }
 
+    /// Whether pieces are collapsing (their entities and steps are by element).
+    pub(crate) fn pieces_collapsing(&self) -> bool {
+        !self.collapses.active.is_empty()
+    }
+
     /// Whether a collapse is playing (the view has to be drawn again).
     pub fn collapsing(&self) -> bool {
         !self.collapses.active.is_empty() || !self.collapses.effects.is_empty()

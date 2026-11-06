@@ -166,7 +166,7 @@ impl TileDocument {
         }
 
         let mark = self.begin()?;
-        let result = (|| -> Result<(Vec<usize>, Vec<u64>), String> {
+        let result = (|| -> Result<(Vec<usize>, Vec<usize>), String> {
             let roots = match (&items, copy_into) {
                 (Some(items), Some(into)) => self.paste_elements(items, into, Float3::default())?,
                 _ => roots,
@@ -174,14 +174,19 @@ impl TileDocument {
 
             let targets = self.flip_targets(&roots, plane);
             self.apply_flip(&targets)?;
-            Ok((roots, targets.iter().map(|t| item_of(t.elem)).collect()))
+            Ok((roots, targets.iter().map(|t| t.elem).collect()))
         })();
 
         match result {
             Ok((went, touched)) => {
                 let name = format!("{} {} items", if copy_into.is_some() { "Flip a copy of" } else { "Flip" }, went.len());
-                let before = if copy_into.is_some() { vec![] } else { touched.clone() };
-                self.push_splice(name, mark, before, touched);
+                let items = went.iter().map(|&e| item_of(e)).collect::<Vec<_>>();
+                if copy_into.is_some() {
+                    self.push_splice_added(name, mark, vec![], items, &went);
+                } else {
+                    self.push_splice_touching(name, mark, items.clone(), items, touched);
+                }
+
                 Ok(went)
             }
 
