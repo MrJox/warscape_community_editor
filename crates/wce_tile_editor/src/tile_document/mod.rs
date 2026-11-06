@@ -23,6 +23,7 @@ mod cover;
 mod draft;
 pub mod context;
 mod edits;
+mod flip;
 pub mod fire;
 mod index;
 pub mod minimap;
@@ -62,6 +63,7 @@ use crate::terrain_bake::{BakedColour, TerrainLook};
 
 pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::prefab_reference_text;
+pub use self::flip::FlipPlane;
 pub use self::index::{FILLED_TYPES, polygon_colour, style_of};
 pub use self::view::{LIGHT_RADIUS_HANDLE, SHELTER_TARGET_HANDLE};
 pub use self::tech::{GROUPS, KINDS, TechInfo, TechKind, TechScope, TechSettings, TechStats, WallTechReport, tech_counts};

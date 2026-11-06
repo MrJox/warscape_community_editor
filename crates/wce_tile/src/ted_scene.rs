@@ -847,7 +847,7 @@ impl TedScene {
         }
     }
 
-    fn point_text(local: Double3) -> String {
+    pub fn point_text(local: Double3) -> String {
         format!("{},{},{}", format_number(local.x), format_number(local.y), format_number(local.z))
     }
 

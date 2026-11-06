@@ -1665,6 +1665,31 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("tile_flip_mode", "tile_flip_mode", "enter Flip mode for the selection, the plane through its centre", |e, _| with_tile(e, |t, e| t.begin_flip(e).map_or_else(fail, ok)));
+    c.add("tile_flip_plane", "tile_flip_plane <x m> <z m> <angle>", "where Flip mode's plane is", |e, a| {
+        let [x, z, angle] = [0, 1, 2].map(|i| a.get(i).and_then(|v| number(v)));
+        let (Some(x), Some(z), Some(angle)) = (x, z, angle) else { return fail("usage: tile_flip_plane <x m> <z m> <angle>") };
+        with_tile(e, |t, _| match &mut t.flip {
+            Some(f) => {
+                f.plane = wce_tile_editor::tile_document::FlipPlane { x, z, angle };
+                ok("")
+            }
+
+            None => fail("not in Flip mode"),
+        })
+    });
+
+    c.add("tile_flip", "tile_flip [copy]", "mirror the selection across Flip mode's plane, moved or as a copy", |e, a| {
+        let copy = a.first().is_some_and(|w| w == "copy");
+        with_tile(e, |t, e| {
+            if let Some(f) = &mut t.flip {
+                f.copy = copy;
+            }
+
+            t.do_flip(e).map_or_else(fail, ok)
+        })
+    });
+
     c.add("place_turn", "place_turn <degrees>", "turn what is being placed, as R does by the rotate step", |e, a| {
         let Some(deg) = a.first().and_then(|v| number(v)) else { return fail("usage: place_turn <degrees>") };
         with_tile(e, |t, _| {

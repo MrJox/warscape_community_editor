@@ -4,6 +4,7 @@
 //! action is a command too (`commands`), so scripts and menus use the same code.
 
 pub mod areas_chip;
+pub mod flip_tool;
 pub mod actions;
 pub mod commands;
 pub mod create_panel;
