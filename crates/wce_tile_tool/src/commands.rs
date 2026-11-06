@@ -1665,7 +1665,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("create_type", "create_type [catalogue]", "the Create panel's list: the items of a catalogue (Buildings, Vegetation, Decals, Models, Effects, Prefabs; none: the favourites and the recent ones)", |e, a| {
+    c.add("create_type", "create_type [section]", "open a section of the Create panel, closing the one open (Buildings, Vegetation, Decals ...; none: all closed)", |e, a| {
         let name = a.join(" ");
         with_tile(e, |t, _| t.set_create_category((!name.is_empty()).then_some(name.as_str())).map_or_else(fail, |()| ok(String::new())))
     });
