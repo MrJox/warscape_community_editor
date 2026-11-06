@@ -238,6 +238,22 @@ impl Tile {
         self.metres(&world_transform(self.tscene(), elem))
     }
 
+    /// Whether a building exports as a prop (`wce_tile::export_as_prop`).
+    pub(crate) fn exports_as_prop(&self, elem: usize) -> bool {
+        let doc = self.tscene().doc();
+        self.tscene().type_of(elem) == "BUILDING_INSTANCE"
+            && wce_tile::export_as_prop::exports_as_prop(doc.get(elem, wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).as_deref(), doc.get(elem, "capture_location").as_deref())
+    }
+
+    /// The scale an element is drawn at: its own, but 1 for a building that is not exported as a prop, as the game draws it.
+    fn shown_scale(&self, elem: usize) -> [f32; 3] {
+        if self.tscene().type_of(elem) == "BUILDING_INSTANCE" && !self.exports_as_prop(elem) {
+            return [1.0; 3];
+        }
+
+        self.tscene().scale(elem).map_or([1.0; 3], |s| [s.x as f32, s.y as f32, s.z as f32])
+    }
+
     /// The matrix an instance's model is drawn with: the instance's scale divided by the unit scale on every axis. The world here is scene
     /// space with x and z divided by the unit scale; drawn at full size, models were twice as large as TEd shows them (docs/formats/tile_ted.md).
     pub fn world_matrix(&self, elem: usize) -> Float4x4 {
@@ -247,8 +263,8 @@ impl Tile {
             return matrix_of(&self.idx.world[self.idx.slot[elem] as usize], self.unit(), Some(model(s.map(f64::from).into())));
         }
 
-        let s = self.tscene().scale(elem).unwrap_or(Double3::new(1.0, 1.0, 1.0));
-        matrix_of(&world_transform(self.tscene(), elem), self.unit(), Some(model(s)))
+        let s = self.shown_scale(elem);
+        matrix_of(&world_transform(self.tscene(), elem), self.unit(), Some(model(Double3::new(f64::from(s[0]), f64::from(s[1]), f64::from(s[2])))))
     }
 
     /// The model a VEGETATION_INSTANCE is drawn with: its key's, converted for the shown list's climate (the instance's own model when the
@@ -537,7 +553,11 @@ impl Tile {
                     };
                 }
 
-                if let Some(r) = raw("scale") {
+                // The game draws a building at scale 1 unless it exports as a prop: so does the viewport.
+                let value = |name: &str| raw(name).map(|r| text(r).into_owned());
+                let unscaled = doc.elements()[i].name == "BUILDING_INSTANCE"
+                    && !wce_tile::export_as_prop::exports_as_prop(value(wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).as_deref(), value("capture_location").as_deref());
+                if let Some(r) = raw("scale").filter(|_| !unscaled) {
                     let r = text(r);
                     if let Some(s3) = parse_triple(&r, "vector") {
                         l.scale = Some([s3[0] as f32, s3[1] as f32, s3[2] as f32]);
@@ -623,8 +643,7 @@ impl Tile {
         self.columns_element_changed(elem);
         self.tech_element_changed(elem);
         if self.idx.valid && elem < self.idx.scale.len() {
-            let s = self.tscene().scale(elem).map_or([1.0; 3], |s| [s.x as f32, s.y as f32, s.z as f32]);
-            self.idx.scale[elem] = s;
+            self.idx.scale[elem] = self.shown_scale(elem);
             self.grid_dirty.set(true);
         }
     }

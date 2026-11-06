@@ -91,6 +91,10 @@ pub enum Rule {
 
     /// Export as prop: greyed out, and off, for a building with a capture location, which has to stay a building (`export_as_prop`).
     NoCaptureLocation,
+
+    /// A building's `scale`, which reaches the game only on a prop: edited there, greyed out with its value on a building that has one and
+    /// is not exported as a prop, else not in the grid.
+    WhenExportedAsProp,
 }
 
 impl Prop {
@@ -159,6 +163,7 @@ const BUILDING: &[Prop] = base3d![
     ruled("ai_breachable", Kind::Bool, Rule::FortWall),
     p("indestructible", Kind::Bool),
     ruled(crate::export_as_prop::EXPORT_AS_PROP_ATTR, Kind::Bool, Rule::NoCaptureLocation),
+    ruled("scale", Kind::Vec3, Rule::WhenExportedAsProp),
     ruled("dockable", Kind::Bool, Rule::FortWallOrUnbreachable),
     p("toggleable", Kind::Bool),
     p("capture_location", Kind::Text),
@@ -333,6 +338,9 @@ pub struct RuleContext<'a> {
 
     /// The building's `capture_location` is set.
     pub capture_location: bool,
+
+    /// The building exports as a prop (`export_as_prop::exports_as_prop`).
+    pub export_as_prop: bool,
 }
 
 /// Whether the property is in the grid and whether it can be edited.
@@ -357,6 +365,15 @@ pub fn access(prop: &Prop, ctx: &RuleContext) -> Access {
         },
 
         Rule::NoCaptureLocation => if ctx.capture_location { Access::ReadOnly } else { Access::Edit },
+        Rule::WhenExportedAsProp => {
+            if ctx.export_as_prop {
+                Access::Edit
+            } else if ctx.present {
+                Access::ReadOnly
+            } else {
+                Access::Hidden
+            }
+        }
     }
 }
 
@@ -496,6 +513,14 @@ mod tests {
         assert_eq!(prop.label(), "Export as prop");
         assert_eq!(access(prop, &RuleContext::default()), Access::Edit);
         assert_eq!(access(prop, &RuleContext { capture_location: true, ..Default::default() }), Access::ReadOnly);
+    }
+
+    #[test]
+    fn a_buildings_scale_is_for_props() {
+        let scale = schema("BUILDING_INSTANCE").unwrap().iter().find(|p| p.attr == "scale").unwrap();
+        assert_eq!(access(scale, &RuleContext::default()), Access::Hidden, "never set, not a prop");
+        assert_eq!(access(scale, &RuleContext { present: true, ..Default::default() }), Access::ReadOnly, "kept, greyed out");
+        assert_eq!(access(scale, &RuleContext { export_as_prop: true, ..Default::default() }), Access::Edit);
     }
 
     #[test]

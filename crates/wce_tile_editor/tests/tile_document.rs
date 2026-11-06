@@ -277,6 +277,51 @@ fn the_grid_of_a_building_is_teds_and_every_row_edits_the_file() {
 }
 
 #[test]
+fn a_buildings_scale_works_only_as_a_prop() {
+    use wce_foundation::math::Float4x4;
+
+    let (_dir, mut d) = open();
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let item = SourceRef { doc: d.id(), item: item_of(b) };
+    let scale = |d: &TileDocument| d.tile().tscene().doc().get(b, "scale");
+    let drawn = |d: &TileDocument| {
+        let m = d.tile().world_matrix(b).m;
+        (m[0][0] * m[0][0] + m[1][0] * m[1][0] + m[2][0] * m[2][0]).sqrt()
+    };
+    let one = drawn(&d);
+    let row = |rows: &[String], f: &str| rows.iter().any(|r| r == f || r == &format!("text:{f}") || r.starts_with(&format!("{f}.")));
+
+    // A building: no row, and the gizmo does nothing.
+    assert!(!row(&inspect(&mut d, b, None), "scale"));
+    d.scale_items(&[item], [2.0; 3], &Float4x4::IDENTITY, 1);
+    assert_eq!(scale(&d), None);
+
+    // A prop: the gizmo's factor is since the drag began, so its steps do not add up; the next drag goes on from there.
+    inspect(&mut d, b, Some(("wce_export_as_prop", Edit::Bool(true))));
+    assert!(row(&inspect(&mut d, b, None), "scale"));
+    d.scale_items(&[item], [2.0; 3], &Float4x4::IDENTITY, 2);
+    d.scale_items(&[item], [3.0, 2.0, 2.0], &Float4x4::IDENTITY, 2);
+    assert_eq!(scale(&d).as_deref(), Some("vector(3,2,2)"));
+    d.scale_items(&[item], [2.0, 1.0, 1.0], &Float4x4::IDENTITY, 3);
+    assert_eq!(scale(&d).as_deref(), Some("vector(6,2,2)"));
+    assert!((drawn(&d) / one - 6.0).abs() < 1e-4, "the viewport follows");
+
+    // Off again: the value stays, greyed out, and the building is drawn as the game draws it.
+    inspect(&mut d, b, Some(("wce_export_as_prop", Edit::Bool(false))));
+    assert!(row(&inspect(&mut d, b, None), "scale"));
+    assert_eq!(scale(&d).as_deref(), Some("vector(6,2,2)"));
+    assert!((drawn(&d) - one).abs() < 1e-5, "{} {one}", drawn(&d));
+    d.scale_items(&[item], [2.0; 3], &Float4x4::IDENTITY, 4);
+    assert_eq!(scale(&d).as_deref(), Some("vector(6,2,2)"));
+
+    // A capture location keeps it a building, marked or not.
+    inspect(&mut d, b, Some(("wce_export_as_prop", Edit::Bool(true))));
+    assert!((drawn(&d) / one - 6.0).abs() < 1e-4);
+    inspect(&mut d, b, Some(("capture_location", Edit::Text("cl".to_owned()))));
+    assert!((drawn(&d) - one).abs() < 1e-5);
+}
+
+#[test]
 fn the_steps_of_a_drag_are_one_entry() {
     let (_dir, mut d) = open();
     let original = text(&d);

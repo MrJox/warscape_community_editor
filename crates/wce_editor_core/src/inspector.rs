@@ -59,6 +59,11 @@ pub trait Inspector {
         self.text(field, label, if v { "true" } else { "false" });
     }
 
+    /// Three numbers that show a value and cannot be changed (greyed out in the ImGui inspector).
+    fn disabled_float3(&mut self, field: &str, label: &str, v: [f32; 3]) {
+        self.text(field, label, &format!("{}, {}, {}", v[0], v[1], v[2]));
+    }
+
     /// A tooltip for the next row (its label and its widget): what the property does. The ImGui inspector shows it on hover.
     fn hint(&mut self, text: &str) {
         let _ = text;

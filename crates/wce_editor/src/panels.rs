@@ -202,6 +202,13 @@ impl Inspector for ImGuiInspector {
         self.show_hint();
     }
 
+    fn disabled_float3(&mut self, field: &str, label: &str, v: [f32; 3]) {
+        gui::begin_disabled(true);
+        let mut shown = v;
+        self.edit_float3(field, label, &mut shown, 0.0);
+        gui::end_disabled();
+    }
+
     fn edit_string(&mut self, field: &str, label: &str, v: &mut String) -> bool {
         self.label(field, label, true);
         let changed = gui::input_text(&self.id(field), None, v, 512, 0);

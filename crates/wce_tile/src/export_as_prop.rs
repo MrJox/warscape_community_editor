@@ -23,6 +23,15 @@ pub const EXPORT_AS_PROP_ATTR: &str = "wce_export_as_prop";
 /// Why the Inspector greys out the checkbox of a building with a capture location.
 pub const CAPTURE_LOCATION_TIP: &str = "A capture location links this building, so it has to stay a building: clear its capture_location to export it as a prop.";
 
+/// Why the Inspector greys out the scale of a building that does not export as a prop.
+pub const SCALE_TIP: &str = "The game ignores the scale of a building: it only applies to a building exported as a prop. Kept here for when Export as prop is on again.";
+
+/// Whether a building exports as a prop, from its attributes' values: marked, and no capture location keeps it a building. The one thing
+/// the scale of a building depends on: the game ignores it otherwise (docs/re/buildings.md).
+pub fn exports_as_prop(mark: Option<&str>, capture_location: Option<&str>) -> bool {
+    mark == Some("true") && !capture_location_set(capture_location)
+}
+
 /// Whether a building's `capture_location` value links it to a capture location, which keeps it a building.
 pub fn capture_location_set(value: Option<&str>) -> bool {
     value.is_some_and(|c| !c.trim().is_empty())
