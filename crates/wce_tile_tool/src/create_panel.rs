@@ -25,10 +25,14 @@ use crate::tool::{SetInUse, TileTool, document, primary};
 pub const CATEGORIES: [&str; 12] =
     ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Siege", "Rivers & roads", "References"];
 
-/// The categories' icons, for their buttons.
-const CATEGORY_ICONS: [&str; 11] = [
-    icons::BUILDING_2, icons::TREE_PINE, icons::STICKER, icons::BOX, icons::SPARKLES, icons::LIGHTBULB, icons::COMPONENT, icons::FLAG, icons::BRAIN, icons::CASTLE, icons::WAVES,
-];
+/// The categories with a catalogue to browse, a button each, and their icons.
+const CATALOGUES: [(usize, &str); 6] = [(0, icons::BUILDING_2), (1, icons::TREE_PINE), (2, icons::STICKER), (3, icons::BOX), (4, icons::SPARKLES), (6, icons::COMPONENT)];
+
+/// The categories of a few fixed tools: always in view as icons, a click starts them.
+const PALETTE: [usize; 5] = [5, 7, 8, 9, 10];
+
+/// The folder of the buildings no table has a category for.
+const NO_CATEGORY: &str = "no category";
 
 /// The types without a key of each fixed category (category, type, drawn).
 const FIXED: [(usize, &str, bool); 19] = [
@@ -224,11 +228,10 @@ impl TileTool {
                 };
 
                 let mut en = entry(category, label, Make::Place { kind: kind.to_owned(), key: key.clone() }, kind);
-                if kind == "BUILDING_INSTANCE"
-                    && let Some(c) = document(e).and_then(|d| d.tile().building_category(key))
-                {
+                if kind == "BUILDING_INSTANCE" {
+                    let c = document(e).and_then(|d| d.tile().building_category(key)).unwrap_or_else(|| NO_CATEGORY.to_owned());
                     en.search.push_str(&format!(" {}", c.to_lowercase()));
-                    en.folder = c.to_owned();
+                    en.folder = c;
                 }
 
                 out.push(en);
@@ -766,19 +769,56 @@ impl TileTool {
     /// No such type.
     pub fn set_create_category(&mut self, name: Option<&str>) -> Result<(), String> {
         self.create.category = match name {
-            Some(name) => Some(CATEGORIES.iter().position(|c| c.eq_ignore_ascii_case(name)).ok_or_else(|| format!("no type '{name}': {}", CATEGORIES.join(", ")))?),
+            Some(name) => {
+                let found = CATALOGUES.iter().map(|&(c, _)| c).find(|&c| CATEGORIES[c].eq_ignore_ascii_case(name));
+                Some(found.ok_or_else(|| format!("no catalogue '{name}': {}", CATALOGUES.map(|(c, _)| CATEGORIES[c]).join(", ")))?)
+            }
+
             None => None,
         };
 
         Ok(())
     }
 
-    /// The buttons of the types of item: one chooses what the list shows, again goes back to none. Their rows wrap to the panel.
+    /// The fixed tools as icons (their name in the tooltip), the one in use lit. The entry clicked.
+    fn draw_palette(&self, entries: &[Entry]) -> Option<usize> {
+        let making = self.making.as_deref().filter(|_| self.placing.is_some() || self.drawing);
+        let mut clicked = None;
+        let mut first = true;
+        for (i, en) in entries.iter().enumerate().filter(|(_, en)| PALETTE.contains(&en.category)) {
+            let text = en.icon();
+            if !first {
+                gui::same_line_or_wrap(gui::button_width(text));
+            }
+
+            first = false;
+            let on = making == Some(en.label.as_str());
+            if on {
+                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+            }
+
+            if gui::button(&format!("{text}##createtool{i}")) {
+                clicked = Some(i);
+            }
+
+            if on {
+                gui::pop_style_color(1);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("{}: {}", CATEGORIES[en.category], en.label));
+            }
+        }
+
+        clicked
+    }
+
+    /// The buttons of the catalogues: one chooses what the list shows, again goes back to none. Their rows wrap to the panel.
     fn draw_category_buttons(&mut self) {
-        for (c, title) in CATEGORIES.iter().enumerate() {
+        for (k, (c, icon)) in CATALOGUES.into_iter().enumerate() {
             let n = self.create.shown.get(c).map_or(0, Vec::len);
-            let text = format!("{}  {title} ({n})", CATEGORY_ICONS[c]);
-            if c != 0 {
+            let text = format!("{icon}  {} ({n})", CATEGORIES[c]);
+            if k != 0 {
                 gui::same_line_or_wrap(gui::button_width(&text));
             }
 
@@ -866,27 +906,6 @@ impl TileTool {
             return;
         }
 
-        // What is being made, and how to stop.
-        if let Some(label) = self.making.clone().filter(|_| self.placing.is_some() || self.drawing) {
-            gui::text_colored(theme::palette().highlight, &format!("{}  {label}", if self.drawing { icons::SQUARE_PEN } else { icons::MOUSE_POINTER_2 }));
-            if self.drawing {
-                gui::text_disabled(&format!("{} points: click the terrain; Enter finishes", self.draw_pts.len()));
-                if gui::button("Finish") {
-                    self.finish_drawing(e);
-                }
-
-                gui::same_line();
-            } else {
-                gui::text_disabled("click the terrain to place; R / Shift+R turn it");
-            }
-
-            if gui::button("Stop (Esc)") {
-                self.stop_making();
-            }
-
-            gui::separator();
-        }
-
         // A set from the selected trees.
         if self.trees_selected(e) && gui::small_button(&format!("{}  New vegetation set from the selected trees", icons::TREES)) {
             self.request_new_vegetation_set();
@@ -909,6 +928,30 @@ impl TileTool {
 
         self.draw_category_buttons();
         gui::separator();
+        let tool = self.draw_palette(&entries);
+        gui::separator();
+
+        // Under the buttons: a tool taken must not move the others from under the mouse.
+        if let Some(label) = self.making.clone().filter(|_| self.placing.is_some() || self.drawing) {
+            gui::text_colored(theme::palette().highlight, &format!("{}  {label}", if self.drawing { icons::SQUARE_PEN } else { icons::MOUSE_POINTER_2 }));
+            if self.drawing {
+                gui::text_disabled(&format!("{} points: click the terrain; Enter finishes", self.draw_pts.len()));
+                if gui::button("Finish") {
+                    self.finish_drawing(e);
+                }
+
+                gui::same_line();
+            } else {
+                gui::text_disabled("click the terrain to place; R / Shift+R turn it");
+            }
+
+            if gui::button("Stop (Esc)") {
+                self.stop_making();
+            }
+
+            gui::separator();
+        }
+
         let words = words(&self.create.filter);
         let (favourites, recent) = self.create_marks(e);
         let by_id = |id: &str| entries.iter().position(|en| en.id() == id);
@@ -935,7 +978,7 @@ impl TileTool {
             gui::set_tooltip("Renders a picture of every building, tree, model and prefab the list shows (filter it first: there are thousands), kept in the cache folder. Hover an entry to see its picture; one hovered without a picture is made then.");
         }
 
-        let mut start = first;
+        let mut start = first.or(tool);
         let mut star = None;
         let mut hovered = None;
         if gui::begin_child("createlist", gui::v2(0.0, 0.0), 0, 0) {
@@ -968,7 +1011,7 @@ impl TileTool {
             }
 
             if !filtering && only.is_none() && favourites.is_empty() && recent.is_empty() {
-                gui::text_disabled("Choose a type of item above, or search.");
+                gui::text_disabled("Choose a catalogue or a tool above, or search.");
             }
 
             for (c, title) in CATEGORIES.iter().enumerate() {

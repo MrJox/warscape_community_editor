@@ -71,6 +71,14 @@ impl BuildingDb {
         }
     }
 
+    /// The categories of the keys the tables do not have: the game's packs come after the kits, and hold what the kits lack (a mod's
+    /// buildings).
+    pub fn add_missing(&mut self, categories: &HashMap<String, String>) {
+        for (key, category) in categories {
+            self.categories.entry(key.clone()).or_insert_with(|| category.clone());
+        }
+    }
+
     pub fn category(&self, key: &str) -> Option<&str> {
         self.categories.get(key).map(String::as_str)
     }
@@ -96,6 +104,16 @@ fn field<'a>(record: &'a str, name: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_packs_only_add_what_the_kits_lack() {
+        let mut db = BuildingDb::default();
+        db.add_xml("<battlefield_buildings x=\"1\"><key>wall_a</key><category>fort_wall</category></battlefield_buildings>");
+        let packs = HashMap::from([("wall_a".to_owned(), "generic".to_owned()), ("mod_house".to_owned(), "incidental".to_owned())]);
+        db.add_missing(&packs);
+        assert_eq!(db.category("wall_a"), Some("fort_wall"), "the kit wins");
+        assert_eq!(db.category("mod_house"), Some("incidental"));
+    }
 
     #[test]
     fn reads_key_and_category() {
