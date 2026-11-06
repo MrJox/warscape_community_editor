@@ -454,7 +454,10 @@ impl TileTool {
             None => self.kit_roots(e).into_iter().find(|r| *r != projects).ok_or("no Assembly Kit (set it in the game's settings)")?,
         };
 
-        let (path, report) = lib.save_for_kit(key, &prefabs::prefab_root(&kit))?;
+        let files = e.files();
+        let models_in = |folder: &str| files.as_ref().map_or_else(Vec::new, |f| f.list(folder, ".rigid_model_v2"));
+        let models = files.is_some().then_some(&models_in as wce_tile::export_as_prop::ModelsIn);
+        let (path, report) = lib.save_for_kit(key, &prefabs::prefab_root(&kit), models)?;
         for line in report.polyfilled.iter().chain(&report.dropped) {
             log::info(format!("Save prefab for Assembly Kit: {line}"));
         }
