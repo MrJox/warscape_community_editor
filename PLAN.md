@@ -49,6 +49,11 @@ Each open item lives in one plan; the others point to it.
 - **Map context: lakes at altitude** (2026-10-31, TDD's `rom_third_age_map`, the Long Lake around Esgaroth, 626 m): fixed in the editor
   (its `sea` tiles stay on the land's LF when it is above the sea, `Frame::on_sea_lf`); the lake's water there comes from its tiles
   (which ones not traced). Not checked in game: whether the game draws water on such a lake.
+- **Fixes to port to rpfm_lib** (a pass later, user 2026-11-06; until then the editor works around them):
+  - `rigidmodel`: a `Weighted` vertex's second weight. rpfm reads byte 3, unused and always 0; the shaders use `1 - w` of byte 2. Reads only:
+    the bytes round-trip. Worked around by `wce_render::anim_pose::vertex_weights`.
+  - `anim`: only the header is decoded; `wce_formats::anim` reads versions 4 and 5 whole, and the bones without a track take the skeleton's
+    pose. Also `anim_meta`, the variant mesh parser and the fragments, if they should live there.
 - **Future tools** (seams only): Unit editor (skinned instances, bone palettes, anim / skeleton / variantmeshdefinition formats),
   VFX editor (see weather.md), battle map / Terry (map-scale terrain, tile_map and lf_height formats; see tile.md), Cinematic editor
   (keyframed scenes, recording).

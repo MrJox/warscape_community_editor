@@ -70,6 +70,7 @@ run format_check      ex wce_formats format_check "$CACHE"
 run variation_check   ex wce_weather variation_check
 run rmv2_check        ex wce_formats rmv2_check "$CACHE"
 run vfx_check_rain    ex wce_assets vfx_check "rain heavy"
+run unit_formats      ex wce_assets unit_formats_check "$GAME"
 [ -f "$CBS" ] && run env_vs_dump_all ex wce_render env_vs_dump --all "$CBS"
 
 # ---- tile gates
@@ -134,6 +135,7 @@ fi
 # decompiled and compiled again (the multi-list capture file of the release pack's copy is a known loss), the editor's round trip
 if [ -n "${WCE_ROME2:-}" ]; then
     run rome2_tile_database ex wce_tile_io rome2_tile_database_check "$WCE_ROME2"
+    run rome2_unit_formats ex_rome2 wce_assets unit_formats_check "$WCE_ROME2"
     run rome2_tile_decompile ex_rome2 wce_tile_io tile_decompile_check "$WCE_ROME2" --filter roads_stone/2x2
     run rome2_tile_workflow ex_rome2 wce_tile_io tile_workflow_check "$WCE_ROME2" "$OUT/rome2_workflow" terrain/tiles/battle/settlement_roman_cities/roman_city_a/small
     # Its maps' built files (the only form they have) read and written back, and the CHMF an LF edit makes (Terrain tool, Phase 9)

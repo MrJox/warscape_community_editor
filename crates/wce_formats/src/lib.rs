@@ -3,6 +3,7 @@
 pub mod cas2;
 pub mod anim;
 pub mod anim_meta;
+pub mod anim_tables;
 pub mod c_num;
 pub mod chmf;
 pub mod dds_decode;
@@ -15,6 +16,7 @@ pub mod text_encoding;
 pub mod tile_climate;
 pub mod tile_entry;
 pub mod tile_index;
+pub mod variant_mesh;
 pub mod xml_doc;
 
 pub use self::text_encoding::{TextEncoding, decode_text, encode_text};
