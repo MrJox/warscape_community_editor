@@ -527,7 +527,8 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
     for (e, el) in fresh.elements().iter().enumerate() {
         for a in &el.attrs {
             if a.name.starts_with("wce_") {
-                if a.name != WCE_VERSION_ATTR && a.name != EXTRACTED_ATTR && !POLYFILLED_ATTRS.contains(&a.name.as_str()) {
+                let unset_mark = a.name == crate::export_as_prop::EXPORT_AS_PROP_ATTR && fresh.get(e, &a.name).as_deref() != Some("true");
+                if a.name != WCE_VERSION_ATTR && a.name != EXTRACTED_ATTR && !POLYFILLED_ATTRS.contains(&a.name.as_str()) && !unset_mark {
                     report.dropped.push(format!("{} of {} '{}'", a.name, el.name, fresh.get(e, "name").unwrap_or_default()));
                 }
 

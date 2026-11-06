@@ -1772,13 +1772,24 @@ pub fn buildings(raw: &Tile) -> Vec<(String, [f32; 16])> {
 /// [`buildings`] for any class of entity (`SIMPLE_MESH_INSTANCE`: BOB's water planes), an instance's own `scale` (a vector) applied
 /// to its matrix's columns (rotation x scale; the order is an assumption: the vanilla water planes are not rotated).
 pub fn instances(raw: &Tile, class: &str) -> Vec<(String, [f32; 16])> {
+    instances_where(raw, class, |_| true)
+}
+
+/// The `SIMPLE_MESH_INSTANCE`s that BOB's water pass reads: all but the models a building was exported as
+/// (`wce_tile::export_as_prop`): BOB stops at a model that is not water, and without any water a tile has no water map.
+pub fn water_planes(raw: &Tile) -> Vec<(String, [f32; 16])> {
+    use wce_tile::export_as_prop::PROP_PIECE_SUFFIX;
+    instances_where(raw, "SIMPLE_MESH_INSTANCE", |n| n.get("name").and_then(Value::as_str).is_none_or(|name| !name.ends_with(PROP_PIECE_SUFFIX)))
+}
+
+fn instances_where(raw: &Tile, class: &str, keep: impl Fn(&Node) -> bool) -> Vec<(String, [f32; 16])> {
     wce_foundation::wce_prof!("compile.instances");
     let Some(scene) = raw.scene.as_ref() else { return vec![] };
     let mut placed = vec![];
     walk(scene, None, "LayerExportType_Normal", "", &mut placed);
     placed
         .iter()
-        .filter(|p| p.node.class == class)
+        .filter(|p| p.node.class == class && keep(p.node))
         .map(|p| {
             let mut m = p.world;
             if let Some(s) = vec3_of(p.node, "scale") {
@@ -1995,6 +2006,24 @@ mod tests {
         let mut entry = Node::new("TILE");
         entry.set("height", Value::Int(2));
         Tile { scene: Some(scene), entry: Some(wce_tile_model::Entry { file_name: "t.xml".to_owned(), root: entry }), ..Default::default() }
+    }
+
+    #[test]
+    fn a_building_exported_as_a_prop_is_not_a_water_plane() {
+        let model = |name: &str| {
+            let mut n = Node::new("SIMPLE_MESH_INSTANCE");
+            n.set("position", Value::Vec3([0.0; 3]));
+            n.set("key", Value::Str(name.to_owned()));
+            n.set("name", Value::Str(name.to_owned()));
+            n
+        };
+
+        let mut scene = Node::new("SCENE_GRAPH");
+        scene.children.push(model("house__wce_prop"));
+        scene.children.push(model("water_plane"));
+        let raw = Tile { scene: Some(scene), ..Default::default() };
+        assert_eq!(instances(&raw, "SIMPLE_MESH_INSTANCE").len(), 2);
+        assert_eq!(water_planes(&raw).iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(), ["water_plane"]);
     }
 
     #[test]

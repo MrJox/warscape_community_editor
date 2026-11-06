@@ -2824,7 +2824,7 @@ impl TileDocument {
         // has all of them in the grid.
         let cur = text.clone().unwrap_or_default();
         let editable = access == Access::Edit;
-        let label = prop.attr;
+        let label = prop.label();
         let field = prop.attr;
 
         // The ones that have their own handling.
@@ -3420,7 +3420,7 @@ impl Tile {
 }
 
 pub(crate) fn edit_value(prop: &Prop, cur: &str, present: bool, levels: i64, ins: &mut dyn Inspector) -> Option<String> {
-    let (field, label) = (prop.attr, prop.attr);
+    let (field, label) = (prop.attr, prop.label());
     let mut new: Option<String> = None;
     match prop.kind {
         Kind::Bool => {

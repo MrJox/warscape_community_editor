@@ -8,6 +8,8 @@ pub mod battle_map;
 pub mod blend_field;
 pub mod brush_image;
 pub mod building_db;
+pub mod building_pieces;
+pub mod export_as_prop;
 pub mod falloff;
 pub mod ground_type_field;
 pub mod ground_types;

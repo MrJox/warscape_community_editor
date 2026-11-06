@@ -111,7 +111,7 @@ pub fn fingerprints(raw: &Tile) -> std::collections::BTreeMap<&'static str, u64>
     terrain.u32(rivers.0 as u32).u32((rivers.0 >> 32) as u32);
     let mut water = base;
     water.u32(rivers.0 as u32).u32((rivers.0 >> 32) as u32);
-    instances(&mut water, super::compile::instances(raw, "SIMPLE_MESH_INSTANCE"));
+    instances(&mut water, super::compile::water_planes(raw));
     std::collections::BTreeMap::from([("textures", textures.0), ("terrain", terrain.0), ("water", water.0), (GROUND, ground.0)])
 }
 

@@ -271,8 +271,25 @@ impl TileDocument {
         Ok((dir, msg))
     }
 
+    /// The scene as an export reads it: the editor's text with the buildings marked Export as prop as their models
+    /// (`wce_tile::export_as_prop`), what that did in the log. `for_kit`: TEd's export comes next, and what it would lose is said too.
+    ///
+    /// # Errors
+    ///
+    /// The text does not read.
+    pub fn text_for_export(&self, for_kit: bool) -> Result<Vec<u8>, String> {
+        let files = self.tile().files.as_deref();
+        let models_in = |folder: &str| files.map_or_else(Vec::new, |f| f.list(folder, ".rigid_model_v2"));
+        let (text, report) = wce_tile::export_as_prop::apply(self.tile().tscene().save(), files.is_some().then_some(&models_in as wce_tile::export_as_prop::ModelsIn))?;
+        for line in if for_kit { report.kit_notes() } else { report.notes() } {
+            wce_foundation::log::info(line);
+        }
+
+        Ok(text)
+    }
+
     /// "Save for Assembly Kit": the tile as TEd reads it in the kit `kit_raw` (a raw_data folder), at its folder, with its database entry.
-    /// Files it replaces get a `.bak`. The procedural walls need `walls`: they are
+    /// Files it replaces get a `.bak`. Buildings marked Export as prop go as their models (`text_for_export`). The procedural walls need `walls`: they are
     /// written as their pieces (`wce_walls::export::walls_for_kit`), and a tile without walls takes its old pieces out of the pack.
     ///
     /// # Errors
@@ -282,7 +299,7 @@ impl TileDocument {
         self.end_stroke();
         let folder = tile_folder(&self.project().dir).ok_or_else(|| format!("{} is not under terrain/tiles/", self.project().dir.display()))?;
         let target = kit_raw.join(&folder);
-        let text = self.tile().tscene().save();
+        let text = self.text_for_export(true)?;
         let (msg, report) = match walls {
             Some(w) if self.tile().has_walls() => {
                 let (scene, n, notes) = wce_walls::export::walls_for_kit(self.project(), text, w.files, w.schema, &folder, w.data)?;

@@ -90,6 +90,13 @@ pub enum Rule {
     CircleShape,
 }
 
+impl Prop {
+    /// The name the Inspector shows: TEd's, its attribute, or the editor's own for what TEd lacks.
+    pub fn label(&self) -> &'static str {
+        if self.attr == crate::export_as_prop::EXPORT_AS_PROP_ATTR { "Export as prop" } else { self.attr }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Prop {
     /// The attribute, and the name TEd shows.
@@ -148,6 +155,7 @@ const BUILDING: &[Prop] = base3d![
     ruled("weak_wall", Kind::Bool, Rule::FortWall),
     ruled("ai_breachable", Kind::Bool, Rule::FortWall),
     p("indestructible", Kind::Bool),
+    p(crate::export_as_prop::EXPORT_AS_PROP_ATTR, Kind::Bool),
     ruled("dockable", Kind::Bool, Rule::FortWallOrUnbreachable),
     p("toggleable", Kind::Bool),
     p("capture_location", Kind::Text),
