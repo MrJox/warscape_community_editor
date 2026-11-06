@@ -1405,7 +1405,7 @@ impl RenderScene {
     }
 
     /// A layer's entities follow a renumbering of their document's items: `map` gives an entity's new item, those it has none for are
-    /// removed (logged as that). Nothing else changes, so the renderer keeps what it built.
+    /// removed. When none is, nothing changes for the renderer, which keeps what it built.
     pub fn renumber_sources(&mut self, layer: LayerId, map: impl Fn(u64) -> Option<u64>) {
         let mut gone = vec![];
         for e in self.entities.iter_mut().filter(|e| e.layer == layer) {
@@ -1415,7 +1415,12 @@ impl RenderScene {
             }
         }
 
-        self.remove_ranges(&gone);
+        // The renderer builds its draws again: followed from the log, these removals and what is added later ended in access violations in
+        // the AMD driver, every time (docs/editor.md, GPU).
+        if !gone.is_empty() {
+            self.remove_ranges(&gone);
+            self.touch();
+        }
     }
 
     /// Keeps the layer, drops its entities.

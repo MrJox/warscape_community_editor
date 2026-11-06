@@ -547,7 +547,7 @@ impl MinimapUi {
         }
 
         if self.show_siege || self.show_zones {
-            let version = d.edit_version();
+            let version = d.tile().siege_version();
             // Not while a button is held (a drag, a stroke): reading it takes tens of milliseconds on a big tile.
             let idle = !(0..3).any(gui::is_mouse_down);
             if self.siege.is_none() || (version != self.siege_for && idle && now - self.siege_time >= SIEGE_EVERY) {

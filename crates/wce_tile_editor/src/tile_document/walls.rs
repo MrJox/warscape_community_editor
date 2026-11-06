@@ -96,6 +96,10 @@ impl Tile {
 
     /// Whether the tile has a wall (what decides that terrain and building edits redraw the walls).
     pub fn has_walls(&self) -> bool {
+        if self.idx.valid {
+            return self.idx.type_names.iter().any(|t| t == WALL_SPLINE);
+        }
+
         self.tscene().doc().elements().iter().any(|e| e.name == WALL_SPLINE)
     }
 

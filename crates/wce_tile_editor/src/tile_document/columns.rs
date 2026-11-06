@@ -304,7 +304,7 @@ impl Tile {
         self.columns.dirty = true;
         if elem < self.tscene().doc().elements().len() && self.tscene().type_of(elem) == "BUILDING_INSTANCE" {
             self.columns.changed.insert(elem);
-        } else {
+        } else if !self.is_instance(elem) {
             self.columns.placed.clear();
         }
     }

@@ -217,11 +217,11 @@ impl Tile {
             self.update_terrain(scene, false);
         }
 
-        // The placed effects play in their seasons only: their entities are made again.
+        // The placed effects play in their seasons only: they start or stop.
         if season_changed && self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
-            let layer = self.layer;
-            self.rebuild_items(true);
-            self.publish_items(scene, layer, true);
+            for e in self.instances.clone() {
+                self.refresh_payload(scene, e);
+            }
         }
     }
 
@@ -1310,7 +1310,7 @@ impl Tile {
         wce_prof!("tile.publish");
 
         // The pieces' properties are by element, and this starts from the elements as they are.
-        if !std::mem::take(&mut self.shifts).is_empty() {
+        if std::mem::take(&mut self.changes).iter().any(|c| !matches!(c, super::shift::ViewChange::Shown)) {
             self.piece_props.clear();
             self.piece_pending.clear();
         }
@@ -1667,8 +1667,8 @@ impl Tile {
         self.structure_version += 1;
         if self.scene_key == scene_key(scene) && self.terrain_entity != 0 {
             let layer = self.layer;
-            self.rebuild_items(true);
-            self.publish_items(scene, layer, true);
+            self.changes.push(super::shift::ViewChange::Shown);
+            self.publish_change(scene, layer);
         }
     }
 

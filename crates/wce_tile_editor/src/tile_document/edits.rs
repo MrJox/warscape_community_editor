@@ -502,7 +502,7 @@ impl TileDocument {
         let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
 
         // Element indices moved: the index is rebuilt by the republish that follows.
-        if !matches!(effect, SpliceEffect::Touched(_)) {
+        if !matches!(effect, SpliceEffect::Touched { .. }) {
             self.tile_mut().idx.valid = false;
         }
 
@@ -511,7 +511,43 @@ impl TileDocument {
 
     /// `push_splice` of an edit of attributes of `elems` alone: the elements keep their indices, only they are published again.
     pub(crate) fn push_splice_touching(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>, elems: Vec<usize>) {
-        self.push_splice_as(name, mark, sel_before, sel_after, SpliceEffect::Touched(elems));
+        self.push_splice_as(name, mark, sel_before, sel_after, SpliceEffect::Touched { elems, outline: false });
+    }
+
+    /// `push_splice` of an edit of `attrs` of `elems`, by what they are: what the tile's structure hangs on, what is drawn, or neither.
+    fn push_splice_attrs(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>, elems: Vec<usize>, attrs: &[&str]) {
+        use wce_tile::project_files::{PREFAB_ATTR, ROTATION_ATTR, SURFACE_ATTR};
+        let structure = |a: &&str| matches!(*a, "flags" | "position" | "orientation" | "surface_mode" | "export_type");
+        let noted = |a: &&str| *a == "name" || *a == SURFACE_ATTR || *a == ROTATION_ATTR || *a == PREFAB_ATTR;
+        let effect = if attrs.iter().any(structure) {
+            SpliceEffect::Structure
+        } else if attrs.iter().all(noted) {
+            SpliceEffect::Touched { elems, outline: true }
+        } else {
+            SpliceEffect::Remade(elems)
+        };
+
+        self.push_splice_as(name, mark, sel_before, sel_after, effect);
+    }
+
+    /// `push_splice` of an edit that added or took away one point of `elem` (`before`: its points then), and of its attributes.
+    fn push_splice_point(&mut self, name: String, mark: usize, elem: usize, before: &[usize]) {
+        let after = self.tile().tscene().polygon_points(elem);
+        let differs = |a: &[usize], b: &[usize]| a.iter().zip(b).position(|(x, y)| x != y).unwrap_or(a.len().min(b.len()));
+        let (span, added) = if after.len() == before.len() + 1 {
+            (after[differs(&after, before)], true)
+        } else if after.len() + 1 == before.len() {
+            (before[differs(before, &after)], false)
+        } else {
+            self.push_splice(name, mark, vec![item_of(elem)], vec![item_of(elem)]);
+            return;
+        };
+
+        let t = self.tile();
+        let (known, now) = (t.idx.type_.len(), t.tscene().doc().elements().len());
+        let fits = t.idx.valid && if added { known + 1 == now } else { known == now + 1 };
+        let effect = if fits { SpliceEffect::Shift { spans: vec![(span, 1)], added, touched: vec![elem] } } else { SpliceEffect::Structure };
+        self.push_splice_as(name, mark, vec![item_of(elem)], vec![item_of(elem)], effect);
     }
 
     /// `push_splice` of an edit that added `roots` with what they hold and changed no other element's number: the scene follows the
@@ -520,7 +556,7 @@ impl TileDocument {
         let spans = self.subtree_spans(roots);
         let t = self.tile();
         let fits = t.idx.valid && t.idx.type_.len() + spans.iter().map(|s| s.1).sum::<usize>() == t.tscene().doc().elements().len();
-        let effect = if fits { SpliceEffect::Shift { spans, added: true } } else { SpliceEffect::Structure };
+        let effect = if fits { SpliceEffect::Shift { spans, added: true, touched: vec![] } } else { SpliceEffect::Structure };
         self.push_splice_as(name, mark, sel_before, sel_after, effect);
     }
 
@@ -528,7 +564,7 @@ impl TileDocument {
     fn push_splice_removed(&mut self, name: String, mark: usize, sel_before: Vec<u64>, spans: Vec<(usize, usize)>) {
         let t = self.tile();
         let fits = t.idx.valid && t.idx.type_.len() == t.tscene().doc().elements().len() + spans.iter().map(|s| s.1).sum::<usize>();
-        let effect = if fits { SpliceEffect::Shift { spans, added: false } } else { SpliceEffect::Structure };
+        let effect = if fits { SpliceEffect::Shift { spans, added: false, touched: vec![] } } else { SpliceEffect::Structure };
         self.push_splice_as(name, mark, sel_before, vec![], effect);
     }
 
@@ -552,6 +588,8 @@ impl TileDocument {
             return false;
         }
 
+        let below = whole.then(|| t.items_below(elem));
+
         let sc = t.tscene();
         let old_pos = position.and(sc.position(elem));
         let old_euler = euler.and(sc.euler(elem));
@@ -564,7 +602,7 @@ impl TileDocument {
         let name = format!("Move {}", if n.is_empty() { sc.type_of(elem).to_owned() } else { n });
         let old_pos_text = old_pos.and_then(|_| sc.doc().get(elem, "position"));
         let old_euler_text = old_euler.and_then(|_| sc.doc().get(elem, "orientation"));
-        self.history.push(Box::new(TedMoveCommand { name, elem, old_pos, new_pos, old_euler, new_euler, old_pos_text, old_euler_text, gesture, whole }));
+        self.history.push(Box::new(TedMoveCommand { name, elem, old_pos, new_pos, old_euler, new_euler, old_pos_text, old_euler_text, gesture, below }));
         true
     }
 
@@ -852,7 +890,7 @@ impl TileDocument {
             _ => "Polygon",
         };
         let e = self.tscene_mut().add_polygon(Some(layer), kind, name, &local, &extra)?;
-        self.push_splice(format!("Add {kind}"), mark, vec![], vec![item_of(e)]);
+        self.push_splice_added(format!("Add {kind}"), mark, vec![], vec![item_of(e)], &[e]);
         Ok(e)
     }
 
@@ -907,7 +945,7 @@ impl TileDocument {
 
                 let local = self.tile().to_local(elem, world);
                 self.tscene_mut().insert_polygon_point(elem, index, local)?;
-                self.push_splice("Insert polygon point".to_owned(), mark, vec![item_of(elem)], vec![item_of(elem)]);
+                self.push_splice_point("Insert polygon point".to_owned(), mark, elem, &pts);
                 Ok(())
             }
 
@@ -916,7 +954,7 @@ impl TileDocument {
                     return Err("a polygon needs at least 2 points".to_owned());
                 }
 
-                self.push_splice("Remove polygon point".to_owned(), mark, vec![item_of(elem)], vec![item_of(elem)]);
+                self.push_splice_point("Remove polygon point".to_owned(), mark, elem, &pts);
                 Ok(())
             }
 
@@ -1014,6 +1052,7 @@ impl TileDocument {
         };
 
         let mark = self.begin()?;
+        let before = self.tile().tscene().polygon_points(elem);
         let result = match op {
             "insert" => {
                 let mut positions = pts.iter().map(|p| p.position).collect::<Vec<_>>();
@@ -1070,7 +1109,7 @@ impl TileDocument {
 
         match result {
             Ok(name) => {
-                self.push_splice(name.to_owned(), mark, vec![item_of(elem)], vec![item_of(elem)]);
+                self.push_splice_point(name.to_owned(), mark, elem, &before);
                 Ok(())
             }
 
@@ -1127,7 +1166,7 @@ impl TileDocument {
             }
         }
 
-        self.push_splice("Flip spline".to_owned(), mark, vec![item_of(elem)], vec![item_of(elem)]);
+        self.push_splice_touching("Flip spline".to_owned(), mark, vec![item_of(elem)], vec![item_of(elem)], vec![elem]);
         Ok(())
     }
 
@@ -1159,7 +1198,7 @@ impl TileDocument {
         let parent = parent.ok_or("this tile has no SCENE_GRAPH, so layers cannot be added")?;
         let mark = self.begin()?;
         let layer = self.tscene_mut().add_layer(Some(parent), if name.is_empty() { "New layer" } else { name })?;
-        self.push_splice("Add layer".to_owned(), mark, vec![], vec![item_of(layer)]);
+        self.push_splice_added("Add layer".to_owned(), mark, vec![], vec![item_of(layer)], &[layer]);
         Ok(layer)
     }
 
@@ -1206,7 +1245,7 @@ impl TileDocument {
 
         let Ok(mark) = self.begin() else { return false };
         self.tscene_mut().set_attr(p, attr, value);
-        self.push_splice(format!("Set point {attr}"), mark, vec![item_of(elem)], vec![item_of(elem)]);
+        self.push_splice_touching(format!("Set point {attr}"), mark, vec![item_of(elem)], vec![item_of(elem)], vec![elem]);
         true
     }
 
@@ -1225,7 +1264,7 @@ impl TileDocument {
 
         let Ok(mark) = self.begin() else { return false };
         self.tscene_mut().set_attr(elem, attr, value);
-        self.push_splice(format!("Set {attr}"), mark, vec![item_of(elem)], vec![item_of(elem)]);
+        self.push_splice_attrs(format!("Set {attr}"), mark, vec![item_of(elem)], vec![item_of(elem)], vec![elem], &[attr]);
         true
     }
 
@@ -1831,7 +1870,8 @@ impl TileDocument {
             self.tscene_mut().set_attr(elem, a, v);
         }
 
-        self.push_splice(format!("Revert the overrides of an item of {key}"), mark, vec![item_of(elem)], vec![item_of(elem)]);
+        let attrs = back.iter().map(|(a, _)| a.as_str()).collect::<Vec<_>>();
+        self.push_splice_attrs(format!("Revert the overrides of an item of {key}"), mark, vec![item_of(elem)], vec![item_of(elem)], vec![elem], &attrs);
         back.len()
     }
 
@@ -1894,7 +1934,8 @@ impl TileDocument {
             self.tscene_mut().set_attr(*g, wce_tile::project_files::PREFAB_ATTR, key);
         }
 
-        self.push_splice(what.to_owned(), mark, vec![], vec![]);
+        let elems = groups.iter().map(|(g, _)| *g).collect();
+        self.push_splice_attrs(what.to_owned(), mark, vec![], vec![], elems, &[wce_tile::project_files::PREFAB_ATTR]);
         groups.len()
     }
 
@@ -2022,7 +2063,7 @@ impl TileDocument {
         let copy = self.tscene_mut().duplicate(layer).map_err(|_| "cannot duplicate this layer".to_owned())?;
         let name = format!("{} copy", self.tile().tscene().name(layer));
         self.tscene_mut().set_attr(copy, "name", &name);
-        self.push_splice("Duplicate layer".to_owned(), mark, vec![item_of(layer)], vec![item_of(copy)]);
+        self.push_splice_added("Duplicate layer".to_owned(), mark, vec![item_of(layer)], vec![item_of(copy)], &[copy]);
         Ok(copy)
     }
 
@@ -3235,7 +3276,7 @@ impl TileDocument {
         }
 
         let items = todo.iter().map(|&e| item_of(e)).collect::<Vec<_>>();
-        self.push_splice(format!("Set {attr} of {} items", todo.len()), mark, items.clone(), items);
+        self.push_splice_attrs(format!("Set {attr} of {} items", todo.len()), mark, items.clone(), items, todo, &[attr]);
         true
     }
 
@@ -3256,7 +3297,9 @@ impl TileDocument {
             }
 
             let items = missing.iter().map(|(e, _, _)| item_of(*e)).collect::<Vec<_>>();
-            self.push_splice(format!("Set {} of {} items", prop.attr, pairs.len()), mark, items.clone(), items);
+            let mut touched = missing.iter().map(|(e, _, _)| *e).collect::<Vec<_>>();
+            touched.dedup();
+            self.push_splice_attrs(format!("Set {} of {} items", prop.attr, pairs.len()), mark, items.clone(), items, touched, &[prop.attr]);
             self.history.break_merge();
         }
 

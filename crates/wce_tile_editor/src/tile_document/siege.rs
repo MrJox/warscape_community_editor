@@ -179,7 +179,109 @@ fn top_layer(scene: &TedScene, name: &str) -> Option<usize> {
     list.into_iter().find(|&c| scene.type_of(c) == "LayerInstance" && scene.name(c) == name)
 }
 
+/// What one building gives the siege overlays and the generator.
+#[derive(Debug, Default)]
+pub(crate) struct BuildingSiege {
+    palisade: Option<wce_siege::PalisadePiece>,
+    wall: Option<WallPiece>,
+    obstacles: Vec<Vec<P>>,
+    raised: Option<WallPiece>,
+}
+
+/// What the siege overlays are read from (a building's logic, a polygon, a wall, a capture, what hides them when it is not exported).
+fn feeds_siege(sc: &TedScene, e: usize) -> bool {
+    let t = sc.type_of(e);
+    sc.is_layer(e) || t.starts_with("SiegeAI") || t.starts_with("SIEGE_AI") || t.starts_with("DeploymentZone") || t.starts_with("DEPLOYMENT_ZONE")
+        || matches!(t, "BUILDING_INSTANCE" | "NOGO_REGION_POLYGON_INSTANCE" | "CaptureLocationInstance" | super::WALL_SPLINE)
+}
+
 impl Tile {
+    /// What goes on when the siege overlays have to be read again (only then: lights, trees and names do not feed them).
+    pub fn siege_version(&self) -> u64 {
+        self.siege_version
+    }
+
+    /// An edit's items are known: the buildings among them are read again, and the overlays if anything feeds them.
+    pub(crate) fn siege_follows(&mut self, dirty: &wce_editor_core::command::Dirty) {
+        if dirty.all {
+            self.siege_buildings.get_mut().clear();
+            self.siege_version += 1;
+            return;
+        }
+
+        for &item in &dirty.items {
+            if item == super::shift::SHIFTED_ITEM {
+                self.siege_version += 1;
+                continue;
+            }
+
+            let Some(e) = super::elem_of(item).filter(|&e| e < self.tscene().doc().elements().len()) else {
+                self.siege_version += u64::from(item == super::TERRAIN);
+                continue;
+            };
+
+            self.siege_buildings.get_mut().remove(&e);
+            self.siege_version += u64::from(feeds_siege(self.tscene(), e));
+        }
+    }
+
+    /// A building's logic summed up, read once.
+    fn logic_of(&self, key: &str) -> Option<Arc<LogicSummary>> {
+        if let Some(l) = self.logic_summaries.borrow().get(key) {
+            return l.clone();
+        }
+
+        self.logic_summaries.borrow_mut().entry(key.to_owned()).or_insert_with(|| {
+            let bytes = self.files.as_deref()?.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok()?;
+            logic_summary(&bytes).map(Arc::new)
+        }).clone()
+    }
+
+    fn building_siege(&self, e: usize) -> BuildingSiege {
+        let sc = self.tscene();
+        let mut part = BuildingSiege::default();
+
+        // The siege barricades stand across the streets (they are broken through, the graph runs over them); an encampment's
+        // (`siege_barricade_wall_1_encampment`) are its palisade, on its line at their origin.
+        let key = sc.doc().get(e, "key").unwrap_or_default();
+        let lower = key.to_lowercase();
+        if lower.contains("barricade") {
+            if lower.contains("encampment") {
+                let w = world_transform(sc, e);
+                let at = [w.position.x, w.position.z];
+                part.palisade = Some(wce_siege::PalisadePiece { at });
+                let hard = self.logic_of(&key).map(|l| l.hard.clone()).unwrap_or_default();
+                let footprint = hard.iter().map(|r| r.iter().map(|p| {
+                    let q = w.position + w.rotation * Double3::new(p[0], 0.0, p[1]);
+                    [q.x, q.z]
+                }).collect()).collect();
+                part.wall = Some(WallPiece { footprint, platforms: vec![], walkway: vec![], gate: false, ends: [at, at] });
+            }
+
+            return part;
+        }
+
+        let Some(l) = self.logic_of(&key) else { return part };
+        let w = world_transform(sc, e);
+        let at = |x: f64, z: f64| -> P {
+            let p = w.position + w.rotation * Double3::new(x, 0.0, z);
+            [p.x, p.z]
+        };
+        let place = |rings: &[Vec<P>]| -> Vec<Vec<P>> { rings.iter().map(|r| r.iter().map(|p| at(p[0], p[1])).collect()).collect() };
+        let mut footprint = place(&l.footprint);
+        footprint.extend(place(&l.hard));
+        let (x0, x1, z) = l.ends;
+        let piece = WallPiece { footprint, platforms: place(&l.platforms), walkway: vec![], gate: l.gate, ends: [at(x0, z), at(x1, z)] };
+        if l.fort || l.gate {
+            part.wall = Some(piece);
+        } else {
+            part.obstacles = place(&l.hard);
+            part.raised = (!piece.platforms.is_empty()).then_some(piece);
+        }
+
+        part
+    }
+
     /// The generator's input: the no-go regions, the buildings (what blocks of them; the fort pieces' footprints, platforms and gates, from
     /// their logic files), the procedural walls, the captures, the sea; what is not exported left out.
     pub fn siege_input(&self) -> Input {
@@ -207,63 +309,33 @@ impl Tile {
             input.steep = outlines.iter().map(|o| o.iter().map(|p| [f64::from(p[0]) * u, f64::from(p[1]) * u]).collect()).collect();
         }
 
-        let read = |key: &str| -> Option<Arc<LogicSummary>> {
-            if let Some(l) = self.logic_summaries.borrow().get(key) {
-                return l.clone();
-            }
+        let read = |key: &str| self.logic_of(key);
 
-            self.logic_summaries.borrow_mut().entry(key.to_owned()).or_insert_with(|| {
-                let bytes = self.files.as_deref()?.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok()?;
-                logic_summary(&bytes).map(Arc::new)
-            }).clone()
-        };
-
+        // The minimap's read keeps each building's part: walking them all took 50 ms on a city, after each edit. Not while the numbers are
+        // being changed, and not for the generator, which is not asked often.
+        let kept = !sea && self.idx.valid && self.changes.is_empty();
         let mut raised = vec![];
         for e in sc.find_all("BUILDING_INSTANCE") {
             if skip(e) {
                 continue;
             }
 
-            // The siege barricades stand across the streets (they are broken through, the graph runs over them); an encampment's
-            // (`siege_barricade_wall_1_encampment`) are its palisade, on its line at their origin.
-            let key = sc.doc().get(e, "key").unwrap_or_default();
-            let lower = key.to_lowercase();
-            if lower.contains("barricade") {
-                if lower.contains("encampment") {
-                    let w = world_transform(sc, e);
-                    let at = [w.position.x, w.position.z];
-                    input.palisade.push(wce_siege::PalisadePiece { at });
-                    let hard = read(&key).map(|l| l.hard.clone()).unwrap_or_default();
-                    let footprint = hard.iter().map(|r| r.iter().map(|p| {
-                        let q = w.position + w.rotation * Double3::new(p[0], 0.0, p[1]);
-                        [q.x, q.z]
-                    }).collect()).collect();
-                    input.walls.push(WallPiece { footprint, platforms: vec![], walkway: vec![], gate: false, ends: [at, at] });
+            let cached = kept.then(|| self.siege_buildings.borrow().get(&e).cloned()).flatten();
+            let part = cached.unwrap_or_else(|| {
+                let part = Arc::new(self.building_siege(e));
+                if kept {
+                    self.siege_buildings.borrow_mut().insert(e, part.clone());
                 }
 
-                continue;
-            }
+                part
+            });
 
-            let Some(l) = read(&key) else { continue };
-            let w = world_transform(sc, e);
-            let at = |x: f64, z: f64| -> P {
-                let p = w.position + w.rotation * Double3::new(x, 0.0, z);
-                [p.x, p.z]
-            };
-            let place = |rings: &[Vec<P>]| -> Vec<Vec<P>> { rings.iter().map(|r| r.iter().map(|p| at(p[0], p[1])).collect()).collect() };
-            let mut footprint = place(&l.footprint);
-            footprint.extend(place(&l.hard));
-            let (x0, x1, z) = l.ends;
-            let piece = WallPiece { footprint, platforms: place(&l.platforms), walkway: vec![], gate: l.gate, ends: [at(x0, z), at(x1, z)] };
-            if l.fort || l.gate {
-                input.walls.push(piece);
-            } else {
-                input.obstacles.extend(place(&l.hard));
-                if !piece.platforms.is_empty() {
-                    raised.push(piece);
-                }
-            }
+            input.palisade.extend(part.palisade);
+            input.walls.extend(part.wall.iter().cloned());
+            input.obstacles.extend(part.obstacles.iter().cloned());
+            raised.extend(part.raised.iter().cloned());
         }
+
 
         // Raised buildings touching the fort (towers, corners without firing positions) are part of it.
         let boxes: Vec<(P, P)> = input.walls.iter().map(|w| bounds(w.footprint.iter().chain(&w.platforms).flatten())).collect();
@@ -873,4 +945,105 @@ fn clip_to_rect(pts: &[wce_foundation::math::Float3], closed: bool, w: f32, h: f
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use wce_editor_core::document::Document;
+    use wce_foundation::math::Double3;
+    use wce_scene::render_scene::RenderScene;
+    use wce_tile::tile_project::TileProject;
+
+    use super::LogicSummary;
+    use crate::tile_document::TileDocument;
+
+    const TED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project version="16">
+    <scene>
+        <SCENE_GRAPH name="root" position="vector(0,0,0)" orientation="euler(0,0,0)">
+            <children>
+                <LayerInstance flags=" OIF_VISIBLE|OIF_ACTIVE" export_type="LayerExportType_Normal" lf_offset="0" position="vector(0,0,0)" name="B" orientation="euler(0,0,0)">
+                    <children>
+                        <BUILDING_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(10,0,10)" name="a" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)" key="house"/>
+                        <POINT_LIGHT_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,20)" name="l" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)"/>
+                    </children>
+                </LayerInstance>
+                <LayerInstance flags=" OIF_VISIBLE|OIF_ACTIVE" export_type="LayerExportType_Normal" lf_offset="0" position="vector(0,0,0)" name="C" orientation="euler(0,0,0)">
+                    <children>
+                        <BUILDING_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(30,0,30)" name="b" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)" key="house"/>
+                    </children>
+                </LayerInstance>
+            </children>
+        </SCENE_GRAPH>
+    </scene>
+</project>
+"#;
+
+    fn open(dir: &std::path::Path) -> TileDocument {
+        std::fs::write(dir.join("tile.ted"), TED).unwrap();
+        let (w, h) = (64u32, 64u32);
+        let pixels = (0..h).flat_map(|y| (0..w).flat_map(move |x| ((x * 300 + y * 200) as u16).to_be_bytes())).collect();
+        let png = wce_formats::png_file::PngFile { width: w, height: h, bit_depth: 16, color_type: 0, pixels, pixels_edited: true, ..Default::default() };
+        std::fs::write(dir.join("height_map_0.png"), png.write().unwrap()).unwrap();
+        let d = TileDocument::new(TileProject::open(dir).unwrap(), None);
+        let logic = LogicSummary { hard: vec![vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]], ..LogicSummary::default() };
+        d.tile().logic_summaries.borrow_mut().insert("house".to_owned(), Some(Arc::new(logic)));
+        d
+    }
+
+    /// What the minimap has read against what a read without the kept buildings gives.
+    fn check(d: &TileDocument, what: &str) {
+        let (kept, read) = (d.tile().minimap_siege().input, d.tile().siege_input_with(true));
+        assert_eq!(format!("{:?}", kept.obstacles), format!("{:?}", read.obstacles), "{what}");
+    }
+
+    #[test]
+    fn what_is_kept_of_the_buildings_follows_every_edit_and_only_what_feeds_the_overlays_reads_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut d = open(dir.path());
+        let mut scene = RenderScene::default();
+        let layer = scene.add_layer(d.id(), "tile");
+        d.publish(&mut scene, layer);
+        let follow = |d: &mut TileDocument, scene: &mut RenderScene| {
+            let dirty = d.history_mut().take_dirty();
+            d.republish(scene, layer, &dirty);
+        };
+
+        check(&d, "first read");
+        assert_eq!(d.tile().siege_buildings.borrow().len(), 2);
+        let sc = d.tile().tscene();
+        let (a, light, later) = (sc.find_all("BUILDING_INSTANCE")[0], sc.find_all("POINT_LIGHT_INSTANCE")[0], sc.find_all("LayerInstance")[1]);
+
+        let version = d.tile().siege_version();
+        assert!(d.set_local(light, Some(Double3::new(25.0, 0.0, 25.0)), None, 0));
+        follow(&mut d, &mut scene);
+        assert!(d.rename(light, "lamp"));
+        follow(&mut d, &mut scene);
+        assert_eq!(d.tile().siege_version(), version, "a light feeds nothing");
+
+        assert!(d.set_local(a, Some(Double3::new(12.0, 0.0, 10.0)), None, 0));
+        follow(&mut d, &mut scene);
+        assert!(d.tile().siege_version() != version, "a building does");
+        assert_eq!(d.tile().siege_buildings.borrow().len(), 1, "only it goes");
+        check(&d, "a building moved");
+
+        assert!(d.set_local(later, Some(Double3::new(5.0, 0.0, 0.0)), None, 0));
+        follow(&mut d, &mut scene);
+        check(&d, "a layer moved");
+
+        // Added before the last building: its number changes, what is kept of it goes with it.
+        let first = d.tile().tscene().find_all("LayerInstance")[0];
+        let items = d.copy_items(&[a]);
+        d.paste(&items, first, wce_foundation::math::Float3::new(3.0, 0.0, 3.0)).unwrap();
+        follow(&mut d, &mut scene);
+        check(&d, "a building added");
+        d.history_mut().undo();
+        follow(&mut d, &mut scene);
+        check(&d, "its undo");
+        assert!(d.remove(a));
+        follow(&mut d, &mut scene);
+        check(&d, "a building removed");
+    }
 }

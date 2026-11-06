@@ -70,7 +70,7 @@ impl TileDocument {
         match result {
             Ok(()) => {
                 // Inserting appends inside the layer, so the elements added first keep their indices.
-                self.push_splice(what.to_owned(), mark, vec![], added.iter().map(|&e| item_of(e)).collect());
+                self.push_splice_added(what.to_owned(), mark, vec![], added.iter().map(|&e| item_of(e)).collect(), &added);
                 Ok(added)
             }
 

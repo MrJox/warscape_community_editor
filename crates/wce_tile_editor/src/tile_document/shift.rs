@@ -1,14 +1,15 @@
-//! An edit that adds or removes elements renumbers the ones after them, and all that is kept by element with them. Publishing the tile again
-//! took half a second on a big one for one building: the scene is told the new numbers instead, and only what came is built.
+//! An edit that adds or removes elements renumbers the ones after them, and all that is kept by element with them; one that changes what a
+//! part of the tile shows has that part's entities come and go. Publishing the tile again took half a second on a big one for one building:
+//! the scene is told what changed instead, and only what came is built.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 
 use wce_scene::render_scene::{EntityId, LayerId, RenderScene};
 
-use super::{Tile, elem_of, item_of};
+use super::{INSTANCE_BIT, Tile, elem_of, item_of};
 
-/// The item a command says it touched when it renumbered the elements (`Tile::shifts` says how).
+/// The item a command says it touched when what it did is in `Tile::changes`.
 pub(crate) const SHIFTED_ITEM: u64 = u64::MAX;
 
 /// Sorted and joined spans (start, length).
@@ -30,6 +31,21 @@ pub(crate) fn merged_spans(mut spans: Vec<(usize, usize)>) -> Vec<(usize, usize)
 pub(crate) struct ElementShift {
     pub spans: Vec<(usize, usize)>,
     pub came: bool,
+
+    /// Elements before the spans that follow them too (the polygon of a point).
+    pub touched: Vec<usize>,
+}
+
+/// What the scene has still to follow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ViewChange {
+    Shift(ElementShift),
+
+    /// These elements are drawn differently (a building's key): their entities are made again.
+    Remade(Vec<usize>),
+
+    /// Which elements are shown or selectable may have changed (the index still says how it was).
+    Shown,
 }
 
 /// The old numbers to the new ones.
@@ -64,6 +80,16 @@ impl ElementShift {
 }
 
 impl ElementMap {
+    /// No element takes another number; `went` go, `came` come (the same number can do both: it is made again).
+    fn same_numbers(len: usize, went: &[usize], came: Vec<usize>) -> Self {
+        let mut to = (0..len).map(Some).collect::<Vec<_>>();
+        for &e in went {
+            to[e] = None;
+        }
+
+        Self { to, came }
+    }
+
     /// The new number of an element, `None` when it went.
     pub(crate) fn map(&self, e: usize) -> Option<usize> {
         self.to.get(e).copied().flatten()
@@ -87,8 +113,17 @@ impl ElementMap {
 }
 
 impl Tile {
-    /// All that is kept by element takes the new numbers.
-    fn renumber(&mut self, scene: &mut RenderScene, layer: LayerId, map: &ElementMap, new_len: usize) {
+    /// These elements are to be made again: with what is waiting (several items of one edit), one change.
+    pub(crate) fn note_remade(&mut self, elems: &[usize]) {
+        match self.changes.last_mut() {
+            Some(ViewChange::Remade(list)) => list.extend_from_slice(elems),
+            _ => self.changes.push(ViewChange::Remade(elems.to_vec())),
+        }
+    }
+
+    /// All that is kept by element takes the new numbers. `same_elements`: they are all still there (what went is only hidden), so what
+    /// was set on them stays.
+    fn renumber(&mut self, scene: &mut RenderScene, layer: LayerId, map: &ElementMap, new_len: usize, same_elements: bool) {
         scene.renumber_sources(layer, |item| match elem_of(item) {
             Some(e) => map.map(e).map(item_of),
             None => Some(item),
@@ -103,10 +138,14 @@ impl Tile {
 
         (self.first_entity, self.entity_count) = (first, count);
         map.keys(&mut self.outline_entity);
-        map.second(&mut self.piece_props);
-        map.second(&mut self.drafts);
-        self.piece_pending = self.piece_pending.iter().filter_map(|&(e, k)| Some((map.map(e)?, k))).collect();
-        self.unlocked_reference = self.unlocked_reference.and_then(|e| map.map(e));
+        if !same_elements {
+            map.second(&mut self.piece_props);
+            map.second(&mut self.drafts);
+            self.piece_pending = self.piece_pending.iter().filter_map(|&(e, k)| Some((map.map(e)?, k))).collect();
+            self.unlocked_reference = self.unlocked_reference.and_then(|e| map.map(e));
+        }
+
+        map.keys(self.siege_buildings.get_mut());
         self.covers_shifted(map);
         self.columns_shifted(map);
         self.tech_shifted(map);
@@ -114,31 +153,59 @@ impl Tile {
         self.fire_shifted(map);
     }
 
-    /// The scene follows the one renumbering waiting (`Tile::shifts`): the entities of what stays stay, what went goes, what came is added.
-    pub(crate) fn publish_shift(&mut self, scene: &mut RenderScene, layer: LayerId) {
-        wce_foundation::wce_prof!("tile.publish_shift");
+    /// What the index said was shown against what it says now: the elements that went and came, and the ones to lock or unlock.
+    fn shown_map(&self, state: &[u8]) -> (ElementMap, Vec<usize>) {
+        let (mut went, mut came, mut locks) = (vec![], vec![], vec![]);
+        for e in (0..state.len()).filter(|&e| self.idx.kind[e] & INSTANCE_BIT != 0) {
+            let (before, now) = (state[e], self.idx.state[e]);
+            match (before & 1 != 0, now & 1 != 0) {
+                (true, false) => went.push(e),
+                (false, true) => came.push(e),
+                (true, true) if before != now => locks.push(e),
+                _ => {}
+            }
+        }
+
+        (ElementMap::same_numbers(state.len(), &went, came), locks)
+    }
+
+    /// The scene follows the one change waiting (`Tile::changes`): the entities of what stays stay, what went goes, what came is added.
+    pub(crate) fn publish_change(&mut self, scene: &mut RenderScene, layer: LayerId) {
+        wce_foundation::wce_prof!("tile.publish_change");
         let new_len = self.tscene().doc().elements().len();
         let old_len = self.first_entity.len();
-        let moved = self.shifts.first().map_or(0, |s| s.spans.iter().map(|s| s.1).sum::<usize>());
-        let fits = self.shifts.first().is_some_and(|s| if s.came { old_len + moved == new_len } else { old_len == new_len + moved });
+        let fits = match self.changes.first() {
+            Some(ViewChange::Shift(s)) => {
+                let moved = s.spans.iter().map(|s| s.1).sum::<usize>();
+                if s.came { old_len + moved == new_len } else { old_len == new_len + moved }
+            }
+
+            Some(_) => old_len == new_len,
+            None => false,
+        };
+
         if !fits || self.pieces_collapsing() || self.idx.type_.len() != old_len {
             self.rebuild_items(true);
             self.publish_items(scene, layer, true);
             return;
         }
 
-        let map = self.shifts[0].map(old_len);
-        self.shifts.clear();
+        let change = self.changes.remove(0);
+        self.changes.clear();
 
-        // What went, while the index still says what it was.
+        // How it was, and how it is now.
         let names = self.idx.type_names.clone();
-        let building = names.iter().position(|t| t == "BUILDING_INSTANCE");
-        let river = names.iter().position(|t| t == "SplineRiverInstance");
-        let went = (0..old_len).filter(|&e| map.map(e).is_none()).map(|e| self.idx.type_[e] as usize).collect::<BTreeSet<_>>();
-        self.renumber(scene, layer, &map, new_len);
-
+        let (types, state) = (self.idx.type_.clone(), self.idx.state.clone());
         let dirty = std::mem::take(&mut self.dirty_type);
         self.rebuild_tables(true);
+
+        let (map, locks) = match &change {
+            ViewChange::Shift(s) => (s.map(old_len), vec![]),
+            ViewChange::Remade(list) => (ElementMap::same_numbers(old_len, list, list.clone()), vec![]),
+            ViewChange::Shown => self.shown_map(&state),
+        };
+
+        self.renumber(scene, layer, &map, new_len, change == ViewChange::Shown);
         if self.idx.type_names != names || dirty.len() != self.dirty_type.len() {
             self.columns_changed();
             self.tech.dirty = true;
@@ -155,9 +222,11 @@ impl Tile {
         self.meshed_for = (vec![], u64::MAX);
         self.links_dirty = true;
 
+        let building = names.iter().position(|t| t == "BUILDING_INSTANCE");
+        let river = names.iter().position(|t| t == "SplineRiverInstance");
         let hide_buildings = self.display.hidden_types.contains("BUILDING_INSTANCE");
         let mut buildings = false;
-        for &t in &went {
+        for t in (0..old_len).filter(|&e| map.map(e).is_none()).map(|e| types[e] as usize).collect::<BTreeSet<_>>() {
             self.dirty_type[t] = 1;
             self.water_dirty |= Some(t) == river;
             if Some(t) == building {
@@ -199,6 +268,21 @@ impl Tile {
             }
         }
 
+        for e in locks {
+            let (first, locked) = (self.first_entity[e], !self.selectable(e));
+            for id in (0..EntityId::from(self.entity_count[e])).filter(|_| first != 0).map(|k| first + k) {
+                if let Some(en) = scene.find_mut(id) {
+                    en.locked = locked;
+                }
+            }
+        }
+
+        if let ViewChange::Shift(s) = &change {
+            for &e in &s.touched {
+                self.refresh_item(scene, e);
+            }
+        }
+
         // A building is what a wall's end is attached to.
         self.polygons_dirty |= buildings && self.has_walls();
     }
@@ -210,16 +294,23 @@ mod tests {
 
     #[test]
     fn the_numbers_follow() {
-        let came = ElementShift { spans: vec![(2, 2), (6, 1)], came: true }.map(5);
+        let came = ElementShift { spans: vec![(2, 2), (6, 1)], came: true, touched: vec![] }.map(5);
         assert_eq!((0..5).map(|e| came.map(e)).collect::<Vec<_>>(), [Some(0), Some(1), Some(4), Some(5), Some(7)]);
         assert_eq!(came.came, [2, 3, 6]);
 
-        let went = ElementShift { spans: vec![(2, 2), (6, 1)], came: false }.map(8);
+        let went = ElementShift { spans: vec![(2, 2), (6, 1)], came: false, touched: vec![] }.map(8);
         assert_eq!((0..8).map(|e| went.map(e)).collect::<Vec<_>>(), [Some(0), Some(1), None, None, Some(2), Some(3), None, Some(4)]);
     }
 
     #[test]
     fn spans_join() {
         assert_eq!(merged_spans(vec![(5, 1), (2, 3), (9, 2)]), [(2, 4), (9, 2)]);
+    }
+
+    #[test]
+    fn an_element_made_again_keeps_its_number() {
+        let map = ElementMap::same_numbers(4, &[1], vec![1]);
+        assert_eq!((0..4).map(|e| map.map(e)).collect::<Vec<_>>(), [Some(0), None, Some(2), Some(3)]);
+        assert_eq!(map.came, [1]);
     }
 }

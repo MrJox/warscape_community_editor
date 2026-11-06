@@ -162,7 +162,8 @@ impl TileDocument {
         }
 
         items.dedup();
-        self.push_splice("Snap river ends to link targets".to_owned(), mark, items.clone(), items);
+        let elems = items.iter().filter_map(|&i| super::elem_of(i)).collect();
+        self.push_splice_touching("Snap river ends to link targets".to_owned(), mark, items.clone(), items, elems);
         Ok(moves.len())
     }
 }
