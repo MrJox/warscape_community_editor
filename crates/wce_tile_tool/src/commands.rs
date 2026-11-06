@@ -1665,6 +1665,11 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("create_type", "create_type [type]", "the Create panel's list: the items of a type (Buildings, Vegetation, Decals ...; none: the favourites and the recent ones)", |e, a| {
+        let name = a.join(" ");
+        with_tile(e, |t, _| t.set_create_category((!name.is_empty()).then_some(name.as_str())).map_or_else(fail, |()| ok(String::new())))
+    });
+
     c.add("create_filter", "create_filter [words]", "the Create panel's search (no words: clear it); its folders open while it has words", |e, a| {
         let words = a.join(" ");
         with_tile(e, |t, _| {
