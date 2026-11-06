@@ -1668,6 +1668,7 @@ impl Renderer {
             wind_variance: self.wind.vfx_variance,
             target: self.gbuffer.scene_hdr_rtv(),
             depth: self.gbuffer.scene_dsv(),
+            depth_one_sample: self.gbuffer.depth.dsv_read_depth.clone(),
             depth_zw: self.gbuffer.depth_srv(),
             sky: self.sky.cube.srv.clone(),
             width,

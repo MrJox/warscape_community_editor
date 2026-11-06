@@ -526,6 +526,11 @@ pub struct Frame {
     pub target: Option<ID3D11RenderTargetView>,
     pub depth: Option<ID3D11DepthStencilView>,
 
+    /// The depth for one-sample targets (the distortion buffer), read-only: `depth_zw` is this depth with MSAA. With MSAA `depth` has more
+    /// samples than they do, and a target and a depth that differ are an invalid pair, which only the debug layer turns down: the AMD
+    /// driver took it and crashed.
+    pub depth_one_sample: Option<ID3D11DepthStencilView>,
+
     /// G-buffer channel 4 (z / w).
     pub depth_zw: Option<ID3D11ShaderResourceView>,
 
@@ -2004,7 +2009,7 @@ impl ParticleSystem {
         if self.alive > 0
             && let Some(target) = f.target.clone()
         {
-            self.draw(f, &sh, &sh.ps, &target, VFX_MAIN_VIEW_ID, self.bs_premultiplied.clone(), cbs);
+            self.draw(f, &sh, &sh.ps, &target, f.depth.as_ref(), VFX_MAIN_VIEW_ID, self.bs_premultiplied.clone(), cbs);
             if self.has_distortion {
                 // The distortion buffer: RGBA8, xy = screen offset * 0.5 + 0.5 (neutral 127 / 255), blended with the particle alpha;
                 // hdr_to_screen (the enable_distortion variant) offsets its uv by (xy - 0.498) * 0.02.
@@ -2017,7 +2022,7 @@ impl ParticleSystem {
                     self.ctx.clear_render_target_view(&rtv, neutral);
                     match lib.get(read, cbs, DISTORTION_PS) {
                         Ok(ps) => {
-                            self.draw(f, &sh, &ps, &rtv, VFX_DISTORTION_VIEW_ID, self.bs_alpha.clone(), cbs);
+                            self.draw(f, &sh, &ps, &rtv, f.depth_one_sample.as_ref(), VFX_DISTORTION_VIEW_ID, self.bs_alpha.clone(), cbs);
                             self.distortion_active = true;
                         }
 
@@ -2092,13 +2097,13 @@ impl ParticleSystem {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw(&self, f: &Frame, sh: &Shaders, pixel: &GameShader, rtv: &ID3D11RenderTargetView, view_id: u32, blend: Option<ID3D11BlendState>, cbs: &mut ConstantBuffers) {
+    fn draw(&self, f: &Frame, sh: &Shaders, pixel: &GameShader, rtv: &ID3D11RenderTargetView, depth: Option<&ID3D11DepthStencilView>, view_id: u32, blend: Option<ID3D11BlendState>, cbs: &mut ConstantBuffers) {
         cbs.set_i("cb_vfx", "g_view_id", view_id as i32);
         let _ = cbs.upload(&self.dev, &self.ctx);
-        self.ctx.set_render_targets(&[Some(rtv.clone())], f.depth.as_ref());
+        self.ctx.set_render_targets(&[Some(rtv.clone())], depth);
         self.ctx.set_viewports(&[D3D11_VIEWPORT { TopLeftX: 0.0, TopLeftY: 0.0, Width: f.width as f32, Height: f.height as f32, MinDepth: 0.0, MaxDepth: 1.0 }]);
         self.ctx.set_blend_state(blend.as_ref());
-        self.ctx.set_depth_stencil_state(if f.depth.is_some() { self.ds_test.as_ref() } else { self.ds_off.as_ref() }, 0);
+        self.ctx.set_depth_stencil_state(if depth.is_some() { self.ds_test.as_ref() } else { self.ds_off.as_ref() }, 0);
         self.ctx.set_input_layout(None);
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
 
