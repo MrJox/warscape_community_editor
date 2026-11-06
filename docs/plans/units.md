@@ -5,7 +5,8 @@ historical battle scripting), the Cinematic tool (the most pressing, after the t
 decided). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
-State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 and 2 are done; the renderer has nothing yet. The scratch scripts and disassembly are in
+State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3 are done: the renderer draws skinned models. Nothing places one
+yet outside the check, and their materials are rough (step 4). The scratch scripts and disassembly are in
 `~/wce_re/scratch/units`.
 
 ## What the game does
@@ -118,10 +119,12 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
 2. **Formats** (done 2026-11-06, `wce_formats`): `anim` (versions 4 and 5, whole), `anim_meta::Meta` (every kind, encodes back to the byte),
    `variant_mesh` (a tree over an `XmlDoc`, so an edit touches only its value), `anim_tables`. Gate `unit_formats_check`, over every file of
    Attila, Rome 2 and Attila with TDD: no failures. It does not check meanings: the fields step 6 reads are still named by position.
-3. **Skinned draw path.** `model_cache` keeps weighted vertices as stored (strides 28 and 32) in a skinned `GpuModel`; a skinned scene kind
-   (`Kind::SkinnedInstance` is declared and unbuilt; it needs a `Payload`); `R32G32B32A32_FLOAT` palette texture, written
-   once a frame with lines allocated per instance, identical pose + skeleton shared; G-buffer and shadow passes through `weightedcommon`;
-   picking through `t_pixel_selection_object_id_texture`. Gate: one rigged part in the bind pose over a CPU-skinned reference, then a clip.
+3. **Skinned draw path** (done 2026-11-06). `Payload::SkinnedInstance` (parts, a palette the entities can share, faction colours; replacing it
+   costs no structural change), `MODEL_SKINNED_SUFFIX` in the model cache, `renderer/skinned.rs`: one dynamic palette texture and instance
+   buffer written once a frame, one instanced draw per mesh, G-buffer and sun shadows through `weightedcommon`. Gate `unit_render_check`:
+   the picture against the same vertices skinned on the CPU, 2 and 4 bones. Left for later: no culling at all (the clipper does it; fine for
+   a few units, not for a crowd), not drawn in the environment cube, Rome 2's baked shadows, or with faded opacity. Not tried with MSAA or
+   in a tile. Picking: the G-buffer's id target gets 0, and the id pass doesn't know them; `ref_human` needs one of those in step 7.
 4. **Materials.** Weighted, Dirtmap, Skin, SkinDirtmap, Decal families, faction colours, tints, masks, skin lighting. Compared with the game.
 5. **Assembly.** VMD resolved by a seed into parts: weighted parts on the body's palette, static parts on their bone, height scale. The
    whole model at the right scale in a tile (metres in game, `1 / unit_scale` in the tile scene).

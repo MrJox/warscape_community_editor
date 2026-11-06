@@ -21,7 +21,7 @@ use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
 use wce_scene::model_top::ModelTop;
-use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain, TerrainSkin};
+use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_SKINNED_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain, TerrainSkin};
 
 use crate::texture::{Texture, load_dds, load_dds_tail, make_rgba_texture, make_solid_texture, plan_dds_stream};
 
@@ -66,10 +66,11 @@ pub const TEX_NORMAL: usize = 4;
 pub const TEX_DETAIL: usize = 5;
 pub const TEX_ALPHA_MASK: usize = 6;
 pub const TEX_AMBIENT: usize = 7;
-pub const TEX_SLOTS: usize = 8;
+pub const TEX_SKIN_MASK: usize = 8;
+pub const TEX_SLOTS: usize = 9;
 
 const TEX_NAMES: [&str; TEX_SLOTS] =
-    ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask", "s_ambient_map"];
+    ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask", "s_ambient_map", "s_skin_mask_map"];
 
 impl MeshKind {
     pub fn is_tree(self) -> bool {
@@ -88,6 +89,10 @@ pub const TREE_STRIDE: u32 = 60;
 /// The Billboard vertex format: the quad's corner (f16 x 4: x across, y up, in metres) and uv (f16 x 2).
 pub const BILLBOARD_STRIDE: u32 = 12;
 
+/// The Weighted and Cinematic vertex formats (two and four bones), kept as stored for the weighted shaders.
+pub const WEIGHTED_STRIDE: u32 = 28;
+pub const CINEMATIC_STRIDE: u32 = 32;
+
 /// The Uk8 vertex format of water meshes: position (f16 x 4) and uv (f16 x 2).
 pub const WATER_STRIDE: u32 = 12;
 
@@ -97,6 +102,12 @@ pub enum MeshKind {
     /// DefaultMaterial: rigidstandard.
     #[default]
     Standard,
+
+    /// A skinned mesh (loaded with MODEL_SKINNED_SUFFIX, drawn by renderer/skinned.rs): the Weighted materials, `weighted.hlsl`.
+    Weighted,
+
+    /// The same with the WeightedSkin materials: `weighted.hlsl`'s skin entries.
+    WeightedSkin,
 
     /// TiledDirtmap: rigidtileddirtmapmesh, rigidstandard plus a tiled dirt map (`s_detail_map` at uv * `g_uv2_tile_interval`) faded by an
     /// alpha mask (`s_alpha_mask` at the second uv).
@@ -719,6 +730,12 @@ impl ModelInner {
     fn build(&self, path: &str) -> Result<Option<GpuModel>, String> {
         wce_prof!("model.build");
 
+        // `<file>#skinned`: the same model, its weighted vertices as stored (MODEL_SKINNED_SUFFIX).
+        let (path, skinned) = match path.strip_suffix(MODEL_SKINNED_SUFFIX) {
+            Some(p) => (p, true),
+            None => (path, false),
+        };
+
         // `<file>#snow`: the same model, marked (MODEL_SNOW_SUFFIX).
         let (path, snow) = match path.strip_suffix(MODEL_SNOW_SUFFIX) {
             Some(p) => (p, true),
@@ -748,7 +765,7 @@ impl ModelInner {
             for lod in model.lods_mut() {
                 lod.mesh_blocks_mut().retain(|b| *b.material().i_matrix_index() == bone);
             }
-        } else if let Some(stem) = path.strip_suffix(".rigid_model_v2").filter(|s| s.ends_with("_anim")) {
+        } else if let Some(stem) = path.strip_suffix(".rigid_model_v2").filter(|s| s.ends_with("_anim") && !skinned) {
             pose_first_frame(&mut model, stem, &self.read);
         }
 
@@ -765,6 +782,10 @@ impl ModelInner {
         let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| -> Option<GpuMesh> {
             let (mesh, material) = (block.mesh(), block.material());
             let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
+                // Until the materials are done (docs/plans/units.md, step 4) the dirt and decal ones draw without their dirt and decals.
+                (MaterialType::Weighted | MaterialType::WeightedDirtmap | MaterialType::WeightedDecal | MaterialType::WeightedDecalDirtmap, f @ (VertexFormat::Weighted | VertexFormat::Cinematic)) if skinned => (MeshKind::Weighted, *f),
+                (MaterialType::WeightedSkin | MaterialType::WeightedSkinDirtmap, f @ (VertexFormat::Weighted | VertexFormat::Cinematic)) if skinned => (MeshKind::WeightedSkin, *f),
+                _ if skinned => return None,
                 (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
                 (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
                 (MaterialType::TerrainBlend, VertexFormat::Static) => (MeshKind::TerrainBlend, VertexFormat::Static),
@@ -795,6 +816,8 @@ impl ModelInner {
                 VertexFormat::Billboard => BILLBOARD_STRIDE,
                 VertexFormat::Grass => GRASS_STRIDE,
                 VertexFormat::Uk8 => WATER_STRIDE,
+                VertexFormat::Weighted => WEIGHTED_STRIDE,
+                VertexFormat::Cinematic => CINEMATIC_STRIDE,
                 _ => 32,
             };
 
@@ -902,6 +925,7 @@ impl ModelInner {
                         material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white())
                     },
                     material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
+                    if kind == MeshKind::WeightedSkin { material_texture(textures, path, material, TextureType::SkinMask, false, textures.black()) } else { textures.black() },
                 ],
                 diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
                 normal_path: material.textures().iter().find(|t| *t.tex_type() == TextureType::Normal).map(|t| t.path().replace('\\', "/")).unwrap_or_default(),
@@ -1536,7 +1560,7 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         tint: [1.0; 12],
         offset: Float3::new(x0, miny, z0),
         has_offset: x0 != 0.0 || miny != 0.0 || z0 != 0.0,
-        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white()],
+        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white(), tex.black()],
         diffuse_path: String::new(),
         normal_path: String::new(),
         displacement: None,

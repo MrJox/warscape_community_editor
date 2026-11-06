@@ -90,6 +90,11 @@ pub fn skin_matrices(pose: &Pose, binds: Option<&[Float4x4]>) -> Vec<Float4x4> {
     }).collect()
 }
 
+/// A palette for the weighted shaders: per bone the three rows of its skinning matrix.
+pub fn palette(skin: &[Float4x4]) -> Vec<[f32; 12]> {
+    skin.iter().map(|m| std::array::from_fn(|i| m.m[i / 4][i % 4])).collect()
+}
+
 /// A vertex's four bone weights as the game's vertex shaders use them. A two-bone vertex (`Weighted`) stores one weight: `vs30_main` gives
 /// the second bone `1 - w`, and rpfm_lib's second weight is the vertex's unused byte. A `Cinematic` vertex's four add up as stored.
 pub fn vertex_weights(two_bones: bool, w: [f32; 4]) -> [f32; 4] {
