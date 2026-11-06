@@ -294,8 +294,8 @@ mod tests {
         {
             let mut m = read("m", MapKind::Battle, &MapFiles::from_dir(&dir).unwrap()).unwrap();
             let item = m.lf_mut(LfRole::Land).unwrap();
-            // Views are made on Windows only (`SampleGrid::map_file`): elsewhere the samples are read into memory.
-            assert_eq!(item.get().grid().is_mapped(), cfg!(windows), "a view of the file");
+            // Views are made on Windows and Unix (`SampleGrid::map_file`): elsewhere the samples are read into memory.
+            assert_eq!(item.get().grid().is_mapped(), cfg!(any(windows, unix)), "a view of the file");
             assert_eq!(item.get().at(2, 1), 441);
             item.edit().set(2, 1, 7);
             let out = write(&m).unwrap();
