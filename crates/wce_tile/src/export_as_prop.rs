@@ -48,12 +48,19 @@ pub struct PropExport {
 impl PropExport {
     /// A line for people per thing to say.
     pub fn notes(&self) -> Vec<String> {
-        let mut out = vec![];
-        if self.buildings != 0 {
-            out.push(format!("export as prop: {} building(s) written as {} model(s)", self.buildings, self.pieces));
-        }
+        let mut out = self.written_note().into_iter().collect::<Vec<_>>();
+        out.extend(self.kept_notes());
+        out
+    }
 
-        // One line per building and reason, however many times a tile places it.
+    /// What was written as models.
+    pub fn written_note(&self) -> Option<String> {
+        (self.buildings != 0).then(|| format!("export as prop: {} building(s) written as {} model(s)", self.buildings, self.pieces))
+    }
+
+    /// What stayed a building. One line per building and reason, however many times a tile places it.
+    pub fn kept_notes(&self) -> Vec<String> {
+        let mut out = vec![];
         let mut kept = std::collections::BTreeMap::<&(String, String), usize>::new();
         for k in &self.kept {
             *kept.entry(k).or_default() += 1;
@@ -61,6 +68,17 @@ impl PropExport {
 
         out.extend(kept.iter().map(|((name, why), n)| format!("export as prop: '{name}' (x{n}) stays a building: {why}")));
         out
+    }
+
+    /// Into the report of a prefab's conversion for TEd: the models are a polyfill, what stayed a building is the feature dropped. A prefab
+    /// does not know the tiles that will place it, so what TEd's export would lose is said whenever it has such models.
+    pub fn add_to(&self, report: &mut crate::project_files::TedReport) {
+        if let Some(line) = self.written_note() {
+            report.polyfilled.push(line);
+            report.polyfilled.push("export as prop: in a tile that places this prefab, BOB stops at these models: water planes after them are lost in TEd's own export".to_owned());
+        }
+
+        report.dropped.extend(self.kept_notes());
     }
 
     /// [`Self::notes`] and what only TEd's export has to fear.

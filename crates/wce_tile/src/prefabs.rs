@@ -184,16 +184,19 @@ impl PrefabLibrary {
     }
 
     /// "Save for Assembly Kit" of a prefab: its file as TEd reads it (the prefabs placed in it baked) in the kit's prefab folder `kit_root`,
-    /// at the same folder, as `<key>.xml`. A file it replaces with other bytes keeps a `.bak`. Returns the file and the conversion's report.
+    /// at the same folder, as `<key>.xml`, its buildings marked Export as prop as their models (`export_as_prop`; `models_in`: the game's
+    /// files). A file it replaces with other bytes keeps a `.bak`. Returns the file and the conversion's report.
     ///
     /// # Errors
     ///
     /// No such prefab, or a file can't be read, converted or written.
-    pub fn save_for_kit(&self, key: &str, kit_root: &Path) -> Result<(PathBuf, crate::project_files::TedReport), String> {
+    pub fn save_for_kit(&self, key: &str, kit_root: &Path, models_in: Option<crate::export_as_prop::ModelsIn>) -> Result<(PathBuf, crate::project_files::TedReport), String> {
         let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
         let text = std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?;
         let (text, _) = crate::project_files::expand_prefabs(text, &|k| self.contents(k))?;
-        let (ted, report) = crate::project_files::to_ted(text)?;
+        let (text, props) = crate::export_as_prop::apply(text, models_in)?;
+        let (ted, mut report) = crate::project_files::to_ted(text)?;
+        props.add_to(&mut report);
         let folder = if entry.folder.is_empty() { kit_root.to_path_buf() } else { kit_root.join(&entry.folder) };
         std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
         let target = folder.join(format!("{}.xml", entry.key));
@@ -333,9 +336,32 @@ mod tests {
         assert_eq!(lib.contents("rocks").unwrap(), b"<BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"rock\" name=\"rock\"/>\n");
 
         // For the kit: TEd's file again, at the kit's place.
-        let (back, _) = lib.save_for_kit("rocks", &prefab_root(kit.path())).unwrap();
+        let (back, _) = lib.save_for_kit("rocks", &prefab_root(kit.path()), None).unwrap();
         assert_eq!(back, path);
         let ted = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
         assert!(!ted.contains("wce_") && ted.contains("vector(2,0,0)"), "{ted}");
+    }
+
+    #[test]
+    fn a_prefab_for_the_kit_writes_its_props_as_models() {
+        let (kit, projects) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let root = prefab_root(projects.path());
+        std::fs::create_dir_all(&root).unwrap();
+        let text = "<INSTANCE_SELECTION version=\"17\" wce_version=\"1\">\n    <BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"house\" name=\"house\" wce_export_as_prop=\"true\"/>\n    <BUILDING_INSTANCE position=\"vector(3,0,0)\" key=\"tower\" name=\"tower\" capture_location=\"cl\" wce_export_as_prop=\"true\"/>\n</INSTANCE_SELECTION>\n";
+        std::fs::write(root.join("pair.wce"), text).unwrap();
+        let lib = PrefabLibrary::scan(&[projects.path().to_path_buf()]);
+        let models_in = |folder: &str| vec![format!("{folder}house_piece01_destruct01.rigid_model_v2"), format!("{folder}house_piece02_destruct01.rigid_model_v2")];
+        let (path, report) = lib.save_for_kit("pair", &prefab_root(kit.path()), Some(&models_in)).unwrap();
+        let ted = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(ted.matches("<SIMPLE_MESH_INSTANCE").count(), 2, "{ted}");
+        assert!(ted.contains("key=\"rigidmodels/buildings/house/house_piece02_destruct01.rigid_model_v2\"") && ted.contains("key=\"tower\""), "{ted}");
+        assert!(!ted.contains("wce_export_as_prop"), "{ted}");
+        assert!(report.polyfilled.iter().any(|l| l.contains("1 building(s) written as 2 model(s)")) && report.polyfilled.iter().any(|l| l.contains("water planes")), "{report:?}");
+        assert!(report.dropped.iter().any(|l| l.contains("'tower'") && l.contains("capture location")), "{report:?}");
+
+        // Without the game's files both stay buildings, and the report says so.
+        let (path, report) = lib.save_for_kit("pair", &prefab_root(kit.path()), None).unwrap();
+        assert_eq!(String::from_utf8(std::fs::read(&path).unwrap()).unwrap().matches("<BUILDING_INSTANCE").count(), 2);
+        assert_eq!(report.dropped.len(), 2, "{report:?}");
     }
 }
