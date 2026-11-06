@@ -75,8 +75,13 @@ impl TileTool {
         }
     }
 
-    /// The normal of the surface a click places on: the thing under the mouse's (Entity: Above), else the terrain's at the mouse.
-    fn surface_normal(&self, d: &TileDocument) -> Double3 {
+    /// The normal of the surface a click places on: the thing under the mouse's (Entity: Above), else the terrain's at the mouse. Being
+    /// turned with Alt: the one where it stays.
+    pub(crate) fn surface_normal(&self, d: &TileDocument) -> Double3 {
+        if let Some(t) = self.alt_turn {
+            return t.normal;
+        }
+
         if let (SurfaceMode::Entity, Some(h)) = (self.modes.unwrap_or_default().0, self.surface_hit) {
             return Double3::new(f64::from(h.normal.x), f64::from(h.normal.y), f64::from(h.normal.z));
         }
@@ -87,11 +92,17 @@ impl TileTool {
     /// A text to place (an instance's, a prefab's group) with the modes applied: its surface mode, the editor's marks, the tilt (to the
     /// surface under the mouse).
     pub(crate) fn apply_placement_modes(&self, d: &TileDocument, text: Vec<u8>) -> Vec<u8> {
-        self.apply_placement_modes_on(text, self.surface_normal(d))
+        self.apply_placement_modes_on(text, Some(self.surface_normal(d)))
     }
 
-    /// The same, tilted to a given surface normal (a painted tree: the terrain's at its own point, not at the mouse).
-    pub(crate) fn apply_placement_modes_on(&self, text: Vec<u8>, normal: Double3) -> Vec<u8> {
+    /// What the preview tilts its text by (`Tile::set_preview`): the surface's normal, when the item follows it.
+    pub(crate) fn preview_normal(&self, d: &TileDocument) -> Option<Double3> {
+        (self.modes.unwrap_or_default().1 == RotationMode::Surface).then(|| self.surface_normal(d))
+    }
+
+    /// The same, tilted to a given surface normal (a painted tree: the terrain's at its own point, not at the mouse), or not tilted (the
+    /// preview's text, `preview_normal`).
+    pub(crate) fn apply_placement_modes_on(&self, text: Vec<u8>, normal: Option<Double3>) -> Vec<u8> {
         let (surface, rotation) = self.modes.unwrap_or_default();
         let mode = if surface == SurfaceMode::Landscape { "MSM_LANDSCAPE" } else { "MSM_FREEFORM" };
         let mut text = with_root_attr(&text, "surface_mode", mode);
@@ -99,7 +110,7 @@ impl TileTool {
             text = with_root_attr(&text, "wce_surface", "entity");
         }
 
-        if rotation == RotationMode::Surface {
+        if let Some(normal) = normal.filter(|_| rotation == RotationMode::Surface) {
             text = with_root_attr(&tilted(&text, normal), "wce_rotation", "surface");
         }
 

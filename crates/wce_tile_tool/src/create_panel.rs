@@ -182,6 +182,9 @@ const ALT_TURN_DEG_PER_PX: f32 = 0.5;
 pub(crate) struct AltTurn {
     pub point: Float3,
     pub on_terrain: bool,
+
+    /// The surface's normal there: the mouse goes elsewhere meanwhile.
+    pub normal: wce_foundation::math::Double3,
     pub mouse_x: f32,
     pub yaw: f32,
 }
@@ -459,7 +462,9 @@ impl TileTool {
         let Some(t) = self.alt_turn else {
             if self.terrain_hit {
                 let (point, on_terrain) = self.place_point();
-                self.alt_turn = Some(AltTurn { point, on_terrain, mouse_x: x, yaw });
+                let d = crate::tool::document_id(e).and_then(|id| e.docs.find_as::<wce_tile_editor::tile_document::TileDocument>(id));
+                let normal = d.map_or(wce_foundation::math::Double3::new(0.0, 1.0, 0.0), |d| self.surface_normal(d));
+                self.alt_turn = Some(AltTurn { point, on_terrain, normal, mouse_x: x, yaw });
             }
 
             return;
@@ -474,26 +479,21 @@ impl TileTool {
         self.status = format!("turn {:.1} deg (Alt + mouse; Shift: steps of {} deg; click places it here)", turned.rem_euclid(360.0), self.angle_step);
     }
 
-    /// What the preview turns its text by: the turn being placed, unless the text holds it (`placing_preview`).
+    /// What the preview turns its text by: the turn being placed (`placing_preview`).
     pub(crate) fn preview_yaw(&self) -> f32 {
-        let tilted = self.modes.unwrap_or_default().1 == crate::settings::RotationMode::Surface;
-        self.placing_yaw().filter(|_| !tilted).unwrap_or(0.0)
+        self.placing_yaw().unwrap_or(0.0)
     }
 
-    /// The text of the preview: what a click places, not turned, for the preview to turn by [`Self::preview_yaw`]: every step of a turn
-    /// would make it again otherwise. A tilted one holds its turn, which comes before the tilt.
+    /// The text of the preview: what a click places, neither turned nor tilted, for the preview to do both by a matrix
+    /// ([`Self::preview_yaw`], `preview_normal`): every step of a turn, and of the mouse over the ground, would make it again otherwise.
     pub(crate) fn placing_preview(&mut self, e: &mut Editor) -> Option<Vec<u8>> {
-        if self.placement_modes(e).1 == crate::settings::RotationMode::Surface {
-            return self.placing_text(e);
-        }
-
+        self.placement_modes(e);
         let text = match self.placing.clone()? {
             crate::tool::Placing::Draft => document(e)?.draft_text(&Draft { yaw: 0.0, ..self.draft.clone()? })?,
             crate::tool::Placing::Prefab(key) => self.prefab_text(e, &key).filter(|t| !t.is_empty())?,
         };
 
-        let d = document(e)?;
-        Some(self.apply_placement_modes(d, text))
+        Some(self.apply_placement_modes_on(text, None))
     }
 
     /// A prefab's reference text, not turned.

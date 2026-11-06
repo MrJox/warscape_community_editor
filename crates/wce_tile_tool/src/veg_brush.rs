@@ -157,7 +157,7 @@ impl TileTool {
         let text = with_root_attr(&text, "scale", &wce_tile::ted_scene::format_number(f64::from(p.scale)));
         // Tilted (Follow surface) to what it stands on at its own point: the mouse has moved on since.
         let normal = p.normal.map_or_else(|| crate::placement_modes::terrain_normal(d, p.at.x, p.at.z), |n| Double3::new(f64::from(n.x), f64::from(n.y), f64::from(n.z)));
-        Some(turned(&self.apply_placement_modes_on(text, normal), p.yaw))
+        Some(turned(&self.apply_placement_modes_on(text, Some(normal)), p.yaw))
     }
 
     /// The topmost surfaces over the brush's circle (Entity: Above), the trees left out, and which of the entities there are the terrain.
