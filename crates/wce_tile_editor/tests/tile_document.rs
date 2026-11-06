@@ -431,12 +431,8 @@ fn items_shown(scene: &wce_scene::render_scene::RenderScene) -> Vec<(u64, String
     out
 }
 
-#[test]
-fn an_item_added_or_removed_leaves_the_scene_as_a_new_publish_would_without_making_the_rest_again() {
-    use wce_scene::render_scene::RenderScene;
-    use wce_tile_editor::tile_document::FlipPlane;
-
-    let two_layers = TED.replace(
+fn two_layers() -> String {
+    TED.replace(
         "</LayerInstance>",
         r#"</LayerInstance>
                 <LayerInstance flags=" OIF_VISIBLE|OIF_ACTIVE" export_type="LayerExportType_Normal" lf_offset="0" position="vector(0,0,0)" name="Later" orientation="euler(0,0,0)">
@@ -452,7 +448,112 @@ fn an_item_added_or_removed_leaves_the_scene_as_a_new_publish_would_without_maki
                         <AI_HINT_LOCATOR_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(95,0,55)" name="m" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)"/>
                     </children>
                 </LayerInstance>"#,
-    );
+    )
+}
+
+#[test]
+fn edits_of_a_part_of_the_tile_leave_the_scene_as_a_new_publish_would() {
+    use wce_scene::render_scene::RenderScene;
+
+    let (dir, _) = open();
+    let tile = dir.path().join("tile.ted");
+    let open_text = |text: &[u8]| {
+        std::fs::write(&tile, text).unwrap();
+        TileDocument::new(TileProject::open(dir.path()).unwrap(), Some(std::sync::Arc::new(HouseFiles)))
+    };
+
+    let mut d = open_text(two_layers().as_bytes());
+    let mut scene = RenderScene::default();
+    let layer = scene.add_layer(d.id(), "tile");
+    let eye = Float3::new(0.0, 100.0, 0.0);
+    d.publish(&mut scene, layer);
+    d.tile_mut().update_view(&mut scene, eye);
+    let fresh = |text: &[u8]| {
+        let mut d = open_text(text);
+        let mut scene = RenderScene::default();
+        let layer = scene.add_layer(d.id(), "tile");
+        d.publish(&mut scene, layer);
+        d.tile_mut().update_view(&mut scene, eye);
+        items_shown(&scene)
+    };
+
+    let same = |d: &mut TileDocument, scene: &mut RenderScene, what: &str| {
+        let dirty = d.history_mut().take_dirty();
+        assert!(!dirty.all, "not everything: {what}");
+        d.republish(scene, layer, &dirty);
+        d.tile_mut().update_view(scene, eye);
+        let (mine, new) = (items_shown(scene), fresh(&text(d)));
+        assert_eq!(mine.len(), new.len(), "{what}");
+        for (a, b) in mine.iter().zip(&new) {
+            assert_eq!((a.0, &a.1), (b.0, &b.1), "{what}");
+            assert!(a.2.iter().zip(&b.2).all(|(x, y)| (f32::from_bits(*x) - f32::from_bits(*y)).abs() < 1e-3), "{what}: {a:?} {b:?}");
+        }
+    };
+
+    let sc = d.tile().tscene();
+    let (first, later) = (sc.find_all("LayerInstance")[0], sc.find_all("LayerInstance")[1]);
+    let a = sc.find_all("BUILDING_INSTANCE")[0];
+    let polygon = sc.find_all("AI_HINT_POLYGON_INSTANCE")[1];
+
+    assert!(d.rename(a, "another"));
+    same(&mut d, &mut scene, "a rename");
+    assert_eq!(d.tile().tscene().name(a), "another");
+
+    assert!(d.set_attribute(a, "opacity", "0.5"));
+    same(&mut d, &mut scene, "a property the file did not have");
+    d.history_mut().undo();
+    same(&mut d, &mut scene, "its undo");
+
+    assert!(d.set_attribute(a, "key", "elsewhere"));
+    same(&mut d, &mut scene, "another key");
+    d.history_mut().undo();
+    same(&mut d, &mut scene, "its undo");
+
+    let at = Double3::new(7.0, 0.0, 9.0);
+    assert!(d.set_local(later, Some(at), None, 1));
+    same(&mut d, &mut scene, "a layer moved");
+    d.history_mut().undo();
+    same(&mut d, &mut scene, "its undo");
+
+    assert!(d.set_flag(later, "OIF_VISIBLE", false));
+    same(&mut d, &mut scene, "a layer hidden");
+    d.history_mut().undo();
+    same(&mut d, &mut scene, "shown again");
+    assert!(d.set_flag(first, "OIF_ACTIVE", false));
+    same(&mut d, &mut scene, "a layer locked");
+    assert!(scene.entities().iter().any(|e| e.source.item == item_of(a) && e.locked), "its buildings cannot be picked");
+    d.history_mut().undo();
+    same(&mut d, &mut scene, "unlocked");
+    assert!(!scene.entities().iter().any(|e| e.source.item == item_of(a) && e.locked));
+
+    let new = d.add_layer(d.tile().tscene().scene_graph(), "New").unwrap();
+    same(&mut d, &mut scene, "a new layer");
+    d.history_mut().undo();
+    same(&mut d, &mut scene, "its undo");
+    assert!(new > first);
+
+    d.polygon_point(polygon, "insert", 0, Float3::new(95.0, 0.0, 55.0), 0).unwrap();
+    same(&mut d, &mut scene, "a point added");
+    d.polygon_point(polygon, "remove", 3, Float3::default(), 0).unwrap();
+    same(&mut d, &mut scene, "a point removed");
+    d.history_mut().undo();
+    same(&mut d, &mut scene, "its undo");
+    d.history_mut().undo();
+    same(&mut d, &mut scene, "the first one's undo");
+
+    let copy = d.add_polygon(Some(first), "AI_HINT_POLYGON_INSTANCE", "", &[Float3::new(1.0, 0.0, 1.0), Float3::new(5.0, 0.0, 1.0), Float3::new(1.0, 0.0, 5.0)]).unwrap();
+    same(&mut d, &mut scene, "a new polygon");
+    d.history_mut().undo();
+    same(&mut d, &mut scene, "its undo");
+    assert!(copy > a);
+}
+
+#[test]
+fn an_item_added_or_removed_leaves_the_scene_as_a_new_publish_would_without_making_the_rest_again() {
+    use wce_scene::render_scene::RenderScene;
+    use wce_tile_editor::tile_document::FlipPlane;
+
+    let two_layers = two_layers();
     let (dir, _) = open();
     let tile = dir.path().join("tile.ted");
     let open_text = |text: &[u8]| {

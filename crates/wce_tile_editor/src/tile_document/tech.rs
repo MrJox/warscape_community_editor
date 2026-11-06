@@ -749,7 +749,7 @@ impl Tile {
     pub(crate) fn tech_element_changed(&mut self, elem: usize) {
         if elem < self.tscene().doc().elements().len() && self.tscene().type_of(elem) == "BUILDING_INSTANCE" {
             self.tech.changed.insert(elem);
-        } else {
+        } else if !self.is_instance(elem) {
             self.tech.dirty = true;
         }
     }

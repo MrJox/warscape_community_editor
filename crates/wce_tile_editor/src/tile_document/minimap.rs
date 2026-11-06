@@ -11,7 +11,7 @@ use wce_tile::blend_field::BlendField;
 use wce_tile::ground_type_field::GroundTypeField;
 use wce_vfs::files::Files;
 
-use super::{Tile, TileDocument};
+use super::Tile;
 use crate::terrain_bake::{BakeRequest, BakedColour, TerrainView, WaterDepth, bake_terrain_colour, bake_terrain_map_view, bake_water_depth};
 
 /// A picture of the tile from above: sRGB, `w * h * 4`, rows along +z, over `x0, z0, w_m, h_m` (metres).
@@ -171,14 +171,6 @@ impl Tile {
     /// The siege AI and the deployment zones for the minimap.
     pub fn minimap_siege(&self) -> MinimapSiege {
         MinimapSiege { unit: self.unit(), input: self.siege_input_with(false), layout: self.current_siege_layout(), zones: self.deployment_zones() }
-    }
-}
-
-impl TileDocument {
-    /// Changes whenever the tile is edited, undone or redone.
-    pub fn edit_version(&self) -> u64 {
-        use wce_editor_core::command::History as _;
-        self.history.version()
     }
 }
 

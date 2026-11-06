@@ -128,6 +128,8 @@ alone, as the cameras of in-game captures fit (western_city_rome/small: the edit
 
 `tile_studio.exe` (and its own renderer) was removed in Phase 8; the tile captures of `scripts/shots.sh` are the render regression.
 
+Most edits of a tile publish only what they changed. Attributes (a name, a spline's values) refresh their items, a property the file lacks or a building's key makes its item again, a moved layer or group refreshes what is below it, the eye and the cursor add, remove or lock the difference (`tile_document/shift.rs`). Move to layer, group, ungroup, prefab updates, Resize, Restore walls and Generate SiegeAI publish the tile again. The minimap reads the siege overlays again only when something that feeds them changed (`Tile::siege_version`), and keeps each building's part.
+
 **References (`ref_human`, `ref_unit`):** the Create panel's References category places real soldiers in the tile to measure the scale against, as many as
 wanted: `ref_human` is one soldier, `ref_unit` a whole unit, its men from `main_units.num_men` at the game's unit size (`gfx_unit_size` in its preferences, read
 again every few seconds), in the ranks and close spacing of its tables. They are tile elements like any other (moved, turned, grouped, undone; a click on any of a
@@ -322,3 +324,5 @@ How the editor stays fast on a 100 000 instance tile (instanced draws and cullin
 
 `libs/render/gpu_adapter` chooses the D3D11 adapter: `WCE_GPU=<part of the adapter name>`, otherwise the high-performance GPU, and the renderer logs `GPU: <name>` when it starts. Two GPUs do not round float math the same way,
 so reference pixels only compare on one adapter (the gate scripts default `WCE_GPU` to `AMD Radeon`, see `docs/baseline.md`).
+
+Entities removed with `RenderScene::renumber_sources` touch the scene, so the renderer builds its draws again. Followed from the structure log instead (`update_draws`), hiding a layer, showing it and selecting it later ended in an access violation in `amdxx64.dll`, in every run; that may be the same fault as the intermittent crashes on AMD, the cause is not known yet.

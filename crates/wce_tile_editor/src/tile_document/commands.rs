@@ -12,7 +12,7 @@ use wce_editor_core::command::Command;
 use wce_formats::xml_doc::XmlSplice;
 use wce_foundation::math::Double3;
 
-use super::shift::{ElementShift, SHIFTED_ITEM};
+use super::shift::{ElementShift, SHIFTED_ITEM, ViewChange};
 use super::{BrushKind, BrushSettings, Follow, TERRAIN, Tile, item_of};
 
 /// A move and / or rotation of one element (local position and euler angles); the steps of one gesture merge.
@@ -27,8 +27,8 @@ pub(crate) struct TedMoveCommand {
     pub old_euler_text: Option<String>,
     pub gesture: u64,
 
-    /// A layer or group: everything below it moved, the whole tile is republished.
-    pub whole: bool,
+    /// A layer or group: everything below it moved, these instances are published again (with it, so that there is always one).
+    pub below: Option<Vec<u64>>,
 }
 
 impl TedMoveCommand {
@@ -42,7 +42,15 @@ impl TedMoveCommand {
         }
 
         // What asks for the world position before the next republish sees the move.
-        t.index_edited(self.elem);
+        self.moved(t);
+    }
+
+    fn moved(&self, t: &mut Tile) {
+        if self.below.is_some() {
+            t.index_subtree_moved(self.elem);
+        } else {
+            t.index_edited(self.elem);
+        }
     }
 }
 
@@ -71,7 +79,7 @@ impl Command<Tile> for TedMoveCommand {
             }
         }
 
-        t.index_edited(self.elem);
+        self.moved(t);
     }
 
     fn merge_key(&self) -> u64 {
@@ -102,7 +110,7 @@ impl Command<Tile> for TedMoveCommand {
     }
 
     fn dirty_items(&self) -> Vec<u64> {
-        if self.whole { vec![] } else { vec![item_of(self.elem)] }
+        self.below.clone().unwrap_or_else(|| vec![item_of(self.elem)])
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -242,25 +250,35 @@ pub(crate) enum SpliceEffect {
     /// Not known: the index and the scene are built again.
     Structure,
 
-    /// Only attributes of these elements: no element moved in the list.
-    Touched(Vec<usize>),
+    /// Only attributes of these elements: no element moved in the list. `outline`: the outliner shows them.
+    Touched { elems: Vec<usize>, outline: bool },
 
-    /// These spans of the list with them in (start, length) were added: removed when `added` is false.
-    Shift { spans: Vec<(usize, usize)>, added: bool },
+    /// Attributes of these elements that change how they are drawn: their entities are made again.
+    Remade(Vec<usize>),
+
+    /// These spans of the list with them in (start, length) were added: removed when `added` is false. `touched` follow (shift.rs).
+    Shift { spans: Vec<(usize, usize)>, added: bool, touched: Vec<usize> },
 }
 
 impl TedSpliceCommand {
     fn changed(&self, t: &mut Tile, forward: bool) {
         match &self.effect {
-            SpliceEffect::Touched(elems) => {
+            SpliceEffect::Touched { elems, outline } => {
                 for &e in elems {
+                    if !t.is_instance(e) {
+                        continue;
+                    }
+
                     t.index_edited(e);
+                    t.index_attr_edited(e);
                 }
 
+                t.structure_version += u64::from(*outline);
                 return;
             }
 
-            SpliceEffect::Shift { spans, added } => t.shifts.push(ElementShift { spans: spans.clone(), came: *added == forward }),
+            SpliceEffect::Remade(elems) => t.note_remade(elems),
+            SpliceEffect::Shift { spans, added, touched } => t.changes.push(ViewChange::Shift(ElementShift { spans: spans.clone(), came: *added == forward, touched: touched.clone() })),
             SpliceEffect::Structure => t.piece_props.clear(),
         }
 
@@ -294,8 +312,8 @@ impl Command<Tile> for TedSpliceCommand {
     fn dirty_items(&self) -> Vec<u64> {
         match &self.effect {
             SpliceEffect::Structure => vec![],
-            SpliceEffect::Touched(elems) => elems.iter().map(|&e| item_of(e)).collect(),
-            SpliceEffect::Shift { .. } => vec![SHIFTED_ITEM],
+            SpliceEffect::Touched { elems, .. } => elems.iter().map(|&e| item_of(e)).collect(),
+            SpliceEffect::Remade(_) | SpliceEffect::Shift { .. } => vec![SHIFTED_ITEM],
         }
     }
 
@@ -328,6 +346,7 @@ impl TedAttrCommand {
         }
 
         if self.rebuild {
+            t.note_remade(&[self.elem]);
             t.idx.valid = false;
             t.structure_version += 1;
         } else {
@@ -367,7 +386,7 @@ impl Command<Tile> for TedAttrCommand {
     }
 
     fn dirty_items(&self) -> Vec<u64> {
-        if self.rebuild { vec![] } else { vec![item_of(self.elem)] }
+        if self.rebuild { vec![SHIFTED_ITEM] } else { vec![item_of(self.elem)] }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -429,7 +448,7 @@ impl Command<Tile> for TedAttrsCommand {
     }
 
     fn dirty_items(&self) -> Vec<u64> {
-        if self.edits.iter().any(|e| e.rebuild) { vec![] } else { self.edits.iter().map(|e| item_of(e.elem)).collect() }
+        if self.edits.iter().any(|e| e.rebuild) { vec![SHIFTED_ITEM] } else { self.edits.iter().map(|e| item_of(e.elem)).collect() }
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -438,7 +457,7 @@ impl Command<Tile> for TedAttrsCommand {
 }
 
 /// The eye / cursor of one or more layers or instances: the flags text is replaced, so undo restores the original bytes. Visibility changes what
-/// is drawn below the element, so the document republishes everything (no dirty items).
+/// is drawn below the element: the scene follows the difference (shift.rs).
 pub(crate) struct TedFlagCommand {
     pub name: String,
     pub elems: Vec<usize>,
@@ -454,6 +473,7 @@ impl TedFlagCommand {
             }
         }
 
+        t.changes.push(ViewChange::Shown);
         t.idx.valid = false;
         t.structure_version += 1;
     }
@@ -470,6 +490,10 @@ impl Command<Tile> for TedFlagCommand {
 
     fn revert(&mut self, t: &mut Tile) {
         Self::put(&self.elems, &self.old, t);
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![SHIFTED_ITEM]
     }
 
     fn as_any(&self) -> &dyn Any {

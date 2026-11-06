@@ -714,6 +714,42 @@ impl Tile {
         self.grid_dirty.set(true);
     }
 
+    /// The instances below a layer or group, and it (there is always one item to publish): what moves with it.
+    pub(crate) fn items_below(&self, elem: usize) -> Vec<u64> {
+        let (mut items, mut pending) = (vec![super::item_of(elem)], vec![elem]);
+        while let Some(e) = pending.pop() {
+            pending.extend_from_slice(&self.elements()[e].children);
+            if e != elem && self.is_instance(e) {
+                items.push(super::item_of(e));
+            }
+        }
+
+        items
+    }
+
+    /// A layer or group moved: its slot and all those below it.
+    pub(crate) fn index_subtree_moved(&mut self, elem: usize) {
+        if !self.idx.valid {
+            return;
+        }
+
+        let mut pending = vec![elem];
+        while let Some(e) = pending.pop() {
+            pending.extend_from_slice(&self.elements()[e].children);
+            let (own, parent) = (self.idx.slot[e], self.elements()[e].parent);
+            if own != 0 && parent.is_some_and(|p| own != self.idx.slot[p]) {
+                let mut w = world_transform(self.tscene(), e);
+                if self.idx.kind[e] & LAYER_BIT == 0 {
+                    self.snap_landscape_world(e, &mut w);
+                }
+
+                self.idx.world[own as usize] = w;
+            }
+        }
+
+        self.grid_dirty.set(true);
+    }
+
     // ---- buildings
 
     pub(crate) fn log_fallbacks(&self) {
