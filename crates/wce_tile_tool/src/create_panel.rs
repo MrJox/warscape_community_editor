@@ -1,4 +1,4 @@
-//! The Create panel and its Shift+A popup: everything that can be put in a tile, in one list searched by words. Buildings, trees, decals,
+//! The Create panel and its Space popup: everything that can be put in a tile, in one list searched by words. Buildings, trees, decals,
 //! models and effects (every valid key, `TileDocument::key_catalogue`), lights, prefabs (`wce_tile::prefabs`), the gameplay markers and
 //! areas, the AI regions and hints, rivers and roads. A click on an entry starts placing it (clicks on the terrain, previewed under the
 //! mouse; R / Shift+R turn it, Esc stops) or drawing it (clicks, Enter finishes). While it is placed or drawn, the Inspector shows its
@@ -24,6 +24,14 @@ use crate::tool::{SetInUse, TileTool, document, primary};
 /// The categories, in the panel's order.
 pub const CATEGORIES: [&str; 12] =
     ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Siege", "Rivers & roads", "References"];
+
+/// The categories' icons, for the rail.
+const CATEGORY_ICONS: [&str; 11] = [
+    icons::BUILDING_2, icons::TREE_PINE, icons::STICKER, icons::BOX, icons::SPARKLES, icons::LIGHTBULB, icons::COMPONENT, icons::FLAG, icons::BRAIN, icons::CASTLE, icons::WAVES,
+];
+
+/// The rail's width.
+const RAIL_WIDTH: f32 = 40.0;
 
 /// The folder of the buildings no table has a category for.
 const NO_CATEGORY: &str = "no category";
@@ -127,13 +135,13 @@ struct FolderRows {
 type EntriesStamp = (DocumentId, u64, u64);
 
 /// What the Create panel shows: the entries (made again for another tile or another prefab library), its filter, the rows it let through,
-/// the favourites and recent entries (the settings' lists, read once), and the Shift+A popup's filter.
+/// the favourites and recent entries (the settings' lists, read once), and the Space popup's filter.
 #[derive(Default)]
 pub struct CreateUi {
     entries: Option<(EntriesStamp, Arc<Vec<Entry>>)>,
     filter: String,
 
-    /// The section open in the panel (`CATEGORIES`): one at a time, so that it never takes opening them all to see them all.
+    /// The type of item the list shows (the rail, `CATEGORIES`); none: only the favourites and the recent ones.
     category: Option<usize>,
     shown: Vec<Vec<usize>>,
     folders: Vec<FolderRows>,
@@ -142,7 +150,7 @@ pub struct CreateUi {
     quick_filter: String,
     quick_open: bool,
 
-    /// The Shift+A popup's highlighted row (Up / Down move it while typing; Enter takes it).
+    /// The Space popup's highlighted row (Up / Down move it while typing; Enter takes it).
     quick_row: usize,
 
     /// The search (the panel's, the popup's) gets the keyboard back on the next frame: Ctrl + Enter added a tree to the new set.
@@ -785,18 +793,40 @@ impl TileTool {
     }
 
     /// Sets the Create panel's search (a script).
-    /// Opens a section of the Create panel, by its name (none: all closed).
+    /// Chooses the type of item the Create panel lists, by its name (none: only the favourites and the recent ones).
     ///
     /// # Errors
     ///
-    /// No such section.
+    /// No such type.
     pub fn set_create_category(&mut self, name: Option<&str>) -> Result<(), String> {
         self.create.category = match name {
-            Some(name) => Some(CATEGORIES.iter().position(|c| c.eq_ignore_ascii_case(name)).ok_or_else(|| format!("no section '{name}': {}", CATEGORIES.join(", ")))?),
+            Some(name) => Some(CATEGORIES.iter().position(|c| c.eq_ignore_ascii_case(name)).ok_or_else(|| format!("no type '{name}': {}", CATEGORIES.join(", ")))?),
             None => None,
         };
 
         Ok(())
+    }
+
+    /// The rail: an icon per type of item (its name and count in the tooltip). One chooses what the list shows, again goes back to none.
+    fn draw_category_rail(&mut self) {
+        for (c, title) in CATEGORIES.iter().enumerate() {
+            let on = self.create.category == Some(c);
+            if on {
+                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+            }
+
+            if gui::button_sized(&format!("{}##createtype{c}", CATEGORY_ICONS[c]), gui::v2(-1.0, 0.0)) {
+                self.create.category = (!on).then_some(c);
+            }
+
+            if on {
+                gui::pop_style_color(1);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("{title} ({})", self.create.shown.get(c).map_or(0, Vec::len)));
+            }
+        }
     }
 
     pub fn set_create_filter(&mut self, words: &str) {
@@ -878,7 +908,7 @@ impl TileTool {
             gui::set_keyboard_focus_here(0);
         }
 
-        let enter = gui::input_text("##createfilter", Some(&format!("{}  search everything (Enter: the first; Shift+A in the viewport; Ctrl + click / Ctrl + Enter a tree: into a new set)", icons::SEARCH)), &mut self.create.filter, 128, gui::INPUT_ENTER_RETURNS_TRUE);
+        let enter = gui::input_text("##createfilter", Some(&format!("{}  search everything (Enter: the first; Space in the viewport; Ctrl + click / Ctrl + Enter a tree: into a new set)", icons::SEARCH)), &mut self.create.filter, 128, gui::INPUT_ENTER_RETURNS_TRUE);
         let entries = self.create_entries(e);
         self.filter_entries(&entries);
 
@@ -892,7 +922,7 @@ impl TileTool {
         let (favourites, recent) = self.create_marks(e);
         let by_id = |id: &str| entries.iter().position(|en| en.id() == id);
 
-        // A search opens every section; otherwise the one open is the list.
+        // A search looks through everything; otherwise the list is the chosen type's.
         let filtering = !words.is_empty();
         let only = self.create.category.filter(|_| !filtering);
 
@@ -921,10 +951,16 @@ impl TileTool {
         // What is being made goes under the list, which gives up the room at its end: what was clicked stays under the mouse.
         let making = self.making.is_some() && (self.placing.is_some() || self.drawing);
         let footer = if making { 2.0 * gui::text_line_height_with_spacing() + gui::frame_height_with_spacing() + 8.0 } else { 0.0 };
+        if gui::begin_child("createrail", gui::v2(RAIL_WIDTH, -footer), 0, gui::WINDOW_NO_SCROLLBAR) {
+            self.draw_category_rail();
+        }
+
+        gui::end_child();
+        gui::same_line_touching();
         if gui::begin_child("createlist", gui::v2(0.0, -footer), 0, 0) {
             // Favourites and recent entries (filtered alike), then the categories (open while a filter is typed).
             for (title, icon, ids) in [("Favourites", icons::STAR, &favourites), ("Recent", icons::HISTORY, &recent)] {
-                let rows = ids.iter().filter_map(|id| by_id(id)).filter(|&i| passes(&entries[i], &words)).collect::<Vec<_>>();
+                let rows = ids.iter().filter_map(|id| by_id(id)).filter(|&i| passes(&entries[i], &words) && only.is_none_or(|c| entries[i].category == c)).collect::<Vec<_>>();
                 if rows.is_empty() {
                     continue;
                 }
@@ -950,23 +986,26 @@ impl TileTool {
                 }
             }
 
-            let mut opened = None;
+            if !filtering && only.is_none() && favourites.is_empty() && recent.is_empty() {
+                gui::text_disabled("Choose a type of item on the left, or search.");
+            }
+
             for (c, title) in CATEGORIES.iter().enumerate() {
+                if !filtering && only != Some(c) {
+                    continue;
+                }
+
                 let rows = self.create.shown.get(c).cloned().unwrap_or_default();
                 if rows.is_empty() && !(c == 6 && !filtering) {
                     continue;
                 }
 
-                // An accordion: the section open is ours, not the tree's; a click on a header says which it is now.
-                let wanted = filtering || only == Some(c);
-                gui::set_next_item_open(wanted, gui::COND_ALWAYS);
-                let open = gui::tree_node_ex_id(&format!("create_cat{c}"), gui::TREE_SPAN_AVAIL_WIDTH, &format!("{title} ({})", rows.len()));
-                if !filtering && open != wanted {
-                    opened = Some(open.then_some(c));
-                }
-
-                if !open {
-                    continue;
+                // Only a search has several types to tell apart.
+                if filtering {
+                    gui::set_next_item_open(true, gui::COND_ALWAYS);
+                    if !gui::tree_node_ex_id(&format!("create_cat{c}"), gui::TREE_SPAN_AVAIL_WIDTH, &format!("{title} ({})", rows.len())) {
+                        continue;
+                    }
                 }
 
                 if c == 6 && rows.is_empty() {
@@ -993,11 +1032,9 @@ impl TileTool {
                     });
                 });
 
-                gui::tree_pop();
-            }
-
-            if let Some(section) = opened {
-                self.create.category = section;
+                if filtering {
+                    gui::tree_pop();
+                }
             }
         }
 
@@ -1046,7 +1083,7 @@ impl TileTool {
     }
 
     /// A click on an entry: makes it; with Ctrl, a tree (or a set) goes into the new vegetation set instead.
-    /// With `keep_focus` (the Shift+A popup staying open, a search after Ctrl + Enter) the Inspector is not focused: that would close the
+    /// With `keep_focus` (the Space popup staying open, a search after Ctrl + Enter) the Inspector is not focused: that would close the
     /// popup or take the keyboard from the search.
     fn make_or_add(&mut self, e: &mut Editor, en: &Entry, keep_focus: bool) {
         match self.set_entries_of(e, en).filter(|_| gui::io().KeyCtrl) {
@@ -1068,14 +1105,14 @@ impl TileTool {
         }
     }
 
-    /// Asks for the Shift+A popup (it opens on the next frame, at the mouse).
+    /// Asks for the Space popup (it opens on the next frame, at the mouse).
     pub fn request_quick_add(&mut self) {
         self.create.quick_open = true;
         self.create.quick_filter.clear();
         self.create.quick_row = 0;
     }
 
-    /// The Shift+A popup: the same search, the first rows; Enter takes the first.
+    /// The Space popup: the same search, the first rows; Enter takes the first.
     pub(crate) fn draw_quick_add(&mut self, e: &mut Editor) {
         if std::mem::take(&mut self.create.quick_open) {
             gui::open_popup("quick_add");

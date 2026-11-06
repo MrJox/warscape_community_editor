@@ -1673,7 +1673,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("create_type", "create_type [section]", "open a section of the Create panel, closing the one open (Buildings, Vegetation, Decals ...; none: all closed)", |e, a| {
+    c.add("create_type", "create_type [type]", "the Create panel's list: the items of a type (Buildings, Vegetation, Decals ...; none: the favourites and the recent ones)", |e, a| {
         let name = a.join(" ");
         with_tile(e, |t, _| t.set_create_category((!name.is_empty()).then_some(name.as_str())).map_or_else(fail, |()| ok(String::new())))
     });
@@ -1942,7 +1942,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("quick_add", "quick_add", "open the Create panel's quick-add popup (Shift+A over the viewport)", |e, _| {
+    c.add("quick_add", "quick_add", "open the Create panel's quick-add popup (Space over the viewport)", |e, _| {
         with_tile(e, |t, _| {
             t.request_quick_add();
             ok("")
