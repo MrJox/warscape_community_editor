@@ -723,7 +723,14 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             let items = e.selection.items().to_vec();
             let gesture = e.viewport.gesture;
             if let Some(d) = e.docs.find_mut(primary.doc) {
-                d.transform_items(&items, &delta, gesture);
+                if vp_gizmo == GizmoMode::Scale {
+                    // ImGuizmo keeps the matrix the drag began with: its axes' lengths are the scale since then.
+                    let m = &moved.m;
+                    let axis = |c: usize| (m[0][c] * m[0][c] + m[1][c] * m[1][c] + m[2][c] * m[2][c]).sqrt();
+                    d.scale_items(&items, [axis(0), axis(1), axis(2)], &delta, gesture);
+                } else {
+                    d.transform_items(&items, &delta, gesture);
+                }
             }
         }
     }

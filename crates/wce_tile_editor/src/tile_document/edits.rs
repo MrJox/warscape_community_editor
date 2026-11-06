@@ -2815,7 +2815,7 @@ impl TileDocument {
         let category = if tag == "BUILDING_INSTANCE" { t.building_category(&key) } else { None };
         let shape = sc.doc().get(e, "polygon_shape");
         let capture_location = wce_tile::export_as_prop::capture_location_set(sc.doc().get(e, "capture_location").as_deref());
-        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: text.is_some(), capture_location };
+        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: text.is_some(), capture_location, export_as_prop: t.exports_as_prop(e) };
         let access = wce_tile::properties::access(prop, &ctx);
         if access == Access::Hidden {
             return;
@@ -2934,6 +2934,12 @@ impl TileDocument {
             return;
         }
 
+        if prop.rule == wce_tile::properties::Rule::WhenExportedAsProp && !editable {
+            ins.hint(wce_tile::export_as_prop::SCALE_TIP);
+            ins.disabled_float3(field, label, parse_vec3_text(&cur).unwrap_or([1.0; 3]));
+            return;
+        }
+
         if !editable {
             ins.text(field, label, &cur);
             return;
@@ -2972,7 +2978,7 @@ impl TileDocument {
         let category = if t.tscene().type_of(e) == "BUILDING_INSTANCE" { t.building_category(&key) } else { None };
         let shape = doc.get(e, "polygon_shape");
         let capture_location = wce_tile::export_as_prop::capture_location_set(doc.get(e, "capture_location").as_deref());
-        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: doc.get(e, prop.attr).is_some(), capture_location };
+        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: doc.get(e, prop.attr).is_some(), capture_location, export_as_prop: t.exports_as_prop(e) };
         wce_tile::properties::access(prop, &ctx)
     }
 
@@ -3319,6 +3325,27 @@ impl TileDocument {
     }
 
     /// The gizmo: moves (and turns) the items by a world-space delta.
+    /// The Scale gizmo on the selected buildings that export as props, the only items it scales: each from the scale it had when the drag
+    /// began (`factor` is the scale since then), one undo entry.
+    pub(crate) fn scale_selected(&mut self, items: &[SourceRef], factor: [f32; 3], gesture: u64) {
+        let t = self.tile();
+        if t.scale_drag.as_ref().is_none_or(|(g, _)| *g != gesture) {
+            let base = items.iter().filter(|r| r.doc == self.id() && piece_of(r.item).is_none()).filter_map(|r| elem_of(r.item)).filter(|&e| t.exports_as_prop(e)).map(|e| {
+                let s = t.tscene().scale(e).map_or([1.0; 3], |s| [s.x as f32, s.y as f32, s.z as f32]);
+                (e, s)
+            }).collect();
+            self.tile_mut().scale_drag = Some((gesture, base));
+        }
+
+        let Some((_, base)) = self.tile().scale_drag.clone() else { return };
+        let Some(prop) = wce_tile::properties::schema("BUILDING_INSTANCE").and_then(|s| s.iter().find(|p| p.attr == "scale")) else { return };
+        let elems = base.keys().copied().collect::<Vec<_>>();
+        let values = base.values().map(|s| wce_tile::properties::format_vec3([s[0] * factor[0], s[1] * factor[1], s[2] * factor[2]])).collect::<Vec<_>>();
+        if !elems.is_empty() {
+            self.set_property_each(&elems, prop, &values, gesture);
+        }
+    }
+
     pub(crate) fn transform_selected(&mut self, items: &[SourceRef], delta: &Float4x4, gesture: u64) {
         for &r in items {
             let t = self.tile();

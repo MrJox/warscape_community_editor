@@ -526,6 +526,18 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
     let mut rounded = 0;
     for (e, el) in fresh.elements().iter().enumerate() {
         for a in &el.attrs {
+            // TEd has no scale on a building (a building that exports as a prop is models by now), and the game ignores it.
+            if el.name == "BUILDING_INSTANCE" && a.name == "scale" {
+                report.dropped.push(format!("scale of BUILDING_INSTANCE '{}'", fresh.get(e, "name").unwrap_or_default()));
+                let mut start = a.value_off - 2 - a.name.len();
+                while start > 0 && text[start - 1].is_ascii_whitespace() {
+                    start -= 1;
+                }
+
+                cuts.push((start, a.value_off + a.value_len + 1, vec![]));
+                continue;
+            }
+
             if a.name.starts_with("wce_") {
                 let unset_mark = a.name == crate::export_as_prop::EXPORT_AS_PROP_ATTR && fresh.get(e, &a.name).as_deref() != Some("true");
                 if a.name != WCE_VERSION_ATTR && a.name != EXTRACTED_ATTR && !POLYFILLED_ATTRS.contains(&a.name.as_str()) && !unset_mark {
@@ -676,6 +688,15 @@ mod tests {
         let (_, missing) = expand_prefabs(stored, &|_| None).unwrap();
         assert_eq!(missing, vec!["rocks".to_owned()]);
         assert!(String::from_utf8(mark_wce_text(b"<INSTANCE_SELECTION version=\"17\">\n</INSTANCE_SELECTION>\n".to_vec())).unwrap().starts_with("<INSTANCE_SELECTION version=\"17\" wce_version=\"1\">"));
+    }
+
+    #[test]
+    fn a_buildings_scale_does_not_reach_ted() {
+        let wce = b"<project version=\"16\" wce_version=\"1\">\n    <BUILDING_INSTANCE key=\"a\" scale=\"vector(2,2,2)\" name=\"a\"/>\n    <SIMPLE_MESH_INSTANCE key=\"b\" scale=\"vector(2,2,2)\" name=\"b\"/>\n</project>\n".to_vec();
+        let (ted, report) = to_ted(wce).unwrap();
+        let ted = String::from_utf8(ted).unwrap();
+        assert!(ted.contains("<BUILDING_INSTANCE key=\"a\" name=\"a\"/>") && ted.contains("<SIMPLE_MESH_INSTANCE key=\"b\" scale=\"vector(2,2,2)\""), "{ted}");
+        assert_eq!(report.dropped.len(), 1, "{report:?}");
     }
 
     #[test]

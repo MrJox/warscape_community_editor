@@ -207,6 +207,13 @@ pub trait Document: Any {
         let _ = (items, delta, gesture);
     }
 
+    /// The Scale gizmo: `factor` is the scale on the item's own axes since the drag began (not since the last call), `delta` the same as a
+    /// world-space delta for the documents that take it as a move.
+    fn scale_items(&mut self, items: &[SourceRef], factor: [f32; 3], delta: &Float4x4, gesture: u64) {
+        let _ = factor;
+        self.transform_items(items, delta, gesture);
+    }
+
     /// The document as `Any`, for tools to reach their own document types.
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
