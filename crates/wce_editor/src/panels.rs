@@ -193,6 +193,15 @@ impl Inspector for ImGuiInspector {
         changed
     }
 
+    fn disabled_bool(&mut self, field: &str, label: &str, v: bool) {
+        self.label(field, label, false);
+        gui::begin_disabled(true);
+        let mut shown = v;
+        gui::checkbox(&self.id(field), &mut shown);
+        gui::end_disabled();
+        self.show_hint();
+    }
+
     fn edit_string(&mut self, field: &str, label: &str, v: &mut String) -> bool {
         self.label(field, label, true);
         let changed = gui::input_text(&self.id(field), None, v, 512, 0);

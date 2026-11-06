@@ -2814,7 +2814,8 @@ impl TileDocument {
         let key = sc.doc().get(e, "key").unwrap_or_default();
         let category = if tag == "BUILDING_INSTANCE" { t.building_category(&key) } else { None };
         let shape = sc.doc().get(e, "polygon_shape");
-        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: text.is_some() };
+        let capture_location = wce_tile::export_as_prop::capture_location_set(sc.doc().get(e, "capture_location").as_deref());
+        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: text.is_some(), capture_location };
         let access = wce_tile::properties::access(prop, &ctx);
         if access == Access::Hidden {
             return;
@@ -2928,6 +2929,11 @@ impl TileDocument {
             _ => {}
         }
 
+        if prop.rule == wce_tile::properties::Rule::NoCaptureLocation && !editable {
+            greyed_export_as_prop(prop, ins);
+            return;
+        }
+
         if !editable {
             ins.text(field, label, &cur);
             return;
@@ -2965,7 +2971,8 @@ impl TileDocument {
         let key = doc.get(e, "key").unwrap_or_default();
         let category = if t.tscene().type_of(e) == "BUILDING_INSTANCE" { t.building_category(&key) } else { None };
         let shape = doc.get(e, "polygon_shape");
-        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: doc.get(e, prop.attr).is_some() };
+        let capture_location = wce_tile::export_as_prop::capture_location_set(doc.get(e, "capture_location").as_deref());
+        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: doc.get(e, prop.attr).is_some(), capture_location };
         wce_tile::properties::access(prop, &ctx)
     }
 
@@ -3104,6 +3111,11 @@ impl TileDocument {
             }
 
             _ => {}
+        }
+
+        if prop.rule == wce_tile::properties::Rule::NoCaptureLocation && !editable {
+            greyed_export_as_prop(prop, ins);
+            return;
         }
 
         if !editable {
@@ -3417,6 +3429,12 @@ impl Tile {
             _ => *prop,
         }
     }
+}
+
+/// The Export as prop row of a building that cannot be one: off, whatever is stored, as that is what the export does.
+fn greyed_export_as_prop(prop: &Prop, ins: &mut dyn Inspector) {
+    ins.hint(wce_tile::export_as_prop::CAPTURE_LOCATION_TIP);
+    ins.disabled_bool(prop.attr, prop.label(), false);
 }
 
 pub(crate) fn edit_value(prop: &Prop, cur: &str, present: bool, levels: i64, ins: &mut dyn Inspector) -> Option<String> {

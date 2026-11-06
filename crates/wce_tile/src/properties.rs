@@ -88,6 +88,9 @@ pub enum Rule {
 
     /// `radius` of a polygon: in the grid for a circle or semicircle, hidden for the other shapes (`+0x13c` is `polygon_shape`).
     CircleShape,
+
+    /// Export as prop: greyed out, and off, for a building with a capture location, which has to stay a building (`export_as_prop`).
+    NoCaptureLocation,
 }
 
 impl Prop {
@@ -155,7 +158,7 @@ const BUILDING: &[Prop] = base3d![
     ruled("weak_wall", Kind::Bool, Rule::FortWall),
     ruled("ai_breachable", Kind::Bool, Rule::FortWall),
     p("indestructible", Kind::Bool),
-    p(crate::export_as_prop::EXPORT_AS_PROP_ATTR, Kind::Bool),
+    ruled(crate::export_as_prop::EXPORT_AS_PROP_ATTR, Kind::Bool, Rule::NoCaptureLocation),
     ruled("dockable", Kind::Bool, Rule::FortWallOrUnbreachable),
     p("toggleable", Kind::Bool),
     p("capture_location", Kind::Text),
@@ -327,6 +330,9 @@ pub struct RuleContext<'a> {
 
     /// The element has this attribute already (a file written by TEd has `weak_wall` for the buildings that TEd shows it for, and no other).
     pub present: bool,
+
+    /// The building's `capture_location` is set.
+    pub capture_location: bool,
 }
 
 /// Whether the property is in the grid and whether it can be edited.
@@ -349,6 +355,8 @@ pub fn access(prop: &Prop, ctx: &RuleContext) -> Access {
             Some("PS_CIRCLE" | "PS_SEMICIRCLE") => Access::ReadOnly,
             _ => Access::Hidden,
         },
+
+        Rule::NoCaptureLocation => if ctx.capture_location { Access::ReadOnly } else { Access::Edit },
     }
 }
 
@@ -480,6 +488,14 @@ mod tests {
         assert_eq!((access(weak, &wall), access(dock, &wall)), (Access::Edit, Access::Edit));
         assert_eq!((access(weak, &unb), access(dock, &unb)), (Access::Hidden, Access::Edit));
         assert_eq!((access(weak, &generic), access(dock, &generic)), (Access::Hidden, Access::Hidden));
+    }
+
+    #[test]
+    fn a_capture_location_greys_out_export_as_prop() {
+        let prop = schema("BUILDING_INSTANCE").unwrap().iter().find(|p| p.attr == crate::export_as_prop::EXPORT_AS_PROP_ATTR).unwrap();
+        assert_eq!(prop.label(), "Export as prop");
+        assert_eq!(access(prop, &RuleContext::default()), Access::Edit);
+        assert_eq!(access(prop, &RuleContext { capture_location: true, ..Default::default() }), Access::ReadOnly);
     }
 
     #[test]
