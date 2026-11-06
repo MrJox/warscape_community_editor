@@ -649,24 +649,7 @@ impl TileDocument {
 
         self.check_structure(&[], Some(into))?;
         let mark = self.begin()?;
-        let result = (|| -> Result<Vec<usize>, String> {
-            let mut out = vec![];
-            for it in items {
-                let g = self.tscene_mut().insert_element_text(into, &it.text)?;
-                let t = self.tile();
-                let u = t.unit();
-                let (x, z) = (it.at.x + offset.x, it.at.z + offset.z);
-                let y = if it.landscape { t.terrain_height(x, z) } else { it.at.y + offset.y };
-                let before = t.tscene().position(g);
-                set_world_position(self.tscene_mut(), g, scene_point(Float3::new(x, y, z), u));
-                set_world_rotation(self.tscene_mut(), g, &it.rotation);
-                self.carry_points(g, before);
-                out.push(g);
-            }
-
-            Ok(out)
-        })();
-
+        let result = self.paste_elements(items, into, offset);
         match result {
             Ok(new) => {
                 let name = if new.len() == 1 { format!("Paste {}", self.tile().tscene().type_of(new[0])) } else { format!("Paste {} items", new.len()) };
@@ -680,6 +663,25 @@ impl TileDocument {
                 Err(e)
             }
         }
+    }
+
+    /// The copied elements into `into`, inside an edit that is open.
+    pub(crate) fn paste_elements(&mut self, items: &[CopiedItem], into: usize, offset: Float3) -> Result<Vec<usize>, String> {
+        let mut out = vec![];
+        for it in items {
+            let g = self.tscene_mut().insert_element_text(into, &it.text)?;
+            let t = self.tile();
+            let u = t.unit();
+            let (x, z) = (it.at.x + offset.x, it.at.z + offset.z);
+            let y = if it.landscape { t.terrain_height(x, z) } else { it.at.y + offset.y };
+            let before = t.tscene().position(g);
+            set_world_position(self.tscene_mut(), g, scene_point(Float3::new(x, y, z), u));
+            set_world_rotation(self.tscene_mut(), g, &it.rotation);
+            self.carry_points(g, before);
+            out.push(g);
+        }
+
+        Ok(out)
     }
 
     pub fn remove(&mut self, elem: usize) -> bool {

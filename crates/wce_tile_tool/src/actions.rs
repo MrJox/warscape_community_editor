@@ -501,6 +501,10 @@ impl TileTool {
             self.status = err;
         }
 
+        if gui::menu_item(&one("Flip...", icons::SPLIT), wce_editor::shortcuts::label("tile.flip").as_deref(), false, some) {
+            self.flip_asked = true;
+        }
+
         if gui::menu_item(&one("Turn", icons::ROTATE_CW), wce_editor::shortcuts::label("tile.turn").as_deref(), false, some)
             && let Some(s) = sel
         {

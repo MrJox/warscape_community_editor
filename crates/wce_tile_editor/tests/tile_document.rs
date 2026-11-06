@@ -425,6 +425,69 @@ fn a_preview_turns_without_being_made_again_and_as_the_item_will_be() {
 }
 
 #[test]
+fn a_flip_mirrors_places_and_headings_undoes_at_once_and_can_copy() {
+    use wce_tile::world_transform::world_transform;
+    use wce_tile_editor::tile_document::FlipPlane;
+
+    let text = TED.replace(
+        r#"<AI_HINT_POLYGON_INSTANCE"#,
+        r#"<UserInstanceGroup flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(100,0,100)" name="g" surface_mode="MSM_FREEFORM" orientation="euler(0,0.5,0)">
+                            <children>
+                                <BUILDING_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(20,0,0)" name="in1" surface_mode="MSM_FREEFORM" orientation="euler(0,0.3,0)" key="house"/>
+                                <BUILDING_INSTANCE flags=" OIF_VISIBLE|OIF_ACTIVE" lf_offset="0" position="vector(0,0,40)" name="in2" surface_mode="MSM_FREEFORM" orientation="euler(0,0,0)" key="house"/>
+                            </children>
+                        </UserInstanceGroup>
+                        <AI_HINT_POLYGON_INSTANCE"#,
+    );
+    let (dir, _) = open();
+    std::fs::write(dir.path().join("tile.ted"), text).unwrap();
+    let mut d = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
+    let original = self::text(&d);
+    let unit = d.tile().unit();
+    let sc = d.tile().tscene();
+    let (group, in1, in2) = (sc.find_all("UserInstanceGroup")[0], sc.find_all("BUILDING_INSTANCE")[1], sc.find_all("BUILDING_INSTANCE")[2]);
+    let polygon = sc.find_all("AI_HINT_POLYGON_INSTANCE")[0];
+    let pos = |d: &TileDocument, e: usize| world_transform(d.tile().tscene(), e).position;
+    let (p1, p2) = (pos(&d, in1), pos(&d, in2));
+    let forward = |d: &TileDocument, e: usize| world_transform(d.tile().tscene(), e).rotation.col(2);
+    let f1 = forward(&d, in1);
+    let world_point = |d: &TileDocument, i: usize| {
+        let sc = d.tile().tscene();
+        let w = world_transform(sc, polygon);
+        w.position + w.rotation * sc.point_position(sc.polygon_points(polygon)[i]).unwrap()
+    };
+
+    let q1 = world_point(&d, 1);
+
+    // Across the plane at x = 50 m: every item at its own mirror, so the group's layout mirrors and is not turned as one.
+    let plane = FlipPlane { x: 50.0, z: 0.0, angle: 0.0 };
+    let before = d.history().size();
+    d.flip(&[group, polygon], plane, None).unwrap();
+    assert_eq!(d.history().size(), before + 1, "one undo entry");
+    let mirrored = |p: Double3| Double3::new(2.0 * 50.0 * unit - p.x, p.y, p.z);
+    let near = |a: Double3, b: Double3| (a.x - b.x).abs() < 1e-3 && (a.y - b.y).abs() < 1e-3 && (a.z - b.z).abs() < 1e-3;
+    assert!(near(pos(&d, in1), mirrored(p1)) && near(pos(&d, in2), mirrored(p2)), "{:?}", pos(&d, in1));
+    assert!(near(forward(&d, in1), Double3::new(-f1.x, f1.y, f1.z)), "the heading is reflected: {:?} from {f1:?}", forward(&d, in1));
+    let r = world_transform(d.tile().tscene(), in1).rotation;
+    let det = r.col(0).x * (r.col(1).y * r.col(2).z - r.col(1).z * r.col(2).y) - r.col(0).y * (r.col(1).x * r.col(2).z - r.col(1).z * r.col(2).x) + r.col(0).z * (r.col(1).x * r.col(2).y - r.col(1).y * r.col(2).x);
+    assert!((det - 1.0).abs() < 1e-6, "still a rotation: {det}");
+    assert!(near(world_point(&d, 1), mirrored(q1)), "a polygon's points mirror: {:?}", world_point(&d, 1));
+
+    d.history_mut().undo();
+    assert_eq!(self::text(&d), original, "undo gives the file back");
+
+    // A copy leaves the items where they are and adds the mirrored ones.
+    let layer = d.tile().tscene().find_all("LayerInstance")[0];
+    let n = d.tile().tscene().find_all("BUILDING_INSTANCE").len();
+    let went = d.flip(&[in2], plane, Some(layer)).unwrap();
+    assert_eq!(went.len(), 1);
+    assert_eq!(d.tile().tscene().find_all("BUILDING_INSTANCE").len(), n + 1);
+    assert!(near(pos(&d, went[0]), mirrored(p2)), "{:?}", pos(&d, went[0]));
+    d.history_mut().undo();
+    assert_eq!(self::text(&d), original);
+}
+
+#[test]
 fn the_steps_of_a_drag_are_one_entry() {
     let (_dir, mut d) = open();
     let original = text(&d);

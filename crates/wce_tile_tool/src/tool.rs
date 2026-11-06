@@ -279,6 +279,12 @@ pub struct TileTool {
     /// Alt + a left drag in Select mode: the selection turning around its centre (`AltRotate`).
     pub(crate) alt_rotate: Option<crate::create_panel::AltRotate>,
 
+    /// Flip mode (the plane, in the viewport and the Inspector).
+    pub(crate) flip: Option<crate::flip_tool::FlipMode>,
+
+    /// The menu's Flip..., for the next update.
+    pub(crate) flip_asked: bool,
+
     // The off-terrain report of the Tile panel.
     off_tol: f32,
     off_list: Vec<OffTerrain>,
@@ -649,7 +655,7 @@ impl Default for TileTool {
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: 0.75, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            ref_units: Default::default(), drawing: false, ground_chip_width: 0.0, areas_chip_width: 0.0, pack_categories: None, areas: None, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            ref_units: Default::default(), drawing: false, flip: None, flip_asked: false, ground_chip_width: 0.0, areas_chip_width: 0.0, pack_categories: None, areas: None, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -1572,6 +1578,7 @@ impl TileTool {
     fn tool_overlay(&self, e: &Editor, d: &TileDocument) -> Overlay {
         let mut o = Overlay { depth_test: false, pickable: false, ..Default::default() };
         let t = d.tile();
+        self.flip_overlay(t, &selected(e), &mut o);
         let gold = overlay_colour(1.0, 0.85, 0.2, 1.0);
         let veg = self.placing == Some(Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE") && self.veg.is_some_and(|b| b.on);
         let radius = if veg { self.veg.map_or(1.0, |b| b.radius) } else { self.brush.radius_m };
@@ -1886,7 +1893,9 @@ impl TileTool {
 
         let sel = primary(e);
         if pressed("tile.cancel", false) {
-            if self.box_select.armed {
+            if self.flip.take().is_some() {
+                self.status = "flip left".to_owned();
+            } else if self.box_select.armed {
                 self.box_select = Default::default();
                 self.status = "box select cancelled".to_owned();
             } else if self.grabbing {
@@ -1975,6 +1984,10 @@ impl TileTool {
             if pressed("tile.paste_in_place", false) {
                 self.paste(e, false);
             }
+        }
+
+        if (pressed("tile.flip", false) || std::mem::take(&mut self.flip_asked)) && self.flip.is_none() {
+            self.status = self.begin_flip(e).unwrap_or_else(|why| why);
         }
 
         if pressed("tile.grab", false) && sel.is_some() {
@@ -2957,6 +2970,7 @@ const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
         a("tile.delete", "Tile", "Delete", &["Delete"]),
         a("tile.rename", "Tile", "Rename (Scene tree)", &["F2"]),
         a("tile.duplicate", "Tile", "Duplicate", &["Ctrl+D"]),
+        a("tile.flip", "Tile", "Flip the selection across a plane...", &["Ctrl+Shift+F"]),
         a("tile.turn", "Tile", "Turn the selection by the rotate step", &["Ctrl+R"]),
         a("tile.turn_back", "Tile", "Turn the selection back by the rotate step", &["Ctrl+Shift+R"]),
         a("tile.group", "Tile", "Group", &["Ctrl+G"]),
@@ -3560,6 +3574,17 @@ impl Tool for TileTool {
                 true
             }
 
+            ViewportEventKind::Press if self.flip.is_some() => self.flip_drag(true),
+            ViewportEventKind::Drag if self.flip.is_some_and(|f| f.dragging) => self.flip_drag(false),
+            ViewportEventKind::Release if self.flip.is_some_and(|f| f.dragging) => {
+                if let Some(f) = &mut self.flip {
+                    f.dragging = false;
+                }
+
+                true
+            }
+
+            ViewportEventKind::Click if self.flip.is_some() => true,
             ViewportEventKind::Press => {
                 self.on_hover(e, ev);
                 if self.grabbing {
@@ -3912,6 +3937,10 @@ impl Tool for TileTool {
     }
 
     fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
+        if self.draw_flip_panel(e) {
+            return true;
+        }
+
         // The brush's settings at the top while it paints trees; then the new vegetation set (not saved), placing or not.
         if self.painting_trees(e) {
             self.inspect_veg_brush(e, ins);
@@ -3981,7 +4010,7 @@ impl Tool for TileTool {
     }
 
     fn left_drag_selects(&self, _e: &Editor) -> bool {
-        self.mode == TileMode::Select && !self.drawing && !self.grabbing && self.placing.is_none() && !self.box_select.armed && self.light_drag.is_none() && self.target_drag.is_none()
+        self.flip.is_none() && self.mode == TileMode::Select && !self.drawing && !self.grabbing && self.placing.is_none() && !self.box_select.armed && self.light_drag.is_none() && self.target_drag.is_none()
     }
 
     fn box_drag(&mut self, e: &mut Editor, from: (i32, i32), to: (i32, i32), done: bool) {
@@ -3989,7 +4018,7 @@ impl Tool for TileTool {
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {
-        self.mode != TileMode::Select || self.drawing || self.grabbing || self.placing.is_some() || self.box_select.armed
+        self.flip.is_some() || self.mode != TileMode::Select || self.drawing || self.grabbing || self.placing.is_some() || self.box_select.armed
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {
