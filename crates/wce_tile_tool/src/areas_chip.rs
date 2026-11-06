@@ -24,14 +24,14 @@ impl TileTool {
         })
     }
 
-    /// Hands the look to the tile in view when it differs, whichever tile that is.
+    /// Hands the look to the tile in view when it differs, whichever tile that is: its next update writes it into the overlay colour table,
+    /// so a slider's drag touches no polygon.
     pub(crate) fn sync_polygon_look(&mut self, e: &mut Editor) {
         let look = self.polygon_look(e).clone();
         let Some(id) = document_id(e) else { return };
         let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
         if d.tile().display().polygon_look != look {
             d.tile_mut().display_mut().polygon_look = look;
-            d.tile_mut().polygons_changed();
         }
     }
 

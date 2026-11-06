@@ -20,7 +20,15 @@ cbuffer Frame : register(b0) { row_major float4x4 vp; uint id; };
 
 struct OvlIn  { float3 pos : POSITION; float4 col : COLOR; };
 struct OvlOut { float4 pos : SV_Position; float4 col : COLOR; };
-OvlOut ovl_vs(OvlIn i) { OvlOut o; o.pos = mul(vp, float4(i.pos, 1)); o.col = i.col; return o; }
+// A vertex of alpha 0 and these green and blue bytes stands for an entry of the table (`overlay_slot`), its red byte the entry.
+cbuffer OverlaySlots : register(b1) { float4 slot_colour[48]; };
+OvlOut ovl_vs(OvlIn i) {
+    OvlOut o;
+    o.pos = mul(vp, float4(i.pos, 1));
+    uint4 c = (uint4)(i.col * 255 + 0.5);
+    o.col = (c.a == 0 && c.g == 0xAB && c.b == 0xCD) ? slot_colour[c.r] : i.col;
+    return o;
+}
 float4 ovl_ps(OvlOut i) : SV_Target { return i.col; }
 
 // Same vertex and instance layout as the game's rigid shaders: half4 position, rows of the 3x4 world matrix in POSITION1..3.
@@ -101,6 +109,9 @@ const HIDDEN_ALPHA: f32 = 0.35;
 
 /// The size of the frame constants: a matrix and the id, padded.
 const FRAME_CB: usize = 80;
+
+/// The size of the overlay colour table.
+const SLOTS_CB: usize = 16 * wce_scene::render_scene::OVERLAY_SLOTS;
 
 /// The size of an overlay vertex.
 const OVERLAY_VERTEX: usize = 16;
@@ -291,6 +302,7 @@ pub(crate) struct EditorGpu {
     ovl_il: Option<ID3D11InputLayout>,
     pick_il: Option<ID3D11InputLayout>,
     ovl_cb: Option<ID3D11Buffer>,
+    ovl_slots_cb: Option<ID3D11Buffer>,
     pick_cb: Option<ID3D11Buffer>,
 
     /// The ground overlay's pixel shader, constants and picture (its id, the texture's view).
@@ -439,6 +451,7 @@ impl Renderer {
         e.mask_bs_all = channel(D3D11_COLOR_WRITE_ENABLE_RED as u8);
         e.mask_bs_visible = channel(D3D11_COLOR_WRITE_ENABLE_GREEN as u8);
 
+        e.ovl_slots_cb = dynamic_buffer(&dev, SLOTS_CB, D3D11_BIND_CONSTANT_BUFFER);
         e.ovl_cb = dynamic_buffer(&dev, FRAME_CB, D3D11_BIND_CONSTANT_BUFFER);
         e.pick_cb = dynamic_buffer(&dev, FRAME_CB, D3D11_BIND_CONSTANT_BUFFER);
         e.ovl_blend = crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
@@ -663,6 +676,11 @@ impl Renderer {
 
         let Some(cb) = e.ovl_cb.clone() else { return };
         write_dynamic(&self.ctx, &cb, &frame_cb(&self.camera.main_view_proj));
+        if let Some(slots) = &e.ovl_slots_cb {
+            write_dynamic(&self.ctx, slots, &scene.overlay_slots);
+            self.ctx.vs_set_constant_buffers(1, std::slice::from_ref(&e.ovl_slots_cb));
+        }
+
         let topology = [D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST];
         self.ctx.set_render_targets(&[target.rtv().cloned()], self.gbuffer.dsv.as_ref());
         self.ctx.set_viewports(&[viewport(0.0, 0.0, target.width() as f32, target.height() as f32)]);
