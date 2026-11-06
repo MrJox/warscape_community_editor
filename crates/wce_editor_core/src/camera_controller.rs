@@ -240,26 +240,42 @@ fn constrain(p: Float3, opts: &CameraOptions, world: &mut dyn CameraWorld) -> Fl
 const ORBIT_CLEAR_REACH: f32 = 512.0;
 const ORBIT_CLEAR_STEP: f32 = 0.5;
 
-/// An orbit's eye kept out of things. The orbit looks at its target from the eye, so an eye moved sideways turns the view: out of an obstacle
-/// it goes back along the line from the target, which keeps the view as it is and stops the zoom at the obstacle. Above the ground it is
-/// lifted, as [`constrain`] does: along a low line that would throw it far away.
-fn constrain_orbit(eye: Float3, target: Float3, opts: &CameraOptions, world: &mut dyn CameraWorld) -> Float3 {
+/// How long (seconds, the time constant) the eye takes to go back from an obstacle, and to come in again after it.
+const ORBIT_CLEAR_OUT: f32 = 0.08;
+const ORBIT_CLEAR_IN: f32 = 0.18;
+
+/// How far an orbit's eye must go back along the line from its target to be out of the obstacles. The orbit looks at its target from the eye,
+/// so an eye moved sideways turns the view; along that line the view stays as it is and the zoom stops at the obstacle.
+fn orbit_clearance(eye: Float3, target: Float3, opts: &CameraOptions, world: &mut dyn CameraWorld) -> f32 {
     let along = eye - target;
     let dist = length(along);
-    if opts.respect_collisions && dist > 1e-4 && world.push_out(eye, EYE_RADIUS) != eye {
-        let dir = along * (1.0 / dist);
-        let mut back = ORBIT_CLEAR_STEP;
-        while back < ORBIT_CLEAR_REACH {
-            let p = target + dir * (dist + back);
-            if world.push_out(p, EYE_RADIUS) == p {
-                return constrain(p, opts, world);
-            }
-
-            back *= 1.25;
-        }
+    if !opts.respect_collisions || dist < 1e-4 || world.push_out(eye, EYE_RADIUS) == eye {
+        return 0.0;
     }
 
-    constrain(eye, opts, world)
+    let dir = along * (1.0 / dist);
+    let mut free = |back: f32| {
+        let p = target + dir * (dist + back);
+        world.push_out(p, EYE_RADIUS) == p
+    };
+
+    let (mut lo, mut hi) = (0.0, ORBIT_CLEAR_STEP);
+    while hi < ORBIT_CLEAR_REACH && !free(hi) {
+        lo = hi;
+        hi *= 1.25;
+    }
+
+    if hi >= ORBIT_CLEAR_REACH {
+        return 0.0;
+    }
+
+    // Down to where it clears, so that it changes smoothly with the view and not in the steps above.
+    for _ in 0..8 {
+        let mid = 0.5 * (lo + hi);
+        if free(mid) { hi = mid } else { lo = mid }
+    }
+
+    hi
 }
 
 /// The view direction of a heading (0 north, +z; turning right towards +x) and a tilt (negative down).
@@ -810,12 +826,15 @@ pub struct OrbitCamera {
 
     /// The eye where the ground or an obstacle stopped it (`None`: where the orbit puts it).
     eye_override: Option<Float3>,
+
+    /// How far it is back along its line from an obstacle, eased.
+    clearance: f32,
 }
 
 impl Default for OrbitCamera {
     fn default() -> Self {
         let target = Float3::new(0.0, 5.0, 0.0);
-        Self { lens: Lens::default(), yaw: 0.6, pitch: 0.35, dist: 120.0, target, shown: (0.6, 0.35, 120.0, target), eye_override: None }
+        Self { lens: Lens::default(), yaw: 0.6, pitch: 0.35, dist: 120.0, target, shown: (0.6, 0.35, 120.0, target), eye_override: None, clearance: 0.0 }
     }
 }
 
@@ -823,6 +842,7 @@ impl OrbitCamera {
     fn snap(&mut self) {
         self.shown = (self.yaw, self.pitch, self.dist, self.target);
         self.eye_override = None;
+        self.clearance = 0.0;
     }
 
     fn orbit_eye(yaw: f32, pitch: f32, dist: f32, target: Float3) -> Float3 {
@@ -878,8 +898,18 @@ impl CameraController for OrbitCamera {
         let t = smooth_step(opts, input.dt);
         let (y, p, d, tg) = self.shown;
         self.shown = (lerp(y, self.yaw, t), lerp(p, self.pitch, t), lerp(d, self.dist, t), lerp3(tg, self.target, t));
-        let eye = Self::orbit_eye(self.shown.0, self.shown.1, self.shown.2, self.shown.3);
-        let kept = constrain_orbit(eye, self.shown.3, opts, world);
+        // Eased, as an obstacle comes and goes in steps when the view moves past its corners: the eye may be inside for a moment, not jump.
+        let (yaw, pitch, dist, target) = self.shown;
+        let wanted = orbit_clearance(Self::orbit_eye(yaw, pitch, dist, target), target, opts, world);
+        let tau = if wanted > self.clearance { ORBIT_CLEAR_OUT } else { ORBIT_CLEAR_IN };
+        self.clearance = if input.dt > 0.0 { lerp(self.clearance, wanted, 1.0 - (-input.dt / tau).exp()) } else { wanted };
+        if (self.clearance - wanted).abs() < 1e-3 {
+            self.clearance = wanted;
+        }
+
+        let eye = Self::orbit_eye(yaw, pitch, dist, target);
+        let back = Self::orbit_eye(yaw, pitch, dist + self.clearance, target);
+        let kept = constrain(back, &CameraOptions { respect_collisions: false, ..*opts }, world);
         self.eye_override = (kept != eye).then_some(kept);
     }
 
