@@ -3,8 +3,11 @@
 //! Layout: u32 version, u32 (bone table version), f32 frame rate, string skeleton name, f32 end time, u32 bone count; per bone
 //! its name (string) and parent (i32, -1 for a root); per bone the index of its translation track, then per bone the index of its rotation
 //! track (i32, -1: none); u32 translation track count, u32 rotation track count, u32 frame count; per frame the translations (3 f32 each)
-//! then the rotations (4 i16 each, x y z w over 32767). Version 4 is the same with UTF-16 strings. The data sizes of all of Attila's version
-//! 5 files match to the byte.
+//! then the rotations (4 i16 each, x y z w over 32767). The data sizes of all of Attila's version 5 files match to the byte.
+//!
+//! Version 4 (31 files, siege towers and archers firing from walls) has UTF-16 strings and no track tables: after the bones, two bit sets
+//! (the bone count, then a u32 per 32 bones; the bones a version 5 file would give tracks), the frame count, then per frame per bone a
+//! translation and a rotation, all f32, whatever the sets say; 4 bytes end the file.
 //!
 //! A bone without a track keeps its skeleton's pose (`on_skeleton`), not the identity: a unit's clip moves 6 of its 50 bones and turns 32.
 
@@ -96,14 +99,32 @@ impl Animation {
             parents.push(r.i32()?);
         }
 
+        if version == 4 {
+            for _ in 0..2 {
+                r.u32()?;
+                r.take(n.div_ceil(32) * 4)?;
+            }
+
+            let count = r.u32()? as usize;
+            if count == 0 || r.b.len().saturating_sub(r.p) < count.checked_mul(n)?.checked_mul(28)? {
+                return None;
+            }
+
+            let frames = (0..count.min(max_frames)).map(|_| (0..n).map(|_| {
+                let t = [r.f32()?, r.f32()?, r.f32()?];
+                Some((t, normalised([r.f32()?, r.f32()?, r.f32()?, r.f32()?])))
+            }).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>()?;
+            return Some(Self { fps, end, skeleton, bones, parents, tracked: vec![(true, true); n], frames });
+        }
+
         let tmap = (0..n).map(|_| r.i32()).collect::<Option<Vec<_>>>()?;
         let rmap = (0..n).map(|_| r.i32()).collect::<Option<Vec<_>>>()?;
         let (nt, nr, count) = (r.u32()? as usize, r.u32()? as usize, r.u32()? as usize);
-        if count == 0 {
+        if count == 0 || r.b.len().saturating_sub(r.p) < count.checked_mul(nt.checked_mul(12)?.checked_add(nr.checked_mul(8)?)?)? {
             return None;
         }
 
-        let mut frames = Vec::with_capacity(count.min(max_frames));
+        let mut frames = Vec::with_capacity(count.min(max_frames).min(4096));
         for _ in 0..count.min(max_frames) {
             let ts = (0..nt).map(|_| Some([r.f32()?, r.f32()?, r.f32()?])).collect::<Option<Vec<_>>>()?;
             let qs = (0..nr).map(|_| Some(normalised([r.i16()?, r.i16()?, r.i16()?, r.i16()?].map(|v| f32::from(v) / 32767.0)))).collect::<Option<Vec<_>>>()?;
@@ -201,5 +222,59 @@ mod tests {
         assert!((q[1] - s).abs() < 1e-3 && (q[3] - s).abs() < 1e-3, "{q:?}");
         assert_eq!(a.sample(5.0)[0].0, [2.0, 4.0, 0.0], "held at the end");
         assert_eq!(Animation::decode(&two_frames(), 1).map(|a| a.frames.len()), Some(1));
+    }
+
+    #[test]
+    fn a_bone_without_tracks_keeps_the_skeletons_pose() {
+        let mut clip = Animation::decode(&two_frames(), usize::MAX).expect("decodes");
+        clip.tracked = vec![(false, true)];
+        let mut skeleton = clip.clone();
+        skeleton.frames = vec![vec![([7.0, 8.0, 9.0], [0.0, 1.0, 0.0, 0.0])]];
+        clip.on_skeleton(&skeleton);
+        assert_eq!(clip.frames[1][0].0, [7.0, 8.0, 9.0], "the translation comes from the skeleton");
+        assert_eq!(clip.frames[0][0].1, [0.0, 0.0, 0.0, 1.0], "the rotation is the clip's");
+    }
+
+    /// One bone, two frames, as version 4 stores them.
+    fn version_4() -> Vec<u8> {
+        let wide = |b: &mut Vec<u8>, s: &str| {
+            b.extend((s.len() as u16).to_le_bytes());
+            s.encode_utf16().for_each(|c| b.extend(c.to_le_bytes()));
+        };
+
+        let mut b = vec![];
+        b.extend(4u32.to_le_bytes());
+        b.extend(1u32.to_le_bytes());
+        b.extend(20f32.to_le_bytes());
+        wide(&mut b, "man");
+        b.extend(0.05f32.to_le_bytes());
+        b.extend(1u32.to_le_bytes());
+        wide(&mut b, "x");
+        b.extend((-1i32).to_le_bytes());
+        [1u32, 1, 1, 1, 2].iter().for_each(|v| b.extend(v.to_le_bytes()));
+        for x in [1f32, 2.0] {
+            [x, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0].iter().for_each(|v| b.extend(v.to_le_bytes()));
+        }
+
+        b
+    }
+
+    #[test]
+    fn reads_version_4() {
+        let a = Animation::decode(&version_4(), usize::MAX).expect("decodes");
+        assert_eq!((a.skeleton.as_str(), a.bones[0].as_str(), a.frames.len()), ("man", "x", 2));
+        assert_eq!(a.frames[1][0], ([2.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]));
+    }
+
+    #[test]
+    fn a_frame_count_past_the_file_is_not_a_clip() {
+        let mut b = version_4();
+        let at = b.len() - 2 * 28 - 4;
+        b[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(Animation::decode(&b, usize::MAX).is_none());
+        let mut b = two_frames();
+        let at = b.len() - 2 * 20 - 4;
+        b[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(Animation::decode(&b, usize::MAX).is_none());
     }
 }
