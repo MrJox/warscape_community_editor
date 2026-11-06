@@ -2,9 +2,12 @@
 //!
 //! A model cannot be mirrored (the game ignores a building's scale, docs/re/buildings.md), so an item keeps its own handedness: it goes to
 //! its mirrored place with its heading reflected, as a rotation. What holds other items is not turned, each item inside goes to its own
-//! mirrored place: turned as one, a group's layout would come out rotated, not mirrored. Polygons and splines have their points mirrored.
+//! mirrored place: turned as one, a group's layout would come out rotated, not mirrored. Polygons and splines have their points mirrored,
+//! and a procedural wall its side too: left and right of its line change places, and its outer face has to stay the outer one.
 
 use wce_foundation::math::{Double3, Double3x3, Float3};
+use wce_tile::new_instances::WALL_SPLINE;
+use wce_tile::properties::parse_bool;
 use wce_tile::splines;
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{set_world_position, set_world_rotation, world_transform};
@@ -65,10 +68,14 @@ struct Target {
     position: Double3,
     rotation: Double3x3,
 
-    /// A polygon's points, a spline's points with their handles, a shelter's target, in the world.
+    /// A polygon's points, a spline's points with their handles (none: the end's unused handle, written 0,0,0), a shelter's target, in the
+    /// world.
     points: Vec<Double3>,
-    spline: Vec<[Double3; 3]>,
+    spline: Vec<[Option<Double3>; 3]>,
     target: Option<Double3>,
+
+    /// A procedural wall's `wall_flip` to write.
+    wall_flip: Option<bool>,
 }
 
 /// An element and all that it holds, parents first.
@@ -93,11 +100,14 @@ impl TileDocument {
             let w = world_transform(sc, e);
             let at = |p: Double3| w.position + w.rotation * p;
             let mirrored = |p: Double3| plane.mirror(p, u);
+            let handle = |h: Double3| (h != Double3::ZERO).then(|| mirrored(at(h)));
             let spline = if wce_tile::splines::is_spline(sc.type_of(e)) {
-                splines::read(sc, e).iter().map(|p| [mirrored(at(p.position)), mirrored(at(p.control_in)), mirrored(at(p.control_out))]).collect()
+                splines::read(sc, e).iter().map(|p| [Some(mirrored(at(p.position))), handle(p.control_in), handle(p.control_out)]).collect()
             } else {
                 vec![]
             };
+
+            let wall_flip = (sc.type_of(e) == WALL_SPLINE).then(|| !sc.doc().get(e, "wall_flip").is_some_and(|v| parse_bool(&v)));
 
             let points = if spline.is_empty() { sc.polygon_points(e).into_iter().filter_map(|p| sc.point_position(p)).map(|p| mirrored(at(p))).collect() } else { vec![] };
 
@@ -113,7 +123,7 @@ impl TileDocument {
                 position.y = f64::from(t.terrain_height((position.x / u) as f32, (position.z / u) as f32)) * u;
             }
 
-            Target { elem: e, position, rotation, points, spline, target }
+            Target { elem: e, position, rotation, points, spline, target, wall_flip }
         }).collect()
     }
 
@@ -131,8 +141,8 @@ impl TileDocument {
 
             for (&elem, p) in sc.polygon_points(t.elem).iter().zip(&t.spline) {
                 for (name, v) in ["position", "controlIn", "controlOut"].into_iter().zip(p) {
-                    if sc.doc().get(elem, name).is_some() {
-                        sc.set_attr(elem, name, &TedScene::point_text(local(*v)));
+                    if let Some(v) = v.filter(|_| sc.doc().get(elem, name).is_some()) {
+                        sc.set_attr(elem, name, &TedScene::point_text(local(v)));
                     }
                 }
             }
@@ -141,6 +151,10 @@ impl TileDocument {
                 let pw = parent_transform(sc, t.elem);
                 let local = pw.rotation.transpose() * (v - pw.position);
                 sc.set_attr(t.elem, "target", &format!("vector({})", TedScene::point_text(local)));
+            }
+
+            if let Some(flip) = t.wall_flip {
+                sc.set_attr(t.elem, "wall_flip", if flip { "true" } else { "false" });
             }
         }
 

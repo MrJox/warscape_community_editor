@@ -18,6 +18,37 @@ const PLANE_STEP: f32 = 32.0;
 /// The most lines drawn from the selection to where it would go.
 const MAX_LINES: usize = 128;
 
+/// Where the values start, as in the Inspector's rows: 40% of the panel, at least 110 pixels.
+fn label_column() -> f32 {
+    (gui::content_region_avail().x * 0.4).max(110.0)
+}
+
+/// A row's label; what follows goes in the value column.
+fn row(label: &str) {
+    let at = label_column();
+    gui::align_text_to_frame_padding();
+    gui::text(label);
+    gui::same_line_at(at);
+}
+
+/// One of two choices side by side, the current one lit.
+fn choice(label: &str, on: bool, width: f32, tip: &str) -> bool {
+    if on {
+        gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+    }
+
+    let clicked = gui::button_sized(label, gui::v2(width, 0.0));
+    if on {
+        gui::pop_style_color(1);
+    }
+
+    if gui::is_item_hovered() {
+        gui::set_tooltip(tip);
+    }
+
+    clicked
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FlipMode {
     pub plane: FlipPlane,
@@ -96,56 +127,73 @@ impl TileTool {
     pub(crate) fn draw_flip_panel(&mut self, e: &mut Editor) -> bool {
         let Some(mut flip) = self.flip else { return false };
         let camera = e.viewport.camera().target;
+        let count = selected(e).len();
         gui::separator_text("Flip");
-        if gui::radio_button("Move##flip", !flip.copy) {
+        gui::text_disabled(&match count {
+            0 => "Nothing selected".to_owned(),
+            1 => "1 item selected".to_owned(),
+            n => format!("{n} items selected"),
+        });
+
+        gui::spacing();
+        let two = (gui::cursor_pos_x() + gui::content_region_avail().x - label_column() - gui::item_spacing().x) * 0.5;
+        row("Action");
+        if choice("Move##flip", !flip.copy, two, "The selection goes across the plane.") {
             flip.copy = false;
         }
 
         gui::same_line();
-        if gui::radio_button("Copy##flip", flip.copy) {
+        if choice("Copy##flip", flip.copy, two, "A mirrored copy goes across, the selection stays.") {
             flip.copy = true;
         }
 
-        gui::set_next_item_width(160.0);
-        gui::drag_float("x##flip", &mut flip.plane.x, 0.5, -100_000.0, 100_000.0, "%.2f m");
-        gui::set_next_item_width(160.0);
-        gui::drag_float("z##flip", &mut flip.plane.z, 0.5, -100_000.0, 100_000.0, "%.2f m");
-        gui::set_next_item_width(160.0);
-        gui::drag_float("angle##flip", &mut flip.plane.angle, 0.5, -360.0, 360.0, "%.1f deg");
-        if gui::button("Align X##flip") {
+        gui::spacing();
+        gui::separator_text("Plane");
+        row("Position (m)");
+        gui::set_next_item_width(-1.0);
+        let mut at = [flip.plane.x, flip.plane.z];
+        if gui::drag_float2("##flipat", &mut at, 0.5, "%.2f") {
+            [flip.plane.x, flip.plane.z] = at;
+        }
+
+        row("Angle");
+        gui::set_next_item_width(-1.0);
+        gui::drag_float("##flipangle", &mut flip.plane.angle, 0.5, -360.0, 360.0, "%.1f deg");
+        row("Align to");
+        if choice("X axis##flip", flip.plane.angle == 0.0, two, "The plane across the x axis: the selection goes to the other side along x.") {
             flip.plane.angle = 0.0;
         }
 
-        if gui::is_item_hovered() {
-            gui::set_tooltip("The plane across the x axis: the selection goes to the other side along x.");
-        }
-
         gui::same_line();
-        if gui::button("Align Z##flip") {
+        if choice("Z axis##flip", flip.plane.angle == 90.0, two, "The plane across the z axis: the selection goes to the other side along z.") {
             flip.plane.angle = 90.0;
         }
 
-        if gui::is_item_hovered() {
-            gui::set_tooltip("The plane across the z axis: the selection goes to the other side along z.");
-        }
-
-        gui::same_line();
-        if gui::button("Move plane into view##flip") {
+        gui::set_cursor_pos_x(label_column());
+        if gui::button_sized("Move plane into view##flip", gui::v2(-1.0, 0.0)) {
             (flip.plane.x, flip.plane.z) = (camera.x, camera.z);
         }
 
         self.flip = Some(flip);
-        gui::begin_disabled(selected(e).is_empty());
-        if gui::button("Flip##flipnow") {
+        gui::spacing();
+        gui::separator();
+        gui::spacing();
+        let done = gui::button_width("Done");
+        let wide = gui::content_region_avail().x - done - gui::item_spacing().x;
+        gui::begin_disabled(count == 0);
+        gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+        if gui::button_sized(if flip.copy { "Flip a copy##flipnow" } else { "Flip##flipnow" }, gui::v2(wide, 0.0)) {
             self.status = self.do_flip(e).unwrap_or_else(|why| why);
         }
 
+        gui::pop_style_color(1);
         gui::end_disabled();
         gui::same_line();
         if gui::button("Done##flip") {
             self.flip = None;
         }
 
+        gui::spacing();
         gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
         gui::text_wrapped("Its gizmo moves and turns the plane; a press on the ground puts it there. Models are not mirrored: they turn.");
         gui::pop_style_color(1);
