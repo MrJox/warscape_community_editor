@@ -7,7 +7,7 @@
 
 use wce_editor::editor::Editor;
 use wce_editor::tool::ViewportEvent;
-use wce_editor::{gui, icons, theme};
+use wce_editor::{gui, icons};
 use wce_foundation::math::{Double3, Float3};
 use wce_tile_editor::tile_document::{TileDocument, elem_of, piece_of, tilted, with_root_attr};
 
@@ -116,23 +116,10 @@ impl TileTool {
         gui::set_cursor_screen_pos(gui::v2(origin.x + size.x - self.place_chips_width - 8.0, origin.y + top));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         let mut picked = None;
-        if gui::begin_child("##placechips", gui::v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
+        if gui::begin_pill("##placechips") {
             let chip = |on: bool, icon: &str, id: &str, tip: &str| -> bool {
-                if on {
-                    let h = theme::palette().highlight;
-                    gui::push_style_color(gui::COL_TEXT, gui::v4(h[0], h[1], h[2], h[3]));
-                }
-
-                let clicked = gui::small_button(&format!("{icon}##{id}"));
-                if on {
-                    gui::pop_style_color(1);
-                }
-
-                if gui::is_item_hovered() {
-                    gui::set_tooltip(tip);
-                }
-
-                gui::same_line();
+                let clicked = wce_editor::chips::chip(on, icon, id, tip);
+                gui::same_line_touching();
                 clicked
             };
 
@@ -147,8 +134,7 @@ impl TileTool {
                 }
             }
 
-            gui::text_disabled("|");
-            gui::same_line();
+            wce_editor::chips::chip_separator();
             let rotations = [
                 (RotationMode::None, icons::ARROW_BIG_UP, "Free: as you turn it (R / Shift+R; the Inspector's orientation); not tilted"),
                 (RotationMode::Surface, icons::ROTATE_3D, "Follow surface: tilted to the surface under it (the turn of R / Shift+R kept)"),
@@ -163,8 +149,7 @@ impl TileTool {
             let tree = self.placing == Some(crate::tool::Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE");
             let mut brush = None;
             if tree {
-                gui::text_disabled("|");
-                gui::same_line();
+                wce_editor::chips::chip_separator();
                 let on = self.veg_brush(e).on;
                 if chip(!on, icons::TREE_PINE, "vegsingle", "One tree per click") {
                     brush = Some(false);

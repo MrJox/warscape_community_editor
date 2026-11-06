@@ -11,7 +11,7 @@ use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::{GENERATED_PREFIX, TileDocument};
 
-pub(crate) use wce_editor::chips::chip;
+pub(crate) use wce_editor::chips::{begin_chip_popup, chip};
 
 use crate::tool::{PAINT_WATER_TIP, TileTool, WATER_VIEW_TIP, document_id, set_sea_state};
 
@@ -64,12 +64,12 @@ impl TileTool {
 
         gui::set_cursor_screen_pos(gui::v2(origin.x + size.x - self.ground_chip_width - 8.0, origin.y + top));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
-        if gui::begin_child("##groundchip", gui::v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
+        if gui::begin_pill("##groundchip") {
             if chip(!look.blended || look.view != TerrainView::Colour || nogo, icons::LAYERS, "groundviews", &tip) {
                 gui::open_popup("groundviews");
             }
 
-            if gui::begin_popup("groundviews") {
+            if begin_chip_popup("groundviews") {
                 self.draw_ground_popup(e, id);
                 gui::end_popup();
             }

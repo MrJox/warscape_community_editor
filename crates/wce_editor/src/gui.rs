@@ -84,6 +84,11 @@ pub fn set_next_window_focus() {
     call!(sys::igSetNextWindowFocus())
 }
 
+/// The next window's size stays within these.
+pub fn set_next_window_size_max(max: Vec2) {
+    call!(sys::igSetNextWindowSizeConstraints(v2(0.0, 0.0), max, None, std::ptr::null_mut()))
+}
+
 pub fn set_next_window_size(size: Vec2, cond: i32) {
     call!(sys::igSetNextWindowSize(size, cond))
 }
@@ -194,6 +199,20 @@ pub fn button_width(label: &str) -> f32 {
 /// The width of a checkbox with this label.
 pub fn checkbox_width(label: &str) -> f32 {
     frame_height() + call!((*sys::igGetStyle()).ItemInnerSpacing.x) + calc_text_size(label).x
+}
+
+/// Right after the last item, with no space between them.
+pub fn same_line_touching() {
+    call!(sys::igSameLine(0.0, 0.0))
+}
+
+/// A pill: the child that holds a row of [`crate::chips::chip`]s. Its padding is in the chips, so that all of the pill is a chip; only the
+/// child loses it (what opens inside, a popup, keeps the style).
+pub fn begin_pill(id: &str) -> bool {
+    push_style_var_v(VAR_WINDOW_PADDING, v2(0.0, 0.0));
+    let open = begin_child(id, v2(0.0, 0.0), CHILD_AUTO_RESIZE, WINDOW_NO_SCROLLBAR);
+    pop_style_var(1);
+    open
 }
 
 pub fn same_line_at(x: f32) {
@@ -1080,7 +1099,7 @@ pub use sys::{
     ImGuiDir_Left as DIR_LEFT, ImGuiDir_Right as DIR_RIGHT, ImGuiInputTextFlags_EnterReturnsTrue as INPUT_ENTER_RETURNS_TRUE, ImGuiKey_1 as KEY_1,
     ImGuiKey_A as KEY_A, ImGuiKey_D as KEY_D, ImGuiKey_U as KEY_U, ImGuiKey_E as KEY_E, ImGuiKey_Escape as KEY_ESCAPE, ImGuiKey_F as KEY_F, ImGuiKey_Q as KEY_Q, ImGuiKey_R as KEY_R,
     ImGuiKey_S as KEY_S, ImGuiKey_W as KEY_W, ImGuiKey_Y as KEY_Y, ImGuiKey_Z as KEY_Z, ImGuiSelectableFlags_AllowDoubleClick as SELECTABLE_ALLOW_DOUBLE_CLICK,
-    ImGuiStyleVar_WindowBorderSize as VAR_WINDOW_BORDER_SIZE, ImGuiStyleVar_WindowPadding as VAR_WINDOW_PADDING, ImGuiStyleVar_WindowRounding as VAR_WINDOW_ROUNDING,
+    ImGuiStyleVar_WindowBorderSize as VAR_WINDOW_BORDER_SIZE, ImGuiStyleVar_WindowPadding as VAR_WINDOW_PADDING, ImGuiStyleVar_FramePadding as VAR_FRAME_PADDING, ImGuiStyleVar_WindowRounding as VAR_WINDOW_ROUNDING,
     ImGuiTreeNodeFlags_DefaultOpen as TREE_DEFAULT_OPEN, ImGuiTreeNodeFlags_Leaf as TREE_LEAF, ImGuiTreeNodeFlags_NoTreePushOnOpen as TREE_NO_PUSH_ON_OPEN, ImGuiTreeNodeFlags_OpenOnArrow as TREE_OPEN_ON_ARROW, ImGuiTreeNodeFlags_Selected as TREE_SELECTED,
     ImGuiTreeNodeFlags_SpanAvailWidth as TREE_SPAN_AVAIL_WIDTH, ImGuiWindowFlags_AlwaysAutoResize as WINDOW_ALWAYS_AUTO_RESIZE,
     ImGuiWindowFlags_HorizontalScrollbar as WINDOW_HORIZONTAL_SCROLLBAR, ImGuiWindowFlags_MenuBar as WINDOW_MENU_BAR,

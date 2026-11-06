@@ -9,14 +9,48 @@ use crate::{gui, icons, theme};
 const GIZMO_STEP_TIP: &str = "The gizmo's own steps (ImGuizmo's snap): a move, a turn or a scale goes by whole steps from where the drag began. \
 For every tool; a tool's snapping (below) then applies on top of it.";
 
-/// A chip: an icon, lit while `on`; true when clicked.
+/// A chip's padding: all of its pill.
+const CHIP_PADDING: gui::Vec2 = gui::Vec2 { x: 12.0, y: 8.0 };
+
+/// Space between a chip's popup and its pill, and the window's edge.
+const POPUP_GAP: f32 = 4.0;
+const POPUP_MARGIN: f32 = 8.0;
+
+/// [`gui::begin_popup`] for the chip drawn last: the popup hangs from the pill every frame, so that it follows the pill when the window or the
+/// layout changes, on the side of the pill the window has room on, and never longer than that room.
+pub fn begin_chip_popup(id: &str) -> bool {
+    let (lo, hi) = gui::item_rect();
+    let display = gui::io().DisplaySize;
+    let right = (lo.x + hi.x) * 0.5 > display.x * 0.5;
+    let below = (lo.y + hi.y) * 0.5 < display.y * 0.5;
+    let at = gui::v2(if right { hi.x } else { lo.x }, if below { hi.y + POPUP_GAP } else { lo.y - POPUP_GAP });
+    gui::set_next_window_pos(at, gui::COND_ALWAYS, gui::v2(if right { 1.0 } else { 0.0 }, if below { 0.0 } else { 1.0 }));
+    let room = if below { display.y - at.y } else { at.y } - POPUP_MARGIN;
+    gui::set_next_window_size_max(gui::v2(display.x - 2.0 * POPUP_MARGIN, room.max(80.0)));
+    gui::begin_popup(id)
+}
+
+/// A bar between two groups of chips in a pill, in line with them.
+pub fn chip_separator() {
+    gui::push_style_var_v(gui::VAR_FRAME_PADDING, gui::v2(2.0, CHIP_PADDING.y));
+    gui::align_text_to_frame_padding();
+    gui::text_disabled("|");
+    gui::pop_style_var(1);
+    gui::same_line_touching();
+}
+
+/// A chip: an icon that is all of its pill (`gui::begin_pill`), lit while `on`; true when clicked.
 pub fn chip(on: bool, icon: &str, id: &str, tip: &str) -> bool {
     if on {
         let h = theme::palette().highlight;
         gui::push_style_color(gui::COL_TEXT, gui::v4(h[0], h[1], h[2], h[3]));
     }
 
-    let clicked = gui::small_button(&format!("{icon}##{id}"));
+    gui::push_style_var_v(gui::VAR_FRAME_PADDING, CHIP_PADDING);
+    gui::push_style_color(gui::COL_BUTTON, gui::v4(0.0, 0.0, 0.0, 0.0));
+    let clicked = gui::button(&format!("{icon}##{id}"));
+    gui::pop_style_color(1);
+    gui::pop_style_var(1);
     if on {
         gui::pop_style_color(1);
     }
@@ -39,9 +73,9 @@ pub(crate) fn draw(e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
 
     gui::set_cursor_screen_pos(gui::v2(origin.x + size.x - e.viewport.chips_width - 8.0, origin.y + e.viewport.chips_top));
     gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
-    if gui::begin_child("##viewchips", gui::v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
+    if gui::begin_pill("##viewchips") {
         draw_snap_chip(e);
-        gui::same_line();
+        gui::same_line_touching();
         draw_camera_chip(e);
     }
 
@@ -63,7 +97,7 @@ fn draw_camera_chip(e: &mut Editor) {
         gui::open_popup("camerachip");
     }
 
-    if !gui::begin_popup("camerachip") {
+    if !begin_chip_popup("camerachip") {
         return;
     }
 
@@ -134,7 +168,7 @@ fn draw_snap_chip(e: &mut Editor) {
         gui::open_popup("snapchip");
     }
 
-    if !gui::begin_popup("snapchip") {
+    if !begin_chip_popup("snapchip") {
         return;
     }
 

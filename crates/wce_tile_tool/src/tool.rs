@@ -3879,7 +3879,7 @@ impl Tool for TileTool {
         let beside = !e.viewport.show_compass || origin.x + 8.0 + self.chips_width + 8.0 <= compass_left;
         gui::set_cursor_screen_pos(gui::v2(origin.x + 8.0, origin.y + if beside { 6.0 } else { 58.0 }));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
-        if gui::begin_child("##weatherchips", gui::v2(0.0, 0.0), gui::CHILD_AUTO_RESIZE, gui::WINDOW_NO_SCROLLBAR) {
+        if gui::begin_pill("##weatherchips") {
             self.weather.draw_chips(e);
         }
 
