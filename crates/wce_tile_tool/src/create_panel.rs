@@ -25,6 +25,11 @@ use crate::tool::{SetInUse, TileTool, document, primary};
 pub const CATEGORIES: [&str; 12] =
     ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Siege", "Rivers & roads", "References"];
 
+/// The categories' icons, for their buttons.
+const CATEGORY_ICONS: [&str; 11] = [
+    icons::BUILDING_2, icons::TREE_PINE, icons::STICKER, icons::BOX, icons::SPARKLES, icons::LIGHTBULB, icons::COMPONENT, icons::FLAG, icons::BRAIN, icons::CASTLE, icons::WAVES,
+];
+
 /// The types without a key of each fixed category (category, type, drawn).
 const FIXED: [(usize, &str, bool); 19] = [
     (11, "WceRefHuman", false), (11, "WceRefUnit", false),
@@ -129,6 +134,9 @@ type EntriesStamp = (DocumentId, u64, u64);
 pub struct CreateUi {
     entries: Option<(EntriesStamp, Arc<Vec<Entry>>)>,
     filter: String,
+
+    /// The type of item the panel lists (its buttons, `CATEGORIES`); none: only the favourites and the recent ones.
+    category: Option<usize>,
     shown: Vec<Vec<usize>>,
     folders: Vec<FolderRows>,
     shown_for: String,
@@ -751,6 +759,44 @@ impl TileTool {
     }
 
     /// Sets the Create panel's search (a script).
+    /// Chooses the type of item the Create panel lists, by its name (none: only the favourites and the recent ones).
+    ///
+    /// # Errors
+    ///
+    /// No such type.
+    pub fn set_create_category(&mut self, name: Option<&str>) -> Result<(), String> {
+        self.create.category = match name {
+            Some(name) => Some(CATEGORIES.iter().position(|c| c.eq_ignore_ascii_case(name)).ok_or_else(|| format!("no type '{name}': {}", CATEGORIES.join(", ")))?),
+            None => None,
+        };
+
+        Ok(())
+    }
+
+    /// The buttons of the types of item: one chooses what the list shows, again goes back to none. Their rows wrap to the panel.
+    fn draw_category_buttons(&mut self) {
+        for (c, title) in CATEGORIES.iter().enumerate() {
+            let n = self.create.shown.get(c).map_or(0, Vec::len);
+            let text = format!("{}  {title} ({n})", CATEGORY_ICONS[c]);
+            if c != 0 {
+                gui::same_line_or_wrap(gui::button_width(&text));
+            }
+
+            let on = self.create.category == Some(c);
+            if on {
+                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+            }
+
+            if gui::button(&format!("{text}##createtype{c}")) {
+                self.create.category = (!on).then_some(c);
+            }
+
+            if on {
+                gui::pop_style_color(1);
+            }
+        }
+    }
+
     pub fn set_create_filter(&mut self, words: &str) {
         words.clone_into(&mut self.create.filter);
     }
@@ -861,9 +907,15 @@ impl TileTool {
             self.create.filter_refocus = gui::io().KeyCtrl && self.set_entries_of(e, &entries[i]).is_some();
         }
 
+        self.draw_category_buttons();
+        gui::separator();
         let words = words(&self.create.filter);
         let (favourites, recent) = self.create_marks(e);
         let by_id = |id: &str| entries.iter().position(|en| en.id() == id);
+
+        // A search looks through everything; otherwise the list is the chosen type's.
+        let filtering = !words.is_empty();
+        let only = self.create.category.filter(|_| !filtering);
 
         // Thumbnails of the list (made in the background, kept in the cache folder).
         if self.thumbs.busy() {
@@ -873,7 +925,7 @@ impl TileTool {
                 self.thumbs.cancel();
             }
         } else if gui::small_button(&format!("{}  Make thumbnails of the list", icons::IMAGE)) {
-            let rows = self.create.shown.iter().flatten().copied().filter(|&i| Self::has_thumbnail(&entries[i])).collect::<Vec<_>>();
+            let rows = self.create.shown.iter().flatten().copied().filter(|&i| Self::has_thumbnail(&entries[i]) && only.is_none_or(|c| entries[i].category == c)).collect::<Vec<_>>();
             for i in rows {
                 self.thumbnail(e, &entries[i], false);
             }
@@ -889,7 +941,7 @@ impl TileTool {
         if gui::begin_child("createlist", gui::v2(0.0, 0.0), 0, 0) {
             // Favourites and recent entries (filtered alike), then the categories (open while a filter is typed).
             for (title, icon, ids) in [("Favourites", icons::STAR, &favourites), ("Recent", icons::HISTORY, &recent)] {
-                let rows = ids.iter().filter_map(|id| by_id(id)).filter(|&i| passes(&entries[i], &words)).collect::<Vec<_>>();
+                let rows = ids.iter().filter_map(|id| by_id(id)).filter(|&i| passes(&entries[i], &words) && only.is_none_or(|c| entries[i].category == c)).collect::<Vec<_>>();
                 if rows.is_empty() {
                     continue;
                 }
@@ -915,19 +967,26 @@ impl TileTool {
                 }
             }
 
-            let filtering = !words.is_empty();
+            if !filtering && only.is_none() && favourites.is_empty() && recent.is_empty() {
+                gui::text_disabled("Choose a type of item above, or search.");
+            }
+
             for (c, title) in CATEGORIES.iter().enumerate() {
+                if !filtering && only != Some(c) {
+                    continue;
+                }
+
                 let rows = self.create.shown.get(c).cloned().unwrap_or_default();
                 if rows.is_empty() && !(c == 6 && !filtering) {
                     continue;
                 }
 
+                // Only a search has several types to tell apart.
                 if filtering {
                     gui::set_next_item_open(true, gui::COND_ALWAYS);
-                }
-
-                if !gui::tree_node_ex_id(&format!("create_cat{c}"), gui::TREE_SPAN_AVAIL_WIDTH, &format!("{title} ({})", rows.len())) {
-                    continue;
+                    if !gui::tree_node_ex_id(&format!("create_cat{c}"), gui::TREE_SPAN_AVAIL_WIDTH, &format!("{title} ({})", rows.len())) {
+                        continue;
+                    }
                 }
 
                 if c == 6 && rows.is_empty() {
@@ -954,7 +1013,9 @@ impl TileTool {
                     });
                 });
 
-                gui::tree_pop();
+                if filtering {
+                    gui::tree_pop();
+                }
             }
         }
 
