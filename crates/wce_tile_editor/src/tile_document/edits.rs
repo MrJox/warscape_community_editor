@@ -22,7 +22,8 @@ use wce_tile::properties::{
 use wce_tile::ted_scene::TedScene;
 use wce_tile::world_transform::{WorldTransform, euler_from_matrix, euler_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
-use super::commands::{BrushStepCommand, GroundFillCommand, HeightFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedAttrsCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
+use super::shift::merged_spans;
+use super::commands::{SpliceEffect, BrushStepCommand, GroundFillCommand, HeightFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedAttrsCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
 use super::{AlignTo, CopiedItem, Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
 
 fn degrees(r: f64) -> f32 {
@@ -494,11 +495,47 @@ impl TileDocument {
 
     /// A structural edit is recorded as the text splices it made (`TedScene::begin_edit` / `end_edit`): `mark` is what `begin_edit` returned.
     pub(crate) fn push_splice(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>) {
+        self.push_splice_as(name, mark, sel_before, sel_after, SpliceEffect::Structure);
+    }
+
+    fn push_splice_as(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>, effect: SpliceEffect) {
         let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
 
         // Element indices moved: the index is rebuilt by the republish that follows.
-        self.tile_mut().idx.valid = false;
-        self.history.push(Box::new(TedSpliceCommand { name, record, sel_before, sel_after, first: true }));
+        if !matches!(effect, SpliceEffect::Touched(_)) {
+            self.tile_mut().idx.valid = false;
+        }
+
+        self.history.push(Box::new(TedSpliceCommand { name, record, sel_before, sel_after, first: true, effect }));
+    }
+
+    /// `push_splice` of an edit of attributes of `elems` alone: the elements keep their indices, only they are published again.
+    pub(crate) fn push_splice_touching(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>, elems: Vec<usize>) {
+        self.push_splice_as(name, mark, sel_before, sel_after, SpliceEffect::Touched(elems));
+    }
+
+    /// `push_splice` of an edit that added `roots` with what they hold and changed no other element's number: the scene follows the
+    /// renumbering (shift.rs). When the list did not grow by just that, everything is built again.
+    pub(crate) fn push_splice_added(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>, roots: &[usize]) {
+        let spans = self.subtree_spans(roots);
+        let t = self.tile();
+        let fits = t.idx.valid && t.idx.type_.len() + spans.iter().map(|s| s.1).sum::<usize>() == t.tscene().doc().elements().len();
+        let effect = if fits { SpliceEffect::Shift { spans, added: true } } else { SpliceEffect::Structure };
+        self.push_splice_as(name, mark, sel_before, sel_after, effect);
+    }
+
+    /// `push_splice` of an edit that removed `spans` (`subtree_spans`, read before it) and nothing else: as `push_splice_added`.
+    fn push_splice_removed(&mut self, name: String, mark: usize, sel_before: Vec<u64>, spans: Vec<(usize, usize)>) {
+        let t = self.tile();
+        let fits = t.idx.valid && t.idx.type_.len() == t.tscene().doc().elements().len() + spans.iter().map(|s| s.1).sum::<usize>();
+        let effect = if fits { SpliceEffect::Shift { spans, added: false } } else { SpliceEffect::Structure };
+        self.push_splice_as(name, mark, sel_before, vec![], effect);
+    }
+
+    /// The spans of the list `roots` and all they hold take.
+    fn subtree_spans(&self, roots: &[usize]) -> Vec<(usize, usize)> {
+        let doc = self.tile().tscene().doc();
+        merged_spans(roots.iter().map(|&r| (r, doc.subtree_size(r))).collect())
     }
 
     pub(crate) fn begin(&mut self) -> Result<usize, String> {
@@ -617,7 +654,7 @@ impl TileDocument {
         }
 
         let name = format!("Duplicate {}", self.tile().tscene().type_of(copy));
-        self.push_splice(name, mark, vec![item_of(elem)], vec![item_of(copy)]);
+        self.push_splice_added(name, mark, vec![item_of(elem)], vec![item_of(copy)], &[copy]);
         Ok(copy)
     }
 
@@ -653,7 +690,7 @@ impl TileDocument {
         match result {
             Ok(new) => {
                 let name = if new.len() == 1 { format!("Paste {}", self.tile().tscene().type_of(new[0])) } else { format!("Paste {} items", new.len()) };
-                self.push_splice(name, mark, vec![], new.iter().map(|&g| item_of(g)).collect());
+                self.push_splice_added(name, mark, vec![], new.iter().map(|&g| item_of(g)).collect(), &new);
                 Ok(new)
             }
 
@@ -696,8 +733,9 @@ impl TileDocument {
 
         let Ok(mark) = self.begin() else { return false };
         let label = self.tile().tscene().type_of(elem).to_owned();
+        let spans = self.subtree_spans(&[elem]);
         let _ = self.tscene_mut().remove(elem);
-        self.push_splice(format!("Delete {label}"), mark, vec![item_of(elem)], vec![]);
+        self.push_splice_removed(format!("Delete {label}"), mark, vec![item_of(elem)], spans);
         true
     }
 
@@ -753,7 +791,7 @@ impl TileDocument {
             set_world_position(self.tscene_mut(), copy, p);
         }
 
-        self.push_splice(format!("Add {key}"), mark, vec![template_elem.map_or(0, item_of)], vec![item_of(copy)]);
+        self.push_splice_added(format!("Add {key}"), mark, vec![template_elem.map_or(0, item_of)], vec![item_of(copy)], &[copy]);
         Ok(copy)
     }
 
@@ -1635,7 +1673,7 @@ impl TileDocument {
         let mark = self.begin()?;
         match self.tscene_mut().insert_element_text(into, &text) {
             Ok(e) => {
-                self.push_splice(format!("Add {kind}"), mark, vec![], vec![item_of(e)]);
+                self.push_splice_added(format!("Add {kind}"), mark, vec![], vec![item_of(e)], &[e]);
                 Ok(e)
             }
 
@@ -1958,6 +1996,7 @@ impl TileDocument {
 
         let name = if top.len() == 1 { format!("Delete {}", sc.type_of(top[0])) } else { format!("Delete {} items", top.len()) };
         let sel_before = top.iter().map(|&e| item_of(e)).collect();
+        let spans = self.subtree_spans(&top);
         let Ok(mark) = self.begin() else { return false };
 
         // From the last one: the indices of the others stay.
@@ -1965,7 +2004,7 @@ impl TileDocument {
             let _ = self.tscene_mut().remove(e);
         }
 
-        self.push_splice(name, mark, sel_before, vec![]);
+        self.push_splice_removed(name, mark, sel_before, spans);
         true
     }
 

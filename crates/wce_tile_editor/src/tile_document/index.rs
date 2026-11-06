@@ -912,9 +912,16 @@ impl Tile {
 
     /// The instances, type counts and markers (from the scene and the index).
     pub(crate) fn rebuild_items(&mut self, reindex: bool) {
-        wce_prof!("tile.rebuild_items");
         self.columns_changed();
         self.tech.dirty = true;
+        self.rebuild_tables(reindex);
+        self.markers_dirty = true;
+        self.polygons_dirty = true;
+    }
+
+    /// `rebuild_items` without asking for what is built from the tables to be built again.
+    pub(crate) fn rebuild_tables(&mut self, reindex: bool) {
+        wce_prof!("tile.rebuild_items");
         if reindex || !self.idx.valid {
             self.build_index();
 
@@ -984,8 +991,6 @@ impl Tile {
         }
 
         self.dirty_type = vec![0; types];
-        self.markers_dirty = true;
-        self.polygons_dirty = true;
         self.grid_dirty.set(true);
     }
 

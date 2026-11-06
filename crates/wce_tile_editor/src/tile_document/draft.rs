@@ -220,7 +220,7 @@ impl TileDocument {
 
         match result {
             Ok(g) => {
-                self.push_splice(what.to_owned(), mark, vec![], vec![item_of(g)]);
+                self.push_splice_added(what.to_owned(), mark, vec![], vec![item_of(g)], &[g]);
                 Ok(g)
             }
 

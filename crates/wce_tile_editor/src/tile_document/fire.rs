@@ -50,6 +50,12 @@ pub(crate) struct FirePreview {
 }
 
 impl Tile {
+    /// The elements were renumbered: what burns follows.
+    pub(crate) fn fire_shifted(&mut self, map: &super::shift::ElementMap) {
+        map.keys(&mut self.fire.started);
+        map.keys(&mut self.fire.shown);
+    }
+
     /// Sets a building on fire in the preview (again from the start when it burns already), at the editor's time `now`.
     pub fn fire_start(&mut self, elem: usize, now: f64) {
         self.fire.started.insert(elem, now);

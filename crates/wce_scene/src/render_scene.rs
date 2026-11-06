@@ -1404,6 +1404,20 @@ impl RenderScene {
         }
     }
 
+    /// A layer's entities follow a renumbering of their document's items: `map` gives an entity's new item, those it has none for are
+    /// removed (logged as that). Nothing else changes, so the renderer keeps what it built.
+    pub fn renumber_sources(&mut self, layer: LayerId, map: impl Fn(u64) -> Option<u64>) {
+        let mut gone = vec![];
+        for e in self.entities.iter_mut().filter(|e| e.layer == layer) {
+            match map(e.source.item) {
+                Some(item) => e.source.item = item,
+                None => gone.push(e.id..e.id + 1),
+            }
+        }
+
+        self.remove_ranges(&gone);
+    }
+
     /// Keeps the layer, drops its entities.
     pub fn clear_layer(&mut self, id: LayerId) {
         self.retain_entities(|e| e.layer != id);

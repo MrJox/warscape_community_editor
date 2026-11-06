@@ -501,6 +501,19 @@ impl Tile {
         self.cover_ground = 0;
     }
 
+    /// The elements were renumbered: the covers follow, and what stood on a removed building is made again.
+    pub(crate) fn covers_shifted(&mut self, map: &super::shift::ElementMap) {
+        map.keys(&mut self.covers);
+        map.sorted(&mut self.covers_dirty);
+        for (&e, c) in &mut self.covers {
+            if c.sources.iter().any(|&s| map.map(s).is_none()) {
+                self.covers_dirty.insert(e);
+            }
+
+            c.sources = c.sources.iter().filter_map(|&s| map.map(s)).collect();
+        }
+    }
+
     /// The polygons whose cover `elem` (a building) raised or may raise now, rebuilt at the next update.
     pub(crate) fn building_moved(&mut self, elem: usize) {
         // Covers on the terrain only (Polygons over buildings off): no building raises them.
