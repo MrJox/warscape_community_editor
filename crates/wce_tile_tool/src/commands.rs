@@ -1665,6 +1665,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("place_turn", "place_turn <degrees>", "turn what is being placed, as R does by the rotate step", |e, a| {
+        let Some(deg) = a.first().and_then(|v| number(v)) else { return fail("usage: place_turn <degrees>") };
+        with_tile(e, |t, _| {
+            t.turn_placing(deg);
+            ok("")
+        })
+    });
+
     c.add("create_type", "create_type [section]", "open a section of the Create panel, closing the one open (Buildings, Vegetation, Decals ...; none: all closed)", |e, a| {
         let name = a.join(" ");
         with_tile(e, |t, _| t.set_create_category((!name.is_empty()).then_some(name.as_str())).map_or_else(fail, |()| ok(String::new())))

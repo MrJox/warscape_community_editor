@@ -466,7 +466,40 @@ impl TileTool {
         self.status = format!("turn {:.1} deg (Alt + mouse; Shift: steps of {} deg; click places it here)", turned.rem_euclid(360.0), self.angle_step);
     }
 
-    /// The text of what a click places now (the preview shows it).
+    /// What the preview turns its text by: the turn being placed, unless the text holds it (`placing_preview`).
+    pub(crate) fn preview_yaw(&self) -> f32 {
+        let tilted = self.modes.unwrap_or_default().1 == crate::settings::RotationMode::Surface;
+        self.placing_yaw().filter(|_| !tilted).unwrap_or(0.0)
+    }
+
+    /// The text of the preview: what a click places, not turned, for the preview to turn by [`Self::preview_yaw`]: every step of a turn
+    /// would make it again otherwise. A tilted one holds its turn, which comes before the tilt.
+    pub(crate) fn placing_preview(&mut self, e: &mut Editor) -> Option<Vec<u8>> {
+        if self.placement_modes(e).1 == crate::settings::RotationMode::Surface {
+            return self.placing_text(e);
+        }
+
+        let text = match self.placing.clone()? {
+            crate::tool::Placing::Draft => document(e)?.draft_text(&Draft { yaw: 0.0, ..self.draft.clone()? })?,
+            crate::tool::Placing::Prefab(key) => self.prefab_text(e, &key).filter(|t| !t.is_empty())?,
+        };
+
+        let d = document(e)?;
+        Some(self.apply_placement_modes(d, text))
+    }
+
+    /// A prefab's reference text, not turned.
+    fn prefab_text(&mut self, e: &mut Editor, key: &str) -> Option<Vec<u8>> {
+        if self.placing_prefab_text.as_ref().is_none_or(|(k, _)| k != key) {
+            let lib = self.prefab_library(e);
+            let text = lib.load(key).map(|p| wce_tile_editor::tile_document::prefab_reference_text(&p.group_text, key)).unwrap_or_default();
+            self.placing_prefab_text = Some((key.to_owned(), text));
+        }
+
+        self.placing_prefab_text.as_ref().map(|(_, t)| t.clone())
+    }
+
+    /// The text of what a click places now.
     pub(crate) fn placing_text(&mut self, e: &mut Editor) -> Option<Vec<u8>> {
         let text = self.placing_text_unmoded(e)?;
         self.placement_modes(e);
@@ -478,11 +511,7 @@ impl TileTool {
         match self.placing.clone()? {
             crate::tool::Placing::Draft => document(e)?.draft_text(self.draft.as_ref()?),
             crate::tool::Placing::Prefab(key) => {
-                if self.placing_prefab_text.as_ref().is_none_or(|(k, _)| *k != key) {
-                    let lib = self.prefab_library(e);
-                    let text = lib.load(&key).map(|p| wce_tile_editor::tile_document::prefab_reference_text(&p.group_text, &key)).unwrap_or_default();
-                    self.placing_prefab_text = Some((key.clone(), text));
-                }
+                self.prefab_text(e, &key);
 
                 // Turned once per turn, not every frame (a prefab can be large).
                 let yaw = self.create.prefab_yaw;

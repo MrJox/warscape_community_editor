@@ -389,6 +389,42 @@ fn a_fill_is_the_general_value_times_its_types() {
 }
 
 #[test]
+fn a_preview_turns_without_being_made_again_and_as_the_item_will_be() {
+    use wce_scene::render_scene::RenderScene;
+    use wce_tile_editor::tile_document::turned;
+
+    let (_dir, mut d) = open_with_house();
+    let mut scene = RenderScene::default();
+    let layer = scene.add_layer(d.id(), "tile");
+    d.publish(&mut scene, layer);
+    let text = b"<BUILDING_INSTANCE key=\"house\" name=\"h\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\" surface_mode=\"MSM_FREEFORM\"/>".to_vec();
+    let at = Float3::new(20.0, 3.0, 30.0);
+    let shown = |s: &RenderScene| s.entities().iter().filter(|e| e.transient).map(|e| (e.id, e.world)).collect::<Vec<_>>();
+
+    d.tile_mut().set_preview(&mut scene, Some(&text), at, 0.0);
+    let (before, structure) = (shown(&scene), scene.structure_revision());
+    assert!(!before.is_empty(), "the preview shows");
+
+    d.tile_mut().set_preview(&mut scene, Some(&text), at, 37.0);
+    let by_yaw = shown(&scene);
+    assert_eq!(by_yaw.iter().map(|e| e.0).collect::<Vec<_>>(), before.iter().map(|e| e.0).collect::<Vec<_>>(), "the same entities");
+    assert_eq!(scene.structure_revision(), structure, "nothing was made again");
+    assert!(by_yaw[0].1 != before[0].1, "it turned");
+
+    // What a click places, shown from its turned text.
+    d.tile_mut().set_preview(&mut scene, Some(&turned(&text, 37.0)), at, 0.0);
+    let placed = shown(&scene);
+    assert_eq!(placed.len(), by_yaw.len());
+    for (a, b) in by_yaw.iter().zip(&placed) {
+        for r in 0..3 {
+            for c in 0..4 {
+                assert!((a.1.m[r][c] - b.1.m[r][c]).abs() < 1e-3, "[{r}][{c}]: {:?} for {:?}", a.1.m, b.1.m);
+            }
+        }
+    }
+}
+
+#[test]
 fn the_steps_of_a_drag_are_one_entry() {
     let (_dir, mut d) = open();
     let original = text(&d);
