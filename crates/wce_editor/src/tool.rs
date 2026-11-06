@@ -166,6 +166,19 @@ pub trait Tool: Any {
         false
     }
 
+    /// A gizmo of the tool's own instead of the selection's (its frame, unit axes), even while the tool has the left button: it moves
+    /// along x and z and turns about y, always in its own axes, and tells `tool_gizmo_moved`. `dragging`: it is being dragged, its height
+    /// has to stay.
+    fn tool_gizmo(&self, editor: &Editor, dragging: bool) -> Option<wce_foundation::math::Float4x4> {
+        let _ = (editor, dragging);
+        None
+    }
+
+    /// The tool's gizmo was dragged to `frame`.
+    fn tool_gizmo_moved(&mut self, editor: &mut Editor, frame: &wce_foundation::math::Float4x4) {
+        let _ = (editor, frame);
+    }
+
     /// Whether a left drag that starts off the gizmo (and off what the tool takes the press for) draws a selection box instead of turning
     /// the camera (`box_drag`); a click without a drag still selects. The camera keeps the right and middle buttons.
     fn left_drag_selects(&self, editor: &Editor) -> bool {

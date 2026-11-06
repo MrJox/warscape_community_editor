@@ -44,6 +44,9 @@ pub enum Handles {
 
     /// Three rings and the outer one that turns about the view.
     Rings,
+
+    /// What stands on the ground: the x and z axes, the square between them and the y ring. It has no centre of its own.
+    Ground,
 }
 
 /// A gizmo as it stands in the view. Positions on screen are the window's pixels, as the mouse's.
@@ -126,7 +129,50 @@ pub fn snap(handles: Handles, mouse: [f32; 2], g: &Gizmo) -> Option<[f32; 2]> {
         // times the size, and past the centre nothing. From the axis's tip it is the same wherever the click was.
         Handles::Scale => snap_axes(mouse, g, false, true),
         Handles::Rings => snap_rings(mouse, g),
+        Handles::Ground => snap_ground(mouse, g),
     }
+}
+
+fn snap_ground(mouse: [f32; 2], g: &Gizmo) -> Option<[f32; 2]> {
+    let length = g.axis_length()?;
+    let centre = (g.project)(g.centre)?;
+    let longer = |d: Float3| Some(if g.clip_length(g.centre, g.centre + d)? < g.clip_length(g.centre, g.centre - d)? { -d } else { d });
+    let (x, z) = (longer(g.axes[0])?, longer(g.axes[2])?);
+
+    let corner = |a: f32, b: f32| (g.project)(g.centre + z * (length * a) + x * (length * b));
+    let quad = [corner(QUAD_MIN, QUAD_MIN)?, corner(QUAD_MIN, QUAD_MAX)?, corner(QUAD_MAX, QUAD_MAX)?, corner(QUAD_MAX, QUAD_MIN)?];
+    if quad_area(&quad) > MIN_QUAD && in_quad(mouse, &quad) {
+        return None;
+    }
+
+    let mut best: Option<(f32, [f32; 2])> = None;
+    let mut offer = |p: [f32; 2]| {
+        let dist = distance(mouse, p);
+        if best.is_none_or(|(n, _)| dist < n) {
+            best = Some((dist, p));
+        }
+    };
+
+    for d in [x, z] {
+        if g.clip_length(g.centre, g.centre + d * length)? > AXIS_LIMIT {
+            offer(on_segment(mouse, (g.project)(g.centre + d * (length * AXIS_START))?, (g.project)(g.centre + d * length)?));
+        }
+    }
+
+    // Only the ring's half towards the camera is drawn and hit (`GetRotateType`).
+    let radius = length * RING;
+    let mut reach = 0.0f32;
+    for k in 0..RING_SAMPLES {
+        let (s, c) = (k as f32 / RING_SAMPLES as f32 * std::f32::consts::TAU).sin_cos();
+        let offset = (g.axes[2] * c + g.axes[0] * s) * radius;
+        let Some(p) = (g.project)(g.centre + offset) else { continue };
+        reach = reach.max(distance(centre, p));
+        if dot(offset, g.forward) <= 1e-4 {
+            offer(p);
+        }
+    }
+
+    best.filter(|_| distance(mouse, centre) <= reach + OUTER_MARGIN).map(|(_, p)| p)
 }
 
 fn snap_axes(mouse: [f32; 2], g: &Gizmo, planes: bool, tips: bool) -> Option<[f32; 2]> {
@@ -298,6 +344,35 @@ mod tests {
                 let first = (snap(Handles::Move, mouse, g), snap(Handles::Rings, mouse, g));
                 assert_eq!(first, (snap(Handles::Move, mouse, g), snap(Handles::Rings, mouse, g)));
             }
+        });
+    }
+
+    /// A view from above of 800 x 600 pixels, 10 pixels a metre: x to the right, z up the screen.
+    fn from_above<R>(f: impl FnOnce(&Gizmo) -> R) -> R {
+        let project = |p: Float3| Some([400.0 + p.x * 10.0, 300.0 - p.z * 10.0]);
+        let g = Gizmo {
+            project: &project, view: [800.0, 600.0], centre: Float3::default(), axes: [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)],
+            right: Float3::new(1.0, 0.0, 0.0), forward: Float3::new(0.0, -1.0, 0.0), orthographic: true, size: 0.25,
+        };
+
+        f(&g)
+    }
+
+    #[test]
+    fn on_the_ground_a_click_goes_to_the_closest_of_its_axes_and_ring() {
+        from_above(|g| {
+            assert_eq!(snap(Handles::Ground, [460.0, 292.0], g), Some([460.0, 300.0]), "the x axis");
+            assert_eq!(snap(Handles::Ground, [392.0, 240.0], g), Some([400.0, 240.0]), "the z axis");
+
+            // Past the axes: the ring, 120 pixels out.
+            let p = snap(Handles::Ground, [400.0 + 112.0 * 0.6, 300.0 + 112.0 * 0.8], g).unwrap();
+            assert!((distance(p, [400.0, 300.0]) - 120.0).abs() < 1.0, "{p:?}");
+            let p = snap(Handles::Ground, [400.0 + 124.0 * 0.6, 300.0 + 124.0 * 0.8], g).unwrap();
+            assert!((distance(p, [400.0, 300.0]) - 120.0).abs() < 1.0, "{p:?}");
+
+            // The square between the axes is ImGuizmo's; past the ring the click goes through.
+            assert_eq!(snap(Handles::Ground, [465.0, 235.0], g), None);
+            assert_eq!(snap(Handles::Ground, [400.0 + 130.0 * 0.6, 300.0 + 130.0 * 0.8], g), None);
         });
     }
 

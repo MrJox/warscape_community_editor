@@ -1,8 +1,9 @@
 //! Flip mode: a vertical plane in the viewport and the Inspector's controls for mirroring the selection across it, moved or as a copy
-//! (`TileDocument::flip`). A press on the ground moves the plane there, a drag takes it along.
+//! (`TileDocument::flip`). The plane has a gizmo of its own that moves and turns it; a press off it puts the plane on the ground there.
 
 use wce_editor::editor::Editor;
 use wce_editor::gui;
+use wce_foundation::math::Float4x4;
 use wce_scene::render_scene::{Overlay, overlay_colour};
 use wce_tile_editor::tile_document::{FlipPlane, Tile, TileDocument};
 
@@ -24,6 +25,9 @@ pub(crate) struct FlipMode {
     /// A copy goes across, the selection stays.
     pub copy: bool,
     pub dragging: bool,
+
+    /// How high its gizmo stood while it is dragged: the ground under it must not move it in the hand.
+    pub gizmo_height: f32,
 }
 
 impl TileTool {
@@ -39,8 +43,8 @@ impl TileTool {
         let n = sel.len() as f32;
         let (x, z) = sel.iter().map(|&s| t.world_position(s)).fold((0.0, 0.0), |(x, z), p| (x + p.x / n, z + p.z / n));
         self.stop_making();
-        self.flip = Some(FlipMode { plane: FlipPlane { x, z, angle: 0.0 }, copy: false, dragging: false });
-        Ok("flip: press on the ground to put the plane there; the Inspector flips".to_owned())
+        self.flip = Some(FlipMode { plane: FlipPlane { x, z, angle: 0.0 }, copy: false, dragging: false, gizmo_height: 0.0 });
+        Ok("flip: its gizmo moves and turns the plane, a press on the ground puts it there; the Inspector flips".to_owned())
     }
 
     /// Mirrors the selection across the plane.
@@ -68,6 +72,24 @@ impl TileTool {
         }
 
         true
+    }
+
+    /// The plane's gizmo: x across the plane, z along it, on the ground.
+    pub(crate) fn flip_gizmo(&self, e: &Editor, dragging: bool) -> Option<Float4x4> {
+        let flip = self.flip?;
+        let (x, z) = (flip.plane.x, flip.plane.z);
+        let id = document_id(e)?;
+        let y = if dragging { flip.gizmo_height } else { e.docs.find_as::<TileDocument>(id)?.tile().terrain_height(x, z) };
+        let (s, c) = flip.plane.angle.to_radians().sin_cos();
+        Some(Float4x4 { m: [[c, 0.0, -s, x], [0.0, 1.0, 0.0, y], [s, 0.0, c, z], [0.0, 0.0, 0.0, 1.0]] })
+    }
+
+    /// The gizmo was dragged.
+    pub(crate) fn flip_gizmo_moved(&mut self, frame: &Float4x4) {
+        let Some(flip) = &mut self.flip else { return };
+        let m = &frame.m;
+        (flip.plane.x, flip.plane.z, flip.gizmo_height) = (m[0][3], m[2][3], m[1][3]);
+        flip.plane.angle = m[2][0].atan2(m[0][0]).to_degrees();
     }
 
     /// The Inspector in Flip mode. True while it shows.
@@ -125,7 +147,7 @@ impl TileTool {
         }
 
         gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
-        gui::text_wrapped("Press on the ground to put the plane there. Models are not mirrored: they turn.");
+        gui::text_wrapped("Its gizmo moves and turns the plane; a press on the ground puts it there. Models are not mirrored: they turn.");
         gui::pop_style_color(1);
         true
     }

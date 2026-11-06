@@ -643,7 +643,12 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     // ---- gizmo (not while the tool owns the left button: a grab or a brush must not hand the click to the gizmo under the cursor)
     let claims = e.viewport_and_tool_claims();
     let mut gizmo_target: Option<(SourceRef, Float4x4)> = None;
-    if e.viewport.gizmo != GizmoMode::Off && !e.viewport.game_view && !claims && !e.selection.is_empty() {
+    let dragged = e.viewport.gizmo_was_using;
+    let tool_gizmo = if e.viewport.game_view { None } else { e.with_active_tool(|t, e| t.tool_gizmo(e, dragged)).flatten() };
+    let tools = tool_gizmo.is_some();
+    if let Some(frame) = tool_gizmo {
+        gizmo_target = Some((SourceRef::default(), frame));
+    } else if e.viewport.gizmo != GizmoMode::Off && !e.viewport.game_view && !claims && !e.selection.is_empty() {
         let primary = e.selection.items()[0];
         gizmo_target = e.docs.find(primary.doc).and_then(|d| d.item_transform(primary)).map(|world| (primary, world));
     }
@@ -657,6 +662,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         let v = to_gizmo(&cam.view());
         let p = to_gizmo(&cam.projection(w as f32 / h as f32));
         let op = match vp.gizmo {
+            _ if tools => gz::TRANSLATE_X | gz::TRANSLATE_Z | gz::ROTATE_Y,
             GizmoMode::Translate => gz::TRANSLATE,
             GizmoMode::Rotate => gz::ROTATE,
             _ => gz::SCALE,
@@ -664,10 +670,10 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
         // Local coordinates: the gizmo works on a stand-in with the parent's axes at the item (the delta it makes is the same world move);
         // the scale is the item's own.
-        let parent = (vp.local_coordinates && vp.gizmo != GizmoMode::Scale).then(|| e.docs.find(primary.doc).and_then(|d| d.item_parent_transform(primary))).flatten();
+        let parent = (!tools && vp.local_coordinates && vp.gizmo != GizmoMode::Scale).then(|| e.docs.find(primary.doc).and_then(|d| d.item_parent_transform(primary))).flatten();
         let frame = parent.map_or(world, |pm| axes_at(&pm, &world));
         let mut m = to_gizmo(&frame);
-        let mode = if parent.is_some() || vp.gizmo == GizmoMode::Scale && vp.local_coordinates { gz::LOCAL } else { gz::WORLD };
+        let mode = if tools || parent.is_some() || vp.gizmo == GizmoMode::Scale && vp.local_coordinates { gz::LOCAL } else { gz::WORLD };
         let gizmo_clip = (2.0 * vp.gizmo_points / size.y.max(1.0)).clamp(0.02, 1.5);
         let mut snap_values = [vp.snap_move; 3];
         if vp.gizmo == GizmoMode::Rotate {
@@ -690,7 +696,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         let project = |p: Float3| cam.project(p, aspect).map(|(x, y)| [origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y]);
         let centre = Float3::new(frame.m[0][3], frame.m[1][3], frame.m[2][3]);
         let axis = |c: usize| normalize(Float3::new(frame.m[0][c], frame.m[1][c], frame.m[2][c]));
-        let local_axes = parent.is_some() || vp.gizmo == GizmoMode::Scale;
+        let local_axes = tools || parent.is_some() || vp.gizmo == GizmoMode::Scale;
         let axes = if local_axes { [axis(0), axis(1), axis(2)] } else { [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)] };
         let shape = crate::gizmo_reach::Gizmo {
             project: &project, view: [size.x, size.y], centre, axes, right, forward, orthographic: cam.is_ortho(), size: gizmo_clip,
@@ -708,6 +714,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             gz::ImGuizmo_SetDrawlist(dear_imgui_sys::igGetWindowDrawList() as *mut _);
             gz::ImGuizmo_SetRect(origin.x, origin.y, size.x, size.y);
             let handles = match vp.gizmo {
+                _ if tools => crate::gizmo_reach::Handles::Ground,
                 GizmoMode::Translate => crate::gizmo_reach::Handles::Move,
                 GizmoMode::Rotate => crate::gizmo_reach::Handles::Rings,
                 _ => crate::gizmo_reach::Handles::Scale,
@@ -724,7 +731,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             gui::with_mouse_at(shown.map(|[x, y]| gui::v2(x, y)), || {
                 gz::ImGuizmo_Manipulate(
                     v.as_ptr(), p.as_ptr(), op, mode, m.as_mut_ptr(), std::ptr::null_mut(),
-                    if vp.snap { snap_values.as_ptr() } else { std::ptr::null() }, std::ptr::null(), std::ptr::null(),
+                    if vp.snap && !tools { snap_values.as_ptr() } else { std::ptr::null() }, std::ptr::null(), std::ptr::null(),
                 );
                 using_gizmo = gz::ImGuizmo_IsUsing();
                 over_gizmo_handle = gz::ImGuizmo_IsOver_Nil();
@@ -747,7 +754,9 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
             // The tool's snapping (the Tile tool's grid and points) on a translate; the gizmo's own Snap is the step it already took.
             let mut moved = from_gizmo(&m);
-            if vp_gizmo == GizmoMode::Translate {
+            if tools {
+                e.with_active_tool(|t, e| t.tool_gizmo_moved(e, &moved));
+            } else if vp_gizmo == GizmoMode::Translate {
                 let (from, to) = ([frame.m[0][3], frame.m[1][3], frame.m[2][3]], [moved.m[0][3], moved.m[1][3], moved.m[2][3]]);
                 let snapped = e.with_active_tool(|t, e| t.snap_gizmo_move(e, primary, from, to)).unwrap_or(to);
                 moved.m[0][3] = snapped[0];
@@ -755,14 +764,14 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
                 moved.m[2][3] = snapped[2];
             }
 
-            if vp_gizmo == GizmoMode::Rotate {
+            if !tools && vp_gizmo == GizmoMode::Rotate {
                 moved = e.with_active_tool(|t, e| t.snap_gizmo_rotate(e, primary, &frame, moved)).unwrap_or(moved);
             }
 
             let delta = moved * inverse(&frame);
             let items = e.selection.items().to_vec();
             let gesture = e.viewport.gesture;
-            if let Some(d) = e.docs.find_mut(primary.doc) {
+            if let Some(d) = e.docs.find_mut(primary.doc).filter(|_| !tools) {
                 if vp_gizmo == GizmoMode::Scale {
                     // ImGuizmo keeps the matrix the drag began with: its axes' lengths are the scale since then.
                     let m = &moved.m;
