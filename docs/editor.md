@@ -122,6 +122,11 @@ alone, as the cameras of in-game captures fit (western_city_rome/small: the edit
 
 `tile_studio.exe` (and its own renderer) was removed in Phase 8; the tile captures of `scripts/shots.sh` are the render regression.
 
+**Reference unit (`ref_human`):** the Tile panel's section stands a real unit in the tile to measure the scale against: any unit of the game's
+tables or a mod's, its faction, colours and soldier, looping its idle; riders with their mounts. It is the editor's only: nothing of it goes into
+the tile's files or an export (the settings remember the unit and, per tile, where it stands). Script: `tile_ref_human on|off`, `unit`, `place`.
+It needs rpfm's schema of the game. See [plans/units.md](plans/units.md).
+
 ## Cross-tool composition (Phase 7)
 
 Every open file is a `Document` in the one `DocumentManager`, whichever tool opened it: a tile and an `.environment` (and vfx files) are open at once, each with its own history, modified marker and layer. Opening a file of another tool

@@ -5,9 +5,9 @@ historical battle scripting), the Cinematic tool (the most pressing, after the t
 decided). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
-State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3 and 5 are done, step 4's code, and step 6's idle: the renderer draws whole units from the DB, a mount under
-a rider, with materials and skin lighting, standing and looping their idle, TDD's trolls too. Step 4's comparison with the game has begun (screenshots in `~/wce_re/scratch/units/ref`).
-Nothing places a unit yet outside the check. The scratch scripts and disassembly are in
+State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3, 5 and 7's `ref_human` are done, step 4's code, and step 6's idle: the Tile tool shows any unit of the DB
+standing in a tile, a mount under a rider, with materials and skin lighting, looping its idle, TDD's trolls too. Step 4's comparison with the game has begun (screenshots in `~/wce_re/scratch/units/ref`).
+Waiting for the screenshots' weather to compare the lighting. The scratch scripts and disassembly are in
 `~/wce_re/scratch/units`.
 
 ## What the game does
@@ -147,8 +147,9 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    the table's fragments, loops, hand poses (a clip's `RHAND_POSE` / `LHAND_POSE` numbers are the `HAND_POSE_*` slots in the engine's order,
    `BATTLE_ENTITY_ANIMATION_TYPE`), the rig of the clip's own skeleton (TDD's trolls: the table says `rome_man_game`, the clip `humanoid04f_s068`).
    Left: blending, a slot's other variations, `weapon_bone_N` flags, `SPLICE`s, `ANIMATED_PROP`s (bows).
-7. **First consumers.** `ref_human` in the Tile tool (decisions below); a small viewer in the Unit tool as the test bench, dev-only
-   (`TODO(pre-release)`). Tested with infantry, cavalry and TDD's trolls.
+7. **First consumers.** `ref_human` (done 2026-11-07, `wce_tile_tool/src/ref_human.rs`): the Tile panel's Reference unit section, or the command
+   `tile_ref_human`. A scene layer of its own and the settings (which unit, per tile where it stands), never the tile's files. It can't be
+   picked: Place moves it. No viewer in the Unit tool yet: `ref_human` and `unit_render_check` are the test bench so far.
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
    tool needs them.

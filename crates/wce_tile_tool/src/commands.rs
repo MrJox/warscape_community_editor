@@ -2114,6 +2114,35 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("tile_ref_human", "tile_ref_human on|off | unit <unit> [faction] [soldier] | place <x> <z> [turn]", "the reference unit (editor only: not in the tile)", |e, a| {
+        with_tile(e, |t, e| {
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            match a.first().map(String::as_str) {
+                Some("on") => t.ref_human.show = true,
+                Some("off") => t.ref_human.show = false,
+                Some("unit") if a.len() >= 2 => {
+                    let (unit, faction, seed) = (a[1].clone(), a.get(2).cloned().unwrap_or_default(), a.get(3).and_then(|s| s.parse().ok()).unwrap_or(0));
+                    e.update_tool_settings::<crate::settings::TileSettings>(crate::settings::SETTINGS_ID, |s| {
+                        s.ref_human.unit.clone_from(&unit);
+                        s.ref_human.faction.clone_from(&faction);
+                        s.ref_human.seed = seed;
+                    });
+                }
+
+                Some("place") if a.len() >= 3 => {
+                    let (Ok(x), Ok(z)) = (a[1].parse::<f32>(), a[2].parse::<f32>()) else { return fail("usage: tile_ref_human place <x> <z> [turn]") };
+                    let y = document(e).map_or(0.0, |d| d.tile().terrain_height(x, z));
+                    t.ref_human.place(e, id, Float3::new(x, y, z), a.get(3).and_then(|s| s.parse().ok()));
+                    return ok(&format!("at {x} {y} {z}"));
+                }
+
+                _ => return fail("usage: tile_ref_human on|off | unit <unit> [faction] [soldier] | place <x> <z> [turn]"),
+            }
+
+            ok("")
+        })
+    });
+
     c.add("tile_generate_siege_ai", "tile_generate_siege_ai", "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported", |e, _| {
         with_tile(e, |t, e| match t.generate_siege_ai_now(e) {
             Ok(l) => ok(&format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("\n  {w}")).collect::<String>())),
