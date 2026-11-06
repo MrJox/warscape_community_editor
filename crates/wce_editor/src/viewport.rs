@@ -8,7 +8,7 @@ use std::path::Path;
 use dear_imguizmo_sys as gz;
 use wce_editor_core::camera_controller::{CameraController, CameraInput, CameraMode, CameraOptions, FlyCamera, OrbitCamera, TopDownCamera, TotalWarCamera, WalkCamera};
 use wce_foundation::log;
-use wce_foundation::math::{Float3, Float4x4, inverse, length};
+use wce_foundation::math::{Float3, Float4x4, inverse, length, normalize};
 use wce_foundation::{clock::Clock, wce_prof};
 use wce_imgui::renderer::D3D11Renderer;
 use wce_render::render_target::RenderTarget;
@@ -108,6 +108,9 @@ pub struct Viewport {
     trace_h: u32,
     trace_n: u32,
     gizmo_was_using: bool,
+
+    /// A drag of the gizmo that began off its handles (`gizmo_reach`): where it is shown the mouse, from the mouse.
+    gizmo_offset: Option<[f32; 2]>,
     wheel_owned: bool,
     gesture: u64,
     press: (f32, f32),
@@ -137,7 +140,7 @@ impl Default for Viewport {
             camera_options: CameraOptions::default(), edge_scroll: false, obstacles: Default::default(), target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
             local_coordinates: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, fog: 1.0, hovered: false, frames_rendered: 0, show_compass: true, chips_width: 0.0, chips_top: 6.0, tool_chips_width: 0.0, show_coords: true, map_frame: None, battle_frame: None, cursor_ground: None, probe: Default::default(),
             north: [0.0, 1.0], trace: String::new(),
-            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, box_from: None, box_active: false, image_origin: gui::v2(0.0, 0.0),
+            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, gizmo_offset: None, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, box_from: None, box_active: false, image_origin: gui::v2(0.0, 0.0),
         }
     }
 }
@@ -681,6 +684,21 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         let clear = |id: gui::ImGuiID| if id == button_id { 0 } else { id };
         gui::set_context_ids((clear(ids.0), clear(ids.1), clear(ids.2)));
 
+        // The whole gizmo takes the mouse: inside it but off its handles (ImGuizmo asked with the real position), it is shown the closest one.
+        let (right, _, forward) = cam.axes();
+        let aspect = w as f32 / h as f32;
+        let project = |p: Float3| cam.project(p, aspect).map(|(x, y)| [origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y]);
+        let centre = Float3::new(frame.m[0][3], frame.m[1][3], frame.m[2][3]);
+        let axis = |c: usize| normalize(Float3::new(frame.m[0][c], frame.m[1][c], frame.m[2][c]));
+        let local_axes = parent.is_some() || vp.gizmo == GizmoMode::Scale;
+        let axes = if local_axes { [axis(0), axis(1), axis(2)] } else { [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)] };
+        let shape = crate::gizmo_reach::Gizmo {
+            project: &project, view: [size.x, size.y], centre, axes, right, forward, size: gizmo_clip,
+        };
+
+        let held_offset = vp.gizmo_offset;
+        let mut next_offset = None;
+
         // SAFETY: inside a Dear ImGui frame, in the viewport window; the arrays outlive the calls.
         unsafe {
             gz::ImGuizmo_SetOrthographic(cam.is_ortho());
@@ -689,13 +707,30 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             gz::ImGuizmo_SetGizmoSizeClipSpace(gizmo_clip);
             gz::ImGuizmo_SetDrawlist(dear_imgui_sys::igGetWindowDrawList() as *mut _);
             gz::ImGuizmo_SetRect(origin.x, origin.y, size.x, size.y);
-            gz::ImGuizmo_Manipulate(
-                v.as_ptr(), p.as_ptr(), op, mode, m.as_mut_ptr(), std::ptr::null_mut(),
-                if vp.snap { snap_values.as_ptr() } else { std::ptr::null() }, std::ptr::null(), std::ptr::null(),
-            );
-            using_gizmo = gz::ImGuizmo_IsUsing();
-            over_gizmo_handle = gz::ImGuizmo_IsOver_Nil();
+            let handles = if vp.gizmo == GizmoMode::Rotate { crate::gizmo_reach::Handles::Rings } else { crate::gizmo_reach::Handles::Axes };
+            let dragging = gz::ImGuizmo_IsUsing();
+            let shown = match held_offset.filter(|_| dragging) {
+                // A drag that began off the handles goes on from where it was shown, by the mouse's movement.
+                Some([x, y]) => Some([mouse_x + x, mouse_y + y]),
+                None if hovered && !dragging && !gz::ImGuizmo_IsOver_Nil() => crate::gizmo_reach::snap(handles, [mouse_x, mouse_y], &shape),
+                None => None,
+            };
+
+            gui::with_mouse_at(shown.map(|[x, y]| gui::v2(x, y)), || {
+                gz::ImGuizmo_Manipulate(
+                    v.as_ptr(), p.as_ptr(), op, mode, m.as_mut_ptr(), std::ptr::null_mut(),
+                    if vp.snap { snap_values.as_ptr() } else { std::ptr::null() }, std::ptr::null(), std::ptr::null(),
+                );
+                using_gizmo = gz::ImGuizmo_IsUsing();
+                over_gizmo_handle = gz::ImGuizmo_IsOver_Nil();
+            });
+
+            if using_gizmo {
+                next_offset = shown.map(|[x, y]| [x - mouse_x, y - mouse_y]);
+            }
         }
+
+        e.viewport.gizmo_offset = next_offset;
 
         // ImGuizmo does not change these ids itself: back to what Dear ImGui had.
         gui::set_context_ids(ids);

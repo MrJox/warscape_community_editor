@@ -907,6 +907,18 @@ pub fn add_input_text(text: &str) {
     call!(sys::ImGuiIO_AddInputCharactersUTF8(sys::igGetIO_Nil(), c.as_ptr()))
 }
 
+/// `f` with the mouse at `at` as far as it can tell, the real position back after it.
+pub fn with_mouse_at<R>(at: Option<Vec2>, f: impl FnOnce() -> R) -> R {
+    let real = io().MousePos;
+    if let Some(at) = at {
+        io().MousePos = at;
+    }
+
+    let out = f();
+    io().MousePos = real;
+    out
+}
+
 pub fn io() -> &'static mut sys::ImGuiIO {
     call!(&mut *sys::igGetIO_Nil())
 }
