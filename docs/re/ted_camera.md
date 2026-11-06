@@ -12,7 +12,8 @@ Static reading of `TEd.AssemblyKit.exe` (Attila kit) and its saved `Ted.xml`; TE
 
 The game (Attila): `default_camera_type` in `preferences.script.txt` (0 totalwar, 1 rts, 2 debug), `camera_move_speed` 100,
 `camera_turn_speed` 5; the `battle_cameras` table's land row: `min_height` 2, `max_height_small` 60, `max_height_large` 90,
-`move_speed_min_multiplier` 0.15, `move_speed_max_multiplier` 1.5, `turn_speed_multiplier` 1.5 (mixed: min 4, naval: min 6.5).
+`move_speed_min_multiplier` 0.15, `move_speed_max_multiplier` 1.5, `turn_speed_multiplier` 1.5 (mixed: min 4, naval: min 6.5). ASSUMPTION:
+the heights are in game units (two per scene unit on a tile), which the editor's limits follow.
 
 The editor's cameras (`wce_editor_core::camera_controller`) take these as their models: Total War (the game's), Top-down (Ortho Top),
 Walk, Fly (Look) and Orbit. Not ported: `head_bob`, `roll`, depth of field.

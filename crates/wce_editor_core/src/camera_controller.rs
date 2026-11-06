@@ -54,10 +54,10 @@ pub struct CameraOptions {
     /// 0 (off) .. 1: how long the view takes to catch up with the controls (up to 0.1 s for most of the way).
     pub smoothing: f32,
 
-    /// The game's battle camera limits (the `battle_cameras` table's land row: 2 to 90 m above the ground).
+    /// The game's battle camera limits (the `battle_cameras` table's land row: 2 to 90 game units above the ground).
     pub game_limits: bool,
 
-    /// The eye stays `ground_clearance` above the terrain.
+    /// The eye stays `ground_clearance` above the ground (the terrain or the sea).
     pub respect_ground: bool,
     pub ground_clearance: f32,
 
@@ -71,7 +71,7 @@ impl Default for CameraOptions {
     }
 }
 
-/// The game's battle camera limits above the ground (`battle_cameras`, land: min_height 2, max_height_large 90).
+/// The game's battle camera limits above the ground, in game units (`battle_cameras`, land: min_height 2, max_height_large 90).
 pub const GAME_MIN_HEIGHT: f32 = 2.0;
 pub const GAME_MAX_HEIGHT: f32 = 90.0;
 
@@ -80,14 +80,19 @@ pub const EYE_RADIUS: f32 = 1.0;
 
 /// What the cameras stand on and bump into.
 pub trait CameraWorld {
-    /// The terrain's height at a point; `None` off every terrain.
+    /// The height of what the cameras stand on at a point (the terrain, or the sea over it); `None` off both.
     fn ground(&mut self, x: f32, z: f32) -> Option<f32>;
 
-    /// Where a ray (direction normalized) meets the terrain first.
+    /// Where a ray (direction normalized) meets that ground first.
     fn ray_ground(&mut self, origin: Float3, dir: Float3) -> Option<Float3>;
 
     /// A sphere moved out of the obstacles (their bounding boxes), the least it takes.
     fn push_out(&mut self, centre: Float3, radius: f32) -> Float3;
+
+    /// Game units per unit of this world: the game's limits are in game units.
+    fn game_units(&self) -> f32 {
+        1.0
+    }
 }
 
 /// No ground, no obstacles.
@@ -329,7 +334,8 @@ impl CameraController for TotalWarCamera {
         if opts.game_limits
             && let Some(g) = world.ground(self.eye.x, self.eye.z)
         {
-            self.eye.y = self.eye.y.clamp(g + GAME_MIN_HEIGHT, g + GAME_MAX_HEIGHT);
+            let units = world.game_units();
+            self.eye.y = self.eye.y.clamp(g + GAME_MIN_HEIGHT / units, g + GAME_MAX_HEIGHT / units);
         }
 
         self.eye = constrain(self.eye, opts, world);
