@@ -201,8 +201,19 @@ Check: in a siege battle, watch a wall section collapse from intact to destroyed
 The building list's record has a `scale` (a vec3), and TEd has no such property and writes 1. **The game ignores it**: on `plains/8x8/8x8_aa`, vanilla,
 `christian_church_1` at scales 1, 2, 0.5 and (1, 2.5, 1) in `building_list` (the floats checked in the exported file) all stood at the same size in a
 battle. The same four as prop markers (`wce_tile::export_as_prop`) were scaled, the non-uniform one too, behaved as props (no collision, no damage), and
-at scale 1 matched the building in size and height. So a building can be scaled only as a prop, and not by TEd's restriction: the game's. Not tried: the
-`scale` of a `Building` in a BMD (the escalation layers), and the matrix a prop marker takes beyond scale (shear).
+at scale 1 matched the building in size and height. So a building can be scaled only as a prop, and not by TEd's restriction: the game's.
+
+Static reading of Attila's `empire.retail.dll` (same day; RVAs): the field is **stored but unused**. The map's building record (0x88 bytes, the same for `building_list` and the
+BMDs) keeps the scale at +0x40, and only its readers and writers touch it (ESF about 0xde12c5, fastbin 0xd89150 / 0xd89c70, XML 0xdd34f0 / 0xde7210, vector copies). What makes the
+buildings does not: the loop at 0x16bec0, the bounds at 0x170b20 / 0x159a30 (the type's model bounds, heading, position), the full building 0x632440 with its world matrix 0x698340
+(rotation and translation), the lite building 0x50bfe0, and the far buildings (`register_far_buildings` 0x4bb5e0: 0x20-byte records without a scale). A BMD's `Building` (fastbin v3
+has no `transform`: that is PROP's, 0xd898d0, which is why props scale) lands in the same records (0xdc72e0, 0xdcd910), so the escalation layers should behave alike; not tried in game.
+No tweak gates it: `building_scale` is the campaign's (`CampaignBuildingDisplay.cpp`), `battle_building_enable_lod_size_scale` is about LODs. `set_scale` hits in the dll were not
+followed, one record site (0x1212b0) was not read closely, and neither was the runtime choice of `building_list_<layer>`.
+
+Not a real scale, and unverified: nothing on those paths normalises the quaternion, so a non-unit one should stretch the drawn model across its axis (yaw: wider, never taller), while
+the bounds and far buildings use the heading; and every piece has a matrix of its own in the draw, which may be the `.cs2` node `docs/re/renderer.md` found identity everywhere, so it
+would scale a type, not an instance. Rome 2 and Thrones not checked.
 
 ## Look properties (2026-10-27)
 
