@@ -111,7 +111,6 @@ fn draw_camera_chip(e: &mut Editor) {
     let o = &mut e.viewport.camera_options;
     gui::checkbox("Respect ground##camerachip", &mut o.respect_ground);
     gui::checkbox("Respect collisions (bounding boxes)##camerachip", &mut o.respect_collisions);
-    gui::checkbox("Game height limits##camerachip", &mut o.game_limits);
     gui::set_next_item_width(160.0);
     gui::slider_float("Smoothing##camerachip", &mut o.smoothing, 0.0, 1.0, "%.2f");
     gui::set_next_item_width(160.0);

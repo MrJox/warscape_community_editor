@@ -309,11 +309,12 @@ impl Editor {
         self.save_settings();
     }
 
-    /// The settings' camera: its mode and options into the viewport.
+    /// The settings' camera: its mode and options into the viewport. The game's height limits are hidden until they are investigated: off
+    /// whatever the settings say (their value is left alone), and only the `camera limits` command turns them on, for its run.
     pub fn apply_camera_settings(&mut self) {
         let c = &self.settings.camera;
         self.viewport.camera_options = CameraOptions {
-            smoothing: c.smoothing.clamp(0.0, 1.0), game_limits: c.game_limits, respect_ground: c.respect_ground, ground_clearance: c.ground_clearance.max(0.0),
+            smoothing: c.smoothing.clamp(0.0, 1.0), game_limits: false, respect_ground: c.respect_ground, ground_clearance: c.ground_clearance.max(0.0),
             respect_collisions: c.respect_collisions,
         };
 
@@ -333,14 +334,14 @@ impl Editor {
     pub fn sync_camera_settings(&mut self) {
         let (o, c) = (self.viewport.camera_options, &mut self.settings.camera);
         c.mode = self.viewport.mode().key().to_owned();
-        (c.smoothing, c.game_limits, c.respect_ground, c.ground_clearance, c.respect_collisions) = (o.smoothing, o.game_limits, o.respect_ground, o.ground_clearance, o.respect_collisions);
+        (c.smoothing, c.respect_ground, c.ground_clearance, c.respect_collisions) = (o.smoothing, o.respect_ground, o.ground_clearance, o.respect_collisions);
         c.edge_scroll = self.viewport.edge_scroll;
     }
 
     fn camera_settings_changed(&self) -> bool {
         let (o, c) = (self.viewport.camera_options, &self.settings.camera);
-        (o.smoothing, o.game_limits, o.respect_ground, o.ground_clearance, o.respect_collisions, self.viewport.edge_scroll)
-            != (c.smoothing, c.game_limits, c.respect_ground, c.ground_clearance, c.respect_collisions, c.edge_scroll)
+        (o.smoothing, o.respect_ground, o.ground_clearance, o.respect_collisions, self.viewport.edge_scroll)
+            != (c.smoothing, c.respect_ground, c.ground_clearance, c.respect_collisions, c.edge_scroll)
     }
 
     /// Switches the camera mode, kept in the settings.
