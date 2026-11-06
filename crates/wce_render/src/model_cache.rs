@@ -67,10 +67,11 @@ pub const TEX_DETAIL: usize = 5;
 pub const TEX_ALPHA_MASK: usize = 6;
 pub const TEX_AMBIENT: usize = 7;
 pub const TEX_SKIN_MASK: usize = 8;
-pub const TEX_SLOTS: usize = 9;
+pub const TEX_DECAL_MASK: usize = 9;
+pub const TEX_SLOTS: usize = 10;
 
 const TEX_NAMES: [&str; TEX_SLOTS] =
-    ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask", "s_ambient_map", "s_skin_mask_map"];
+    ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask", "s_ambient_map", "s_skin_mask_map", "s_decal_mask"];
 
 impl MeshKind {
     pub fn is_tree(self) -> bool {
@@ -106,7 +107,7 @@ pub enum MeshKind {
     /// A skinned mesh (loaded with MODEL_SKINNED_SUFFIX, drawn by renderer/skinned.rs): the Weighted materials, `weighted.hlsl`.
     Weighted,
 
-    /// The same with the WeightedSkin materials: `weighted.hlsl`'s skin entries.
+    /// The same with the WeightedSkin materials: the skin entries, whose pixels the skin lighting draws.
     WeightedSkin,
 
     /// TiledDirtmap: rigidtileddirtmapmesh, rigidstandard plus a tiled dirt map (`s_detail_map` at uv * `g_uv2_tile_interval`) faded by an
@@ -163,6 +164,13 @@ pub struct GpuMesh {
     pub stride: u32,
 
     pub kind: MeshKind,
+
+    /// A weighted mesh's material has a dirt map (`weightedwithdirt`) or a decal (`weightedwithdecal`), or both (`weightedwithdecaldirt`).
+    pub dirt: bool,
+    pub decal: bool,
+
+    /// A decal's rectangle in the mesh's uv (`g_decal_uv_rect_coords`, the material's vector 0).
+    pub decal_rect: [f32; 4],
 
     /// The tiled dirt map's repeats per uv unit (the material's floats 0 and 1, `rigid_config_PS.g_uv2_tile_interval`); TiledDirtmap only.
     pub uv2_tile: [f32; 2],
@@ -635,6 +643,21 @@ fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::f
         })
 }
 
+/// A weighted material: its mesh kind, whether it has a dirt map and whether it has a decal; `None` for the others.
+fn weighted_material(material: MaterialType) -> Option<(MeshKind, bool, bool)> {
+    Some(match material {
+        MaterialType::Weighted => (MeshKind::Weighted, false, false),
+        MaterialType::WeightedDirtmap => (MeshKind::Weighted, true, false),
+        MaterialType::WeightedDecal => (MeshKind::Weighted, false, true),
+        MaterialType::WeightedDecalDirtmap => (MeshKind::Weighted, true, true),
+        MaterialType::WeightedSkin => (MeshKind::WeightedSkin, false, false),
+        MaterialType::WeightedSkinDirtmap => (MeshKind::WeightedSkin, true, false),
+        MaterialType::WeightedSkinDecal => (MeshKind::WeightedSkin, false, true),
+        MaterialType::WeightedSkinDecalDirtmap => (MeshKind::WeightedSkin, true, true),
+        _ => return None,
+    })
+}
+
 /// Poses an animation's mesh in its first frame (anim_pose.rs): a weighted mesh by its bones' skinning matrices, a rigid one by its bone
 /// (the material's matrix index, else the first bone). Without the animation file the mesh stays as stored.
 fn pose_first_frame(model: &mut RigidModel, stem: &str, read: &SharedReader) {
@@ -781,10 +804,10 @@ impl ModelInner {
         let textures = &self.textures;
         let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| -> Option<GpuMesh> {
             let (mesh, material) = (block.mesh(), block.material());
+            let weighted = weighted_material(*mesh.material_type());
+            let (dirt, decal) = weighted.map_or((false, false), |(_, dirt, decal)| (dirt, decal));
             let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
-                // Until the materials are done (docs/plans/units.md, step 4) the dirt and decal ones draw without their dirt and decals.
-                (MaterialType::Weighted | MaterialType::WeightedDirtmap | MaterialType::WeightedDecal | MaterialType::WeightedDecalDirtmap, f @ (VertexFormat::Weighted | VertexFormat::Cinematic)) if skinned => (MeshKind::Weighted, *f),
-                (MaterialType::WeightedSkin | MaterialType::WeightedSkinDirtmap, f @ (VertexFormat::Weighted | VertexFormat::Cinematic)) if skinned => (MeshKind::WeightedSkin, *f),
+                (_, f @ (VertexFormat::Weighted | VertexFormat::Cinematic)) if skinned && weighted.is_some() => (weighted?.0, *f),
                 _ if skinned => return None,
                 (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
                 (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
@@ -900,7 +923,10 @@ impl ModelInner {
                 alpha_mode: material.params_i32().iter().find(|(id, _)| *id == 0).map_or(0, |(_, v)| *v),
                 stride,
                 kind,
-                uv2_tile: if matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
+                dirt,
+                decal,
+                decal_rect: material.params_vector4df32().iter().find(|(id, _)| *id == 0).map_or([0.0, 0.0, 1.0, 1.0], |(_, v)| [v.x, v.y, v.z, v.w]),
+                uv2_tile: if dirt || matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
                 tint: tree_tint(material),
                 offset: pivot,
                 has_offset: pivot != Float3::default(),
@@ -914,18 +940,19 @@ impl ModelInner {
                     normal,
                     // TEX_DETAIL / TEX_ALPHA_MASK: the tiled dirt map and its mask, or a Dirtmap mesh's dirt map (linear: a normal offset and
                     // the dirt amount) and dirt mask.
-                    if kind == MeshKind::Dirtmap {
+                    if kind == MeshKind::Dirtmap || dirt {
                         material_texture(textures, path, material, TextureType::DecalDirtmap, false, textures.black())
                     } else {
                         material_texture(textures, path, material, TextureType::TilingDirtUV2, true, textures.white())
                     },
-                    if kind == MeshKind::Dirtmap {
+                    if kind == MeshKind::Dirtmap || dirt {
                         material_texture(textures, path, material, TextureType::DecalDirtmask, false, textures.black())
                     } else {
                         material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white())
                     },
                     material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
                     if kind == MeshKind::WeightedSkin { material_texture(textures, path, material, TextureType::SkinMask, false, textures.black()) } else { textures.black() },
+                    if decal { material_texture(textures, path, material, TextureType::DecalMask, false, textures.black()) } else { textures.black() },
                 ],
                 diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
                 normal_path: material.textures().iter().find(|t| *t.tex_type() == TextureType::Normal).map(|t| t.path().replace('\\', "/")).unwrap_or_default(),
@@ -1556,11 +1583,14 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         alpha_mode: 0,
         stride: 32,
         kind: MeshKind::Standard,
+        dirt: false,
+        decal: false,
+        decal_rect: [0.0; 4],
         uv2_tile: [0.0; 2],
         tint: [1.0; 12],
         offset: Float3::new(x0, miny, z0),
         has_offset: x0 != 0.0 || miny != 0.0 || z0 != 0.0,
-        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white(), tex.black()],
+        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white(), tex.black(), tex.black()],
         diffuse_path: String::new(),
         normal_path: String::new(),
         displacement: None,

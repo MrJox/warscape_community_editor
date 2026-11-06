@@ -5,8 +5,8 @@ historical battle scripting), the Cinematic tool (the most pressing, after the t
 decided). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
-State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3 are done: the renderer draws skinned models. Nothing places one
-yet outside the check, and their materials are rough (step 4). The scratch scripts and disassembly are in
+State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3 are done and step 4's code: the renderer draws skinned models with their
+materials and skin lighting. What is left of step 4 is comparing with the game's screenshots. Nothing places a unit yet outside the check. The scratch scripts and disassembly are in
 `~/wce_re/scratch/units`.
 
 ## What the game does
@@ -57,14 +57,22 @@ lights have `ps30_skinlm_*` entries next to the `slm` one the renderer uses (`DI
 (three in `faction_colours`) against `s_colour_mask_map`.
 
 Instance inputs, from `ps30_gbuffer` and `ps30_gbuffer_skin` (2-bone numbering): `v12` is the tint, rgb with `.w` 1, 2 or 3 picking the
-colour mask channel it applies to (VMD `TINT`, `mask0..2`), read by `ps30_gbuffer` only; `v9.y` scales the fourth faction colour; `v10.zw`
+colour mask channel it applies to (VMD `TINT`, `mask0..2`), read by the non-skin entries only: `.w` 0 leaves the mask to the faction colours,
+any other value sets the other channels white; `v9.y` scales the fourth faction colour; `v9.zw` offset the dirt map's uv (0 here; the engine's
+value per soldier is not traced); `v10.zw`
 blend the colour and gloss towards something (**ASSUMPTION**: dirt and blood levels; 0 leaves them alone); `v11.y` reaches the pixel shader
 unused here; the pixel selection id is `t1` at `instance id + cb1[4].w`, as the rigid shaders. Skin puts its mask in the third target, which
 is how the light pass can tell it.
 
-Not known: the engine's choice of entry. The names suggest material to family (Weighted, WeightedDirtmap -> `weightedwithdirt`,
-WeightedDecal -> `weightedwithdecal`), `_skin` for the WeightedSkin types, `_noclip` by the alpha mode. **ASSUMPTION** until screenshots
-agree. Which light entry reads the third target (`skinlm` or the `slm` in use) is step 4's first question.
+Skin lighting (2026-11-07). The engine registers a lighting pass per model with a number: default 0, `slm` 1, `ulm` 2, `skinlm` 3
+(fn 0x116e4b60, and 0x116d4720 the same for the sun) and its lights compare the stencil with mask 3 (capture), so skin pixels are stencil 3
+(**ASSUMPTION**, read from those; no capture has skin). `ps30_gbuffer_skin` writes the colour unsquared and the skin mask in channel 3, for
+`skinlm`; `ps30_gbuffer_skin_slm` writes what `slm` reads, and which the engine uses when is not traced. The editor draws `_skin` with
+stencil `SKIN_STENCIL` and a second sun and point light pass of `skinlm` over them; the fog takes them through `ds_geometry`.
+
+Not known: the engine's choice of entry. The names give material to family (Weighted, WeightedDirtmap -> `weightedwithdirt`,
+WeightedDecal -> `weightedwithdecal`, WeightedDecalDirtmap -> `weightedwithdecaldirt`, the same for WeightedSkin*), `_skin` for the
+WeightedSkin types, `_noclip` by the alpha mode (only 1 is alpha-tested). **ASSUMPTION** until screenshots agree.
 
 ### Animations
 
@@ -125,7 +133,8 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    the picture against the same vertices skinned on the CPU, 2 and 4 bones. Left for later: no culling at all (the clipper does it; fine for
    a few units, not for a crowd), not drawn in the environment cube, Rome 2's baked shadows, or with faded opacity. Not tried with MSAA or
    in a tile. Picking: the G-buffer's id target gets 0, and the id pass doesn't know them; `ref_human` needs one of those in step 7.
-4. **Materials.** Weighted, Dirtmap, Skin, SkinDirtmap, Decal families, faction colours, tints, masks, skin lighting. Compared with the game.
+4. **Materials.** Done but for the comparison with the game's screenshots: the four families, dirt, decals (their textures come with the part,
+   from the VMD in step 5), faction colours, tints, skin lighting for the sun and point lights.
 5. **Assembly.** VMD resolved by a seed into parts: weighted parts on the body's palette, static parts on their bone, height scale. The
    whole model at the right scale in a tile (metres in game, `1 / unit_scale` in the tile scene).
 6. **Animator.** A pure function `(unit, clip, time) -> pose`, so a timeline can scrub it: slots from fragments, loops, blending, hand

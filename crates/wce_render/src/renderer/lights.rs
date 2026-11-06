@@ -33,6 +33,10 @@ const SMOOTH_PS: &str = "dx11_sm_3_0_pointlightsmoothfalloff.hlsl_ps_ps30_slm_hi
 const LINEAR_VS: &str = "dx11_sm_3_0_pointlightlinearfalloff.hlsl_vs_vs30_main";
 const LINEAR_PS: &str = "dx11_sm_3_0_pointlightlinearfalloff.hlsl_ps_ps30_slm_highdef";
 
+/// The same on skin pixels (`SKIN_STENCIL`).
+const SMOOTH_SKIN_PS: &str = "dx11_sm_3_0_pointlightsmoothfalloff.hlsl_ps_ps30_skinlm_highdef";
+const LINEAR_SKIN_PS: &str = "dx11_sm_3_0_pointlightlinearfalloff.hlsl_ps_ps30_skinlm_highdef";
+
 /// Floats of one instance: POSITION1 (colour), POSITION2 (centre, radius).
 const INSTANCE_FLOATS: usize = 8;
 
@@ -136,7 +140,6 @@ impl Renderer {
         self.cbs.set_f("point_light_PS", "g_viewport_offset_scale", &[0.0, 0.0, 1.0, 1.0]);
         self.upload();
         self.ctx.set_render_targets(&[self.gbuffer.scene_hdr_rtv()], self.gbuffer.scene_dsv_read_depth().as_ref());
-        self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), 1);
         self.ctx.set_rasterizer_state(self.lights.rs.as_ref());
         self.ctx.set_blend_state(self.lights.bs.as_ref());
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -148,11 +151,16 @@ impl Renderer {
             element(c"POSITION", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, 16, true),
         ];
 
-        for (vs, ps, count, first) in [(SMOOTH_VS, SMOOTH_PS, n_smooth, 0), (LINEAR_VS, LINEAR_PS, n_linear, n_smooth)] {
-            if count == 0 {
+        let skin = self.skin_drawn();
+        for (vs, ps, stencil, count, first) in [
+            (SMOOTH_VS, SMOOTH_PS, 1, n_smooth, 0), (LINEAR_VS, LINEAR_PS, 1, n_linear, n_smooth),
+            (SMOOTH_VS, SMOOTH_SKIN_PS, SKIN_STENCIL, n_smooth, 0), (LINEAR_VS, LINEAR_SKIN_PS, SKIN_STENCIL, n_linear, n_smooth),
+        ] {
+            if count == 0 || (stencil == SKIN_STENCIL && !skin) {
                 continue;
             }
 
+            self.ctx.set_depth_stencil_state(self.states.ds_light.as_ref(), stencil);
             let (Some(vs), Some(ps)) = (self.shader(vs), self.scene_shader(ps)) else { continue };
             let Some(layout) = self.layout(&vs, "point_light", &el) else { continue };
             self.ctx.set_input_layout(Some(&layout));

@@ -17,7 +17,7 @@ use wce_foundation::math::{Float3, length};
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{EntityId, MODEL_SKINNED_SUFFIX, Payload, RenderScene};
 
-use super::{Renderer, dynamic_buffer, element, ps_samplers};
+use super::{Renderer, SKIN_STENCIL, dynamic_buffer, element, ps_samplers};
 use crate::model_cache::{GpuMesh, GpuModel, MeshKind};
 use crate::shader_lib::{GameShader, bind_srv};
 
@@ -67,6 +67,9 @@ struct Run {
     mesh: usize,
     faction: [[f32; 3]; 4],
     casts_shadow: bool,
+
+    /// The decal's textures (`SkinnedPart`), for a mesh with a decal.
+    decal: [Option<String>; 2],
     first: u32,
     count: u32,
 }
@@ -125,14 +128,20 @@ fn layout_of(stride: u32) -> Vec<InputElement> {
     el
 }
 
-/// The G-buffer pixel shader of a mesh. **ASSUMPTION** until compared with the game: `_noclip` for the materials that aren't alpha-tested.
-fn gbuffer_ps(m: &GpuMesh) -> &'static str {
-    match (m.kind == MeshKind::WeightedSkin, m.alpha_mode == 1) {
-        (false, true) => "dx11_sm_3_0_weighted.hlsl_ps_ps30_gbuffer",
-        (false, false) => "dx11_sm_3_0_weighted.hlsl_ps_ps30_gbuffer_noclip",
-        (true, true) => "dx11_sm_3_0_weighted.hlsl_ps_ps30_gbuffer_skin",
-        (true, false) => "dx11_sm_3_0_weighted.hlsl_ps_ps30_gbuffer_skin_noclip",
-    }
+/// The G-buffer pixel shader of a mesh: its material's family and, for skin, the entry the skin lighting reads (`_skin`; `_skin_slm` writes
+/// what the standard lighting reads, and the engine's choice between them isn't traced). **ASSUMPTION** until compared with the game: `_noclip`
+/// for the materials that aren't alpha-tested.
+fn gbuffer_ps(m: &GpuMesh) -> String {
+    let family = match (m.dirt, m.decal) {
+        (false, false) => "weighted",
+        (true, false) => "weightedwithdirt",
+        (false, true) => "weightedwithdecal",
+        (true, true) => "weightedwithdecaldirt",
+    };
+
+    let skin = if m.kind == MeshKind::WeightedSkin { "_skin" } else { "" };
+    let noclip = if m.alpha_mode == 1 { "" } else { "_noclip" };
+    format!("dx11_sm_3_0_{family}.hlsl_ps_ps30_gbuffer{skin}{noclip}")
 }
 
 /// The lines `texels` take in the palette texture.
@@ -192,7 +201,8 @@ impl Renderer {
                 }).unwrap_or(model.lods.len());
                 let count = if lod == 0 { model.meshes.len() } else { model.lods[lod - 1].meshes.len() };
                 for mesh in 0..count {
-                    let run = Run { model: model.clone(), lod, mesh, faction: s.faction_colours, casts_shadow: s.casts_shadow, first: 0, count: 1 };
+                    let decal = [part.decal_diffuse.clone(), part.decal_normal.clone()];
+                    let run = Run { model: model.clone(), lod, mesh, faction: s.faction_colours, casts_shadow: s.casts_shadow, decal, first: 0, count: 1 };
                     let instance = SkinnedGpuInstance { world, palette: [palette as f32, s.faction_scale, 0.0, 0.0], tint: part.tint, ..SkinnedGpuInstance::default() };
                     placed.push((run, instance));
                 }
@@ -200,7 +210,7 @@ impl Renderer {
         }
 
         // The same mesh and colours in a row: one instanced draw.
-        let key = |r: &Run| (Arc::as_ptr(&r.model) as usize, r.lod, r.mesh, r.faction.map(|c| c.map(f32::to_bits)), r.casts_shadow);
+        let key = |r: &Run| (Arc::as_ptr(&r.model) as usize, r.lod, r.mesh, r.faction.map(|c| c.map(f32::to_bits)), r.casts_shadow, r.decal.clone());
         placed.sort_by_key(|(r, _)| key(r));
         let mut instances = Vec::with_capacity(placed.len());
         let mut runs: Vec<Run> = vec![];
@@ -263,6 +273,23 @@ impl Renderer {
         mapped.write(0, instances)
     }
 
+    /// Whether this frame's G-buffer has skin pixels: the skin lighting draws them.
+    pub(crate) fn skin_drawn(&self) -> bool {
+        self.skinned.runs.iter().any(|r| r.mesh().kind == MeshKind::WeightedSkin)
+    }
+
+    /// A mesh's decal: the part's textures, or none (its mask black, so that the decal adds nothing).
+    fn bind_decal(&self, ps: &GameShader, run: &Run) {
+        let srv = |path: &Option<String>, srgb: bool| path.as_ref().and_then(|p| self.textures.get(p, srgb)).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()));
+        let (diffuse, normal) = (srv(&run.decal[0], true), srv(&run.decal[1], false));
+        if diffuse.is_none() {
+            bind_srv(&self.ctx, ps, "s_decal_mask", self.res.black_srv.as_ref());
+        }
+
+        bind_srv(&self.ctx, ps, "s_decal_diffuse", diffuse.as_ref().or(self.res.black_srv.as_ref()));
+        bind_srv(&self.ctx, ps, "s_decal_normal", normal.as_ref().or(self.res.black_srv.as_ref()));
+    }
+
     /// The vertex shader's textures: the palette, and the rigid passes' empty selection ids.
     fn bind_palette(&self, vs: &GameShader) {
         for (name, slot) in &vs.textures {
@@ -296,9 +323,14 @@ impl Renderer {
         self.ctx.set_rasterizer_state(self.states.rs_back.as_ref());
         for run in &runs {
             let m = run.mesh();
-            let (Some((vs, layout)), Some(ps)) = (self.skinned_vs(m.stride, false), self.shader(gbuffer_ps(m))) else { continue };
+            let (Some((vs, layout)), Some(ps)) = (self.skinned_vs(m.stride, false), self.shader(&gbuffer_ps(m))) else { continue };
             self.ctx.set_input_layout(Some(&layout));
+            self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), if m.kind == MeshKind::WeightedSkin { SKIN_STENCIL } else { 1 });
             self.cbs.set_f("rigid_faction_colours", "faction_colours", &faction_constants(&run.faction));
+            if m.decal {
+                self.cbs.set_f("rigid_config_PS", "g_decal_uv_rect_coords", &m.decal_rect);
+            }
+
             self.upload();
             self.bind(&vs);
             self.bind_palette(&vs);
@@ -306,9 +338,14 @@ impl Renderer {
             ps_samplers(&self.ctx, &ps, &self.states.s_wrap_aniso);
             let slots = self.slots_of(&ps);
             self.bind_mesh_material(&ps, &slots, m);
+            if m.decal {
+                self.bind_decal(&ps, run);
+            }
+
             self.draw_run(run);
         }
 
+        self.ctx.set_depth_stencil_state(self.states.ds_gbuffer.as_ref(), 1);
         self.skinned.runs = runs;
         self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[size_of::<crate::model_cache::RigidInstance>() as u32], &[0]);
     }
@@ -358,7 +395,8 @@ fn faction_constants(colours: &[[f32; 3]; 4]) -> [f32; 15] {
 
 #[cfg(test)]
 mod tests {
-    use super::{PALETTE_WIDTH, SkinnedGpuInstance, faction_constants, layout_of, lines_of};
+    use super::{PALETTE_WIDTH, SkinnedGpuInstance, faction_constants, gbuffer_ps, layout_of, lines_of};
+    use crate::model_cache::{GpuMesh, MeshKind};
 
     #[test]
     fn a_bone_never_crosses_a_line() {
@@ -370,6 +408,20 @@ mod tests {
     fn instance_is_the_eight_texcoords() {
         assert_eq!(size_of::<SkinnedGpuInstance>(), 8 * 16);
         assert_eq!((layout_of(28).len(), layout_of(32).len()), (6 + 8, 7 + 8));
+    }
+
+    #[test]
+    fn a_material_picks_its_family_and_entry() {
+        let mesh = |kind, dirt, decal, alpha_mode| {
+            let (vb, ib, offset, bmin, bmax) = (None, None, Default::default(), Default::default(), Default::default());
+            let tex = std::array::from_fn(|_| Default::default());
+            GpuMesh { vb, ib, index_count: 0, alpha_mode, stride: 28, kind, dirt, decal, decal_rect: [0.0; 4], uv2_tile: [0.0; 2], tint: [0.0; 12], offset, has_offset: false, tex, diffuse_path: String::new(), normal_path: String::new(), displacement: None, bmin, bmax, snow: false }
+        };
+
+        assert_eq!(gbuffer_ps(&mesh(MeshKind::Weighted, false, false, -1)), "dx11_sm_3_0_weighted.hlsl_ps_ps30_gbuffer_noclip");
+        assert_eq!(gbuffer_ps(&mesh(MeshKind::Weighted, true, true, 1)), "dx11_sm_3_0_weightedwithdecaldirt.hlsl_ps_ps30_gbuffer");
+        assert_eq!(gbuffer_ps(&mesh(MeshKind::WeightedSkin, true, false, -1)), "dx11_sm_3_0_weightedwithdirt.hlsl_ps_ps30_gbuffer_skin_noclip");
+        assert_eq!(gbuffer_ps(&mesh(MeshKind::WeightedSkin, false, true, 1)), "dx11_sm_3_0_weightedwithdecal.hlsl_ps_ps30_gbuffer_skin");
     }
 
     #[test]

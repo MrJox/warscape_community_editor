@@ -40,6 +40,8 @@ const BODY: [&str; 3] = [
 const CINEMATIC: [&str; 1] = ["variantmeshes/_variantmodels/man/skin/att_cine_germanic_06_skin01_cut_2.rigid_model_v2"];
 /// A cloak: four bones, over the body's two.
 const CLOAK: [&str; 1] = ["variantmeshes/_variantmodels/man/cloak/eastern_overcloak_03.rigid_model_v2"];
+/// WeightedDecalDirtmap, alpha-tested: `weightedwithdecaldirt`, with no decal given.
+const GREAVES: [&str; 1] = ["variantmeshes/_variantmodels/man/greaves/steppe_leather_greaves.rigid_model_v2"];
 const WALK: &str = "animations/rome2/human/battle/sword_and_shield/locomotion/sws_walk_124_cm.anim";
 
 struct Gpu {
@@ -172,6 +174,7 @@ fn run(out: &Path, env_path: &str) -> Result<usize, String> {
         Case { name: "walk", parts: &BODY, clip: Some((WALK, 0.3)), yaw: 1.2 },
         Case { name: "cinematic", parts: &CINEMATIC, clip: Some((WALK, 0.3)), yaw: 0.5 },
         Case { name: "cloak", parts: &CLOAK, clip: Some((WALK, 0.3)), yaw: 2.6 },
+        Case { name: "greaves", parts: &GREAVES, clip: Some((WALK, 0.3)), yaw: 0.5 },
     ] {
         let mut scene = RenderScene::default();
         let layer = scene.add_layer(1, "Unit");
@@ -185,7 +188,7 @@ fn run(out: &Path, env_path: &str) -> Result<usize, String> {
         let mut rt = RenderTarget::new(&gpu.dev, W, H);
         let skin = skin_of(&vfs, case.clip);
         let mut instance = SkinnedInstance {
-            parts: case.parts.iter().map(|p| SkinnedPart { model: (*p).to_owned(), tint: [0.0; 4] }).collect(),
+            parts: case.parts.iter().map(|p| SkinnedPart { model: (*p).to_owned(), tint: [0.0; 4], decal_diffuse: None, decal_normal: None }).collect(),
             palette: Arc::new(palette(&skin)), casts_shadow: false,
             faction_colours: [[0.7, 0.1, 0.1], [0.8, 0.7, 0.3], [0.2, 0.2, 0.6], [0.0; 3]], faction_scale: 0.0,
         };
