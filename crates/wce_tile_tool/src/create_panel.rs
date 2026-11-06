@@ -27,7 +27,7 @@ pub const CATEGORIES: [&str; 12] =
 
 /// The categories' icons, for the rail.
 const CATEGORY_ICONS: [&str; 11] = [
-    icons::BUILDING_2, icons::TREE_PINE, icons::STICKER, icons::BOX, icons::SPARKLES, icons::LIGHTBULB, icons::COMPONENT, icons::FLAG, icons::BRAIN, icons::CASTLE, icons::WAVES,
+    icons::HOUSE, icons::TREE_PINE, icons::IMAGE, icons::BOX, icons::SPARKLES, icons::LIGHTBULB, icons::GROUP, icons::FLAG, icons::BRAIN, icons::SWORDS, icons::WAVES,
 ];
 
 /// The rail's width.
@@ -35,6 +35,41 @@ const RAIL_WIDTH: f32 = 40.0;
 
 /// The folder of the buildings no table has a category for.
 const NO_CATEGORY: &str = "no category";
+
+/// The buildings' catch-all category, with subfolders by the key's first word: its culture or style (1 487 buildings with TDD).
+const GENERIC: &str = "generic";
+
+/// A first word of fewer keys than this is not a subfolder of its own: they go to [`OTHER_BUILDINGS`].
+const MIN_GROUP: usize = 5;
+const OTHER_BUILDINGS: &str = "other";
+
+/// The first word of a building's key, for its subfolder: the numbered blocks (`30_30_10`) together, the kit's two spellings as one.
+fn building_group(key: &str) -> String {
+    let word = key.split('_').next().unwrap_or_default().to_lowercase();
+    match word.as_str() {
+        "" => "blocks".to_owned(),
+        w if w.starts_with(|c: char| c.is_ascii_digit()) => "blocks".to_owned(),
+        "west" => "western".to_owned(),
+        "cinematics" => "cinematic".to_owned(),
+        _ => word,
+    }
+}
+
+/// How many of the generic buildings (their keys) each first word has.
+fn generic_counts<'a>(keys: impl Iterator<Item = &'a str>) -> std::collections::HashMap<String, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for key in keys {
+        *counts.entry(building_group(key)).or_default() += 1;
+    }
+
+    counts
+}
+
+/// A generic building's subfolder: its first word's, [`OTHER_BUILDINGS`] for the words with few keys.
+fn generic_folder(counts: &std::collections::HashMap<String, usize>, key: &str) -> String {
+    let group = building_group(key);
+    if counts.get(&group).is_some_and(|&n| n >= MIN_GROUP) { group } else { OTHER_BUILDINGS.to_owned() }
+}
 
 /// The types without a key of each fixed category (category, type, drawn).
 const FIXED: [(usize, &str, bool); 19] = [
@@ -122,6 +157,16 @@ pub(crate) const PROJECT_PREFAB_TIP: &str = "A prefab of the projects folder (th
 /// The order of an entry in its category: its folder's parts, each before the entries (folders first), then the entry.
 fn folder_order(folder: &str) -> Vec<(u8, String)> {
     folder.split('/').filter(|p| !p.is_empty()).map(|p| (0, p.to_lowercase())).chain([(1, String::new())]).collect()
+}
+
+impl Entry {
+    /// The key it places.
+    fn place_key(&self) -> Option<&str> {
+        match &self.make {
+            Make::Place { key, .. } => Some(key),
+            _ => None,
+        }
+    }
 }
 
 /// The rows of a category shown by folder: each run of rows in the same folder, and how many rows each folder holds (its sub-folders' too).
@@ -263,6 +308,14 @@ impl TileTool {
             en.folder.clone_from(&p.folder);
             en.project = project;
             out.push(en);
+        }
+
+        // The generic buildings' subfolders.
+        let counts = generic_counts(out.iter().filter(|en| en.folder == GENERIC).filter_map(Entry::place_key));
+        for en in out.iter_mut().filter(|en| en.folder == GENERIC) {
+            if let Some(folder) = en.place_key().map(|key| generic_folder(&counts, key)) {
+                en.folder = format!("{GENERIC}/{folder}");
+            }
         }
 
         // By category, then folder (stable: the order within a folder stays the catalogue's).
@@ -1247,4 +1300,25 @@ pub fn make_set_for_script(t: &mut TileTool, e: &mut Editor, name: &str) -> Resu
     let en = Entry { category: 1, label: format!("set: {name}"), make: Make::VegSet { name: name.to_owned() }, folder: String::new(), project: false, search: String::new() };
     t.start_making(e, &en);
     Ok(())
+}
+
+#[cfg(test)]
+mod generic_tests {
+    use super::*;
+
+    #[test]
+    fn generic_buildings_go_by_their_first_word_and_the_rare_ones_together() {
+        let mut keys = (0..5).map(|n| format!("roman_villa_{n}")).collect::<Vec<_>>();
+        keys.extend((0..3).map(|n| format!("west_house_{n}")));
+        keys.extend((0..2).map(|n| format!("western_house_{n}")));
+        keys.extend(["30_30_10", "60_60_30", "90_30_10", "120_30_10", "_odd"].map(str::to_owned));
+        keys.push("colossus_of_rhodes".to_owned());
+        let counts = generic_counts(keys.iter().map(String::as_str));
+        let group = |key: &str| generic_folder(&counts, key);
+        assert_eq!(group("roman_villa_3"), "roman");
+        assert_eq!(group("west_house_1"), "western", "one word for both spellings");
+        assert_eq!(group("western_house_0"), "western");
+        assert_eq!(group("30_30_10"), "blocks");
+        assert_eq!(group("colossus_of_rhodes"), OTHER_BUILDINGS);
+    }
 }
