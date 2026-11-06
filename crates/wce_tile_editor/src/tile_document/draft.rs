@@ -143,7 +143,7 @@ impl TileDocument {
             let cur = cur.unwrap_or_default();
 
             // TEd's rules, as for a placed one (a building's category decides its wall properties; a draft has no file to go by).
-            let ctx = RuleContext { category: category.as_deref(), shape: d.attrs.get("polygon_shape").map(String::as_str), present: false };
+            let ctx = RuleContext { category: category.as_deref(), shape: d.attrs.get("polygon_shape").map(String::as_str), present: false, capture_location: wce_tile::export_as_prop::capture_location_set(d.attrs.get("capture_location").map(String::as_str)) };
             match access(prop, &ctx) {
                 Access::Hidden => continue,
                 Access::ReadOnly => {

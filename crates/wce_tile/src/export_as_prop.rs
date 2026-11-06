@@ -20,6 +20,14 @@ use crate::instance_templates::template;
 /// The attribute of a `BUILDING_INSTANCE` that exports it as a prop.
 pub const EXPORT_AS_PROP_ATTR: &str = "wce_export_as_prop";
 
+/// Why the Inspector greys out the checkbox of a building with a capture location.
+pub const CAPTURE_LOCATION_TIP: &str = "A capture location links this building, so it has to stay a building: clear its capture_location to export it as a prop.";
+
+/// Whether a building's `capture_location` value links it to a capture location, which keeps it a building.
+pub fn capture_location_set(value: Option<&str>) -> bool {
+    value.is_some_and(|c| !c.trim().is_empty())
+}
+
 /// How the name of a model made from a building ends. Never in a tile of the kit, so that its water stays as BOB makes it.
 pub const PROP_PIECE_SUFFIX: &str = "__wce_prop";
 
@@ -129,7 +137,7 @@ pub fn apply(text: Vec<u8>, models_in: Option<ModelsIn>) -> Result<(Vec<u8>, Pro
         let name = doc.get(e, "name").unwrap_or_default();
         let key = doc.get(e, "key").unwrap_or_default().to_lowercase();
         let level = doc.get(e, "destruction_level").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0);
-        let linked = doc.get(e, "capture_location").is_some_and(|c| !c.trim().is_empty());
+        let linked = capture_location_set(doc.get(e, "capture_location").as_deref());
         let pieces = if linked {
             Err("a capture location links it".to_owned())
         } else if let Some(models_in) = models_in {

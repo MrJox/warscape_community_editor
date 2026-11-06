@@ -54,6 +54,11 @@ pub trait Inspector {
         let _ = marks;
     }
 
+    /// A checkbox that shows a value and cannot be changed (greyed out in the ImGui inspector).
+    fn disabled_bool(&mut self, field: &str, label: &str, v: bool) {
+        self.text(field, label, if v { "true" } else { "false" });
+    }
+
     /// A tooltip for the next row (its label and its widget): what the property does. The ImGui inspector shows it on hover.
     fn hint(&mut self, text: &str) {
         let _ = text;
