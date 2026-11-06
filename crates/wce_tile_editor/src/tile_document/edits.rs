@@ -3325,12 +3325,21 @@ impl TileDocument {
     }
 
     /// The gizmo: moves (and turns) the items by a world-space delta.
-    /// The Scale gizmo on the selected buildings that export as props, the only items it scales: each from the scale it had when the drag
-    /// began (`factor` is the scale since then), one undo entry.
+    /// The `scale` property of an element the Scale gizmo works on: every type that has one, while the Inspector can edit it (a building only
+    /// as a prop).
+    fn scale_prop(&self, e: usize) -> Option<Prop> {
+        let schema = wce_tile::properties::schema(self.tile().tscene().type_of(e))?;
+        let prop = *schema.iter().find(|p| p.attr == "scale")?;
+        (self.prop_access(e, &prop) == Access::Edit).then_some(prop)
+    }
+
+    /// The Scale gizmo on the selected items that have a scale, one undo entry: each from the scale it had when the drag began (`factor` is
+    /// the scale since then). A vector takes the axes (a decal's negative z stays negative); a single number takes the axis that moved most,
+    /// within its range.
     pub(crate) fn scale_selected(&mut self, items: &[SourceRef], factor: [f32; 3], gesture: u64) {
-        let t = self.tile();
-        if t.scale_drag.as_ref().is_none_or(|(g, _)| *g != gesture) {
-            let base = items.iter().filter(|r| r.doc == self.id() && piece_of(r.item).is_none()).filter_map(|r| elem_of(r.item)).filter(|&e| t.exports_as_prop(e)).map(|e| {
+        if self.tile().scale_drag.as_ref().is_none_or(|(g, _)| *g != gesture) {
+            let t = self.tile();
+            let base = items.iter().filter(|r| r.doc == self.id() && piece_of(r.item).is_none()).filter_map(|r| elem_of(r.item)).filter(|&e| self.scale_prop(e).is_some()).map(|e| {
                 let s = t.tscene().scale(e).map_or([1.0; 3], |s| [s.x as f32, s.y as f32, s.z as f32]);
                 (e, s)
             }).collect();
@@ -3338,12 +3347,23 @@ impl TileDocument {
         }
 
         let Some((_, base)) = self.tile().scale_drag.clone() else { return };
-        let Some(prop) = wce_tile::properties::schema("BUILDING_INSTANCE").and_then(|s| s.iter().find(|p| p.attr == "scale")) else { return };
-        let elems = base.keys().copied().collect::<Vec<_>>();
-        let values = base.values().map(|s| wce_tile::properties::format_vec3([s[0] * factor[0], s[1] * factor[1], s[2] * factor[2]])).collect::<Vec<_>>();
-        if !elems.is_empty() {
-            self.set_property_each(&elems, prop, &values, gesture);
-        }
+        let uniform = factor.into_iter().max_by(|a, b| (a - 1.0).abs().total_cmp(&(b - 1.0).abs())).unwrap_or(1.0);
+        let scaled = base.iter().filter_map(|(&e, s)| {
+            let prop = self.scale_prop(e)?;
+            let value = match prop.kind {
+                Kind::Vec3 => format_vec3([s[0] * factor[0], s[1] * factor[1], s[2] * factor[2]]),
+                Kind::Slider(lo, hi) => format_float((s[0] * uniform).clamp(lo, hi)),
+                _ => format_float(s[0] * uniform),
+            };
+
+            Some((e, prop, value))
+        }).collect::<Vec<_>>();
+
+        // One attribute: the types' props differ only in how the value is written, done above.
+        let Some(&(_, prop, _)) = scaled.first() else { return };
+        let elems = scaled.iter().map(|s| s.0).collect::<Vec<_>>();
+        let values = scaled.into_iter().map(|s| s.2).collect::<Vec<_>>();
+        self.set_property_each(&elems, &prop, &values, gesture);
     }
 
     pub(crate) fn transform_selected(&mut self, items: &[SourceRef], delta: &Float4x4, gesture: u64) {
