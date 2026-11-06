@@ -28,6 +28,7 @@ mod decals;
 mod lights;
 mod grass;
 mod draws;
+mod skinned;
 mod editor;
 pub mod game;
 pub use self::editor::{SurfaceGrid, SurfaceHit};
@@ -889,6 +890,7 @@ pub struct Renderer {
     /// The scene's climate, lower case (`rome_med`).
     pub(crate) climate: String,
     pub(crate) draw_lists: SceneDraws,
+    pub(crate) skinned: skinned::SkinnedDraws,
     pub(crate) camera: CameraState,
     pub(crate) clock: FrameClock,
     pub(crate) draw_stats: DrawStats,
@@ -1002,6 +1004,7 @@ impl Renderer {
         let mut cbs = ConstantBuffers::default();
 
         // Faction colours: white = no tint on the test map.
+        cbs.declare("variant_animation_size", 16, &BTreeMap::from([("g_animation_texture_width".to_owned(), Var { offset: 8, size: 8 })]));
         cbs.declare("rigid_faction_colours", 64, &BTreeMap::from([("faction_colours".to_owned(), Var { offset: 0, size: 60 })]));
         cbs.set_f("rigid_faction_colours", "faction_colours", &[1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0]);
         Ok(Self {
@@ -1035,6 +1038,7 @@ impl Renderer {
             dof: dof::DofTargets::default(),
             climate: String::new(),
             draw_lists: SceneDraws::default(),
+            skinned: skinned::SkinnedDraws::default(),
             camera: CameraState::default(),
             clock: FrameClock::default(),
             draw_stats: DrawStats::default(),
@@ -1563,6 +1567,8 @@ impl Renderer {
         let o = self.camera.origin;
         let view_m = cam.view_from(o);
         let proj = cam.projection(aspect);
+
+        self.prepare_skinned(scene);
 
         // Before the shadows: the material terrain casts its own. The shadow pass sets only the cascades' view_projection; the rest of the
         // camera's constants (its position and view, which the trees' shaders take their LOD and billboards' facing from) must be the main

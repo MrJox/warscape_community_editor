@@ -233,6 +233,10 @@ impl Renderer {
             }
         }
 
+        if !self.env.active {
+            self.draw_skinned_gbuffer();
+        }
+
         // The tessellated round leaves its stages bound.
         if tess_stages.is_some() {
             self.ctx.hs_set_shader(None);
@@ -811,6 +815,7 @@ impl Renderer {
                 self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
                 self.ctx.set_rasterizer_state(rs_shadow_rigid.as_ref());
                 let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && m.kind != MeshKind::Water);
+                self.draw_skinned_shadow();
                 self.ctx.set_rasterizer_state(rs_shadow.as_ref());
                 self.draw_stats.shadow_instances += instances;
                 self.draw_stats.shadow_triangles += triangles;

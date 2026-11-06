@@ -31,7 +31,7 @@ pub enum Kind {
     /// A rigid model, drawn through the game's rigid shaders.
     MeshInstance,
 
-    /// Declared for the unit editor (bone palette, weighted vertex formats); not built yet.
+    /// A skinned model, drawn through the game's weighted shaders with a bone palette.
     SkinnedInstance,
 
     /// A regular height grid.
@@ -118,6 +118,35 @@ pub const MODEL_BONE_SUFFIX: &str = "#bone=";
 /// `<file>#snow`: the model as it is, its meshes marked to take the snow regions' snow (the renderer files the trees in a snowy cell
 /// under it: they draw with the snow's intensity, the others with the weather's).
 pub const MODEL_SNOW_SUFFIX: &str = "#snow";
+
+/// Suffix of a model path that keeps a weighted mesh's vertices as stored, for the skinned path ([`SkinnedInstance`]).
+pub const MODEL_SKINNED_SUFFIX: &str = "#skinned";
+
+/// One part of a skinned instance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkinnedPart {
+    /// VFS path of the .rigid_model_v2.
+    pub model: String,
+
+    /// rgb, and in `.w` the colour mask channel it applies to (1 to 3; 0: none).
+    pub tint: [f32; 4],
+}
+
+/// A skinned model (a unit): meshes sharing one bone palette, through the game's weighted shaders. The entity's matrix places it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkinnedInstance {
+    pub parts: Vec<SkinnedPart>,
+
+    /// Per bone the three rows of its skinning matrix (pose * inverse bind). Instances sharing the same `Arc` share one palette on the GPU.
+    pub palette: std::sync::Arc<Vec<[f32; 12]>>,
+    pub casts_shadow: bool,
+
+    /// The material masks' colours (`rigid_faction_colours`).
+    pub faction_colours: [[f32; 3]; 4],
+
+    /// How much of the fourth colour it takes.
+    pub faction_scale: f32,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshInstance {
@@ -829,6 +858,7 @@ impl Default for Water {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Payload {
     MeshInstance(MeshInstance),
+    SkinnedInstance(SkinnedInstance),
     Terrain(Terrain),
     VfxEmitter(VfxEmitter),
     Overlay(Overlay),
@@ -843,6 +873,7 @@ impl Payload {
     pub fn kind(&self) -> Kind {
         match self {
             Self::MeshInstance(_) => Kind::MeshInstance,
+            Self::SkinnedInstance(_) => Kind::SkinnedInstance,
             Self::Terrain(_) => Kind::Terrain,
             Self::VfxEmitter(_) => Kind::VfxEmitter,
             Self::Overlay(_) => Kind::Overlay,
@@ -1202,14 +1233,18 @@ impl RenderScene {
         self.moved_log.push(id);
     }
 
-    /// Replaces an entity's payload. An overlay replacing an overlay changes nothing the renderer's draw set keeps, and a terrain
-    /// replacing a terrain only changes the terrain revision.
+    /// Replaces an entity's payload. An overlay replacing an overlay changes nothing the renderer's draw set keeps, a skinned instance
+    /// replacing a skinned instance neither (the renderer reads those every frame: a new pose costs nothing), and a terrain replacing a
+    /// terrain only changes the terrain revision.
     pub fn update_payload(&mut self, id: EntityId, payload: Payload) {
         let Some(e) = self.find_mut(id) else { return };
         let overlay_only = matches!((&e.payload, &payload), (Payload::Overlay(_), Payload::Overlay(_)));
         let terrain_only = matches!((&e.payload, &payload), (Payload::Terrain(_), Payload::Terrain(_)));
+        let skinned_only = matches!((&e.payload, &payload), (Payload::SkinnedInstance(_), Payload::SkinnedInstance(_)));
         e.payload = payload;
-        if overlay_only {
+        if skinned_only {
+            self.revision += 1;
+        } else if overlay_only {
             self.revision += 1;
             self.log_overlay(id);
         } else if terrain_only {

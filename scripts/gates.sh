@@ -71,6 +71,7 @@ run variation_check   ex wce_weather variation_check
 run rmv2_check        ex wce_formats rmv2_check "$CACHE"
 run vfx_check_rain    ex wce_assets vfx_check "rain heavy"
 run unit_formats      ex wce_assets unit_formats_check "$GAME"
+run unit_render       ex wce_render unit_render_check "$OUT/unit_render"
 [ -f "$CBS" ] && run env_vs_dump_all ex wce_render env_vs_dump --all "$CBS"
 
 # ---- tile gates
