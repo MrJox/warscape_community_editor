@@ -1025,6 +1025,10 @@ pub struct RenderScene {
     /// The log position of moved_log[0].
     moved_base: u64,
 
+    /// The mesh instances whose burn changed (`update_burn`), and the log position of the first.
+    burn_log: Vec<EntityId>,
+    burn_base: u64,
+
     /// The structural changes since `structure_base` (see [`StructureChange`]).
     structure_log: Vec<StructureChange>,
     structure_base: u64,
@@ -1161,6 +1165,8 @@ impl Default for RenderScene {
             overlay_base: 0,
             moved_log: vec![],
             moved_base: 0,
+            burn_log: vec![],
+            burn_base: 0,
             structure_log: vec![],
             structure_base: 0,
             environment: EnvironmentSlot::default(),
@@ -1270,6 +1276,33 @@ impl RenderScene {
         }
 
         self.moved_log.push(id);
+    }
+
+    /// A mesh instance's burn (its POSITION6): logged for [`Self::burn_since`], no change of anything else, so the renderer keeps its draws
+    /// (a fire's char moves many times a second).
+    pub fn update_burn(&mut self, id: EntityId, p6: [f32; 4]) {
+        let Some(Payload::MeshInstance(mi)) = self.find_mut(id).map(|e| &mut e.payload) else { return };
+        mi.p6 = p6;
+
+        // Nobody is following: forget the old entries.
+        if self.burn_log.len() > MOVED_LOG_LIMIT {
+            self.burn_base += self.burn_log.len() as u64;
+            self.burn_log.clear();
+        }
+
+        self.burn_log.push(id);
+    }
+
+    /// The mesh instances whose burn changed since `cursor`, as [`Self::moved_since`].
+    pub fn burn_since(&self, cursor: &mut u64) -> Option<Vec<EntityId>> {
+        let end = self.burn_base + self.burn_log.len() as u64;
+        let start = *cursor;
+        *cursor = end;
+        if start < self.burn_base || start > end {
+            return None;
+        }
+
+        Some(self.burn_log[(start - self.burn_base) as usize..].to_vec())
     }
 
     /// Replaces an entity's payload. An overlay replacing an overlay changes nothing the renderer's draw set keeps, a skinned instance

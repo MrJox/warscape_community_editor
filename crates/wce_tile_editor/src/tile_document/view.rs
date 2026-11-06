@@ -1411,7 +1411,7 @@ impl Tile {
 
 impl Tile {
     /// A piece's POSITION6 and whether it draws with the fire shaders: its look's, or the burning sequence's preview (fire.rs).
-    fn burn_of(&self, elem: usize, look: &PieceProps) -> ([f32; 4], bool) {
+    pub(crate) fn burn_of(&self, elem: usize, look: &PieceProps) -> ([f32; 4], bool) {
         match self.fire_look(elem) {
             Some((amount, _)) => ([amount, 0.0, 0.0, 0.0], true),
             None => (burn_row(look), look.burn),
