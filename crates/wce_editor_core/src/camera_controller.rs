@@ -236,6 +236,32 @@ fn constrain(p: Float3, opts: &CameraOptions, world: &mut dyn CameraWorld) -> Fl
     p
 }
 
+/// How far (metres) an orbiting eye goes back along its line to clear an obstacle, and the first step.
+const ORBIT_CLEAR_REACH: f32 = 512.0;
+const ORBIT_CLEAR_STEP: f32 = 0.5;
+
+/// An orbit's eye kept out of things. The orbit looks at its target from the eye, so an eye moved sideways turns the view: out of an obstacle
+/// it goes back along the line from the target, which keeps the view as it is and stops the zoom at the obstacle. Above the ground it is
+/// lifted, as [`constrain`] does: along a low line that would throw it far away.
+fn constrain_orbit(eye: Float3, target: Float3, opts: &CameraOptions, world: &mut dyn CameraWorld) -> Float3 {
+    let along = eye - target;
+    let dist = length(along);
+    if opts.respect_collisions && dist > 1e-4 && world.push_out(eye, EYE_RADIUS) != eye {
+        let dir = along * (1.0 / dist);
+        let mut back = ORBIT_CLEAR_STEP;
+        while back < ORBIT_CLEAR_REACH {
+            let p = target + dir * (dist + back);
+            if world.push_out(p, EYE_RADIUS) == p {
+                return constrain(p, opts, world);
+            }
+
+            back *= 1.25;
+        }
+    }
+
+    constrain(eye, opts, world)
+}
+
 /// The view direction of a heading (0 north, +z; turning right towards +x) and a tilt (negative down).
 fn direction(yaw: f32, pitch: f32) -> Float3 {
     let cp = pitch.cos();
@@ -853,7 +879,7 @@ impl CameraController for OrbitCamera {
         let (y, p, d, tg) = self.shown;
         self.shown = (lerp(y, self.yaw, t), lerp(p, self.pitch, t), lerp(d, self.dist, t), lerp3(tg, self.target, t));
         let eye = Self::orbit_eye(self.shown.0, self.shown.1, self.shown.2, self.shown.3);
-        let kept = constrain(eye, opts, world);
+        let kept = constrain_orbit(eye, self.shown.3, opts, world);
         self.eye_override = (kept != eye).then_some(kept);
     }
 
