@@ -500,23 +500,23 @@ impl MinimapUi {
 
     fn draw_bar(&mut self) {
         gui::checkbox("siege AI", &mut self.show_siege);
-        gui::same_line();
+        gui::same_line_or_wrap(gui::checkbox_width("deployment"));
         gui::checkbox("deployment", &mut self.show_zones);
-        gui::same_line();
+        gui::same_line_or_wrap(gui::checkbox_width("cells"));
         gui::checkbox("cells", &mut self.show_cells);
         if gui::is_item_hovered() {
             gui::set_tooltip("The tile's cells (its database entry's): the valid ones outlined, the others darkened (the Tile panel's valid cells).");
         }
 
-        gui::same_line();
+        gui::same_line_or_wrap(gui::checkbox_width("no-go"));
         gui::checkbox("no-go", &mut self.show_nogo);
         if gui::is_item_hovered() {
             gui::set_tooltip(AUTO_NOGO_TIP);
         }
 
-        gui::same_line();
+        gui::same_line_or_wrap(gui::checkbox_width("camera"));
         gui::checkbox("camera", &mut self.show_camera);
-        gui::same_line();
+        gui::same_line_or_wrap(gui::button_width("fit"));
         if gui::small_button("fit") {
             self.zoom = 1.0;
             self.centre = None;

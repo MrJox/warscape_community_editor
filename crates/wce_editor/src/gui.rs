@@ -191,6 +191,11 @@ pub fn button_width(label: &str) -> f32 {
     calc_text_size(label).x + 2.0 * call!((*sys::igGetStyle()).FramePadding.x)
 }
 
+/// The width of a checkbox with this label.
+pub fn checkbox_width(label: &str) -> f32 {
+    frame_height() + call!((*sys::igGetStyle()).ItemInnerSpacing.x) + calc_text_size(label).x
+}
+
 pub fn same_line_at(x: f32) {
     call!(sys::igSameLine(x, -1.0))
 }
