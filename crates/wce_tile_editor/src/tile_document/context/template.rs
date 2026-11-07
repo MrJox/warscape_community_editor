@@ -98,9 +98,8 @@ pub struct Template {
     pub coarse: Grid,
 
     /// Its ground material over the tile with its border (its alpha map fades the border out a little past the tile's edge, where the
-    /// neighbour's fades in), the same at a quarter of the resolution, and at a quarter of that for the ground ring. That last one is what
-    /// lets the ring be wide: a placement on the scene keeps its material, in memory and on the GPU, past the budget for templates, and
-    /// 3 300 chunks at the low one took 39 GB.
+    /// neighbour's fades in), the same at a quarter of the resolution, and at a quarter of that for the ground ring, baked by
+    /// [`Template::bake_far`] where the renderer can draw that.
     pub material: Option<Arc<TerrainMaterial>>,
     pub material_low: Option<Arc<TerrainMaterial>>,
     pub material_far: Option<Arc<TerrainMaterial>>,
@@ -207,6 +206,44 @@ fn image_bytes(img: &TerrainImage) -> usize {
 }
 
 impl Template {
+    /// Makes the ground ring's material a baked one: its colour instead of its blend and index maps, from the mean colours of its textures
+    /// (`mean` gives a path's). What the ring costs is the climate texture arrays, one for each different set of 16 textures (414 at 128
+    /// cells, 9 GB of files), and from where it is seen they come down to these means anyway.
+    pub fn bake_far(&mut self, mean: &dyn Fn(&str) -> Option<[f32; 3]>) {
+        let (Some(m), Some(far)) = (&self.material, &self.material_far) else { return };
+        let (Some(blend), Some(index)) = (&m.blend.rgba, &m.index.rgba) else { return };
+        if m.blend.w == 0 || m.blend.w != m.index.w || m.blend.h != m.index.h {
+            return;
+        }
+
+        let slots = slot_colours(m, mean);
+        let (w, h, bw, bh) = (far.blend.w as usize, far.blend.h as usize, m.blend.w as usize, m.blend.h as usize);
+        let mut out = vec![255u8; w * h * 4];
+        out.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
+            for x in 0..w {
+                // A few pixels of what the texel covers.
+                let mut sum = [0.0f32; 3];
+                for (sx, sy) in (0..4).flat_map(|b| (0..4).map(move |a| ((x * 4 + a) * bw / (w * 4), (y * 4 + b) * bh / (h * 4)))) {
+                    let at = (sy * bw + sx) * 4;
+                    let c = blended(&blend[at..at + 4], &index[at..at + 4], &slots);
+                    sum = std::array::from_fn(|k| sum[k] + c[k] / 16.0);
+                }
+
+                for k in 0..3 {
+                    row[x * 4 + k] = (sum[k].max(0.0).sqrt() * 255.0).round().min(255.0) as u8;
+                }
+            }
+        });
+
+        let mut baked = (**far).clone();
+        baked.baked = true;
+        baked.blend.rgba = Some(Arc::new(out));
+        baked.index = TerrainImage::default();
+        baked.diffuse = Default::default();
+        baked.normal_tex = Default::default();
+        baked.id = next_id(&MATERIAL_IDS);
+        self.material_far = Some(Arc::new(baked));
+    }
 
     /// Fills in what follows from the rest (the coarse grid, the low material, the size): after a load or a cache read.
     pub fn finish(&mut self) {
@@ -251,6 +288,33 @@ impl Template {
         let custom: usize = self.custom.iter().flat_map(|m| &m.lods).map(|l| l.vertices.len() * size_of::<wce_scene::render_scene::CustomTerrainVertex>() + l.indices.len() * 4).sum();
         self.bytes = (self.own.heights.len() + self.near.heights.len() + self.coarse.heights.len()) * 4 + images(&self.material) + images(&self.material_low) + images(&self.material_far) + entities + custom;
     }
+}
+
+/// The colour of each of a material's 16 texture slots (linear, the means of the textures), from `mean`, which gives a path's; a slot
+/// without one has the mean of the others.
+fn slot_colours(m: &TerrainMaterial, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> [[f32; 3]; 16] {
+    let found = m.diffuse.each_ref().map(|path| if path.is_empty() { None } else { mean(path) });
+    let n = found.iter().flatten().count().max(1) as f32;
+    let all = found.iter().flatten().fold([0.0f32; 3], |s, c| std::array::from_fn(|k| s[k] + c[k] / n));
+    found.map(|c| c.unwrap_or(all))
+}
+
+/// What the blend pass draws at a pixel of a material's maps, in one colour per texture slot (ps30_blend): the four layers' weights made
+/// unit length, each layer's selector between two of its four variations.
+fn blended(blend: &[u8], index: &[u8], slots: &[[f32; 3]; 16]) -> [f32; 3] {
+    let length = blend.iter().map(|&b| f32::from(b).powi(2)).sum::<f32>().sqrt().max(1.0);
+    let mut out = [0.0f32; 3];
+    for layer in 0..4 {
+        let selector = f32::from(index[layer]) / 255.0 * 3.0;
+        let (first, part) = (selector.floor() as usize, selector.fract());
+        let (a, b) = (slots[layer * 4 + first.min(3)], slots[layer * 4 + (first + 1).min(3)]);
+        let weight = f32::from(blend[layer]) / length;
+        for k in 0..3 {
+            out[k] += weight * (a[k] + (b[k] - a[k]) * part);
+        }
+    }
+
+    out
 }
 
 /// The material of a tile over `[x0, z0, x1, z1]` (its border cropped off past what the heights cover), with its normal map from the

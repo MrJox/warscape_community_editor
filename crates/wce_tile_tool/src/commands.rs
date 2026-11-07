@@ -385,6 +385,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 let files = e.files();
                 let ui = &mut t.context;
                 ui.game_dir = e.game().campaign_battle_map;
+                ui.bake_ground = e.game().key != wce_vfs::GameProfile::ROME_2.key;
                 ui.refresh_maps(&raw, files.as_deref());
                 // `campaign` is the game's own campaign; another map of the packs by its folder (`cha_attila_map`).
                 let want = if name == "campaign" { GAME_MAP.to_owned() } else { name.clone() };
@@ -464,6 +465,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             let files = e.files();
             let ui = &mut t.context;
             ui.game_dir = e.game().campaign_battle_map;
+            ui.bake_ground = e.game().key != wce_vfs::GameProfile::ROME_2.key;
             ui.refresh_maps(&raw, files.as_deref());
             let want = if name == "campaign" { crate::context_panel::GAME_MAP.to_owned() } else { name.clone() };
             let want = if ui.maps.contains(&want) { want } else { format!("{want}{}", crate::context_panel::GAME_FILES) };

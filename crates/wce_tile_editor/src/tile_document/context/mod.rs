@@ -99,6 +99,9 @@ pub struct ContextRequest {
     pub look: TerrainLook,
     pub trees: bool,
 
+    /// The ground ring's material is baked (`Template::bake_far`): the renderer has a blend pass for it (not Rome 2's).
+    pub bake_ground: bool,
+
     /// The material the LF ground's plain one is made from (the open tile's; else the first neighbour's), and its tile's texture groups
     /// (to give it other climates' textures).
     pub plain: Option<Arc<TerrainMaterial>>,

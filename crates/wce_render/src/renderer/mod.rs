@@ -1194,6 +1194,17 @@ impl Renderer {
         }
     }
 
+    /// A shader of the editor's own by its source; `None` (reported) when it can't be made.
+    pub(crate) fn own_shader(&mut self, name: &str, source: &str, entry: &str, target: &str) -> Option<Rc<GameShader>> {
+        match self.lib.own(&mut self.cbs, name, || compile(source, name, entry, target)) {
+            Ok(shader) => Some(shader),
+            Err(error) => {
+                self.error(error.0);
+                None
+            }
+        }
+    }
+
     /// An input layout of a shader; `None` (reported) when the device refuses it.
     pub(crate) fn layout(&mut self, vs: &GameShader, id: &str, elements: &[InputElement]) -> Option<ID3D11InputLayout> {
         match self.lib.layout(vs, id, elements) {
