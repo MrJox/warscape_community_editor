@@ -759,9 +759,9 @@ impl TileTool {
     }
 
     /// The models an entry places, for its thumbnail: a building, a tree, a model or a prefab (nothing for the others).
-    fn thumbnail_parts(&mut self, e: &mut Editor, en: &Entry) -> Vec<(wce_foundation::math::Float4x4, wce_scene::render_scene::MeshInstance)> {
+    fn thumbnail_parts(&mut self, e: &mut Editor, en: &Entry) -> Vec<(wce_foundation::math::Float4x4, wce_scene::render_scene::Payload)> {
         let text = match &en.make {
-            Make::Place { kind, key } if !key.is_empty() && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE") => {
+            Make::Place { kind, key } if !key.is_empty() && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance") => {
                 document(e).and_then(|d| d.draft_text(&Draft::new(kind, key)))
             }
 
@@ -774,7 +774,7 @@ impl TileTool {
         };
 
         match (text, document(e)) {
-            (Some(text), Some(d)) => d.tile().model_parts(&text),
+            (Some(text), Some(d)) => d.tile().item_parts(&text),
             _ => vec![],
         }
     }
@@ -782,7 +782,7 @@ impl TileTool {
     /// Whether an entry can have a thumbnail.
     fn has_thumbnail(en: &Entry) -> bool {
         match &en.make {
-            Make::Place { kind, key } => !key.is_empty() && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE"),
+            Make::Place { kind, key } => !key.is_empty() && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance"),
             Make::Prefab { .. } => true,
             _ => false,
         }
