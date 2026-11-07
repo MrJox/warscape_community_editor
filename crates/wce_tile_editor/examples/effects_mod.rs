@@ -5,8 +5,8 @@
 //! somewhere stays dark where it stands alone: there is no telling the two apart in its logic file.
 //!
 //! The entries of a destruct that play one effect share one running effect, moved through their places, so only one shows: each one after
-//! the first plays another effect: a shipped one that only the cinematic editor uses (`SPARE`), with the file of the effect in its place.
-//! Those files go in a pack of their own, of movie type: the game ignores `vfx/` in a mod-type pack, and loads a movie-type one always.
+//! the first plays a copy of it, `vfx/wce_<effect>_<n>.xml`. Those files go in a pack of their own, of movie type: the game ignores `vfx/`
+//! in a mod-type pack, and loads a movie-type one always.
 //!
 //! The packs read are the game's, the one with `vfx/` among them. What comes out is <out pack>, the patched logic files, and beside it
 //! `<out pack stem>_vfx.pack`, the effects.
@@ -25,9 +25,6 @@ use wce_formats::anim_meta::{MetaEffect, meta_effects};
 
 /// Its model is 294 bytes and the game stops with a runtime error when it is placed; nothing attaches it.
 const LEFT_OUT: &[&str] = &["greek_torch_sconce"];
-
-/// Shipped effects given over to the second and later entries of a destruct. As many as the most any destruct needs of one effect, less one.
-const SPARE: &[&str] = &["cindy_fire_torch_loop", "cindy_fire_wide_torch_loop", "cindy_fire_nosmoke_loop", "cindy_fire_nosmoke_wild_loop", "cindy_fire_smoke_short_loop"];
 
 /// The always-on effects of a `.meta` (the `.meta` itself keeps them: the game ignores it).
 fn always_on(bytes: &[u8]) -> Vec<MetaEffect> {
@@ -108,7 +105,7 @@ fn patched(bytes: &[u8], own: &BTreeMap<String, Vec<MetaEffect>>, models: &BTree
                 let most = copies.entry(effect.clone()).or_default();
                 *most = (*most).max(*count);
 
-                let played = if *count == 1 { effect.as_str() } else { *SPARE.get(*count - 2).ok_or(format!("{name}: more than SPARE holds"))? };
+                let played = if *count == 1 { effect.clone() } else { format!("wce_{effect}_{count:02}") };
                 list.push(json!({ "key": format!("{name}_emitter_{played}_{:02}", n + 1), "matrix_1": matrix(at) }));
                 added += 1;
             }
@@ -177,15 +174,10 @@ fn main() -> Result<(), String> {
         patches.push((path.clone(), new));
     }
 
-    let needing = copies.iter().filter(|(_, most)| **most > 1).collect::<Vec<_>>();
-    if needing.len() > 1 {
-        return Err(format!("SPARE holds one effect's copies: {needing:?}"));
-    }
-
-    for &(effect, &most) in &needing {
+    for (effect, &most) in copies.iter().filter(|(_, most)| **most > 1) {
         let path = format!("vfx/{effect}.xml");
         let xml = files.get(&path).ok_or(format!("{path}: not in these packs"))?;
-        patches.extend(SPARE[..most - 1].iter().map(|spare| (format!("vfx/{spare}.xml"), xml.clone())));
+        patches.extend((2..=most).map(|n| (format!("vfx/wce_{effect}_{n:02}.xml"), xml.clone())));
         println!("{effect}: at most {most} on a destruct");
     }
 
