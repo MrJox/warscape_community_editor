@@ -51,9 +51,19 @@ pub enum Lod {
     /// The LF ground alone.
     Far,
 
-    /// The LF ground alone over a whole block of chunks ([`BLOCK`]), under the key of its first chunk, with a vertex a cell. A chunk's
-    /// rectangles past the rings were most of a far view's cost: a campaign map is 40 000 chunks, and what they drew is one colour.
+    /// The LF ground alone over a whole block of chunks ([`BLOCK`]), one terrain under the key of its first chunk (`Frame::build_block`).
     Block,
+
+    /// A block with its tiles' heights and colours merged into that terrain: the ground ring where it can go by blocks, one draw where its
+    /// tiles are dozens. It opens them, so a block shows as [`Lod::Block`] first.
+    Merged,
+}
+
+impl Lod {
+    /// Whether it is a whole block.
+    fn is_block(self) -> bool {
+        matches!(self, Self::Block | Self::Merged)
+    }
 }
 
 /// What changed on the scene's side.
@@ -302,7 +312,7 @@ impl Shared {
             // Not in the pool: `template` may wait for another worker's tile, and a pool thread waiting inside a parallel loop can take up
             // that very worker's job (a deadlock); only the opening and the cache read run there.
             let (frame, generation) = self.frame();
-            let entities = frame.build_chunk(job.key, job.lod, &|i| self.template(&frame, i), &|i| self.is_custom(&frame, i));
+            let entities = frame.build_chunk(job.key, job.lod, &|i| self.template(&frame, i), &|i| self.is_custom(&frame, i), &|path| self.mean_colour(path));
             if tx.send((job.key, job.lod, entities, generation)).is_err() {
                 return;
             }
@@ -412,9 +422,10 @@ impl Streamer {
         if d <= edge + SLACK && d > inner - SLACK { Some(now) } else { plain }
     }
 
-    /// The cells from the focus past which the LF ground goes by blocks: past the tiles' rings by enough for a ring's edge to stay on chunks.
-    fn block_start(&self) -> i32 {
-        self.rings[..3].iter().copied().max().unwrap_or(0) + BLOCK_MARGIN
+    /// The cells from the focus past which the ground goes by blocks: past the rings of what stands on it. They need the baked ground's
+    /// blend pass: without it (Rome 2) they don't start.
+    fn block_start(&self) -> f64 {
+        if self.shared.rq.bake_ground { f64::from(self.rings[..2].iter().copied().max().unwrap_or(0) + BLOCK_MARGIN) } else { f64::MAX }
     }
 
     /// Works out the levels around the focus (a point of the frame), queues what changes and returns what the workers finished.
@@ -434,17 +445,21 @@ impl Streamer {
             (dx * dx + dy * dy).sqrt()
         };
 
-        let start = f64::from(self.block_start());
+        let (start, ground) = (self.block_start(), f64::from(self.rings[2]));
         let mut want: HashMap<ChunkKey, (Lod, f64)> = HashMap::new();
         for by in span(fy).filter(|&y| y >= 0 && y * BLOCK < ch) {
             for bx in span(fx).filter(|&x| x >= 0 && x * BLOCK < cw) {
                 // Past the rings a block is one piece; it stays one within the slack.
                 let key = (bx * BLOCK, by * BLOCK);
                 let d = distance(bx * block_cells, by * block_cells, block_cells);
-                let slack = if self.wanted.get(&key) == Some(&Lod::Block) { SLACK } else { 0.0 };
+                let now = self.wanted.get(&key).copied();
+                let slack = if now.is_some_and(Lod::is_block) { SLACK } else { 0.0 };
                 if d > start - slack {
+                    // Merged once it shows as LF ground: its tiles take a while, and until then there would be nothing there.
+                    let shows = self.shown.get(&key).copied().is_some_and(Lod::is_block);
+                    let merged = shows && d <= ground + if now == Some(Lod::Merged) { SLACK } else { 0.0 };
                     if d <= reach {
-                        want.insert(key, (Lod::Block, d));
+                        want.insert(key, (if merged { Lod::Merged } else { Lod::Block }, d));
                     }
 
                     continue;
@@ -453,7 +468,7 @@ impl Streamer {
                 for cy in key.1..(key.1 + BLOCK).min(ch) {
                     for cx in key.0..(key.0 + BLOCK).min(cw) {
                         let d = distance(cx * CHUNK, cy * CHUNK, CHUNK);
-                        let now = self.wanted.get(&(cx, cy)).copied().filter(|l| *l != Lod::Block);
+                        let now = self.wanted.get(&(cx, cy)).copied().filter(|l| !l.is_block());
                         if let Some(l) = self.level(d, now) {
                             want.insert((cx, cy), (l, d));
                         }
@@ -518,7 +533,7 @@ impl Streamer {
         let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
         let (x1, y1) = ((cells[2] - 1).div_euclid(CHUNK), (cells[3] - 1).div_euclid(CHUNK));
         self.wanted.retain(|&(cx, cy), l| {
-            let side = if *l == Lod::Block { BLOCK - 1 } else { 0 };
+            let side = if l.is_block() { BLOCK - 1 } else { 0 };
             cx + side < x0 || cx > x1 || cy + side < y0 || cy > y1
         });
     }
@@ -551,8 +566,8 @@ impl Streamer {
     }
 
     /// The chunks on the scene per level.
-    pub fn shown(&self) -> [usize; 5] {
-        let mut n = [0; 5];
+    pub fn shown(&self) -> [usize; 6] {
+        let mut n = [0; 6];
         for l in self.shown.values() {
             n[*l as usize] += 1;
         }
@@ -564,10 +579,10 @@ impl Streamer {
     pub fn report(&self) -> String {
         let f = self.frame();
         let s = lock(&self.shared.stats);
-        let [near, mid, ground, far, blocks] = self.shown();
+        let [near, mid, ground, far, blocks, merged] = self.shown();
         let failed = if s.failed.is_empty() { String::new() } else { format!(", {} could not be opened", s.failed.len()) };
         format!(
-            "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far, {blocks} far blocks{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
+            "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far, {merged} merged blocks, {blocks} far blocks{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
             f.map.name, if self.busy() > 0 { format!(", {} building", self.busy()) } else { String::new() }, s.opened, s.open_s, s.from_cache, s.bytes >> 20,
             f.lf_note(), self.frame_s, self.first_s.map_or(String::new(), |t| format!(", first ring {t:.1} s"))
         )

@@ -68,6 +68,23 @@ it by default (`libs/render/gpu_adapter`: the high performance adapter unless `W
 
 **Vfs**: extraction requests from many threads combine into one pack tool call (`Vfs::extract`), 130 single-file calls became about 10.
 
+## The map context from afar (2026-11-07)
+
+`rom_third_age_map` from 56 000 units up, view distance 93 000 (a 7900 XTX; it is CPU-bound). What held a far view back, in the order it showed:
+
+| Tile ground | Before | LF by blocks | Baked | Merged blocks |
+|---|---|---|---|---|
+| 24 cells | 13 fps, 8.7 GB | 33 fps | | |
+| 128 cells | 11 fps | 16 fps, 15 GB | 15 fps, 9 GB | |
+| 512 cells | stopped | | 2.3 fps, 13 GB, 62 000 draws | |
+| the whole map | | | | 22 fps, 6 400 draws |
+
+* **Rectangles.** Past the rings a campaign map was 40 000 chunks of LF ground, each its own rectangles.
+* **Texture arrays.** A tile's material binds an array for its set of 16 ground textures, and tiles differ: 414 arrays at 128 cells, 9 GB of files, and at 256 cells the app stopped at 35 GB. The template budget does not count them. `Template::bake_far` makes a tile's far material one colour image instead (the mean of each texture, mixed by its blend and index maps as ps30_blend mixes them), and a blend pass of ours (`BAKED_BLEND_PS`) draws it with no arrays.
+* **Draws.** A tile has its own vertex buffer, so it is a draw in each of the terrain's passes. `Frame::build_block` merges a block's tiles into one grid (their heights over the LF) and one colour, sea tiles and uncovered cells pulled down to the sea bed in the same grid. Tiles go per tile only in the blocks the near and mid rings touch.
+
+Rome 2 has its own terrain pass, with no baked blend: it keeps the per-chunk levels. A block shows as LF ground first and is merged when its tiles have been read, so the first time over a whole map takes minutes and writes the tile cache (`map_context`) as it goes. `perf`'s worst frame right after `map_context_settle` is the wait itself, not a frame: script commands run inside the frame.
+
 ## Tools for the next person
 
 * Menu bar (right): frames per second and milliseconds of the last 60 frames; not in fixed-step runs (their shots must not depend on the machine).
