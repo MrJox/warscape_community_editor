@@ -204,6 +204,8 @@ pub struct TileProject {
     /// What is off about how it opened (no entry, ...), empty when nothing.
     pub warning: String,
     pub scene: TedScene,
+    /// The terrain layers (`terrain_layers`), when the tile has any; `height`, `blend` and `ground` hold what they compose.
+    pub layers: Option<crate::terrain_layers::TerrainLayers>,
     pub height_png: Option<PngFile>,
     pub height: Option<HeightField>,
     pub height_dirty: bool,
@@ -375,8 +377,13 @@ impl TileProject {
 
         let mut project = Self {
             dir, info: found.info, entry: found.entry, variation: found.variation, raw_root: found.raw_root, warning, scene, height_png, height,
-            height_dirty: false, blend: None, blend_dirty: false, ground: None, ground_dirty: false, ground_file: String::new(), unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![], game_kit: None,
+            layers: None, height_dirty: false, blend: None, blend_dirty: false, ground: None, ground_dirty: false, ground_file: String::new(), unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![], game_kit: None,
         };
+
+        let layers_file = project.dir.join(crate::terrain_layers::FILE);
+        if layers_file.exists() {
+            project.layers = Some(std::fs::read(&layers_file).map_err(|error| format!("{}: {error}", layers_file.display())).and_then(|b| crate::terrain_layers::TerrainLayers::from_bytes(&b))?);
+        }
 
         project.river_texts = project.current_river_texts();
 
@@ -603,6 +610,25 @@ impl TileProject {
             std::fs::write(&target, ground.to_bytes()?).map_err(|_| format!("could not write {}", target.display()))?;
             msg += &format!("{} saved. ", self.ground_file);
             wrote = true;
+        }
+
+        // A kit save goes by the maps above, which hold the composite: TEd gets the terrain, the layers stay here.
+        let layers_file = out_dir.join(crate::terrain_layers::FILE);
+        match &mut self.layers {
+            Some(layers) if !layers.is_empty() && (layers.dirty || elsewhere) => {
+                std::fs::write(&layers_file, layers.to_bytes()?).map_err(|_| format!("could not write {}", layers_file.display()))?;
+                layers.dirty = false;
+                msg += "terrain layers saved. ";
+                wrote = true;
+            }
+
+            Some(layers) if layers.is_empty() && layers_file.exists() => {
+                std::fs::remove_file(&layers_file).map_err(|_| format!("could not remove {}", layers_file.display()))?;
+                layers.dirty = false;
+                wrote = true;
+            }
+
+            _ => {}
         }
 
         Ok((wrote, if wrote { msg } else { "nothing to save".to_owned() }))

@@ -285,6 +285,21 @@ impl BlendField {
         peak
     }
 
+    /// The rectangle edited since the last call, for the terrain layers.
+    pub fn take_edited(&mut self) -> Option<(u32, u32, u32, u32)> {
+        self.layer.take_edited()
+    }
+
+    /// Forgets the undo history: the terrain layers changed under it.
+    pub fn clear_undo(&mut self) {
+        self.layer.clear_undo();
+    }
+
+    /// Writes a pixel of the composite of the terrain layers: neither an edit nor undoable.
+    pub fn compose_pixel(&mut self, x: u32, y: u32, samples: &[u16]) {
+        self.layer.compose_pixel(x, y, samples);
+    }
+
     /// Whether something changed since `take_changed` was last called.
     pub fn changed(&self) -> bool {
         self.layer.changed()
