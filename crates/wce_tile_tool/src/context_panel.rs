@@ -85,7 +85,7 @@ pub struct ContextUi {
     /// The look the build on its way was asked with: a look that changes again meanwhile starts another, the same one waits for it.
     build_look: Option<TerrainLook>,
 
-    db: Option<(PathBuf, Arc<TileDatabase>)>,
+    db: Option<(Vec<PathBuf>, Arc<TileDatabase>)>,
     maps_for: PathBuf,
 
     /// The season's snow where the map has it (its `snow_map_<season>.png`), how much.
@@ -103,15 +103,19 @@ impl Default for ContextUi {
     }
 }
 
+/// The tile database of `raw` over those of the tile roots (the projects' and the kits'): a project alone holds only its own few tiles.
 pub(crate) fn database(ui: &mut ContextUi, raw: &Path) -> Result<Arc<TileDatabase>, String> {
+    let mut roots = vec![raw.to_path_buf()];
+    roots.extend(ui.tile_roots.iter().filter(|r| r.as_path() != raw).cloned());
     if let Some((r, db)) = &ui.db
-        && r == raw
+        && *r == roots
     {
         return Ok(db.clone());
     }
 
-    let db = Arc::new(TileDatabase::load(&raw.join("terrain/tiles/battle/_tile_database"))?);
-    ui.db = Some((raw.to_path_buf(), db.clone()));
+    let folders = roots.iter().map(|r| r.join("terrain/tiles/battle/_tile_database")).collect::<Vec<_>>();
+    let db = Arc::new(TileDatabase::load_layered(&folders.iter().map(PathBuf::as_path).collect::<Vec<_>>())?);
+    ui.db = Some((roots, db.clone()));
     Ok(db)
 }
 

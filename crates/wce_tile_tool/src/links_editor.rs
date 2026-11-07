@@ -33,8 +33,8 @@ const LEGEND_WIDTH: f32 = 110.0;
 
 impl TileTool {
     /// The links as a map: the tile's cells, north up as in the list of cells of the entry (y from the +z edge), and the ring of neighbours'
-    /// cells round them, where the rules are. The cell clicked.
-    fn draw_link_map(&self, targets: &[TileLinkTarget], links: &[TileLink], width: i32, height: i32) -> Option<(i32, i32)> {
+    /// cells round them, where the rules are. The cell clicked, and whether with the right button.
+    fn draw_link_map(&self, targets: &[TileLinkTarget], links: &[TileLink], width: i32, height: i32) -> Option<((i32, i32), bool)> {
         let cells = targets.iter().map(|t| (t.x, t.y)).chain(links.iter().map(|l| (l.x, l.y)));
         let (mut x0, mut x1, mut y0, mut y1) = (-1, width, -1, height);
         for (x, y) in cells {
@@ -81,7 +81,11 @@ impl TileTool {
 
                 gui::set_cursor_screen_pos(lo);
                 if gui::invisible_button(&format!("##linkcell{x}_{y}"), gui::v2(side - 1.0, side - 1.0), 0) {
-                    clicked = Some((x, y));
+                    clicked = Some(((x, y), false));
+                }
+
+                if gui::is_item_hovered() && gui::is_mouse_clicked(1) && !here.is_empty() {
+                    clicked = Some(((x, y), true));
                 }
 
                 if gui::is_item_hovered() {
@@ -94,9 +98,11 @@ impl TileTool {
                         };
                     }
 
-                    if here.is_empty() {
-                        tip += if on_tile { "\nA click adds a target." } else { "\nA click adds a rule." };
-                    }
+                    tip += match (here.is_empty(), on_tile) {
+                        (true, true) => "\nA click adds a target.",
+                        (true, false) => "\nA click adds a rule.",
+                        (false, _) => "\nA right click removes it.",
+                    };
 
                     gui::set_tooltip(&tip);
                 }
@@ -154,10 +160,22 @@ impl TileTool {
         let mut changed: Option<&str> = None;
         let mut gesture = 0u64;
 
-        // The map: a click picks what a cell has, or adds to an empty one.
-        if let Some((x, y)) = self.draw_link_map(&targets, &links, width, height) {
+        // The map: a click picks what a cell has, or adds to an empty one; a right click removes.
+        if let Some(((x, y), remove)) = self.draw_link_map(&targets, &links, width, height) {
             let here = links_at(&targets, &links, x, y);
-            if here.is_empty() {
+            if remove {
+                let picked = self.link_pick.filter(|p| here.contains(p));
+                if let Some((is_target, i)) = picked.or(here.first().copied()) {
+                    if is_target {
+                        targets.remove(i);
+                    } else {
+                        links.remove(i);
+                    }
+
+                    self.link_pick = None;
+                    changed = Some(if is_target { "Remove a link target" } else { "Remove a link rule" });
+                }
+            } else if here.is_empty() {
                 let on_tile = (0..width).contains(&x) && (0..height).contains(&y);
                 if on_tile {
                     let tile_set = self.link_pick.filter(|p| p.0).and_then(|p| targets.get(p.1)).map_or_else(|| entry.tile_set(), |t| t.tile_set.clone());
@@ -181,13 +199,15 @@ impl TileTool {
                 self.link_pick = Some(here[at]);
             }
 
-            look = Some((x, y));
+            if !remove {
+                look = Some((x, y));
+            }
         }
 
         // The picked one.
         let pick = self.link_pick.filter(|&(t, i)| if t { i < targets.len() } else { i < links.len() });
         if pick.is_none() {
-            gui::text_disabled("Click a link to edit it. An empty cell gets a new one: a rule around the tile, a target on it.");
+            gui::text_disabled("Click a link to edit it, right click to remove it. An empty cell gets a new one: a rule around the tile, a target on it.");
         }
 
         if let Some((is_target, i)) = pick {
@@ -222,12 +242,6 @@ impl TileTool {
 
                 if int_field("x##ltx", &mut t.x, CELL_TIP, &mut gesture, 0x10) | int_field("y##lty", &mut t.y, CELL_TIP, &mut gesture, 0x11) {
                     changed = Some("Move a link target");
-                }
-
-                if gui::small_button(&format!("{}  Remove the target", icons::TRASH_2)) {
-                    targets.remove(i);
-                    self.link_pick = None;
-                    changed = Some("Remove a link target");
                 }
             } else {
                 let l = &mut links[i];
@@ -277,12 +291,6 @@ impl TileTool {
 
                 if int_field("base x##lrbx", &mut l.base_x, BASE_TIP, &mut gesture, 0x23) | int_field("base y##lrby", &mut l.base_y, BASE_TIP, &mut gesture, 0x24) {
                     changed = Some("Change a link rule");
-                }
-
-                if gui::small_button(&format!("{}  Remove the rule", icons::TRASH_2)) {
-                    links.remove(i);
-                    self.link_pick = None;
-                    changed = Some("Remove a link rule");
                 }
             }
 
