@@ -931,7 +931,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let (rows, working) = d.terrain_layers(kind);
         match (a.get(1).map(String::as_str), id) {
             (Some("list"), _) => {}
-            (Some("add"), _) => match d.add_terrain_layer(kind, a.get(2).map_or("Layer", String::as_str), "") {
+            (Some("add"), _) => match d.add_terrain_layer(kind, a.get(2).map_or("Layer", String::as_str)) {
                 Ok(id) => return ok(format!("layer {id}")),
                 Err(why) => return fail(why),
             },
