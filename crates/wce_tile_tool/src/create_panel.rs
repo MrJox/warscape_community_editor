@@ -867,7 +867,11 @@ impl TileTool {
         dl.text(gui::v2(at.x + 2.0, at.y + side), theme::u32(colour), &name);
         if favourite {
             let h = theme::palette().highlight;
-            dl.text(gui::v2(at.x + side - 16.0, at.y + 3.0), theme::u32(h), icons::STAR);
+            // On a dark disc: over the pictures' pale skies it did not show.
+            let size = gui::calc_text_size(icons::STAR);
+            let c = gui::v2(at.x + side - 4.0 - size.x * 0.5, at.y + 4.0 + size.y * 0.5);
+            dl.circle_filled(c, size.x.max(size.y) * 0.5 + 3.0, theme::u32([0.08, 0.08, 0.09, 0.85]));
+            dl.text(gui::v2(c.x - size.x * 0.5, c.y - size.y * 0.5), theme::u32(h), icons::STAR);
         }
 
         (clicked, star, hovered)
