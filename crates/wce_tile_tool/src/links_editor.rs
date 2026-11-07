@@ -8,7 +8,7 @@ use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 use wce_editor_core::document::Document;
 use wce_scene::render_scene::DocumentId;
 use wce_tile::battle_map::context::{MapPlacement, PlacedMap};
-use wce_tile::battle_map::link_candidates::{Candidate, candidates};
+use wce_tile::battle_map::link_candidates::{Candidate, candidates, pair_ground};
 use wce_tile::battle_map::tile_db::TileDatabase;
 use wce_tile_editor::tile_document::{TileDocument, link_rgb};
 
@@ -487,8 +487,9 @@ impl TileTool {
                 h: t.height, rotation: c.rotation, flipped: false, climate: 0, any_variation: false,
             },
         ];
-        // A flat LF 100 m up: as on an inland map, above the sea (with none the tiles sit 20 m under it, where the game never puts them).
-        let level = ((100.0 + wce_tile::battle_map::context::VERTICAL_OFFSET) / wce_tile::battle_map::context::LF_HEIGHT * 65535.0).round() as u16;
+        // A flat LF: the ground they stand on.
+        let ground = pair_ground(db, [open, t]);
+        let level = ((ground + wce_tile::battle_map::context::VERTICAL_OFFSET) / wce_tile::battle_map::context::LF_HEIGHT * 65535.0).round() as u16;
         let lf = wce_tile::battle_map::context::LfField::new(1, 1, vec![level]);
         let map = PlacedMap {
             name: format!("link candidate {}", t.location), width: (x1 - x0) as u32, height: (y1 - y0) as u32, placements, lf: Some(lf), sea_lf: None, unknown: vec![],
