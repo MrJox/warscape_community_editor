@@ -423,6 +423,41 @@ impl TileTool {
         };
     }
 
+    /// Something was picked in the Scene panel: what was being made ends (a line being drawn is finished with the points it has, what was
+    /// being placed or painted stops), and the Inspector shows the pick.
+    pub fn leave_for_selection(&mut self, e: &mut Editor) {
+        if self.drawing && self.draw_pts.len() >= 2 {
+            // Finishing selects what it made (a hint the tool takes next frame) and inserts it, which moves the elements after it along:
+            // the pick stays, moved with them.
+            let picked: Vec<wce_scene::render_scene::SourceRef> = e.selection.items().to_vec();
+            let before = document(e).map_or(0, |d| d.tile().tscene().doc().elements().len());
+            self.finish_drawing(e);
+            if let Some(d) = document(e) {
+                let added = d.tile().tscene().doc().elements().len().saturating_sub(before) as u64;
+                let at = d.take_selection_hint().and_then(|h| h.first().copied());
+                e.selection.clear();
+                for mut r in picked {
+                    // (A building's piece is not an element: it does not move.)
+                    if let Some(at) = at && r.item >= at && wce_tile_editor::tile_document::elem_of(r.item).is_some() {
+                        r.item += added;
+                    }
+
+                    e.selection.add(r);
+                }
+            }
+        }
+
+        if self.making.is_some() || self.placing.is_some() || self.drawing {
+            self.stop_making();
+        }
+
+        if self.mode != crate::tool::TileMode::Select {
+            self.set_mode(crate::tool::TileMode::Select);
+        }
+
+        e.pending_focus = Some("Inspector".to_owned());
+    }
+
     /// Stops placing or drawing.
     pub fn stop_making(&mut self) {
         self.veg_set = None;
