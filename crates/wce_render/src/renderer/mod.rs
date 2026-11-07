@@ -1497,20 +1497,13 @@ impl Renderer {
         // The editor view's fog amount: battlefog.hlsl's alpha is saturate((g_fog_height_strength * the height term + the distance term)
         // * the clear-distance ramp), its distance term g_fog_distance_scale * (1 - exp(-d)) (g_fog_distance_strength only sets how fast d
         // grows): scaling the two scales the fog (the GLSL listing of ps30_main).
-        if !self.settings.game_view && self.settings.fog_amount < 1.0 {
-            let k = self.settings.fog_amount.clamp(0.0, 1.0);
+        // A view past the game's far plane (the map context's far views) thins it by as much: as the game has it, a view from high up was
+        // all white. (Slowing the distance term instead left it white: 1 - exp(-d) still reaches its top well inside such a view.)
+        let far = (GAME_VIEW_DISTANCE / view_params.camera.zfar).min(1.0);
+        if !self.settings.game_view && (self.settings.fog_amount < 1.0 || far < 1.0) {
+            let k = self.settings.fog_amount.clamp(0.0, 1.0) * far;
             self.cbs.set_f("fog_VS_PS", "g_fog_distance_scale", &[env.fog_distance_scale * k]);
             self.cbs.set_f("fog_VS_PS", "g_fog_height_strength", &[env.fog_height_strength * k]);
-        }
-
-        // A view past the game's far plane (the map context's far views): its fog is stretched to the same share of the view; as the game
-        // has it, everything past a few km was white.
-        let stretch = GAME_VIEW_DISTANCE / view_params.camera.zfar;
-        if !self.settings.game_view && stretch < 1.0 {
-            let k = self.settings.fog_amount.clamp(0.0, 1.0);
-            self.cbs.set_f("fog_VS_PS", "g_fog_distance_start", &[env.fog_distance_start / stretch]);
-            self.cbs.set_f("fog_VS_PS", "g_fog_distance_strength", &[env.fog_distance_strength * stretch]);
-            self.cbs.set_f("fog_VS_PS", "g_fog_height_strength", &[env.fog_height_strength * k * stretch]);
         }
 
         // gfx_screen_space_reflections 0 (Attila, Thrones of Britannia; fn 0x11904130): no environment specular pass, the directional

@@ -508,7 +508,7 @@ impl ContextUi {
         // The rings change the streamer's levels; the rest builds a new one.
         let mut rings = gui::slider_int("full detail (cells)", &mut self.near, 1, 64);
         rings |= gui::slider_int("buildings (cells)", &mut self.mid, 1, 128);
-        rings |= gui::slider_int("tile ground (cells)", &mut self.ground, 1, 1024);
+        rings |= gui::slider_int("tile ground (cells)", &mut self.ground, 1, 128);
         rings |= gui::slider_int("LF ground (cells)", &mut self.far, 1, 1024);
         if rings {
             let r = self.rings();
