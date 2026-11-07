@@ -25,16 +25,25 @@ pub const BOX_BELOW: f64 = 5.0;
 pub const BOX_ABOVE: f64 = 30.0;
 
 /// What a material averages to, as a baked one stores it (`Template::bake_far`).
-pub(super) fn mean_of_material(m: &TerrainMaterial, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> [u8; 3] {
+pub(super) fn mean_of_material(m: &TerrainMaterial, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> [u8; 4] {
     let slots = slot_colours(m, mean);
-    let (Some(blend), Some(index)) = (&m.blend.rgba, &m.index.rgba) else { return [128; 3] };
+    let detail = detail_byte(m);
+    let (Some(blend), Some(index)) = (&m.blend.rgba, &m.index.rgba) else { return [128, 128, 128, detail] };
     let n = (blend.len() / 4).min(index.len() / 4).max(1);
     let sum = blend.chunks_exact(4).zip(index.chunks_exact(4)).fold([0.0f32; 3], |s, (b, i)| {
         let c = blended(b, i, &slots);
         std::array::from_fn(|k| s[k] + c[k] / n as f32)
     });
 
-    sum.map(baked_byte)
+    let [r, g, b] = sum.map(baked_byte);
+    [r, g, b, detail]
+}
+
+/// A material's mid-distance detail strength (per layer in `mid_strength`), as a baked material stores it, in its colour's alpha: the
+/// resolve lays the detail map over the ground by it, and without it distant ground came out brighter and yellower than the tiles beside it.
+fn detail_byte(m: &TerrainMaterial) -> u8 {
+    let mean = m.mid_strength.iter().sum::<f32>() / 4.0;
+    (mean.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// A linear colour channel as a baked material stores it.
@@ -246,6 +255,7 @@ impl Template {
 
         let slots = slot_colours(m, mean);
         let (w, h, bw, bh) = (far.blend.w as usize, far.blend.h as usize, m.blend.w as usize, m.blend.h as usize);
+        let detail = detail_byte(m);
         let mut out = vec![255u8; w * h * 4];
         out.par_chunks_mut(w * 4).enumerate().for_each(|(y, row)| {
             for x in 0..w {
@@ -260,6 +270,8 @@ impl Template {
                 for k in 0..3 {
                     row[x * 4 + k] = baked_byte(sum[k]);
                 }
+
+                row[x * 4 + 3] = detail;
             }
         });
 
@@ -277,14 +289,14 @@ impl Template {
     }
 
     /// The baked colour at a point of the tile's frame, as a baked material stores it.
-    pub fn far_colour(&self, x: f64, z: f64) -> Option<[u8; 3]> {
+    pub fn far_colour(&self, x: f64, z: f64) -> Option<[u8; 4]> {
         let m = self.material_far.as_ref().filter(|m| m.baked)?;
         let px = m.blend.rgba.as_ref()?;
         let (w, h) = (i64::from(m.blend.w), i64::from(m.blend.h));
         let (u, v) = ((x - m.x0) / (m.x1 - m.x0), (z - m.z0) / (m.z1 - m.z0));
         let (i, j) = (((u * w as f64) as i64).clamp(0, w - 1), ((v * h as f64) as i64).clamp(0, h - 1));
         let at = ((j * w + i) * 4) as usize;
-        Some([px[at], px[at + 1], px[at + 2]])
+        Some([px[at], px[at + 1], px[at + 2], px[at + 3]])
     }
 
     /// Fills in what follows from the rest (the coarse grid, the low material, the size): after a load or a cache read.
