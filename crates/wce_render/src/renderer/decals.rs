@@ -92,7 +92,7 @@ pub(crate) struct DecalGpu {
     /// Collected at all (a scene may have none); the structure log as far as they follow it and the first entity id not seen (a map
     /// context's chunks come and go without collecting 100 000 entities again); the mesh entities whose models had not loaded (their
     /// decal boxes come with the model).
-    built: bool,
+    pub(crate) built: bool,
     structure_cursor: u64,
     next_entity: EntityId,
     pending: Vec<EntityId>,

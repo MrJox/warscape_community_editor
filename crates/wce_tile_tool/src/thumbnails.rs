@@ -32,8 +32,9 @@ const SETTLE_RENDERS: u32 = 6;
 /// How long the renderer stays without work before it is dropped (seconds).
 const IDLE_DROP_S: f64 = 20.0;
 
-/// The direction the camera looks from: south-east of the model and above it.
-const VIEW_FROM: [f32; 3] = [0.75, 0.55, -1.0];
+/// The direction the camera looks from: south-east of the model and 40 degrees above it (24 before: what is wide and low, decals above
+/// all, was seen too flat).
+const VIEW_FROM: [f32; 3] = [0.75, 1.05, -1.0];
 
 /// The sun is put behind the camera, this far round to its side (degrees), and at least this high: under the weather's own sun a model
 /// was often seen from its dark side. Its side gives the faces some shading.
@@ -41,7 +42,7 @@ const SUN_TURN: f32 = 35.0;
 const SUN_LEAST_ELEVATION: f32 = 35.0;
 
 /// Goes into a thumbnail's file name: the ones made under another light, or without the ground, are not taken for these.
-const LOOK: &str = "sun_behind_grey_ground_decals";
+const LOOK: &str = "sun_behind_grey_ground_higher_view";
 
 /// The ground under what a thumbnail shows: grey, so that what is pale, small or see-through (effects, decals) shows against it. As
 /// wide as this many times the framed radius.
@@ -247,6 +248,7 @@ impl Thumbnails {
             waited += 1;
         }
 
+        r.forget_scene();
         r.restart_temporal();
         let effects = job.scene.entities().iter().any(|en| matches!(en.payload, Payload::VfxEmitter(_)));
         let renders = if effects { (EFFECT_SECONDS / EFFECT_STEP) as u32 } else { SETTLE_RENDERS };
@@ -305,6 +307,24 @@ fn add_ground(scene: &mut RenderScene, floor: Float3, radius: f32) -> wce_scene:
     ground
 }
 
+/// Where the ground is under what a thumbnail shows: at the middle height of its models' origins (a model stands on its origin), else of its
+/// decals' (their boxes reach across the ground), else at the origin. The bottom of the bounds was under it wherever a model had foundations,
+/// a skirt or a decal box below the ground, and what stood on it floated; the origin alone is not it either: a prefab's parts keep the heights
+/// they were saved at (the kit's path prefabs stand 2 m over theirs).
+fn ground_height(job: &Job) -> f32 {
+    let median = |mut v: Vec<f32>| {
+        v.sort_by(f32::total_cmp);
+        v.get(v.len() / 2).copied()
+    };
+
+    let origins = |decal: bool| job.scene.entities().iter().filter(|en| match &en.payload {
+        Payload::MeshInstance(_) => !decal,
+        Payload::Decal(_) => decal,
+        _ => false,
+    }).map(|en| en.world.m[1][3]).collect::<Vec<_>>();
+    median(origins(false)).or_else(|| median(origins(true))).unwrap_or(0.0)
+}
+
 /// The camera that frames the job's models (their bounds once loaded) and effects, the point under their middle at their bottom, and their
 /// radius. `None` when nothing loaded.
 fn frame(r: &mut Renderer, job: &Job) -> Option<(Camera, Float3, f32)> {
@@ -353,7 +373,7 @@ fn frame(r: &mut Renderer, job: &Job) -> Option<(Camera, Float3, f32)> {
     // The bounding sphere of the box is loose for long, low models: a little closer than it asks.
     let dist = radius / (cam.fov_y * 0.5).sin() * 0.85;
     let camera = Camera { eye: centre + d * dist, target: centre, znear: (dist - radius * 1.5).max(0.05), zfar: dist + radius * (GROUND_SPAN + 4.0), ..cam };
-    Some((camera, Float3::new(centre.x, lo.y, centre.z), radius))
+    Some((camera, Float3::new(centre.x, ground_height(job), centre.z), radius))
 }
 
 /// Box-filters RGBA8 pixels to half their size, alpha 255.

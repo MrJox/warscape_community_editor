@@ -1130,6 +1130,12 @@ impl Renderer {
     }
 
     /// Forgets what earlier frames left behind (auto exposure, tone mapper limits, frame counter, clock), so the next frames depend on the scene only.
+    /// Forgets what it keeps of the scene it drew last (its decals): the next scene may be another one at the same address, which it would
+    /// take for that one (the thumbnails make each preview's scene in the same place, and showed the decals of the one before).
+    pub fn forget_scene(&mut self) {
+        self.decals.built = false;
+    }
+
     pub fn restart_temporal(&mut self) {
         self.clock.frame = 0;
         self.clock.last_time = -1.0;
