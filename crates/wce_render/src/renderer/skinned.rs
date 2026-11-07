@@ -191,8 +191,9 @@ fn lines_of(texels: usize) -> usize {
 
 impl Renderer {
 
-    /// Writes the frame's palettes and instances (before the first pass that draws them).
-    pub(crate) fn prepare_skinned(&mut self, scene: &RenderScene) {
+    /// Writes the frame's palettes and instances (before the first pass that draws them). `eye` is the view's: `self.camera` may still be the environment
+    /// cube's here, every fourth frame, and the LODs picked from it put all the soldiers at their distance from the battle's centre for that frame.
+    pub(crate) fn prepare_skinned(&mut self, scene: &RenderScene, eye: Float3) {
         let scene_id = std::ptr::from_ref(scene) as usize;
         if self.skinned.scene_id != scene_id || self.skinned.revision != scene.structure_revision() {
             self.skinned.scene_id = scene_id;
@@ -206,7 +207,7 @@ impl Renderer {
         }
 
         wce_prof!("render.skinned_prepare");
-        let (units, o, eye) = (self.camera.units, self.camera.origin, self.camera.eye);
+        let (units, o) = (self.camera.units, self.camera.origin);
         let mut texels: Vec<[f32; 4]> = vec![];
         let mut offset_of = HashMap::<usize, usize>::new();
         let mut placed: Vec<(Run, Placed)> = vec![];

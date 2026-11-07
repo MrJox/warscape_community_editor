@@ -7,7 +7,7 @@
 //!
 //! `WCE_MODS` (packs, comma separated) mounts mods, `WCE_UNITS` (`unit:faction`, comma separated) runs just those whole units, `WCE_UNIT_FIND` lists
 //! the units whose key has a word, `WCE_UNIT_CAM` (eye and target, x,y,z,x,y,z) places the camera, `WCE_UNIT_COUNT`
-//! sets how many soldiers (over 5: ranks), `WCE_UNIT_SLOT` and `WCE_UNIT_TIME` what they play.
+//! sets how many soldiers (over 5: ranks), `WCE_UNIT_SLOT` and `WCE_UNIT_TIME` what they play, `WCE_UNIT_TURN` turns them half a turn.
 
 use std::io::Cursor;
 use std::path::Path;
@@ -230,6 +230,9 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
         let layer = scene.add_layer(1, "Unit");
         scene.add(layer, Float4x4::IDENTITY, Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)), SourceRef { doc: 1, item: 0 });
         scene.environment.active = Some(env.clone());
+
+        // Far from the soldiers: the environment cube, rebuilt every few frames from above the battle's centre, must change nothing of theirs.
+        scene.battle_centre = [900.0, 0.0];
         let count = std::env::var("WCE_UNIT_COUNT").ok().and_then(|g| g.parse().ok()).unwrap_or(5);
         let mut wanted: Vec<String> = vec![];
         let mut different = std::collections::BTreeSet::new();
@@ -293,6 +296,12 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
                     world.m[r][r] = figure.scale;
                 }
 
+                // Half a turn, to face the other way against the sun.
+                if std::env::var("WCE_UNIT_TURN").is_ok() {
+                    world.m[0][0] = -figure.scale;
+                    world.m[2][2] = -figure.scale;
+                }
+
                 world.m[0][3] = (k as f32 - (count - 1) as f32 * 0.5) * extent * 0.65;
                 world.m[2][3] = (k % 2) as f32 * 1.1;
                 if count > 5 {
@@ -325,6 +334,22 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
         wait_for(&mut r, &scene, &cam, &mut rt, &parts)?;
         let mut clock = 1.0;
         frames_running(&mut r, &scene, &cam, &mut rt, 150, &mut clock);
+        // Nothing moves: no frame may differ from the one before.
+        let mut before: Option<Vec<u8>> = None;
+        let mut changed = 0;
+        for _ in 0..8 {
+            frames_running(&mut r, &scene, &cam, &mut rt, 1, &mut clock);
+            let rgba = rt.read_rgba8(&gpu.dev, &gpu.ctx).unwrap_or_default();
+            changed = before.as_ref().map_or(0, |b: &Vec<u8>| rgba.iter().zip(b).filter(|(a, c)| a.abs_diff(**c) > 6).count()).max(changed);
+            before = Some(rgba);
+        }
+
+        println!("{unit}: at most {changed} channels changed between still frames");
+        if changed > 0 {
+            println!("FAIL: {unit}: a still picture flickers");
+            failures += 1;
+        }
+
         println!("{unit}: tone points {:?}", r.points_readback().0);
         write_ppm_sized(&out.join(format!("unit{shot}.ppm")), &rt.read_rgba8(&gpu.dev, &gpu.ctx).unwrap_or_default(), w, h);
         println!("{unit}: {} of {count} soldiers differ", different.len());
