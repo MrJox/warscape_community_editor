@@ -10,6 +10,11 @@ fn set3(cbs: &mut ConstantBuffers, cb: &str, var: &str, v: Float3) {
     cbs.set_f(cb, var, &[v.x, v.y, v.z]);
 }
 
+/// The length of the sun's direction in `skydome_PS`, a hair under 1. The sky shaders take `acos(dot(view, sun))` through `sqrt(1 - dot)`: a pixel
+/// straight at the sun can round the dot over 1, and that pixel is a NaN. In the sky cube it takes one texel, which the reflections pick up and their
+/// blurs spread over a square of the picture.
+const SKY_SUN_LENGTH: f32 = 1.0 - 1e-6;
+
 /// A float3[2]: 16-byte stride.
 fn set_pair(cbs: &mut ConstantBuffers, var: &str, v: [Float3; 2]) {
     cbs.set_f("lighting_VS_PS", var, &[v[0].x, v[0].y, v[0].z, 0.0, v[1].x, v[1].y, v[1].z]);
@@ -30,7 +35,7 @@ pub fn apply_environment(e: &EnvironmentParams, cbs: &mut ConstantBuffers) {
     cbs.set_f("skydome_PS", "g_horizon_decay", &[e.horizon_decay * -0.5]);
     cbs.set_f("skydome_PS", "g_circumsolar_decay", &[e.circumsolar_decay * -10.0]);
     cbs.set_f("skydome_PS", "g_backscatter_decay", &[e.backscatter_decay]);
-    set3(cbs, "skydome_PS", "g_sun_direction", to_sun);
+    set3(cbs, "skydome_PS", "g_sun_direction", to_sun * SKY_SUN_LENGTH);
 
     // lighting_VS_PS. sun_direction is the direction light travels (the shader uses -sun_direction as L).
     // Verified (memory dump): sun colour = pow(c, 2.2) * sun_colour_scale * 5000 (the shaders multiply by 0.004 in HDR).
