@@ -66,7 +66,7 @@ pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::prefab_reference_text;
 pub use self::flip::FlipPlane;
 pub use self::index::{FILLED_TYPES, polygon_colour, style_of};
-pub use self::view::{LIGHT_RADIUS_HANDLE, SHELTER_TARGET_HANDLE};
+pub use self::view::{LIGHT_RADIUS_HANDLE, SHELTER_TARGET_HANDLE, link_rgb};
 pub use self::tech::{GROUPS, KINDS, TechInfo, TechKind, TechScope, TechSettings, TechStats, WallTechReport, tech_counts};
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
 pub use self::walls::{Anchor, WALL_SPLINE, WallLayout};
@@ -326,8 +326,6 @@ pub struct LinkCell {
     pub text: String,
     pub equals: bool,
     pub target: bool,
-    pub base_x: i32,
-    pub base_y: i32,
 }
 
 /// A landscape instance further from the terrain than a tolerance: dy = y - the terrain height.

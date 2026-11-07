@@ -10,7 +10,7 @@ use wce_scene::render_scene::DocumentId;
 use wce_tile::battle_map::context::{MapPlacement, PlacedMap};
 use wce_tile::battle_map::link_candidates::{Candidate, candidates};
 use wce_tile::battle_map::tile_db::TileDatabase;
-use wce_tile_editor::tile_document::TileDocument;
+use wce_tile_editor::tile_document::{TileDocument, link_rgb};
 
 use crate::tool::TileTool;
 
@@ -24,7 +24,110 @@ const BLEND_TIP: &str = "How many pixels of the neighbour's terrain are blended 
 const OFFLINE_TIP: &str = "Turns off the export's pre-blend at that edge (from the name; not tested).";
 const BASE_TIP: &str = "Only the export's edge blend reads it: an offset in the link set's linking tile (a 1 x 1 tile, turned as it may be) from the link's cell to the cell of this tile where that tile's terrain is blended in. (1, 0): one cell over, the kit's usual; (0, 0): the link's cell. A reading of the code, not checked in game.";
 
+/// The map's largest side and the size of its cells (pixels).
+const MAP_SIDE: f32 = 220.0;
+const MAP_CELL: (f32, f32) = (9.0, 22.0);
+
+/// How wide the legend must fit to stand beside the map (pixels).
+const LEGEND_WIDTH: f32 = 110.0;
+
 impl TileTool {
+    /// The links as a map: the tile's cells, north up as in the list of cells of the entry (y from the +z edge), and the ring of neighbours'
+    /// cells round them, where the rules are. The cell clicked.
+    fn draw_link_map(&self, targets: &[TileLinkTarget], links: &[TileLink], width: i32, height: i32) -> Option<(i32, i32)> {
+        let cells = targets.iter().map(|t| (t.x, t.y)).chain(links.iter().map(|l| (l.x, l.y)));
+        let (mut x0, mut x1, mut y0, mut y1) = (-1, width, -1, height);
+        for (x, y) in cells {
+            (x0, x1, y0, y1) = (x0.min(x), x1.max(x), y0.min(y), y1.max(y));
+        }
+
+        let (nx, ny) = (x1 - x0 + 1, y1 - y0 + 1);
+        let side = (MAP_SIDE.min(gui::content_region_avail().x) / nx.max(ny) as f32).floor().clamp(MAP_CELL.0, MAP_CELL.1);
+        let origin = gui::cursor_screen_pos();
+        let right = origin.x + gui::content_region_avail().x;
+        let dl = gui::window_draw_list();
+        let picked = self.link_pick.and_then(|(t, i)| if t { targets.get(i).map(|t| (t.x, t.y)) } else { links.get(i).map(|l| (l.x, l.y)) });
+        let mut clicked = None;
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                let lo = gui::v2(origin.x + (x - x0) as f32 * side, origin.y + (y - y0) as f32 * side);
+                let hi = gui::v2(lo.x + side - 1.0, lo.y + side - 1.0);
+                let on_tile = (0..width).contains(&x) && (0..height).contains(&y);
+                dl.rect_filled(lo, hi, if on_tile { gui::col32(58, 62, 68, 255) } else { gui::col32(34, 36, 40, 255) }, 0.0);
+
+                let here = links_at(targets, links, x, y);
+                let rule = here.iter().find(|h| !h.0).map(|h| &links[h.1]);
+                let target = here.iter().find(|h| h.0).map(|h| &targets[h.1]);
+                if let Some(l) = rule {
+                    dl.rect_filled(lo, hi, set_colour(&l.link_set, 235), 0.0);
+                    if l.test == "TLT_NOT_EQUALS" {
+                        dl.line(lo, hi, gui::col32(0, 0, 0, 255), 1.5);
+                        dl.line(gui::v2(lo.x, hi.y), gui::v2(hi.x, lo.y), gui::col32(0, 0, 0, 255), 1.5);
+                    }
+                }
+
+                if let Some(t) = target {
+                    if rule.is_none() {
+                        dl.rect_filled(lo, hi, set_colour(&t.tile_set, 150), 0.0);
+                    }
+
+                    let size = gui::text_line_height().min(side);
+                    dl.text_sized(size, gui::v2(lo.x + (side - 1.0 - size) * 0.5, lo.y + (side - 1.0 - size) * 0.5), gui::col32(255, 255, 255, 255), icons::FLAG);
+                }
+
+                if picked == Some((x, y)) {
+                    dl.rect(lo, hi, gui::col32(255, 255, 255, 255), 0.0, 2.0);
+                }
+
+                gui::set_cursor_screen_pos(lo);
+                if gui::invisible_button(&format!("##linkcell{x}_{y}"), gui::v2(side - 1.0, side - 1.0), 0) {
+                    clicked = Some((x, y));
+                }
+
+                if gui::is_item_hovered() {
+                    let mut tip = format!("Cell ({x}, {y})");
+                    for &(is_target, i) in &here {
+                        tip += &if is_target {
+                            format!("\noffers a {} join", targets[i].tile_set)
+                        } else {
+                            format!("\n{} {}", if links[i].test == "TLT_NOT_EQUALS" { "must not be" } else { "must be" }, links[i].link_set)
+                        };
+                    }
+
+                    if here.is_empty() {
+                        tip += if on_tile { "\nA click adds a target." } else { "\nA click adds a rule." };
+                    }
+
+                    gui::set_tooltip(&tip);
+                }
+            }
+        }
+
+        // The legend beside the map, where there is room for it, else under it.
+        let (map_w, map_h) = (nx as f32 * side, ny as f32 * side);
+        let beside = right - (origin.x + map_w) >= LEGEND_WIDTH;
+        let spacing = 2.0 * gui::item_spacing().x;
+        gui::set_cursor_screen_pos(if beside { gui::v2(origin.x + map_w + spacing, origin.y) } else { gui::v2(origin.x, origin.y + map_h + 4.0) });
+        gui::begin_group();
+        let mut sets = links.iter().map(|l| l.link_set.as_str()).chain(targets.iter().map(|t| t.tile_set.as_str())).collect::<Vec<_>>();
+        sets.sort_unstable();
+        sets.dedup();
+        for set in sets {
+            let at = gui::cursor_screen_pos();
+            let box_side = gui::text_line_height() - 2.0;
+            dl.rect_filled(gui::v2(at.x, at.y + 1.0), gui::v2(at.x + box_side, at.y + 1.0 + box_side), set_colour(set, 235), 0.0);
+            gui::set_cursor_screen_pos(gui::v2(at.x + box_side + gui::item_spacing().x, at.y));
+            let (rules, offers) = (links.iter().filter(|l| l.link_set == set).count(), targets.iter().filter(|t| t.tile_set == set).count());
+            gui::text(&format!("{set}  {rules}{}", if offers > 0 { format!(" + {offers} {}", icons::FLAG) } else { String::new() }));
+        }
+
+        gui::end_group();
+        let (_, hi) = gui::item_rect();
+        gui::set_cursor_screen_pos(gui::v2(origin.x, hi.y.max(origin.y + if beside { map_h } else { 0.0 }) + 4.0));
+        gui::dummy(gui::v2(map_w, 1.0));
+        clicked
+    }
+
     /// The link set names offered (the kit's tile sets, read once per kit), with `current` in them.
     fn link_set_names(&mut self, d: &TileDocument, current: &str) -> Vec<String> {
         let root = d.project().entry.as_ref().and_then(|en| en.raw_root()).unwrap_or_default();
@@ -51,52 +154,50 @@ impl TileTool {
         let mut changed: Option<&str> = None;
         let mut gesture = 0u64;
 
-        // The list.
-        for (i, t) in targets.iter().enumerate() {
-            let on = self.link_pick == Some((true, i));
-            if gui::selectable(&format!("{}  target: {} at ({}, {})##lt{i}", icons::FLAG, t.tile_set, t.x, t.y), on, 0) {
-                self.link_pick = Some((true, i));
-                look = Some((t.x, t.y));
+        // The map: a click picks what a cell has, or adds to an empty one.
+        if let Some((x, y)) = self.draw_link_map(&targets, &links, width, height) {
+            let here = links_at(&targets, &links, x, y);
+            if here.is_empty() {
+                let on_tile = (0..width).contains(&x) && (0..height).contains(&y);
+                if on_tile {
+                    let tile_set = self.link_pick.filter(|p| p.0).and_then(|p| targets.get(p.1)).map_or_else(|| entry.tile_set(), |t| t.tile_set.clone());
+                    targets.push(TileLinkTarget { elem: 0, serialise_version: 1, tile_set, x, y });
+                    self.link_pick = Some((true, targets.len() - 1));
+                    changed = Some("Add a link target");
+                } else {
+                    // As the one picked, or the last: a tile's rules are mostly alike.
+                    let like = self.link_pick.filter(|p| !p.0).and_then(|p| links.get(p.1)).or(links.last()).cloned();
+                    let new = like.unwrap_or_else(|| TileLink {
+                        elem: 0, serialise_version: 1, link_set: entry.tile_set(), x, y, base_x: 1, base_y: 0, is_entry: false, blend_size: 64,
+                        no_offline_blend: false, test: "TLT_EQUALS".to_owned(), has_blend_quad: true,
+                    });
+                    links.push(TileLink { elem: 0, x, y, ..new });
+                    self.link_pick = Some((false, links.len() - 1));
+                    changed = Some("Add a link rule");
+                }
+            } else {
+                // Again on a cell with several: the next one.
+                let at = self.link_pick.and_then(|p| here.iter().position(|h| *h == p)).map_or(0, |i| (i + 1) % here.len());
+                self.link_pick = Some(here[at]);
             }
-        }
 
-        for (i, l) in links.iter().enumerate() {
-            let on = self.link_pick == Some((false, i));
-            let test = if l.test == "TLT_NOT_EQUALS" { "must not be" } else { "must be" };
-            if gui::selectable(&format!("{}  ({}, {}) {test} {}##lr{i}", icons::ROUTE, l.x, l.y, l.link_set), on, 0) {
-                self.link_pick = Some((false, i));
-                look = Some((l.x, l.y));
-            }
-        }
-
-        if gui::small_button(&format!("{}  Add a target", icons::PLUS)) {
-            targets.push(TileLinkTarget { elem: 0, serialise_version: 1, tile_set: entry.tile_set(), x: 0, y: 0 });
-            self.link_pick = Some((true, targets.len() - 1));
-            changed = Some("Add a link target");
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(TARGET_SET_TIP);
-        }
-
-        gui::same_line();
-        if gui::small_button(&format!("{}  Add a rule", icons::PLUS)) {
-            links.push(TileLink {
-                elem: 0, serialise_version: 1, link_set: entry.tile_set(), x: -1, y: 0, base_x: 1, base_y: 0, is_entry: false, blend_size: 64,
-                no_offline_blend: false, test: "TLT_EQUALS".to_owned(), has_blend_quad: true,
-            });
-            self.link_pick = Some((false, links.len() - 1));
-            changed = Some("Add a link rule");
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("A condition on a neighbour's cell: what it must (or must not) be for this tile to be put next to it.");
+            look = Some((x, y));
         }
 
         // The picked one.
         let pick = self.link_pick.filter(|&(t, i)| if t { i < targets.len() } else { i < links.len() });
+        if pick.is_none() {
+            gui::text_disabled("Click a link to edit it. An empty cell gets a new one: a rule around the tile, a target on it.");
+        }
+
         if let Some((is_target, i)) = pick {
             gui::separator();
+            let (x, y) = if is_target { (targets[i].x, targets[i].y) } else { (links[i].x, links[i].y) };
+            let here = links_at(&targets, &links, x, y).len();
+            if here > 1 {
+                gui::text_disabled(&format!("{here} links in this cell: click it again for the next."));
+            }
+
             let int_field = |label: &str, v: &mut i32, tip: &str, g: &mut u64, key: u64| -> bool {
                 gui::set_next_item_width(110.0);
                 let c = gui::input_int(label, v);
@@ -185,7 +286,6 @@ impl TileTool {
                 }
             }
 
-            gui::text_disabled(&format!("the tile is {width} x {height} cells"));
         }
 
         if let Some(name) = changed {
@@ -205,6 +305,19 @@ impl TileTool {
 
         look
     }
+}
+
+/// What a cell holds: `(is a target, index)`, targets first.
+fn links_at(targets: &[TileLinkTarget], links: &[TileLink], x: i32, y: i32) -> Vec<(bool, usize)> {
+    let t = targets.iter().enumerate().filter(|(_, t)| (t.x, t.y) == (x, y)).map(|(i, _)| (true, i));
+    let l = links.iter().enumerate().filter(|(_, l)| (l.x, l.y) == (x, y)).map(|(i, _)| (false, i));
+    t.chain(l).collect()
+}
+
+/// A link set's colour for the panel.
+fn set_colour(set: &str, alpha: u8) -> u32 {
+    let [r, g, b] = link_rgb(set).map(|c| (c * 255.0).round() as u8);
+    gui::col32(r, g, b, alpha)
 }
 
 /// A combo of link set names; the picked one when it changed.
