@@ -3383,6 +3383,10 @@ impl Tool for TileTool {
         self.draw_quick_add(e);
     }
 
+    fn fixes(&self) -> Vec<std::sync::Arc<dyn wce_editor::fixes::Fix>> {
+        vec![std::sync::Arc::new(crate::building_effects_fix::BuildingEffectsFix)]
+    }
+
     fn draw_menus(&mut self, e: &mut Editor) {
         if !gui::begin_menu("Tile") {
             return;

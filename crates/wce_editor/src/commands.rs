@@ -811,6 +811,16 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
+    c.add("fix", "fix list | open <id> | apply <id> | remove <id>", "the Fixes menu: its window, or its work without it", |e, a| {
+        match (a.first().map(String::as_str), a.get(1)) {
+            (Some("list"), _) => ok(&e.fix_names().join(" ")),
+            (Some("open"), Some(id)) if e.open_fix(id) => ok(""),
+            (Some("apply"), Some(id)) => e.run_fix(id, true).map_or_else(|why| fail(&why), |done| ok(&done)),
+            (Some("remove"), Some(id)) => e.run_fix(id, false).map_or_else(|why| fail(&why), |done| ok(&done)),
+            _ => fail("usage: fix list | open <id> | apply <id> | remove <id>"),
+        }
+    });
+
     c.add("shot", "shot <file.png>", "save the whole window after this frame (the app loop does it)", |e, a| {
         let Some(p) = a.first() else { return fail("usage: shot <file.png>") };
         e.pending_shot = Some(PathBuf::from(p));

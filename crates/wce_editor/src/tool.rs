@@ -106,6 +106,11 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// What the tool offers in the Fixes menu.
+    fn fixes(&self) -> Vec<std::sync::Arc<dyn crate::fixes::Fix>> {
+        vec![]
+    }
+
     /// Buttons of the tool in the toolbar, after the gizmo's.
     fn toolbar(&mut self, editor: &mut Editor) {
         let _ = editor;

@@ -1,20 +1,16 @@
-//! Builds a mod pack that lights what Attila leaves dark: it drops the effects of a standing piece's `.meta`, and plays the `vfx_emitters`
-//! of its logic file (docs/re/buildings.md, "What gates a piece's effects"). The game stops that list only when the piece's own state
-//! changes, so an attached building's list would outlive its wall: each always-on effect of a `.meta` goes to the list of the destruct
-//! that attaches the model, at the same place, and to the model's own list only when nothing attaches it. A model that is attached
-//! somewhere stays dark where it stands alone: there is no telling the two apart in its logic file.
+//! Fixes > Light wall torches, for Attila: it drops the effects of a standing piece's `.meta`, and plays the `vfx_emitters` of its logic
+//! file (docs/re/buildings.md, "What gates a piece's effects"). This builds what makes them play, from the game and the chosen mods.
+//!
+//! Each always-on effect of a `.meta` goes to the list of the destruct that attaches the model, at the same place, as the game stops a
+//! list only when its own piece changes state: on the model itself it would outlive its wall. It goes to the model's own list only when
+//! nothing attaches it. A model that is attached somewhere stays dark where it stands alone: its logic file cannot tell the two apart.
 //!
 //! The entries of a destruct that play one effect share one running effect, moved through their places, so only one shows: each one after
 //! the first plays a copy of it, `vfx/wce_<effect>_<n>.xml`. Those files go in a pack of their own, of movie type: the game ignores `vfx/`
-//! in a mod-type pack, and loads a movie-type one always.
+//! in a mod-type pack (docs/re/game_command_line.md, "What loads before the mods"), and loads a movie-type one always.
 //!
 //! A post placed where its destruct's mesh is higher than its flame is under the wall (the upper end of the step walls): the attachment
 //! goes up, the model and its flame with it. Sconces stay: they hang under arches and roofs on purpose.
-//!
-//! The packs read are the game's, the one with `vfx/` among them. What comes out is <out pack>, the patched logic files, and beside it
-//! `<out pack stem>_vfx.pack`, the effects.
-//!
-//!   cargo run --release -p wce_tile_editor --example effects_mod -- <out pack, or - to only list> <game pack>...
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
@@ -26,6 +22,11 @@ use rpfm_lib::files::{Decodeable, DecodeableExtraData, Encodeable};
 use rpfm_lib::games::pfh_file_type::PFHFileType;
 use serde_json::{Value, json};
 use wce_formats::anim_meta::{MetaEffect, meta_effects};
+use wce_vfs::Vfs;
+
+/// The packs, in the game's data folder: the logic files, and the effects' copies.
+pub const LOGIC_PACK: &str = "wce_lit_buildings.pack";
+pub const VFX_PACK: &str = "wce_lit_buildings_vfx.pack";
 
 /// Its model is 294 bytes and the game stops with a runtime error when it is placed; nothing attaches it.
 const LEFT_OUT: &[&str] = &["greek_torch_sconce"];
@@ -199,25 +200,33 @@ fn patched(
     encode(serde_json::from_value(v).map_err(|e| e.to_string())?).map(Some)
 }
 
-fn main() -> Result<(), String> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let (out, packs) = args.split_first().ok_or("<out pack, or -> <game pack>...")?;
-    let mut files = BTreeMap::new();
-    for pack in packs {
-        files.extend(wce_walls::pack::read_pack_files(Path::new(pack), "attila")?);
-    }
+/// What [`build`] made.
+#[derive(Default)]
+pub struct Built {
+    /// Path in the packs, bytes.
+    pub logic: Vec<(String, Vec<u8>)>,
+    pub effects: Vec<(String, Vec<u8>)>,
+    pub raised: usize,
+
+    /// Logic files with something to add that could not be patched (a mod's, in a form this does not write back), and why.
+    pub skipped: Vec<String>,
+}
+
+/// Builds the packs' contents from what `files` shows. `files` must not have [`LOGIC_PACK`] among its packs: that would patch its own work.
+///
+/// # Errors
+///
+/// An effect to copy is not in the files.
+pub fn build(files: &Vfs) -> Result<Built, String> {
+    const BUILDINGS: &str = "rigidmodels/buildings/";
 
     // Building key -> destruct -> its effects.
     let mut buildings: BTreeMap<String, BTreeMap<String, Vec<MetaEffect>>> = BTreeMap::new();
-    for (path, bytes) in files.iter().filter(|(p, _)| p.starts_with("rigidmodels/buildings/") && p.ends_with(".meta") && !p.ends_with("_anim.meta")) {
-        let effects = always_on(bytes);
+    for path in files.list(BUILDINGS, ".meta").into_iter().filter(|p| !p.ends_with("_anim.meta")) {
+        let Ok(bytes) = files.read(path) else { continue };
+        let effects = always_on(&bytes);
         let (Some(key), Some(file), false) = (path.split('/').nth(2), path.rsplit('/').next(), effects.is_empty()) else { continue };
-        for e in &effects {
-            println!("{path}: {} at {:?}, turned {:?}, scale {} (start {} end {})", e.effect, e.position, e.rotation, e.scale, e.start, e.end);
-        }
-
         if LEFT_OUT.contains(&key) {
-            println!("  left out");
             continue;
         }
 
@@ -232,47 +241,118 @@ fn main() -> Result<(), String> {
         destructs.flat_map(|d| d["file_refs"].as_array().into_iter().flatten()).filter_map(attached).collect()
     };
 
-    let logic = files.iter().filter(|(p, _)| p.starts_with("rigidmodels/buildings/") && p.ends_with("_tech.cs2.parsed")).collect::<Vec<_>>();
+    let logic = files.list(BUILDINGS, "_tech.cs2.parsed").into_iter().filter_map(|p| Some((p, files.read(p).ok()?))).collect::<Vec<_>>();
     let mut models = BTreeMap::new();
     for key in logic.iter().flat_map(|(_, b)| attaching(b)).collect::<BTreeSet<_>>() {
         if let Some(by_destruct) = buildings.remove(&key) {
-            println!("{key}: attached: its effects go to the destructs attaching it");
             models.insert(key, by_destruct.into_values().flatten().collect::<Vec<_>>());
         }
     }
 
-    let (mut patches, mut entries, mut copies, mut raised) = (vec![], 0, BTreeMap::new(), 0);
+    let (mut built, mut copies) = (Built::default(), BTreeMap::new());
     for (path, bytes) in logic {
         let own = path.split('/').nth(2).and_then(|key| buildings.get(key)).cloned().unwrap_or_default();
         let dir = &path[..path.rfind('/').unwrap_or_default() + 1];
         let key = path.split('/').nth(2).unwrap_or_default();
         let mesh_of = |destruct: &str| {
-            let prefix = format!("{dir}{key}_{destruct}");
-            let models = files.iter().filter(|(p, _)| p.starts_with(&prefix) && p.ends_with(".rigid_model_v2") && !p.contains("_anim"));
-            models.flat_map(|(_, b)| triangles(b)).collect::<Vec<_>>()
+            let meshes = files.list(&format!("{dir}{key}_{destruct}"), ".rigid_model_v2");
+            meshes.into_iter().filter(|p| !p.contains("_anim")).filter_map(|p| files.read(p).ok()).flat_map(|b| triangles(&b)).collect::<Vec<_>>()
         };
 
-        let Some(new) = patched(bytes, &own, &models, &mesh_of, &mut copies, &mut raised).map_err(|e| format!("{path}: {e}"))? else { continue };
-        println!("{path}: {} to {} bytes", bytes.len(), new.len());
-        entries += 1;
-        patches.push((path.clone(), new));
+        match patched(&bytes, &own, &models, &mesh_of, &mut copies, &mut built.raised) {
+            Ok(Some(new)) => built.logic.push((path.to_owned(), new)),
+            Ok(None) => {}
+            Err(why) => built.skipped.push(format!("{path}: {why}")),
+        }
     }
 
     for (effect, &most) in copies.iter().filter(|(_, most)| **most > 1) {
         let path = format!("vfx/{effect}.xml");
-        let xml = files.get(&path).ok_or(format!("{path}: not in these packs"))?;
-        patches.extend((2..=most).map(|n| (format!("vfx/wce_{effect}_{n:02}.xml"), xml.clone())));
-        println!("{effect}: at most {most} on a destruct");
+        let xml = files.read(&path).map_err(|e| format!("{path}: {e}"))?;
+        built.effects.extend((2..=most).map(|n| (format!("vfx/wce_{effect}_{n:02}.xml"), xml.clone())));
     }
 
-    println!("{entries} logic files, {raised} posts moved up");
-    if out != "-" {
-        let (vfx, logic) = patches.into_iter().partition::<Vec<_>, _>(|(p, _)| p.starts_with("vfx/"));
-        wce_walls::pack::write_pack(Path::new(out), "attila", logic, vec![])?;
+    Ok(built)
+}
 
-        let movie = format!("{}_vfx.pack", out.trim_end_matches(".pack"));
-        wce_walls::pack::write_pack_as(Path::new(&movie), "attila", PFHFileType::Movie, vfx, vec![], "wce_lit_buildings_vfx")?;
+/// Writes one pack by way of a file beside it, so that a failure leaves the old one.
+fn replace(path: &Path, kind: PFHFileType, files: Vec<(String, Vec<u8>)>, table_file: &str) -> Result<(), String> {
+    let new = path.with_extension("new.pack");
+    wce_walls::pack::write_pack_as(&new, "attila", kind, files, vec![], table_file)?;
+    std::fs::rename(&new, path).map_err(|e| {
+        let _ = std::fs::remove_file(&new);
+        format!("{}: {e}", path.display())
+    })
+}
+
+/// Puts the packs in the game's data folder, in place of the ones there.
+///
+/// # Errors
+///
+/// A pack can't be written (the game has it open, say).
+pub fn install(data: &Path, built: Built) -> Result<(), String> {
+    replace(&data.join(LOGIC_PACK), PFHFileType::Mod, built.logic, "wce_lit_buildings")?;
+    replace(&data.join(VFX_PACK), PFHFileType::Movie, built.effects, "wce_lit_buildings_vfx")
+}
+
+/// Takes the packs out of the game's data folder.
+///
+/// # Errors
+///
+/// A pack can't be deleted (the game has it open, say).
+pub fn uninstall(data: &Path) -> Result<(), String> {
+    for pack in [LOGIC_PACK, VFX_PACK] {
+        let path = data.join(pack);
+        if path.is_file() {
+            std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FLAT: Triangle = [[0.0, 2.0, 0.0], [10.0, 2.0, 0.0], [0.0, 2.0, 10.0]];
+    const HIGH: Triangle = [[0.0, 5.0, 0.0], [10.0, 5.0, 0.0], [0.0, 5.0, 10.0]];
+
+    #[test]
+    fn the_top_is_the_highest_surface_there() {
+        assert_eq!(top_at(&[FLAT, HIGH], 1.0, 1.0), Some(5.0));
+        assert_eq!(top_at(&[FLAT], 1.0, 1.0), Some(2.0));
+        assert_eq!(top_at(&[FLAT], 9.0, 9.0), None);
+    }
+
+    #[test]
+    fn a_place_goes_through_a_row_vector_matrix() {
+        let mut m = matrix([1.0, 2.0, 3.0]);
+        assert_eq!(through(&m, [0.0, 0.5, 0.0]), Some([1.0, 2.5, 3.0]));
+
+        // Turned a quarter: x goes to z.
+        m["m00"] = json!(0.0);
+        m["m02"] = json!(1.0);
+        m["m20"] = json!(1.0);
+        m["m22"] = json!(0.0);
+        assert_eq!(through(&m, [2.0, 0.0, 0.0]), Some([1.0, 2.0, 5.0]));
+    }
+
+    #[test]
+    fn a_post_under_the_mesh_goes_up_and_one_over_it_stays() {
+        let post = MetaEffect { tag: String::new(), effect: "fire".to_owned(), start: 0.0, end: 0.0, position: [0.0, 2.0, 0.0], rotation: [0.0, 0.0, 0.0, 1.0], bone: -1, scale: 1.0, volume: None };
+        let models = BTreeMap::from([("torch_ground_post".to_owned(), vec![post])]);
+        let file_ref = |y: f32| json!({ "key": "piece01_destruct01_file:torch_ground_post", "transform": matrix([1.0, y, 1.0]) });
+
+        // The flame at 2 + 2, the mesh at 5: 0.75 over it.
+        let mut d = json!({ "file_refs": [file_ref(2.0)] });
+        assert_eq!(raise_posts(&mut d, &[HIGH], &models), 1);
+        assert!((d["file_refs"][0]["transform"]["m31"].as_f64().unwrap() - 3.75).abs() < 1e-5);
+        assert_eq!(list_of(&d, None, &models), [("fire".to_owned(), [1.0, 5.75, 1.0])]);
+
+        // The flame at 6, well over it.
+        let mut d = json!({ "file_refs": [file_ref(4.0)] });
+        assert_eq!(raise_posts(&mut d, &[HIGH], &models), 0);
+        assert_eq!(d["file_refs"][0]["transform"]["m31"].as_f64(), Some(4.0));
+    }
 }

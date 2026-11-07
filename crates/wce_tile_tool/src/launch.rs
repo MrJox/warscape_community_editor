@@ -501,7 +501,7 @@ pub fn pack_type(path: &Path) -> Option<u32> {
     (&h[..3] == b"PFH").then(|| u32::from_le_bytes([h[4], h[5], h[6], h[7]]) & 0xf)
 }
 
-/// The movie-type packs of `data` that are not the game's (`release`) nor the editor's own walls pack: the game loads them whatever the
+/// The movie-type packs of `data` that are not the game's (`release`) nor the editor's own (the walls', the Fixes menu's): the game loads them whatever the
 /// mod list says, and a stale one shadows the mods' files (the GPU driver crashes of docs/re/game_command_line.md).
 pub fn stray_movie_packs(data: &Path, release: &[String]) -> Vec<String> {
     let Ok(dir) = std::fs::read_dir(data) else { return vec![] };
@@ -509,7 +509,8 @@ pub fn stray_movie_packs(data: &Path, release: &[String]) -> Vec<String> {
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| n.to_ascii_lowercase().ends_with(".pack"))
-        .filter(|n| !release.iter().any(|r| r.eq_ignore_ascii_case(n)) && !n.eq_ignore_ascii_case(wce_walls::pack::PROC_PACK))
+        .filter(|n| !release.iter().any(|r| r.eq_ignore_ascii_case(n)))
+        .filter(|n| ![wce_walls::pack::PROC_PACK, wce_tile_editor::building_effects::VFX_PACK].iter().any(|own| n.eq_ignore_ascii_case(own)))
         .filter(|n| pack_type(&data.join(n)) == Some(4))
         .collect();
     v.sort_by_key(|n| n.to_ascii_lowercase());
