@@ -240,7 +240,15 @@ unsafe fn create_device(window: HWND) -> Option<(IDXGISwapChain, ID3D11Device, I
     };
 
     // Needs the Windows "Graphics Tools" feature.
-    let flags = if std::env::var("WCE_D3D_DEBUG").is_ok_and(|d| d.starts_with('1')) { D3D11_CREATE_DEVICE_DEBUG as u32 } else { 0 };
+    let on = |name: &str| std::env::var(name).is_ok_and(|d| d.starts_with('1'));
+    let mut flags = if on("WCE_D3D_DEBUG") { D3D11_CREATE_DEVICE_DEBUG as u32 } else { 0 };
+
+    // Without the driver's worker thread a crash in the driver happens in the call that caused it, with our stack, slower but findable
+    // (the access violations in amdxx64.dll are on that thread, long after the call; docs/editor.md).
+    if on("WCE_D3D_NO_DRIVER_THREADS") {
+        flags |= D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS as u32;
+        log::info("the driver's internal threads are off (WCE_D3D_NO_DRIVER_THREADS)");
+    }
 
     // The same GPU every run (docs/baseline.md).
     // SAFETY: after init_platform (the caller's contract).
@@ -386,8 +394,14 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
             }
 
             if let Some((w, h)) = state.resize.take() {
+                // Nothing may hold the back buffer: the context binds it until told not to, and the view's release is deferred without a flush.
+                ctx.OMSetRenderTargets(Some(&[None]), None);
                 rtv = None;
-                let _ = swap.ResizeBuffers(0, w, h, DXGI_FORMAT_UNKNOWN, 0);
+                ctx.Flush();
+                if let Err(error) = swap.ResizeBuffers(0, w, h, DXGI_FORMAT_UNKNOWN, 0).ok() {
+                    log::error(format!("the window's buffers stay as they were: {error}"));
+                }
+
                 rtv = back_buffer_view(swap, dev).or(rtv);
             }
 
