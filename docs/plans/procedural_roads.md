@@ -5,7 +5,7 @@ bridges over the gaps. All of it lives in layers of its own, so it can be change
 are a feature in their own right, modelled on the newer Terry's: height, blend and ground type layers, which come first. Terry only shows how
 the feature works: its projects are not imported (user, 2026-11-07).
 
-Status (2026-11-07): Phases 1 and 2 are built (`wce_tile::terrain_layers`, `tile_document/layers.rs`, `wce_tile_tool/layers_panel.rs`). Roads are not.
+Status (2026-11-07): Phases 1, 2 and 4 are built: layers (`wce_tile::terrain_layers`, `tile_document/layers.rs`, `wce_tile_tool/layers_panel.rs`) and the road on the terrain (`wce_tile::roads`, `tile_document/roads.rs`). Detail and bridges are not.
 
 ## Decisions (user, 2026-11-07)
 
@@ -73,8 +73,10 @@ layers. TEd never sees it, a tile with no layers has no such file, and saving af
 **The element.** `WceRoadSpline`, as `WceWallSpline`: an open polyline of its own kind that TEd never sees, its results regenerated. The tile
 has its settings; the Inspector shows them; **Create** panel, new section. Reuses `wce_tile::splines`.
 
-**Settings:** road width, shoulder width, bump height, maximum grade, maximum side slope, texture channel, ground type, edge noise, detail
-set, seed. Presets for path (3 m), road (6 m), paved road (9 m).
+**Settings:** `road_width`, `road_shoulder`, `road_bump`, `road_max_grade`, `road_max_side`, `road_group` and `road_variation` (its texture),
+`road_ground`, `road_feather`, `road_seed`, in the Inspector and `road_set`. Not yet: pinned heights, presets, the detail set.
+
+**The line** is a Catmull-Rom curve through the points: no handles, the points are where the road goes. Its outline draws that curve.
 
 **Generation** reads the terrain composite *below* its layers, so a road never feeds on itself, and fills three layers it owns, one per type:
 
@@ -87,9 +89,13 @@ set, seed. Presets for path (3 m), road (6 m), paved road (9 m).
 4. **Ground type layer.** Road where the road is, 16 elsewhere. Units and speed in the game follow it.
 5. **Detail** (below) and **bridges** (below), as generated instances.
 
-**When it runs.** While dragging, heights and blend on a fast path over the road's own rectangle, with the detail following when the drag
-ends, as walls do. A layer under a road changing marks the road stale: the Inspector offers a refresh, and it never rebuilds on its own while
-a brush is painting.
+**When it runs.** The layers are derived data: a road's signature (its line and settings) is kept in its layers' owner, `road:<id>#<signature>`.
+A road whose signature differs, or a height edit anywhere, makes the roads again once the line has stopped moving and no stroke is open, so a
+drag makes its road at the end, and undoing an edit of a road needs nothing of its own. Layers of a road that went are taken out; opening a tile
+makes nothing again. A road's layers are not edited by hand: their rows cannot be made the working layer. A hand edit goes on a layer above.
+
+**The height at a point** comes from the road's samples near it, by distance, further than 12 past the edge: taken from the nearest alone it jumped where
+a point stopped being nearer one stretch than another, in steps across the banks (`the_terrain_a_road_leaves_has_no_steps`).
 
 **Crossings.** Roads sharing a point weld at it: each ends flat at a common height. Road layers apply in the list's order, so a later road
 wins where two overlap. Reaching a tile's edge, the road can end flat at a height the neighbouring tile can match; matching across tiles is
@@ -164,7 +170,7 @@ the terrain goes as the composite. Nothing new has to go in a pack while pieces 
 | 0 | Check the composition rules against Terry's own output | not done: Warhammer III's packs gave no flattened tile quickly. The rules are in one place (`Kind` in `terrain_layers.rs`) |
 | 1 | Layer model, composite, file, saves flatten | done |
 | 2 | Working layer, brushes and undo on it, the panel | done |
-| 4 | `WceRoadSpline`, Create panel, Inspector, height, blend and ground type generation | drawn road on a test tile, and on the game's battle map: units take its ground type |
+| 4 | `WceRoadSpline`, Create panel, Inspector, height, blend and ground type generation | built; to check in a battle that units take its ground type |
 | 5 | Detail: bent layout of the kit's prefabs, seed, `Clear` | the road reads as a road from close up |
 | 6 | Crossings, tile edge ends | two roads weld |
 | 7 | Bridges from kit pieces | units cross a generated bridge in a battle |
