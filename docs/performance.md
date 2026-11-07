@@ -74,10 +74,10 @@ it by default (`libs/render/gpu_adapter`: the high performance adapter unless `W
 
 | Tile ground | Before | LF by blocks | Baked | Merged blocks |
 |---|---|---|---|---|
-| 24 cells | 13 fps, 8.7 GB | 33 fps | | |
+| 24 cells | 13 fps, 8.7 GB | 33 fps | | 76 fps |
 | 128 cells | 11 fps | 16 fps, 15 GB | 15 fps, 9 GB | |
 | 512 cells | stopped | | 2.3 fps, 13 GB, 62 000 draws | |
-| the whole map | | | | 22 fps, 6 400 draws |
+| the whole map | | | | 23 fps, 7 300 draws |
 
 * **Rectangles.** Past the rings a campaign map was 40 000 chunks of LF ground, each its own rectangles.
 * **Texture arrays.** A tile's material binds an array for its set of 16 ground textures, and tiles differ: 414 arrays at 128 cells, 9 GB of files, and at 256 cells the app stopped at 35 GB. The template budget does not count them. `Template::bake_far` makes a tile's far material one colour image instead (the mean of each texture, mixed by its blend and index maps as ps30_blend mixes them), and a blend pass of ours (`BAKED_BLEND_PS`) draws it with no arrays.
