@@ -88,6 +88,19 @@ pub struct MapView {
     pub status: String,
 }
 
+/// How far the ground shows from under the camera (scene units): straight ahead, and to each side there. What ends the view is its far plane,
+/// `zfar` along the camera's axis: at the sides of a flat cone it is further than `zfar` from the eye, and a tilted axis meets the ground
+/// past it. `height` is the eye's over the ground, `aspect` the viewport's.
+fn view_reach(cam: &wce_scene::camera::Camera, height: f64, aspect: f64) -> (f64, f64) {
+    let (dx, dy, dz) = (f64::from(cam.target.x - cam.eye.x), f64::from(cam.target.y - cam.eye.y), f64::from(cam.target.z - cam.eye.z));
+    let flat = dx.hypot(dz);
+
+    // Not looking straight down, where the ground under the view has no ahead.
+    let pitch = (-dy).atan2(flat).clamp(-1.4, 1.4);
+    let far = f64::from(cam.zfar);
+    (((far - height * pitch.sin()) / pitch.cos()).max(0.0), far * (f64::from(cam.fov_y) * 0.5).tan() * aspect)
+}
+
 impl MapView {
 
     /// The document whose layer the view is on (0: none yet).
@@ -416,13 +429,12 @@ impl MapView {
             let (tx, ty) = frame.cell_of(f64::from(cam.target.x), f64::from(cam.target.z));
             let (dx, dy) = (tx - ex, ty - ey);
             let l = dx.hypot(dy).max(1e-9);
-            let reach = f64::from(cam.zfar) / CELL;
+            let (along, across) = view_reach(&cam, f64::from(cam.eye.y) - f64::from(frame.sea_y()), f64::from(size.x / size.y.max(1.0)));
+            let (along, across) = (along / CELL, across / CELL);
             let eye = at(ex, ey);
-            let half = (f64::from(cam.fov_y) * 0.75).min(1.2);
             let side = |s: f64| {
-                let (c, n) = (half.cos(), s * half.sin());
-                let (rx, ry) = ((dx * c - dy * n) / l, (dx * n + dy * c) / l);
-                at(ex + rx * reach, ey + ry * reach)
+                let (fx, fy) = (dx / l, dy / l);
+                at(ex + fx * along - s * fy * across, ey + fy * along + s * fx * across)
             };
 
             dl.triangle_filled(eye, side(-1.0), side(1.0), gui::col32(255, 255, 255, 40));
@@ -450,5 +462,25 @@ impl MapView {
 
         gui::end_child();
         gui::pop_style_color(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_view_ends_at_its_far_plane() {
+        use wce_foundation::math::Float3;
+        let cam = |eye: Float3, target: Float3| wce_scene::camera::Camera { eye, target, zfar: 1000.0, fov_y: 1.0, ..Default::default() };
+
+        // Level: `zfar` ahead, wider at the sides than a cone of that length would be.
+        let (along, across) = view_reach(&cam(Float3::new(0.0, 0.0, 0.0), Float3::new(0.0, 0.0, 10.0)), 0.0, 1.5);
+        assert!((along - 1000.0).abs() < 1e-3);
+        assert!((across - 1000.0 * 0.5f64.tan() * 1.5).abs() < 1e-3);
+
+        // 45 degrees down from 100 up: where the far plane meets the ground.
+        let (along, _) = view_reach(&cam(Float3::new(0.0, 100.0, 0.0), Float3::new(0.0, 0.0, 100.0)), 100.0, 1.5);
+        assert!((along - (1000.0 - 100.0 * std::f64::consts::FRAC_1_SQRT_2) * std::f64::consts::SQRT_2).abs() < 1e-3);
     }
 }
