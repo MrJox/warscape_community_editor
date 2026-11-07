@@ -615,7 +615,7 @@ impl TileDocument {
         let name = format!("Move {}", if n.is_empty() { sc.type_of(elem).to_owned() } else { n });
         let old_pos_text = old_pos.and_then(|_| sc.doc().get(elem, "position"));
         let old_euler_text = old_euler.and_then(|_| sc.doc().get(elem, "orientation"));
-        self.history.push(Box::new(TedMoveCommand { name, elem, old_pos, new_pos, old_euler, new_euler, old_pos_text, old_euler_text, gesture, below }));
+        self.history.push(Box::new(TedMoveCommand { name, elem, old_pos, new_pos, old_euler, new_euler, old_pos_text, old_euler_text, gesture, below, grounded: vec![] }));
         true
     }
 

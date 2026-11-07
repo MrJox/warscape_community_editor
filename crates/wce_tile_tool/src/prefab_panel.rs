@@ -289,8 +289,8 @@ impl TileTool {
         let p = lib.load(&entry.key)?;
         let d = document(e).ok_or("no tile open")?;
         let into = self.new_items_layer(d).ok_or("this tile has no scene graph")?;
-        d.place_prefab(&entry.key, &p.group_text, into, at)?;
-        Ok(format!("placed {}", entry.key))
+        let g = d.place_prefab(&entry.key, &p.group_text, into, at)?;
+        Ok(format!("placed {} (#{g})", entry.key))
     }
 
     /// Where a prefab placed from the panel goes: the terrain under the mouse, else the point the camera looks at.

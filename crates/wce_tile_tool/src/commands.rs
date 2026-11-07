@@ -1078,7 +1078,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_move", "tile_move <dx m> <dz m>", "move the selected instance over the ground (keeps its height above the terrain)", |e, a| {
+    c.add("tile_move", "tile_move <dx m> <dz m>", "move the selected instance over the ground (keeps its height above the terrain), or the selected group", |e, a| {
+        if primary(e).is_none() && let Some(g) = selected_group_or_layer(e) {
+            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            let Some((dx, dz)) = parsed else { return fail("usage: tile_move <dx m> <dz m>") };
+            let Some(d) = document(e) else { return no_tile() };
+            let mut w = world_transform(d.tile().tscene(), g);
+            let u = d.tile().unit();
+            w.position.x += f64::from(dx) * u;
+            w.position.z += f64::from(dz) * u;
+            return if d.set_world_transform(g, &w, 0) { ok("") } else { fail("cannot move it") };
+        }
+
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };
         let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
@@ -1171,7 +1182,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };
         let Some(deg) = a.first().and_then(|x| number(x)) else { return fail("usage: rotate <degrees>") };
-        if el.is_some_and(|el| d.rotate(el, deg)) { ok("") } else { fail("nothing selected") }
+        if el.is_some_and(|el| d.rotate(el, deg)) {
+            return ok("");
+        }
+
+        // A group or layer: about its own origin.
+        let Some(g) = selected_group_or_layer(e) else { return fail("nothing selected") };
+        let Some(d) = document(e) else { return no_tile() };
+        let mut w = world_transform(d.tile().tscene(), g);
+        w.rotation = wce_foundation::math::Double3x3::rotation_y(f64::from(deg).to_radians()) * w.rotation;
+        if d.set_world_transform(g, &w, 0) { ok("") } else { fail("cannot turn it") }
     });
 
     c.add(
@@ -3430,4 +3450,10 @@ fn element_arg(d: &TileDocument, a: &str, primary: Option<usize>) -> Option<usiz
     }
 
     d.tile().find_layer(a)
+}
+
+/// The selected group or layer, when no instance is selected.
+fn selected_group_or_layer(e: &Editor) -> Option<usize> {
+    let d = e.docs.find_as::<TileDocument>(crate::tool::document_id(e)?)?;
+    crate::tool::selected(e).into_iter().find(|&el| d.tile().tscene().is_layer(el) && d.tile().tscene().type_of(el) != "SCENE_GRAPH")
 }
