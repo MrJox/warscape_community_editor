@@ -154,17 +154,24 @@ versions are needed. Three variants is the fewest that hides repetition when the
 `road_planks`, all in `models_building` with logic files. Vanilla's `river_crossing` tiles use `bridge_wood_complete` 29 times, and the separate
 pieces 11 times. `battle_bridge_subculture_jcts` is empty in Attila's kit, so nothing there ties bridges to cultures.
 
-**Sizes**, from vanilla's `river_crossing` tiles, as the database has none: a piece runs along its z, `bridge_wood_1` every 10.4 with its `_end` 5.2 from the
-last, `bridge_wood_2` every 20 with its `_end` 10.1 from it (file's units). They stand level and freeform, `lf_offset` their height.
+**What units walk on** (the logic files, `examples/bridge_dump`, user 2026-11-07: a bridge must be one surface touching the ground at both ends; the first
+version's ends pointed inwards and its height ignored them). `bridge_wood_2`: one platform along its z, -10 .. 10, at height 1, 10 wide. `bridge_wood_1`: -5 .. 5,
+5 wide. An `_end`: a ramp from height 0 at z = -2 up to height 1 at its origin. `bridge_wood_complete`: one building, a deck 100 long and 20 wide at 1.2, a ramp
+at each end down to -3.7 at z = -58.49 and -3.4 at z = 57.97. `bridge_stone_1` has no platforms at all, so it is not used. Pieces join by their platforms meeting
+edge to edge, as the wall pieces do (docs/re/buildings.md).
 
 **Finding the gap** (`find_gaps`). Where the road graded over the ground stands at least 4 over it for at least 8. A gap runs out to where the ground comes
 back up to the road, and on up the walls while they are steeper than the road may climb: following the ground down, the road met it partway
 down the wall, and the first bridges started in the canyon. The road is graded again with the gap taken out (`over_gaps`: rim to rim), so it does
 not dip into it, until the gaps settle. So a gentle valley gets a road through it, and a bridge only comes where the road could not go. `road_bridges` turns them off.
 
-**Laying it.** `bridge_pieces`: `bridge_wood_1` under 60, `bridge_wood_2` over, an `_end` at each end, enough pieces to span it; straight from rim to rim,
-the height going from one rim's to the other's. The layers leave the terrain under the gap alone (`Strip::open_gaps`), and the detail skips it. Buildings go in as generated instances
-carrying the kit's logic, so units should cross them as in vanilla: not yet seen in a battle.
+**Laying it.** `choose_bridge`: `bridge_wood_complete` for a gap of 60 to 104 (file's units) under a road at least 10 wide, as it is the one surface
+already; else a chain of `bridge_wood_2`, or `bridge_wood_1` under a narrower road, with an `_end` at each end, enough to span it. Its feet, where its ramps
+meet the road, are found by going out along the road from the gap's middle until they are as far apart as the bridge is long. `lay_bridge` then lays all of
+it on the straight line between them, sloped if the rims differ: its platforms stay in one plane and meet edge to edge, and both feet are on the road
+surface, whose height there is the road's own (tests: `a_chain_is_one_surface_from_foot_to_foot`, `a_gap_of_its_size_takes_the_whole_bridge_and_its_feet_touch`). The
+layers leave the terrain under the gap alone (`Strip::open_gaps`), and the detail skips the bridge. Buildings go in as generated instances with the kit's
+own logic. Units crossing is not yet seen in a battle. A gap too near the road's end for the feet gets no bridge, with a warning in the log.
 
 **Later**, generated bridges: any length and curve, on `wce_walls` (warped meshes, generated platforms and pathing). Not before the rest is proven.
 

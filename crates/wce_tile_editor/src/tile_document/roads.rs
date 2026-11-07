@@ -3,14 +3,13 @@
 //! edit of the road needs nothing of its own. What a road was made from is in its layers' owner (`road:<id>#<signature>`), so that opening a
 //! tile does not make its roads again.
 
-use wce_foundation::math::{Double3, Float3};
+use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::RenderScene;
 use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile::new_instances::{NewInstance, element_text};
-use wce_tile::road_detail::{Layout, lay, placed_text, read_prefab};
-use wce_tile::roads::{RoadSettings, Strip, bridge_pieces, centre_line, find_gaps, graded, over_gaps, with_bump};
+use wce_tile::road_detail::{Layout, Stations, lay, placed_text, read_prefab};
+use wce_tile::roads::{RoadSettings, Strip, centre_line, choose_bridge, find_gaps, graded, lay_bridge, over_gaps, with_bump};
 use wce_tile::ted_scene::TedScene;
-use wce_tile::world_transform::euler_matrix;
 use wce_tile::terrain_layers::{Kind, Stack, TerrainLayers};
 
 use super::Tile;
@@ -312,22 +311,62 @@ impl Tile {
             };
 
             let plan = Self::plan_road(road, &sample, &|_, _| false);
-            let mut spans = vec![];
+            // Each bridge from foot to foot: where its ramps meet the road, as far apart as it is long.
+            let stations = Stations::new(&plan.line);
             let along = |i: usize| plan.line[..=i].windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f64>();
+            let height = |s: f64| {
+                let (at, _) = (s.round().clamp(0.0, plan.heights.len() as f64 - 1.0) as usize, ());
+                let (mut best, mut near) = (at, f64::MAX);
+                for k in at.saturating_sub(8)..(at + 9).min(plan.heights.len()) {
+                    let d = (along(k) - s).abs();
+                    if d < near {
+                        (best, near) = (k, d);
+                    }
+                }
+
+                plan.heights[best]
+            };
+
+            let mut spans = vec![];
             for &(a, b) in &plan.gaps {
-                spans.push((along(a), along(b)));
-                let ((p, q), (ya, yb)) = ((plan.line[a], plan.line[b]), (plan.heights[a], plan.heights[b]));
-                let (dx, dz) = (q[0] - p[0], q[1] - p[1]);
-                let length = dx.hypot(dz);
-                let (tx, tz) = (dx / length.max(1e-9), dz / length.max(1e-9));
-                let yaw = tx.atan2(tz);
-                for (key, offset, back) in bridge_pieces(length * unit) {
-                    let f = 0.5 + offset / (length * unit);
-                    let (x, z) = (p[0] + dx * 0.5 + tx * offset / unit, p[1] + dz * 0.5 + tz * offset / unit);
-                    let y = ya + (yb - ya) * f.clamp(0.0, 1.0);
-                    let position = [x * unit, y * unit, z * unit];
-                    if let Some(text) = bridge_text(key, position, if back { yaw + std::f64::consts::PI } else { yaw }) {
-                        items.push(RoadItem { road: elem, text, position });
+                let (sa, sb) = (along(a), along(b));
+                let (p, q) = (plan.line[a], plan.line[b]);
+                let gap = (q[0] - p[0]).hypot(q[1] - p[1]) * unit;
+                let (bridge, length) = choose_bridge(gap, road.settings.width * unit);
+
+                // Out from the gap's middle along the road, until the feet are that far apart (a straight line between them).
+                let middle = (sa + sb) * 0.5;
+                let chord = |d: f64| {
+                    let (x, y) = (stations.at(middle - d).0, stations.at(middle + d).0);
+                    (x[0] - y[0]).hypot(x[1] - y[1]) * unit
+                };
+
+                let total = stations.length();
+                let (mut lo, mut hi) = (0.0, total);
+                for _ in 0..40 {
+                    let d = (lo + hi) * 0.5;
+                    if chord(d) < length { lo = d } else { hi = d }
+                }
+
+                let d = hi;
+                if middle - d < 0.0 || middle + d > total {
+                    wce_foundation::log::warn(format!("road {}: a gap too near its end for a bridge", road.id));
+                    continue;
+                }
+
+                let (pa, pb) = (stations.at(middle - d).0, stations.at(middle + d).0);
+                let (ya, yb) = (height(middle - d), height(middle + d));
+                let (a3, b3) = ([pa[0] * unit, ya * unit, pa[1] * unit], [pb[0] * unit, yb * unit, pb[1] * unit]);
+
+                // The heights may not leave the distance exact: the line is run out to the bridge's length.
+                let run = ((b3[0] - a3[0]).powi(2) + (b3[2] - a3[2]).powi(2)).sqrt().max(1e-9);
+                let rise = b3[1] - a3[1];
+                let flat = (length * length - rise * rise).max(0.0).sqrt();
+                let b3 = [a3[0] + (b3[0] - a3[0]) * flat / run, b3[1], a3[2] + (b3[2] - a3[2]) * flat / run];
+                spans.push((middle - d, middle + d));
+                for piece in lay_bridge(bridge, a3, b3) {
+                    if let Some(text) = bridge_text(piece.key, piece.position, &piece.rotation) {
+                        items.push(RoadItem { road: elem, text, position: piece.position });
                     }
                 }
             }
@@ -416,10 +455,10 @@ impl Tile {
     }
 }
 
-/// A piece of a bridge, as the kit's tiles place them: freeform, level, along its z.
-fn bridge_text(key: &str, position: [f64; 3], yaw: f64) -> Option<Vec<u8>> {
+/// A piece of a bridge, as the kit's tiles place them: freeform, along its z.
+fn bridge_text(key: &str, position: [f64; 3], rotation: &Double3x3) -> Option<Vec<u8>> {
     let n = NewInstance::new("BUILDING_INSTANCE").position(Double3::new(position[0], position[1], position[2])).attr("key", key).attr("name", key).attr("surface_mode", "MSM_FREEFORM");
-    placed_text(&element_text(&n).ok()?, position, &euler_matrix(Double3::new(yaw, 0.0, 0.0)))
+    placed_text(&element_text(&n).ok()?, position, rotation)
 }
 
 /// A road's layer in a stack, emptied: the one it has, else a new one.
