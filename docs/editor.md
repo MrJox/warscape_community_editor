@@ -122,10 +122,12 @@ alone, as the cameras of in-game captures fit (western_city_rome/small: the edit
 
 `tile_studio.exe` (and its own renderer) was removed in Phase 8; the tile captures of `scripts/shots.sh` are the render regression.
 
-**Reference unit (`ref_human`):** the Tile panel's section stands a real unit in the tile to measure the scale against: any unit of the game's
-tables or a mod's, its faction, colours and soldier, looping its idle; riders with their mounts. It is the editor's only: nothing of it goes into
-the tile's files or an export (the settings remember the unit and, per tile, where it stands). Script: `tile_ref_human on|off`, `unit`, `place`.
-It needs rpfm's schema of the game. See [plans/units.md](plans/units.md).
+**References (`ref_human`, `ref_unit`):** the Create panel's References category places real soldiers in the tile to measure the scale against, as many as
+wanted: `ref_human` is one soldier, `ref_unit` a whole unit, its men from `main_units.num_men` at the game's unit size (`gfx_unit_size` in its preferences, read
+again every few seconds), in the ranks and close spacing of its tables. They are tile elements like any other (moved, turned, grouped, undone; a click on any of a
+unit's soldiers selects it), saved in `tile.wce` as `WceRefHuman` / `WceRefUnit` and dropped from anything TEd or the game reads. The Inspector picks the unit,
+faction, animation slot, soldier and colours; an edit goes to every selected reference. They stand on the ground under each man, or level at their own height when
+freeform. They aren't drawn in the Game view. Script: `tile_ref human|unit <x> <z> [unit] [faction] [soldier] [slot]`, `tile_ref status`.
 
 ## Cross-tool composition (Phase 7)
 

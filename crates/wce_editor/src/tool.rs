@@ -144,6 +144,9 @@ pub trait Tool: Any {
         false
     }
 
+    /// Rows of the tool's below what the document shows of the selection, in the Inspector.
+    fn inspect_below(&mut self, _editor: &mut Editor) {}
+
     /// What the tool holds that no document saves (a new vegetation set not saved yet, say), one line each: quitting asks first and lists it
     /// as lost.
     fn unsaved_work(&self) -> Vec<String> {

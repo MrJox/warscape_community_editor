@@ -25,6 +25,7 @@ pub fn style_of(t: &str) -> TileTypeStyle {
         "POINT_LIGHT_INSTANCE" => s(1.0, 0.95, 0.4, 1.5, true),
         "SIMPLE_MESH_INSTANCE" => s(0.6, 0.6, 0.75, 4.0, false),
         "CaptureLocationInstance" => s(0.2, 0.6, 1.0, 3.0, false),
+        "WceRefHuman" | "WceRefUnit" => s(1.0, 0.8, 0.2, 1.5, true),
         "SiegeAINodeInstance" | "SiegeAIEdgeInstance" => s(0.95, 0.2, 0.2, 2.0, false),
         _ if t.contains("POLYGON") || t.contains("Polygon") || t.contains("Zone") || t == "AISeparatorInstance" => {
             let [r, g, b] = polygon_colour(t);

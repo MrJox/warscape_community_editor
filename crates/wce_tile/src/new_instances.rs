@@ -13,9 +13,28 @@ use crate::ted_scene::format_number;
 /// (`project_files`).
 pub const WALL_SPLINE: &str = "WceWallSpline";
 
+/// A soldier standing in the tile to measure the scale against (docs/plans/units.md). Not TEd's, nor the game's: it is saved in tile.wce and goes no
+/// further.
+pub const REF_HUMAN: &str = "WceRefHuman";
+
+/// A whole unit standing in the tile, of the size the game is set to.
+pub const REF_UNIT: &str = "WceRefUnit";
+
+/// A reference's attributes the Tile tool edits, with lists of the game's units, not as properties.
+pub const REF_TOOL_ATTRS: [&str; 5] = ["unit", "faction", "seed", "slot", "colours"];
+
+/// `unit`, `faction`, `slot` empty: the game's default unit, standing. `colours`: three faction colours, nine numbers, over the faction's.
+const REF_ATTRS: &[(&str, &str)] = &[
+    ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("surface_mode", "MSM_LANDSCAPE"), ("position", "vector(0,0,0)"), ("orientation", "euler(0,0,0)"),
+    ("name", "Reference"), ("unit", ""), ("faction", ""), ("seed", "0"), ("slot", ""), ("colours", ""),
+];
+
 /// The defaults of the editor's own types, which the kit has none of (`instance_templates` is generated from its tiles): a procedural
 /// wall is an open polyline with the polygons' attributes and its own.
-pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[InstanceTemplate {
+pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
+    InstanceTemplate { kind: REF_HUMAN, attrs: REF_ATTRS, wrappers: &[], point_attrs: &[] },
+    InstanceTemplate { kind: REF_UNIT, attrs: REF_ATTRS, wrappers: &[], point_attrs: &[] },
+    InstanceTemplate {
     kind: WALL_SPLINE,
     attrs: &[
         ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("recenter_polygon", "0"), ("lf_offset", "0"), ("line_colour", "argb(1.0,0.8,0.0,1.0)"),
@@ -26,7 +45,8 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[InstanceTemplate {
     ],
     wrappers: &["points"],
     point_attrs: &[("position", "0,0,0")],
-}];
+    },
+];
 
 /// The defaults of a type: the kit's, else the editor's own.
 pub fn template(kind: &str) -> Option<&'static InstanceTemplate> {

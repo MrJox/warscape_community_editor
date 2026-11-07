@@ -10,7 +10,7 @@ pub const SETTINGS_ID: &str = "tile";
 
 /// The fields about the game's files, kept per game: tiles, weathers and Create entries are one game's (the same tile path can be in two
 /// games), and so are the sea states (keys of the game's wind table), the packs written and Launch in game's armies (keys of its tables).
-pub const GAME_FIELDS: &[&str] = &["ref_human", "ref_human_at", "sea_state", "weathers", "favourites", "recent", "create_favourites", "create_recent", "mod_packs", "launch_army"];
+pub const GAME_FIELDS: &[&str] = &["sea_state", "weathers", "favourites", "recent", "create_favourites", "create_recent", "mod_packs", "launch_army"];
 
 /// The source of the game's exported tiles in a [`TileRef`] (the Tiles panel's "game packs").
 pub const PACKS_SOURCE: &str = "packs";
@@ -44,12 +44,6 @@ pub fn source_of(raw_root: &Path) -> String {
 pub struct TileSettings {
     /// The sea at 0 m (the tile's plane and the map context's sea).
     pub show_sea: bool,
-
-    /// The reference unit (`ref_human`): which one it is.
-    pub ref_human: crate::ref_human::RefHumanSettings,
-
-    /// Where it stands in each tile, by the tile's folder: x, y, z (scene units), the turn in degrees.
-    pub ref_human_at: BTreeMap<String, [f32; 4]>,
 
     /// The VFX boxes (the VFXInstance markers; the effects still play).
     pub show_vfx_boxes: bool,
@@ -263,6 +257,6 @@ pub struct CameraView {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { ref_human: Default::default(), ref_human_at: BTreeMap::new(), show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
+        Self { show_sea: true, show_vfx_boxes: true, sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
     }
 }

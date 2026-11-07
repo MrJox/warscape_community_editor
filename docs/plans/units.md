@@ -5,7 +5,7 @@ historical battle scripting), the Cinematic tool (the most pressing, after the t
 decided). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
-State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3, 5 and 7's `ref_human` are done, step 4's code, and step 6's idle: the Tile tool shows any unit of the DB
+State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3, 5 and 7's references are done, step 4's code, and step 6's idle: the Tile tool shows any unit of the DB
 standing in a tile, a mount under a rider, with materials and skin lighting, looping its idle, TDD's trolls too. Step 4's comparison with the game has begun (screenshots in `~/wce_re/scratch/units/ref`).
 Waiting for the screenshots' weather to compare the lighting. The scratch scripts and disassembly are in
 `~/wce_re/scratch/units`.
@@ -135,6 +135,16 @@ are further off, and the face's blue is the one to watch.
 - Decal diffuse is sRGB: the game's sampler table says so, and linear overshoots ((48, 63, 77) against the game's (25, 42, 62)). Faction colours
   aren't what makes the wine shields wine: it is their decal.
 - With a bright flat test ground the reflections warm a white shield (138, 109, 87); the game's dark grass doesn't. Not a bug of the units.
+- Shots 14 to 17 (2026-11-07, Rome medium settlement, the Sagittarii and comitatenses up close, graphics maxed) are Mediterranean: `weather/rome_med`, nine files,
+  not the seven above. `evening_med_2` fits: pink horizon, violet sky. There, soldiers facing the sun (`WCE_UNIT_TURN`), the tunics' yellow, green and red, the shading
+  and the skin agree by eye and the face's blue cast is gone: olive cloth reads yellow in sun and green in shade, so the tint and mask assumptions hold. The game
+  looks brighter and more saturated, by a factor not measured: the regions sampled were different soldiers, and a stone city and a flat field meter differently.
+  The small black mark on the game's tunics, from their dirt map, hasn't been seen in the editor.
+- Flicker on helmets, faces, mail and bosses (user's recording and frame logs, 2026-11-07): `prepare_skinned` picked the LODs from `self.camera`, which on the fourth
+  frames the environment cube is rebuilt on is still the cube's, above the battle's centre: every soldier took another LOD for that frame. It needs a camera far from
+  the centre, and the checks had the soldiers on it. `unit_render_check` now puts the centre 900 units away and wants still frames identical (64,611 channels changed
+  before the fix, 0 after). Found by rebuilding the cube every frame and never (no flicker), then a per-frame log of draw counts. A milder shimmer of self-shadow from
+  the cascades' depth range is left as the game has it: PLAN.md, after the final baseline.
 - With TDD enabled every one of these weathers is one file: `tdd_pack1` overrides them all with the same blue sky (sun at 24 degrees). Compare with
   the mods off.
 
@@ -178,10 +188,16 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    A clip's travel on the ground (`bn_hips`, first to last frame) is taken out of its root bones, so a walk loops on the spot; `Clip::travel` is there for a
    timeline that moves a unit.
    `single_frame_variant` is on plain looping clips too (a horse's `STAND` is nothing else): such lines play only in a slot without other lines, the first.
-   What the flag does in the engine isn't traced. Left: `stretch`, face poses. Splices are unseen: no standing clip has one.
-7. **First consumers.** `ref_human` (done 2026-11-07, `wce_tile_tool/src/ref_human.rs`): the Tile panel's Reference unit section, or the command
-   `tile_ref_human`. A scene layer of its own and the settings (which unit, per tile where it stands), never the tile's files. It can't be
-   picked: Place moves it. It stands on the ground as it is now, through terrain edits. No viewer in the Unit tool yet: `ref_human` and `unit_render_check` are the test bench so far.
+   What the flag does in the engine isn't traced. Left: `stretch`, face poses. Splices play in the idles (`STAND` and most `STAND_IDLE_n` have one, 2026-11-07), not looked at closely.
+7. **First consumers.** The references (`wce_tile_tool/src/ref_units.rs`; `ref_human` 2026-11-07, as entities with `ref_unit` the same day): tile elements
+   `WceRefHuman` and `WceRefUnit`, placed from the Create panel's References, as many as wanted, saved in `tile.wce` and dropped by `to_ted`, so selection, gizmo,
+   undo, groups and the Scene panel are the elements' own. `ref_unit`: `main_units.num_men` at the game's `gfx_unit_size`, `land_units.rank_depth`,
+   `unit_spacings` by `land_units.spacing`, close formation; 16 soldiers (`UNIT_VARIATIONS`) posed once a frame and shared by the men, 0.5 ms for 160 men.
+   **ASSUMPTION**: a quarter of the men per step of `gfx_unit_size`: the game's formula wasn't found, only the debug panel that names it. Attila's `main_units` has
+   no `unit_scaling` column: there every unit scales, which artillery and generals may not. Deployment gaps, officers and loose formation aren't modelled.
+   Skinned meshes aren't in the id pass: a click finds a soldier by a sphere per man (`Tile::set_ref_spots`), and there is no selection outline on them. They
+   follow the ground man by man; freeform keeps them level at the element's height. No viewer in the Unit tool yet: the references and `unit_render_check` are the
+   test bench so far.
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
    tool needs them.
@@ -196,7 +212,7 @@ Out of scope: battle simulation, formations, pathing, sounds and blood, dismembe
 
 ## Decisions (user, 2026-11-06)
 
-- **`ref_human`** is the scale reference, named as in Terry. No prop of that name exists in Attila's or Rome 2's packs, TDD's or the
+- **`ref_human`** is the scale reference, named as in Terry; **`ref_unit`** the same with a whole unit. 2026-11-07: entities the user places, not one per tile. No prop of that name exists in Attila's or Rome 2's packs, TDD's or the
   kit's raw files, so it is a real unit, not a prop. Editor only: never in TEd's files or an export. Better storage waits for historical
   battles.
 - **Unit:** a default per game, which the user can switch to any other, to test differently sized units. Attila's default:

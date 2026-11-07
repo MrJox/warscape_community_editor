@@ -232,6 +232,9 @@ const POLYGON: &[Prop] = polygon![p("subdivision_length", Kind::Slider(0.0, 100.
 
 /// Not TEd's: a procedural wall (docs/plans/procedural_walls.md), an open polyline whose points may be `sharp` (a corner). TEd does not
 /// know the class; the editor and the wall generator do.
+/// The rest of a reference is the tool's: combos of the game's units, not lines of text.
+const REFERENCE: &[Prop] = &[p("flags", Kind::Flags), p("surface_mode", Kind::Placement), p("position", Kind::Position), p("orientation", Kind::Orientation)];
+
 const WALL: &[Prop] = &[
     p("flags", Kind::Flags),
     p("position", Kind::Position),
@@ -294,6 +297,7 @@ pub fn schema(tag: &str) -> Option<&'static [Prop]> {
         "SEGMENTED_SPLINE_INSTANCE" | "SplineRiverInstance" => SPLINE,
         "AI_HINT_POLYGON_INSTANCE" => AI_HINT,
         "WceWallSpline" => WALL,
+        "WceRefHuman" | "WceRefUnit" => REFERENCE,
         "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => DEPLOYMENT_POLYGON,
         "ZONE_POLYGON_INSTANCE" => ZONE_POLYGON,
         "AISeparatorInstance" => SEPARATOR,

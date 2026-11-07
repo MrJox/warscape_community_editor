@@ -566,6 +566,7 @@ pub fn inspector(e: &mut Editor) {
                     let mut ins = ImGuiInspector { local: e.viewport.local_coordinates, ..Default::default() };
                     ins.begin(r.doc, r.item);
                     if d.inspect_many(&items, &mut ins) {
+                        e.with_active_tool(|t, e| t.inspect_below(e));
                         gui::end();
                         return;
                     }
@@ -579,6 +580,7 @@ pub fn inspector(e: &mut Editor) {
                 let mut ins = ImGuiInspector { local: e.viewport.local_coordinates, ..Default::default() };
                 ins.begin(r.doc, r.item);
                 d.inspect(r, &mut ins);
+                e.with_active_tool(|t, e| t.inspect_below(e));
             }
         }
     }

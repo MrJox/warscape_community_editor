@@ -32,7 +32,7 @@ mod tech_chip;
 mod resize_tile;
 mod tile_properties;
 mod tile_database;
-mod ref_human;
+mod ref_units;
 mod tile_stats;
 pub mod tool;
 pub mod veg_brush;

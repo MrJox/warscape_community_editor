@@ -2622,6 +2622,12 @@ impl TileDocument {
         ins.section("Properties");
         // The reference's key is the prefab row above.
         let mut shown = vec!["name", wce_tile::project_files::PREFAB_ATTR];
+
+        // A reference's own are the tool's rows, below.
+        if matches!(tag.as_str(), super::REF_HUMAN | super::REF_UNIT) {
+            shown.extend(wce_tile::new_instances::REF_TOOL_ATTRS);
+        }
+
         for prop in schema {
             shown.push(prop.attr);
             if let Some(twin) = prop.twin {
@@ -3376,7 +3382,7 @@ pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> R
             if key.is_empty() { n } else { n.attr("vfx", key).attr("scale", wce_tile::instance_templates::vfx_scale(key).unwrap_or("1")) }
         }
 
-        "POINT_LIGHT_INSTANCE" => NewInstance::new(kind).position(at),
+        "POINT_LIGHT_INSTANCE" | "WceRefHuman" | "WceRefUnit" => NewInstance::new(kind).position(at),
         "CivilianShelter" => NewInstance::new(kind).position(at).attr("target", vector(at + Double3::new(0.0, 0.0, 10.0 * unit))),
         "CaptureLocationInstance" => {
             let boundary = new_polygon("CaptureLocationPolygonInstance", circle_points(20.0 * unit), true).attr("radius", wce_tile::ted_scene::format_number(20.0 * unit));

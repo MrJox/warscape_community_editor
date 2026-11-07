@@ -460,7 +460,7 @@ pub struct TileTool {
     pub(crate) placing: Option<Placing>,
 
     /// The reference unit.
-    pub(crate) ref_human: crate::ref_human::RefHuman,
+    pub(crate) ref_units: crate::ref_units::RefUnits,
     pub(crate) draft: Option<wce_tile_editor::tile_document::Draft>,
     pub(crate) making: Option<String>,
     pub(crate) create: crate::create_panel::CreateUi,
@@ -639,7 +639,7 @@ impl Default for TileTool {
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: 0.75, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            ref_human: Default::default(), drawing: false, ground_chip_width: 0.0, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            ref_units: Default::default(), drawing: false, ground_chip_width: 0.0, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -2061,7 +2061,6 @@ impl TileTool {
             None => {}
         }
 
-        self.ref_human.draw(e, id);
         if gui::collapsing_header("Info", gui::TREE_DEFAULT_OPEN) {
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
             let t = d.tile();
@@ -2976,7 +2975,7 @@ impl Tool for TileTool {
         // Everything but the tool's choices belongs to the old game: the map context, the browser's kits and packs, the prefabs. A launch
         // being prepared or a launched game goes on (it knows its game), so that its files are removed when it ends.
         self.context.clear(e);
-        self.ref_human.game_changed(e);
+        self.ref_units.game_changed(e);
         let old = std::mem::take(self);
         *self = Self {
             mode: old.mode, brush: old.brush, snap_grid: old.snap_grid, grid_m: old.grid_m, snap_tolerance: old.snap_tolerance, snap_vertices: old.snap_vertices, snap_edges: old.snap_edges, snap_heights: old.snap_heights, angle_tolerance: old.angle_tolerance, angle_step: old.angle_step, left_dock: old.left_dock,
@@ -3181,7 +3180,7 @@ impl Tool for TileTool {
             self.scene_focus_frames = 3;
         }
 
-        self.ref_human.update(e, id);
+        self.ref_units.update(e, id);
 
         // The Game view draws the layers the launched battle would load: the escalation upgrades go with a settlement at its map placement.
         let layers = e.viewport.game_view.then(|| {
@@ -3590,14 +3589,6 @@ impl Tool for TileTool {
                     return true;
                 }
 
-                if self.ref_human.placing {
-                    if self.terrain_hit {
-                        self.ref_human.place(e, id, self.cursor, None);
-                    }
-
-                    return true;
-                }
-
                 if let Some(placing) = self.placing.clone() {
                     if self.terrain_hit {
                         let _ = placing;
@@ -3932,6 +3923,12 @@ impl Tool for TileTool {
         self.inspect_new_set(e);
 
         self.inspect_making(e, ins) || self.inspect_brush(e, ins)
+    }
+
+    fn inspect_below(&mut self, e: &mut Editor) {
+        if let Some(id) = document_id(e) {
+            self.ref_units.draw(e, id);
+        }
     }
 
     fn toolbar(&mut self, e: &mut Editor) {
