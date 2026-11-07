@@ -158,8 +158,8 @@ impl TileDatabase {
     }
 
     /// Reads the databases of `folders` as one, the first one's tiles over the later ones' (a projects' kit layout before the Assembly
-    /// Kit: its few tiles and the kit's others). The settings are the first `_settings.xml` of the folders; a tile is its first TILES
-    /// file of a name, then its first of a location.
+    /// Kit: its few tiles and the kit's others). The settings are the first `_settings.xml` of the folders, and the tile sets only the later
+    /// ones have (a mod's) are added to them; a tile is its first TILES file of a name, then its first of a location.
     ///
     /// # Errors
     ///
@@ -183,6 +183,24 @@ impl TileDatabase {
                 also_place_tile_set: attr(s, "also_place_tile_set").to_owned(),
                 id: 0,
             });
+        }
+
+        for later in folders.iter().filter(|f| **f != *folder) {
+            let Ok(bytes) = std::fs::read(later.join("_settings.xml")) else { continue };
+            let later = root(&bytes);
+            for s in later.child("TILE_SETS").map(|c| c.children.as_slice()).unwrap_or_default().iter().filter(|c| c.name == "TILE_SET") {
+                if !db.sets.iter().any(|known| known.name == attr(s, "name")) {
+                    db.sets.push(TileSet {
+                        name: attr(s, "name").to_owned(),
+                        colour: colour(s),
+                        link_as_set: attr(s, "link_as_set").to_owned(),
+                        linking_tile: attr(s, "linking_tile").to_owned(),
+                        shared_geometry: attr(s, "shared_geometry").to_owned(),
+                        also_place_tile_set: attr(s, "also_place_tile_set").to_owned(),
+                        id: 0,
+                    });
+                }
+            }
         }
 
         // merge_all_from_folder (0x1029e3a0) adds these two sets when the database lacks them.
@@ -329,5 +347,33 @@ impl TileDatabase {
 
     pub fn tile_location_of(&self, tile: usize, variation: usize) -> String {
         format!("{}\\{}", self.tiles[tile].location, self.tiles[tile].variations[variation].location)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_later_layer_adds_its_tile_sets_and_keeps_the_first_tile() {
+        let dir = std::env::temp_dir().join(format!("wce_tile_db_{}", std::process::id()));
+        let write = |folder: &str, set: &str, tile: &str, tile_set: &str| {
+            let at = dir.join(folder);
+            std::fs::create_dir_all(at.join("TILES")).unwrap();
+            std::fs::write(at.join("_settings.xml"), format!("<SETTINGS><TILE_SETS><TILE_SET name='{set}'/></TILE_SETS></SETTINGS>")).unwrap();
+            let xml = format!("<TILE location='terrain\\tiles\\battle\\{tile}' tile_set='{tile_set}' width='1' height='1'/>");
+            std::fs::write(at.join("TILES").join(format!("{tile}.xml")), xml).unwrap();
+        };
+
+        write("first", "kit_set", "shared", "kit_set");
+        write("second", "mod_set", "shared", "mod_set");
+        write("third", "mod_set", "only_mod", "mod_set");
+        let (a, b, c) = (dir.join("first"), dir.join("second"), dir.join("third"));
+        let db = TileDatabase::load_layered(&[a.as_path(), b.as_path(), c.as_path()]).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let set_of = |name: &str| db.tiles.iter().find(|t| t.location.ends_with(name)).and_then(|t| t.set).map(|s| db.sets[s].name.as_str());
+        assert_eq!(set_of("only_mod"), Some("mod_set"), "a mod's set is known, so its tiles match");
+        assert_eq!(set_of("shared"), Some("kit_set"), "the first layer's tile wins");
     }
 }

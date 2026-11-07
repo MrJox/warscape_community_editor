@@ -2172,8 +2172,10 @@ impl TileTool {
         if let Some((x, y)) = look.filter(|_| self.link_follow) {
             let (x0, z0, x1, z1) = d.tile().cell_rect(x, y);
             let (cx, cz) = ((x0 + x1) * 0.5, (z0 + z1) * 0.5);
-            let t = Float3::new(cx, d.tile().terrain_height(cx, cz), cz);
-            e.viewport.controller().set_orbit(0.8, 0.9, 350.0, t);
+
+            // Only sideways: the angle, the distance and the height stay as they were, so that going along an edge the view doesn't jump.
+            let y = e.viewport.camera().target.y;
+            e.viewport.controller().move_pivot(Float3::new(cx, y, cz));
         }
     }
 

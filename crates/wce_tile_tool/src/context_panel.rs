@@ -103,10 +103,12 @@ impl Default for ContextUi {
     }
 }
 
-/// The tile database of `raw` over those of the tile roots (the projects' and the kits'): a project alone holds only its own few tiles.
+/// The tile database of `raw` over those of the tile roots (the projects' and the kits') and of the packs, the game's and the mods' (read
+/// the first time): a project alone holds only its own few tiles.
 pub(crate) fn database(ui: &mut ContextUi, raw: &Path) -> Result<Arc<TileDatabase>, String> {
     let mut roots = vec![raw.to_path_buf()];
     roots.extend(ui.tile_roots.iter().filter(|r| r.as_path() != raw).cloned());
+    roots.extend(ui.packs_tree.as_ref().and_then(|p| p.raw().ok()).filter(|r| !roots.contains(r)));
     if let Some((r, db)) = &ui.db
         && *r == roots
     {
