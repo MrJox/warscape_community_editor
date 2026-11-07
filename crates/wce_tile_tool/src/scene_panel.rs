@@ -1035,6 +1035,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
     // A click on a row makes the tile the active document; the tree does not scroll to what it selected itself.
     if activate {
         e.docs.set_active(id);
+        tool.leave_for_selection(e);
         tool.tree_synced = selected(e).first().copied();
     }
 

@@ -1931,6 +1931,32 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("draw_point", "draw_point <x m> <z m>", "add a point to the line being drawn, on the ground at x z, as a click there does", |e, a| {
+        let (Some(x), Some(z)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else { return fail("usage: draw_point <x m> <z m>") };
+        with_tile(e, |t, e| {
+            if !t.drawing {
+                return fail("nothing is being drawn");
+            }
+
+            let Some(d) = document(e) else { return fail("no tile open") };
+            t.draw_pts.push(Float3::new(x, d.tile().terrain_height(x, z), z));
+            ok(format!("{} points", t.draw_pts.len()))
+        })
+    });
+
+    c.add("tree_pick", "tree_pick <element>", "select an element as a click on its Scene panel row does: what was placed or painted stops, a line being drawn is finished, the Inspector shows it", |e, a| {
+        let Some(el) = a.first().and_then(|x| x.parse::<u64>().ok()) else { return fail("usage: tree_pick <element>") };
+        with_tile(e, |t, e| {
+            let Some(id) = e.docs.active().map(|d| d.id()) else { return fail("no tile open") };
+            let points = t.draw_pts.len();
+            e.selection.set(wce_scene::render_scene::SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(el as usize) });
+            t.leave_for_selection(e);
+            let picked = e.selection.items().first().and_then(|r| wce_tile_editor::tile_document::elem_of(r.item)).unwrap_or(0);
+            let status = t.status.clone();
+            ok(format!("picked #{picked} ({status}; {points} points drawn); making {}, mode {:?}, focus {}", t.making.as_deref().unwrap_or("nothing"), t.mode(), e.pending_focus.as_deref().unwrap_or("-")))
+        })
+    });
+
     c.add("start_making", "start_making <type | building | prefab> [key]", "start placing or drawing something, as a click in the Create panel does (the mouse places it)", |e, a| {
         let Some(what) = a.first().cloned() else { return fail("usage: start_making <type | building | prefab> [key]") };
         let key = a.get(1).cloned().unwrap_or_default();
