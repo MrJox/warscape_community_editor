@@ -138,18 +138,3 @@ jobs:
           make_latest: false
           generate_release_notes: true
           fail_on_unmatched_files: true
-
-      - name: Prune old nightly releases (keep last 14)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release list --exclude-drafts --limit 100 --json tagName,isPrerelease | \
-            jq -r '.[] | select(.isPrerelease and (.tagName | test("nightly"))) | .tagName' | \
-            tail -n +15 | while read -r tag; do
-              if [ -n "$tag" ]; then
-                echo "Deleting old nightly release and tag: $tag"
-                gh release delete "$tag" --yes --cleanup-tag || true
-              fi
-            done
-
