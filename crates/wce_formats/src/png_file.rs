@@ -91,6 +91,24 @@ fn filter_row(ft: u8, row: &[u8], prev: &[u8], bpp: usize, out: &mut [u8]) {
     }
 }
 
+/// Compresses bytes (a zlib stream, for files of the editor's own).
+///
+/// # Errors
+///
+/// zlib failed.
+pub fn deflate_bytes(src: &[u8]) -> Result<Vec<u8>, PngError> {
+    deflate_kit(src)
+}
+
+/// Inflates what [`deflate_bytes`] made into exactly `out.len()` bytes.
+///
+/// # Errors
+///
+/// The stream is bad or short.
+pub fn inflate_bytes(src: &[u8], out: &mut [u8]) -> Result<(), PngError> {
+    inflate_exact(src, out)
+}
+
 /// Inflates a zlib stream into exactly `out.len()` bytes.
 fn inflate_exact(src: &[u8], out: &mut [u8]) -> Result<(), PngError> {
     // SAFETY: zlib expects a zeroed z_stream before inflateInit (null zalloc / zfree select its own allocator); it's only reached

@@ -96,6 +96,23 @@ impl GroundTypeField {
         }
     }
 
+    /// The rectangle edited since the last call, for the terrain layers.
+    pub fn take_edited(&mut self) -> Option<(u32, u32, u32, u32)> {
+        self.layer.take_edited()
+    }
+
+    /// Forgets the undo history: the terrain layers changed under it.
+    pub fn clear_undo(&mut self) {
+        self.layer.clear_undo();
+    }
+
+    /// Writes a pixel of the composite of the terrain layers: neither an edit nor undoable.
+    pub fn compose_rgb(&mut self, x: u32, y: u32, rgb: [u8; 3]) {
+        let px = [rgb[0], rgb[1], rgb[2], 255];
+        let n = self.layer.channels();
+        self.layer.compose_pixel(x, y, &px[..n]);
+    }
+
     /// Whether something changed since `take_changed` was last called.
     pub fn changed(&self) -> bool {
         self.layer.changed()

@@ -108,6 +108,9 @@ pub struct HeightField {
 
     /// The samples changed since `take_changed` (x0, y0, x1, y1; end exclusive).
     pending: Option<(u32, u32, u32, u32)>,
+
+    /// The same since `take_edited`, for the terrain layers; the composite they write is not in it.
+    edited: Option<(u32, u32, u32, u32)>,
     undo: Vec<Record>,
     redo: Vec<Record>,
 }
@@ -257,7 +260,32 @@ impl HeightField {
         self.pending.take()
     }
 
+    /// The rectangle of samples edited since the last call (x0, y0, x1, y1; end exclusive), for the terrain layers: `take_changed` belongs to
+    /// the display. None while an edit is open.
+    pub fn take_edited(&mut self) -> Option<(u32, u32, u32, u32)> {
+        if self.editing { None } else { self.edited.take() }
+    }
+
+    /// Writes a sample of the composite of the terrain layers: neither an edit nor undoable, the display is told.
+    pub fn compose_metres(&mut self, x: u32, y: u32, metres: f64) {
+        let i = y as usize * self.w as usize + x as usize;
+        let v = (metres - self.base) as f32;
+        if self.v[i] != v {
+            self.v[i] = v;
+            let keep = self.edited;
+            self.changed((x, y, x + 1, y + 1));
+            self.edited = keep;
+        }
+    }
+
+    /// Forgets the undo history: the terrain layers changed under it.
+    pub fn clear_undo(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+
     fn changed(&mut self, (x0, y0, x1, y1): (u32, u32, u32, u32)) {
+        self.edited = Some(self.edited.map_or((x0, y0, x1, y1), |p| (p.0.min(x0), p.1.min(y0), p.2.max(x1), p.3.max(y1))));
         self.changes = self.changes.wrapping_add(1);
         self.pending = Some(self.pending.map_or((x0, y0, x1, y1), |p| (p.0.min(x0), p.1.min(y0), p.2.max(x1), p.3.max(y1))));
     }

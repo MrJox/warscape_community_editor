@@ -28,6 +28,9 @@ pub struct PixelLayer<T> {
 
     /// The rectangle changed since the display last took it (exclusive end).
     changed: Option<(u32, u32, u32, u32)>,
+
+    /// The same since `take_edited`, for the terrain layers; the composite they write is not in it.
+    edited: Option<(u32, u32, u32, u32)>,
 }
 
 impl<T: Copy + PartialEq> PixelLayer<T> {
@@ -35,7 +38,7 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
     /// `v` holds `channels` samples per pixel, row by row.
     pub fn new(w: u32, h: u32, channels: usize, v: Vec<T>) -> Self {
         debug_assert_eq!(v.len(), w as usize * h as usize * channels);
-        Self { w, h, channels, v, editing: false, saved: vec![], touched: vec![], undo: vec![], redo: vec![], changed: None }
+        Self { w, h, channels, v, editing: false, saved: vec![], touched: vec![], undo: vec![], redo: vec![], changed: None, edited: None }
     }
 
     pub fn width(&self) -> u32 {
@@ -165,7 +168,33 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
         self.mark(x0, y0, x1, y1);
     }
 
+    /// The rectangle edited since the last call, for the terrain layers (`take_changed` belongs to the display); none while an edit is open.
+    pub fn take_edited(&mut self) -> Option<(u32, u32, u32, u32)> {
+        if self.editing { None } else { self.edited.take() }
+    }
+
+    /// Writes a pixel of the composite of the terrain layers: neither an edit nor undoable, the display is told.
+    pub fn compose_pixel(&mut self, x: u32, y: u32, samples: &[T]) {
+        let i = (y as usize * self.w as usize + x as usize) * self.channels;
+        if self.v[i..i + self.channels] != *samples {
+            self.v[i..i + self.channels].copy_from_slice(samples);
+            let keep = self.edited;
+            self.mark(x, y, x + 1, y + 1);
+            self.edited = keep;
+        }
+    }
+
+    /// Forgets the undo history: the terrain layers changed under it.
+    pub fn clear_undo(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+
     fn mark(&mut self, x0: u32, y0: u32, x1: u32, y1: u32) {
+        self.edited = Some(match self.edited {
+            None => (x0, y0, x1, y1),
+            Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
+        });
         self.changed = Some(match self.changed {
             None => (x0, y0, x1, y1),
             Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
