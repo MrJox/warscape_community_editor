@@ -26,8 +26,8 @@ pub const CATEGORIES: [&str; 12] =
     ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Siege", "Rivers & roads", "References"];
 
 /// The categories' icons, for the rail.
-const CATEGORY_ICONS: [&str; 11] = [
-    icons::HOUSE, icons::TREE_PINE, icons::IMAGE, icons::BOX, icons::SPARKLES, icons::LIGHTBULB, icons::GROUP, icons::FLAG, icons::BRAIN, icons::SWORDS, icons::WAVES,
+const CATEGORY_ICONS: [&str; CATEGORIES.len()] = [
+    icons::HOUSE, icons::TREE_PINE, icons::IMAGE, icons::BOX, icons::SPARKLES, icons::LIGHTBULB, icons::GROUP, icons::FLAG, icons::BRAIN, icons::SWORDS, icons::WAVES, icons::USER,
 ];
 
 /// The rail's width.
