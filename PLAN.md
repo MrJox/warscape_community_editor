@@ -54,6 +54,8 @@ Each open item lives in one plan; the others point to it.
     the bytes round-trip. Worked around by `wce_render::anim_pose::vertex_weights`.
   - `anim`: only the header is decoded; `wce_formats::anim` reads versions 4 and 5 whole, and the bones without a track take the skeleton's
     pose. Also `anim_meta`, the variant mesh parser and the fragments, if they should live there.
+- **Tile weather in scripts:** `tile_weather <file>` reports "previewing" but the view keeps its sky (2026-11-07, `attila_steppes_plains/1x1/ac`, a
+  scripted run): not traced, the Weather panel not tried.
 - **Future tools** (seams only): Unit editor (skinned instances, bone palettes, anim / skeleton / variantmeshdefinition formats),
   VFX editor (see weather.md), battle map / Terry (map-scale terrain, tile_map and lf_height formats; see tile.md), Cinematic editor
   (keyframed scenes, recording).
