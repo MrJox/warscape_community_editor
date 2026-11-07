@@ -102,3 +102,13 @@ pointing at the XML). Root `<battle>`:
   opposite side.
 
 Other names in the dll near it: `next_battle`, `intro_movie_file`, `gate_opened`, `placed_deployables`, `is_tutorial`.
+
+## What loads before the mods
+
+There is no filter by pack type on reads: `FUN_1161a040` looks in the tree of mounted packs and, in mode 3, in the loose files only if the tree had nothing. What differs is when a pack is mounted. Start-up is `FUN_100d2510`, whose tasks each run as they are queued (`FUN_100ca6b0` calls the task at once), in the order of that function:
+
+1. `FUN_100d1580` (queued at d25ab), the file system's `+0x8` `FUN_116460d0`, log `Finished VFS load_release`: release and movie packs (types 1 and 4), then patch packs (type 2).
+2. `FUN_100d1c00` (d25d4), log `Finished ws_create`: creates the graphics device (`FUN_11735c10`), and with it `FUN_11861ba0` lists `vfx\*.xml` and fills the table of effect templates, once.
+3. `FUN_100cff30` (d26b7) opens the database (`FUN_10e0b6c0`), whose first step is the file system's `+0x14` `FUN_11645320`, log `Done m_vfs.load_mods`: the mod packs (type 3).
+
+So **what the graphics device reads when it is made cannot come from a mod-type pack**, as those are mounted after it: effects, whether new names or replacements. A movie-type pack is mounted in step 1 and does. A battle lists `vfx/*.xml` again (`FUN_1192e6a0`), and by then that finds a mod's files, but the template is looked up in the table of step 2 (`FUN_11910d00`, `FUN_1183f140`), so the name gets no effect. Seen in game the same way (docs/re/buildings.md). What else step 2 reads was not surveyed.
