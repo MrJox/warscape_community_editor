@@ -1538,3 +1538,60 @@ fn a_normalized_prefab_is_level_wherever_it_stands() {
     assert!(now.iter().all(|v| (v - now[2]).abs() < 0.02), "level: {now:?}");
     assert!(now[2] - 2.0 > lo && now[2] - 2.0 < hi, "2 over the plain: {now:?} over {was:?}");
 }
+
+#[test]
+fn an_unpacked_prefab_keeps_its_ground_as_a_layer_of_the_users() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let g = d.group_instances(&[b], graph, "rocks").unwrap();
+    assert!(d.make_prefab_reference(g, "rocks"));
+    d.set_prefab_ground(Some(rocks_ground(false, 5, 2.0)));
+    let p = d.tile().world_position(g);
+    let (x, z) = (f64::from(p.x) * d.project().unit_scale, f64::from(p.z) * d.project().unit_scale);
+    let before = ground_at(&d, x, z);
+    d.refresh_terrain();
+    let raised = ground_at(&d, x, z);
+    assert!((raised - before - 2.0).abs() < 0.01);
+
+    assert!(d.unpack_prefab_copy(g, "my rocks"));
+    d.refresh_terrain();
+    let height = wce_tile_editor::tile_document::layers::LayerType::Height;
+    assert!(prefab_owners(&d).is_empty());
+    assert_eq!(d.terrain_layers(height).0.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["rocks ground"]);
+    assert!((ground_at(&d, x, z) - raised).abs() < 0.01, "the ground stays");
+
+    // Undone one step: unpacked, without it; then the reference with its own again.
+    d.history_mut().undo();
+    d.refresh_terrain();
+    assert!(d.terrain_layers(height).0.is_empty() && (ground_at(&d, x, z) - before).abs() < 0.01);
+    while d.history_mut().can_undo() {
+        d.history_mut().undo();
+        d.refresh_terrain();
+        if !prefab_owners(&d).is_empty() {
+            assert!((ground_at(&d, x, z) - raised).abs() < 0.01);
+        }
+    }
+
+    assert_eq!(text(&d), original);
+}
+
+#[test]
+fn a_references_ground_is_in_its_inspector() {
+    let (_dir, mut d) = open();
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let g = d.group_instances(&[b], graph, "rocks").unwrap();
+    assert!(d.make_prefab_reference(g, "rocks"));
+    d.set_prefab_ground(Some(rocks_ground(true, 5, 2.0)));
+    let rows = inspect(&mut d, g, None);
+    for f in ["ground_on", "text:ground_mode", "ground_opacity", "ground_feather"] {
+        assert!(rows.iter().any(|r| r == f), "{f} in {rows:?}");
+    }
+
+    // Switched off from the Inspector: the attribute, which is not one of the other attributes.
+    inspect(&mut d, g, Some(("ground_on", Edit::Bool(false))));
+    assert_eq!(d.tile().tscene().doc().get(g, "wce_terrain").as_deref(), Some("off"));
+    assert!(!inspect(&mut d, g, None).iter().any(|r| r == "text:attr_wce_terrain"));
+}

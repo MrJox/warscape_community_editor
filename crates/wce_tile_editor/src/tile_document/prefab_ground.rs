@@ -229,3 +229,88 @@ impl Tile {
         Ok(())
     }
 }
+
+impl super::TileDocument {
+    /// The Inspector's rows of a reference's ground: whether it brings it, how much, the feather when normalized. A value being dragged is
+    /// a draft, set (one undo entry) when the drag ends.
+    pub(crate) fn prefab_ground_rows(&mut self, e: usize, ins: &mut dyn wce_editor_core::inspector::Inspector) {
+        let t = self.tile();
+        let doc = t.tscene().doc();
+        let key = doc.get(e, PREFAB_ATTR).unwrap_or_default();
+        let Some(source) = t.project.prefab_ground.clone() else { return };
+        let Some((_, terrain)) = (source.0)(&key) else {
+            ins.text("ground", "ground", "none (the prefab has no height layer)");
+            return;
+        };
+
+        ins.section("Ground");
+        let mut on = doc.get(e, TERRAIN_ATTR).is_none_or(|v| v != "off");
+        let (w, h) = (f64::from(terrain.width) * terrain.spacing, f64::from(terrain.height) * terrain.spacing);
+        let mode = if terrain.normalize { "normalized: level under it, feathered into the ground" } else { "adds to the ground under it" };
+        let opacity = number(doc, e, TERRAIN_OPACITY_ATTR).unwrap_or(1.0).clamp(0.0, 1.0);
+        let feather = number(doc, e, TERRAIN_FEATHER_ATTR);
+        if ins.edit_bool("ground_on", "brings ground", &mut on) {
+            self.set_attribute(e, TERRAIN_ATTR, if on { "on" } else { "off" });
+        }
+
+        ins.text("ground_mode", "mode", mode);
+        ins.text("ground_size", "size", &format!("{w:.1} x {h:.1}"));
+
+        // Opacity and feather: drafts while dragged.
+        let draft = |d: &mut Self, attr: &str, now: f64, edit: &mut dyn FnMut(&mut dyn wce_editor_core::inspector::Inspector, &mut f32) -> bool, ins: &mut dyn wce_editor_core::inspector::Inspector| {
+            let k = (e, attr.to_owned());
+            let mut v = d.tile().drafts.get(&k).and_then(|s| s.parse::<f32>().ok()).unwrap_or(now as f32);
+            if edit(ins, &mut v) {
+                d.tile_mut().drafts.insert(k.clone(), wce_tile::ted_scene::format_number(f64::from(v)));
+            }
+
+            if ins.gesture_ended() && let Some(v) = d.tile_mut().drafts.remove(&k) {
+                d.set_attribute(e, attr, &v);
+            }
+        };
+
+        draft(self, TERRAIN_OPACITY_ATTR, opacity, &mut |ins, v| ins.edit_slider("ground_opacity", "opacity", v, 0.0, 1.0), ins);
+        if terrain.normalize {
+            draft(self, TERRAIN_FEATHER_ATTR, feather.unwrap_or(terrain.feather), &mut |ins, v| ins.edit_float("ground_feather", "feather", v, 0.1, 0.0, 100.0), ins);
+            if feather.is_some() {
+                ins.mark_fields(vec![("ground_feather".to_owned(), format!("Override: the prefab's is {}", wce_tile::ted_scene::format_number(terrain.feather)))]);
+            }
+
+            if ins.button("ground_feather_reset", "The prefab's feather", feather.is_some()) {
+                self.set_attribute(e, TERRAIN_FEATHER_ATTR, "");
+            }
+        }
+
+        ins.hint("Sculpting here goes under the prefab's ground: change it in the prefab, switch it off, or unpack the prefab.");
+    }
+}
+
+impl super::TileDocument {
+    /// A reference's place among those that bring ground (what its layer's owner says), none if it brings none.
+    pub(crate) fn prefab_ground_place(&self, group: usize) -> Option<usize> {
+        self.tile().prefab_grounds().iter().position(|g| g.elem == group)
+    }
+
+    /// Unpacking a reference (its place `n`, found before): its ground stays where it is, as a layer of the user's named after the prefab
+    /// (an undo entry of its own, after the unpack's). Returns whether it had any.
+    pub(crate) fn keep_prefab_ground(&mut self, n: usize, key: &str) -> bool {
+        let t = self.tile();
+        let has = t.project.layers.as_ref().and_then(|l| l.height.as_ref()).is_some_and(|s| s.layers.iter().any(|l| parse_owner(&l.owner).is_some_and(|(m, _)| m == n)));
+        if !has {
+            return false;
+        }
+
+        let name = format!("{key} ground");
+        self.change_stack(&format!("Keep the ground of {key}"), super::layers::LayerType::Height, |p| {
+            let Some(s) = p.layers.as_mut().and_then(|l| l.height.as_mut()) else { return };
+            if let Some(l) = s.layers.iter_mut().find(|l| parse_owner(&l.owner).is_some_and(|(m, _)| m == n)) {
+                l.owner.clear();
+                l.name.clone_from(&name);
+            }
+
+            s.put_owned_on_top();
+        });
+
+        true
+    }
+}

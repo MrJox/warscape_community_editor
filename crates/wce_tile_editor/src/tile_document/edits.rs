@@ -1784,11 +1784,20 @@ impl TileDocument {
 
     /// Makes a copy a plain group: its reference goes (an empty `wce_prefab`, which tile.wce and TEd's file leave out), and its name.
     pub fn unpack_prefab_copy(&mut self, group: usize, name: &str) -> bool {
+        let key = self.prefab_key(group);
+        let place = self.prefab_ground_place(group);
         if self.tile().tscene().doc().get(group, wce_tile::project_files::PREFAB_ATTR).is_some() {
             self.set_attribute(group, wce_tile::project_files::PREFAB_ATTR, "");
         }
 
-        self.rename(group, name)
+        let renamed = self.rename(group, name);
+
+        // Its ground stays: the layer it owned (still there until the ground is looked at again) becomes the user's.
+        if let (Some(key), Some(n)) = (key, place) {
+            self.keep_prefab_ground(n, &key);
+        }
+
+        renamed
     }
 
     /// The copy being edited (Edit prefab), whose contents may change in structure too (`check_structure`); the tool says which.
@@ -1923,6 +1932,7 @@ impl TileDocument {
                 self.revert_overrides(e);
             }
 
+            self.prefab_ground_rows(e, ins);
             return;
         }
 
@@ -2730,6 +2740,9 @@ impl TileDocument {
         ins.section("Properties");
         // The reference's key is the prefab row above.
         let mut shown = vec!["name", wce_tile::project_files::PREFAB_ATTR];
+
+        // A reference's ground has its own rows, above.
+        shown.extend([super::prefab_ground::TERRAIN_ATTR, super::prefab_ground::TERRAIN_OPACITY_ATTR, super::prefab_ground::TERRAIN_FEATHER_ATTR]);
 
         // A reference's own are the tool's rows, below.
         if matches!(tag.as_str(), super::REF_HUMAN | super::REF_UNIT) {
