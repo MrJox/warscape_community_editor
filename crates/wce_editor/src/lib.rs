@@ -7,6 +7,7 @@ pub mod commands;
 pub mod coords;
 pub mod gizmo_reach;
 pub mod editor;
+pub mod fixes;
 pub mod gui;
 pub mod icons;
 pub mod images;

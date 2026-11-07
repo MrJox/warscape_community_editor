@@ -161,6 +161,9 @@ pub struct Editor {
     mod_checks_for: String,
     mods_popup: bool,
 
+    /// The Fixes menu.
+    pub(crate) fixes: crate::fixes::Fixes,
+
     /// Frame times (the app loop records them).
     pub perf: PerfStats,
     pub(crate) wait_loaded_start: Option<Instant>,
@@ -215,7 +218,7 @@ impl Editor {
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(), prompt_game: None,
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
-            first_run_message: String::new(), mod_checks: vec![], mod_filter: String::new(), mod_removed: vec![], game_before: None, mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
+            first_run_message: String::new(), mod_checks: vec![], mod_filter: String::new(), mod_removed: vec![], fixes: Default::default(), game_before: None, mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
             panel_data: PanelData::default(), settings_window: Default::default(), updates: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
         };
 
@@ -369,6 +372,7 @@ impl Editor {
         crate::shortcuts::register(tool.shortcuts());
         crate::shortcuts::set_overrides(&self.settings.shortcuts);
         self.tool_info.push(ToolInfo { id: tool.id().to_owned(), title: tool.title().to_owned(), icon: tool.icon().to_owned(), opens: tool.opens() });
+        self.fixes.list.extend(tool.fixes());
         self.tools.push(Some(tool));
     }
 
@@ -1425,6 +1429,7 @@ impl Editor {
 
         gui::end();
         self.draw_mods_popup();
+        self.draw_fix_window();
         self.draw_settings_window();
         self.draw_updates();
         if self.first_run {
@@ -1819,6 +1824,7 @@ impl Editor {
         }
 
         self.with_tool_at(self.active_tool, |t, e| t.draw_menus(e));
+        self.draw_fixes_menu();
         if gui::begin_menu("Help") {
             gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
             gui::separator();
