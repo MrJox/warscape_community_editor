@@ -4,6 +4,9 @@
 //! `VARIANT_MESH` is a mesh (`model`, its decals and imposter, `mask0..2`) with `TINT`s and `SLOT`s, or just a group of slots; `SLOT` (`name`,
 //! `attach_point`, `probability`) holds the alternatives for one part, `VARIANT_MESH`es and `VARIANT_MESH_REFERENCE`s (`definition`, another file). The game
 //! picks among a slot's alternatives; picking is not this module's business.
+//!
+//! Mods ship hand-edited files that aren't XML (11 of TDD's 8,500: `/ >`, doubled quotes, end tags left over or left out, the game takes them all). What doesn't
+//! parse is read through [`repair`], which keeps what the game most likely reads.
 
 use crate::xml_doc::{XmlDoc, XmlError};
 
@@ -62,6 +65,9 @@ pub struct Slot {
 pub struct VariantMeshFile {
     pub doc: XmlDoc,
     pub root: VariantMesh,
+
+    /// The file wasn't XML: `doc` is [`repair`]'s text, not the file's.
+    pub repaired: bool,
 }
 
 fn number(doc: &XmlDoc, element: usize, name: &str) -> f32 {
@@ -109,25 +115,202 @@ fn slot(doc: &XmlDoc, element: usize) -> Slot {
     }
 }
 
+/// The elements that hold no others: left open, what comes next is not theirs.
+const LEAVES: [&[u8]; 2] = [b"TINT", b"VARIANT_MESH_REFERENCE"];
+
+/// A definition that isn't XML as XML. **ASSUMPTION** (the game's reader isn't traced; what it makes of these files is what they were tested with):
+/// - `/ >` closes a tag, and a quote where none belongs is dropped: `a=""b"`, `a="b"" c`;
+/// - a leaf is closed where it is opened;
+/// - an end tag closes the innermost open element if it names it and is left out if not: closing back to a match would end the slot, or the file, early;
+/// - what is open at the end is closed there.
+///
+/// Comments and the text between tags stay. The file's bytes are taken one by one: no value here needs decoding.
+fn repair(file: &[u8]) -> Vec<u8> {
+    fn is_name_end(c: u8) -> bool {
+        c.is_ascii_whitespace() || matches!(c, b'=' | b'>' | b'/' | b'"')
+    }
+
+    let (mut out, mut open) = (Vec::with_capacity(file.len()), Vec::<&[u8]>::new());
+    let mut p = 0;
+    while let Some(from) = file[p..].iter().position(|&c| c == b'<').map(|k| p + k) {
+        out.extend_from_slice(&file[p..from]);
+        p = from;
+
+        // Comments and declarations, as they are.
+        if file[p..].starts_with(b"<!") || file[p..].starts_with(b"<?") {
+            let end: &[u8] = if file[p..].starts_with(b"<!--") { b"-->" } else { b">" };
+            let close = file[p..].windows(end.len()).position(|w| w == end).map_or(file.len(), |k| p + k + end.len());
+            out.extend_from_slice(&file[p..close]);
+            p = close;
+            continue;
+        }
+
+        let closing = file.get(p + 1) == Some(&b'/');
+        p += if closing { 2 } else { 1 };
+        let start = p;
+        while p < file.len() && !is_name_end(file[p]) {
+            p += 1;
+        }
+
+        let name = &file[start..p];
+        if closing {
+            p = file[p..].iter().position(|&c| c == b'>').map_or(file.len(), |k| p + k + 1);
+            if open.last() == Some(&name) {
+                open.pop();
+                out.extend_from_slice(&[b"</", name, b">"].concat());
+            }
+
+            continue;
+        }
+
+        out.push(b'<');
+        out.extend_from_slice(name);
+        let mut empty = false;
+        while p < file.len() {
+            match file[p] {
+                b'>' => {
+                    p += 1;
+                    break;
+                }
+
+                b'/' => {
+                    empty = true;
+                    p += 1;
+                }
+
+                c if c.is_ascii_whitespace() || c == b'"' => p += 1,
+                _ => {
+                    let attr = p;
+                    while p < file.len() && !is_name_end(file[p]) {
+                        p += 1;
+                    }
+
+                    let attr = &file[attr..p];
+                    while p < file.len() && file[p].is_ascii_whitespace() {
+                        p += 1;
+                    }
+
+                    let mut value: &[u8] = b"";
+                    if file.get(p) == Some(&b'=') {
+                        p += 1;
+                        while p < file.len() && file[p].is_ascii_whitespace() {
+                            p += 1;
+                        }
+
+                        // `a=""` is empty, unless the value follows: `a=""b"`.
+                        if file.get(p) == Some(&b'"') {
+                            p += 1;
+                            if file.get(p) == Some(&b'"') && file.get(p + 1).is_some_and(|&c| !c.is_ascii_whitespace() && !matches!(c, b'/' | b'>')) {
+                                p += 1;
+                            }
+
+                            let begin = p;
+                            while p < file.len() && file[p] != b'"' {
+                                p += 1;
+                            }
+
+                            value = &file[begin..p];
+                            p = (p + 1).min(file.len());
+                        }
+                    }
+
+                    if !attr.is_empty() {
+                        out.extend_from_slice(&[b" ", attr, b"=\"", value, b"\""].concat());
+                    } else {
+                        p += 1;
+                    }
+                }
+            }
+        }
+
+        if empty || LEAVES.contains(&name) {
+            out.extend_from_slice(b"/>");
+        } else {
+            out.push(b'>');
+            open.push(name);
+        }
+    }
+
+    out.extend_from_slice(&file[p..]);
+    while let Some(name) = open.pop() {
+        out.extend_from_slice(&[b"</", name, b">"].concat());
+    }
+
+    out
+}
+
 impl VariantMeshFile {
-    /// Parses a definition.
+    /// Parses a definition, repairing one that isn't XML.
     ///
     /// # Errors
     ///
-    /// Returns an error if it isn't XML, or its root isn't a `VARIANT_MESH`.
+    /// Returns an error if not even that makes it XML, or its root isn't a `VARIANT_MESH`.
     pub fn parse(bytes: Vec<u8>) -> Result<Self, XmlError> {
-        let doc = XmlDoc::parse(bytes)?;
+        let (doc, repaired) = match XmlDoc::parse(bytes.clone()) {
+            Ok(doc) => (doc, false),
+            Err(_) => (XmlDoc::parse(repair(&bytes))?, true),
+        };
+
         let root = doc.roots().iter().copied().find(|&r| doc.elements()[r].name == "VARIANT_MESH").ok_or_else(|| XmlError::Edit("not a variant mesh definition".to_owned()))?;
         let root = mesh(&doc, root);
-        Ok(Self { doc, root })
+        Ok(Self { doc, root, repaired })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Alternative, VariantMeshFile};
+    use super::{Alternative, VariantMesh, VariantMeshFile};
 
     const FILE: &str = "<VARIANT_MESH>\r\n\t<SLOT name=\"skin\" >\r\n\t\t<VARIANT_MESH model=\"a/b.rigid_model_v2\"  mask0=\"2\"  mask2=\"1\" >\r\n\t\t\t<TINT red=\"1.0\" green=\"0.5\" blue=\"0.25\" random_range=\"0.1\" />\r\n\t\t\t<META_DATA>female</META_DATA>\t<SLOT name=\"crest\" attach_point=\"crest_centre\" probability=\"0.25\" />\r\n\t\t</VARIANT_MESH>\r\n\t\t<VARIANT_MESH_REFERENCE definition=\"c/d.VariantMeshDefinition\" />\r\n\t</SLOT>\r\n</VARIANT_MESH>\r\n";
+
+    fn repaired(file: &str) -> VariantMesh {
+        let f = VariantMeshFile::parse(file.as_bytes().to_vec()).expect("repairs");
+        assert!(f.repaired, "{file}");
+        f.root
+    }
+
+    fn models(mesh: &VariantMesh) -> Vec<&str> {
+        mesh.slots[0].alternatives.iter().filter_map(|a| if let Alternative::Mesh(m) = a { m.model.as_deref() } else { None }).collect()
+    }
+
+    #[test]
+    fn a_tag_closed_with_a_space_is_closed() {
+        let m = repaired("<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\"><SLOT name=\"t\"><VARIANT_MESH model=\"b\"/ ></SLOT></VARIANT_MESH><VARIANT_MESH model=\"c\"/></SLOT></VARIANT_MESH>");
+        assert_eq!(models(&m), ["a", "c"]);
+        let Alternative::Mesh(a) = &m.slots[0].alternatives[0] else { panic!("a mesh") };
+        assert_eq!(models(a), ["b"]);
+    }
+
+    #[test]
+    fn doubled_quotes_go_and_empty_values_stay() {
+        let m = repaired("<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\" imposter_model=\"\"i\" /><VARIANT_MESH model=\"b\"\" mask0=\"2\"/><VARIANT_MESH model=\"\" mask0=\"1\"/ ></SLOT></VARIANT_MESH>");
+        assert_eq!(models(&m), ["a", "b", ""]);
+        let Alternative::Mesh(a) = &m.slots[0].alternatives[0] else { panic!("a mesh") };
+        assert_eq!(a.imposter_model.as_deref(), Some("i"));
+        let Alternative::Mesh(b) = &m.slots[0].alternatives[1] else { panic!("a mesh") };
+        assert_eq!(b.masks[0], Some(2));
+    }
+
+    #[test]
+    fn a_tint_left_open_ends_nothing() {
+        // vik_tunics_poor: the mesh is closed, the tint open, and its end tag ends neither.
+        let m = repaired("<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\"/><TINT red=\"1\" green=\"1\" blue=\"1\" random_range=\"0\" ></VARIANT_MESH><VARIANT_MESH model=\"b\"/></SLOT></VARIANT_MESH>");
+        assert_eq!(models(&m), ["a", "b"]);
+    }
+
+    #[test]
+    fn an_end_tag_left_over_is_left_out_and_an_open_file_closes() {
+        // orc_skin_cut4_brown, and blacklock_t3_hammers's last line.
+        let m = repaired("<VARIANT_MESH><SLOT name=\"s\"><VARIANT_MESH model=\"a\"></VARIANT_MESH></VARIANT_MESH><VARIANT_MESH model=\"b\"/></SLOT><VARIANT_MESH>");
+        assert_eq!(models(&m), ["a", "b"]);
+    }
+
+    #[test]
+    fn a_good_file_is_kept_as_it_is() {
+        let f = VariantMeshFile::parse(FILE.as_bytes().to_vec()).expect("parses");
+        assert!(!f.repaired);
+        assert_eq!(f.doc.save(), FILE.as_bytes());
+    }
 
     #[test]
     fn reads_the_tree() {
