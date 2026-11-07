@@ -135,10 +135,23 @@ impl Tile {
         out
     }
 
+    /// Whether an element stands on the terrain, so that its height against it means something. Polygons and lines have the landscape mode
+    /// too, but what they are is their points, flat on the ground in the game: the height of their pivot says nothing (39 m on a shipped
+    /// tile). The same goes for what only holds them: a siege AI edge is its two boundaries, at the tile's origin.
+    pub(crate) fn on_the_terrain(&self, e: usize) -> bool {
+        if self.placement(e) != Placement::Landscape || self.is_polygon(e) {
+            return false;
+        }
+
+        let els = self.tscene().doc().elements();
+        let inside = els[e].children.iter().filter(|&&c| els[c].name == "children").flat_map(|&c| els[c].children.iter());
+        !inside.into_iter().any(|&c| self.is_polygon(c))
+    }
+
     /// Landscape instances further from the terrain than tolerance, worst first.
     pub fn off_terrain(&self, tolerance: f32, among: Option<&[usize]>) -> Vec<OffTerrain> {
         let list = among.unwrap_or(&self.instances);
-        let mut out = list.iter().copied().filter(|&e| self.placement(e) == Placement::Landscape).filter_map(|e| {
+        let mut out = list.iter().copied().filter(|&e| self.on_the_terrain(e)).filter_map(|e| {
             let p = self.world_position(e);
             let dy = p.y - self.landscape_y(e, p.x, p.z);
             (dy.abs() > tolerance).then_some(OffTerrain { elem: e, dy })
@@ -2995,7 +3008,7 @@ impl TileDocument {
                     }
 
                     let t = self.tile();
-                    if t.placement(e) == Placement::Landscape {
+                    if t.on_the_terrain(e) {
                         let w = t.world_position(e);
                         let dy = w.y - t.landscape_y(e, w.x, w.z);
                         if dy.abs() > 0.005 {
