@@ -7,7 +7,7 @@
 //!
 //! `WCE_MODS` (packs, comma separated) mounts mods, `WCE_UNITS` (`unit:faction`, comma separated) runs just those whole units, `WCE_UNIT_FIND` lists
 //! the units whose key has a word, `WCE_UNIT_CAM` (eye and target, x,y,z,x,y,z) places the camera, `WCE_UNIT_COUNT`
-//! sets how many soldiers (over 5: ranks).
+//! sets how many soldiers (over 5: ranks), `WCE_UNIT_SLOT` and `WCE_UNIT_TIME` what they play.
 
 use std::io::Cursor;
 use std::path::Path;
@@ -166,6 +166,31 @@ fn frames_running(r: &mut Renderer, scene: &RenderScene, cam: &Camera, target: &
     }
 }
 
+/// A unit's schedule, stepped at 30 frames a second: the largest move of a bone between two frames (metres; a pop is a large one), and which bone.
+fn largest_step(model: &UnitModel) -> (f32, String, f32) {
+    let period: f32 = model.man.segments.iter().map(|s| s.length).sum();
+    let bones = &model.man.rig.skeleton.bones;
+    let (mut worst, mut bone, mut at) = (0.0f32, 0, 0.0);
+    let mut before = None;
+    for k in 0..=(period * 30.0) as usize {
+        let t = k as f32 / 30.0;
+        let now = model.instances(t, false)[0].instance.bones.clone();
+        if let Some(b) = &before {
+            let b: &std::sync::Arc<Vec<[f32; 12]>> = b;
+            for (i, (a, c)) in now.iter().zip(b.iter()).enumerate() {
+                let d = ((a[3] - c[3]).powi(2) + (a[7] - c[7]).powi(2) + (a[11] - c[11]).powi(2)).sqrt();
+                if d > worst {
+                    (worst, bone, at) = (d, i, t);
+                }
+            }
+        }
+
+        before = Some(now);
+    }
+
+    (worst, bones.get(bone).cloned().unwrap_or_default(), at)
+}
+
 fn write_ppm(path: &Path, rgba: &[u8]) {
     write_ppm_sized(path, rgba, W, H);
 }
@@ -210,7 +235,14 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
         let mut extent = 2.0f32;
         for k in 0..count {
             let model = match UnitModel::load(&read, &catalog, unit, faction, 1000 + k as u64) {
-                Ok(m) => m,
+                Ok(mut m) => {
+                    if let Ok(slot) = std::env::var("WCE_UNIT_SLOT") {
+                        println!("{slot}: played {}", m.play(&read, &slot));
+                    }
+
+                    m
+                }
+
                 Err(e) => {
                     println!("FAIL: {unit}: {e}");
                     failures += 1;
@@ -220,7 +252,23 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
 
             if k == 0 {
                 let e = catalog.entry(unit, faction).expect("the unit");
-                println!("{unit}: variant {}, skeleton {}, mount {}, {} parts, clip {} ({} s), missing {:?}", e.variant, model.man.rig.skeleton.skeleton, model.mount.as_ref().map_or("none", |m| m.rig.skeleton.skeleton.as_str()), model.man.parts.parts.len(), model.man.clip.anim.bones.len(), model.man.clip.anim.duration(), model.man.parts.missing);
+                println!("{unit}: variant {}, skeleton {}, mount {}, {} parts, clip {} ({} s), missing {:?}", e.variant, model.man.rig.skeleton.skeleton, model.mount.as_ref().map_or("none", |m| m.rig.skeleton.skeleton.as_str()), model.man.parts.parts.len(), model.man.segments[0].clip.anim.bones.len(), model.man.segments.iter().map(|s| s.length).sum::<f32>(), model.man.parts.missing);
+            }
+
+            let (a, b) = (model.instances(1.25, true), model.instances(1.25, true));
+            if a[0].instance.palette != b[0].instance.palette {
+                println!("FAIL: {unit}: the same time gave two poses");
+                failures += 1;
+            }
+
+            if k == 0 {
+                let slots: Vec<&str> = model.man.segments.iter().map(|s| s.slot.as_str()).collect();
+                let (step, bone, at) = largest_step(&model);
+                println!("{unit}: schedule {slots:?}, largest step {step:.3} m, {bone} at {at:.2} s");
+                if step > 0.3 {
+                    println!("FAIL: {unit}: a pop of {step:.3} m");
+                    failures += 1;
+                }
             }
 
             wanted.extend(model.models());
@@ -229,10 +277,11 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
                 extent = 3.2;
             }
 
-            for (scale, instance) in model.instances(0.3, true) {
+            let t = std::env::var("WCE_UNIT_TIME").ok().and_then(|t| t.parse().ok()).unwrap_or(0.3);
+            for figure in model.instances(t, true) {
                 let mut world = Float4x4::IDENTITY;
                 for r in 0..3 {
-                    world.m[r][r] = scale;
+                    world.m[r][r] = figure.scale;
                 }
 
                 world.m[0][3] = (k as f32 - (count - 1) as f32 * 0.5) * extent * 0.65;
@@ -241,7 +290,7 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
                     world.m[0][3] = ((k % 8) as f32 - 3.5) * 1.15 + ((k / 8) % 2) as f32 * 0.5;
                     world.m[2][3] = 1.2 - (k / 8) as f32 * 1.4;
                 }
-                scene.add(layer, world, Payload::SkinnedInstance(instance), SourceRef { doc: 1, item: 1 + k as u64 });
+                scene.add(layer, world * figure.local, Payload::SkinnedInstance(figure.instance), SourceRef { doc: 1, item: 1 + k as u64 });
             }
         }
 
