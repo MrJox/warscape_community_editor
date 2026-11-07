@@ -165,6 +165,11 @@ impl Tile {
         }).collect()
     }
 
+    /// What `text` draws, in metres around its root element.
+    pub(super) fn preview_payloads(&self, text: &[u8]) -> Vec<(Float4x4, Payload)> {
+        self.preview_parts(text).0.into_iter().map(|it| (it.local, it.payload)).collect()
+    }
+
     fn preview_parts(&self, text: &[u8]) -> (Vec<PreviewItem>, Vec<(Float3, Float3)>) {
         let Ok(mini) = TedScene::parse_any(text.to_vec()) else { return (vec![], vec![]) };
         let unit = self.unit();

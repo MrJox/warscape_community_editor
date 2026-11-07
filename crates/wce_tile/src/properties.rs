@@ -279,6 +279,8 @@ const ROAD: &[Prop] = &[
     p("road_ground", Kind::Enum(en::ROAD_GROUND)),
     p("road_feather", Kind::Slider(0.0, 20.0)),
     p("road_seed", Kind::Int(0, 9999)),
+    p("road_detail", Kind::Enum(en::ROAD_DETAIL)),
+    p("road_bridges", Kind::Bool),
 ];
 
 const AI_HINT: &[Prop] = polygon![    p("subdivision_length", Kind::Slider(0.0, 100.0)),

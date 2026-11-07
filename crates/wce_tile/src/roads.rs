@@ -28,6 +28,9 @@ pub struct RoadSettings {
     /// The colour of its ground type.
     pub ground: [u8; 3],
 
+    /// Whether it crosses gaps on bridges.
+    pub bridges: bool,
+
     /// How far the texture fades out past the road's edge.
     pub feather: f64,
     pub seed: u32,
@@ -41,6 +44,39 @@ const SAMPLE: f64 = 1.0;
 
 /// How far along the line the ground under it is averaged, each way.
 const SMOOTHING: f64 = 15.0;
+
+/// How far under the road the ground must be to be a gap, and over how long a stretch (world units).
+const GAP_DEPTH: f64 = 4.0;
+const GAP_LENGTH: f64 = 8.0;
+
+/// Over how much of the road its bump comes in: from its ends, and from another road it meets.
+const BUMP_RAMP: f64 = 8.0;
+
+/// A chain of the kit's bridge pieces: its keys, and their places along it from its middle (the file's units; both from vanilla's
+/// `river_crossing` tiles, where a piece runs along its z).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BridgeKind {
+    piece: &'static str,
+    end: &'static str,
+    pitch: f64,
+    end_offset: f64,
+}
+
+const SHORT_BRIDGE: BridgeKind = BridgeKind { piece: "bridge_wood_1", end: "bridge_wood_1_end", pitch: 10.4, end_offset: 5.2 };
+const LONG_BRIDGE: BridgeKind = BridgeKind { piece: "bridge_wood_2", end: "bridge_wood_2_end", pitch: 20.0, end_offset: 10.1 };
+
+/// The pieces that span a length (the file's units): each one's building key, its place along the chain from its middle, and whether it
+/// looks back along it (the far end).
+#[must_use]
+pub fn bridge_pieces(length: f64) -> Vec<(&'static str, f64, bool)> {
+    let k = if length >= 3.0 * LONG_BRIDGE.pitch { LONG_BRIDGE } else { SHORT_BRIDGE };
+    let n = (((length - 2.0 * k.end_offset) / k.pitch).ceil().max(1.0)) as usize;
+    let half = k.pitch * (n as f64 - 1.0) * 0.5;
+    let mut out = vec![(k.end, -half - k.end_offset - k.pitch * 0.5 + k.end_offset, true)];
+    out.extend((0..n).map(|i| (k.piece, -half + k.pitch * i as f64, false)));
+    out.push((k.end, half + k.pitch * 0.5, false));
+    out
+}
 
 /// How far past the road's edge its height goes from the line's exact one to the blend of what is near.
 const NEAR: f64 = 12.0;
@@ -82,11 +118,95 @@ pub fn centre_line(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
 /// The road's height at each sample: the ground under it averaged along the line, then limited to the maximum grade both ways, and the bump.
 #[must_use]
 pub fn profile(line: &[[f64; 2]], ground: &dyn Fn(f64, f64) -> f64, s: &RoadSettings) -> Vec<f64> {
+    let raw: Vec<f64> = line.iter().map(|p| ground(p[0], p[1])).collect();
+    with_bump(line, &graded(line, &raw, s), s, &|_, _| false)
+}
+
+/// The stretches of a line (first and last sample) where the ground is well under the road: gaps for a bridge. `raw`: the ground under each
+/// sample; `heights`: the road's. A stretch runs out to where the ground comes back up to the road, and on up the walls while they are steeper
+/// than the road may climb: a road following the ground down has met it partway down the wall, and a bridge from there would start in the canyon.
+#[must_use]
+pub fn find_gaps(line: &[[f64; 2]], raw: &[f64], heights: &[f64], s: &RoadSettings) -> Vec<(usize, usize)> {
+    let slope = s.max_grade.to_radians().tan();
+    let climbs = |from: usize, to: usize| {
+        let run = (line[to][0] - line[from][0]).hypot(line[to][1] - line[from][1]).max(1e-9);
+        (raw[to] - raw[from]) / run > slope
+    };
+
+    let mut out: Vec<(usize, usize)> = vec![];
+    let mut i = 0;
+    while i < raw.len() {
+        if heights[i] - raw[i] < GAP_DEPTH {
+            i += 1;
+            continue;
+        }
+
+        let (mut a, mut b) = (i, i);
+        while a > 0 && heights[a - 1] - raw[a - 1] > 1.0 {
+            a -= 1;
+        }
+
+        while b + 1 < raw.len() && heights[b + 1] - raw[b + 1] > 1.0 {
+            b += 1;
+        }
+
+        while a > 0 && climbs(a, a - 1) {
+            a -= 1;
+        }
+
+        while b + 1 < raw.len() && climbs(b, b + 1) {
+            b += 1;
+        }
+
+        let length = line[a..=b].windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f64>();
+        if length >= GAP_LENGTH && a > 0 && b + 1 < raw.len() && out.last().is_none_or(|l| l.1 < a) {
+            out.push((a, b));
+        }
+
+        i = b + 1;
+    }
+
+    out
+}
+
+/// The ground with its gaps taken out: straight from rim to rim, for the road to be graded as if they were not there, and not dip into them.
+#[must_use]
+pub fn over_gaps(raw: &[f64], gaps: &[(usize, usize)]) -> Vec<f64> {
+    let mut out = raw.to_vec();
+    for &(a, b) in gaps {
+        let n = (b - a).max(1) as f64;
+        for (k, v) in out[a..=b].iter_mut().enumerate() {
+            *v = raw[a] + (raw[b] - raw[a]) * k as f64 / n;
+        }
+    }
+
+    out
+}
+
+/// Adds the bump. It comes in from the road's ends, so that a road ending at a tile's edge ends on the ground, and it stays off where the
+/// road runs on another (`on_other`): that one's bump is already in the ground.
+#[must_use]
+pub fn with_bump(line: &[[f64; 2]], heights: &[f64], s: &RoadSettings, on_other: &dyn Fn(f64, f64) -> bool) -> Vec<f64> {
+    let n = heights.len();
+    let reach = BUMP_RAMP as usize;
+    let off = line.iter().map(|p| on_other(p[0], p[1])).collect::<Vec<_>>();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let ends = (i.min(n - 1 - i) as f64 / BUMP_RAMP).min(1.0);
+        let near = (i.saturating_sub(reach)..(i + reach + 1).min(n)).filter(|&k| off[k]).map(|k| k.abs_diff(i) as f64 / BUMP_RAMP).fold(1.0, f64::min);
+        out.push(heights[i] + s.bump * smooth(ends.min(near)));
+    }
+
+    out
+}
+
+/// The ground under a line averaged along it, then limited to the maximum grade both ways.
+#[must_use]
+pub fn graded(line: &[[f64; 2]], raw: &[f64], s: &RoadSettings) -> Vec<f64> {
     if line.is_empty() {
         return vec![];
     }
 
-    let raw: Vec<f64> = line.iter().map(|p| ground(p[0], p[1])).collect();
     let mut along = vec![0.0; line.len()];
     for i in 1..line.len() {
         along[i] = along[i - 1] + (line[i][0] - line[i - 1][0]).hypot(line[i][1] - line[i - 1][1]);
@@ -117,7 +237,7 @@ pub fn profile(line: &[[f64; 2]], ground: &dyn Fn(f64, f64) -> f64, s: &RoadSett
         y[i] = y[i].clamp(y[i + 1] - d, y[i + 1] + d);
     }
 
-    y.iter().map(|v| v + s.bump).collect()
+    y
 }
 
 /// A road laid out: its samples, found by position.
@@ -125,6 +245,9 @@ pub struct Strip {
     pub line: Vec<[f64; 2]>,
     pub heights: Vec<f64>,
     settings: RoadSettings,
+
+    /// The samples a bridge carries: the road leaves the terrain under them as it is.
+    open: Vec<bool>,
     origin: [f64; 2],
     across: usize,
     cells: Vec<Vec<u32>>,
@@ -157,7 +280,15 @@ impl Strip {
             }
         }
 
-        Self { line, heights, settings, origin, across, cells, reach }
+        let open = vec![false; line.len()];
+        Self { line, heights, settings, open, origin, across, cells, reach }
+    }
+
+    /// Leaves the terrain alone over these stretches (first and last sample).
+    pub fn open_gaps(&mut self, gaps: &[(usize, usize)]) {
+        for &(a, b) in gaps {
+            self.open[a..=b].fill(true);
+        }
     }
 
     /// The rectangle it can touch (x0, z0, x1, z1), past its reach nothing.
@@ -173,6 +304,11 @@ impl Strip {
 
     /// The distance from a point to the line and the road's height at the nearest place on it.
     fn nearest(&self, x: f64, z: f64) -> Option<(f64, f64)> {
+        self.nearest_open(x, z).filter(|n| !n.2).map(|n| (n.0, n.1))
+    }
+
+    /// As [`Self::nearest`], and whether the place on the line is over a gap.
+    fn nearest_open(&self, x: f64, z: f64) -> Option<(f64, f64, bool)> {
         let (cx, cz) = ((x - self.origin[0]) / CELL, (z - self.origin[1]) / CELL);
         if cx < 0.0 || cz < 0.0 {
             return None;
@@ -197,18 +333,18 @@ impl Strip {
 
         // The cells keep every fourth sample: the rest of the way between the neighbours of the best one.
         let (_, i) = best?;
-        let (mut near, mut own) = (f64::MAX, 0.0);
+        let (mut near, mut own, mut open) = (f64::MAX, 0.0, false);
         for k in i.saturating_sub(4)..(i + 5).min(self.line.len()) {
             let p = self.line[k];
             let d = (p[0] - x).hypot(p[1] - z);
             if d < near {
-                (near, own) = (d, self.heights[k]);
+                (near, own, open) = (d, self.heights[k], self.open[k]);
             }
         }
 
         // Near the road its exact height, for a surface with no ripple from the samples the cells left out; the jumps are further out.
         let far = smooth((near - self.settings.width * 0.5) / NEAR);
-        Some((near, own + (sum / weights - own) * far))
+        Some((near, own + (sum / weights - own) * far, open))
     }
 
     /// The terrain's height at a point once the road is there, `ground` its height without; none where the road leaves it alone. On the road
@@ -267,7 +403,83 @@ mod tests {
     use super::*;
 
     fn settings() -> RoadSettings {
-        RoadSettings { width: 6.0, shoulder: 3.0, bump: 0.25, max_grade: 10.0, max_side: 30.0, channel: 5, ground: [255, 96, 0], feather: 2.0, seed: 1 }
+        RoadSettings { width: 6.0, shoulder: 3.0, bump: 0.25, max_grade: 10.0, max_side: 30.0, channel: 5, ground: [255, 96, 0], bridges: true, feather: 2.0, seed: 1 }
+    }
+
+    #[test]
+    fn a_canyon_is_a_gap_and_a_ditch_is_not() {
+        let l = straight();
+        let s = settings();
+        let raw = |depth: f64, a: f64, b: f64| l.iter().map(|p| if p[0] > a && p[0] < b { -depth } else { 0.0 }).collect::<Vec<_>>();
+        let canyon = raw(30.0, 40.0, 60.0);
+        let gaps = find_gaps(&l, &canyon, &graded(&l, &over_gaps(&canyon, &[(30, 70)]), &s), &s);
+        assert_eq!(gaps.len(), 1);
+        let (a, b) = gaps[0];
+        assert!(l[a][0] <= 41.0 && l[a][0] >= 38.0 && l[b][0] >= 59.0 && l[b][0] <= 62.0, "{:?} {:?}", l[a], l[b]);
+
+        // Shallow, or short: the road just goes over it.
+        let ditch = raw(2.0, 40.0, 60.0);
+        assert!(find_gaps(&l, &ditch, &vec![0.0; l.len()], &s).is_empty());
+        let notch = raw(30.0, 49.0, 52.0);
+        assert!(find_gaps(&l, &notch, &vec![0.0; l.len()], &s).is_empty());
+    }
+
+    #[test]
+    fn a_gap_runs_to_the_top_of_its_walls() {
+        let l = straight();
+        let s = settings();
+
+        // Walls 30 high over 30 units each side, a flat floor between them.
+        let raw = l.iter().map(|p| {
+            let d = (p[0] - 50.0).abs();
+            if d < 10.0 { -30.0 } else if d < 40.0 { -30.0 + d - 10.0 } else { 0.0 }
+        }).collect::<Vec<_>>();
+        let gaps = find_gaps(&l, &raw, &graded(&l, &raw, &s), &s);
+        assert_eq!(gaps.len(), 1, "{gaps:?}");
+        let (a, b) = gaps[0];
+        assert!(raw[a] > -2.0 && raw[b] > -2.0, "ends at {} and {}", raw[a], raw[b]);
+    }
+
+    #[test]
+    fn a_road_stays_up_over_a_gap() {
+        let raw = [0.0, 0.0, -30.0, -30.0, 2.0, 2.0];
+        assert_eq!(over_gaps(&raw, &[(1, 4)]), [0.0, 0.0, 2.0 / 3.0, 4.0 / 3.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn the_terrain_under_a_bridge_stays() {
+        let l = straight();
+        let s = settings();
+        let y = vec![10.0; l.len()];
+        let mut strip = Strip::new(l, y, s);
+        strip.open_gaps(&[(40, 60)]);
+        assert!(strip.height_at(50.0, 0.0, -20.0).is_none());
+        assert_eq!(strip.texture_at(50.0, 0.0), 0.0);
+        assert!(!strip.on_road(50.0, 0.0));
+        assert_eq!(strip.height_at(20.0, 0.0, -20.0), Some(10.0));
+    }
+
+    #[test]
+    fn a_bridge_is_long_enough_and_ends_with_its_ends() {
+        for length in [12.0, 25.0, 48.0, 90.0, 200.0] {
+            let p = bridge_pieces(length);
+            let (first, last) = (p[0], p[p.len() - 1]);
+            assert!(first.0.ends_with("_end") && last.0.ends_with("_end"), "{p:?}");
+            assert!(first.2 && !last.2, "{p:?}");
+            assert!(last.1 - first.1 >= length - 20.0, "{length}: {p:?}");
+            assert!(p[1..p.len() - 1].iter().all(|x| !x.0.ends_with("_end")), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn the_bump_comes_in_from_the_ends_and_stays_off_another_road() {
+        let l = straight();
+        let s = settings();
+        let y = with_bump(&l, &vec![0.0; l.len()], &s, &|x, _| (45.0..55.0).contains(&x));
+        assert_eq!(y[0], 0.0);
+        assert_eq!(*y.last().unwrap(), 0.0);
+        assert!((y[25] - s.bump).abs() < 1e-9);
+        assert_eq!(y[50], 0.0);
     }
 
     fn straight() -> Vec<[f64; 2]> {
@@ -287,7 +499,7 @@ mod tests {
     #[test]
     fn flat_ground_gives_a_flat_road_at_its_bump() {
         let y = profile(&straight(), &|_, _| 10.0, &settings());
-        assert!(y.iter().all(|v| (v - 10.25).abs() < 1e-9));
+        assert!(y[10..y.len() - 10].iter().all(|v| (v - 10.25).abs() < 1e-9));
     }
 
     #[test]

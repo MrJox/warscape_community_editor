@@ -3243,6 +3243,13 @@ impl Tool for TileTool {
 
     fn update(&mut self, e: &mut Editor) {
         self.update_launch(e);
+        if document(e).is_some_and(|d| d.wants_road_prefabs()) {
+            let lib = self.prefab_library(e);
+            if let Some(d) = document(e) {
+                d.set_road_prefabs(lib);
+            }
+        }
+
         let Some(id) = document_id(e) else {
             e.viewport.battle_frame = None;
 
