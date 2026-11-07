@@ -470,16 +470,7 @@ impl Tile {
             }
         }
 
-        gone.sort_unstable();
-        let mut ranges: Vec<std::ops::Range<EntityId>> = vec![];
-        for id in gone {
-            match ranges.last_mut() {
-                Some(r) if r.end == id => r.end = id + 1,
-                _ => ranges.push(id..id + 1),
-            }
-        }
-
-        scene.remove_ranges(&ranges);
+        scene.remove_ids(&gone);
         let unit = self.unit() as f32;
         for (elem, (sig, columns, pieces)) in shows {
             if self.columns.by_elem.contains_key(&elem) {
