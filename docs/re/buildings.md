@@ -145,6 +145,8 @@ its start time has passed (0 and 0: at once). The torches' entries are untagged 
 draw of a piece or standalone entity (`FUN_10464ce0`, `FUN_105340c0`): after a view test (vtable +0x84), for a piece that is shown (flag 1 of +0x7a; +0xdc for the entity) in mode 1 or 3 (2 is the
 collapse). No night, weather, season or owner test was found on this path. Not traced: the code that makes the attached buildings of `file_refs`, or which object the entity list of `FUN_10534060` is.
 
+The string flag is read by `FUN_116a8680` into the entry's +0x30 (`"true"`). In `FUN_104b2a80` it keeps a handle to the running effect and moves it every time (`false`: started once, by the `started` table). **Tested in game 2026-11-07**: the three torch `.meta` with `true`, in a mod before TDD, on `gen_dun_minor_final_2`: the torches still did not burn. So the flag is not why. The user sees them never burn in game; the editor draws them (an **ASSUMPTION** of `columns.rs`: that the game plays what the `.meta` says on attached buildings). `_tech.cs2.parsed` has one user in the code, `FUN_10dc5c10`, and that is a prop list (`Filename`, `CollX`, `Burnable`), not the path of the walls' `file_refs`.
+
 `torch_sconce` and `torch_ground_post` are placed per fort piece by its logic file, per destruction state: 67 of the 191 fort pieces of the kit's tables have any (298 `file_refs`, all pieces of the
 vanilla packs), 202 on state 0 and 96 on state 1, none on later ones. Bridging columns, end caps and most joiners have none, and a damaged piece usually keeps fewer: walls are not lit evenly by data.
 
