@@ -24,6 +24,7 @@ use wce_foundation::math::Float3;
 use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile::world_transform::world_transform;
 use wce_tile_editor::terrain_bake::TerrainView;
+use wce_tile_editor::tile_document::layers::LayerType;
 use wce_tile_editor::tile_document::{BrushKind, GROUND_ERASE, Placement, TileDocument};
 
 use wce_tile::property_enums::WALL_BASE;
@@ -919,6 +920,45 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let Some(d) = document(e) else { return no_tile() };
         d.tile_mut().display_mut().tint_freeform = on;
         ok("")
+    });
+
+    c.add("terrain_layer", "terrain_layer <height|blend|ground> list | add <name> | work <id|base> | show <id> on|off | opacity <id> <0..1> | up <id> | down <id> | merge <id> | remove <id>",
+        "the tile's terrain layers (the Tile panel's Terrain layers section)", |e, a| {
+        let usage = "usage: terrain_layer <height|blend|ground> list | add <name> | work <id|base> | show <id> on|off | opacity <id> <0..1> | up <id> | down <id> | merge <id> | remove <id>";
+        let Some(kind) = a.first().and_then(|k| LayerType::named(k)) else { return fail(usage) };
+        let Some(d) = document(e) else { return no_tile() };
+        let id = a.get(2).and_then(|v| v.parse::<u64>().ok());
+        let (rows, working) = d.terrain_layers(kind);
+        let look = |id: u64| rows.iter().find(|r| r.id == id).map(|r| (r.visible, r.opacity));
+        match (a.get(1).map(String::as_str), id) {
+            (Some("list"), _) => {}
+            (Some("add"), _) => match d.add_terrain_layer(kind, a.get(2).map_or("Layer", String::as_str), "") {
+                Ok(id) => return ok(format!("layer {id}")),
+                Err(why) => return fail(why),
+            },
+
+            (Some("work"), id) => d.set_working_layer(kind, id),
+            (Some("show"), Some(id)) => {
+                let Some((_, opacity)) = look(id) else { return fail("no such layer") };
+                d.set_terrain_layer_look(kind, id, a.get(3).is_some_and(|v| v == "on"), opacity);
+            }
+
+            (Some("opacity"), Some(id)) => {
+                let Some((visible, _)) = look(id) else { return fail("no such layer") };
+                let Some(o) = a.get(3).and_then(|v| v.parse::<f32>().ok()) else { return fail(usage) };
+                d.set_terrain_layer_look(kind, id, visible, o);
+            }
+
+            (Some("up"), Some(id)) => d.move_terrain_layer(kind, id, 1),
+            (Some("down"), Some(id)) => d.move_terrain_layer(kind, id, -1),
+            (Some("merge"), Some(id)) => d.merge_terrain_layer(kind, id),
+            (Some("remove"), Some(id)) => d.remove_terrain_layer(kind, id),
+            _ => return fail(usage),
+        }
+
+        let (rows, working) = if a.get(1).is_some_and(|v| v == "list") { (rows, working) } else { document(e).map_or((vec![], None), |d| d.terrain_layers(kind)) };
+        let list = rows.iter().map(|r| format!("{} {}{} {:.2} {} KB", r.id, r.name, if r.visible { "" } else { " (hidden)" }, r.opacity, r.bytes / 1024)).collect::<Vec<_>>();
+        ok(format!("working {}; {}", working.map_or("base".to_owned(), |w| w.to_string()), if list.is_empty() { "no layers".to_owned() } else { list.join("; ") }))
     });
 
     c.add("level_along", "level_along", "TEd's Spline Road: level the ground under the selected line to its height (one undo entry)", |e, _| {

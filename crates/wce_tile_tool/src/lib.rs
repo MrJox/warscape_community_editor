@@ -16,6 +16,7 @@ mod falloff_editor;
 pub mod ground_views;
 mod height_import_dialog;
 mod image_brush;
+mod layers_panel;
 pub mod kit_prompt;
 pub mod launch;
 pub mod launch_prompt;
