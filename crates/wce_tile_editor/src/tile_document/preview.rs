@@ -165,6 +165,11 @@ impl Tile {
         }).collect()
     }
 
+    /// Everything `text` draws (models, decals, effects, lights), in metres around its root element: what a thumbnail shows.
+    pub fn item_parts(&self, text: &[u8]) -> Vec<(Float4x4, Payload)> {
+        self.preview_payloads(text)
+    }
+
     /// What `text` draws, in metres around its root element.
     pub(super) fn preview_payloads(&self, text: &[u8]) -> Vec<(Float4x4, Payload)> {
         self.preview_parts(text).0.into_iter().map(|it| (it.local, it.payload)).collect()
