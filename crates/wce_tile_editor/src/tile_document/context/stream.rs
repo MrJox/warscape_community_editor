@@ -18,7 +18,7 @@ use wce_vfs::files::Files;
 
 use super::template::{Template, load_any_template};
 use crate::terrain_bake::TerrainLook;
-use super::{CHUNK, ContextRequest, Frame, TileKey, cache, tile_dir};
+use super::{BLOCK, CHUNK, ContextRequest, Frame, TileKey, cache, tile_dir};
 
 /// A chunk: its column and row of CHUNK x CHUNK map cells.
 pub type ChunkKey = (i32, i32);
@@ -26,6 +26,14 @@ pub type ChunkKey = (i32, i32);
 /// A chunk a worker finished: its entities at a level.
 /// A built chunk and the frame generation it was built with.
 type Built = (ChunkKey, Lod, Vec<(Float4x4, Payload)>, u64);
+
+/// The cells past the tiles' rings where the blocks start.
+const BLOCK_MARGIN: i32 = 2 * CHUNK;
+
+/// The first chunk of a chunk's block.
+fn block_of(k: ChunkKey) -> ChunkKey {
+    (k.0.div_euclid(BLOCK) * BLOCK, k.1.div_euclid(BLOCK) * BLOCK)
+}
 
 /// A chunk's level of detail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -41,6 +49,10 @@ pub enum Lod {
 
     /// The LF ground alone.
     Far,
+
+    /// The LF ground alone over a whole block of chunks ([`BLOCK`]), under the key of its first chunk, with a vertex a cell. A chunk's
+    /// rectangles past the rings were most of a far view's cost: a campaign map is 40 000 chunks, and what they drew is one colour.
+    Block,
 }
 
 /// What changed on the scene's side.
@@ -344,7 +356,8 @@ impl Streamer {
             *f = (frame, f.1 + 1);
         }
 
-        let changed: std::collections::HashSet<ChunkKey> = changed.iter().copied().collect();
+        // A block holds what its chunks hold.
+        let changed: std::collections::HashSet<ChunkKey> = changed.iter().flat_map(|&k| [k, block_of(k)]).collect();
         let shown = &self.shown;
         self.wanted.retain(|k, l| shown.get(k) == Some(l) && !changed.contains(k));
         lock(&self.shared.queue).clear();
@@ -372,24 +385,52 @@ impl Streamer {
         if d <= edge + SLACK && d > inner - SLACK { Some(now) } else { plain }
     }
 
+    /// The cells from the focus past which the LF ground goes by blocks: past the tiles' rings by enough for a ring's edge to stay on chunks.
+    fn block_start(&self) -> i32 {
+        self.rings[..3].iter().copied().max().unwrap_or(0) + BLOCK_MARGIN
+    }
+
     /// Works out the levels around the focus (a point of the frame), queues what changes and returns what the workers finished.
     pub fn update(&mut self, focus: (f64, f64)) -> Vec<ChunkChange> {
         let (f, generation) = self.shared.frame();
         let (fx, fy) = f.cell_of(focus.0, focus.1);
         let reach = f64::from(self.rings.into_iter().max().unwrap_or(0)) + SLACK;
         let (cw, ch) = f.chunks();
-        let span = |c: f64| ((c - reach) / f64::from(CHUNK)).floor() as i32..=((c + reach) / f64::from(CHUNK)).floor() as i32;
+        let block_cells = BLOCK * CHUNK;
+        let span = |c: f64| ((c - reach) / f64::from(block_cells)).floor() as i32..=((c + reach) / f64::from(block_cells)).floor() as i32;
+
+        // The distance from the focus to a square of cells.
+        let distance = |x: i32, y: i32, size: i32| {
+            let (x0, y0, size) = (f64::from(x), f64::from(y), f64::from(size));
+            let dx = (x0 - fx).max(fx - (x0 + size)).max(0.0);
+            let dy = (y0 - fy).max(fy - (y0 + size)).max(0.0);
+            (dx * dx + dy * dy).sqrt()
+        };
+
+        let start = f64::from(self.block_start());
         let mut want: HashMap<ChunkKey, (Lod, f64)> = HashMap::new();
-        for cy in span(fy).filter(|&y| y >= 0 && y < ch) {
-            for cx in span(fx).filter(|&x| x >= 0 && x < cw) {
-                // The distance from the focus to the chunk's cells.
-                let (x0, y0) = (f64::from(cx * CHUNK), f64::from(cy * CHUNK));
-                let dx = (x0 - fx).max(fx - (x0 + f64::from(CHUNK))).max(0.0);
-                let dy = (y0 - fy).max(fy - (y0 + f64::from(CHUNK))).max(0.0);
-                let d = (dx * dx + dy * dy).sqrt();
-                let now = self.wanted.get(&(cx, cy)).copied();
-                if let Some(l) = self.level(d, now) {
-                    want.insert((cx, cy), (l, d));
+        for by in span(fy).filter(|&y| y >= 0 && y * BLOCK < ch) {
+            for bx in span(fx).filter(|&x| x >= 0 && x * BLOCK < cw) {
+                // Past the rings a block is one piece; it stays one within the slack.
+                let key = (bx * BLOCK, by * BLOCK);
+                let d = distance(bx * block_cells, by * block_cells, block_cells);
+                let slack = if self.wanted.get(&key) == Some(&Lod::Block) { SLACK } else { 0.0 };
+                if d > start - slack {
+                    if d <= reach {
+                        want.insert(key, (Lod::Block, d));
+                    }
+
+                    continue;
+                }
+
+                for cy in key.1..(key.1 + BLOCK).min(ch) {
+                    for cx in key.0..(key.0 + BLOCK).min(cw) {
+                        let d = distance(cx * CHUNK, cy * CHUNK, CHUNK);
+                        let now = self.wanted.get(&(cx, cy)).copied().filter(|l| *l != Lod::Block);
+                        if let Some(l) = self.level(d, now) {
+                            want.insert((cx, cy), (l, d));
+                        }
+                    }
                 }
             }
         }
@@ -449,7 +490,10 @@ impl Streamer {
         let reach = self.frame().reach();
         let (x0, y0) = ((cells[0] - reach).div_euclid(CHUNK), (cells[1] - reach).div_euclid(CHUNK));
         let (x1, y1) = ((cells[2] - 1).div_euclid(CHUNK), (cells[3] - 1).div_euclid(CHUNK));
-        self.wanted.retain(|&(cx, cy), _| cx < x0 || cx > x1 || cy < y0 || cy > y1);
+        self.wanted.retain(|&(cx, cy), l| {
+            let side = if *l == Lod::Block { BLOCK - 1 } else { 0 };
+            cx + side < x0 || cx > x1 || cy + side < y0 || cy > y1
+        });
     }
 
     /// The chunks wanted and not on the scene at their level yet.
@@ -480,8 +524,8 @@ impl Streamer {
     }
 
     /// The chunks on the scene per level.
-    pub fn shown(&self) -> [usize; 4] {
-        let mut n = [0; 4];
+    pub fn shown(&self) -> [usize; 5] {
+        let mut n = [0; 5];
         for l in self.shown.values() {
             n[*l as usize] += 1;
         }
@@ -493,10 +537,10 @@ impl Streamer {
     pub fn report(&self) -> String {
         let f = self.frame();
         let s = lock(&self.shared.stats);
-        let [near, mid, ground, far] = self.shown();
+        let [near, mid, ground, far, blocks] = self.shown();
         let failed = if s.failed.is_empty() { String::new() } else { format!(", {} could not be opened", s.failed.len()) };
         format!(
-            "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
+            "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far, {blocks} far blocks{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
             f.map.name, if self.busy() > 0 { format!(", {} building", self.busy()) } else { String::new() }, s.opened, s.open_s, s.from_cache, s.bytes >> 20,
             f.lf_note(), self.frame_s, self.first_s.map_or(String::new(), |t| format!(", first ring {t:.1} s"))
         )

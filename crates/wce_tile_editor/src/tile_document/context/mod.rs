@@ -45,6 +45,9 @@ pub use wce_tile::sources::tile_dir;
 /// Map cells a side of a chunk.
 pub const CHUNK: i32 = 8;
 
+/// Chunks a side of a block of far ground ([`Lod::Block`]).
+pub const BLOCK: i32 = 8;
+
 /// The most texels a side of the LF normal map.
 const LF_NORMAL_SIDE: i32 = 4096;
 
@@ -118,7 +121,7 @@ pub type TileKey = (String, String, String);
 type PlainBase = (Option<Arc<TerrainMaterial>>, u64);
 
 /// The plain materials by grid size, far ring or not, and climate.
-type Plains = HashMap<(i32, i32, bool, u8), Arc<TerrainMaterial>>;
+type Plains = HashMap<(i32, i32, bool, u8, i32), Arc<TerrainMaterial>>;
 
 /// A cell no placement gives a climate.
 const NO_CLIMATE: u8 = u8::MAX;
@@ -560,13 +563,18 @@ impl Frame {
     /// The LF ground over a rectangle of map cells: a grid of zero heights on the LF's lattice (the shader adds the LF), the plain material
     /// of the cells' climate.
     fn ground(&self, r: [i32; 4], far: bool, climate: u8) -> (Float4x4, Payload) {
+        self.ground_every(r, far, climate, 1)
+    }
+
+    /// [`Self::ground`] on every `k`th vertex of the LF's lattice.
+    fn ground_every(&self, r: [i32; 4], far: bool, climate: u8, k: i32) -> (Float4x4, Payload) {
         let b = bounds(&self.from_map, f64::from(r[0]), f64::from(r[1]), f64::from(r[2]), f64::from(r[3]));
-        let step = self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step));
+        let step = f64::from(k) * self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step));
         let (nx, nz) = (((b[2] - b[0]) / step).round() as i32 + 1, ((b[3] - b[1]) / step).round() as i32 + 1);
         let heights = self.zeros.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz)).or_insert_with(|| Arc::new(vec![0.0; (nx * nz) as usize])).clone();
         let (base, plain_id) = self.plain_for(climate);
         let material = base.map(|base| {
-            self.plains.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz, far, climate)).or_insert_with(|| {
+            self.plains.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz, far, climate, k)).or_insert_with(|| {
                 // A little past its rectangle (one colour: its maps wrap onto themselves), so two of them side by side leave no pixel to
                 // neither (the resolve would draw it black).
                 // One id per climate and one normal id for all sizes: one set of maps on the GPU (a normal id per size had the renderer make
@@ -744,9 +752,78 @@ impl Frame {
         }
     }
 
+    /// The LF ground of a block ([`Lod::Block`], `key` its first chunk): as the far level has it for its chunks (`build_chunk`), but its
+    /// cells are merged whichever chunk owns them, and sea tiles with each other, in as few rectangles as they make. A vertex a cell: the
+    /// shader takes the heights from the LF, so what goes is the LF's detail between them, seen from at least the rings' width away.
+    fn build_block(&self, key: ChunkKey, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool) -> Vec<(Float4x4, Payload)> {
+        #[derive(Clone, Copy, PartialEq)]
+        enum Cell {
+            Land,
+            Sea,
+            Cut,
+        }
+
+        let side = BLOCK * CHUNK;
+        let area = [key.0 * CHUNK, key.1 * CHUNK, key.0 * CHUNK + side, key.1 * CHUNK + side];
+        let wide = side + self.reach;
+        let mut cells = vec![Cell::Land; (wide * wide) as usize];
+        let mut out = vec![];
+        for cy in key.1..key.1 + BLOCK {
+            for cx in key.0..key.0 + BLOCK {
+                for &i in self.by_chunk.get(&(cx, cy)).map_or(&[][..], Vec::as_slice) {
+                    let kind = if is_custom(i) && template(i).is_some_and(|t| {
+                        self.place(i, &t, Lod::Far, &mut out);
+                        true
+                    }) {
+                        Cell::Cut
+                    } else if self.on_sea_lf(i) {
+                        Cell::Sea
+                    } else {
+                        continue;
+                    };
+
+                    let r = self.map.placements[i].rect();
+                    for y in (r[1] - area[1]).max(0)..(r[3] - area[1]).min(wide) {
+                        for x in (r[0] - area[0]).max(0)..(r[2] - area[0]).min(wide) {
+                            cells[(y * wide + x) as usize] = kind;
+                        }
+                    }
+                }
+            }
+        }
+
+        let (cw, _) = self.chunks();
+        let mine = |o: u32| {
+            let n = o as i32 - 2;
+            n >= 0 && ((n % cw).div_euclid(BLOCK) * BLOCK, (n / cw).div_euclid(BLOCK) * BLOCK) == key
+        };
+
+        let kind = |x: i32, y: i32| {
+            let (x, y) = (x - area[0], y - area[1]);
+            if x < wide && y < wide { cells[(y * wide + x) as usize] } else { Cell::Land }
+        };
+
+        let k = (CELL / self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step))).round().max(1.0) as i32;
+        let reached = [area[0], area[1], area[2] + self.reach, area[3] + self.reach];
+        out.extend(self.runs_by_climate(reached, |o, x, y| mine(o) && kind(x, y) == Cell::Land).into_iter().map(|(r, c)| self.ground_every(r, true, c, k)));
+        for (r, c) in self.runs_by_climate(reached, |o, x, y| mine(o) && kind(x, y) == Cell::Sea) {
+            let (world, ground) = self.ground_every(r, true, c, k);
+            if let Payload::Terrain(t) = ground {
+                out.push(self.on_sea(world, t));
+            }
+        }
+
+        out.extend(self.runs_by_climate(area, |o, _, _| o == 0).into_iter().map(|(r, c)| self.uncovered_every(r, true, c, k)));
+        out
+    }
+
     /// A chunk at a level: its placements from their tiles (`template` gives a placement's tile, none when it could not be opened: its
     /// rectangle gets LF ground), and LF ground over its cells nobody covers. `is_custom` says whether a placement's tile is a custom-mesh one.
     pub fn build_chunk(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool) -> Vec<(Float4x4, Payload)> {
+        if lod == Lod::Block {
+            return self.build_block(key, template, is_custom);
+        }
+
         // Far: the LF ground over everything it draws, in as few rectangles as its cells make; but a custom-mesh tile (the cliffs) keeps
         // its mesh (its coarsest level by distance): the LF under it is the land its cliff drops from, which drawn plain stood as a slab
         // over the sea. Their tiles are few (48 cliffs), opened once for all their placements. A sea tile's rectangle is on the sea's LF.
@@ -800,7 +877,12 @@ impl Frame {
     /// sea's LF as a sea tile is (`on_sea`). The land LF there holds what its painters left under the water: south of Rome a dome of
     /// sand stood out of the sea where the game has open water.
     fn uncovered_ground(&self, r: [i32; 4], far: bool, c: u8) -> (Float4x4, Payload) {
-        let (world, ground) = self.ground(r, far, c);
+        self.uncovered_every(r, far, c, 1)
+    }
+
+    /// [`Self::uncovered_ground`] on every `k`th vertex of the LF's lattice.
+    fn uncovered_every(&self, r: [i32; 4], far: bool, c: u8, k: i32) -> (Float4x4, Payload) {
+        let (world, ground) = self.ground_every(r, far, c, k);
         match ground {
             Payload::Terrain(t) if self.climates.kind == "campaign" => self.on_sea(world, t),
             g => (world, g),
