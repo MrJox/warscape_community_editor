@@ -86,6 +86,10 @@ pub struct ContextUi {
     build_look: Option<TerrainLook>,
 
     db: Option<(Vec<PathBuf>, Arc<TileDatabase>)>,
+
+    /// The variation of the open tile the map has, when it hasn't the open one (`find_placements`): looking for it goes over the whole map,
+    /// too slow for each frame the section shows.
+    placed_variation: Option<String>,
     maps_for: PathBuf,
 
     /// The season's snow where the map has it (its `snow_map_<season>.png`), how much.
@@ -97,7 +101,7 @@ impl Default for ContextUi {
     fn default() -> Self {
         Self {
             game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, packs_tree: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, trees: true, view_distance: GAME_FAR_PLANE, minimap: true,
-            follow: true, status: String::new(), busy: String::new(), rx: None, view: MapView::default(), build: 0, build_look: None, db: None, maps_for: PathBuf::new(), snow_on: true,
+            follow: true, placed_variation: None, status: String::new(), busy: String::new(), rx: None, view: MapView::default(), build: 0, build_look: None, db: None, maps_for: PathBuf::new(), snow_on: true,
             snow_amount: 1.0,
         }
     }
@@ -252,9 +256,12 @@ impl ContextUi {
         let info = &d.project().info;
         self.placements = map.find(&info.location, &info.variation);
         self.choice = 0;
+        self.placed_variation = None;
         if self.placements.is_empty() {
             // Another variation of the tile is placed: its spot (the variations share the tile's size and links); else the map's centre.
-            self.manual = match map.find_tile(&info.location).first().map(|&i| &map.placements[i]) {
+            let other = map.find_tile(&info.location).first().map(|&i| &map.placements[i]);
+            self.placed_variation = other.map(|p| p.variation.clone());
+            self.manual = match other {
                 Some(p) => [p.x, p.y, match p.rotation { 0x20 => 1, 0x40 => 2, 0x80 => 3, _ => 0 }],
                 None => [(map.width / 2) as i32, (map.height / 2) as i32, 0],
             };
@@ -472,8 +479,7 @@ impl ContextUi {
 
             let preview = if self.choice < self.placements.len() { label(self.placements[self.choice]) } else { "a cell of my choice".to_owned() };
             if self.placements.is_empty() {
-                let other = map.find_tile(&info.location).first().map(|&i| map.placements[i].variation.clone());
-                gui::text_wrapped(&match other {
+                gui::text_wrapped(&match &self.placed_variation {
                     Some(v) => format!("{}\\{} is not placed in this map: shown where its variation {v} is (or put it at another cell).", info.location, info.variation),
                     None => format!("{}\\{} is not placed in this map: put it at a cell.", info.location, info.variation),
                 });
