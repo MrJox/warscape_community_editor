@@ -439,6 +439,25 @@ impl<K: Kind> Stack<K> {
         changed
     }
 
+    /// What lies under a layer at a pixel: what a procedural feature works from.
+    pub fn below(&self, id: u64, x: u32, y: u32, out: &mut [K::Sample]) {
+        self.compose(x, y, self.index_of(id).unwrap_or(self.layers.len()), out);
+    }
+
+    /// Empties a layer, for a procedural feature to fill.
+    pub fn clear_layer(&mut self, id: u64) {
+        if let Some(i) = self.index_of(id) {
+            self.layers[i].samples = Blocks::new(self.w, self.h);
+        }
+    }
+
+    /// Sets a pixel of a layer. Not an edit: [`Self::apply_all`] then shows it.
+    pub fn put(&mut self, id: u64, x: u32, y: u32, pixel: &[K::Sample]) {
+        if let Some(i) = self.index_of(id) {
+            self.layers[i].samples.pixel_mut(x, y, K::CHANNELS).copy_from_slice(pixel);
+        }
+    }
+
     /// The composite at a pixel from the base up to, not including, layer `end`.
     fn compose(&self, x: u32, y: u32, end: usize, out: &mut [K::Sample]) {
         match self.base.pixel(x, y, K::CHANNELS) {

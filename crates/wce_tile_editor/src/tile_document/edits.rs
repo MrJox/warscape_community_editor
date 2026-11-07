@@ -891,6 +891,10 @@ impl TileDocument {
             extra.insert("hint_type".to_owned(), hint.to_owned());
         }
 
+        if kind == super::ROAD_SPLINE {
+            extra.insert("road_id".to_owned(), t.next_road_id().to_string());
+        }
+
         // A wall's `hint` is its base wall.
         if kind == super::WALL_SPLINE && !hint.is_empty() {
             extra.insert("wall_base".to_owned(), hint.to_owned());
@@ -900,6 +904,7 @@ impl TileDocument {
         let name = match kind {
             "AI_HINT_POLYGON_INSTANCE" => "AI hint polygon",
             super::WALL_SPLINE => "Wall",
+            super::ROAD_SPLINE => "Road",
             _ => "Polygon",
         };
         let e = self.tscene_mut().add_polygon(Some(layer), kind, name, &local, &extra)?;
@@ -1659,6 +1664,11 @@ impl TileDocument {
 
                 let (c, points) = line(&pts)?;
                 new_polygon(kind, points, false).position(c)
+            }
+
+            (super::ROAD_SPLINE, Create::Line(pts)) => {
+                let (c, points) = line(pts)?;
+                new_polygon(kind, points, false).position(c).attr("road_id", t.next_road_id().to_string())
             }
 
             ("AISeparatorInstance", Create::Line(pts)) => {

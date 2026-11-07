@@ -1207,7 +1207,7 @@ impl Tile {
             if self.is_polygon(e) {
                 let spline = wce_tile::splines::is_spline(ty);
                 let closed = !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
-                let points = if spline { self.spline_world_curve(e) } else { self.polygon_world_points(e) };
+                let points = if spline { self.spline_world_curve(e) } else if self.is_road(e) { self.road_world_curve(e) } else { self.polygon_world_points(e) };
                 if points.len() > 1 {
                     out.push((points, closed));
                 }
@@ -1247,7 +1247,7 @@ impl Tile {
         let ty = self.tscene().type_of(elem).to_owned();
         let spline = wce_tile::splines::is_spline(&ty);
         let closed = !spline && self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
-        let points = if spline { self.spline_world_curve(elem) } else { self.polygon_world_points(elem) };
+        let points = if spline { self.spline_world_curve(elem) } else if self.is_road(elem) { self.road_world_curve(elem) } else { self.polygon_world_points(elem) };
         self.covers_dirty.remove(&elem);
         if points.is_empty() {
             self.covers.remove(&elem);
@@ -1721,6 +1721,13 @@ impl Tile {
         }
 
         self.sync_terrain_layers();
+        self.refresh_roads();
+
+        // What the layers wrote is no edit of the history's, which is what the terrain follows otherwise.
+        if std::mem::take(&mut self.layers_shown) {
+            self.update_terrain(scene, false);
+        }
+
         let layer = self.layer;
         if self.water_dirty && !self.stroke_open {
             self.rebuild_water(scene, layer);

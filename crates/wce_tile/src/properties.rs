@@ -264,8 +264,24 @@ const WALL: &[Prop] = &[
     p("wall_defence_every", Kind::Slider(0.0, 1000.0)),
 ];
 
-const AI_HINT: &[Prop] = polygon![
-    p("subdivision_length", Kind::Slider(0.0, 100.0)),
+const ROAD: &[Prop] = &[
+    p("flags", Kind::Flags),
+    p("position", Kind::Position),
+    p("line_colour", Kind::Colour),
+    p("selected_line_colour", Kind::Colour),
+    p("road_width", Kind::Slider(0.5, 40.0)),
+    p("road_shoulder", Kind::Slider(0.5, 30.0)),
+    p("road_bump", Kind::Slider(-2.0, 4.0)),
+    p("road_max_grade", Kind::Slider(0.5, 45.0)),
+    p("road_max_side", Kind::Slider(1.0, 80.0)),
+    p("road_group", Kind::Int(0, 3)),
+    p("road_variation", Kind::Int(0, 3)),
+    p("road_ground", Kind::Enum(en::ROAD_GROUND)),
+    p("road_feather", Kind::Slider(0.0, 20.0)),
+    p("road_seed", Kind::Int(0, 9999)),
+];
+
+const AI_HINT: &[Prop] = polygon![    p("subdivision_length", Kind::Slider(0.0, 100.0)),
     p("max_subdivisions", Kind::Int(0, 100)),
     Prop { attr: "generated", kind: Kind::Bool, rule: Rule::Normal, twin: Some("is_generated") },
     p("hint_type", Kind::Enum(en::AI_HINT_TYPE)),
@@ -314,6 +330,7 @@ pub fn schema(tag: &str) -> Option<&'static [Prop]> {
         "SEGMENTED_SPLINE_INSTANCE" | "SplineRiverInstance" => SPLINE,
         "AI_HINT_POLYGON_INSTANCE" => AI_HINT,
         "WceWallSpline" => WALL,
+        "WceRoadSpline" => ROAD,
         "WceRefHuman" | "WceRefUnit" => REFERENCE,
         "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => DEPLOYMENT_POLYGON,
         "ZONE_POLYGON_INSTANCE" => ZONE_POLYGON,
