@@ -1577,7 +1577,7 @@ impl Renderer {
         let view_m = cam.view_from(o);
         let proj = cam.projection(aspect);
 
-        self.prepare_skinned(scene);
+        self.prepare_skinned(scene, cam.eye);
 
         // Before the shadows: the material terrain casts its own. The shadow pass sets only the cascades' view_projection; the rest of the
         // camera's constants (its position and view, which the trees' shaders take their LOD and billboards' facing from) must be the main
