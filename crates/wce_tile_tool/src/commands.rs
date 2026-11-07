@@ -2114,18 +2114,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_ref_human", "tile_ref_human on|off | unit <unit> [faction] [soldier] | place <x> <z> [turn]", "the reference unit (editor only: not in the tile)", |e, a| {
+    c.add("tile_ref_human", "tile_ref_human on|off | unit <unit> [faction] [soldier] [slot] | place <x> <z> [turn]", "the reference unit (editor only: not in the tile)", |e, a| {
         with_tile(e, |t, e| {
             let Some(id) = crate::tool::document_id(e) else { return no_tile() };
             match a.first().map(String::as_str) {
                 Some("on") => t.ref_human.show = true,
                 Some("off") => t.ref_human.show = false,
                 Some("unit") if a.len() >= 2 => {
-                    let (unit, faction, seed) = (a[1].clone(), a.get(2).cloned().unwrap_or_default(), a.get(3).and_then(|s| s.parse().ok()).unwrap_or(0));
+                    let (unit, faction, seed, slot) = (a[1].clone(), a.get(2).cloned().unwrap_or_default(), a.get(3).and_then(|s| s.parse().ok()).unwrap_or(0), a.get(4).cloned().unwrap_or_default());
                     e.update_tool_settings::<crate::settings::TileSettings>(crate::settings::SETTINGS_ID, |s| {
                         s.ref_human.unit.clone_from(&unit);
                         s.ref_human.faction.clone_from(&faction);
                         s.ref_human.seed = seed;
+                        s.ref_human.slot.clone_from(&slot);
                     });
                 }
 
@@ -2136,7 +2137,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                     return ok(&format!("at {x} {y} {z}"));
                 }
 
-                _ => return fail("usage: tile_ref_human on|off | unit <unit> [faction] [soldier] | place <x> <z> [turn]"),
+                _ => return fail("usage: tile_ref_human on|off | unit <unit> [faction] [soldier] [slot] | place <x> <z> [turn]"),
             }
 
             ok("")

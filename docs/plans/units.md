@@ -161,11 +161,20 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    them through the rigid shaders with their own decal and colours: `rigidwithdecalmesh`, `rigidwithdecaldirtmesh` are drawn nowhere else.
    The picks use the editor's generator, so a seed is not the game's soldier. `unit_catalog` reads `unit_variants`, `main_units`, `land_units`,
    `mounts`, `factions` and the animation tables, mods included; a unit's mount is a second figure at the same origin. Left: the whole model in
-   a tile (metres in game, `1 / unit_scale` in the tile scene), weighted weapons (bows are `ANIMATED_PROP`s, step 6).
+   a tile (metres in game, `1 / unit_scale` in the tile scene), weighted weapons other than bows.
 6. **Animator.** `unit_animation::UnitModel`: `instances(t)` is a pure function of the time, so a timeline can scrub it. Done: slots from
    the table's fragments, loops, hand poses (a clip's `RHAND_POSE` / `LHAND_POSE` numbers are the `HAND_POSE_*` slots in the engine's order,
    `BATTLE_ENTITY_ANIMATION_TYPE`), the rig of the clip's own skeleton (TDD's trolls: the table says `rome_man_game`, the clip `humanoid04f_s068`).
-   Left: blending, a slot's other variations, `weapon_bone_N` flags, `SPLICE`s, `ANIMATED_PROP`s (bows).
+   Bows (done 2026-11-07): at rest the definition's rigid bow on `bn_weapon_04`. A clip's `PROP` / `ANIMATED_PROP` entries hold another model from their
+   start to the clip's end; a bow's has a skeleton (`shortbow_bendy`) and a clip of its own, in the figure's space, so it is placed at the figure's origin
+   and its bone only says which static part it replaces (**ASSUMPTION**). `UnitModel::play` plays a slot; `UnitModel::instances` gives the props as
+   instances of their own.
+   Schedules (done 2026-11-07): a looping list of clips built from the seed, a slot's lines by `selection_weight` and its `<slot>_IDLE_n` mixed in, each
+   blending in from the one before over its `blend_in_time`; a mount follows its rider's schedule; a soldier starts at a phase of his own. `SPLICE`s
+   (`META_DATA_SPLICE`) over the body regions, as poses or additive. `WEAPON_ON` shows a bone's parts from its start. `unit_render_check` steps a
+   schedule at 30 fps and fails on a bone moving over 0.3 m in a frame, or two poses for one time.
+   Left: `single_frame_variant` lines (all of the riders' idles, so riders loop their stand), `weapon_bone_N` flags, `stretch`, `WEAPON_RHAND` and the other
+   weapon moves, face poses, crossbows and slings unseen. Splices are unseen too: no standing clip has one.
 7. **First consumers.** `ref_human` (done 2026-11-07, `wce_tile_tool/src/ref_human.rs`): the Tile panel's Reference unit section, or the command
    `tile_ref_human`. A scene layer of its own and the settings (which unit, per tile where it stands), never the tile's files. It can't be
    picked: Place moves it. No viewer in the Unit tool yet: `ref_human` and `unit_render_check` are the test bench so far.

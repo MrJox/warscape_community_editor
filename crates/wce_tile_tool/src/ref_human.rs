@@ -37,10 +37,13 @@ pub struct RefHumanSettings {
 
     /// Replaces the faction's three colours.
     pub colours: Option<[[f32; 3]; 3]>,
+
+    /// The animation slot it plays; empty: it stands.
+    pub slot: String,
 }
 
-/// A soldier wanted: what the model on hand was loaded for.
-type Wanted = (String, String, u64);
+/// A soldier wanted: what the model on hand was loaded for: unit, faction, soldier, slot.
+type Wanted = (String, String, u64, String);
 
 #[derive(Default)]
 pub struct RefHuman {
@@ -63,6 +66,7 @@ pub struct RefHuman {
     status: String,
     unit_filter: String,
     faction_filter: String,
+    slot_filter: String,
 }
 
 /// The key of a tile in [`TileSettings::ref_human_at`].
@@ -140,7 +144,7 @@ impl RefHuman {
         let (unit, faction) = default_unit(e.game().key);
         let unit = [s.unit.as_str(), unit].into_iter().find(|u| !u.is_empty() && catalog.entry(u, "").is_some()).or_else(|| catalog.units().first().copied())?;
         let faction = if s.unit.is_empty() { faction.to_owned() } else { s.faction };
-        Some((unit.to_owned(), faction, s.seed))
+        Some((unit.to_owned(), faction, s.seed, s.slot))
     }
 
     fn load_model(&mut self, e: &Editor, wanted: Wanted) {
@@ -150,7 +154,13 @@ impl RefHuman {
         format!("loading {}...", wanted.0).clone_into(&mut self.status);
         std::thread::spawn(move || {
             let read = |p: &str| vfs.read(p).ok();
-            let model = UnitModel::load(&read, &catalog, &wanted.0, &wanted.1, wanted.2);
+            let model = UnitModel::load(&read, &catalog, &wanted.0, &wanted.1, wanted.2).map(|mut m| {
+                if !wanted.3.is_empty() {
+                    m.play(&read, &wanted.3);
+                }
+
+                m
+            });
             let _ = tx.send((wanted, model));
         });
     }
@@ -234,21 +244,21 @@ impl RefHuman {
         // Models are in game units; the tile's scene isn't.
         let units = e.scene.game_units.max(1e-3);
         let place = translation(Float3::new(at[0], at[1], at[2])) * rotation_y(at[3].to_radians());
-        for (&entity, (scale, instance)) in self.entities.iter().zip(&mut figures) {
+        for (&entity, figure) in self.entities.iter().zip(&mut figures) {
             if let Some(c) = colours {
-                instance.faction_colours = [c[0], c[1], c[2], instance.faction_colours[3]];
+                figure.instance.faction_colours = [c[0], c[1], c[2], figure.instance.faction_colours[3]];
             }
 
             let mut world = place;
-            let k = *scale / units;
+            let k = figure.scale / units;
             for r in 0..3 {
                 for c in 0..3 {
                     world.m[r][c] *= k;
                 }
             }
 
-            e.scene.update_world(entity, world);
-            e.scene.update_payload(entity, Payload::SkinnedInstance(instance.clone()));
+            e.scene.update_world(entity, world * figure.local);
+            e.scene.update_payload(entity, Payload::SkinnedInstance(figure.instance.clone()));
         }
     }
 
@@ -303,23 +313,26 @@ impl RefHuman {
         }
 
         let Some(catalog) = self.catalog.clone() else { return };
-        let Some((mut unit, mut faction, seed)) = self.wanted(e) else { return };
+        let Some((mut unit, mut faction, seed, mut slot)) = self.wanted(e) else { return };
         let units = catalog.units();
         let mut factions: Vec<&str> = catalog.colours.keys().map(String::as_str).collect();
         factions.sort_unstable();
         let picked_unit = Self::combo("Unit##ref_human", &mut self.unit_filter, &mut unit, &units);
         let picked_faction = Self::combo("Faction##ref_human", &mut self.faction_filter, &mut faction, &factions);
+        let slots = self.model.as_ref().map(|(_, m)| m.slots()).unwrap_or_default();
+        let picked_slot = Self::combo("Plays##ref_human", &mut self.slot_filter, &mut slot, &slots);
         let mut seed_box = seed as i32;
         gui::set_next_item_width(120.0);
         let picked_seed = gui::input_int("Soldier##ref_human", &mut seed_box);
         gui::same_line();
         let next = gui::small_button("Next##ref_human");
-        if picked_unit || picked_faction || picked_seed || next {
+        if picked_unit || picked_faction || picked_seed || next || picked_slot {
             let seed = if next { seed.wrapping_add(1) } else { u64::from(seed_box.unsigned_abs()) };
             e.update_tool_settings::<TileSettings>(SETTINGS_ID, |s| {
                 s.ref_human.unit.clone_from(&unit);
                 s.ref_human.faction.clone_from(&faction);
                 s.ref_human.seed = seed;
+                s.ref_human.slot.clone_from(&slot);
                 if picked_faction {
                     s.ref_human.colours = None;
                 }
