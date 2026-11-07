@@ -50,7 +50,7 @@ pub struct AssembledPart {
 pub struct AssembledUnit {
     pub parts: Vec<AssembledPart>,
 
-    /// The definitions named that could not be read: a mod's files, some not well-formed.
+    /// The definitions named that could not be read: a mod's files, some of them gone.
     pub missing: Vec<String>,
 }
 

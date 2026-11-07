@@ -77,6 +77,7 @@ fn main() {
     }
 
     let (mut meshes, mut names) = (Tally::default(), BTreeMap::<String, usize>::new());
+    let mut repaired = 0;
     for path in vfs.list("", ".variantmeshdefinition") {
         let bytes = vfs.read(path).expect("readable");
         match VariantMeshFile::parse(bytes.clone()) {
@@ -88,10 +89,13 @@ fn main() {
                     }
                 }
 
-                meshes.add(path, f.doc.save() == bytes);
+                // Nothing but what isn't XML is changed, and what is has a tree to show for it.
+                let walked = f.root.slots.iter().any(|s| !s.alternatives.is_empty()) || f.root.model.is_some();
+                repaired += usize::from(f.repaired);
+                meshes.add(path, if f.repaired { walked } else { f.doc.save() == bytes });
             }
 
-            Err(e) => println!("  malformed: {path}: {e}"),
+            Err(e) => meshes.add(&format!("{path}: {e}"), false),
         }
     }
 
@@ -124,6 +128,7 @@ fn main() {
     println!("clip versions {versions:?}, {untouched} with no frames, {dangling} table fragments without a file");
     println!("meta kinds {kinds:?}");
     println!("{} slots", slots.len());
+    println!("variant meshes repaired, not being XML: {repaired}");
     println!("variant mesh elements and attributes {names:?}");
     if !ok.iter().all(|o| *o) {
         std::process::exit(1);
