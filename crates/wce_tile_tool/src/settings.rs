@@ -69,6 +69,9 @@ pub struct TileSettings {
     pub create_favourites: Vec<String>,
     pub create_recent: Vec<String>,
 
+    /// The Create panel shows its entries as a grid of pictures instead of a list.
+    pub create_grid: bool,
+
     /// The placement chips: what new things stand on and how they are turned.
     pub place_surface: SurfaceMode,
     pub place_rotation: RotationMode,
@@ -262,6 +265,6 @@ pub struct CameraView {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, polygon_fill: 0.3, polygon_outline: 0.85, polygon_type_fill: BTreeMap::new(), sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
+        Self { show_sea: true, show_vfx_boxes: true, polygon_fill: 0.3, polygon_outline: 0.85, polygon_type_fill: BTreeMap::new(), sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], create_grid: false, place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
     }
 }

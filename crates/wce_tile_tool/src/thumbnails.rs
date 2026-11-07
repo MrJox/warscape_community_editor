@@ -35,6 +35,14 @@ const IDLE_DROP_S: f64 = 20.0;
 /// The direction the camera looks from: south-east of the model and above it.
 const VIEW_FROM: [f32; 3] = [0.75, 0.55, -1.0];
 
+/// The sun is put behind the camera, this far round to its side (degrees), and at least this high: under the weather's own sun a model
+/// was often seen from its dark side. Its side gives the faces some shading.
+const SUN_TURN: f32 = 35.0;
+const SUN_LEAST_ELEVATION: f32 = 35.0;
+
+/// Goes into a thumbnail's file name: the ones made under another light are not taken for these.
+const LOOK: &str = "sun_behind";
+
 struct Job {
     id: String,
     scene: RenderScene,
@@ -67,7 +75,7 @@ pub(crate) struct Thumbnails {
 /// A file name for an entry id: its letters, with a hash so that ids that differ only in other characters stay apart.
 fn file_name(id: &str) -> String {
     let clean: String = id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '.' { c } else { '_' }).take(80).collect();
-    format!("{clean}_{:016x}.png", fnv(id.as_bytes()))
+    format!("{clean}_{:016x}.png", fnv(format!("{LOOK}|{id}").as_bytes()))
 }
 
 fn fnv(bytes: &[u8]) -> u64 {
@@ -187,7 +195,10 @@ impl Thumbnails {
         if self.job.is_none() {
             let Some((id, parts)) = self.queue.pop_front() else { return };
             let mut scene = RenderScene::default();
-            scene.environment.active = Some(e.scene.environment.active.clone().unwrap_or_default());
+            let mut env = e.scene.environment.active.clone().unwrap_or_default();
+            env.sun_azimuth = VIEW_FROM[0].atan2(VIEW_FROM[2]).to_degrees() + SUN_TURN;
+            env.sun_elevation = env.sun_elevation.max(SUN_LEAST_ELEVATION);
+            scene.environment.active = Some(env);
             scene.game_units = e.scene.game_units;
             let layer = scene.add_layer(0, "thumbnail");
             let models = parts.iter().map(|(_, mi)| mi.model.clone()).collect();

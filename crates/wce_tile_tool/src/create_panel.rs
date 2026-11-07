@@ -31,6 +31,15 @@ const CATEGORY_ICONS: [&str; CATEGORIES.len()] = [
 ];
 
 /// The rail's width.
+/// A colour of the style, as the draw list takes it.
+fn style_u32(idx: i32) -> u32 {
+    let c = gui::style_color(idx);
+    theme::u32([c.x, c.y, c.z, c.w])
+}
+
+/// The side of a picture in the grid view (pixels; the thumbnails are 128).
+const GRID_PICTURE: f32 = 96.0;
+
 const RAIL_WIDTH: f32 = 40.0;
 
 /// The folder of the buildings no table has a category for.
@@ -204,6 +213,12 @@ pub struct CreateUi {
     /// The search (the panel's, the popup's) gets the keyboard back on the next frame: Ctrl + Enter added a tree to the new set.
     filter_refocus: bool,
     quick_refocus: bool,
+
+    /// The grid view (`TileSettings::create_grid`, read on first use), the entries it drew last frame (their thumbnails are asked for after
+    /// the list: drawing it, the panel cannot), and the thumbnails it has.
+    grid: Option<bool>,
+    grid_seen: std::cell::RefCell<Vec<usize>>,
+    grid_images: std::collections::HashMap<String, wce_editor::images::ImageRef>,
 
     /// The sticky drafts of each type (its values and turn), and the prefab's turn.
     pub drafts: std::collections::HashMap<String, Draft>,
@@ -819,6 +834,83 @@ impl TileTool {
         gui::end_tooltip();
     }
 
+    /// A cell of the grid: the entry's picture (its icon until there is one) over its name, lit while it is made, starred in a corner. A right
+    /// click stars or unstars it. Returns (clicked, star clicked, hovered).
+    fn create_cell(&self, i: usize, en: &Entry, favourite: bool, uid: &str) -> (bool, bool, bool) {
+        let on = self.making.as_deref() == Some(en.label.as_str());
+        let (side, line) = (GRID_PICTURE, gui::text_line_height_with_spacing());
+        let at = gui::cursor_screen_pos();
+        let clicked = gui::selectable_sized(&format!("##cell{uid}"), on, 0, gui::v2(side, side + line));
+        let hovered = gui::is_item_hovered();
+        let star = hovered && gui::is_item_clicked_with(1);
+        self.create.grid_seen.borrow_mut().push(i);
+        let dl = gui::window_draw_list();
+        let (pmin, pmax) = (gui::v2(at.x + 2.0, at.y + 2.0), gui::v2(at.x + side - 2.0, at.y + side - 2.0));
+        match self.create.grid_images.get(&en.id()) {
+            Some(img) => dl.image(img.id, pmin, pmax, gui::v2(0.0, 0.0), gui::v2(1.0, 1.0), 0xFFFF_FFFF),
+            None => {
+                dl.rect_filled(pmin, pmax, style_u32(gui::COL_FRAME_BG), 4.0);
+                let size = gui::calc_text_size(en.icon());
+                dl.text(gui::v2(at.x + (side - size.x) * 0.5, at.y + (side - size.y) * 0.5), style_u32(gui::COL_TEXT_DISABLED), en.icon());
+            }
+        }
+
+        // The name, cut to the cell.
+        let mut name = en.label.clone();
+        while name.chars().count() > 3 && gui::calc_text_size(&name).x > side - 4.0 {
+            name.pop();
+            name.pop();
+            name.push('…');
+        }
+
+        let colour = if en.project { theme::palette().success } else { theme::text() };
+        dl.text(gui::v2(at.x + 2.0, at.y + side), theme::u32(colour), &name);
+        if favourite {
+            let h = theme::palette().highlight;
+            dl.text(gui::v2(at.x + side - 16.0, at.y + 3.0), theme::u32(h), icons::STAR);
+        }
+
+        (clicked, star, hovered)
+    }
+
+    /// Rows as cells, as many to a line as the panel fits.
+    fn create_cells(&self, rows: &[usize], entries: &[Entry], favourites: &[String], uid: &str, mut take: impl FnMut(usize, (bool, bool, bool))) {
+        let spacing = gui::item_spacing().x;
+        let across = (((gui::content_region_avail().x + spacing) / (GRID_PICTURE + spacing)) as usize).max(1);
+        let lines = rows.len().div_ceil(across);
+        gui::clipped(lines, |l| {
+            for (k, &i) in rows[l * across..((l + 1) * across).min(rows.len())].iter().enumerate() {
+                if k > 0 {
+                    gui::same_line();
+                }
+
+                let en = &entries[i];
+                take(i, self.create_cell(i, en, favourites.contains(&en.id()), &format!("{uid}{i}")));
+            }
+        });
+    }
+
+    /// Shows the Create panel as a grid of pictures or a list, and keeps that.
+    pub fn set_create_grid(&mut self, e: &mut Editor, on: bool) {
+        self.create.grid = Some(on);
+        e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.create_grid = on);
+    }
+
+    /// Asks for the thumbnails of the cells drawn: those in view get theirs.
+    fn grid_thumbnails(&mut self, e: &mut Editor, entries: &[Entry]) {
+        let seen = std::mem::take(&mut *self.create.grid_seen.borrow_mut());
+        for i in seen {
+            let en = &entries[i];
+            if !Self::has_thumbnail(en) || self.create.grid_images.contains_key(&en.id()) {
+                continue;
+            }
+
+            if let Some(img) = self.thumbnail(e, en, false) {
+                self.create.grid_images.insert(en.id(), img);
+            }
+        }
+    }
+
     /// A row of the list: the entry, lit while it is made, its star at the right. Returns (clicked, star clicked, hovered).
     fn create_row(&self, en: &Entry, favourite: bool, uid: &str) -> (bool, bool, bool) {
         let on = self.making.as_deref() == Some(en.label.as_str());
@@ -982,6 +1074,21 @@ impl TileTool {
         let filtering = !words.is_empty();
         let only = self.create.category.filter(|_| !filtering);
 
+        // The view: a list, or a grid of pictures.
+        let grid = *self.create.grid.get_or_insert_with(|| e.tool_settings::<TileSettings>(SETTINGS_ID).create_grid);
+        for (on, icon, tip) in [(false, icons::LIST_TREE, "A list"), (true, icons::LAYOUT_GRID, "Pictures: each entry with its thumbnail, made as it comes into view")] {
+            if gui::selectable_sized(&format!("{icon}##view{on}"), grid == on, 0, gui::v2(gui::frame_height(), 0.0)) && grid != on {
+                self.create.grid = Some(on);
+                e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.create_grid = on);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(tip);
+            }
+
+            gui::same_line();
+        }
+
         // Thumbnails of the list (made in the background, kept in the cache folder).
         if self.thumbs.busy() {
             gui::text_disabled(&format!("{}  thumbnails: {} of {}", icons::IMAGE, self.thumbs.made, self.thumbs.asked));
@@ -1021,7 +1128,23 @@ impl TileTool {
                     continue;
                 }
 
-                if gui::tree_node_ex_id(&format!("create_{title}"), gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH, &format!("{icon}  {title} ({})", rows.len())) {
+                if grid && gui::tree_node_ex_id(&format!("create_{title}"), gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH, &format!("{icon}  {title} ({})", rows.len())) {
+                    self.create_cells(&rows, &entries, &favourites, title, |i, (c, s, h)| {
+                        if c {
+                            start = Some(i);
+                        }
+
+                        if h {
+                            hovered = Some(i);
+                        }
+
+                        if s {
+                            star = Some(i);
+                        }
+                    });
+
+                    gui::tree_pop();
+                } else if !grid && gui::tree_node_ex_id(&format!("create_{title}"), gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH, &format!("{icon}  {title} ({})", rows.len())) {
                     for i in rows {
                         let en = &entries[i];
                         let (c, s, h) = self.create_row(en, favourites.contains(&en.id()), &format!("{title}{i}"));
@@ -1070,6 +1193,24 @@ impl TileTool {
 
                 let folders = self.create.folders.get(c).cloned().unwrap_or_default();
                 self.folder_tree(c, &folders, filtering, |t, rows| {
+                    if grid {
+                        t.create_cells(rows, &entries, &favourites, "", |i, (cl, s, h)| {
+                            if cl {
+                                start = Some(i);
+                            }
+
+                            if h {
+                                hovered = Some(i);
+                            }
+
+                            if s {
+                                star = Some(i);
+                            }
+                        });
+
+                        return;
+                    }
+
                     gui::clipped(rows.len(), |r| {
                         let i = rows[r];
                         let en = &entries[i];
@@ -1094,7 +1235,14 @@ impl TileTool {
             }
         }
 
-        if let Some(i) = hovered {
+        if grid {
+            self.grid_thumbnails(e, &entries);
+            if let Some(i) = hovered && gui::begin_tooltip() {
+                gui::text(&entries[i].label);
+                gui::text_disabled("right click: star");
+                gui::end_tooltip();
+            }
+        } else if let Some(i) = hovered {
             self.thumbnail_tooltip(e, &entries[i]);
         }
 
