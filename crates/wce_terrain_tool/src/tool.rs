@@ -630,7 +630,7 @@ impl TerrainTool {
             map: m.clone(), spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 }, cells: (0, 0),
             // A campaign map's heights: its database's `unit_scale` (`wce_tile::tile_project::height_unit`).
             unit: if map_kind(&d.name).0 == MapKind::Campaign { 0.2 } else { UNIT },
-            near: self.rings.near, mid: self.rings.mid, far: self.view.far_ring(self.rings.far),
+            near: self.rings.near, mid: self.rings.mid, ground: self.rings.ground, far: self.view.far_ring(self.rings.far),
             raw_root: database_root(e).or_else(|| self.packs.as_ref().and_then(|p| p.raw().ok()))?, tile_roots: roots,
             game_kit: whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)), look: TerrainLook { season: self.season.clone(), ..TerrainLook::default() }, trees: true, plain: None,
             groups: None, cache: Some(cache::cache_dir()), provider: self.provider.clone(),
@@ -900,8 +900,9 @@ impl TerrainTool {
 
         gui::separator();
         let mut rings = gui::slider_int("full detail (cells)", &mut self.rings.near, 1, 64);
-        rings |= gui::slider_int("ground and buildings (cells)", &mut self.rings.mid, 1, 128);
-        rings |= gui::slider_int("LF ground (cells)", &mut self.rings.far, 1, 512);
+        rings |= gui::slider_int("buildings (cells)", &mut self.rings.mid, 1, 128);
+        rings |= gui::slider_int("tile ground (cells)", &mut self.rings.ground, 1, 1024);
+        rings |= gui::slider_int("LF ground (cells)", &mut self.rings.far, 1, 1024);
         if rings {
             self.view.set_rings(&self.rings);
         }
@@ -2396,17 +2397,21 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_view", "terrain_view <distance> [near mid far]", "the Terrain tool: the camera's view distance (scene units) and the rings (cells)", |e, a| {
-            let Some(d) = a.first().and_then(|v| v.parse::<f32>().ok()) else { return CommandResult::fail("usage: terrain_view <distance> [near mid far]") };
+        c.add("terrain_view", "terrain_view <distance> [near mid far [ground]]", "the Terrain tool: the camera's view distance (scene units) and the rings (cells)", |e, a| {
+            let Some(d) = a.first().and_then(|v| v.parse::<f32>().ok()) else { return CommandResult::fail("usage: terrain_view <distance> [near mid far [ground]]") };
             let rings: Vec<i32> = a[1..].iter().filter_map(|v| v.parse().ok()).collect();
             with_terrain(e, |t, _| {
                 t.rings.view_distance = d.max(GAME_FAR_PLANE);
-                if let [near, mid, far] = rings[..] {
+                if let [near, mid, far, ..] = rings[..] {
                     (t.rings.near, t.rings.mid, t.rings.far) = (near, mid, far);
                 }
 
+                if let Some(&ground) = rings.get(3) {
+                    t.rings.ground = ground;
+                }
+
                 t.view.set_rings(&t.rings);
-                CommandResult::success(format!("view distance {}, rings {} / {} / {}", t.rings.view_distance, t.rings.near, t.rings.mid, t.rings.far))
+                CommandResult::success(format!("view distance {}, rings {} / {} / {} / {}", t.rings.view_distance, t.rings.near, t.rings.mid, t.rings.ground, t.rings.far))
             })
         });
     }

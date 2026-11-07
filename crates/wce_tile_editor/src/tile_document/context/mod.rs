@@ -76,9 +76,10 @@ pub struct ContextRequest {
     pub cells: (i32, i32),
     pub unit: f64,
 
-    /// The rings around the focus, in cells: everything, the mid level, the LF ground.
+    /// The rings around the focus, in cells: everything, the mid level, the tiles' ground, the LF ground.
     pub near: i32,
     pub mid: i32,
+    pub ground: i32,
     pub far: i32,
 
     /// The kit's raw_data folder (the tile database's settings).
@@ -704,6 +705,11 @@ impl Frame {
     fn place_entities(&self, t: &Template, lod: Lod, frame: Float4x4, out: &mut Vec<(Float4x4, Payload)>) {
         let n = if lod == Lod::Near { t.entities.len() } else { t.mid };
         for (w, payload) in &t.entities[..n] {
+            // The ground ring keeps the rivers (they are part of the land) and leaves what stands on it.
+            if lod == Lod::Ground && !matches!(payload, Payload::Water(_)) {
+                continue;
+            }
+
             // The renderer draws water vertices as they are (no world matrix): moved into the frame here, lifted per vertex.
             if let Payload::Water(water) = payload {
                 let m = frame * *w;
