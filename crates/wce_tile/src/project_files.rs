@@ -520,7 +520,12 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
     outermost.sort_unstable();
     for &e in outermost.iter().rev() {
         let name = scene.doc().elements()[e].name.clone();
-        report.dropped.push(format!("{name} '{}'", scene.name(e)));
+        if name == crate::prefab_terrain::ELEMENT {
+            report.dropped.push("the prefab's height layer (TEd's prefabs have no terrain)".to_owned());
+        } else {
+            report.dropped.push(format!("{name} '{}'", scene.name(e)));
+        }
+
         scene.remove(e)?;
     }
 

@@ -22,6 +22,7 @@ pub mod new_instances;
 pub mod new_tile;
 pub mod pixel_layer;
 pub mod prefab_refs;
+pub mod prefab_terrain;
 pub mod prefabs;
 pub mod project_files;
 pub mod river_files;
