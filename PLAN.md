@@ -54,6 +54,14 @@ Each open item lives in one plan; the others point to it.
     the bytes round-trip. Worked around by `wce_render::anim_pose::vertex_weights`.
   - `anim`: only the header is decoded; `wce_formats::anim` reads versions 4 and 5 whole, and the bones without a track take the skeleton's
     pose. Also `anim_meta`, the variant mesh parser and the fragments, if they should live there.
+- **After the final baseline, not before** (user 2026-11-07: accuracy to the game first, improvements on top of it once everything important renders properly):
+  - Steady shadow cascades. The cascades are sized by this frame's depth range, as the game does; whatever moves at its near end (grass, soldiers) changes it by
+    centimetres every frame, each new size refits the light boxes, and a soldier's shadow on himself shimmers mildly (a still scene with that jitter added: up to 52
+    levels, on the soldiers only, nothing with shadows off). Tried and taken out: hold the range while the depth seen stays inside it, with room left to each side
+    when it moves (near: 0.5 + 10 % of the near depth, in game units; far: 5 %), in `shadow_fit`, used by `pass_shadows`.
+- **Variant mesh error detection tool** (user 2026-11-07): a check that finds what is wrong in a pack's `.variantmeshdefinition` files, for modders: files that aren't XML
+  (`variant_mesh::repair` reads them, but doesn't say what it changed: TDD has 11 of 8,507), references to definitions that don't exist (TDD's
+  `rough_helm2_blond`), models and textures that don't exist. The editor only drops these without a word.
 - **Future tools** (seams only): Unit editor (skinned instances, bone palettes, anim / skeleton / variantmeshdefinition formats),
   VFX editor (see weather.md), battle map / Terry (map-scale terrain, tile_map and lf_height formats; see tile.md), Cinematic editor
   (keyframed scenes, recording).

@@ -22,11 +22,12 @@ use crate::settings::{RECENT_KEEP, SETTINGS_ID, TileSettings};
 use crate::tool::{SetInUse, TileTool, document, primary};
 
 /// The categories, in the panel's order.
-pub const CATEGORIES: [&str; 11] =
-    ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Siege", "Rivers & roads"];
+pub const CATEGORIES: [&str; 12] =
+    ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Siege", "Rivers & roads", "References"];
 
 /// The types without a key of each fixed category (category, type, drawn).
-const FIXED: [(usize, &str, bool); 17] = [
+const FIXED: [(usize, &str, bool); 19] = [
+    (11, "WceRefHuman", false), (11, "WceRefUnit", false),
     (5, "POINT_LIGHT_INSTANCE", false), (7, "CaptureLocationInstance", false), (7, "DeploymentZonePolygonInstanceGroup", false),
     (7, "DEPLOYMENT_ZONE_POLYGON_INSTANCE", true), (7, "CivilianShelter", false), (7, "CivilianDeploymentZone", true), (7, "ZONE_POLYGON_INSTANCE", true),
     (7, "LiteBuildingZone", true), (9, "SiegeAINodeInstance", false), (9, "SiegeAIEdgeInstance", true), (8, "AI_HINT_POLYGON_INSTANCE", true),

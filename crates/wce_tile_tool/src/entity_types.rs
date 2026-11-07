@@ -31,6 +31,8 @@ pub fn type_icon(ty: &str) -> &'static str {
         "SplineRiverInstance" => icons::WAVES,
         "SEGMENTED_SPLINE_INSTANCE" => icons::SPLINE,
         "WceWallSpline" => icons::BRICK_WALL,
+        "WceRefHuman" => icons::USER,
+        "WceRefUnit" => icons::USERS,
         "LayerInstance" | "SCENE_GRAPH" => icons::LAYERS,
         "UserInstanceGroup" | "INSTANCE_GROUP" | "LAYER_INSTANCE_GROUP" => icons::BOXES,
         _ => icons::CIRCLE_HELP,
@@ -64,6 +66,8 @@ pub fn type_name(ty: &str) -> &'static str {
         "SplineRiverInstance" => "River",
         "SEGMENTED_SPLINE_INSTANCE" => "Road",
         "WceWallSpline" => "Wall (procedural)",
+        "WceRefHuman" => "ref_human (a soldier, for scale)",
+        "WceRefUnit" => "ref_unit (a whole unit, for scale)",
         _ => "Other",
     }
 }

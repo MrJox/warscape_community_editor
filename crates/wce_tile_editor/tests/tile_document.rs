@@ -707,6 +707,44 @@ fn a_wall_is_drawn_as_the_create_panel_draws_it() {
 }
 
 #[test]
+fn a_reference_is_an_element_the_tile_keeps_and_no_export_sees() {
+    use wce_tile_editor::tile_document::{REF_HUMAN, REF_UNIT};
+
+    let (_dir, mut d) = open();
+    let layer = d.tile().find_layer("Buildings").unwrap();
+    let attrs = std::collections::BTreeMap::from([("unit".to_owned(), "att_rom_sagittarii".to_owned())]);
+    let human = d.create_with(REF_HUMAN, layer, &Create::Point(Float3::new(10.0, 0.0, 10.0)), "", &attrs).unwrap();
+    let unit = d.create(REF_UNIT, layer, &Create::Point(Float3::new(30.0, 0.0, 10.0)), "").unwrap();
+    let again = d.create(REF_HUMAN, layer, &Create::Point(Float3::new(20.0, 0.0, 10.0)), "").unwrap();
+
+    // As many as wanted, and each an instance like any other.
+    let mut scene = wce_scene::render_scene::RenderScene::default();
+    let scene_layer = scene.add_layer(1, "tile");
+    wce_editor_core::document::Document::republish(&mut d, &mut scene, scene_layer, &wce_editor_core::command::Dirty::default());
+    let t = d.tile();
+    assert_eq!(t.tscene().find_all(REF_HUMAN).len(), 2);
+    assert!(t.is_instance(human) && t.is_instance(unit) && t.is_instance(again) && !t.is_polygon(unit));
+    assert_eq!(t.tscene().doc().get(human, "unit").as_deref(), Some("att_rom_sagittarii"));
+    assert_eq!(t.tscene().doc().get(unit, "surface_mode").as_deref(), Some("MSM_LANDSCAPE"));
+
+    // A click finds a soldier of it, well away from the element.
+    let (origin, down) = (Float3::new(35.0, 8.0, 5.0), wce_foundation::math::normalize(Float3::new(5.0, -7.0, 5.0)));
+    assert_eq!(t.pick_instance(origin, down, false), None);
+    t.set_ref_spots(vec![(unit, Float3::new(40.0, 1.0, 10.0), 0.8)]);
+    assert_eq!(t.pick_instance(origin, down, false), Some(unit));
+
+    // Saved in the tile; TEd's text and what is built from it have none.
+    let wce = t.tscene().save();
+    assert!(String::from_utf8_lossy(&wce).contains(REF_UNIT));
+    let (ted, report) = wce_tile::project_files::to_ted(wce).unwrap();
+    assert!(!String::from_utf8_lossy(&ted).contains("WceRef"));
+    assert!(report.dropped.iter().any(|d| d.contains(REF_UNIT)), "{report:?}");
+
+    d.history_mut().undo();
+    assert_eq!(d.tile().tscene().find_all(REF_HUMAN).len(), 1);
+}
+
+#[test]
 fn a_building_copied_from_an_earlier_layer_goes_into_a_later_one() {
     use wce_tile_editor::tile_document::Placement;
 

@@ -2114,33 +2114,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_ref_human", "tile_ref_human on|off | unit <unit> [faction] [soldier] [slot] | place <x> <z> [turn]", "the reference unit (editor only: not in the tile)", |e, a| {
+    c.add("tile_ref", "tile_ref human|unit <x m> <z m> [unit] [faction] [soldier] [slot] | status", "places a reference: a soldier (ref_human) or a whole unit of the game's unit size (ref_unit); saved in tile.wce, never exported. status: what is loaded and drawn", |e, a| {
+        let usage = "usage: tile_ref human|unit <x m> <z m> [unit] [faction] [soldier] [slot] | status";
+        if a.first().is_some_and(|c| c == "status") {
+            return with_tile(e, |t, _| ok(t.ref_units.summary()));
+        }
+
+        let kind = match a.first().map(String::as_str) {
+            Some("human") => wce_tile_editor::tile_document::REF_HUMAN,
+            Some("unit") => wce_tile_editor::tile_document::REF_UNIT,
+            _ => return fail(usage),
+        };
+
+        let (Some(x), Some(z)) = (a.get(1).and_then(|v| number(v)), a.get(2).and_then(|v| number(v))) else { return fail(usage) };
+        let attrs: std::collections::BTreeMap<String, String> = ["unit", "faction", "seed", "slot"].iter().zip(a.iter().skip(3)).map(|(k, v)| ((*k).to_owned(), v.clone())).collect();
         with_tile(e, |t, e| {
-            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
-            match a.first().map(String::as_str) {
-                Some("on") => t.ref_human.show = true,
-                Some("off") => t.ref_human.show = false,
-                Some("unit") if a.len() >= 2 => {
-                    let (unit, faction, seed, slot) = (a[1].clone(), a.get(2).cloned().unwrap_or_default(), a.get(3).and_then(|s| s.parse().ok()).unwrap_or(0), a.get(4).cloned().unwrap_or_default());
-                    e.update_tool_settings::<crate::settings::TileSettings>(crate::settings::SETTINGS_ID, |s| {
-                        s.ref_human.unit.clone_from(&unit);
-                        s.ref_human.faction.clone_from(&faction);
-                        s.ref_human.seed = seed;
-                        s.ref_human.slot.clone_from(&slot);
-                    });
-                }
-
-                Some("place") if a.len() >= 3 => {
-                    let (Ok(x), Ok(z)) = (a[1].parse::<f32>(), a[2].parse::<f32>()) else { return fail("usage: tile_ref_human place <x> <z> [turn]") };
-                    let y = document(e).map_or(0.0, |d| d.tile().terrain_height(x, z));
-                    t.ref_human.place(e, id, Float3::new(x, y, z), a.get(3).and_then(|s| s.parse().ok()));
-                    return ok(&format!("at {x} {y} {z}"));
-                }
-
-                _ => return fail("usage: tile_ref_human on|off | unit <unit> [faction] [soldier] [slot] | place <x> <z> [turn]"),
-            }
-
-            ok("")
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(into) = t.new_items_layer(d) else { return fail("this tile has no scene graph") };
+            let at = Float3::new(x, d.tile().terrain_height(x, z), z);
+            d.create_with(kind, into, &wce_tile_editor::tile_document::Create::Point(at), "", &attrs).map_or_else(fail, |_| ok(format!("added {kind}")))
         })
     });
 

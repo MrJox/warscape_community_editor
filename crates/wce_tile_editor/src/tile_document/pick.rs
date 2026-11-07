@@ -12,8 +12,6 @@ impl Tile {
 
         // Shown and selectable instances.
         let pickable = self.instances.iter().copied().filter(|&e| self.shown(e) && self.selectable(e)).collect::<Vec<_>>();
-        let m = pickable.len();
-        g.stamp = vec![0; m];
         let (mut minx, mut maxx, mut minz, mut maxz) = (1e30f32, -1e30f32, 1e30f32, -1e30f32);
         for &e in &pickable {
             let p = self.world_position(e);
@@ -29,6 +27,25 @@ impl Tile {
             maxz = maxz.max(p.z);
         }
 
+        // Each soldier of a reference is a sphere of it.
+        let spots = self.ref_spots.borrow();
+        let picked = if spots.is_empty() { Default::default() } else { pickable.iter().copied().collect::<std::collections::HashSet<_>>() };
+        for &(e, p, r) in spots.iter().filter(|(e, ..)| picked.contains(e)) {
+            g.elem.push(e);
+            g.x.push(p.x);
+            g.y.push(p.y);
+            g.z.push(p.z);
+            g.r.push(r);
+            g.type_.push(self.idx.type_[e]);
+            minx = minx.min(p.x);
+            maxx = maxx.max(p.x);
+            minz = minz.min(p.z);
+            maxz = maxz.max(p.z);
+        }
+
+        drop(spots);
+        let m = g.elem.len();
+        g.stamp = vec![0; m];
         if m == 0 {
             g.start = vec![0];
             *self.grid.borrow_mut() = g;
@@ -84,6 +101,14 @@ impl Tile {
         }
 
         *self.grid.borrow_mut() = g;
+    }
+
+    /// What a click on the soldiers of the references finds: element, centre and radius of a sphere per soldier.
+    pub fn set_ref_spots(&self, spots: Vec<(usize, Float3, f32)>) {
+        if *self.ref_spots.borrow() != spots {
+            *self.ref_spots.borrow_mut() = spots;
+            self.grid_dirty.set(true);
+        }
     }
 
     /// The nearest instance along a ray (spheres around the instances): a walk over the grid cells the ray crosses, stopping at the first cell

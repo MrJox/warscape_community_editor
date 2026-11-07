@@ -67,6 +67,7 @@ pub use self::view::{LIGHT_RADIUS_HANDLE, SHELTER_TARGET_HANDLE};
 pub use self::tech::{GROUPS, KINDS, TechInfo, TechKind, TechScope, TechSettings, TechStats, WallTechReport, tech_counts};
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
 pub use self::walls::{Anchor, WALL_SPLINE, WallLayout};
+pub use wce_tile::new_instances::{REF_HUMAN, REF_UNIT};
 
 /// What a new instance is made from (`TileDocument::create`): a point on the ground (world metres), or drawn points.
 #[derive(Clone, Debug, PartialEq)]
@@ -395,6 +396,9 @@ pub(crate) struct PickGrid {
 
 /// Everything of a tile document but its undo stack: what its commands edit.
 pub struct Tile {
+    /// The soldiers of the references, spheres for the picking (`set_ref_spots`): the tool knows where they stand.
+    pub(crate) ref_spots: std::cell::RefCell<Vec<(usize, Float3, f32)>>,
+
     /// The prefabs' contents the references' overrides are compared with (`TileDocument::overrides_of`), each with the text it was read
     /// from: read again when the prefab's contents change.
     pub(crate) prefab_cache: HashMap<String, (Vec<u8>, Arc<wce_tile::prefab_refs::BaseContents>)>,
@@ -725,6 +729,7 @@ impl TileDocument {
         let core = DocumentCore::new();
         let t0 = std::time::Instant::now();
         let mut tile = Tile {
+            ref_spots: Default::default(),
             id: core.id(), project, files, display: TileDisplay::default(), scene_key: 0, layer: 0, terrain_entity: 0, overlay_entity: 0, terrain_version: 1,
             terrain_stride: 1, instances: vec![], type_ordinal: vec![], markers: Markers::default(), type_counts: BTreeMap::new(), batch_entity: vec![], dirty_type: vec![],
             first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), covers: HashMap::new(), covers_dirty: BTreeSet::new(), cover_spare: HashMap::new(), cover_ground: 0, polygons_published: false, tops: HashMap::new(), tops_wanted: BTreeSet::new(), tops_polls: 0, tops_came: false, models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
