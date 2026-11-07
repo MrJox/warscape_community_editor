@@ -6,7 +6,9 @@ name: Release
 
 on:
   push:
-    tags: [ 'v*' ]
+    tags:
+      - 'v*'
+      - '!*-nightly*'
 
 permissions:
   contents: write
@@ -25,7 +27,7 @@ jobs:
       CARGO_TARGET_DIR: C:\t
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -52,7 +54,7 @@ jobs:
           Compress-Archive -Path "$dist\*" -DestinationPath "wce-$env:VERSION-windows-x64.zip"
 
       - name: Publish the release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: Warscape Community Editor ${{ env.VERSION }}
           files: wce-${{ env.VERSION }}-windows-x64.zip
