@@ -848,7 +848,7 @@ impl TileProject {
         let mut n = 0;
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let skip = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some())
+            let skip = name == TED_FILE || name == WCE_FILE || name == crate::terrain_layers::FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some())
                 || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some()) || name.ends_with(".bak") || !entry.path().is_file();
             if !skip {
                 std::fs::copy(entry.path(), out_dir.join(&name)).map_err(|error| format!("{}: {error}", entry.path().display()))?;
