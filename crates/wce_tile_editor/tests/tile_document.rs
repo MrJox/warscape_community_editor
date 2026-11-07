@@ -75,6 +75,10 @@ fn moves_undo_to_the_file_text() {
     assert_eq!(text(&d), original, "\"10.50\" and \"0.0\" come back as they were written, not as TEd would write them");
 
     let p = d.tile().tscene().find_all("AI_HINT_POLYGON_INSTANCE")[0];
+    assert!(d.tile().is_polygon(p));
+    assert_eq!(d.set_placement(&[p], wce_tile_editor::tile_document::Placement::Landscape), 1);
+    assert!(d.tile().off_terrain(-1.0, Some(&[p])).is_empty(), "a polygon's pivot is no height: nothing to report");
+    d.history_mut().undo();
     d.polygon_point(p, "move", 1, Float3::new(30.0, 0.0, 30.0), 0).unwrap();
     d.history_mut().undo();
     assert_eq!(text(&d), original, "the point and the polygon's area come back as they were written");

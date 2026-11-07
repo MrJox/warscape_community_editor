@@ -2300,13 +2300,6 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         let c = d.tile().placement_counts();
         gui::text(&format!("{} landscape, {} freeform, {} without a mode", c.landscape, c.freeform, c.other));
-        gui::same_line();
-        let v = d.tile_mut().display_mut();
-        gui::checkbox("tint freeform", &mut v.tint_freeform);
-        if gui::is_item_hovered() {
-            gui::set_tooltip(FREEFORM_TINT_TIP);
-        }
-
         gui::set_next_item_width(90.0);
         gui::drag_float("tolerance (m)", &mut self.off_tol, 0.05, 0.001, 50.0, "%.3f");
         gui::same_line();
