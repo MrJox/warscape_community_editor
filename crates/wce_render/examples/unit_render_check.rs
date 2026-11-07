@@ -6,7 +6,7 @@
 //!   cargo run --release -p wce_render --example unit_render_check -- <out dir> [environment path in the packs]      (the game folder: the settings or WCE_GAME)
 //!
 //! `WCE_MODS` (packs, comma separated) mounts mods, `WCE_UNITS` (`unit:faction`, comma separated) runs just those whole units, `WCE_UNIT_FIND` lists
-//! the units whose key has a word.
+//! the units whose key has a word, `WCE_UNIT_CAM` (eye and target, x,y,z,x,y,z) places the camera.
 
 use std::io::Cursor;
 use std::path::Path;
@@ -235,7 +235,14 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
 
         let (w, h) = (1280, 640);
         let target = Float3::new(0.0, extent * 0.5, 0.0);
-        let cam = Camera { target, eye: Float3::new(-extent * 0.6, extent * 1.15, extent * 2.6), ..Default::default() };
+        let mut cam = Camera { target, eye: Float3::new(-extent * 0.6, extent * 1.15, extent * 2.6), ..Default::default() };
+        if let Ok(view) = std::env::var("WCE_UNIT_CAM") {
+            let v: Vec<f32> = view.split(',').filter_map(|c| c.parse().ok()).collect();
+            if let [ex, ey, ez, tx, ty, tz] = v[..] {
+                (cam.eye, cam.target) = (Float3::new(ex, ey, ez), Float3::new(tx, ty, tz));
+            }
+        }
+
         let mut r = Renderer::new(&gpu.dev, &gpu.ctx, files.clone()).map_err(|e| e.0)?;
         let mut rt = RenderTarget::new(&gpu.dev, w, h);
         wanted.sort();

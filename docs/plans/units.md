@@ -119,6 +119,20 @@ WeightedSkin types, `_noclip` by the alpha mode (only 1 is alpha-tested). **ASSU
 Rome 2 has the same picture: 5,925 anims (5,894 v5, 31 v4), `weightedcommon` with the same entries, 145 skeleton files, fragments as text.
 Later games differ (`.anim` v6+, binary fragments, `wsmodel`): the seams go behind the game profile, nothing more for now.
 
+### Comparison with the game (2026-11-07)
+
+The user's screenshots (`~/wce_re/scratch/units/ref`): vanilla, spring, day, dry, Terra Incognita land map, north-west of Scotland. The database
+gives 7 files for that (`default_map`, Atlantic or Continental): `day_north_1`, `morn_north_1`, `morn_north_2`, `evening_north_1..3`, `morn_6`, and
+the battle picks one at random. By the sky and the ground's purple cast the shots are `morn_north_2` (by eye, not from the game).
+
+Measured with the same view of the sun, in `unit_render_check`:
+- White shield in shade, game (106, 118, 116), editor (106, 115, 113) without reflections: lighting, ambient and tone mapping agree. With
+  reflections (138, 109, 87): the test's bright flat ground, which the game's dark grass doesn't give. Not a bug of the units.
+- Shadow on the ground, game (10, 25, 40), editor (16, 23, 44). Blue against white shield at midday 0.22, in the game 0.25: the albedos agree.
+- **Open:** dark materials in shade. Mail, blue and wine shields are at the tone curve's floor (0, 0, 21) here and lifted in the game
+  ((33, 24, 46), (4, 17, 60), (18, 9, 38)). Not reflections or ambient occlusion. Suspect: the instance's brighten input (`v8.x`, the selection and
+  mouse-over glow, `UNIT_GLOW_INTENSITY_*`); the shots are of the deployment. To settle it: a shot of an unselected unit.
+
 ## Plan
 
 Each step ends with something visible and a gate (a Cargo example) or a shot.
