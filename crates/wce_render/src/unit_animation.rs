@@ -5,7 +5,7 @@
 //!
 //! - The schedule loops, built once from the seed, so soldiers don't move as one: a slot's lines are its variations, picked by `selection_weight`, and a
 //!   standing slot mixes in its `<slot>_IDLE_n` slots. Each clip blends in from the one before over its `blend_in_time`. A mount's schedule follows
-//!   its rider's slot by slot, at the rider's lengths. **ASSUMPTION**: the engine's choice isn't traced; `single_frame_variant` lines are left out.
+//!   its rider's slot by slot, at the rider's lengths. **ASSUMPTION**: the engine's choice isn't traced; see [`pick`] for `single_frame_variant`.
 //! - A `.anim` moves the body; the fingers come from the clip's `RHAND_POSE` / `LHAND_POSE` entries, whose numbers are the `HAND_POSE_*` slots in the
 //!   engine's order (`BATTLE_ENTITY_ANIMATION_TYPE`).
 //! - `SPLICE` entries (`META_DATA_SPLICE`) lay another clip over parts of the body by the region weights: as a pose, or added as the difference from its
@@ -14,10 +14,16 @@
 //!   that bends while shooting, with a skeleton and a clip of its own. That clip is in the figure's space, so such a prop is placed at the figure's origin
 //!   (checked: the bow comes to the left hand). **ASSUMPTION** (not traced): it takes the place of the static part on its bone, the rigid bow of the
 //!   definition, and its clip runs from the entry's start.
-//! - `WEAPON_ON` shows what a weapon bone carries, from its start: a clip with such an entry hides that bone's parts until then (**ASSUMPTION**: the
-//!   arrow appears in the archer's hand).
+//! - `WEAPON_ON` shows what a weapon bone carries, from its start: a clip with such an entry hides that bone's parts until then. `bn_weapon_05` is the
+//!   ammunition's (arrows, darts): it jumps within a frame in half its clips even with its flag on, so its parts show only under a `WEAPON_ON`
+//!   (**ASSUMPTION**, both: the arrow appears in the archer's hand, no dart hangs in the air).
 //!
-//! Not here yet: `weapon_bone_N` flags, `stretch`, `WEAPON_RHAND` and the other weapon moves, face poses.
+//! - A clip travels (`bn_hips` from its first to its last frame: the battle moves the entity along) and a schedule stays where it is: that travel, on the
+//!   ground plane, is taken out of the clip's root bones as it goes, so a walk loops on the spot. A timeline moving a unit would add it back: [`Clip::travel`].
+//!
+//! Not used: `weapon_bone_N` flags and `WEAPON_RHAND`, `_LHAND`, `_HIP`. The clips' tracks carry the weapons (the poses are right without them), and over
+//! 1500 to 2500 clips neither says where a bone is or whether it jumps: on and off bones are near the body alike, `WEAPON_RHAND` of a sword has it in the
+//! hand 503 times and away 128. They look like the battle logic's state, not motion. Not here yet: `stretch`, face poses.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +31,7 @@ use std::sync::Arc;
 use wce_formats::anim::{Animation, BoneLocal};
 use wce_formats::anim_meta::Meta;
 use wce_formats::anim_tables::{AnimationTable, FragmentEntry, parse_fragment};
-use wce_foundation::math::Float4x4;
+use wce_foundation::math::{Float3, Float4x4, translation};
 use wce_scene::render_scene::{SKINNED_NO_OFFSET, SkinnedInstance, SkinnedPart};
 
 use crate::anim_pose::{inverse_binds, palette, world_pose};
@@ -295,10 +301,8 @@ impl Rig {
         entries.filter(|e| e.start <= t).max_by(|a, b| a.start.total_cmp(&b.start)).and_then(|e| e.u32(0)).map(|n| n as usize)
     }
 
-    /// The bones' local transforms of a clip at `t` (seconds; it loops).
+    /// The bones' local transforms of a clip at `t` (seconds, held at its end).
     pub fn locals(&self, clip: &Clip, t: f32) -> Vec<BoneLocal> {
-        let duration = clip.anim.duration().max(1e-3);
-        let t = t.rem_euclid(duration);
         let mut locals = clip.anim.sample(t);
         self.apply_splices(clip, t, &mut locals);
         let (left, right) = (Self::hand_at(clip, "LHAND_POSE", t), Self::hand_at(clip, "RHAND_POSE", t));
@@ -333,9 +337,14 @@ pub struct Figure {
 /// How long a schedule is, in clips, for a slot with idles.
 const SCHEDULE_CLIPS: usize = 8;
 
-/// A line of a slot, by `selection_weight`. `single_frame_variant` lines are left out.
+/// A line of a slot, by `selection_weight`, among the ones without `single_frame_variant`. A slot of nothing but those plays its first: the flag is on
+/// plain looping clips too (the horse's `STAND` is two such lines, `horse_stand` first), and what it does in the engine isn't traced.
 fn pick<'a>(lines: &'a [FragmentEntry], rng: &mut Rng) -> Option<&'a FragmentEntry> {
     let usable: Vec<&FragmentEntry> = lines.iter().filter(|e| e.flag("single_frame_variant").is_none()).collect();
+    if usable.is_empty() {
+        return lines.first();
+    }
+
     let weight = |e: &FragmentEntry| e.flag("selection_weight").and_then(|w| w.parse::<f32>().ok()).unwrap_or(1.0).max(0.0);
     let mut left = rng.unit() * usable.iter().map(|e| weight(e)).sum::<f32>();
     for e in &usable {
@@ -346,6 +355,16 @@ fn pick<'a>(lines: &'a [FragmentEntry], rng: &mut Rng) -> Option<&'a FragmentEnt
     }
 
     usable.last().copied()
+}
+
+impl Clip {
+    /// How far the clip has travelled on the ground plane at `t`, evenly along it.
+    pub fn travel(&self, t: f32) -> [f32; 2] {
+        let (Some(first), Some(last)) = (self.anim.frames.first(), self.anim.frames.last()) else { return [0.0; 2] };
+        let (Some(a), Some(b)) = (first.first(), last.first()) else { return [0.0; 2] };
+        let at = (t / self.anim.duration().max(1e-3)).clamp(0.0, 1.0);
+        [(b.0[0] - a.0[0]) * at, (b.0[2] - a.0[2]) * at]
+    }
 }
 
 impl Figure {
@@ -416,10 +435,20 @@ impl Figure {
     /// The pose at `t`: the segment's clip, coming in from the one before over its blend.
     fn locals_at(&self, k: usize, inside: f32) -> Vec<BoneLocal> {
         let s = &self.segments[k];
-        let mut locals = self.rig.locals(&s.clip, inside);
+        let in_place = |clip: &Clip, t: f32| {
+            let mut locals = self.rig.locals(clip, t);
+            let [x, z] = clip.travel(t);
+            for (l, _) in locals.iter_mut().zip(&clip.anim.parents).filter(|(_, p)| **p < 0) {
+                (l.0[0], l.0[2]) = (l.0[0] - x, l.0[2] - z);
+            }
+
+            locals
+        };
+
+        let mut locals = in_place(&s.clip, inside);
         if s.blend_in > 0.0 && inside < s.blend_in {
             let before = &self.segments[(k + self.segments.len() - 1) % self.segments.len()];
-            let from = self.rig.locals(&before.clip, (before.length + inside).min(before.clip.anim.duration()));
+            let from = in_place(&before.clip, (before.length + inside).min(before.clip.anim.duration()));
             let w = inside / s.blend_in;
             let w = w * w * (3.0 - 2.0 * w);
             for (l, f) in locals.iter_mut().zip(from) {
@@ -438,9 +467,10 @@ impl Figure {
         let world = world_pose(&self.rig.skeleton.parents, &locals);
         let (body_palette, body_bones) = self.rig.pose(&locals);
         let held: Vec<&Prop> = clip.props.iter().filter(|p| p.start <= inside).collect();
+        let ammunition = self.rig.bone("bn_weapon_05");
         let hidden = |bone: u32| {
             let mut ons = clip.meta.iter().flat_map(|m| &m.entries).filter(|e| e.kind == "WEAPON_ON" && e.u32(0) == Some(bone)).peekable();
-            ons.peek().is_some() && !ons.any(|e| e.start <= inside)
+            (ons.peek().is_some() || Some(bone) == ammunition) && !ons.any(|e| e.start <= inside)
         };
 
         let parts = self.parts.parts.iter().filter_map(|p| {
@@ -466,7 +496,8 @@ impl Figure {
             let part = SkinnedPart { model: prop.model.clone(), tint: [0.0; 4], decal_diffuse: None, decal_normal: None, masks: [0, 1, 2], bone: None, offset: SKINNED_NO_OFFSET };
 
             // A clip of its own is authored in the figure's space, as the figure's are: the bone only says what it replaces.
-            let carrier = if prop.anim.is_some() { Float4x4::IDENTITY } else { world.get(prop.bone as usize).copied().unwrap_or(Float4x4::IDENTITY) };
+            let [x, z] = clip.travel(inside);
+            let carrier = if prop.anim.is_some() { translation(Float3::new(-x, 0.0, -z)) } else { world.get(prop.bone as usize).copied().unwrap_or(Float4x4::IDENTITY) };
             let instance = SkinnedInstance { parts: vec![part], palette: prop_palette, bones, casts_shadow, faction_colours, faction_scale: 0.0 };
             out.push(UnitInstance { scale, local: carrier * prop.offset, instance });
         }
@@ -542,7 +573,7 @@ impl UnitModel {
         if let Some(mount) = &mut self.mount {
             let of_mount: Vec<String> = self.man.segments.iter().map(|s| {
                 let own = s.slot.strip_prefix("RIDER_").unwrap_or(&s.slot);
-                if mount.set.slots.contains_key(own) { own.to_owned() } else { "STAND".to_owned() }
+                [own.to_owned(), format!("{own}_1")].into_iter().find(|o| mount.set.slots.contains_key(o)).unwrap_or_else(|| "STAND".to_owned())
             }).collect();
             mount.play(read, &of_mount, &lengths, &mut rng);
         }
@@ -587,6 +618,13 @@ mod tests {
     }
 
     #[test]
+    fn a_clip_travels_evenly() {
+        let bone = |z: f32| ([0.0, 1.0, z], [0.0, 0.0, 0.0, 1.0]);
+        let clip = Clip { anim: wce_formats::anim::Animation { fps: 10.0, end: 2.0, frames: vec![vec![bone(1.0)], vec![bone(3.0)]], ..Default::default() }, ..Clip::default() };
+        assert_eq!((clip.travel(0.0), clip.travel(1.0), clip.travel(2.0)), ([0.0, 0.0], [0.0, 1.0], [0.0, 2.0]));
+    }
+
+    #[test]
     fn a_blend_runs_between_the_two_poses() {
         let (a, b) = (([0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]), ([2.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]));
         assert_eq!(blend_local(a, b, 0.0), a);
@@ -612,6 +650,10 @@ mod tests {
         let lines = [line("never", &[("selection_weight", "0.00")]), line("pose", &[("single_frame_variant", "true")]), line("yes", &[])];
         let mut rng = Rng(7);
         assert!((0..50).all(|_| pick(&lines, &mut rng).is_some_and(|e| e.filename == "yes")));
+
+        // A horse's STAND: every line flagged, the first the base clip.
+        let flagged = [line("base", &[("single_frame_variant", "true")]), line("variation", &[("single_frame_variant", "true")])];
+        assert!((0..50).all(|_| pick(&flagged, &mut rng).is_some_and(|e| e.filename == "base")));
     }
 
     #[test]

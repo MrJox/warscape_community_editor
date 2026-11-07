@@ -166,7 +166,8 @@ fn frames_running(r: &mut Renderer, scene: &RenderScene, cam: &Camera, target: &
     }
 }
 
-/// A unit's schedule, stepped at 30 frames a second: the largest move of a bone between two frames (metres; a pop is a large one), and which bone.
+/// A unit's schedule, stepped at 30 frames a second: the largest move of a bone between two frames (metres; a pop is a large one), and which bone. Not
+/// the weapon bones': they jump while what they carry is hidden.
 fn largest_step(model: &UnitModel) -> (f32, String, f32) {
     let period: f32 = model.man.segments.iter().map(|s| s.length).sum();
     let bones = &model.man.rig.skeleton.bones;
@@ -177,7 +178,7 @@ fn largest_step(model: &UnitModel) -> (f32, String, f32) {
         let now = model.instances(t, false)[0].instance.bones.clone();
         if let Some(b) = &before {
             let b: &std::sync::Arc<Vec<[f32; 12]>> = b;
-            for (i, (a, c)) in now.iter().zip(b.iter()).enumerate() {
+            for (i, (a, c)) in now.iter().zip(b.iter()).enumerate().filter(|(i, _)| !bones[*i].contains("weapon")) {
                 let d = ((a[3] - c[3]).powi(2) + (a[7] - c[7]).powi(2) + (a[11] - c[11]).powi(2)).sqrt();
                 if d > worst {
                     (worst, bone, at) = (d, i, t);
@@ -263,6 +264,14 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
 
             if k == 0 {
                 let slots: Vec<&str> = model.man.segments.iter().map(|s| s.slot.as_str()).collect();
+                if let Some(m) = &model.mount {
+                    println!("{unit}: mount schedule {:?}", m.segments.iter().map(|s| s.slot.as_str()).collect::<Vec<_>>());
+                    if m.segments.is_empty() {
+                        println!("FAIL: {unit}: a mount without a schedule");
+                        failures += 1;
+                    }
+                }
+
                 let (step, bone, at) = largest_step(&model);
                 println!("{unit}: schedule {slots:?}, largest step {step:.3} m, {bone} at {at:.2} s");
                 if step > 0.3 {
