@@ -52,6 +52,9 @@ pub const BLOCK: i32 = 8;
 /// Texels of a block's colour a cell.
 const BLOCK_TEXELS: i32 = 4;
 
+/// The sea bed in a block, as a baked material stores it: dark, as the sea tiles' own ground is. ASSUMPTION: one colour for all of them.
+const SEA_BED: [u8; 4] = [46, 54, 66, 255];
+
 /// The most texels a side of the LF normal map.
 const LF_NORMAL_SIDE: i32 = 4096;
 
@@ -394,7 +397,7 @@ pub struct Frame {
     plain_bases: Mutex<HashMap<u8, PlainBase>>,
 
     /// The climates' plain colours (`plain_colour`).
-    plain_colours: Mutex<HashMap<u8, [u8; 3]>>,
+    plain_colours: Mutex<HashMap<u8, [u8; 4]>>,
     plains: Mutex<Plains>,
 }
 
@@ -905,8 +908,10 @@ impl Frame {
                     _ => None,
                 };
 
-                let c = painted.unwrap_or_else(|| self.plain_colour(self.climate[(cy * w + cx) as usize], source.mean));
-                texel[..3].copy_from_slice(&c);
+                // Under the sea its bed, not the climate's ground: the sea shows what is under it, and a bright bed took the coast away.
+                let under = matches!(cell, Cell::Sea) || self.lift(x, z) < self.sea_y();
+                let c = painted.unwrap_or_else(|| if under { SEA_BED } else { self.plain_colour(self.climate[(cy * w + cx) as usize], source.mean) });
+                texel.copy_from_slice(&c);
             }
         }
 
@@ -925,10 +930,12 @@ impl Frame {
         (m.y0, m.y1) = (f64::from(lo - SKIRT) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
         m.id = next_id(&MATERIAL_IDS);
         m.normal_id = next_id(&NORMAL_IDS);
-        // A skirt, as a tile's: two blocks read different tiles along their shared edge, and the gap between them showed as a line.
+        // A skirt, as a tile's: two blocks read different tiles along their shared edge, and the gap between them showed as a line. No level
+        // of detail: at a vertex a cell it is coarse already, the shader takes the LF at the vertices, and two blocks at different strides
+        // parted by far more than a skirt closes (black lines, block-wide, in the distance).
         let g = Grid { nx, nz, ox: 0.0, oz: 0.0, step: CELL as f32, heights: Arc::new(grid) }.skirted();
         let t = Terrain {
-            nx: g.nx, nz: g.nz, origin_x: g.ox, origin_z: g.oz, step: g.step, heights: g.heights, lod: true, tile_metres: 32.0, material: Some(Arc::new(m)),
+            nx: g.nx, nz: g.nz, origin_x: g.ox, origin_z: g.oz, step: g.step, heights: g.heights, lod: false, tile_metres: 32.0, material: Some(Arc::new(m)),
             lf: self.lf.clone(), legacy: false, ..Default::default()
         };
         let mut world = Float4x4::IDENTITY;
@@ -938,9 +945,9 @@ impl Frame {
     }
 
     /// The colour of a climate's plain ground, as a baked material stores it: what its material averages to.
-    fn plain_colour(&self, climate: u8, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> [u8; 3] {
+    fn plain_colour(&self, climate: u8, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> [u8; 4] {
         let mut known = self.plain_colours.lock().unwrap_or_else(|p| p.into_inner());
-        *known.entry(climate).or_insert_with(|| self.plain_for(climate).0.as_deref().map_or([128, 128, 128], |m| mean_of_material(m, mean)))
+        *known.entry(climate).or_insert_with(|| self.plain_for(climate).0.as_deref().map_or([128, 128, 128, 255], |m| mean_of_material(m, mean)))
     }
 
     /// A chunk at a level: its placements from their tiles (`template` gives a placement's tile, none when it could not be opened: its

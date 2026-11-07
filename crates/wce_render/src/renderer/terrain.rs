@@ -38,7 +38,8 @@ const SHADOW_NEW_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_shadow_new";
 /// The blend pass of a baked material (`TerrainMaterial::baked`), in place of ps30_blend behind the same vs30_blend: the colour from one
 /// map, no texture arrays. As ps30_blend (its DXBC) up to the colour: the world position from the depth, the rectangle, the rotation table,
 /// the alpha, the tile's normal over the LF's, and the three targets, premultiplied. Its light parameters are those of the first slot
-/// (ASSUMPTION: from where this draws, the mix of them is not worth a map), and it adds no detail normals or mid-distance strength.
+/// (ASSUMPTION: from where this draws, the mix of them is not worth a map), its mid-distance strength is the colour's alpha, and it adds no
+/// detail normals.
 const BAKED_BLEND_PS: &str = r"
 cbuffer camera_VS_PS : register(b0) {
     float4 camera_before[21];
@@ -105,7 +106,7 @@ Out main(In i) {
         discard;
     }
 
-    float3 colour = t_colour.Sample(s_clamp, uv).rgb;
+    float4 colour = t_colour.Sample(s_clamp, uv);
     float2 own = two_channel(t_normal.Sample(s_wrap, uv));
     float3 tile = normalize(float3(own.y * turn.y + own.x * turn.x, sqrt(max(1.0 - dot(own, own), 0.0)), own.y * turn.x + own.x * turn.z));
     float2 lf = two_channel(t_lf_normal.Sample(s_wrap, world.xz / g_world_dimensions * float2(1.0, -1.0)));
@@ -113,9 +114,9 @@ Out main(In i) {
     float3 normal = normalize(float3(under.x + tile.x, under.y, under.z + tile.z));
     float2 light = t_light_params.SampleLevel(s_point, float2(0.5 / 16.0, 0.5), 0).xy;
     Out o;
-    o.colour = float4(colour * colour * alpha, alpha);
+    o.colour = float4(colour.rgb * colour.rgb * alpha, alpha);
     o.normal = float4(normal * alpha, alpha);
-    o.light = float4(light * alpha, alpha, 0.0);
+    o.light = float4(light * alpha, alpha, colour.a * alpha);
     return o;
 }
 ";
