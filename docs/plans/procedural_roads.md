@@ -4,7 +4,7 @@ Draw a spline and a road forms over it: the ground bumped and its sides levelled
 bridges over the gaps. All of it lives in layers of its own, so it can be changed or removed without touching the base terrain. The layers
 are a feature in their own right, copied from the newer Terry: height, blend and ground type layers, which come first.
 
-Nothing here is built yet. Status: plan, for review.
+Status (2026-11-07): Phases 1 and 2 are built (`wce_tile::terrain_layers`, `tile_document/layers.rs`, `wce_tile_tool/layers_panel.rs`). Roads are not.
 
 ## Decisions (user, 2026-11-07)
 
@@ -36,31 +36,32 @@ Attila differs in one place: 16 blend channels (4 groups x 4 variations), not 8.
 
 ## Layers
 
-**Model** (`wce_tile`). `TerrainLayers<T>`: an ordered list of `TerrainLayer { id, name, visible, opacity, owner, pixels }` over the map of
-its type. `owner` is empty, or the procedural feature that writes the layer. The existing `HeightField`, `BlendField` and `GroundTypeField`
-stay what they are and become the base. Everything that reads the terrain (renderer, heights under objects, siege, exports) reads a
-**composite**: the base with the layers applied. With no layers it is the base itself, at no cost.
+**Model** (`wce_tile::terrain_layers`). A `Stack` per type beside the tile's field: its base, and an ordered list of `Layer { id, name, visible,
+opacity, owner, samples }`. A layer keeps its samples over the rectangle it was painted in: most of it is empty, and a whole blend layer is
+50 MB. `owner` is empty, or the procedural feature that writes the layer.
 
-**Composite.** Worked out on change, only over the dirty rectangle. Height adds, in floats. A layer is sparse in practice (most of a
-tile is untouched), so each keeps its bounding rectangle and is skipped elsewhere.
+**The fields hold the composite.** `TileProject::height`, `blend` and `ground` keep being the terrain as it shows, so nothing reading them changes
+(there are 230 uses of `.height` alone), and a kit save, which writes them, gets the terrain the layers make without knowing of layers.
 
-**Editing.** The working layer is a new state beside the scene's. Brushes, Spline Road, Level, stamp and import write to it instead of the
-base. Height brushes on an additive layer need care: *flatten to 10 m* has to write `10 - (what the layers below give)`, so a brush works on
-the composite and stores the difference. Undo keeps the layer's changed rectangle, as a stroke does now. A brush with no working layer of its
-type still edits the base.
+**Editing goes by difference** (changed from the first plan, which routed the brushes): nothing edits a layer. Brushes, Spline Road, stamps and
+imports edit the field as ever, and when the edit closes `Stack::absorb` compares the field with what the stack composes and takes the
+difference into the working layer, or the base without one. So every edit works on layers with no code of its own, undo and redo too.
+A height layer takes the change itself (scaled by its opacity); a blend layer works out the least cover that gives the new pixel; a ground type
+layer takes the new pixel, or stays empty where it equals what is below. The fields tell the stack apart from the display with their own
+rectangle (`take_edited`, beside `take_changed`), and the composite written back is not an edit.
 
-**UI.** A *Terrain layers* section in the Tile panel: a tab per type, a list with visibility, opacity and name, new, duplicate, delete,
-reorder by dragging, merge down, and which one is the working layer. Layers a road owns show its icon and are read-only, with a button to
-select the road. Styled as the links and tile database sections are now.
+**A change of the stack is not undoable** (first version): showing, hiding, moving, merging or removing a layer rewrites the field, which leaves the
+field's undo records restoring pixels of another composite, so that field's undo is cleared. Painting into a hidden layer goes to the base,
+and the panel says so.
 
-**Files.** `tile.wce` keeps them: a `WceTerrainLayers` element (the file's convention: TEd never sees it) listing them, the pixels in files
-beside it with Terry's naming, `<tile>.<type>.<id>.tif`. Importing a Terry project's layers is then close to free.
+**UI.** A *Terrain layers* section in the Tile panel: a tab per type, the list as a stack (top row applies last, Base at the bottom), an eye per
+row, a click makes it the working layer; name, opacity, up, down, Merge down and remove for the working layer. `terrain_layer` is its command.
+A road's layers will show its icon and be read-only (not enforced yet: nothing owns a layer so far).
 
-**Saves.**
-- A tile with no layers must save byte for byte as it does now: nothing new is written.
-- *Save for Assembly Kit* writes the composite as the height, blend and ground maps: TEd has no layers, so it gets the terrain they make
-  (our polyfill rule). The layers stay in `tile.wce`.
-- The game's export uses the composite too.
+**Files.** `terrain_layers.wcl` beside the tile (changed from a `tile.wce` element with Terry's TIFFs): one compressed file with the bases and
+layers. TEd never sees it, a tile with no layers has no such file, and saving after the last layer goes removes it. Terry's TIFFs stay an import.
+
+**Saves.** The tile's maps hold the composite, in the project and in a kit save; the base is only in `terrain_layers.wcl`. It is not copied to the kit.
 
 ## Procedural roads
 
@@ -155,9 +156,9 @@ the terrain goes as the composite. Nothing new has to go in a pack while pieces 
 
 | Phase | Work | Done when |
 |---|---|---|
-| 0 | Check the composition rules against Terry's own output; read the layers' opacity in use | a Warhammer III project's layers compose to what Terry builds |
-| 1 | Layer model, composite, `tile.wce` files, saves flatten | layers made by command show in the viewport, a kit save holds the composite, no-layer tiles round-trip byte for byte |
-| 2 | Working layer, brushes and undo on it, the panel | painting goes to a layer; hide it and the change goes |
+| 0 | Check the composition rules against Terry's own output | not done: Warhammer III's packs gave no flattened tile quickly. The rules are in one place (`Kind` in `terrain_layers.rs`) |
+| 1 | Layer model, composite, file, saves flatten | done |
+| 2 | Working layer, brushes and undo on it, the panel | done |
 | 3 | Terry import | `nuln_city`'s layers open in the editor (Warhammer's textures aside) |
 | 4 | `WceRoadSpline`, Create panel, Inspector, height, blend and ground type generation | drawn road on a test tile, and on the game's battle map: units take its ground type |
 | 5 | Detail: bent layout of the kit's prefabs, seed, `Clear` | the road reads as a road from close up |
@@ -165,7 +166,7 @@ the terrain goes as the composite. Nothing new has to go in a pack while pieces 
 | 7 | Bridges from kit pieces | units cross a generated bridge in a battle |
 | 8 | Standard models (art), generated bridges | later, on their own |
 
-Phases 1 and 2 are useful on their own and can ship before any road exists.
+Phases 1 and 2 are useful on their own.
 
 ## Risks and open questions
 
