@@ -123,15 +123,20 @@ Later games differ (`.anim` v6+, binary fragments, `wsmodel`): the seams go behi
 
 The user's screenshots (`~/wce_re/scratch/units/ref`): vanilla, spring, day, dry, Terra Incognita land map, north-west of Scotland. The database
 gives 7 files for that (`default_map`, Atlantic or Continental): `day_north_1`, `morn_north_1`, `morn_north_2`, `evening_north_1..3`, `morn_6`, and
-the battle picks one at random. By the sky and the ground's purple cast the shots are `morn_north_2` (by eye, not from the game).
+each battle picks one at random. By their skies (by eye, not from the game) shots 1 to 5 are `morn_north_2`, shots 6 to 13 `morn_north_1`.
 
-Measured with the same view of the sun, in `unit_render_check`:
-- White shield in shade, game (106, 118, 116), editor (106, 115, 113) without reflections: lighting, ambient and tone mapping agree. With
-  reflections (138, 109, 87): the test's bright flat ground, which the game's dark grass doesn't give. Not a bug of the units.
-- Shadow on the ground, game (10, 25, 40), editor (16, 23, 44). Blue against white shield at midday 0.22, in the game 0.25: the albedos agree.
-- **Open:** dark materials in shade. Mail, blue and wine shields are at the tone curve's floor (0, 0, 21) here and lifted in the game
-  ((33, 24, 46), (4, 17, 60), (18, 9, 38)). Not reflections or ambient occlusion. Suspect: the instance's brighten input (`v8.x`, the selection and
-  mouse-over glow, `UNIT_GLOW_INTENSITY_*`); the shots are of the deployment. To settle it: a shot of an unselected unit.
+`unit_render_check` in `morn_north_1`, 48 soldiers, the sun behind them (`WCE_UNIT_COUNT`, `WCE_UNIT_CAM`), against shot 11: shields, mail, tunics and
+faces agree by eye. Nothing was tuned for it. Sampled, editor against game (regions picked by hand, different soldiers): white shield (109, 118, 130) /
+(108, 120, 134), blue (26, 43, 61) / (25, 42, 62), mail (23, 25, 29) / (25, 26, 28); wine (42, 28, 29) / (33, 22, 21) and a face (71, 62, 69) / (76, 63, 57)
+are further off, and the face's blue is the one to watch.
+- The tone mapper's black point adapts from the frame's darkest luma, by the time between frames, and the first frame snaps to it. A check that
+  renders at one `time_s` has dt 0: the point stays as the first frame left it, with nothing loaded yet (0.58 here, 0.004 with the clock running),
+  and every dark colour sits on the floor. `frames_running` is for pictures; this cost a long detour through materials and lighting.
+- Decal diffuse is sRGB: the game's sampler table says so, and linear overshoots ((48, 63, 77) against the game's (25, 42, 62)). Faction colours
+  aren't what makes the wine shields wine: it is their decal.
+- With a bright flat test ground the reflections warm a white shield (138, 109, 87); the game's dark grass doesn't. Not a bug of the units.
+- With TDD enabled every one of these weathers is one file: `tdd_pack1` overrides them all with the same blue sky (sun at 24 degrees). Compare with
+  the mods off.
 
 ## Plan
 

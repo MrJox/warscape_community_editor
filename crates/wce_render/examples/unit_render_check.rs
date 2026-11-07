@@ -6,7 +6,8 @@
 //!   cargo run --release -p wce_render --example unit_render_check -- <out dir> [environment path in the packs]      (the game folder: the settings or WCE_GAME)
 //!
 //! `WCE_MODS` (packs, comma separated) mounts mods, `WCE_UNITS` (`unit:faction`, comma separated) runs just those whole units, `WCE_UNIT_FIND` lists
-//! the units whose key has a word, `WCE_UNIT_CAM` (eye and target, x,y,z,x,y,z) places the camera.
+//! the units whose key has a word, `WCE_UNIT_CAM` (eye and target, x,y,z,x,y,z) places the camera, `WCE_UNIT_COUNT`
+//! sets how many soldiers (over 5: ranks).
 
 use std::io::Cursor;
 use std::path::Path;
@@ -154,6 +155,17 @@ fn wait_for(r: &mut Renderer, scene: &RenderScene, cam: &Camera, target: &mut Re
     Err(format!("the models did not load: {parts:?}"))
 }
 
+/// Renders `n` frames with the clock running: the auto exposure adapts by the time between frames, so at one time (`frames`) it stays as the first
+/// frame left it, with nothing loaded. The pictures to compare with the game need this one.
+fn frames_running(r: &mut Renderer, scene: &RenderScene, cam: &Camera, target: &mut RenderTarget, n: usize, clock: &mut f32) {
+    r.settings.deterministic = true;
+    for _ in 0..n {
+        *clock += 1.0 / 30.0;
+        r.render(scene, &ViewParams { camera: *cam, time_s: *clock }, target);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
 fn write_ppm(path: &Path, rgba: &[u8]) {
     write_ppm_sized(path, rgba, W, H);
 }
@@ -192,7 +204,7 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
         let layer = scene.add_layer(1, "Unit");
         scene.add(layer, Float4x4::IDENTITY, Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)), SourceRef { doc: 1, item: 0 });
         scene.environment.active = Some(env.clone());
-        let count = 5;
+        let count = std::env::var("WCE_UNIT_COUNT").ok().and_then(|g| g.parse().ok()).unwrap_or(5);
         let mut wanted: Vec<String> = vec![];
         let mut different = std::collections::BTreeSet::new();
         let mut extent = 2.0f32;
@@ -225,6 +237,10 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
 
                 world.m[0][3] = (k as f32 - (count - 1) as f32 * 0.5) * extent * 0.65;
                 world.m[2][3] = (k % 2) as f32 * 1.1;
+                if count > 5 {
+                    world.m[0][3] = ((k % 8) as f32 - 3.5) * 1.15 + ((k / 8) % 2) as f32 * 0.5;
+                    world.m[2][3] = 1.2 - (k / 8) as f32 * 1.4;
+                }
                 scene.add(layer, world, Payload::SkinnedInstance(instance), SourceRef { doc: 1, item: 1 + k as u64 });
             }
         }
@@ -248,10 +264,10 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
         wanted.sort();
         wanted.dedup();
         let parts: Vec<&str> = wanted.iter().map(String::as_str).collect();
-        println!("{unit}: waiting for {} models", parts.len());
         wait_for(&mut r, &scene, &cam, &mut rt, &parts)?;
-        println!("{unit}: loaded, {} triangles", r.draw_stats().triangles);
-        frames(&mut r, &scene, &cam, &mut rt, 40);
+        let mut clock = 1.0;
+        frames_running(&mut r, &scene, &cam, &mut rt, 150, &mut clock);
+        println!("{unit}: tone points {:?}", r.points_readback().0);
         write_ppm_sized(&out.join(format!("unit{shot}.ppm")), &rt.read_rgba8(&gpu.dev, &gpu.ctx).unwrap_or_default(), w, h);
         println!("{unit}: {} of {count} soldiers differ", different.len());
         failures += usize::from(different.is_empty());
