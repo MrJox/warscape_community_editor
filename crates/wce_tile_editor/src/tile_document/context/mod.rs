@@ -9,7 +9,7 @@
 //! Chunks of CHUNK x CHUNK map cells own the placements whose origin cell they hold and the cells nobody covers; each is drawn at a level of
 //! detail by its distance from the focus (`stream`): near everything, mid the tiles' coarse heights, low-resolution material, buildings and
 //! rivers, ground the same without the buildings and with a smaller material, far the LF ground alone (a placement's rectangle of it), and
-//! past the rings a block of BLOCK x BLOCK chunks of LF ground in one piece. Every cell has one owner at any level, so the levels never overlap.
+//! past the rings blocks of BLOCK x BLOCK chunks in one piece, with their tiles' ground merged out to the ground ring and the LF past it. Every cell has one owner at any level, so the levels never overlap.
 //!
 //! Heights (ASSUMPTION, see the module docs of `context` in wce_tile for the game's formula): the game puts every tile on the map's LF
 //! (`LF * 3000 - 20 + the tile's height`). The open tile's ground is drawn on it too, relative to the median LF under it (its objects and
@@ -32,13 +32,13 @@ use wce_tile::battle_map::context::{Affine2, CELL, LfField, MapPlacement, Placed
 
 use super::{MATERIAL_IDS, NORMAL_IDS, next_id};
 use crate::terrain_bake::TerrainLook;
-use crate::terrain_material::retexture;
+use crate::terrain_material::{retexture, terrain_normal_image};
 use wce_formats::tile_climate::ClimateList;
 
 use crate::climate_db::effective_climates;
 use wce_formats::tile_entry::TileTextureGroup;
 use wce_vfs::files::Files;
-use template::{BOX_ABOVE, BOX_BELOW, Template};
+use template::{BOX_ABOVE, BOX_BELOW, Grid, SKIRT, Template, mean_of_material};
 
 pub use stream::{ChunkChange, ChunkKey, Lod, Streamer};
 pub use wce_tile::sources::tile_dir;
@@ -46,8 +46,11 @@ pub use wce_tile::sources::tile_dir;
 /// Map cells a side of a chunk.
 pub const CHUNK: i32 = 8;
 
-/// Chunks a side of a block of far ground ([`Lod::Block`]).
+/// Chunks a side of a block ([`Lod::Block`], [`Lod::Merged`]).
 pub const BLOCK: i32 = 8;
+
+/// Texels of a block's colour a cell.
+const BLOCK_TEXELS: i32 = 4;
 
 /// The most texels a side of the LF normal map.
 const LF_NORMAL_SIDE: i32 = 4096;
@@ -125,7 +128,15 @@ pub type TileKey = (String, String, String);
 type PlainBase = (Option<Arc<TerrainMaterial>>, u64);
 
 /// The plain materials by grid size, far ring or not, and climate.
-type Plains = HashMap<(i32, i32, bool, u8, i32), Arc<TerrainMaterial>>;
+type Plains = HashMap<(i32, i32, bool, u8), Arc<TerrainMaterial>>;
+
+/// What a block is built from: a placement's tile (none when it could not be opened), whether a placement's tile is a custom-mesh one, and
+/// a ground texture's mean colour.
+pub struct BlockSource<'a> {
+    pub template: &'a dyn Fn(usize) -> Option<Arc<Template>>,
+    pub is_custom: &'a dyn Fn(usize) -> bool,
+    pub mean: &'a dyn Fn(&str) -> Option<[f32; 3]>,
+}
 
 /// A cell no placement gives a climate.
 const NO_CLIMATE: u8 = u8::MAX;
@@ -381,6 +392,9 @@ pub struct Frame {
     /// Per climate (NO_CLIMATE: the look's): the plain material's base with its textures and its id; the plain material per rectangle
     /// size and climate.
     plain_bases: Mutex<HashMap<u8, PlainBase>>,
+
+    /// The climates' plain colours (`plain_colour`).
+    plain_colours: Mutex<HashMap<u8, [u8; 3]>>,
     plains: Mutex<Plains>,
 }
 
@@ -407,7 +421,7 @@ impl Frame {
         Self {
             map, unit: rq.unit, open, to_map, from_map, lf_level, lf_range, lf, sea_lf, by_chunk, owner, reach, climate, climates, look: rq.look.clone(),
             groups: rq.groups.clone(), files, plain_base: Mutex::new(rq.plain.clone()), plain_normal_id: next_id(&NORMAL_IDS), zeros: Mutex::default(),
-            plain_bases: Mutex::default(), plains: Mutex::default(),
+            plain_bases: Mutex::default(), plain_colours: Mutex::default(), plains: Mutex::default(),
         }
     }
 
@@ -419,7 +433,7 @@ impl Frame {
             map, unit: self.unit, open: self.open, to_map: self.to_map, from_map: self.from_map, lf_level: self.lf_level, lf_range: self.lf_range,
             lf: self.lf.clone(), sea_lf: self.sea_lf.clone(), by_chunk, owner, reach, climate, climates: self.climates.clone(), look: self.look.clone(),
             groups: self.groups.clone(), files: self.files.clone(), plain_base: Mutex::new(self.plain_base.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()),
-            plain_normal_id: self.plain_normal_id, zeros: Mutex::default(), plain_bases: Mutex::default(), plains: Mutex::default(),
+            plain_normal_id: self.plain_normal_id, zeros: Mutex::default(), plain_bases: Mutex::default(), plain_colours: Mutex::default(), plains: Mutex::default(),
         }
     }
 
@@ -567,18 +581,13 @@ impl Frame {
     /// The LF ground over a rectangle of map cells: a grid of zero heights on the LF's lattice (the shader adds the LF), the plain material
     /// of the cells' climate.
     fn ground(&self, r: [i32; 4], far: bool, climate: u8) -> (Float4x4, Payload) {
-        self.ground_every(r, far, climate, 1)
-    }
-
-    /// [`Self::ground`] on every `k`th vertex of the LF's lattice.
-    fn ground_every(&self, r: [i32; 4], far: bool, climate: u8, k: i32) -> (Float4x4, Payload) {
         let b = bounds(&self.from_map, f64::from(r[0]), f64::from(r[1]), f64::from(r[2]), f64::from(r[3]));
-        let step = f64::from(k) * self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step));
+        let step = self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step));
         let (nx, nz) = (((b[2] - b[0]) / step).round() as i32 + 1, ((b[3] - b[1]) / step).round() as i32 + 1);
         let heights = self.zeros.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz)).or_insert_with(|| Arc::new(vec![0.0; (nx * nz) as usize])).clone();
         let (base, plain_id) = self.plain_for(climate);
         let material = base.map(|base| {
-            self.plains.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz, far, climate, k)).or_insert_with(|| {
+            self.plains.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz, far, climate)).or_insert_with(|| {
                 // A little past its rectangle (one colour: its maps wrap onto themselves), so two of them side by side leave no pixel to
                 // neither (the resolve would draw it black).
                 // One id per climate and one normal id for all sizes: one set of maps on the GPU (a normal id per size had the renderer make
@@ -761,76 +770,184 @@ impl Frame {
         }
     }
 
-    /// The LF ground of a block ([`Lod::Block`], `key` its first chunk): as the far level has it for its chunks (`build_chunk`), but its
-    /// cells are merged whichever chunk owns them, and sea tiles with each other, in as few rectangles as they make. A vertex a cell: the
-    /// shader takes the heights from the LF, so what goes is the LF's detail between them, seen from at least the rings' width away.
-    fn build_block(&self, key: ChunkKey, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool) -> Vec<(Float4x4, Payload)> {
+    /// A block as one terrain ([`Lod::Block`], [`Lod::Merged`]; `key` its first chunk): one grid, one colour image, one draw, where its tiles
+    /// and the LF's rectangles were hundreds. The grid holds what a tile's own does, the heights over the LF (the shader adds it): a tile's
+    /// where `paint` opens the tiles, none where it doesn't. The sea tiles' and the uncovered cells' stand at the sea bed, which is off the
+    /// land's LF (`on_sea`), so the one grid takes them in too; what the sea leaves of the bed is not seen from where a block is drawn. A
+    /// custom-mesh tile keeps its mesh. Every cell is drawn by the block it is in, whichever chunk owns its tile.
+    fn build_block(&self, key: ChunkKey, paint: bool, source: &BlockSource) -> Vec<(Float4x4, Payload)> {
         #[derive(Clone, Copy, PartialEq)]
         enum Cell {
             Land,
             Sea,
-            Cut,
+            Tile(usize),
         }
 
+        let (w, h) = (self.map.width as i32, self.map.height as i32);
         let side = BLOCK * CHUNK;
-        let area = [key.0 * CHUNK, key.1 * CHUNK, key.0 * CHUNK + side, key.1 * CHUNK + side];
-        let wide = side + self.reach;
-        let mut cells = vec![Cell::Land; (wide * wide) as usize];
+        let area = [key.0 * CHUNK, key.1 * CHUNK, (key.0 * CHUNK + side).min(w), (key.1 * CHUNK + side).min(h)];
+        let (aw, ah) = (area[2] - area[0], area[3] - area[1]);
+        let mut cells: Vec<Cell> = (0..aw * ah).map(|k| {
+            let (x, y) = (area[0] + k % aw, area[1] + k / aw);
+            let sea = match self.owner[(y * w + x) as usize] {
+                0 => self.climates.kind == "campaign",
+                o => o == 1,
+            };
+
+            if sea { Cell::Sea } else { Cell::Land }
+        }).collect();
+
+        // The placements over its cells, from their chunks: up to the largest tile before the block.
         let mut out = vec![];
-        for cy in key.1..key.1 + BLOCK {
-            for cx in key.0..key.0 + BLOCK {
+        let mut tiles: HashMap<usize, (Arc<Template>, Affine2)> = HashMap::new();
+        let back = (self.reach + CHUNK - 1) / CHUNK;
+        for cy in key.1 - back..key.1 + BLOCK {
+            for cx in key.0 - back..key.0 + BLOCK {
                 for &i in self.by_chunk.get(&(cx, cy)).map_or(&[][..], Vec::as_slice) {
-                    let kind = if is_custom(i) && template(i).is_some_and(|t| {
-                        self.place(i, &t, Lod::Far, &mut out);
-                        true
-                    }) {
-                        Cell::Cut
+                    let p = &self.map.placements[i];
+                    let r = p.rect();
+                    if r[0] >= area[2] || r[2] <= area[0] || r[1] >= area[3] || r[3] <= area[1] {
+                        continue;
+                    }
+
+                    let kind = if (source.is_custom)(i) {
+                        // Its mesh, once: by the block of its chunk.
+                        let mine = cx >= key.0 && cy >= key.1;
+                        match (source.template)(i) {
+                            Some(t) => {
+                                if mine {
+                                    self.place(i, &t, Lod::Far, &mut out);
+                                }
+
+                                Cell::Sea
+                            }
+
+                            None => continue,
+                        }
                     } else if self.on_sea_lf(i) {
                         Cell::Sea
+                    } else if paint {
+                        match (source.template)(i) {
+                            Some(t) => {
+                                tiles.insert(i, (t, p.to_map().inverse()));
+                                Cell::Tile(i)
+                            }
+
+                            None => continue,
+                        }
                     } else {
                         continue;
                     };
 
-                    let r = self.map.placements[i].rect();
-                    for y in (r[1] - area[1]).max(0)..(r[3] - area[1]).min(wide) {
-                        for x in (r[0] - area[0]).max(0)..(r[2] - area[0]).min(wide) {
-                            cells[(y * wide + x) as usize] = kind;
+                    for y in r[1].max(area[1])..r[3].min(area[3]) {
+                        for x in r[0].max(area[0])..r[2].min(area[2]) {
+                            let at = &mut cells[((y - area[1]) * aw + x - area[0]) as usize];
+                            if self.owner[(y * w + x) as usize] > 1 && !matches!(at, Cell::Tile(_)) {
+                                *at = kind;
+                            }
                         }
                     }
                 }
             }
         }
 
-        let (cw, _) = self.chunks();
-        let mine = |o: u32| {
-            let n = o as i32 - 2;
-            n >= 0 && ((n % cw).div_euclid(BLOCK) * BLOCK, (n / cw).div_euclid(BLOCK) * BLOCK) == key
+        let b = bounds(&self.from_map, f64::from(area[0]), f64::from(area[1]), f64::from(area[2]), f64::from(area[3]));
+        let cell_at = |x: f64, z: f64| {
+            let (mx, my) = self.to_map.apply(x, z);
+            let (cx, cy) = ((mx.floor() as i32).clamp(area[0], area[2] - 1), (my.floor() as i32).clamp(area[1], area[3] - 1));
+            ((mx, my), (cx, cy), cells[((cy - area[1]) * aw + cx - area[0]) as usize])
         };
 
-        let kind = |x: i32, y: i32| {
-            let (x, y) = (x - area[0], y - area[1]);
-            if x < wide && y < wide { cells[(y * wide + x) as usize] } else { Cell::Land }
-        };
+        // The heights at twice the grid's density: the fine ones are for the normal map.
+        let bed = self.sea_y() - (self.map.vertical_offset / self.unit) as f32;
+        let (fw, fh) = (((b[2] - b[0]) / (CELL / 2.0)).round() as i32 + 1, ((b[3] - b[1]) / (CELL / 2.0)).round() as i32 + 1);
+        let mut grid = Vec::with_capacity((fw / 2 + 1) as usize * (fh / 2 + 1) as usize);
+        let mut relief = vec![0.0f32; (fw * fh) as usize];
+        for j in 0..fh {
+            for i in 0..fw {
+                let (x, z) = (b[0] + f64::from(i) * CELL / 2.0, b[1] + f64::from(j) * CELL / 2.0);
+                let (at, _, cell) = cell_at(x, z);
+                let own = match cell {
+                    Cell::Tile(k) => {
+                        let (t, inverse) = &tiles[&k];
+                        let (lx, lz) = inverse.apply(at.0, at.1);
+                        t.own.height(lx, lz)
+                    }
 
-        let k = (CELL / self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step))).round().max(1.0) as i32;
-        let reached = [area[0], area[1], area[2] + self.reach, area[3] + self.reach];
-        out.extend(self.runs_by_climate(reached, |o, x, y| mine(o) && kind(x, y) == Cell::Land).into_iter().map(|(r, c)| self.ground_every(r, true, c, k)));
-        for (r, c) in self.runs_by_climate(reached, |o, x, y| mine(o) && kind(x, y) == Cell::Sea) {
-            let (world, ground) = self.ground_every(r, true, c, k);
-            if let Payload::Terrain(t) = ground {
-                out.push(self.on_sea(world, t));
+                    _ => 0.0,
+                };
+
+                relief[(j * fw + i) as usize] = own;
+                if i % 2 == 0 && j % 2 == 0 {
+                    grid.push(if matches!(cell, Cell::Sea) { bed - self.lift(x, z) } else { own });
+                }
             }
         }
 
-        out.extend(self.runs_by_climate(area, |o, _, _| o == 0).into_iter().map(|(r, c)| self.uncovered_every(r, true, c, k)));
+        let (nx, nz) = (fw / 2 + 1, fh / 2 + 1);
+        let (lo, hi) = grid.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+
+        // The colour.
+        let (tw, th) = (((fw - 1) * BLOCK_TEXELS / 2) as usize, ((fh - 1) * BLOCK_TEXELS / 2) as usize);
+        let mut colour = vec![255u8; tw * th * 4];
+        for (j, row) in colour.chunks_exact_mut(tw * 4).enumerate() {
+            for (i, texel) in row.chunks_exact_mut(4).enumerate() {
+                let x = b[0] + (i as f64 + 0.5) / tw as f64 * (b[2] - b[0]);
+                let z = b[1] + (j as f64 + 0.5) / th as f64 * (b[3] - b[1]);
+                let (at, (cx, cy), cell) = cell_at(x, z);
+                let painted = match cell {
+                    Cell::Tile(k) => {
+                        let (t, inverse) = &tiles[&k];
+                        let (lx, lz) = inverse.apply(at.0, at.1);
+                        t.far_colour(lx, lz)
+                    }
+
+                    _ => None,
+                };
+
+                let c = painted.unwrap_or_else(|| self.plain_colour(self.climate[(cy * w + cx) as usize], source.mean));
+                texel[..3].copy_from_slice(&c);
+            }
+        }
+
+        let climate = self.climate[(area[1] * w + area[0]) as usize];
+        let Some(base) = self.plain_for(climate).0 else { return out };
+        let mut m = (*base).clone();
+        let (gw, gh) = (b[2] - b[0], b[3] - b[1]);
+        m.baked = true;
+        m.blend = TerrainImage { w: tw as u32, h: th as u32, rgba: Some(Arc::new(colour)) };
+        m.index = TerrainImage::default();
+        m.alpha = TerrainImage::default();
+        m.normal = terrain_normal_image(&relief, fw, fh, CELL / 2.0, CELL / 2.0, fw as u32, fh as u32);
+        m.diffuse = Default::default();
+        m.normal_tex = Default::default();
+        (m.x0, m.z0, m.x1, m.z1) = (-FAR_MARGIN, -FAR_MARGIN, gw + FAR_MARGIN, gh + FAR_MARGIN);
+        (m.y0, m.y1) = (f64::from(lo - SKIRT) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
+        m.id = next_id(&MATERIAL_IDS);
+        m.normal_id = next_id(&NORMAL_IDS);
+        // A skirt, as a tile's: two blocks read different tiles along their shared edge, and the gap between them showed as a line.
+        let g = Grid { nx, nz, ox: 0.0, oz: 0.0, step: CELL as f32, heights: Arc::new(grid) }.skirted();
+        let t = Terrain {
+            nx: g.nx, nz: g.nz, origin_x: g.ox, origin_z: g.oz, step: g.step, heights: g.heights, lod: true, tile_metres: 32.0, material: Some(Arc::new(m)),
+            lf: self.lf.clone(), legacy: false, ..Default::default()
+        };
+        let mut world = Float4x4::IDENTITY;
+        (world.m[0][3], world.m[2][3]) = (b[0] as f32, b[1] as f32);
+        out.push((world, Payload::Terrain(t)));
         out
+    }
+
+    /// The colour of a climate's plain ground, as a baked material stores it: what its material averages to.
+    fn plain_colour(&self, climate: u8, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> [u8; 3] {
+        let mut known = self.plain_colours.lock().unwrap_or_else(|p| p.into_inner());
+        *known.entry(climate).or_insert_with(|| self.plain_for(climate).0.as_deref().map_or([128, 128, 128], |m| mean_of_material(m, mean)))
     }
 
     /// A chunk at a level: its placements from their tiles (`template` gives a placement's tile, none when it could not be opened: its
     /// rectangle gets LF ground), and LF ground over its cells nobody covers. `is_custom` says whether a placement's tile is a custom-mesh one.
-    pub fn build_chunk(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool) -> Vec<(Float4x4, Payload)> {
-        if lod == Lod::Block {
-            return self.build_block(key, template, is_custom);
+    pub fn build_chunk(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> Vec<(Float4x4, Payload)> {
+        if matches!(lod, Lod::Block | Lod::Merged) {
+            return self.build_block(key, lod == Lod::Merged, &BlockSource { template, is_custom, mean });
         }
 
         // Far: the LF ground over everything it draws, in as few rectangles as its cells make; but a custom-mesh tile (the cliffs) keeps
@@ -886,12 +1003,7 @@ impl Frame {
     /// sea's LF as a sea tile is (`on_sea`). The land LF there holds what its painters left under the water: south of Rome a dome of
     /// sand stood out of the sea where the game has open water.
     fn uncovered_ground(&self, r: [i32; 4], far: bool, c: u8) -> (Float4x4, Payload) {
-        self.uncovered_every(r, far, c, 1)
-    }
-
-    /// [`Self::uncovered_ground`] on every `k`th vertex of the LF's lattice.
-    fn uncovered_every(&self, r: [i32; 4], far: bool, c: u8, k: i32) -> (Float4x4, Payload) {
-        let (world, ground) = self.ground_every(r, far, c, k);
+        let (world, ground) = self.ground(r, far, c);
         match ground {
             Payload::Terrain(t) if self.climates.kind == "campaign" => self.on_sea(world, t),
             g => (world, g),

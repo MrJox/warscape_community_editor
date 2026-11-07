@@ -24,6 +24,24 @@ pub const NEIGHBOUR_STEP: f64 = 2.0;
 pub const BOX_BELOW: f64 = 5.0;
 pub const BOX_ABOVE: f64 = 30.0;
 
+/// What a material averages to, as a baked one stores it (`Template::bake_far`).
+pub(super) fn mean_of_material(m: &TerrainMaterial, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> [u8; 3] {
+    let slots = slot_colours(m, mean);
+    let (Some(blend), Some(index)) = (&m.blend.rgba, &m.index.rgba) else { return [128; 3] };
+    let n = (blend.len() / 4).min(index.len() / 4).max(1);
+    let sum = blend.chunks_exact(4).zip(index.chunks_exact(4)).fold([0.0f32; 3], |s, (b, i)| {
+        let c = blended(b, i, &slots);
+        std::array::from_fn(|k| s[k] + c[k] / n as f32)
+    });
+
+    sum.map(baked_byte)
+}
+
+/// A linear colour channel as a baked material stores it.
+fn baked_byte(v: f32) -> u8 {
+    (v.max(0.0).sqrt() * 255.0).round().min(255.0) as u8
+}
+
 /// The most cells a side of the coarse grid (the renderer's patch: one draw for the whole tile).
 const COARSE_CELLS: i32 = 64;
 
@@ -32,7 +50,7 @@ const COARSE_CELLS: i32 = 64;
 const OVERLAP_STEPS: i32 = 4;
 
 /// How far the ring of vertices around a tile's ground goes down (scene units): a skirt that closes what the overlap leaves open.
-const SKIRT: f32 = 20.0;
+pub(super) const SKIRT: f32 = 20.0;
 
 /// The alpha map's texel (scene units): the width over which a tile fades into its neighbour past its edge.
 const ALPHA_TEXEL: f64 = 4.0;
@@ -49,6 +67,16 @@ pub struct Grid {
 }
 
 impl Grid {
+    /// The height at a point of its frame, between its vertices.
+    pub fn height(&self, x: f64, z: f64) -> f32 {
+        let (u, v) = ((x as f32 - self.ox) / self.step, (z as f32 - self.oz) / self.step);
+        let (i, j) = ((u.floor() as i32).clamp(0, self.nx - 2), (v.floor() as i32).clamp(0, self.nz - 2));
+        let (fu, fv) = ((u - i as f32).clamp(0.0, 1.0), (v - j as f32).clamp(0.0, 1.0));
+        let at = |a: i32, b: i32| self.heights[((j + b) * self.nx + i + a) as usize];
+        let (top, bottom) = (at(0, 0) + (at(1, 0) - at(0, 0)) * fu, at(0, 1) + (at(1, 1) - at(0, 1)) * fu);
+        top + (bottom - top) * fv
+    }
+
     fn sample(nx: i32, nz: i32, ox: f64, oz: f64, step: f64, h: &(dyn Fn(f64, f64) -> f32 + Sync)) -> Self {
         let mut heights = vec![0.0f32; (nx * nz) as usize];
         heights.par_chunks_mut(nx as usize).enumerate().for_each(|(j, row)| {
@@ -69,7 +97,7 @@ impl Grid {
     }
 
     /// The grid with a ring of vertices one step outside it, SKIRT below its edge.
-    fn skirted(&self) -> Self {
+    pub(super) fn skirted(&self) -> Self {
         let (nx, nz) = (self.nx + 2, self.nz + 2);
         let heights = (0..nz).flat_map(|j| (0..nx).map(move |i| (i, j))).map(|(i, j)| {
             let (si, sj) = ((i - 1).clamp(0, self.nx - 1), (j - 1).clamp(0, self.nz - 1));
@@ -230,7 +258,7 @@ impl Template {
                 }
 
                 for k in 0..3 {
-                    row[x * 4 + k] = (sum[k].max(0.0).sqrt() * 255.0).round().min(255.0) as u8;
+                    row[x * 4 + k] = baked_byte(sum[k]);
                 }
             }
         });
@@ -239,10 +267,24 @@ impl Template {
         baked.baked = true;
         baked.blend.rgba = Some(Arc::new(out));
         baked.index = TerrainImage::default();
+
+        // No fade into the neighbours: at this size the alpha map's feather was gone, and the seams between the tiles showed dark.
+        baked.alpha = TerrainImage::default();
         baked.diffuse = Default::default();
         baked.normal_tex = Default::default();
         baked.id = next_id(&MATERIAL_IDS);
         self.material_far = Some(Arc::new(baked));
+    }
+
+    /// The baked colour at a point of the tile's frame, as a baked material stores it.
+    pub fn far_colour(&self, x: f64, z: f64) -> Option<[u8; 3]> {
+        let m = self.material_far.as_ref().filter(|m| m.baked)?;
+        let px = m.blend.rgba.as_ref()?;
+        let (w, h) = (i64::from(m.blend.w), i64::from(m.blend.h));
+        let (u, v) = ((x - m.x0) / (m.x1 - m.x0), (z - m.z0) / (m.z1 - m.z0));
+        let (i, j) = (((u * w as f64) as i64).clamp(0, w - 1), ((v * h as f64) as i64).clamp(0, h - 1));
+        let at = ((j * w + i) * 4) as usize;
+        Some([px[at], px[at + 1], px[at + 2]])
     }
 
     /// Fills in what follows from the rest (the coarse grid, the low material, the size): after a load or a cache read.
@@ -483,4 +525,42 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
     let mut tpl = Template { extent: (ex, ez), own, material, entities, mid, load_s: t0.elapsed().as_secs_f64(), ..Default::default() };
     tpl.finish();
     Ok(tpl)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pixel_mixes_as_the_blend_pass_does() {
+        let mut slots = [[0.0f32; 3]; 16];
+        (slots[0], slots[1], slots[4]) = ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]);
+
+        // One layer, its selector at the first variation: that texture alone.
+        assert_eq!(blended(&[255, 0, 0, 0], &[0, 0, 0, 0], &slots), [1.0, 0.0, 0.0]);
+
+        // A selector halfway between the first two variations (a sixth of the way up: it reads 0 to 3).
+        let c = blended(&[255, 0, 0, 0], &[43, 0, 0, 0], &slots);
+        assert!((c[0] - 0.494).abs() < 0.01 && (c[1] - 0.506).abs() < 0.01, "{c:?}");
+
+        // Two equal layers: their weights have unit length, not unit sum, as ps30_blend's.
+        let c = blended(&[255, 255, 0, 0], &[0, 0, 0, 0], &slots);
+        assert!((c[0] - 0.707).abs() < 0.001 && (c[2] - 0.707).abs() < 0.001, "{c:?}");
+    }
+
+    #[test]
+    fn a_slot_without_a_texture_has_the_mean_of_the_others() {
+        let mut m = TerrainMaterial::default();
+        (m.diffuse[0], m.diffuse[1]) = ("a".to_owned(), "b".to_owned());
+        let slots = slot_colours(&m, &|p| Some(if p == "a" { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] }));
+        assert_eq!(slots[1], [0.0, 1.0, 0.0]);
+        assert_eq!(slots[7], [0.5, 0.5, 0.0]);
+    }
+
+    #[test]
+    fn a_grid_is_read_between_its_vertices_and_held_at_its_edge() {
+        let g = Grid { nx: 2, nz: 2, ox: 10.0, oz: 20.0, step: 2.0, heights: Arc::new(vec![0.0, 2.0, 4.0, 6.0]) };
+        assert_eq!(g.height(11.0, 21.0), 3.0);
+        assert_eq!(g.height(100.0, 20.0), 2.0);
+    }
 }
