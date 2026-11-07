@@ -2,7 +2,7 @@
 //! (`TileDocument::flip`). The plane has a gizmo of its own that moves and turns it; a press off it puts the plane on the ground there.
 
 use wce_editor::editor::Editor;
-use wce_editor::gui;
+use wce_editor::gui::{self, label_column, row};
 use wce_foundation::math::Float4x4;
 use wce_scene::render_scene::{Overlay, overlay_colour};
 use wce_tile_editor::tile_document::{FlipPlane, Tile, TileDocument};
@@ -17,19 +17,6 @@ const PLANE_STEP: f32 = 32.0;
 
 /// The most lines drawn from the selection to where it would go.
 const MAX_LINES: usize = 128;
-
-/// Where the values start, as in the Inspector's rows: 40% of the panel, at least 110 pixels.
-fn label_column() -> f32 {
-    (gui::content_region_avail().x * 0.4).max(110.0)
-}
-
-/// A row's label; what follows goes in the value column.
-fn row(label: &str) {
-    let at = label_column();
-    gui::align_text_to_frame_padding();
-    gui::text(label);
-    gui::same_line_at(at);
-}
 
 /// One of two choices side by side, the current one lit.
 fn choice(label: &str, on: bool, width: f32, tip: &str) -> bool {
