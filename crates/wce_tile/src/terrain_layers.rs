@@ -444,6 +444,13 @@ impl<K: Kind> Stack<K> {
         self.compose(x, y, self.index_of(id).unwrap_or(self.layers.len()), out);
     }
 
+    /// Whether any visible layer whose owner starts with `owner` has a pixel at a place (`empty`: what a layer's pixel holds where it has nothing).
+    pub fn owned_at(&self, owner: &str, x: u32, y: u32, empty: impl Fn(&[K::Sample]) -> bool) -> bool {
+        x < self.w && y < self.h && self.layers.iter().any(|l| {
+            l.visible && l.owner.starts_with(owner) && l.samples.pixel(x, y, K::CHANNELS).is_some_and(|p| !empty(p))
+        })
+    }
+
     /// Empties a layer, for a procedural feature to fill.
     pub fn clear_layer(&mut self, id: u64) {
         if let Some(i) = self.index_of(id) {
