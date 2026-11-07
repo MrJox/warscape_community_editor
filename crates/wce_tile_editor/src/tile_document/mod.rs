@@ -36,6 +36,7 @@ pub mod roads;
 pub mod river_links;
 mod shift;
 pub mod siege;
+pub mod stage;
 mod grass;
 mod vegetation;
 mod tech;
@@ -699,6 +700,17 @@ pub(crate) fn next_id(counter: &AtomicU64) -> u64 {
 pub struct TileDocument {
     core: DocumentCore,
     pub(crate) history: CommandStack<Tile>,
+
+    /// A tile that stands in for something else (the Prefab tool's stage): what it is called and what saving it does.
+    stage: Option<Stage>,
+}
+
+/// What saving a stage does: it writes what the stage holds (a prefab), not the tile under it. Returns what it saved.
+pub type StageSave = Box<dyn FnMut(&mut TileDocument) -> Result<String, String>>;
+
+struct Stage {
+    title: String,
+    save: Option<StageSave>,
 }
 
 /// The item of an element; item 0 is the terrain.
@@ -835,7 +847,7 @@ impl TileDocument {
             "tile loaded: {} instances in {total:.2} s (element index {t_index:.2}, building models {t_models:.2}, markers {:.2})", tile.instances.len(), total - t_index - t_models
         );
         log::info(tile.load_info.clone());
-        Self { core, history: CommandStack::new(tile) }
+        Self { core, history: CommandStack::new(tile), stage: None }
     }
 
     pub fn tile(&self) -> &Tile {
@@ -877,6 +889,40 @@ impl TileDocument {
     /// The prefabs' height layers changed (one was saved, the library scanned again): the references' ground is made again.
     pub fn prefab_ground_changed(&mut self) {
         self.tile_mut().prefab_ground_stale = true;
+    }
+
+    /// Makes the tile a stage for something else: its title, and what saving it writes instead of the tile (the stage's own files are not
+    /// saved).
+    pub fn set_stage(&mut self, title: &str, save: StageSave) {
+        self.stage = Some(Stage { title: title.to_owned(), save: Some(save) });
+    }
+
+    pub fn set_stage_title(&mut self, title: &str) {
+        if let Some(s) = &mut self.stage {
+            title.clone_into(&mut s.title);
+        }
+    }
+
+    #[must_use]
+    pub fn is_stage(&self) -> bool {
+        self.stage.is_some()
+    }
+
+    fn save_stage(&mut self) -> Result<(), String> {
+        self.end_stroke();
+        let mut save = self.stage.as_mut().and_then(|s| s.save.take()).ok_or("the stage is saving already")?;
+        let result = save(self);
+        if let Some(s) = &mut self.stage {
+            s.save = Some(save);
+        }
+
+        let message = result?;
+        if let Some(l) = self.tile_mut().project.layers.as_mut() {
+            l.dirty = false;
+        }
+
+        self.tile_mut().last_message = message;
+        Ok(())
     }
 
     /// Where the references find their prefabs' height layers (none: references bring no ground).
@@ -930,7 +976,7 @@ impl Document for TileDocument {
     }
 
     fn title(&self) -> String {
-        self.tile().title()
+        self.stage.as_ref().map_or_else(|| self.tile().title(), |s| s.title.clone())
     }
 
     fn kind(&self) -> String {
@@ -950,6 +996,10 @@ impl Document for TileDocument {
     }
 
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
+        if self.stage.is_some() {
+            return self.save_stage();
+        }
+
         self.save_tile(target).map(|message| self.tile_mut().last_message = message)
     }
 

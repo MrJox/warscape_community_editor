@@ -1595,3 +1595,36 @@ fn a_references_ground_is_in_its_inspector() {
     assert_eq!(d.tile().tscene().doc().get(g, "wce_terrain").as_deref(), Some("off"));
     assert!(!inspect(&mut d, g, None).iter().any(|r| r == "text:attr_wce_terrain"));
 }
+
+#[test]
+fn a_prefabs_layer_goes_onto_the_stage_and_back() {
+    use wce_tile::prefab_stage::{StageSettings, make};
+    use wce_tile::prefab_terrain::PrefabTerrain;
+
+    let dir = tempfile::tempdir().unwrap();
+    let group = b"<UserInstanceGroup flags=\" OIF_VISIBLE\" position=\"vector(0,0,0)\" name=\"rocks\" orientation=\"euler(0,0,0)\">\n    <children>\n        <BUILDING_INSTANCE position=\"vector(1,0,0)\" key=\"rock\" name=\"rock\"/>\n    </children>\n</UserInstanceGroup>\n";
+    let s = StageSettings { cells: 1, density: 32, ..Default::default() };
+    let mut d = TileDocument::new(make(&dir.path().join("stage"), &s, group).unwrap(), None);
+
+    // The stage's pixels are 8 apart: a 5 x 5 layer at that spacing, raised on its +x half, its footprint all of it.
+    let mut t = PrefabTerrain::empty([-16.0, -16.0], 8.0, 5, 5);
+    for z in 0..5 {
+        for x in 0..5 {
+            t.coverage[z * 5 + x] = 1.0;
+            t.heights[z * 5 + x] = if x >= 3 { 1.5 } else { 0.0 };
+        }
+    }
+
+    (t.normalize, t.feather) = (true, 6.0);
+    d.begin_stage(Some(&t)).unwrap();
+    assert!(!d.modified(), "a stage starts unmodified");
+    let back = d.stage_terrain(true, 6.0).unwrap();
+    assert_eq!((back.origin, back.spacing, back.width, back.height), (t.origin, t.spacing, t.width, t.height), "{back:?}");
+    assert!(back.heights.iter().zip(&t.heights).all(|(a, b)| (a - b).abs() < 1e-3), "{:?}", back.heights);
+    assert_eq!(back.coverage, t.coverage);
+
+    // An empty stage holds none.
+    let mut empty = TileDocument::new(make(&dir.path().join("stage2"), &s, group).unwrap(), None);
+    empty.begin_stage(None).unwrap();
+    assert!(empty.stage_layer().is_some() && empty.stage_terrain(false, 4.0).is_none());
+}

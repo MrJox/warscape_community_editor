@@ -499,6 +499,13 @@ impl<K: Kind> Stack<K> {
         }
     }
 
+    /// A pixel of a layer as it holds it (not what shows); false, and `out` untouched, without such a layer or with nothing there.
+    pub fn get(&self, id: u64, x: u32, y: u32, out: &mut [K::Sample]) -> bool {
+        let Some(px) = self.index_of(id).and_then(|i| self.layers[i].samples.pixel(x, y, K::CHANNELS)) else { return false };
+        out.copy_from_slice(px);
+        true
+    }
+
     /// Whether a layer depends on a scene layer for which `exported` says no.
     pub fn leaves_out(&self, exported: &dyn Fn(&str) -> bool) -> bool {
         self.layers.iter().any(|l| !l.depends.is_empty() && !exported(&l.depends))
