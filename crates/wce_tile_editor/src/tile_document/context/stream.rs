@@ -19,7 +19,7 @@ use wce_vfs::files::Files;
 
 use super::template::{Template, load_any_template};
 use crate::terrain_bake::TerrainLook;
-use super::{BLOCK, CHUNK, ContextRequest, Frame, TileKey, cache, tile_dir};
+use super::{BLOCK, BlockSource, CHUNK, ContextRequest, Frame, TileKey, cache, tile_dir};
 
 /// A chunk: its column and row of CHUNK x CHUNK map cells.
 pub type ChunkKey = (i32, i32);
@@ -119,6 +119,9 @@ struct Shared {
 
     /// Whether a tile (location, variation) is a custom-mesh one (`is_custom`).
     custom_tiles: Mutex<HashMap<(String, String), bool>>,
+
+    /// The blocks that go by chunks at the moment (`Lod::is_block`: the rest are blocks).
+    zone: Mutex<std::collections::HashSet<ChunkKey>>,
 
     /// The mean colours of the ground textures, for the baked ground (`Template::bake_far`): the same few hundred for every tile.
     means: Mutex<HashMap<String, Option<[f32; 3]>>>,
@@ -312,7 +315,13 @@ impl Shared {
             // Not in the pool: `template` may wait for another worker's tile, and a pool thread waiting inside a parallel loop can take up
             // that very worker's job (a deadlock); only the opening and the cache read run there.
             let (frame, generation) = self.frame();
-            let entities = frame.build_chunk(job.key, job.lod, &|i| self.template(&frame, i), &|i| self.is_custom(&frame, i), &|path| self.mean_colour(path));
+            let zone = lock(&self.zone).clone();
+            let source = BlockSource {
+                template: &|i| self.template(&frame, i), is_custom: &|i| self.is_custom(&frame, i), mean: &|path| self.mean_colour(path),
+                in_block: &|k| self.rq.bake_ground && !zone.contains(&block_of(k)),
+            };
+
+            let entities = frame.build_chunk(job.key, job.lod, &source);
             if tx.send((job.key, job.lod, entities, generation)).is_err() {
                 return;
             }
@@ -363,7 +372,7 @@ impl Streamer {
         let rings = [rq.near, rq.mid, rq.ground, rq.far];
         let frame_s = started.elapsed().as_secs_f64();
         let shared = Arc::new(Shared {
-            pool, frame: Mutex::new((frame, 0)), rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), custom_tiles: Mutex::default(), means: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
+            pool, frame: Mutex::new((frame, 0)), rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), custom_tiles: Mutex::default(), zone: Mutex::default(), means: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
             clock: Default::default(), stop: AtomicBool::new(false),
         });
 
@@ -393,8 +402,11 @@ impl Streamer {
             *f = (frame, f.1 + 1);
         }
 
-        // A block holds what its chunks hold.
-        let changed: std::collections::HashSet<ChunkKey> = changed.iter().flat_map(|&k| [k, block_of(k)]).collect();
+        // A block draws what its cells hold, whichever chunk's tile that is: every block a tile of the chunk can reach.
+        let reach = (self.frame().reach() + CHUNK - 1) / CHUNK;
+        let changed: std::collections::HashSet<ChunkKey> = changed.iter().flat_map(|&k| {
+            [k, block_of(k), block_of((k.0 + reach, k.1)), block_of((k.0, k.1 + reach)), block_of((k.0 + reach, k.1 + reach))]
+        }).collect();
         let shown = &self.shown;
         self.wanted.retain(|k, l| shown.get(k) == Some(l) && !changed.contains(k));
         lock(&self.shared.queue).clear();
@@ -447,6 +459,7 @@ impl Streamer {
 
         let (start, ground) = (self.block_start(), f64::from(self.rings[2]));
         let mut want: HashMap<ChunkKey, (Lod, f64)> = HashMap::new();
+        let mut zone = std::collections::HashSet::new();
         for by in span(fy).filter(|&y| y >= 0 && y * BLOCK < ch) {
             for bx in span(fx).filter(|&x| x >= 0 && x * BLOCK < cw) {
                 // Past the rings a block is one piece; it stays one within the slack.
@@ -465,6 +478,7 @@ impl Streamer {
                     continue;
                 }
 
+                zone.insert(key);
                 for cy in key.1..(key.1 + BLOCK).min(ch) {
                     for cx in key.0..(key.0 + BLOCK).min(cw) {
                         let d = distance(cx * CHUNK, cy * CHUNK, CHUNK);
@@ -477,10 +491,25 @@ impl Streamer {
             }
         }
 
+        // The zone moved: the chunks by the blocks that came or left built again, for the cells of tiles they fill in (`Frame::build_chunk`).
+        {
+            let mut now = lock(&self.shared.zone);
+            if *now != zone {
+                let moved: Vec<ChunkKey> = now.symmetric_difference(&zone).copied().collect();
+                let near = (f.reach() + CHUNK - 1) / CHUNK + 1;
+                self.wanted.retain(|&(cx, cy), l| {
+                    l.is_block() || !moved.iter().any(|&(bx, by)| {
+                        cx >= bx - near && cx < bx + BLOCK + near && cy >= by - near && cy < by + BLOCK + near
+                    })
+                });
+                *now = zone;
+            }
+        }
+
         let mut out = vec![];
 
         // The chunks that go: off the queue, off the scene.
-        let gone: Vec<ChunkKey> = self.wanted.keys().filter(|k| !want.contains_key(k)).copied().collect();
+        let gone: std::collections::HashSet<ChunkKey> = self.wanted.keys().chain(self.shown.keys()).filter(|k| !want.contains_key(k)).copied().collect();
         for k in gone {
             self.wanted.remove(&k);
             if self.shown.remove(&k).is_some() {

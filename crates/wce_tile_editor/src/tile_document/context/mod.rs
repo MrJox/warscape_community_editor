@@ -49,6 +49,9 @@ pub const CHUNK: i32 = 8;
 /// Chunks a side of a block ([`Lod::Block`], [`Lod::Merged`]).
 pub const BLOCK: i32 = 8;
 
+/// How far a block's blend box reaches past its heights (scene units).
+const BLOCK_BOX: f64 = 500.0;
+
 /// Texels of a block's colour a cell.
 const BLOCK_TEXELS: i32 = 4;
 
@@ -133,12 +136,15 @@ type PlainBase = (Option<Arc<TerrainMaterial>>, u64);
 /// The plain materials by grid size, far ring or not, and climate.
 type Plains = HashMap<(i32, i32, bool, u8), Arc<TerrainMaterial>>;
 
-/// What a block is built from: a placement's tile (none when it could not be opened), whether a placement's tile is a custom-mesh one, and
-/// a ground texture's mean colour.
+/// What a chunk or a block is built from: a placement's tile (none when it could not be opened), whether a placement's tile is a custom-mesh
+/// one, and a ground texture's mean colour.
 pub struct BlockSource<'a> {
     pub template: &'a dyn Fn(usize) -> Option<Arc<Template>>,
     pub is_custom: &'a dyn Fn(usize) -> bool,
     pub mean: &'a dyn Fn(&str) -> Option<[f32; 3]>,
+
+    /// Whether a chunk is drawn by a block at the moment.
+    pub in_block: &'a dyn Fn(ChunkKey) -> bool,
 }
 
 /// A cell no placement gives a climate.
@@ -927,7 +933,9 @@ impl Frame {
         m.diffuse = Default::default();
         m.normal_tex = Default::default();
         (m.x0, m.z0, m.x1, m.z1) = (-FAR_MARGIN, -FAR_MARGIN, gw + FAR_MARGIN, gh + FAR_MARGIN);
-        (m.y0, m.y1) = (f64::from(lo - SKIRT) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
+        // Tall: the blend pass finds a pixel's height from its depth, which is tens of units off from where a block is seen, and a pixel out of
+        // every box is black (lines along the blocks' edges, from high up). Only what the box covers on the screen costs, and that is little.
+        (m.y0, m.y1) = (f64::from(lo - SKIRT) - BLOCK_BOX, f64::from(hi) + BLOCK_BOX);
         m.id = next_id(&MATERIAL_IDS);
         m.normal_id = next_id(&NORMAL_IDS);
         // A skirt, as a tile's: two blocks read different tiles along their shared edge, and the gap between them showed as a line. No level
@@ -952,10 +960,25 @@ impl Frame {
 
     /// A chunk at a level: its placements from their tiles (`template` gives a placement's tile, none when it could not be opened: its
     /// rectangle gets LF ground), and LF ground over its cells nobody covers. `is_custom` says whether a placement's tile is a custom-mesh one.
-    pub fn build_chunk(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> Vec<(Float4x4, Payload)> {
+    pub fn build_chunk(&self, key: ChunkKey, lod: Lod, source: &BlockSource) -> Vec<(Float4x4, Payload)> {
         if matches!(lod, Lod::Block | Lod::Merged) {
-            return self.build_block(key, lod == Lod::Merged, &BlockSource { template, is_custom, mean });
+            return self.build_block(key, lod == Lod::Merged, source);
         }
+
+        let mut out = self.chunk_levels(key, lod, source.template, source.is_custom);
+
+        // Cells of its own that belong to a tile drawn by a block: a chunk keeps to its tiles and a block to its square, and a tile that
+        // starts in a block and reaches in here was neither's (holes down to the sea bed along the blocks' edges).
+        let (cw, _) = self.chunks();
+        let by_block = |o: u32| o > 1 && (source.in_block)(((o as i32 - 2) % cw, (o as i32 - 2) / cw));
+        let area = [key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK];
+        let me = self.owner_of(key);
+        out.extend(self.runs_by_climate(area, |o, _, _| o != me && by_block(o)).into_iter().map(|(r, c)| self.ground(r, true, c)));
+        out
+    }
+
+    /// A chunk at a level, as [`Self::build_chunk`] says, without the cells of tiles the blocks draw.
+    fn chunk_levels(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool) -> Vec<(Float4x4, Payload)> {
 
         // Far: the LF ground over everything it draws, in as few rectangles as its cells make; but a custom-mesh tile (the cliffs) keeps
         // its mesh (its coarsest level by distance): the LF under it is the land its cliff drops from, which drawn plain stood as a slab
