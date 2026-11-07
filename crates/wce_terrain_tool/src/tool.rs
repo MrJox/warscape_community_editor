@@ -901,7 +901,7 @@ impl TerrainTool {
         gui::separator();
         let mut rings = gui::slider_int("full detail (cells)", &mut self.rings.near, 1, 64);
         rings |= gui::slider_int("buildings (cells)", &mut self.rings.mid, 1, 128);
-        rings |= gui::slider_int("tile ground (cells)", &mut self.rings.ground, 1, 1024);
+        rings |= gui::slider_int("tile ground (cells)", &mut self.rings.ground, 1, 128);
         rings |= gui::slider_int("LF ground (cells)", &mut self.rings.far, 1, 1024);
         if rings {
             self.view.set_rings(&self.rings);

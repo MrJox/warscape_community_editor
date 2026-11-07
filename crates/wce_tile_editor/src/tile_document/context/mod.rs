@@ -8,7 +8,8 @@
 //!
 //! Chunks of CHUNK x CHUNK map cells own the placements whose origin cell they hold and the cells nobody covers; each is drawn at a level of
 //! detail by its distance from the focus (`stream`): near everything, mid the tiles' coarse heights, low-resolution material, buildings and
-//! rivers, far the LF ground alone (a placement's rectangle of it). Every cell has one owner at any level, so the levels never overlap.
+//! rivers, ground the same without the buildings and with a smaller material, far the LF ground alone (a placement's rectangle of it), and
+//! past the rings a block of BLOCK x BLOCK chunks of LF ground in one piece. Every cell has one owner at any level, so the levels never overlap.
 //!
 //! Heights (ASSUMPTION, see the module docs of `context` in wce_tile for the game's formula): the game puts every tile on the map's LF
 //! (`LF * 3000 - 20 + the tile's height`). The open tile's ground is drawn on it too, relative to the median LF under it (its objects and
