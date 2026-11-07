@@ -120,7 +120,8 @@ impl Tile {
             let (x, z) = (m.m[0][3] + at.x, m.m[2][3] + at.z);
             m.m[0][3] = x;
             m.m[2][3] = z;
-            m.m[1][3] += if item.landscape { self.terrain_height(x, z) } else { at.y };
+            // A landscape item stands on the terrain wherever it is, its height in the text aside, as placing puts it (`place_text`).
+            m.m[1][3] = if item.landscape { self.terrain_height(x, z) } else { m.m[1][3] + at.y };
             scene.update_world(e, m);
         }
 

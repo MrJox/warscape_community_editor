@@ -215,6 +215,19 @@ impl TileDocument {
             let before = self.tile().tscene().position(g);
             set_world_position(self.tscene_mut(), g, p);
             self.carry_points(g, before);
+
+            // What is inside on the landscape goes onto the terrain where it now is: it kept the height it had where it was saved (a
+            // prefab's parts floated or sank by the ground's difference).
+            let unit = self.tile().unit();
+            let inside = self.tile().instances_below(&[g]).into_iter().filter(|&e| e != g && self.tile().on_the_terrain(e)).collect::<Vec<_>>();
+            for e in inside {
+                let t = self.tile();
+                let w = wce_tile::world_transform::world_transform(t.tscene(), e).position;
+                let (x, z) = ((w.x / unit) as f32, (w.z / unit) as f32);
+                let local = t.local_for_world_y(e, f64::from(t.landscape_y(e, x, z)));
+                self.tscene_mut().set_position(e, local);
+            }
+
             Ok(g)
         })();
 
