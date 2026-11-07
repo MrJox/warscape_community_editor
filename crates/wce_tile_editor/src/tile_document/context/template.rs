@@ -98,9 +98,12 @@ pub struct Template {
     pub coarse: Grid,
 
     /// Its ground material over the tile with its border (its alpha map fades the border out a little past the tile's edge, where the
-    /// neighbour's fades in), and the same at a quarter of the resolution.
+    /// neighbour's fades in), the same at a quarter of the resolution, and at a quarter of that for the ground ring. That last one is what
+    /// lets the ring be wide: a placement on the scene keeps its material, in memory and on the GPU, past the budget for templates, and
+    /// 3 300 chunks at the low one took 39 GB.
     pub material: Option<Arc<TerrainMaterial>>,
     pub material_low: Option<Arc<TerrainMaterial>>,
+    pub material_far: Option<Arc<TerrainMaterial>>,
 
     /// A custom-mesh tile's mesh (the cliffs), drawn instead of its heights' patches.
     pub custom: Option<Arc<wce_scene::render_scene::CustomTerrainMesh>>,
@@ -225,7 +228,7 @@ impl Template {
             Arc::new(m)
         });
 
-        self.material_low = self.material.as_ref().map(|m| {
+        let smaller = |m: &Arc<TerrainMaterial>| {
             let mut low = (**m).clone();
             low.blend = quarter(&m.blend);
             low.index = quarter(&m.index);
@@ -234,7 +237,10 @@ impl Template {
             low.id = next_id(&MATERIAL_IDS);
             low.normal_id = next_id(&NORMAL_IDS);
             Arc::new(low)
-        });
+        };
+
+        self.material_low = self.material.as_ref().map(smaller);
+        self.material_far = self.material_low.as_ref().map(smaller);
 
         let images = |m: &Option<Arc<TerrainMaterial>>| m.as_ref().map_or(0, |m| image_bytes(&m.blend) + image_bytes(&m.index) + image_bytes(&m.normal) + image_bytes(&m.alpha));
         let entities: usize = self.entities.iter().map(|(_, p)| match p {
@@ -243,7 +249,7 @@ impl Template {
             _ => 0,
         } + 160).sum();
         let custom: usize = self.custom.iter().flat_map(|m| &m.lods).map(|l| l.vertices.len() * size_of::<wce_scene::render_scene::CustomTerrainVertex>() + l.indices.len() * 4).sum();
-        self.bytes = (self.own.heights.len() + self.near.heights.len() + self.coarse.heights.len()) * 4 + images(&self.material) + images(&self.material_low) + entities + custom;
+        self.bytes = (self.own.heights.len() + self.near.heights.len() + self.coarse.heights.len()) * 4 + images(&self.material) + images(&self.material_low) + images(&self.material_far) + entities + custom;
     }
 }
 
