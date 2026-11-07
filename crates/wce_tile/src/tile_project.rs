@@ -867,7 +867,7 @@ impl TileProject {
     ///
     /// The scene does not convert, or a file can't be written.
     pub fn save_for_kit(&self, kit_dir: &Path) -> Result<(String, TedReport)> {
-        self.save_for_kit_scene(kit_dir, self.scene.save(), vec![])
+        self.save_for_kit_scene(kit_dir, self.scene.save(), vec![], &[])
     }
 
     /// [`Self::save_for_kit`] with the scene given as text (the project's with a feature's polyfill applied that needs more than the
@@ -876,7 +876,99 @@ impl TileProject {
     /// # Errors
     ///
     /// As `save_for_kit`.
-    pub fn save_for_kit_scene(&self, kit_dir: &Path, scene: Vec<u8>, polyfilled: Vec<String>) -> Result<(String, TedReport)> {
+    /// The scene layer with this `wce_layer_id`.
+    #[must_use]
+    pub fn layer_by_key(&self, key: &str) -> Option<usize> {
+        self.scene.find_all("LayerInstance").into_iter().find(|&e| self.scene.doc().get(e, "wce_layer_id").as_deref() == Some(key))
+    }
+
+    /// How a scene layer exports, as TEd's export goes by it: its own `export_type`, or for a normal one in another layer that layer's
+    /// (docs/formats/tile_compile.md). `Normal`, `Off`, `Separate`, `Escalation1`..`3`.
+    #[must_use]
+    pub fn layer_export(&self, elem: usize) -> String {
+        let els = self.scene.doc().elements();
+        let mut p = Some(elem);
+        while let Some(q) = p {
+            let t = self.scene.doc().get(q, "export_type").unwrap_or_default();
+            let t = t.strip_prefix("LayerExportType_").unwrap_or(&t);
+            if !t.is_empty() && t != "Normal" {
+                return t.to_owned();
+            }
+
+            p = els[q].parent;
+        }
+
+        "Normal".to_owned()
+    }
+
+    /// Whether the terrain layers that depend on a scene layer go into an export: not when it is "Don't Export". One that is gone leaves
+    /// them in. An escalation layer has no terrain of its own (its `bmd_data_escalation<n>` holds buildings, props, effects, capture points,
+    /// no-go regions and zones), so they go in with the tile's.
+    #[must_use]
+    pub fn key_exported(&self, key: &str) -> bool {
+        self.layer_by_key(key).is_none_or(|e| self.layer_export(e) != "Off")
+    }
+
+    /// The maps an export writes where the terrain layers leave some out (a layer depending on a scene layer that is not exported), by file
+    /// name; none where an export takes the tile's own. The height map keeps the tile's range, so the entry needs nothing.
+    ///
+    /// # Errors
+    ///
+    /// A map can't be read or written.
+    pub fn export_maps(&mut self) -> Result<Vec<(String, Vec<u8>)>> {
+        let Some(layers) = self.layers.as_ref() else { return Ok(vec![]) };
+        let keys: Vec<String> = [
+            layers.height.as_ref().map(|s| s.layers.iter().map(|l| l.depends.clone()).collect::<Vec<_>>()),
+            layers.blend.as_ref().map(|s| s.layers.iter().map(|l| l.depends.clone()).collect()),
+            layers.ground.as_ref().map(|s| s.layers.iter().map(|l| l.depends.clone()).collect()),
+        ].into_iter().flatten().flatten().filter(|k| !k.is_empty()).collect();
+        let off: std::collections::HashSet<String> = keys.into_iter().filter(|k| !self.key_exported(k)).collect();
+        if off.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let keep = |depends: &str| !off.contains(depends);
+        let exported = |k: &str| keep(k);
+        let mut out = vec![];
+        let layers = self.layers.as_ref().expect("checked above");
+        let (height, blend, ground) = (
+            layers.height.as_ref().is_some_and(|s| s.leaves_out(&exported)),
+            layers.blend.as_ref().is_some_and(|s| s.leaves_out(&exported)),
+            layers.ground.as_ref().is_some_and(|s| s.leaves_out(&exported)),
+        );
+
+        if blend {
+            self.load_blend()?;
+        }
+
+        if ground {
+            self.load_ground()?;
+        }
+
+        let layers = self.layers.as_ref().expect("checked above");
+        if let (true, Some(s), Some(f), Some(base)) = (height, &layers.height, &self.height, &self.height_png) {
+            let mut f = f.clone();
+            s.export_into(&mut f, &|l| keep(&l.depends));
+            let png = f.to_png(base);
+            out.push(("height_map_0.png".to_owned(), if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?));
+        }
+
+        if let (true, Some(s), Some(f)) = (blend, &layers.blend, &self.blend) {
+            let mut f = f.clone();
+            s.export_into(&mut f, &|l| keep(&l.depends));
+            out.push(("blend_map.tif".to_owned(), f.to_bytes()));
+        }
+
+        if let (true, Some(s), Some(f)) = (ground, &layers.ground, &self.ground) {
+            let mut f = f.clone();
+            s.export_into(&mut f, &|l| keep(&l.depends));
+            out.push((self.ground_file.clone(), f.to_bytes()?));
+        }
+
+        Ok(out)
+    }
+
+    pub fn save_for_kit_scene(&self, kit_dir: &Path, scene: Vec<u8>, polyfilled: Vec<String>, maps: &[(String, Vec<u8>)]) -> Result<(String, TedReport)> {
         std::fs::create_dir_all(kit_dir).map_err(|error| format!("{}: {error}", kit_dir.display()))?;
         // A file the kit has the same bytes of is left alone; one it has otherwise keeps a `.bak`.
         let write = |name: &str, bytes: &[u8]| -> Result<bool> {
@@ -911,17 +1003,30 @@ impl TileProject {
             n += 1;
         }
 
+        // An export's own maps where the terrain layers leave some out (`export_maps`).
+        let given = |name: &str| maps.iter().find(|(n, _)| n == name).map(|(_, b)| b.as_slice());
         if let (Some(field), Some(base)) = (&self.height, &self.height_png) {
-            let png = field.to_png(base);
-            write("height_map_0.png", &if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?)?;
+            match given("height_map_0.png") {
+                Some(b) => write("height_map_0.png", b)?,
+                None => {
+                    let png = field.to_png(base);
+                    write("height_map_0.png", &if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?)?
+                }
+            };
         }
 
         if let Some(blend) = &self.blend {
-            write("blend_map.tif", &blend.to_bytes())?;
+            match given("blend_map.tif") {
+                Some(b) => write("blend_map.tif", b)?,
+                None => write("blend_map.tif", &blend.to_bytes())?,
+            };
         }
 
         if let Some(ground) = &self.ground {
-            write(&self.ground_file, &ground.to_bytes()?)?;
+            match given(&self.ground_file) {
+                Some(b) => write(&self.ground_file, b)?,
+                None => write(&self.ground_file, &ground.to_bytes()?)?,
+            };
         }
 
         // The other files, as the project has them.

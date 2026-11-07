@@ -922,9 +922,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("terrain_layer", "terrain_layer <height|blend|ground> list | add <name> | work <id|base> | show <id> on|off | opacity <id> <0..1> | up <id> | down <id> | merge <id> | remove <id>",
+    c.add("terrain_layer", "terrain_layer <height|blend|ground> list | add <name> | work <id|base> | show <id> on|off | opacity <id> <0..1> | up <id> | down <id> | merge <id> | remove <id> | depend <id> <scene layer path | none>",
         "the tile's terrain layers (the Tile panel's Terrain layers section)", |e, a| {
-        let usage = "usage: terrain_layer <height|blend|ground> list | add <name> | work <id|base> | show <id> on|off | opacity <id> <0..1> | up <id> | down <id> | merge <id> | remove <id>";
+        let usage = "usage: terrain_layer <height|blend|ground> list | add <name> | work <id|base> | show <id> on|off | opacity <id> <0..1> | up <id> | down <id> | merge <id> | remove <id> | depend <id> <scene layer path | none>";
         let Some(kind) = a.first().and_then(|k| LayerType::named(k)) else { return fail(usage) };
         let Some(d) = document(e) else { return no_tile() };
         let id = a.get(2).and_then(|v| v.parse::<u64>().ok());
@@ -950,12 +950,21 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             (Some("up"), Some(id)) => d.move_terrain_layer(kind, id, 1),
             (Some("down"), Some(id)) => d.move_terrain_layer(kind, id, -1),
             (Some("merge"), Some(id)) => d.merge_terrain_layer(kind, id),
+            (Some("depend"), Some(id)) => {
+                let Some(path) = a.get(3) else { return fail(usage) };
+                let layer = if path == "none" { None } else { match d.tile().find_layer(path) { Some(l) => Some(l), None => return fail("no such scene layer") } };
+                d.set_terrain_layer_dependency(kind, id, layer);
+            }
+
             (Some("remove"), Some(id)) => d.remove_terrain_layer(kind, id),
             _ => return fail(usage),
         }
 
         let (rows, working) = if a.get(1).is_some_and(|v| v == "list") { (rows, working) } else { document(e).map_or((vec![], None), |d| d.terrain_layers(kind)) };
-        let list = rows.iter().map(|r| format!("{} {}{} {:.2} {} KB", r.id, r.name, if r.visible { "" } else { " (hidden)" }, r.opacity, r.bytes / 1024)).collect::<Vec<_>>();
+        let list = rows.iter().map(|r| {
+            let with = if r.depends.is_empty() { String::new() } else { format!(" with layer {}", r.depends) };
+            format!("{} {}{} {:.2} {} KB{with}", r.id, r.name, if r.visible { "" } else { " (hidden)" }, r.opacity, r.bytes / 1024)
+        }).collect::<Vec<_>>();
         ok(format!("working {}; {}", working.map_or("base".to_owned(), |w| w.to_string()), if list.is_empty() { "no layers".to_owned() } else { list.join("; ") }))
     });
 

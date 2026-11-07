@@ -312,6 +312,14 @@ pub fn save_exported_with(
         files.folder.insert(TED_FILE.to_owned(), Blob::Bytes(scene.into()));
     }
 
+    // The terrain layers that depend on a scene layer not exported are left out (wce_tile::terrain_layers): the maps as such an export has them.
+    if project_dir.join(wce_tile::terrain_layers::FILE).exists() {
+        let mut project = wce_tile::tile_project::TileProject::open(project_dir).map_err(|e| e.to_string())?;
+        for (name, bytes) in project.export_maps().map_err(|e| e.to_string())? {
+            files.folder.insert(name, Blob::Bytes(bytes.into()));
+        }
+    }
+
     let entry_xml = files.entry.as_ref().map(|(_, b)| b.bytes().map(|b| String::from_utf8_lossy(&b).into_owned())).transpose().map_err(|e| e.to_string())?;
     let (raw, _) = {
         wce_foundation::wce_prof!("export.read_project");

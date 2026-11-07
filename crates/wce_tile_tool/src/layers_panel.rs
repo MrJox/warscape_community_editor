@@ -5,12 +5,15 @@ use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
 use wce_scene::render_scene::DocumentId;
 use wce_tile_editor::tile_document::TileDocument;
-use wce_tile_editor::tile_document::layers::{LayerRow, LayerType};
+use wce_tile_editor::tile_document::layers::{Dependency, LayerRow, LayerType};
 
 use crate::tool::TileTool;
 
 const SECTION_TIP: &str = "Terrain made by composition: what you paint goes into the working layer and leaves the base alone, so it can be hidden, faded, reordered or removed. \
     Height layers add to what is below, texture layers go over it, ground type layers replace it. Save for Assembly Kit writes the terrain they make, as TEd has no layers.";
+
+const EXPORTS_WITH_TIP: &str = "A scene layer this one goes with: exports (Save for Assembly Kit, the game) leave it out when that layer is set \
+    to Don't Export. The editor shows it either way.";
 
 /// The section's state.
 #[derive(Default)]
@@ -116,6 +119,38 @@ impl TileTool {
 
         if gui::is_item_deactivated() {
             d.commit_terrain_layer("Layer opacity", kind);
+        }
+
+        // The scene layer it exports with.
+        let scene = d.scene_layers();
+        let dependency = d.terrain_layer_dependency(&row.depends);
+        let mut names = vec!["Always".to_owned()];
+        names.extend(scene.iter().map(|(_, n)| if n.is_empty() { "(unnamed)".to_owned() } else { n.clone() }));
+        let mut chosen = match &dependency {
+            Dependency::On { elem, .. } => scene.iter().position(|(e, _)| e == elem).map_or(0, |i| i as i32 + 1),
+            _ => 0,
+        };
+
+        gui::row_tip("Exports with", EXPORTS_WITH_TIP);
+        let items = names.iter().map(String::as_str).collect::<Vec<_>>();
+        if gui::combo("##layer_depends", &mut chosen, &items) {
+            d.set_terrain_layer_dependency(kind, row.id, (chosen > 0).then(|| scene[chosen as usize - 1].0));
+        }
+
+        let note = match &dependency {
+            Dependency::Gone => Some("Its scene layer is gone: it always exports.".to_owned()),
+            Dependency::On { name, export, .. } if export == "Off" => Some(format!("Left out of exports: '{name}' is set to Don't Export.")),
+            Dependency::On { export, .. } if export.starts_with("Escalation") => {
+                Some("Escalation layers have no terrain of their own: this exports with the tile at every escalation level.".to_owned())
+            }
+
+            _ => None,
+        };
+
+        if let Some(note) = note {
+            gui::push_style_color(gui::COL_TEXT, theme::v4(theme::warning()));
+            gui::text_wrapped(&note);
+            gui::pop_style_color(1);
         }
 
         let at = rows.iter().position(|r| r.id == row.id).unwrap_or(0);

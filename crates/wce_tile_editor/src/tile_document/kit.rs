@@ -316,7 +316,8 @@ impl TileDocument {
                 }
 
                 let polyfill = format!("{n} procedural wall(s) written as their pieces in the layer '{}' ({})", wce_walls::export::KIT_LAYER, wce_walls::pack::PROC_PACK);
-                self.project().save_for_kit_scene(&target, scene, vec![polyfill])?
+                let maps = self.tile_mut().project.export_maps()?;
+                self.project().save_for_kit_scene(&target, scene, vec![polyfill], &maps)?
             }
 
             None if self.tile().has_walls() => {
@@ -331,7 +332,8 @@ impl TileDocument {
                     wce_walls::pack::replace_in_proc_pack(&w.data.join(wce_walls::pack::PROC_PACK), game, &prefix, vec![], vec![])?;
                 }
 
-                self.project().save_for_kit_scene(&target, text, vec![])?
+                let maps = self.tile_mut().project.export_maps()?;
+                self.project().save_for_kit_scene(&target, text, vec![], &maps)?
             }
         };
 

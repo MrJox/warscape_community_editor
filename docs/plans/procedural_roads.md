@@ -51,6 +51,8 @@ A height layer takes the change itself (scaled by its opacity); a blend layer wo
 layer takes the new pixel, or stays empty where it equals what is below. The fields tell the stack apart from the display with their own
 rectangle (`take_edited`, beside `take_changed`), and the composite written back is not an edit.
 
+**Export with a scene layer** (user, 2026-11-07). A layer's `depends` names a scene layer by its `wce_layer_id` (an attribute the editor gives it, which TEd never sees). An export leaves the layer out when that scene layer exports as Off, its own `export_type` or, for a normal layer, the one it is in; a scene layer that is gone leaves it in. Escalation layers cannot have terrain (one height, blend and ground map a tile), so they count as exported. Kit saves pass `export_maps` to `save_for_kit_scene`; the game export puts them over the project's files in `save_exported_with`, which every export goes through. The height map keeps the tile's range. Checked: kit and game exports with the scene layer on and off differ in the heights only (the game's mesh, normals and grass follow). This is what would let one project hold several variants of a map, terrain per level, once escalation-like levels can have terrain.
+
 **Undo goes by the stack's state.** Each edit's record in the field has a serial; `Stack::sync` keeps the state after an edit under its serial, and
 when the field comes back to a serial it knows, that state returns. Layers and the base keep their samples in 64 x 64 blocks shared between
 states, so a state costs what its edit touched. A change of the stack itself (add, show, hide, move, merge, remove, rename, opacity) is an undo
