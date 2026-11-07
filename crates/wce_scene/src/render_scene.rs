@@ -1305,18 +1305,27 @@ impl RenderScene {
         Some(self.burn_log[(start - self.burn_base) as usize..].to_vec())
     }
 
-    /// Replaces an entity's payload. An overlay replacing an overlay changes nothing the renderer's draw set keeps, a skinned instance
-    /// replacing a skinned instance neither (the renderer reads those every frame: a new pose costs nothing), and a terrain replacing a
-    /// terrain only changes the terrain revision.
+    /// A skinned entity's pose, every frame while it animates: its matrix and its instance. Nothing moves on: the renderer reads these every
+    /// frame, and what follows `revision` (the sea bed, the terrain's list, the baked shadows) goes over the scene when it does and shows
+    /// no soldier. The first pose of another kind of entity goes through [`Self::update_payload`], which lists it.
+    pub fn update_pose(&mut self, id: EntityId, world: Float4x4, instance: SkinnedInstance) {
+        let Some(e) = self.find_mut(id) else { return };
+        e.world = world;
+        if matches!(e.payload, Payload::SkinnedInstance(_)) {
+            e.payload = Payload::SkinnedInstance(instance);
+        } else {
+            self.update_payload(id, Payload::SkinnedInstance(instance));
+        }
+    }
+
+    /// Replaces an entity's payload. An overlay replacing an overlay changes nothing the renderer's draw set keeps, and a terrain replacing
+    /// a terrain only changes the terrain revision.
     pub fn update_payload(&mut self, id: EntityId, payload: Payload) {
         let Some(e) = self.find_mut(id) else { return };
         let overlay_only = matches!((&e.payload, &payload), (Payload::Overlay(_), Payload::Overlay(_)));
         let terrain_only = matches!((&e.payload, &payload), (Payload::Terrain(_), Payload::Terrain(_)));
-        let skinned_only = matches!((&e.payload, &payload), (Payload::SkinnedInstance(_), Payload::SkinnedInstance(_)));
         e.payload = payload;
-        if skinned_only {
-            self.revision += 1;
-        } else if overlay_only {
+        if overlay_only {
             self.revision += 1;
             self.log_overlay(id);
         } else if terrain_only {
@@ -1413,6 +1422,21 @@ impl RenderScene {
     /// every frame a building moves).
     pub fn remove_range(&mut self, ids: std::ops::Range<EntityId>) {
         self.remove_ranges(std::slice::from_ref(&ids));
+    }
+
+    /// Removes these entities, as the ranges of ids they make ([`Self::remove_ranges`]).
+    pub fn remove_ids(&mut self, ids: &[EntityId]) {
+        let mut sorted = ids.to_vec();
+        sorted.sort_unstable();
+        let mut ranges: Vec<std::ops::Range<EntityId>> = vec![];
+        for id in sorted {
+            match ranges.last_mut() {
+                Some(r) if r.end == id => r.end = id + 1,
+                _ => ranges.push(id..id + 1),
+            }
+        }
+
+        self.remove_ranges(&ranges);
     }
 
     /// Removes the entities with ids in any of `ranges` (one pass for all: a streamed map context drops several chunks a frame).

@@ -6,7 +6,7 @@ use wce_foundation::math::{Float3, Float4x4, translation};
 use wce_scene::clouds::{CloudField, cloud_texture, generate_clouds};
 use wce_scene::environment::{blend_environments, build_scurve, colour_matrix, parse_graphics_options, read_environment};
 use wce_scene::half::f32_to_f16;
-use wce_scene::render_scene::{Kind, LfMap, MeshInstance, Overlay, Payload, RenderScene, SourceRef, StructureChange, Terrain, overlay_colour};
+use wce_scene::render_scene::{Kind, LfMap, MeshInstance, Overlay, Payload, RenderScene, SkinnedInstance, SourceRef, StructureChange, Terrain, overlay_colour};
 
 const ENVIRONMENT: &str = "<ENVIRONMENT>\
 <LIGHTING sun_direction_azimuth='90' sun_direction_elevation='0' sun_colour='rgb(1,0.5,0.25)' use_custom_ambient_cube_colours='false'/>\
@@ -106,6 +106,32 @@ fn render_scene() {
     assert_eq!(scene.moved_since(&mut cursor), Some(vec![mesh]));
     assert_eq!(scene.moved_since(&mut cursor), Some(vec![]));
     assert_eq!(scene.moved_since(&mut 99), None);
+
+    // A pose moves nothing on, past the first, which lists the entity; ids removed together are ranges, which the renderer can follow.
+    let skinned = || SkinnedInstance {
+        parts: vec![],
+        palette: Default::default(),
+        bones: Default::default(),
+        casts_shadow: true,
+        faction_colours: [[0.0; 3]; 4],
+        faction_scale: 0.0,
+    };
+
+    let (soldier, other) = (scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), source), scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), source));
+    scene.update_pose(soldier, Float4x4::IDENTITY, skinned());
+    let (revision, structure) = (scene.revision(), scene.structure_revision());
+    let mut moved = 0;
+    scene.moved_since(&mut moved);
+    let pose = translation(Float3::new(2.0, 0.0, 0.0));
+    scene.update_pose(soldier, pose, skinned());
+    assert_eq!((scene.revision(), scene.structure_revision()), (revision, structure));
+    assert_eq!(scene.find(soldier).map(|e| e.world), Some(pose));
+    assert_eq!(scene.moved_since(&mut moved), Some(vec![]));
+
+    let mut changes = 0;
+    scene.structure_since(&mut changes);
+    scene.remove_ids(&[other, soldier]);
+    assert_eq!(scene.structure_since(&mut changes), Some(vec![StructureChange::Removed(soldier..other + 1)]));
 
     scene.clear_layer_except(layer, terrain);
     assert_eq!(scene.entities().len(), 1);

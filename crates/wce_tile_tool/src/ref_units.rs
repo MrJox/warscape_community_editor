@@ -125,9 +125,9 @@ impl RefUnits {
     }
 
     fn clear(&mut self, e: &mut Editor) {
-        for id in self.entities.drain(..) {
-            e.scene.remove(id);
-        }
+        // Not one by one: each would go over the scene, and a removal of that kind has the renderer build all its draws again.
+        e.scene.remove_ids(&self.entities);
+        self.entities.clear();
     }
 
     fn load_catalog(&mut self, e: &Editor) {
@@ -351,8 +351,7 @@ impl RefUnits {
                 figure.instance.faction_colours = [c[0], c[1], c[2], figure.instance.faction_colours[3]];
             }
 
-            e.scene.update_world(entity, world);
-            e.scene.update_payload(entity, Payload::SkinnedInstance(figure.instance));
+            e.scene.update_pose(entity, world, figure.instance);
         }
     }
 
