@@ -597,6 +597,7 @@ fn export_menu(sc: &TedScene, layer: usize, escalation: bool, actions: &mut Vec<
 
 /// A prefab action asked from a row's menu.
 enum PrefabAction {
+    OpenInTool(usize),
     Edit(usize),
     Apply,
     Cancel,
@@ -640,6 +641,9 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             gui::set_scroll_y((y - (h - row_h) * 0.5).max(0.0));
         }
     }
+
+    // A prefab is edited in the Prefab tool when the build has it (else in the tile, as a copy).
+    let prefab_tool = tool.profile == crate::tool::Profile::Tile && e.with_tool::<crate::prefab_tool::PrefabTool, _>(|_, _| ()).is_some();
 
     {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
@@ -794,7 +798,11 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     }
 
                     Some(_) => {
-                        if gui::menu_item("Edit prefab", None, false, edited_copy.is_none()) {
+                        if prefab_tool {
+                            if gui::menu_item("Open in Prefab tool", None, false, true) {
+                                actions.push(RowAction::Prefab(PrefabAction::OpenInTool(el)));
+                            }
+                        } else if gui::menu_item("Edit prefab", None, false, edited_copy.is_none()) {
                             actions.push(RowAction::Prefab(PrefabAction::Edit(el)));
                         }
 
@@ -1135,6 +1143,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
     // The prefab actions need the editor (the library, the selection).
     for p in prefab_actions {
         let result = match p {
+            PrefabAction::OpenInTool(el) => tool.open_in_prefab_tool(e, el),
             PrefabAction::Edit(el) => tool.edit_prefab(e, el),
             PrefabAction::Apply => tool.apply_prefab_edit(e),
             PrefabAction::Cancel => tool.cancel_prefab_edit(e),

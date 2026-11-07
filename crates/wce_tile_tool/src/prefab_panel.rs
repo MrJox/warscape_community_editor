@@ -365,23 +365,8 @@ impl TileTool {
         let key = self.prefab_edit.as_ref().map(|p| p.2.clone()).unwrap_or_default();
         let entry = lib.get(&key).ok_or_else(|| format!("no prefab '{key}'"))?.clone();
         let children = d.children_text(copy);
-
-        // The other references keep their overrides (what they differ by from the prefab before the edit), on top of the new contents; one
-        // that differs by more keeps its own contents. TEd's copies get the new contents.
         let old = lib.contents(&key).unwrap_or_default();
-        let mut each = vec![];
-        let mut kept = 0;
-        for c in d.prefab_copies(&key).into_iter().filter(|&c| c != copy) {
-            if !d.is_prefab_reference(c) {
-                each.push((c, children.clone()));
-                continue;
-            }
-
-            match wce_tile::prefab_refs::overrides(&d.children_text(c), &old).and_then(|ovs| wce_tile::prefab_refs::apply(&children, &ovs)) {
-                Ok((text, _)) => each.push((c, text)),
-                Err(_) => kept += 1,
-            }
-        }
+        let (each, kept) = copies_with(d, &key, &old, &children, Some(copy));
 
         // The edit goes into the projects' prefab (its .wce), never into the kit.
         let projects = prefabs::prefab_root(&Self::workspace_dir(e).join("raw_data"));
@@ -563,6 +548,73 @@ impl TileTool {
 pub(crate) const PREFAB_ICON: &str = icons::COMPONENT;
 
 /// The colour of an edited copy's row marks.
+/// The new contents of a tile's copies of a prefab whose contents went from `old` to `new` (but `skip`'s): the references keep their
+/// overrides (what they differ by from the old contents) on top of the new ones, TEd's copies get the new ones; a reference that differs by
+/// more keeps its own contents (counted).
+fn copies_with(d: &TileDocument, key: &str, old: &[u8], new: &[u8], skip: Option<usize>) -> (Vec<(usize, Vec<u8>)>, usize) {
+    let mut each = vec![];
+    let mut kept = 0;
+    for c in d.prefab_copies(key).into_iter().filter(|&c| Some(c) != skip) {
+        if !d.is_prefab_reference(c) {
+            each.push((c, new.to_vec()));
+            continue;
+        }
+
+        match wce_tile::prefab_refs::overrides(&d.children_text(c), old).and_then(|ovs| wce_tile::prefab_refs::apply(new, &ovs)) {
+            Ok((text, _)) => each.push((c, text)),
+            Err(_) => kept += 1,
+        }
+    }
+
+    (each, kept)
+}
+
+impl TileTool {
+    /// Opens the prefab of a copy in the Prefab tool (and switches to it).
+    ///
+    /// # Errors
+    ///
+    /// Not a copy of a prefab, no Prefab tool in this build, or it can't open it.
+    pub fn open_in_prefab_tool(&mut self, e: &mut Editor, copy: usize) -> Result<String, String> {
+        let d = document(e).ok_or("no tile open")?;
+        let key = self.prefab_of(d, copy).ok_or("not a copy of a prefab")?;
+        self.open_key_in_prefab_tool(e, &key)
+    }
+
+    pub(crate) fn open_key_in_prefab_tool(&mut self, e: &mut Editor, key: &str) -> Result<String, String> {
+        let r = e.with_tool::<crate::prefab_tool::PrefabTool, _>(|p, e| p.open_prefab(e, key)).ok_or("there is no Prefab tool in this build")??;
+        e.set_tool(crate::prefab_tool::PREFAB_TOOL_ID);
+        Ok(r)
+    }
+
+    /// After a prefab was saved elsewhere (the Prefab tool): every open tile's copies of it get its new contents (`copies_with`), one undo
+    /// entry in each tile that has any. `old`: its contents before. Returns how many copies changed.
+    pub(crate) fn refresh_copies(&mut self, e: &mut Editor, key: &str, old: &[u8]) -> usize {
+        let Some(new) = self.prefab_library(e).contents(key) else { return 0 };
+        let mut n = 0;
+        for id in e.docs.order().to_vec() {
+            if e.docs.tool_of(id) != crate::tool::TILE_TOOL_ID {
+                continue;
+            }
+
+            let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { continue };
+            let (each, kept) = copies_with(d, key, old, &new, None);
+            if kept != 0 {
+                log::warn(format!("{}: {kept} reference(s) to {key} differ from it by more than values: they keep their own contents", d.title()));
+            }
+
+            if each.iter().any(|(c, text)| d.children_text(*c) != *text) {
+                match d.set_each_group_children(&each, &format!("Update the copies of {key}")) {
+                    Ok(m) => n += m,
+                    Err(why) => log::warn(format!("{}: {why}", d.title())),
+                }
+            }
+        }
+
+        n
+    }
+}
+
 pub(crate) fn edited_colour() -> [f32; 4] {
     theme::palette().highlight
 }

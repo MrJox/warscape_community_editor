@@ -1932,6 +1932,10 @@ impl TileDocument {
                 self.revert_overrides(e);
             }
 
+            if self.tile().prefab_tool_ready && ins.button("open_in_prefab_tool", "Open in Prefab tool", true) {
+                self.tile_mut().prefab_open_request = Some(key.clone());
+            }
+
             self.prefab_ground_rows(e, ins);
             return;
         }

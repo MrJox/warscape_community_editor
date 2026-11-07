@@ -3267,6 +3267,23 @@ impl Tool for TileTool {
 
     fn update(&mut self, e: &mut Editor) {
         self.update_launch(e);
+
+        // The Inspector's "Open in Prefab tool".
+        if self.profile == Profile::Tile {
+            let ready = e.with_tool::<crate::prefab_tool::PrefabTool, _>(|_, _| ()).is_some();
+            let asked = document(e).and_then(|d| {
+                d.set_prefab_tool_ready(ready);
+                d.take_prefab_open_request()
+            });
+
+            if let Some(key) = asked {
+                let r = self.open_key_in_prefab_tool(e, &key);
+                if let Err(why) = r {
+                    e.status(&why, true);
+                }
+            }
+        }
+
         if document(e).is_some_and(|d| d.wants_road_prefabs()) {
             let lib = self.prefab_library(e);
             if let Some(d) = document(e) {

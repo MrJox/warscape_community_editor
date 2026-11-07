@@ -5,7 +5,7 @@ prefabs are the editor's (`<key>.wce` in the projects' `art/prefabs`), and they 
 tile, a prefab's height layer shows in the reference's own settings (the Inspector), not in the tile's Terrain layers list. The goal is
 prefabs that stop needing hand-made meshes that fake the terrain.
 
-State: planned 2026-11-07, decisions taken with the user (the list at the end). Steps 1 to 4 done (2026-11-07/08).
+State: planned 2026-11-07, decisions taken with the user (the list at the end). Steps 1 to 7 done (2026-11-07/08): the tool works behind the `prefab` feature; step 8 and the follow-ups below are open.
 
 ## Why
 

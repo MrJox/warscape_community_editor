@@ -33,13 +33,19 @@ pub const PREFAB_TOOL_ID: &str = "prefab";
 pub const NORMALIZE_ATTR: &str = "wce_stage_normalize";
 pub const FEATHER_ATTR: &str = "wce_stage_feather";
 
+/// What the stage's ground's size was found for: the stage, its history's and terrain's versions, the flag and the feather's bits.
+type SizeKey = (DocumentId, u64, bool, u32);
+
 /// The prefab open on the stage.
 struct Open {
     doc: DocumentId,
     key: String,
 
-    /// Set by the stage's save: the libraries are scanned again.
+    /// Set by the stage's save: the libraries are scanned again, and the open tiles' copies follow.
     saved: Arc<AtomicBool>,
+
+    /// Its contents as the file had them (references filled in) when opened or last saved: what the tiles' copies differ from.
+    old: Vec<u8>,
 }
 
 pub struct PrefabTool {
@@ -50,6 +56,9 @@ pub struct PrefabTool {
 
     /// The tiles hidden while the stage shows (the Tile tool shows them again).
     pub(crate) hidden: Vec<DocumentId>,
+
+    /// The stage's ground's size, and what it was found for (the stage, its history's and terrain's versions, the flag and feather).
+    ground_size: (SizeKey, Option<(f64, f64)>),
 
     // The Prefabs panel.
     filter: String,
@@ -62,7 +71,7 @@ impl Default for PrefabTool {
     fn default() -> Self {
         let mut tile = TileTool::default();
         tile.profile = Profile::Prefab;
-        Self { tile, stage: StageSettings::default(), open: None, hidden: vec![], filter: String::new(), new_name: String::new(), new_folder: String::new(), status: String::new() }
+        Self { tile, stage: StageSettings::default(), open: None, hidden: vec![], ground_size: ((0, 0, false, 0), None), filter: String::new(), new_name: String::new(), new_folder: String::new(), status: String::new() }
     }
 }
 
@@ -135,7 +144,7 @@ impl PrefabTool {
 
         let id = e.docs.add(&mut e.scene, Box::new(doc), PREFAB_TOOL_ID);
         e.docs.set_active(id);
-        self.open = Some(Open { doc: id, key: entry.key.clone(), saved });
+        self.open = Some(Open { doc: id, key: entry.key.clone(), saved, old: prefab.children_text });
         self.show_stage(e);
         e.pending_focus = Some("Scene".to_owned());
         Ok(format!("{} on the stage{}", entry.key, if entry.wce { "" } else { " (from the Assembly Kit: a save makes the projects' copy)" }))
@@ -229,8 +238,17 @@ impl PrefabTool {
     }
 
     fn after_save(&mut self, e: &mut Editor) {
-        if self.open.as_ref().is_some_and(|o| o.saved.swap(false, Ordering::Relaxed)) {
-            self.rescan(e);
+        let Some(open) = self.open.as_ref().filter(|o| o.saved.swap(false, Ordering::Relaxed)) else { return };
+        let (key, old) = (open.key.clone(), open.old.clone());
+        self.rescan(e);
+        let n = e.with_tool::<TileTool, _>(|t, e| t.refresh_copies(e, &key, &old)).unwrap_or(0);
+        if n != 0 {
+            e.status(&format!("{key} saved: {n} cop{} in the open tiles updated", if n == 1 { "y" } else { "ies" }), false);
+        }
+
+        let new = self.library(e).contents(&key).unwrap_or_default();
+        if let Some(open) = &mut self.open {
+            open.old = new;
         }
     }
 
@@ -370,8 +388,14 @@ impl PrefabTool {
             }
         }
 
-        let has = d.stage_terrain(normalize, f64::from(feather)).map(|t| (f64::from(t.width) * t.spacing, f64::from(t.height) * t.spacing));
-        gui::text_disabled(&match has {
+        // Found again after an edit only.
+        let key = (d.id(), d.history().version() ^ d.tile().terrain_version().rotate_left(32), normalize, feather.to_bits());
+        if self.ground_size.0 != key {
+            let size = d.stage_terrain(normalize, f64::from(feather)).map(|t| (f64::from(t.width) * t.spacing, f64::from(t.height) * t.spacing));
+            self.ground_size = (key, size);
+        }
+
+        gui::text_disabled(&match self.ground_size.1 {
             Some((w, h)) => format!("ground: {w:.0} x {h:.0}"),
             None => "no ground: sculpt it, or paint its footprint with the Ground brush".to_owned(),
         });

@@ -158,16 +158,18 @@ impl Tile {
             owner_of(n, self.ground_signature(g, &grid, below_of))
         }).collect::<Vec<_>>();
 
+        // A prefab's layer that changed changes its signature: stale only makes them looked at.
         let current = made.iter().map(|(_, o)| o.clone()).collect::<Vec<_>>();
-        if current != wanted || self.prefab_ground_stale {
+        if current != wanted {
             if let Err(why) = self.make_prefab_ground(&grounds, &grid) {
                 wce_foundation::log::warn(format!("prefab ground: {why}"));
             }
 
             self.layers_shown = true;
             self.roads_stale = true;
-            self.prefab_ground_stale = false;
         }
+
+        self.prefab_ground_stale = false;
 
         let version = self.project.height.as_ref().map_or(0, |f| f.version().1);
         self.prefab_ground_seen = fnv(FNV_START, &[self.history_version, self.structure_version, self.edits_seen, version, 0]);
