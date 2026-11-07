@@ -2119,11 +2119,9 @@ impl TileTool {
         }
 
         self.draw_entry_section(e, id);
-        self.draw_stats_section(e, id);
+        self.draw_debug_section(e, id);
         self.prepare_neighbours(e);
         self.context.draw(e, id);
-        gui::separator();
-        self.draw_placement_section(e, id);
         gui::separator();
         self.draw_prefabs_section(e, id);
         gui::separator();
@@ -2290,13 +2288,9 @@ impl TileTool {
         }
     }
 
-    /// Placement (docs/formats/tile_ted.md): landscape instances stand on the terrain, freeform ones keep any height. The counts, and the report
+    /// In the Debug section. Placement (docs/formats/tile_ted.md): landscape instances stand on the terrain, freeform ones keep any height. The counts, and the report
     /// of the landscape instances that are off the terrain (the selection's placement is in the right-click and Edit menus).
-    fn draw_placement_section(&mut self, e: &mut Editor, id: DocumentId) {
-        if !gui::collapsing_header("Placement", 0) {
-            return;
-        }
-
+    pub(crate) fn draw_placement_report(&mut self, e: &mut Editor, id: DocumentId) {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         let c = d.tile().placement_counts();
         gui::text(&format!("{} landscape, {} freeform, {} without a mode", c.landscape, c.freeform, c.other));
