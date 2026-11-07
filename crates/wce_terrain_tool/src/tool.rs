@@ -631,6 +631,7 @@ impl TerrainTool {
             // A campaign map's heights: its database's `unit_scale` (`wce_tile::tile_project::height_unit`).
             unit: if map_kind(&d.name).0 == MapKind::Campaign { 0.2 } else { UNIT },
             near: self.rings.near, mid: self.rings.mid, ground: self.rings.ground, far: self.view.far_ring(self.rings.far),
+            bake_ground: e.game().key != wce_vfs::GameProfile::ROME_2.key,
             raw_root: database_root(e).or_else(|| self.packs.as_ref().and_then(|p| p.raw().ok()))?, tile_roots: roots,
             game_kit: whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)), look: TerrainLook { season: self.season.clone(), ..TerrainLook::default() }, trees: true, plain: None,
             groups: None, cache: Some(cache::cache_dir()), provider: self.provider.clone(),
@@ -901,7 +902,7 @@ impl TerrainTool {
         gui::separator();
         let mut rings = gui::slider_int("full detail (cells)", &mut self.rings.near, 1, 64);
         rings |= gui::slider_int("buildings (cells)", &mut self.rings.mid, 1, 128);
-        rings |= gui::slider_int("tile ground (cells)", &mut self.rings.ground, 1, 128);
+        rings |= gui::slider_int("tile ground (cells)", &mut self.rings.ground, 1, 1024);
         rings |= gui::slider_int("LF ground (cells)", &mut self.rings.far, 1, 1024);
         if rings {
             self.view.set_rings(&self.rings);

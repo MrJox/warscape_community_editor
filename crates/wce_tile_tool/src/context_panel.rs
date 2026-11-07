@@ -65,6 +65,9 @@ pub struct ContextUi {
     pub ground: i32,
     pub far: i32,
 
+    /// The ground ring's material is baked (`ContextRequest::bake_ground`).
+    pub bake_ground: bool,
+
     pub trees: bool,
 
     /// The camera's view distance while the context shows (scene units; the game's battle camera sees 13 000), and whether the minimap
@@ -101,7 +104,7 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, packs_tree: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, ground: 24, far: 64, trees: true, view_distance: GAME_FAR_PLANE, minimap: true,
+            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, packs_tree: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, ground: 24, far: 64, bake_ground: false, trees: true, view_distance: GAME_FAR_PLANE, minimap: true,
             follow: true, placed_variation: None, status: String::new(), busy: String::new(), rx: None, view: MapView::default(), build: 0, build_look: None, db: None, maps_for: PathBuf::new(), snow_on: true,
             snow_amount: 1.0,
         }
@@ -230,7 +233,7 @@ impl ContextUi {
         let raw = self.raw_of(d)?;
         Some(ContextRequest {
             map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, near: self.near,
-            mid: self.mid, ground: self.ground, far: self.far_ring(), raw_root: raw, tile_roots: self.tile_roots.clone(), game_kit: p.game_kit.clone(), look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
+            mid: self.mid, ground: self.ground, far: self.far_ring(), raw_root: raw, tile_roots: self.tile_roots.clone(), game_kit: p.game_kit.clone(), look: d.tile().terrain_look().clone(), trees: self.trees, bake_ground: self.bake_ground, plain: d.tile().ground_material_base(),
             groups: p.entry.as_ref().map(|e| e.texture_group()),
             cache: Some(cache::cache_dir()),
             provider: self.neighbours.as_ref().map(|(_, provide)| provide.clone()).or_else(|| self.packs_fallback.clone()),
@@ -456,6 +459,7 @@ impl ContextUi {
 
         let files = e.files();
         self.game_dir = e.game().campaign_battle_map;
+        self.bake_ground = e.game().key != wce_vfs::GameProfile::ROME_2.key;
         self.refresh_maps(&raw, files.as_deref());
         let mut changed = false;
         if gui::checkbox("show the tiles around it", &mut self.shown) {
@@ -508,7 +512,7 @@ impl ContextUi {
         // The rings change the streamer's levels; the rest builds a new one.
         let mut rings = gui::slider_int("full detail (cells)", &mut self.near, 1, 64);
         rings |= gui::slider_int("buildings (cells)", &mut self.mid, 1, 128);
-        rings |= gui::slider_int("tile ground (cells)", &mut self.ground, 1, 128);
+        rings |= gui::slider_int("tile ground (cells)", &mut self.ground, 1, 1024);
         rings |= gui::slider_int("LF ground (cells)", &mut self.far, 1, 1024);
         if rings {
             let r = self.rings();

@@ -238,6 +238,10 @@ pub struct TerrainImage {
 /// of the tile entry's TEXTURE_GROUP (red, green, blue, alpha).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainMaterial {
+    /// `blend` holds the ground's colour itself (square roots of linear colour; a map context's ground ring), drawn without the climate's
+    /// texture arrays: `index`, `diffuse` and `normal_tex` are empty.
+    pub baked: bool,
+
     /// The rectangle the maps cover (the tile with its border), in the terrain entity's frame: the entity's rotation about y and its
     /// translation place it, not its scale (the tile tool's z scale is already in it); the blend shader turns the maps with the rotation.
     pub x0: f64,
@@ -309,6 +313,7 @@ impl Default for TerrainMaterial {
             z1: 1.0,
             y0: -100.0,
             y1: 1000.0,
+            baked: false,
             blend: TerrainImage::default(),
             index: TerrainImage::default(),
             alpha: TerrainImage::default(),

@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
+use wce_formats::dds_decode::{dds_decode_mip, dds_info};
 use wce_foundation::math::Float4x4;
 use wce_scene::render_scene::Payload;
 use wce_vfs::files::Files;
@@ -108,6 +109,9 @@ struct Shared {
 
     /// Whether a tile (location, variation) is a custom-mesh one (`is_custom`).
     custom_tiles: Mutex<HashMap<(String, String), bool>>,
+
+    /// The mean colours of the ground textures, for the baked ground (`Template::bake_far`): the same few hundred for every tile.
+    means: Mutex<HashMap<String, Option<[f32; 3]>>>,
     loaded: Condvar,
     stats: Mutex<Stats>,
     clock: std::sync::atomic::AtomicU64,
@@ -189,6 +193,12 @@ impl Shared {
             None => (load_any_template(&dir, &look, self.rq.trees, game_kit, self.files.clone()), false),
         });
 
+        // The bake is not cached: it takes a fraction of what reading the template does, and follows the textures.
+        let mut result = result;
+        if let (Ok(t), true) = (&mut result, self.rq.bake_ground) {
+            t.bake_far(&|path| self.mean_colour(path));
+        }
+
         // A custom-mesh tile is not cached (the cache has no place for its mesh; it opens in a fraction of a scene tile's time).
         if let (Ok(t), Some((c, k)), false) = (&result, &ck, cached)
             && t.custom.is_none()
@@ -251,6 +261,23 @@ impl Shared {
         tiles.insert(key, slot);
         self.loaded.notify_all();
         out
+    }
+
+    /// A ground texture's mean colour (linear), from one of its last mips.
+    fn mean_colour(&self, path: &str) -> Option<[f32; 3]> {
+        if let Some(known) = lock(&self.means).get(path) {
+            return *known;
+        }
+
+        let mean = self.files.as_ref().and_then(|f| f.read(path).ok()).and_then(|bytes| {
+            let image = dds_decode_mip(&bytes, dds_info(&bytes).mips.saturating_sub(4)).ok()?;
+            let n = (image.px.len() / 4).max(1) as f32;
+            let sum = image.px.chunks_exact(4).fold([0.0f32; 3], |s, p| std::array::from_fn(|k| s[k] + (f32::from(p[k]) / 255.0).powf(2.2)));
+            Some(sum.map(|v| v / n))
+        });
+
+        lock(&self.means).insert(path.to_owned(), mean);
+        mean
     }
 
     fn worker(self: Arc<Self>, tx: Sender<Built>) {
@@ -326,7 +353,7 @@ impl Streamer {
         let rings = [rq.near, rq.mid, rq.ground, rq.far];
         let frame_s = started.elapsed().as_secs_f64();
         let shared = Arc::new(Shared {
-            pool, frame: Mutex::new((frame, 0)), rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), custom_tiles: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
+            pool, frame: Mutex::new((frame, 0)), rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), custom_tiles: Mutex::default(), means: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
             clock: Default::default(), stop: AtomicBool::new(false),
         });
 

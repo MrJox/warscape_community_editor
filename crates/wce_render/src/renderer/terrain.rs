@@ -34,6 +34,91 @@ const BLEND_PS: &str = "dx11_sm_4_0_rigidterrain.hlsl_ps_ps30_blend";
 const RESOLVE_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_terrain_to_gbuffer";
 const RESOLVE_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_terrain_to_gbuffer_ss";
 const SHADOW_NEW_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_shadow_new";
+
+/// The blend pass of a baked material (`TerrainMaterial::baked`), in place of ps30_blend behind the same vs30_blend: the colour from one
+/// map, no texture arrays. As ps30_blend (its DXBC) up to the colour: the world position from the depth, the rectangle, the rotation table,
+/// the alpha, the tile's normal over the LF's, and the three targets, premultiplied. Its light parameters are those of the first slot
+/// (ASSUMPTION: from where this draws, the mix of them is not worth a map), and it adds no detail normals or mid-distance strength.
+const BAKED_BLEND_PS: &str = r"
+cbuffer camera_VS_PS : register(b0) {
+    float4 camera_before[21];
+    float4 inv_view_projection[4];
+    float4 camera_between[2];
+    float4 g_screen_size;
+    float g_vpos_texel_offset;
+    float3 camera_pad;
+    float4 g_viewport_dimensions;
+};
+
+cbuffer vs_height_map_cb : register(b1) {
+    float4 height_before[3];
+    float2 g_world_dimensions;
+};
+
+Texture2D t_depth : register(t0);
+Texture2D t_alpha : register(t1);
+Texture2D t_colour : register(t2);
+Texture2D t_normal : register(t3);
+Texture2D t_lf_normal : register(t4);
+Texture2D t_light_params : register(t5);
+SamplerState s_point : register(s0);
+SamplerState s_clamp : register(s1);
+SamplerState s_wrap : register(s2);
+
+static const float4 TURNS[4] = { float4(1, 0, 0, 0), float4(0, 1, -1, 0), float4(-1, 0, 0, 0), float4(0, -1, 1, 0) };
+
+struct In {
+    float4 position : SV_Position;
+    float2 world : TEXCOORD0;
+    nointerpolation float4 rect : TEXCOORD1;
+    nointerpolation float2 turn : TEXCOORD2;
+    nointerpolation float4 layers : TEXCOORD3;
+};
+
+struct Out {
+    float4 colour : SV_Target0;
+    float4 normal : SV_Target1;
+    float4 light : SV_Target2;
+};
+
+float2 two_channel(float4 n) {
+    return (n.wy + 0.001961) * 2.0 - 1.0;
+}
+
+Out main(In i) {
+    float2 pixel = i.position.xy + g_vpos_texel_offset;
+    float2 screen = pixel * g_viewport_dimensions.zw;
+    float depth = t_depth.SampleLevel(s_point, pixel * g_screen_size.zw, 0).x;
+    float4 p = float4(screen * float2(2.0, -2.0) + float2(-1.0, 1.0), depth, 1.0);
+    float4 q = float4(dot(p, inv_view_projection[0]), dot(p, inv_view_projection[1]), dot(p, inv_view_projection[2]), dot(p, inv_view_projection[3]));
+    float3 world = q.xyz / q.w;
+    float2 lo = min(i.rect.xy, i.rect.zw), hi = max(i.rect.xy, i.rect.zw);
+    if (any(world.xz < lo) || any(world.xz > hi)) {
+        discard;
+    }
+
+    float2 centred = (world.xz - lo) / (hi - lo) - 0.5;
+    float4 turn = TURNS[(int)floor(i.turn.x + 0.1)];
+    float2 uv = float2(centred.x * turn.x + centred.y * turn.z, centred.x * turn.y + centred.y * turn.x) + 0.5;
+    float alpha = t_alpha.Sample(s_clamp, uv).x * 1.1 - 0.1;
+    if (alpha < 0.0) {
+        discard;
+    }
+
+    float3 colour = t_colour.Sample(s_clamp, uv).rgb;
+    float2 own = two_channel(t_normal.Sample(s_wrap, uv));
+    float3 tile = normalize(float3(own.y * turn.y + own.x * turn.x, sqrt(max(1.0 - dot(own, own), 0.0)), own.y * turn.x + own.x * turn.z));
+    float2 lf = two_channel(t_lf_normal.Sample(s_wrap, world.xz / g_world_dimensions * float2(1.0, -1.0)));
+    float3 under = normalize(float3(lf.x, sqrt(max(1.0 - dot(lf, lf), 0.0)), -lf.y));
+    float3 normal = normalize(float3(under.x + tile.x, under.y, under.z + tile.z));
+    float2 light = t_light_params.SampleLevel(s_point, float2(0.5 / 16.0, 0.5), 0).xy;
+    Out o;
+    o.colour = float4(colour * colour * alpha, alpha);
+    o.normal = float4(normal * alpha, alpha);
+    o.light = float4(light * alpha, alpha, 0.0);
+    return o;
+}
+";
 const SHADOW_TERRAIN_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_shadow";
 
 /// The grid vertex (slot 0) and the instance's three world rows (slot 1), for geom_new and shadow_new.
@@ -295,12 +380,13 @@ fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &Terrain
 
     // The blend and index maps change under a paint stroke: written in place, not made again.
     let patchable = match (&m.blend.rgba, &m.index.rgba) {
-        (Some(b), Some(i)) => crate::texture::PatchableRgba::new(dev, m.blend.w, m.blend.h, b).zip(crate::texture::PatchableRgba::new(dev, m.index.w, m.index.h, i)),
+        (Some(b), Some(i)) if !m.baked => crate::texture::PatchableRgba::new(dev, m.blend.w, m.blend.h, b).zip(crate::texture::PatchableRgba::new(dev, m.index.w, m.index.h, i)),
         _ => None,
     };
 
     let (blend, index) = match &patchable {
         Some((b, i)) => (b.texture.clone(), i.texture.clone()),
+        None if m.baked => (img(&m.blend, "colour"), Texture::default()),
         None => (img(&m.blend, "blend"), img(&m.index, "index")),
     };
 
@@ -354,10 +440,12 @@ fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &Terrain
         t
     };
 
-    g.diffuse = array(&m.diffuse, true);
-    g.normals = array(&m.normal_tex, false);
-    if g.diffuse.srv.is_none() || g.normals.srv.is_none() {
-        errors.push("terrain material: the texture arrays did not build".to_owned());
+    if !m.baked {
+        g.diffuse = array(&m.diffuse, true);
+        g.normals = array(&m.normal_tex, false);
+        if g.diffuse.srv.is_none() || g.normals.srv.is_none() {
+            errors.push("terrain material: the texture arrays did not build".to_owned());
+        }
     }
 
     // s_light_params: 16 texels (smoothness, reflectivity) per slot.
@@ -1537,6 +1625,10 @@ impl Renderer {
             }
         }
 
+        // The baked materials last: they change the shader once.
+        by_material.sort_by_key(|(m, _, _, _)| m.baked);
+        let baked_ps = if by_material.iter().any(|(m, _, _, _)| m.baked) { self.own_shader("wce_terrain_baked_blend", BAKED_BLEND_PS, "main", "ps_4_0") } else { None };
+
         // The constants every material shares, set once (they were rebuilt per material: a map context's 192 tiles spent 11 ms a frame
         // building and comparing the 32 KB mapping array); per material only its four layers' scales change below.
         let cbs = &mut self.cbs;
@@ -1638,7 +1730,12 @@ impl Renderer {
                 ctx.set_render_targets(&acc, s1_dsv.as_ref());
             }
         };
+        let mut baked_world = None;
         for (k, (m, lf, boxes, snow)) in by_material.into_iter().enumerate() {
+            if m.baked && baked_ps.is_none() {
+                break;
+            }
+
             let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
             if snow {
                 self.ctx.set_depth_stencil_state(self.terrain.ds_stencil_snow.as_ref(), 3);
@@ -1649,26 +1746,57 @@ impl Renderer {
             // The LF map's normals, at uv = (x, -z) / g_world_dimensions (wrapping); a flat normal without one.
             let lf_normal = lf.as_ref().and_then(|lf| self.terrain.lf.get(&lf.id)).and_then(|l| l.normal.srv.clone()).or_else(|| g.lf_normal.srv.clone());
             let world = lf.as_ref().filter(|lf| lf.normal.w > 0).map_or([1.0e6, 1.0e6], |lf| [lf.normal_world[0] * u, lf.normal_world[1] * u]);
-            self.cbs.set_f("vs_height_map_cb", "g_world_dimensions", &world);
-            let mut arr = [0.0f32; 16];
-            for l in 0..4 {
-                arr[l * 4] = super::tiling(m.pixel_scale[l], super::ORIGIN_REACH * u);
-                arr[l * 4 + 1] = m.outfield_scale[l];
-                arr[l * 4 + 2] = m.mid_strength[l];
+            match baked_ps.as_ref().filter(|_| m.baked) {
+                Some(ps) => {
+                    // The first of them: the shader and what they share. They read no scales, and their LF rarely changes.
+                    if baked_world != Some(world) {
+                        if baked_world.is_none() {
+                            self.bind(ps);
+                            null_ps_srvs(&self.ctx, 16);
+                            bind_srv(&self.ctx, ps, "t_depth", self.gbuffer.channels[3].srv.as_ref());
+                            bind_sampler(&self.ctx, ps, "s_point", self.states.s_clamp_point.as_ref());
+                            bind_sampler(&self.ctx, ps, "s_clamp", self.states.s_clamp_aniso.as_ref());
+                            bind_sampler(&self.ctx, ps, "s_wrap", self.states.s_wrap_aniso.as_ref());
+                        }
+
+                        baked_world = Some(world);
+                        self.cbs.set_f("vs_height_map_cb", "g_world_dimensions", &world);
+                        self.upload();
+                    }
+
+                    let ctx = &self.ctx;
+                    bind_srv(ctx, ps, "t_alpha", g.alpha.srv.as_ref());
+                    bind_srv(ctx, ps, "t_colour", g.blend.srv.as_ref());
+                    bind_srv(ctx, ps, "t_normal", g.normal.srv.as_ref());
+                    bind_srv(ctx, ps, "t_lf_normal", lf_normal.as_ref());
+                    bind_srv(ctx, ps, "t_light_params", g.light_params.as_ref());
+                }
+
+                None => {
+                    self.cbs.set_f("vs_height_map_cb", "g_world_dimensions", &world);
+                    let mut arr = [0.0f32; 16];
+                    for l in 0..4 {
+                        arr[l * 4] = super::tiling(m.pixel_scale[l], super::ORIGIN_REACH * u);
+                        arr[l * 4 + 1] = m.outfield_scale[l];
+                        arr[l * 4 + 2] = m.mid_strength[l];
+                    }
+
+                    // Elements 0 .. 3 (the rest stays zero).
+                    self.cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &arr);
+                    self.upload();
+                    let ctx = &self.ctx;
+                    bind_srv(ctx, &blend_ps, "s_alpha_map", g.alpha.srv.as_ref());
+                    bind_srv(ctx, &blend_ps, "s_blend_map", g.blend.srv.as_ref());
+                    bind_srv(ctx, &blend_ps, "s_index_map", g.index.srv.as_ref());
+                    bind_srv(ctx, &blend_ps, "s_normal_map", g.normal.srv.as_ref());
+                    bind_srv(ctx, &blend_ps, "s_lf_normal_map", lf_normal.as_ref());
+                    bind_srv(ctx, &blend_ps, "s_light_params", g.light_params.as_ref());
+                    bind_srv(ctx, &blend_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
+                    bind_srv(ctx, &blend_ps, "t_normal_array", g.normals.srv.as_ref());
+                }
             }
 
-            // Elements 0 .. 3 (the rest stays zero).
-            self.cbs.set_f("ps_texture_array_cb", "g_blend_pixel_scale_array", &arr);
-            self.upload();
             let ctx = &self.ctx;
-            bind_srv(ctx, &blend_ps, "s_alpha_map", g.alpha.srv.as_ref());
-            bind_srv(ctx, &blend_ps, "s_blend_map", g.blend.srv.as_ref());
-            bind_srv(ctx, &blend_ps, "s_index_map", g.index.srv.as_ref());
-            bind_srv(ctx, &blend_ps, "s_normal_map", g.normal.srv.as_ref());
-            bind_srv(ctx, &blend_ps, "s_lf_normal_map", lf_normal.as_ref());
-            bind_srv(ctx, &blend_ps, "s_light_params", g.light_params.as_ref());
-            bind_srv(ctx, &blend_ps, "t_diffuse_array", g.diffuse.srv.as_ref());
-            bind_srv(ctx, &blend_ps, "t_normal_array", g.normals.srv.as_ref());
             if let Some(first) = box_first[k] {
                 draw_boxes(ctx, (boxes.len() / 16) as u32, first, snow);
                 self.draw_stats.draw_calls += 1;

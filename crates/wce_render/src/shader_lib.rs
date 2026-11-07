@@ -86,7 +86,26 @@ impl ShaderLibrary {
 
         let bytes = read(&format!("fxc/{name}.fxc")).map_err(RenderError)?;
         let fxc = Fxc::decode(&mut Cursor::new(&bytes), &None).map_err(|error| RenderError(format!("{name}: {error}")))?;
-        let mut s = GameShader { name: name.to_owned(), bytecode: fxc.shader().clone(), ..Default::default() };
+        self.create(cbs, name, fxc.shader().clone())
+    }
+
+    /// A shader of the editor's own, compiled by `compile` on first use, bound by its reflected names as the game's are.
+    ///
+    /// # Errors
+    ///
+    /// Fails if it can't be compiled, reflected, or created.
+    pub fn own(&mut self, cbs: &mut ConstantBuffers, name: &str, compile: impl FnOnce() -> Result<Vec<u8>, RenderError>) -> Result<Rc<GameShader>, RenderError> {
+        if let Some(shader) = self.cache.get(name) {
+            return Ok(shader.clone());
+        }
+
+        let code = compile()?;
+        self.create(cbs, name, code)
+    }
+
+    /// A shader from its bytecode.
+    fn create(&mut self, cbs: &mut ConstantBuffers, name: &str, bytecode: Vec<u8>) -> Result<Rc<GameShader>, RenderError> {
+        let mut s = GameShader { name: name.to_owned(), bytecode, ..Default::default() };
 
         // SAFETY: the reflection reads the bytecode, alive during the block; descriptions are locals.
         unsafe {
