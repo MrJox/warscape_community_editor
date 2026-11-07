@@ -53,6 +53,19 @@ pub struct LayerRow {
     pub visible: bool,
     pub opacity: f32,
     pub bytes: usize,
+
+    /// The scene layer it exports with (`wce_layer_id`), empty: always.
+    pub depends: String,
+}
+
+/// What a terrain layer's dependency comes to, for the panel.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Dependency {
+    Always,
+    Gone,
+
+    /// The scene layer, its name and how it exports (`TileProject::layer_export`).
+    On { elem: usize, name: String, export: String },
 }
 
 /// Runs a body on the stack of a type and its field.
@@ -82,7 +95,7 @@ macro_rules! with_stack {
 
 fn rows<K: wce_tile::terrain_layers::Kind>(s: &Stack<K>) -> (Vec<LayerRow>, Option<u64>) {
     // What a procedural feature owns is not listed: it is made from the feature, and goes with it.
-    let list = s.layers.iter().filter(|l| l.owner.is_empty()).map(|l| LayerRow { id: l.id, name: l.name.clone(), visible: l.visible, opacity: l.opacity, bytes: l.bytes() }).collect();
+    let list = s.layers.iter().filter(|l| l.owner.is_empty()).map(|l| LayerRow { id: l.id, name: l.name.clone(), visible: l.visible, opacity: l.opacity, bytes: l.bytes(), depends: l.depends.clone() }).collect();
     (list, s.working)
 }
 
@@ -365,6 +378,55 @@ impl TileDocument {
                 }
             });
         });
+    }
+
+    /// Makes a layer export only with a scene layer (`None`: always). The scene layer gets its `wce_layer_id` if it has none, an undo entry of
+    /// its own; the dependency is another.
+    pub fn set_terrain_layer_dependency(&mut self, kind: LayerType, id: u64, scene_layer: Option<usize>) {
+        let key = match scene_layer {
+            None => String::new(),
+            Some(elem) => match self.tile().tscene().doc().get(elem, "wce_layer_id").filter(|k| !k.is_empty()) {
+                Some(k) => k,
+                None => {
+                    let next = self.tile().tscene().find_all("LayerInstance").into_iter()
+                        .filter_map(|e| self.tile().tscene().doc().get(e, "wce_layer_id")?.parse::<u64>().ok()).max().unwrap_or(0) + 1;
+                    if !self.set_attribute(elem, "wce_layer_id", &next.to_string()) {
+                        return;
+                    }
+
+                    next.to_string()
+                }
+            },
+        };
+
+        self.change_stack("Layer exports with", kind, |p| {
+            with_stack!(p, kind, |s, _f| {
+                if let Some(i) = s.user_index(id) {
+                    s.layers[i].depends.clone_from(&key);
+                }
+            });
+        });
+    }
+
+    /// What a dependency comes to now.
+    #[must_use]
+    pub fn terrain_layer_dependency(&self, depends: &str) -> Dependency {
+        if depends.is_empty() {
+            return Dependency::Always;
+        }
+
+        let p = self.project();
+        match p.layer_by_key(depends) {
+            None => Dependency::Gone,
+            Some(elem) => Dependency::On { elem, name: self.tile().tscene().doc().get(elem, "name").unwrap_or_default(), export: p.layer_export(elem) },
+        }
+    }
+
+    /// The scene's layers, in the scene's order, with their names.
+    #[must_use]
+    pub fn scene_layers(&self) -> Vec<(usize, String)> {
+        let sc = self.tile().tscene();
+        sc.find_all("LayerInstance").into_iter().map(|e| (e, sc.doc().get(e, "name").unwrap_or_default())).collect()
     }
 
     /// Removes a layer and what it did.
