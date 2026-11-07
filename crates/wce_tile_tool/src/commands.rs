@@ -929,7 +929,6 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let Some(d) = document(e) else { return no_tile() };
         let id = a.get(2).and_then(|v| v.parse::<u64>().ok());
         let (rows, working) = d.terrain_layers(kind);
-        let look = |id: u64| rows.iter().find(|r| r.id == id).map(|r| (r.visible, r.opacity));
         match (a.get(1).map(String::as_str), id) {
             (Some("list"), _) => {}
             (Some("add"), _) => match d.add_terrain_layer(kind, a.get(2).map_or("Layer", String::as_str), "") {
@@ -939,14 +938,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
             (Some("work"), id) => d.set_working_layer(kind, id),
             (Some("show"), Some(id)) => {
-                let Some((_, opacity)) = look(id) else { return fail("no such layer") };
-                d.set_terrain_layer_look(kind, id, a.get(3).is_some_and(|v| v == "on"), opacity);
+                d.set_terrain_layer_visible(kind, id, a.get(3).is_some_and(|v| v == "on"));
             }
 
             (Some("opacity"), Some(id)) => {
-                let Some((visible, _)) = look(id) else { return fail("no such layer") };
                 let Some(o) = a.get(3).and_then(|v| v.parse::<f32>().ok()) else { return fail(usage) };
-                d.set_terrain_layer_look(kind, id, visible, o);
+                d.set_terrain_layer_opacity(kind, id, o);
+                d.commit_terrain_layer("Layer opacity", kind);
             }
 
             (Some("up"), Some(id)) => d.move_terrain_layer(kind, id, 1),

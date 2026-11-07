@@ -4,13 +4,21 @@
 //! The tile's `HeightField`, `BlendField` and `GroundTypeField` keep holding the terrain as it shows, the composite, so that nothing reading
 //! them has to know about layers: not the renderer, nor a kit save, which is how TEd gets the terrain the layers make. A [`Stack`] sits beside
 //! each field. Nothing edits a layer directly either: every brush goes on editing the field, and [`Stack::absorb`] then finds where the field
-//! differs from what the stack composes and takes the difference into the working layer, or the base without one. That holds for undo too.
+//! differs from what the stack composes and takes the difference into the working layer, or the base without one.
+//!
+//! Undo goes by the stack's state, not the field's records: a stroke into a hidden layer leaves the field as it was, so they could not say
+//! what it did. Each edit's record has a serial (`top_id`); [`Stack::sync`] keeps the state after it under that serial, and when the field
+//! comes back to a serial it knows (an undo, a redo) it puts that state back. Samples are in blocks shared between states, so a state costs
+//! what the edit touched. A change of the stack itself is its own undo entry ([`AnyState`]).
 //!
 //! The rules are read from Warhammer III's kit (`nuln_map_reduced_wh1`). ASSUMPTION: they are inferred from the layers' data; nothing compared
 //! them with what Terry builds. A height layer adds (0 is nothing there), a blend layer goes over what is below by its weights (all 0 is
 //! nothing), and a ground type layer replaces (Terry's 16 is nothing there, an alpha of 0 here: the field keeps colours, not numbers).
 //!
 //! A stack lives in `terrain_layers.wcl` beside the tile: TEd never sees it, and a tile without layers has no such file.
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use wce_formats::png_file::{deflate_bytes, inflate_bytes};
 
@@ -22,7 +30,13 @@ use crate::height_field::HeightField;
 pub const FILE: &str = "terrain_layers.wcl";
 
 const MAGIC: &[u8; 4] = b"WCTL";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
+
+/// Pixels a side of a block of samples.
+const BLOCK: u32 = 64;
+
+/// The states a stack keeps, past which the oldest go (their edits then undo only as far as the field's records say).
+const STATES: usize = 512;
 
 /// What a layer of a type does to a pixel, and how a pixel of a field is read and written.
 pub trait Kind {
@@ -38,11 +52,20 @@ pub trait Kind {
     fn write(field: &mut Self::Field, x: u32, y: u32, pixel: &[Self::Sample]);
     fn size(field: &Self::Field) -> (u32, u32);
 
+    /// The rectangle edited since the last call.
+    fn take_edited(field: &mut Self::Field) -> Option<(u32, u32, u32, u32)>;
+
+    /// The serial of the last edit undo would take back, 0 with none.
+    fn top_id(field: &Self::Field) -> u64;
+
     /// Applies a layer's pixel over `out`.
     fn over(out: &mut [Self::Sample], layer: &[Self::Sample], opacity: f32);
 
     /// Sets a layer's pixel so that it turns `below` into `new`. `shown` is what the stack composed before the edit.
     fn absorb(layer: &mut [Self::Sample], below: &[Self::Sample], shown: &[Self::Sample], new: &[Self::Sample], opacity: f32);
+
+    /// Adds an edit to a hidden layer's pixel: what it did to what is shown, on top of what the layer holds, which the edit did not see.
+    fn onto(layer: &mut [Self::Sample], shown: &[Self::Sample], new: &[Self::Sample]);
 
     /// Changes a pixel of the base after an edit with no working layer.
     fn rebase(base: &mut [Self::Sample], shown: &[Self::Sample], new: &[Self::Sample]);
@@ -74,12 +97,24 @@ impl Kind for Height {
         (field.width(), field.height())
     }
 
+    fn take_edited(field: &mut HeightField) -> Option<(u32, u32, u32, u32)> {
+        field.take_edited()
+    }
+
+    fn top_id(field: &HeightField) -> u64 {
+        field.top_id()
+    }
+
     fn over(out: &mut [f32], layer: &[f32], opacity: f32) {
         out[0] += layer[0] * opacity;
     }
 
     fn absorb(layer: &mut [f32], _: &[f32], shown: &[f32], new: &[f32], opacity: f32) {
         layer[0] += (new[0] - shown[0]) / opacity.max(0.01);
+    }
+
+    fn onto(layer: &mut [f32], shown: &[f32], new: &[f32]) {
+        layer[0] += new[0] - shown[0];
     }
 
     fn rebase(base: &mut [f32], shown: &[f32], new: &[f32]) {
@@ -119,6 +154,14 @@ impl Kind for Blend {
         (field.width(), field.height())
     }
 
+    fn take_edited(field: &mut BlendField) -> Option<(u32, u32, u32, u32)> {
+        field.take_edited()
+    }
+
+    fn top_id(field: &BlendField) -> u64 {
+        field.top_id()
+    }
+
     fn over(out: &mut [u16], layer: &[u16], opacity: f32) {
         let cover = (layer.iter().map(|&v| f32::from(v)).sum::<f32>() / 65535.0).min(1.0) * opacity;
         if cover <= 0.0 {
@@ -151,6 +194,15 @@ impl Kind for Blend {
         for ((l, &b), &n) in layer.iter_mut().zip(below).zip(new) {
             let v = (f32::from(n) - f32::from(b) * (1.0 - cover)) / opacity.max(0.01);
             *l = v.round().clamp(0.0, 65535.0) as u16;
+        }
+    }
+
+    fn onto(layer: &mut [u16], shown: &[u16], new: &[u16]) {
+        let mut edit = [0u16; 16];
+        Self::absorb(&mut edit, shown, shown, new, 1.0);
+        let cover = (edit.iter().map(|&v| f32::from(v)).sum::<f32>() / 65535.0).min(1.0);
+        for (l, &e) in layer.iter_mut().zip(&edit) {
+            *l = (f32::from(*l) * (1.0 - cover) + f32::from(e)).round().min(65535.0) as u16;
         }
     }
 
@@ -192,6 +244,14 @@ impl Kind for Ground {
         (field.width(), field.height())
     }
 
+    fn take_edited(field: &mut GroundTypeField) -> Option<(u32, u32, u32, u32)> {
+        field.take_edited()
+    }
+
+    fn top_id(field: &GroundTypeField) -> u64 {
+        field.top_id()
+    }
+
     fn over(out: &mut [u8], layer: &[u8], opacity: f32) {
         if layer[3] > 0 && opacity >= 0.5 {
             out[..3].copy_from_slice(&layer[..3]);
@@ -201,6 +261,13 @@ impl Kind for Ground {
     fn absorb(layer: &mut [u8], below: &[u8], _: &[u8], new: &[u8], _: f32) {
         layer[..3].copy_from_slice(&new[..3]);
         layer[3] = if below[..3] == new[..3] { 0 } else { 255 };
+    }
+
+    fn onto(layer: &mut [u8], shown: &[u8], new: &[u8]) {
+        if shown[..3] != new[..3] {
+            layer[..3].copy_from_slice(&new[..3]);
+            layer[3] = 255;
+        }
     }
 
     fn rebase(base: &mut [u8], _: &[u8], new: &[u8]) {
@@ -220,7 +287,41 @@ impl Kind for Ground {
     }
 }
 
-/// A layer: its samples over a rectangle that grows as it is painted. Most of a layer is empty, and a blend layer of a whole tile is 50 MB.
+/// Samples by block, those of a block nobody touched left out. Most of a layer is empty, and a whole blend layer is 50 MB.
+#[derive(Clone, Debug, PartialEq)]
+struct Blocks<T> {
+    across: u32,
+    blocks: Vec<Option<Arc<Vec<T>>>>,
+}
+
+impl<T: Copy + Default> Blocks<T> {
+    fn new(w: u32, h: u32) -> Self {
+        let (across, down) = (w.div_ceil(BLOCK), h.div_ceil(BLOCK));
+        Self { across, blocks: vec![None; across as usize * down as usize] }
+    }
+
+    fn at(x: u32, y: u32, across: u32, channels: usize) -> (usize, usize) {
+        (((y / BLOCK) * across + x / BLOCK) as usize, ((y % BLOCK) * BLOCK + x % BLOCK) as usize * channels)
+    }
+
+    fn pixel(&self, x: u32, y: u32, channels: usize) -> Option<&[T]> {
+        let (b, i) = Self::at(x, y, self.across, channels);
+        self.blocks[b].as_ref().map(|s| &s[i..i + channels])
+    }
+
+    /// A pixel to change: its block made if it was not there, copied if a state shares it.
+    fn pixel_mut(&mut self, x: u32, y: u32, channels: usize) -> &mut [T] {
+        let (b, i) = Self::at(x, y, self.across, channels);
+        let block = self.blocks[b].get_or_insert_with(|| Arc::new(vec![T::default(); (BLOCK * BLOCK) as usize * channels]));
+        &mut Arc::make_mut(block)[i..i + channels]
+    }
+
+    fn bytes(&self) -> usize {
+        self.blocks.iter().flatten().map(|b| b.len() * size_of::<T>()).sum()
+    }
+}
+
+/// A layer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Layer<T> {
     pub id: u64,
@@ -230,80 +331,63 @@ pub struct Layer<T> {
 
     /// The procedural feature that writes it (a road), empty for a layer of the user's. Such a layer is not edited by hand.
     pub owner: String,
-    rect: [u32; 4],
-    samples: Vec<T>,
+    samples: Blocks<T>,
 }
 
 impl<T: Copy + Default> Layer<T> {
-    fn pixel(&self, x: u32, y: u32, channels: usize) -> Option<&[T]> {
-        let [x0, y0, x1, y1] = self.rect;
-        if x < x0 || x >= x1 || y < y0 || y >= y1 {
-            return None;
-        }
-
-        let i = ((y - y0) as usize * (x1 - x0) as usize + (x - x0) as usize) * channels;
-        Some(&self.samples[i..i + channels])
-    }
-
-    /// Makes room for a rectangle.
-    fn grow(&mut self, [a, b, c, d]: [u32; 4], channels: usize) {
-        let [x0, y0, x1, y1] = self.rect;
-        let new = if x1 == x0 { [a, b, c, d] } else { [x0.min(a), y0.min(b), x1.max(c), y1.max(d)] };
-        if new == self.rect {
-            return;
-        }
-
-        let (w, h) = ((new[2] - new[0]) as usize, (new[3] - new[1]) as usize);
-        let mut samples = vec![T::default(); w * h * channels];
-        for y in y0..y1 {
-            let from = (y - y0) as usize * (x1 - x0) as usize * channels;
-            let to = ((y - new[1]) as usize * w + (x0 - new[0]) as usize) * channels;
-            let n = (x1 - x0) as usize * channels;
-            samples[to..to + n].copy_from_slice(&self.samples[from..from + n]);
-        }
-
-        (self.rect, self.samples) = (new, samples);
-    }
-
-    fn pixel_mut(&mut self, x: u32, y: u32, channels: usize) -> &mut [T] {
-        let [x0, y0, x1, _] = self.rect;
-        let i = ((y - y0) as usize * (x1 - x0) as usize + (x - x0) as usize) * channels;
-        &mut self.samples[i..i + channels]
-    }
-
     /// The bytes in memory of its samples.
     #[must_use]
     pub fn bytes(&self) -> usize {
-        self.samples.len() * size_of::<T>()
+        self.samples.bytes()
     }
+}
+
+/// What a stack holds at a moment. Cheap: the samples are shared.
+#[derive(Clone, Debug, PartialEq)]
+pub struct State<T> {
+    base: Blocks<T>,
+    layers: Vec<Layer<T>>,
+    working: Option<u64>,
 }
 
 /// A map's base and layers.
 pub struct Stack<K: Kind> {
     w: u32,
     h: u32,
-    base: Vec<K::Sample>,
+    base: Blocks<K::Sample>,
     pub layers: Vec<Layer<K::Sample>>,
 
     /// The layer edits go to, by id; none: the base.
     pub working: Option<u64>,
+
+    /// The state after each edit, by the serial of its record in the field, and the serial last seen.
+    states: HashMap<u64, State<K::Sample>>,
+    seen: u64,
 }
 
 impl<K: Kind> Stack<K> {
     /// A stack with no layers over what a field holds.
     pub fn new(field: &K::Field) -> Self {
         let (w, h) = K::size(field);
-        let mut base = vec![K::Sample::default(); w as usize * h as usize * K::CHANNELS];
-        for (i, pixel) in base.chunks_exact_mut(K::CHANNELS).enumerate() {
-            K::read(field, i as u32 % w, i as u32 / w, pixel);
+        let mut base = Blocks::new(w, h);
+        let mut px = vec![K::Sample::default(); K::CHANNELS];
+        for y in 0..h {
+            for x in 0..w {
+                K::read(field, x, y, &mut px);
+                base.pixel_mut(x, y, K::CHANNELS).copy_from_slice(&px);
+            }
         }
 
-        Self { w, h, base, layers: vec![], working: None }
+        let seen = K::top_id(field);
+        let mut s = Self { w, h, base, layers: vec![], working: None, states: HashMap::new(), seen };
+        s.states.insert(seen, s.state());
+        s
     }
 
     /// A new layer on top; its id.
     pub fn add(&mut self, id: u64, name: &str, owner: &str) -> u64 {
-        self.layers.push(Layer { id, name: name.to_owned(), visible: true, opacity: 1.0, owner: owner.to_owned(), rect: [0; 4], samples: vec![] });
+        let samples = Blocks::new(self.w, self.h);
+        self.layers.push(Layer { id, name: name.to_owned(), visible: true, opacity: 1.0, owner: owner.to_owned(), samples });
         id
     }
 
@@ -312,12 +396,58 @@ impl<K: Kind> Stack<K> {
         self.layers.iter().position(|l| l.id == id)
     }
 
+    #[must_use]
+    pub fn state(&self) -> State<K::Sample> {
+        State { base: self.base.clone(), layers: self.layers.clone(), working: self.working }
+    }
+
+    /// Puts a change of the stack itself in or takes it out (an undo entry of its own): the state, its composite in the field.
+    pub fn put_state(&mut self, state: &State<K::Sample>, field: &mut K::Field) {
+        (self.base, self.layers, self.working) = (state.base.clone(), state.layers.clone(), state.working);
+        self.remember();
+        self.apply_all(field);
+    }
+
+    /// Keeps the state under the serial last seen: a later undo comes back to it.
+    pub fn remember(&mut self) {
+        self.states.insert(self.seen, self.state());
+        if self.states.len() > STATES {
+            let oldest = self.states.keys().copied().min().unwrap_or(0);
+            self.states.remove(&oldest);
+        }
+    }
+
+    /// Follows the field: a new edit goes into the stack, and coming back to an edit it knows puts that state back (an undo, a redo; the
+    /// working layer stays the one chosen). Whether anything changed. Not while an edit is open: its record does not exist yet.
+    pub fn sync(&mut self, field: &mut K::Field) -> bool {
+        let Some(r) = K::take_edited(field) else { return false };
+        let id = K::top_id(field);
+        if id != self.seen
+            && let Some(state) = self.states.get(&id).cloned()
+        {
+            self.seen = id;
+            let working = self.working;
+            (self.base, self.layers) = (state.base, state.layers);
+            self.working = working.filter(|&w| self.index_of(w).is_some());
+            self.apply_all(field);
+            return true;
+        }
+
+        self.seen = id;
+        let changed = self.absorb(field, [r.0, r.1, r.2, r.3]);
+        self.remember();
+        changed
+    }
+
     /// The composite at a pixel from the base up to, not including, layer `end`.
     fn compose(&self, x: u32, y: u32, end: usize, out: &mut [K::Sample]) {
-        let i = (y as usize * self.w as usize + x as usize) * K::CHANNELS;
-        out.copy_from_slice(&self.base[i..i + K::CHANNELS]);
+        match self.base.pixel(x, y, K::CHANNELS) {
+            Some(px) => out.copy_from_slice(px),
+            None => out.fill(K::Sample::default()),
+        }
+
         for layer in self.layers[..end].iter().filter(|l| l.visible && l.opacity > 0.0) {
-            if let Some(px) = layer.pixel(x, y, K::CHANNELS) {
+            if let Some(px) = layer.samples.pixel(x, y, K::CHANNELS) {
                 K::over(out, px, layer.opacity);
             }
         }
@@ -339,57 +469,42 @@ impl<K: Kind> Stack<K> {
         self.apply(field, [0, 0, self.w, self.h]);
     }
 
-    /// Takes an edit of the field over a rectangle into the working layer (a hidden or empty-handed one is left out: the base takes it). Whether
-    /// anything differed. Where layers above cover the edit, the field goes back to what they make.
+    /// Takes an edit of the field over a rectangle into the working layer, or the base with none. Whether anything differed. A hidden layer
+    /// takes it too and it does not show, which the panel warns of: paint going elsewhere would be worse. The field then goes back to what
+    /// the stack composes: what layers above cover, what a hidden layer holds.
     pub fn absorb(&mut self, field: &mut K::Field, rect: [u32; 4]) -> bool {
-        let target = self.working.and_then(|id| self.index_of(id)).filter(|&i| self.layers[i].visible && self.layers[i].opacity > 0.0);
+        let target = self.working.and_then(|id| self.index_of(id));
         let (x1, y1) = (rect[2].min(self.w), rect[3].min(self.h));
         let (mut shown, mut new, mut below) = (vec![K::Sample::default(); K::CHANNELS], vec![K::Sample::default(); K::CHANNELS], vec![K::Sample::default(); K::CHANNELS]);
-
-        // The rectangle of what differs, so that a layer grows no further than it was touched.
-        let mut edits = vec![];
+        let mut bounds: Option<[u32; 4]> = None;
         for y in rect[1]..y1 {
             for x in rect[0]..x1 {
                 self.compose(x, y, self.layers.len(), &mut shown);
                 K::read(field, x, y, &mut new);
-                if !K::same(&shown, &new) {
-                    edits.push((x, y));
+                if K::same(&shown, &new) {
+                    continue;
+                }
+
+                bounds = Some(bounds.map_or([x, y, x + 1, y + 1], |b| [b[0].min(x), b[1].min(y), b[2].max(x + 1), b[3].max(y + 1)]));
+                match target {
+                    Some(k) if self.layers[k].visible && self.layers[k].opacity > 0.0 => {
+                        self.compose(x, y, k, &mut below);
+                        let opacity = self.layers[k].opacity;
+                        K::absorb(self.layers[k].samples.pixel_mut(x, y, K::CHANNELS), &below, &shown, &new, opacity);
+                    }
+
+                    Some(k) => K::onto(self.layers[k].samples.pixel_mut(x, y, K::CHANNELS), &shown, &new),
+                    None => K::rebase(self.base.pixel_mut(x, y, K::CHANNELS), &shown, &new),
                 }
             }
         }
 
-        let Some(bounds) = edits.iter().fold(None, |b: Option<[u32; 4]>, &(x, y)| {
-            Some(b.map_or([x, y, x + 1, y + 1], |b| [b[0].min(x), b[1].min(y), b[2].max(x + 1), b[3].max(y + 1)]))
-        }) else { return false };
-
-        if let Some(k) = target {
-            self.layers[k].grow(bounds, K::CHANNELS);
-        }
-
-        for (x, y) in edits {
-            self.compose(x, y, self.layers.len(), &mut shown);
-            K::read(field, x, y, &mut new);
-            match target {
-                Some(k) => {
-                    self.compose(x, y, k, &mut below);
-                    let opacity = self.layers[k].opacity;
-                    K::absorb(self.layers[k].pixel_mut(x, y, K::CHANNELS), &below, &shown, &new, opacity);
-                }
-
-                None => {
-                    let i = (y as usize * self.w as usize + x as usize) * K::CHANNELS;
-                    K::rebase(&mut self.base[i..i + K::CHANNELS], &shown, &new);
-                }
-            }
-        }
-
-        // What the layers above leave of it, and the rounding of the rest.
+        let Some(bounds) = bounds else { return false };
         self.apply(field, bounds);
         true
     }
 
-    /// Merges a layer into the one below it, or into the base. The composite stays as it was only for a visible, fully opaque stack: a
-    /// merged layer applies its opacity for good.
+    /// Merges a layer into the one below it, or into the base. A merged layer applies its opacity for good; a hidden one goes.
     pub fn merge_down(&mut self, index: usize) {
         if index >= self.layers.len() {
             return;
@@ -404,24 +519,17 @@ impl<K: Kind> Stack<K> {
             return;
         }
 
-        let [x0, y0, x1, y1] = top.rect;
         let mut px = vec![K::Sample::default(); K::CHANNELS];
-        for y in y0..y1 {
-            for x in x0..x1 {
-                let Some(l) = top.pixel(x, y, K::CHANNELS) else { continue };
-                match index.checked_sub(1) {
-                    Some(under) => {
-                        self.layers[under].grow(top.rect, K::CHANNELS);
-                        let o = self.layers[under].pixel_mut(x, y, K::CHANNELS);
-                        K::over(o, l, top.opacity);
-                    }
+        for y in 0..self.h {
+            for x in 0..self.w {
+                let Some(l) = top.samples.pixel(x, y, K::CHANNELS) else { continue };
+                px.copy_from_slice(l);
+                let target = match index.checked_sub(1) {
+                    Some(under) => &mut self.layers[under].samples,
+                    None => &mut self.base,
+                };
 
-                    None => {
-                        let i = (y as usize * self.w as usize + x as usize) * K::CHANNELS;
-                        px.copy_from_slice(l);
-                        K::over(&mut self.base[i..i + K::CHANNELS], &px, top.opacity);
-                    }
-                }
+                K::over(target.pixel_mut(x, y, K::CHANNELS), &px, top.opacity);
             }
         }
     }
@@ -432,37 +540,60 @@ impl<K: Kind> Stack<K> {
         }
 
         out.extend(self.working.unwrap_or(0).to_le_bytes());
-        self.base.iter().for_each(|&s| K::put(out, s));
+        write_blocks::<K>(out, &self.base);
         for l in &self.layers {
             out.extend(l.id.to_le_bytes());
             put_text(out, &l.name);
             put_text(out, &l.owner);
             out.push(u8::from(l.visible));
             out.extend(l.opacity.to_le_bytes());
-            l.rect.iter().for_each(|v| out.extend(v.to_le_bytes()));
-            l.samples.iter().for_each(|&s| K::put(out, s));
+            write_blocks::<K>(out, &l.samples);
         }
     }
 
     fn read(r: &mut Reader) -> Result<Self, String> {
         let (w, h, n) = (r.u32()?, r.u32()?, r.u32()?);
         let working = Some(r.u64()?).filter(|&id| id != 0);
-        let samples = |r: &mut Reader, count: usize| -> Result<Vec<K::Sample>, String> {
-            Ok(r.take(count * K::BYTES)?.chunks_exact(K::BYTES).map(K::get).collect())
-        };
-
-        let base = samples(r, w as usize * h as usize * K::CHANNELS)?;
+        let base = read_blocks::<K>(r, w, h)?;
         let mut layers = vec![];
         for _ in 0..n {
             let (id, name, owner, visible, opacity) = (r.u64()?, r.text()?, r.text()?, r.take(1)?[0] != 0, r.f32()?);
-            let rect = [r.u32()?, r.u32()?, r.u32()?, r.u32()?];
-            let count = rect[2].saturating_sub(rect[0]) as usize * rect[3].saturating_sub(rect[1]) as usize * K::CHANNELS;
-            let samples = samples(r, count)?;
-            layers.push(Layer { id, name, visible, opacity, owner, rect, samples });
+            let samples = read_blocks::<K>(r, w, h)?;
+            layers.push(Layer { id, name, visible, opacity, owner, samples });
         }
 
-        Ok(Self { w, h, base, layers, working })
+        Ok(Self { w, h, base, layers, working, states: HashMap::new(), seen: 0 })
     }
+}
+
+fn write_blocks<K: Kind>(out: &mut Vec<u8>, b: &Blocks<K::Sample>) {
+    out.extend((b.blocks.iter().flatten().count() as u32).to_le_bytes());
+    for (i, block) in b.blocks.iter().enumerate() {
+        if let Some(block) = block {
+            out.extend((i as u32).to_le_bytes());
+            block.iter().for_each(|&s| K::put(out, s));
+        }
+    }
+}
+
+fn read_blocks<K: Kind>(r: &mut Reader, w: u32, h: u32) -> Result<Blocks<K::Sample>, String> {
+    let mut b = Blocks::new(w, h);
+    for _ in 0..r.u32()? {
+        let i = r.u32()? as usize;
+        let bytes = r.take((BLOCK * BLOCK) as usize * K::CHANNELS * K::BYTES)?;
+        let slot = b.blocks.get_mut(i).ok_or("terrain layers: a block out of its map")?;
+        *slot = Some(Arc::new(bytes.chunks_exact(K::BYTES).map(K::get).collect()));
+    }
+
+    Ok(b)
+}
+
+/// A stack's state, of whichever type: what an undo entry of a change of the stack keeps.
+#[derive(Clone)]
+pub enum AnyState {
+    Height(State<f32>),
+    Blend(State<u16>),
+    Ground(State<u8>),
 }
 
 fn put_text(out: &mut Vec<u8>, s: &str) {
@@ -513,6 +644,9 @@ pub struct TerrainLayers {
 
     /// Changed since it was last saved.
     pub dirty: bool,
+
+    /// The state before a change still in progress (an opacity being dragged), which its undo entry goes back to.
+    pub pending: Option<AnyState>,
     next_id: u64,
 }
 
@@ -654,7 +788,7 @@ mod tests {
         s.add(1, "hills", "");
         edit(&mut f, 2, 2, 90.0);
         s.absorb(&mut f, [0, 0, 4, 4]);
-        assert!(s.layers[0].samples.is_empty());
+        assert_eq!(s.layers[0].bytes(), 0);
         s.layers[0].visible = false;
         s.apply_all(&mut f);
         assert_eq!(f.metres(2, 2), 90.0);
@@ -665,21 +799,119 @@ mod tests {
         let (mut f, mut s) = stack();
         s.working = Some(s.add(1, "hills", ""));
         assert!(!s.absorb(&mut f, [0, 0, 4, 4]));
-        assert!(s.layers[0].samples.is_empty());
+        assert_eq!(s.layers[0].bytes(), 0);
     }
 
     #[test]
-    fn a_layer_only_grows_where_it_is_touched_and_keeps_what_it_had() {
+    fn a_layer_keeps_only_the_blocks_it_was_touched_in() {
+        let (mut f, mut s) = (HeightField::flat(200, 200, 0.0), Stack::<Height>::new(&HeightField::flat(200, 200, 0.0)));
+        s.working = Some(s.add(1, "hills", ""));
+        edit(&mut f, 190, 190, 3.0);
+        s.absorb(&mut f, [0, 0, 200, 200]);
+        assert_eq!(s.layers[0].samples.blocks.iter().flatten().count(), 1);
+        edit(&mut f, 1, 2, 1.0);
+        s.absorb(&mut f, [0, 0, 200, 200]);
+        assert_eq!(s.layers[0].samples.blocks.iter().flatten().count(), 2);
+        assert_eq!(s.layers[0].samples.pixel(190, 190, 1), Some(&[3.0f32][..]));
+    }
+
+    #[test]
+    fn a_hidden_layer_takes_the_paint_and_it_does_not_show() {
         let (mut f, mut s) = stack();
         s.working = Some(s.add(1, "hills", ""));
-        edit(&mut f, 3, 3, 103.0);
-        s.absorb(&mut f, [0, 0, 4, 4]);
-        assert_eq!(s.layers[0].rect, [3, 3, 4, 4]);
-        edit(&mut f, 1, 2, 101.0);
-        s.absorb(&mut f, [0, 0, 4, 4]);
-        assert_eq!(s.layers[0].rect, [1, 2, 4, 4]);
-        assert_eq!(s.layers[0].pixel(3, 3, 1), Some(&[3.0f32][..]));
-        assert_eq!(s.layers[0].pixel(1, 2, 1), Some(&[1.0f32][..]));
+        edit(&mut f, 1, 1, 104.0);
+        s.sync(&mut f);
+        s.layers[0].visible = false;
+        s.apply_all(&mut f);
+        edit(&mut f, 1, 1, 102.0);
+        s.sync(&mut f);
+        assert_eq!(f.metres(1, 1), 100.0);
+        s.layers[0].visible = true;
+        s.apply_all(&mut f);
+        assert_eq!(f.metres(1, 1), 106.0);
+    }
+
+    #[test]
+    fn a_hidden_blend_layer_keeps_what_it_held() {
+        let mut layer = [0u16; 16];
+        layer[1] = 65535;
+        let mut shown = [0u16; 16];
+        shown[0] = 65535;
+
+        // A quarter of channel 2 painted over what shows, none of which is this layer's.
+        let mut new = [0u16; 16];
+        (new[0], new[2]) = (49151, 16384);
+        Blend::onto(&mut layer, &shown, &new);
+        assert!(layer[1].abs_diff(49151) <= 2 && layer[2].abs_diff(16384) <= 2, "{layer:?}");
+
+        // Ground types: the same, and what was not painted stays.
+        let mut layer = [7u8, 7, 7, 255];
+        Ground::onto(&mut layer, &[1, 1, 1, 255], &[1, 1, 1, 255]);
+        assert_eq!(layer, [7, 7, 7, 255]);
+    }
+
+    #[test]
+    fn undo_and_redo_follow_the_stack_even_into_a_hidden_layer() {
+        let (mut f, mut s) = stack();
+        s.working = Some(s.add(1, "hills", ""));
+        s.remember();
+        s.layers[0].visible = false;
+        s.apply_all(&mut f);
+        s.remember();
+        edit(&mut f, 1, 1, 105.0);
+        s.sync(&mut f);
+        assert_eq!(s.layers[0].samples.pixel(1, 1, 1), Some(&[5.0f32][..]));
+
+        f.undo();
+        s.sync(&mut f);
+        assert!(s.layers[0].samples.pixel(1, 1, 1).is_none());
+        f.redo();
+        s.sync(&mut f);
+        assert_eq!(s.layers[0].samples.pixel(1, 1, 1), Some(&[5.0f32][..]));
+        assert_eq!(f.metres(1, 1), 100.0);
+    }
+
+    #[test]
+    fn a_new_edit_after_an_undo_is_a_new_edit() {
+        let (mut f, mut s) = stack();
+        s.working = Some(s.add(1, "hills", ""));
+        s.remember();
+        edit(&mut f, 1, 1, 105.0);
+        s.sync(&mut f);
+        f.undo();
+        s.sync(&mut f);
+        edit(&mut f, 2, 2, 103.0);
+        s.sync(&mut f);
+        assert!(s.layers[0].samples.pixel(1, 1, 1).is_none_or(|p| p[0] == 0.0));
+        assert_eq!(s.layers[0].samples.pixel(2, 2, 1), Some(&[3.0f32][..]));
+    }
+
+    #[test]
+    fn a_change_of_the_stack_goes_back_and_a_later_undo_finds_it() {
+        let (mut f, mut s) = stack();
+        s.working = Some(s.add(1, "hills", ""));
+        s.remember();
+        edit(&mut f, 1, 1, 105.0);
+        s.sync(&mut f);
+
+        // Hidden as an undo entry of its own, then a stroke on top.
+        let before = s.state();
+        s.layers[0].visible = false;
+        s.apply_all(&mut f);
+        let after = s.state();
+        s.put_state(&after, &mut f);
+        s.working = None;
+        edit(&mut f, 2, 2, 90.0);
+        s.sync(&mut f);
+
+        // The stroke goes: the layer is still hidden.
+        f.undo();
+        s.sync(&mut f);
+        assert!(!s.layers[0].visible);
+        assert_eq!(f.metres(2, 2), 100.0);
+        s.put_state(&before, &mut f);
+        assert!(s.layers[0].visible);
+        assert_eq!(f.metres(1, 1), 105.0);
     }
 
     #[test]

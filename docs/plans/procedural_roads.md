@@ -2,7 +2,8 @@
 
 Draw a spline and a road forms over it: the ground bumped and its sides levelled, a texture and a ground type painted, detail laid along it,
 bridges over the gaps. All of it lives in layers of its own, so it can be changed or removed without touching the base terrain. The layers
-are a feature in their own right, copied from the newer Terry: height, blend and ground type layers, which come first.
+are a feature in their own right, modelled on the newer Terry's: height, blend and ground type layers, which come first. Terry only shows how
+the feature works: its projects are not imported (user, 2026-11-07).
 
 Status (2026-11-07): Phases 1 and 2 are built (`wce_tile::terrain_layers`, `tile_document/layers.rs`, `wce_tile_tool/layers_panel.rs`). Roads are not.
 
@@ -50,9 +51,13 @@ A height layer takes the change itself (scaled by its opacity); a blend layer wo
 layer takes the new pixel, or stays empty where it equals what is below. The fields tell the stack apart from the display with their own
 rectangle (`take_edited`, beside `take_changed`), and the composite written back is not an edit.
 
-**A change of the stack is not undoable** (first version): showing, hiding, moving, merging or removing a layer rewrites the field, which leaves the
-field's undo records restoring pixels of another composite, so that field's undo is cleared. Painting into a hidden layer goes to the base,
-and the panel says so.
+**Undo goes by the stack's state.** Each edit's record in the field has a serial; `Stack::sync` keeps the state after an edit under its serial, and
+when the field comes back to a serial it knows, that state returns. Layers and the base keep their samples in 64 x 64 blocks shared between
+states, so a state costs what its edit touched. A change of the stack itself (add, show, hide, move, merge, remove, rename, opacity) is an undo
+entry of its own, `LayerStackCommand`; an opacity drag or a rename is one entry. The working layer is a choice, not an edit, and is not undone.
+
+**A hidden working layer takes the paint** (user, 2026-11-07): it goes where the user said it goes, it just does not show until the layer does, and
+the panel warns. A layer's opacity at 0 counts as hidden.
 
 **UI.** A *Terrain layers* section in the Tile panel: a tab per type, the list as a stack (top row applies last, Base at the bottom), an eye per
 row, a click makes it the working layer; name, opacity, up, down, Merge down and remove for the working layer. `terrain_layer` is its command.
@@ -159,7 +164,6 @@ the terrain goes as the composite. Nothing new has to go in a pack while pieces 
 | 0 | Check the composition rules against Terry's own output | not done: Warhammer III's packs gave no flattened tile quickly. The rules are in one place (`Kind` in `terrain_layers.rs`) |
 | 1 | Layer model, composite, file, saves flatten | done |
 | 2 | Working layer, brushes and undo on it, the panel | done |
-| 3 | Terry import | `nuln_city`'s layers open in the editor (Warhammer's textures aside) |
 | 4 | `WceRoadSpline`, Create panel, Inspector, height, blend and ground type generation | drawn road on a test tile, and on the game's battle map: units take its ground type |
 | 5 | Detail: bent layout of the kit's prefabs, seed, `Clear` | the road reads as a road from close up |
 | 6 | Crossings, tile edge ends | two roads weld |
