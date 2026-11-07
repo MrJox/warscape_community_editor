@@ -130,6 +130,14 @@ impl PrefabTerrain {
         Some(out)
     }
 
+    /// A hash of everything in it (the same in every run: what a tile made from it is known again by it).
+    #[must_use]
+    pub fn signature(&self) -> u64 {
+        let words = [self.origin[0].to_bits(), self.origin[1].to_bits(), self.spacing.to_bits(), u64::from(self.width) << 32 | u64::from(self.height), u64::from(self.normalize), self.feather.to_bits()];
+        let samples = self.heights.iter().chain(&self.coverage).map(|v| u64::from(v.to_bits()));
+        words.into_iter().chain(samples).flat_map(u64::to_le_bytes).fold(0xCBF2_9CE4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
+    }
+
     /// The element's text (one line, no indentation).
     ///
     /// # Errors
@@ -362,6 +370,26 @@ impl PrefabTerrain {
         Weights { margin, width: w, height: h, values }
     }
 
+    /// The pixels of a grid the layer placed `at` can change (x0, y0, x1, y1; ends exclusive): its samples, normalized with the feather
+    /// (`feather`: the reference's, else the layer's) around them.
+    #[must_use]
+    pub fn reach(&self, at: &Placement, grid: &Grid, feather: Option<f64>) -> [u32; 4] {
+        let margin = if self.normalize { (feather.unwrap_or(self.feather).max(0.0) / self.spacing).ceil() } else { 0.0 };
+        let m = (margin + 1.0) * self.spacing;
+        let (lx0, lz0) = (self.origin[0] - m, self.origin[1] - m);
+        let (lx1, lz1) = (self.origin[0] + f64::from(self.width) * self.spacing + m, self.origin[1] + f64::from(self.height) * self.spacing + m);
+        let corners = [(lx0, lz0), (lx1, lz0), (lx0, lz1), (lx1, lz1)].map(|(x, z)| {
+            let (sx, sz) = at.to_scene(x, z);
+            grid.pixel(sx, sz)
+        });
+
+        let lo = |v: f64, n: u32| (v.floor().max(0.0) as u32).min(n);
+        let hi = |v: f64, n: u32| (v.ceil().max(0.0) as u32 + 1).min(n);
+        let (min_x, max_x) = corners.iter().fold((f64::MAX, f64::MIN), |(a, b), c| (a.min(c.0), b.max(c.0)));
+        let (min_y, max_y) = corners.iter().fold((f64::MAX, f64::MIN), |(a, b), c| (a.min(c.1), b.max(c.1)));
+        [lo(min_x, grid.width), lo(min_y, grid.height), hi(max_x, grid.width), hi(max_y, grid.height)]
+    }
+
     /// What the layer adds to each pixel of a tile's height map it reaches, placed `at`, added into `out` (by pixel). `ground` is the map
     /// below it, without `out`: what is in `out` already (a nested prefab's) counts as ground. `feather`: the reference's, else the layer's.
     pub fn rasterize(&self, at: &Placement, grid: &Grid, feather: Option<f64>, ground: &dyn Fn(u32, u32) -> f64, out: &mut BTreeMap<(u32, u32), f32>) {
@@ -371,7 +399,6 @@ impl PrefabTerrain {
 
         let below = |x: u32, y: u32, out: &BTreeMap<(u32, u32), f32>| ground(x, y) + out.get(&(x, y)).map_or(0.0, |&v| f64::from(v));
         let weights = self.normalize.then(|| self.weights(feather.unwrap_or(self.feather)));
-        let margin = weights.as_ref().map_or(0, |w| w.margin);
 
         // The plain: the ground under the origin.
         let plain = {
@@ -385,20 +412,7 @@ impl PrefabTerrain {
             top * (1.0 - fy) + bottom * fy
         };
 
-        // The pixels the layer (with its margin) can reach.
-        let m = f64::from(margin) * self.spacing;
-        let (lx0, lz0) = (self.origin[0] - m - self.spacing, self.origin[1] - m - self.spacing);
-        let (lx1, lz1) = (self.origin[0] + f64::from(self.width) * self.spacing + m, self.origin[1] + f64::from(self.height) * self.spacing + m);
-        let corners = [(lx0, lz0), (lx1, lz0), (lx0, lz1), (lx1, lz1)].map(|(x, z)| {
-            let (sx, sz) = at.to_scene(x, z);
-            grid.pixel(sx, sz)
-        });
-
-        let lo = |v: f64, n: u32| (v.floor().max(0.0) as u32).min(n);
-        let hi = |v: f64, n: u32| (v.ceil().max(0.0) as u32 + 1).min(n);
-        let (x0, x1) = (lo(corners.iter().map(|c| c.0).fold(f64::MAX, f64::min), grid.width), hi(corners.iter().map(|c| c.0).fold(f64::MIN, f64::max), grid.width));
-        let (y0, y1) = (lo(corners.iter().map(|c| c.1).fold(f64::MAX, f64::min), grid.height), hi(corners.iter().map(|c| c.1).fold(f64::MIN, f64::max), grid.height));
-
+        let [x0, y0, x1, y1] = self.reach(at, grid, feather);
         let mut writes = vec![];
         for y in y0..y1 {
             for x in x0..x1 {

@@ -1448,3 +1448,93 @@ fn a_building_copied_from_an_earlier_layer_goes_into_a_later_one() {
     assert_eq!(sc.doc().get(added, "key").as_deref(), Some("tower"));
     assert_eq!(sc.layer_path(template), "Buildings");
 }
+
+/// A prefab ground source with one prefab: `rocks`, a 2 high block of `n` x `n` samples `spacing` apart around its origin.
+fn rocks_ground(normalize: bool, n: u32, spacing: f64) -> wce_tile::tile_project::PrefabGroundSource {
+    let half = f64::from(n - 1) * spacing / 2.0;
+    let mut t = wce_tile::prefab_terrain::PrefabTerrain::empty([-half, -half], spacing, n, n);
+    t.heights.iter_mut().for_each(|h| *h = 2.0);
+    t.coverage.iter_mut().for_each(|c| *c = 1.0);
+    (t.normalize, t.feather) = (normalize, 0.0);
+    let t = std::sync::Arc::new(t);
+    let sig = t.signature();
+    wce_tile::tile_project::PrefabGroundSource(std::sync::Arc::new(move |k: &str| (k == "rocks").then(|| (sig, t.clone()))))
+}
+
+/// The height map's value at a scene point.
+fn ground_at(d: &TileDocument, x: f64, z: f64) -> f64 {
+    let g = wce_tile::prefab_terrain::Grid::of(d.project()).unwrap();
+    let (px, py) = (((x - g.origin[0]) / g.spacing[0]).round() as u32, ((z - g.origin[1]) / g.spacing[1]).round() as u32);
+    d.project().height.as_ref().unwrap().metres(px, py)
+}
+
+fn prefab_owners(d: &TileDocument) -> Vec<String> {
+    d.project().layers.as_ref().and_then(|l| l.height.as_ref()).map(|s| s.layers.iter().filter(|l| l.owner.starts_with("prefab:")).map(|l| l.owner.clone()).collect()).unwrap_or_default()
+}
+
+#[test]
+fn a_prefab_reference_brings_its_ground_and_takes_it_along() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let g = d.group_instances(&[b], graph, "rocks").unwrap();
+    assert!(d.make_prefab_reference(g, "rocks"));
+    d.set_prefab_ground(Some(rocks_ground(false, 5, 2.0)));
+    let at = |d: &TileDocument| d.tile().world_position(g);
+    let p = at(&d);
+    let (x, z) = (f64::from(p.x) * d.project().unit_scale, f64::from(p.z) * d.project().unit_scale);
+    let before = (ground_at(&d, x, z), ground_at(&d, x + 40.0, z + 40.0));
+
+    d.refresh_terrain();
+    assert!((ground_at(&d, x, z) - before.0 - 2.0).abs() < 0.01, "{} over {}", ground_at(&d, x, z), before.0);
+    let owners = prefab_owners(&d);
+    assert_eq!(owners.len(), 1, "{owners:?}");
+    assert!(d.terrain_layers(wce_tile_editor::tile_document::layers::LayerType::Height).0.is_empty(), "not one of the user's layers");
+
+    // Looked at again, nothing changes.
+    d.refresh_terrain();
+    assert_eq!(prefab_owners(&d), owners);
+
+    // Moved, it takes its ground along.
+    let local = d.tile().tscene().position(g).unwrap();
+    assert!(d.set_local(g, Some(local + Double3::new(40.0, 0.0, 40.0)), None, 0));
+    d.refresh_terrain();
+    assert!((ground_at(&d, x, z) - before.0).abs() < 0.01 && (ground_at(&d, x + 40.0, z + 40.0) - before.1 - 2.0).abs() < 0.01);
+    assert_ne!(prefab_owners(&d), owners);
+
+    // Switched off, it brings none.
+    assert!(d.set_attribute(g, wce_tile_editor::tile_document::prefab_ground::TERRAIN_ATTR, "off"));
+    d.refresh_terrain();
+    assert!(prefab_owners(&d).is_empty() && (ground_at(&d, x + 40.0, z + 40.0) - before.1).abs() < 0.01);
+
+    while d.history_mut().can_undo() {
+        d.history_mut().undo();
+    }
+
+    d.refresh_terrain();
+    assert_eq!(text(&d), original);
+    assert!(prefab_owners(&d).is_empty() && (ground_at(&d, x, z) - before.0).abs() < 0.01);
+}
+
+#[test]
+fn a_normalized_prefab_is_level_wherever_it_stands() {
+    let (_dir, mut d) = open();
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let g = d.group_instances(&[b], graph, "rocks").unwrap();
+    assert!(d.make_prefab_reference(g, "rocks"));
+    d.set_prefab_ground(Some(rocks_ground(true, 7, 8.0)));
+    let p = d.tile().world_position(g);
+    let (x, z) = (f64::from(p.x) * d.project().unit_scale, f64::from(p.z) * d.project().unit_scale);
+    let spots = [(-16.0, -16.0), (16.0, -16.0), (0.0, 0.0), (-16.0, 16.0), (16.0, 16.0)];
+    let was = spots.map(|(dx, dz)| ground_at(&d, x + dx, z + dz));
+    d.refresh_terrain();
+
+    // The test tile slopes; under the prefab it is level, 2 over the plain under its origin.
+    let now = spots.map(|(dx, dz)| ground_at(&d, x + dx, z + dz));
+    let (lo, hi) = was.iter().fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
+    assert!(hi - lo > 1.0, "the ground slopes: {was:?}");
+    assert!(now.iter().all(|v| (v - now[2]).abs() < 0.02), "level: {now:?}");
+    assert!(now[2] - 2.0 > lo && now[2] - 2.0 < hi, "2 over the plain: {now:?} over {was:?}");
+}

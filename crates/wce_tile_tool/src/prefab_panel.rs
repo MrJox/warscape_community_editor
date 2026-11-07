@@ -16,7 +16,8 @@ use wce_foundation::math::Float3;
 use wce_scene::render_scene::SourceRef;
 use wce_tile::prefab_refs::ContentIndex;
 use wce_tile::prefabs::{self, PrefabLibrary};
-use wce_tile::tile_project::PrefabSource;
+use wce_tile::prefab_terrain::PrefabTerrain;
+use wce_tile::tile_project::{PrefabGroundSource, PrefabSource};
 use wce_tile_editor::tile_document::{TileDocument, item_of};
 
 use crate::scene_panel::{layer_by_key, layer_key};
@@ -27,6 +28,7 @@ use crate::tool::{TileTool, document, document_id, selected};
 pub(crate) struct PrefabBase {
     lib: Option<Arc<PrefabLibrary>>,
     contents: HashMap<String, Option<Arc<Vec<u8>>>>,
+    ground: HashMap<String, Option<(u64, Arc<PrefabTerrain>)>>,
     index: Option<Arc<ContentIndex>>,
 }
 
@@ -44,6 +46,27 @@ impl PrefabBase {
     }
 }
 
+impl PrefabBase {
+    /// A key's height layer with its signature (`PrefabLibrary::terrain`), read once. One that does not read is none, and said once.
+    pub(crate) fn ground(&mut self, key: &str) -> Option<(u64, Arc<PrefabTerrain>)> {
+        let k = key.to_lowercase();
+        if let Some(g) = self.ground.get(&k) {
+            return g.clone();
+        }
+
+        let g = match self.lib.as_ref()?.terrain(key) {
+            Ok(t) => t.map(|t| (t.signature(), Arc::new(t))),
+            Err(why) => {
+                log::warn(format!("prefab '{key}': {why}"));
+                None
+            }
+        };
+
+        self.ground.insert(k, g.clone());
+        g
+    }
+}
+
 pub(crate) type SharedBase = Arc<Mutex<PrefabBase>>;
 
 /// A key's contents from the shared base.
@@ -56,6 +79,12 @@ impl TileTool {
     pub(crate) fn prefab_source(&self) -> PrefabSource {
         let base = self.prefab_base.clone();
         PrefabSource(Arc::new(move |k: &str| base_contents(&base, k).map(|c| (*c).clone())))
+    }
+
+    /// The prefabs' height layers, for the references' ground.
+    pub(crate) fn prefab_ground_source(&self) -> PrefabGroundSource {
+        let base = self.prefab_base.clone();
+        PrefabGroundSource(Arc::new(move |k: &str| base.lock().ok()?.ground(k)))
     }
 
     /// The index of the prefabs' contents (to find the groups that are copies of one), made once per library.
@@ -139,6 +168,14 @@ impl TileTool {
         }
 
         self.prefab_version += 1;
+
+        // The open tiles' references find their prefabs' layers again.
+        for id in e.docs.order().to_vec() {
+            if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
+                d.prefab_ground_changed();
+            }
+        }
+
         lib
     }
 

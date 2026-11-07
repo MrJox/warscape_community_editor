@@ -1723,6 +1723,7 @@ impl Tile {
         }
 
         self.sync_terrain_layers();
+        self.refresh_prefab_ground();
         self.refresh_roads();
 
         // What the layers wrote is no edit of the history's, which is what the terrain follows otherwise.

@@ -3409,7 +3409,7 @@ impl Tool for TileTool {
         let now = e.clock.time();
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().update_fire(&mut e.scene, now);
-        d.tile_mut().update_view(&mut e.scene, eye);
+        d.update_view(&mut e.scene, eye);
         d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at, yaw, normal);
         let hot = if self.light_drag.is_some() {
             Some(wce_tile_editor::tile_document::LIGHT_RADIUS_HANDLE)
@@ -4158,6 +4158,7 @@ impl Tool for TileTool {
         }
 
         project.prefab_base = Some(self.prefab_source());
+        project.prefab_ground = Some(self.prefab_ground_source());
 
         project.game_kit = tiles_kit(e);
 
