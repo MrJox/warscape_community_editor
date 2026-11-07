@@ -2,7 +2,9 @@
 //! heights, texture weights and whether a point is road, and the document writes them into the layers the road owns. The same inputs give the
 //! same road, so its layers are derived data: they are made again, never edited.
 //!
-//! World units throughout (the tile's x, z and height).
+//! World units throughout (the tile's x, z and height), but for the bridges, whose pieces are in the file's.
+
+use wce_foundation::math::{Double3, Double3x3};
 
 /// A road's settings (the attributes of a `WceRoadSpline`).
 #[derive(Clone, Debug, PartialEq)]
@@ -52,30 +54,94 @@ const GAP_LENGTH: f64 = 8.0;
 /// Over how much of the road its bump comes in: from its ends, and from another road it meets.
 const BUMP_RAMP: f64 = 8.0;
 
-/// A chain of the kit's bridge pieces: its keys, and their places along it from its middle (the file's units; both from vanilla's
-/// `river_crossing` tiles, where a piece runs along its z).
+/// A chain of the kit's bridge pieces. From their logic files: a piece's platform runs along its z, `pitch` long, at height 1, and an end's is a
+/// ramp `RAMP` long from height 0 at z = -`RAMP` up to height 1 at its origin. Pieces join because their platforms meet edge to edge.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct BridgeKind {
+pub struct Chain {
     piece: &'static str,
     end: &'static str,
     pitch: f64,
-    end_offset: f64,
 }
 
-const SHORT_BRIDGE: BridgeKind = BridgeKind { piece: "bridge_wood_1", end: "bridge_wood_1_end", pitch: 10.4, end_offset: 5.2 };
-const LONG_BRIDGE: BridgeKind = BridgeKind { piece: "bridge_wood_2", end: "bridge_wood_2_end", pitch: 20.0, end_offset: 10.1 };
+const NARROW: Chain = Chain { piece: "bridge_wood_1", end: "bridge_wood_1_end", pitch: 10.0 };
+const WIDE: Chain = Chain { piece: "bridge_wood_2", end: "bridge_wood_2_end", pitch: 20.0 };
 
-/// The pieces that span a length (the file's units): each one's building key, its place along the chain from its middle, and whether it
-/// looks back along it (the far end).
+/// Across a `WIDE` chain's platform.
+const WIDE_WIDTH: f64 = 10.0;
+const RAMP: f64 = 2.0;
+
+/// `bridge_wood_complete`, one building and one walkable surface: where its ramps meet the ground, (height, along its z), and the gaps it fits.
+const WHOLE: &str = "bridge_wood_complete";
+const WHOLE_FEET: [(f64, f64); 2] = [(-3.7, -58.49), (-3.4, 57.97)];
+const WHOLE_GAPS: (f64, f64) = (60.0, 104.0);
+
+/// How a gap is crossed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Bridge {
+    Whole,
+    Pieces(Chain, usize),
+}
+
+/// A bridge piece, placed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BridgePiece {
+    pub key: &'static str,
+    pub position: [f64; 3],
+    pub rotation: Double3x3,
+}
+
+/// The bridge for a gap and a road's width (the file's units), and how far apart its feet are.
 #[must_use]
-pub fn bridge_pieces(length: f64) -> Vec<(&'static str, f64, bool)> {
-    let k = if length >= 3.0 * LONG_BRIDGE.pitch { LONG_BRIDGE } else { SHORT_BRIDGE };
-    let n = (((length - 2.0 * k.end_offset) / k.pitch).ceil().max(1.0)) as usize;
-    let half = k.pitch * (n as f64 - 1.0) * 0.5;
-    let mut out = vec![(k.end, -half - k.end_offset - k.pitch * 0.5 + k.end_offset, true)];
-    out.extend((0..n).map(|i| (k.piece, -half + k.pitch * i as f64, false)));
-    out.push((k.end, half + k.pitch * 0.5, false));
-    out
+pub fn choose_bridge(gap: f64, width: f64) -> (Bridge, f64) {
+    if (WHOLE_GAPS.0..=WHOLE_GAPS.1).contains(&gap) && width >= WIDE_WIDTH {
+        let [(ya, a), (yb, b)] = WHOLE_FEET;
+        return (Bridge::Whole, (b - a).hypot(yb - ya));
+    }
+
+    let chain = if width >= WIDE_WIDTH { WIDE } else { NARROW };
+    let n = ((gap / chain.pitch).ceil() as usize).max(1);
+    (Bridge::Pieces(chain, n), n as f64 * chain.pitch + 2.0 * RAMP)
+}
+
+/// The rotation that takes a piece's +z along `d` (a unit vector), its x level and its y up.
+fn along(d: [f64; 3]) -> Double3x3 {
+    let flat = d[0].hypot(d[2]).max(1e-9);
+    let x = [d[2] / flat, 0.0, -d[0] / flat];
+    let y = [d[1] * x[2] - d[2] * x[1], d[2] * x[0] - d[0] * x[2], d[0] * x[1] - d[1] * x[0]];
+    let y = if y[1] < 0.0 { y.map(|v| -v) } else { y };
+    Double3x3 { m: [[x[0], y[0], d[0]], [x[1], y[1], d[1]], [x[2], y[2], d[2]]] }
+}
+
+/// Lays a bridge from one foot to the other (where its ramps meet the road; the file's units, as far apart as [`choose_bridge`] says). The whole
+/// bridge lies on the straight line between them, level or not, so every platform meets the next edge to edge: one walkable surface, ground to ground.
+#[must_use]
+pub fn lay_bridge(bridge: Bridge, a: [f64; 3], b: [f64; 3]) -> Vec<BridgePiece> {
+    let delta = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    let length = (delta[0] * delta[0] + delta[1] * delta[1] + delta[2] * delta[2]).sqrt().max(1e-9);
+    let d = delta.map(|v| v / length);
+    let forward = along(d);
+    let back = along(d.map(|v| -v));
+    let on = |distance: f64| [a[0] + d[0] * distance, a[1] + d[1] * distance, a[2] + d[2] * distance];
+    match bridge {
+        Bridge::Whole => {
+            // Its feet are not level in its own frame: the line between them is turned by that first.
+            let [(ya, za), (yb, zb)] = WHOLE_FEET;
+            let own = (yb - ya).atan2(zb - za);
+            let flat = d[0].hypot(d[2]).max(1e-9);
+            let tilt = d[1].atan2(flat) - own;
+            let axis = [d[0] / flat * tilt.cos(), tilt.sin(), d[2] / flat * tilt.cos()];
+            let rotation = along(axis);
+            let foot = rotation * Double3::new(0.0, ya, za);
+            vec![BridgePiece { key: WHOLE, position: [a[0] - foot.x, a[1] - foot.y, a[2] - foot.z], rotation }]
+        }
+
+        Bridge::Pieces(chain, n) => {
+            let mut out = vec![BridgePiece { key: chain.end, position: on(RAMP), rotation: forward }];
+            out.extend((0..n).map(|i| BridgePiece { key: chain.piece, position: on(RAMP + chain.pitch * (i as f64 + 0.5)), rotation: forward }));
+            out.push(BridgePiece { key: chain.end, position: on(RAMP + chain.pitch * n as f64), rotation: back });
+            out
+        }
+    }
 }
 
 /// How far past the road's edge its height goes from the line's exact one to the blend of what is near.
@@ -459,16 +525,59 @@ mod tests {
         assert_eq!(strip.height_at(20.0, 0.0, -20.0), Some(10.0));
     }
 
+    /// A point of a piece, in the world.
+    fn world(p: &BridgePiece, local: [f64; 3]) -> [f64; 3] {
+        let v = p.rotation * Double3::new(local[0], local[1], local[2]);
+        [p.position[0] + v.x, p.position[1] + v.y, p.position[2] + v.z]
+    }
+
+    fn close(a: [f64; 3], b: [f64; 3]) -> bool {
+        (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6)
+    }
+
     #[test]
-    fn a_bridge_is_long_enough_and_ends_with_its_ends() {
-        for length in [12.0, 25.0, 48.0, 90.0, 200.0] {
-            let p = bridge_pieces(length);
-            let (first, last) = (p[0], p[p.len() - 1]);
-            assert!(first.0.ends_with("_end") && last.0.ends_with("_end"), "{p:?}");
-            assert!(first.2 && !last.2, "{p:?}");
-            assert!(last.1 - first.1 >= length - 20.0, "{length}: {p:?}");
-            assert!(p[1..p.len() - 1].iter().all(|x| !x.0.ends_with("_end")), "{p:?}");
+    fn a_chain_is_one_surface_from_foot_to_foot() {
+        for (rise, gap) in [(0.0, 30.0), (6.0, 47.0), (-9.0, 130.0)] {
+            let (bridge, length) = choose_bridge(gap, 12.0);
+            let Bridge::Pieces(chain, n) = bridge else { panic!("a chain") };
+            assert!(length >= gap, "{length} for {gap}");
+            let run = (length * length - rise * rise).sqrt();
+            let (a, b) = ([0.0, 5.0, 0.0], [run * 0.6, 5.0 + rise, run * 0.8]);
+            let p = lay_bridge(bridge, a, b);
+            assert_eq!(p.len(), n + 2);
+
+            // The ramps start on the feet.
+            assert!(close(world(&p[0], [0.0, 0.0, -RAMP]), a), "{:?}", world(&p[0], [0.0, 0.0, -RAMP]));
+            assert!(close(world(&p[n + 1], [0.0, 0.0, -RAMP]), b), "{:?}", world(&p[n + 1], [0.0, 0.0, -RAMP]));
+
+            // Every platform's edge is the next one's.
+            assert!(close(world(&p[0], [0.0, 1.0, 0.0]), world(&p[1], [0.0, 1.0, -chain.pitch * 0.5])));
+            for w in p[1..=n].windows(2) {
+                assert!(close(world(&w[0], [0.0, 1.0, chain.pitch * 0.5]), world(&w[1], [0.0, 1.0, -chain.pitch * 0.5])));
+            }
+
+            assert!(close(world(&p[n], [0.0, 1.0, chain.pitch * 0.5]), world(&p[n + 1], [0.0, 1.0, 0.0])));
+            assert!(p.iter().all(|q| (q.rotation * Double3::new(0.0, 1.0, 0.0)).y > 0.9), "upright");
         }
+    }
+
+    #[test]
+    fn a_gap_of_its_size_takes_the_whole_bridge_and_its_feet_touch() {
+        let (bridge, length) = choose_bridge(90.0, 12.0);
+        assert_eq!(bridge, Bridge::Whole);
+        let (a, b) = ([10.0, 3.0, 0.0], [10.0, 7.0, (length * length - 16.0).sqrt()]);
+        let p = lay_bridge(bridge, a, b);
+        assert_eq!(p.len(), 1);
+        let [(ya, za), (yb, zb)] = WHOLE_FEET;
+        assert!(close(world(&p[0], [0.0, ya, za]), a), "{:?}", world(&p[0], [0.0, ya, za]));
+        assert!(close(world(&p[0], [0.0, yb, zb]), b), "{:?}", world(&p[0], [0.0, yb, zb]));
+    }
+
+    #[test]
+    fn a_narrow_road_takes_the_narrow_pieces() {
+        assert!(matches!(choose_bridge(30.0, 6.0).0, Bridge::Pieces(c, 3) if c == NARROW));
+        assert!(matches!(choose_bridge(90.0, 6.0).0, Bridge::Pieces(c, 9) if c == NARROW));
+        assert!(matches!(choose_bridge(150.0, 12.0).0, Bridge::Pieces(c, 8) if c == WIDE));
     }
 
     #[test]
