@@ -428,6 +428,9 @@ pub(crate) fn viewport(x: f32, y: f32, w: f32, h: f32) -> D3D11_VIEWPORT {
     D3D11_VIEWPORT { TopLeftX: x, TopLeftY: y, Width: w, Height: h, MinDepth: 0.0, MaxDepth: 1.0 }
 }
 
+/// How far the game's battle camera sees (scene units).
+const GAME_VIEW_DISTANCE: f32 = 13_000.0;
+
 /// What one frame needs besides the scene: the camera and the time (from the clock).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ViewParams {
@@ -1498,6 +1501,16 @@ impl Renderer {
             let k = self.settings.fog_amount.clamp(0.0, 1.0);
             self.cbs.set_f("fog_VS_PS", "g_fog_distance_scale", &[env.fog_distance_scale * k]);
             self.cbs.set_f("fog_VS_PS", "g_fog_height_strength", &[env.fog_height_strength * k]);
+        }
+
+        // A view past the game's far plane (the map context's far views): its fog is stretched to the same share of the view; as the game
+        // has it, everything past a few km was white.
+        let stretch = GAME_VIEW_DISTANCE / view_params.camera.zfar;
+        if !self.settings.game_view && stretch < 1.0 {
+            let k = self.settings.fog_amount.clamp(0.0, 1.0);
+            self.cbs.set_f("fog_VS_PS", "g_fog_distance_start", &[env.fog_distance_start / stretch]);
+            self.cbs.set_f("fog_VS_PS", "g_fog_distance_strength", &[env.fog_distance_strength * stretch]);
+            self.cbs.set_f("fog_VS_PS", "g_fog_height_strength", &[env.fog_height_strength * k * stretch]);
         }
 
         // gfx_screen_space_reflections 0 (Attila, Thrones of Britannia; fn 0x11904130): no environment specular pass, the directional
