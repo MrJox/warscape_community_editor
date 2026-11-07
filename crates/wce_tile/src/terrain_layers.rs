@@ -64,8 +64,9 @@ pub trait Kind {
     /// Sets a layer's pixel so that it turns `below` into `new`. `shown` is what the stack composed before the edit.
     fn absorb(layer: &mut [Self::Sample], below: &[Self::Sample], shown: &[Self::Sample], new: &[Self::Sample], opacity: f32);
 
-    /// Adds an edit to a hidden layer's pixel: what it did to what is shown, on top of what the layer holds, which the edit did not see.
-    fn onto(layer: &mut [Self::Sample], shown: &[Self::Sample], new: &[Self::Sample]);
+    /// Adds an edit to a pixel that is not what shows (a hidden layer, or one with layers over it): what the edit did to what is shown, on top of what
+    /// the pixel holds. Taken from `new` itself, the pixel would keep what those layers over it put there, and a road's texture stayed after the road.
+    fn onto(layer: &mut [Self::Sample], shown: &[Self::Sample], new: &[Self::Sample], opacity: f32);
 
     /// Changes a pixel of the base after an edit with no working layer.
     fn rebase(base: &mut [Self::Sample], shown: &[Self::Sample], new: &[Self::Sample]);
@@ -113,8 +114,8 @@ impl Kind for Height {
         layer[0] += (new[0] - shown[0]) / opacity.max(0.01);
     }
 
-    fn onto(layer: &mut [f32], shown: &[f32], new: &[f32]) {
-        layer[0] += new[0] - shown[0];
+    fn onto(layer: &mut [f32], shown: &[f32], new: &[f32], opacity: f32) {
+        layer[0] += (new[0] - shown[0]) / opacity.max(0.01);
     }
 
     fn rebase(base: &mut [f32], shown: &[f32], new: &[f32]) {
@@ -197,12 +198,21 @@ impl Kind for Blend {
         }
     }
 
-    fn onto(layer: &mut [u16], shown: &[u16], new: &[u16]) {
+    fn onto(layer: &mut [u16], shown: &[u16], new: &[u16], opacity: f32) {
         let mut edit = [0u16; 16];
-        Self::absorb(&mut edit, shown, shown, new, 1.0);
+        Self::absorb(&mut edit, shown, shown, new, opacity);
         let cover = (edit.iter().map(|&v| f32::from(v)).sum::<f32>() / 65535.0).min(1.0);
+        let full = layer.iter().map(|&v| u32::from(v)).sum::<u32>() > 65000;
         for (l, &e) in layer.iter_mut().zip(&edit) {
             *l = (f32::from(*l) * (1.0 - cover) + f32::from(e)).round().min(65535.0) as u16;
+        }
+
+        // A whole pixel (the base's) stays one: what the rounding left goes on its strongest channel.
+        if full {
+            let sum = layer.iter().map(|&v| i64::from(v)).sum::<i64>();
+            if let Some(top) = layer.iter_mut().max() {
+                *top = (i64::from(*top) + 65535 - sum).clamp(0, 65535) as u16;
+            }
         }
     }
 
@@ -263,7 +273,7 @@ impl Kind for Ground {
         layer[3] = if below[..3] == new[..3] { 0 } else { 255 };
     }
 
-    fn onto(layer: &mut [u8], shown: &[u8], new: &[u8]) {
+    fn onto(layer: &mut [u8], shown: &[u8], new: &[u8], _: f32) {
         if shown[..3] != new[..3] {
             layer[..3].copy_from_slice(&new[..3]);
             layer[3] = 255;
@@ -384,11 +394,29 @@ impl<K: Kind> Stack<K> {
         s
     }
 
-    /// A new layer on top; its id.
+    /// A new layer; its id. A layer of the user's goes on top of theirs, under what procedural features own: those apply last.
     pub fn add(&mut self, id: u64, name: &str, owner: &str) -> u64 {
         let samples = Blocks::new(self.w, self.h);
-        self.layers.push(Layer { id, name: name.to_owned(), visible: true, opacity: 1.0, owner: owner.to_owned(), samples });
+        let at = if owner.is_empty() { self.layers.iter().position(|l| !l.owner.is_empty()).unwrap_or(self.layers.len()) } else { self.layers.len() };
+        self.layers.insert(at, Layer { id, name: name.to_owned(), visible: true, opacity: 1.0, owner: owner.to_owned(), samples });
         id
+    }
+
+    /// A layer of the user's, by id: what a procedural feature owns is not theirs to touch.
+    #[must_use]
+    pub fn user_index(&self, id: u64) -> Option<usize> {
+        self.index_of(id).filter(|&i| self.layers[i].owner.is_empty())
+    }
+
+    /// Whether what procedural features own applies after everything else.
+    #[must_use]
+    pub fn owned_on_top(&self) -> bool {
+        !self.layers.windows(2).any(|w| !w[0].owner.is_empty() && w[1].owner.is_empty())
+    }
+
+    /// Makes it so.
+    pub fn put_owned_on_top(&mut self) {
+        self.layers.sort_by_key(|l| !l.owner.is_empty());
     }
 
     #[must_use]
@@ -512,14 +540,21 @@ impl<K: Kind> Stack<K> {
                 }
 
                 bounds = Some(bounds.map_or([x, y, x + 1, y + 1], |b| [b[0].min(x), b[1].min(y), b[2].max(x + 1), b[3].max(y + 1)]));
+                let shows = |l: &Layer<K::Sample>| l.visible && l.opacity > 0.0;
                 match target {
-                    Some(k) if self.layers[k].visible && self.layers[k].opacity > 0.0 => {
+                    Some(k) if shows(&self.layers[k]) && self.layers[k + 1..].iter().any(shows) => {
+                        let opacity = self.layers[k].opacity;
+                        K::onto(self.layers[k].samples.pixel_mut(x, y, K::CHANNELS), &shown, &new, opacity);
+                    }
+
+                    Some(k) if shows(&self.layers[k]) => {
                         self.compose(x, y, k, &mut below);
                         let opacity = self.layers[k].opacity;
                         K::absorb(self.layers[k].samples.pixel_mut(x, y, K::CHANNELS), &below, &shown, &new, opacity);
                     }
 
-                    Some(k) => K::onto(self.layers[k].samples.pixel_mut(x, y, K::CHANNELS), &shown, &new),
+                    Some(k) => K::onto(self.layers[k].samples.pixel_mut(x, y, K::CHANNELS), &shown, &new, 1.0),
+                    None if self.layers.iter().any(shows) => K::onto(self.base.pixel_mut(x, y, K::CHANNELS), &shown, &new, 1.0),
                     None => K::rebase(self.base.pixel_mut(x, y, K::CHANNELS), &shown, &new),
                 }
             }
@@ -858,6 +893,54 @@ mod tests {
     }
 
     #[test]
+    fn what_a_feature_owns_stays_on_top_of_the_users_layers() {
+        let (_, mut s) = stack();
+        s.add(1, "road", "road:1#0");
+        s.add(2, "mine", "");
+        s.add(3, "mine too", "");
+        assert_eq!(s.layers.iter().map(|l| l.id).collect::<Vec<_>>(), [2, 3, 1]);
+        assert!(s.owned_on_top());
+        assert_eq!(s.user_index(1), None);
+        assert_eq!(s.user_index(3), Some(1));
+
+        // A tile saved before they had to be.
+        s.layers.swap(1, 2);
+        assert!(!s.owned_on_top());
+        s.put_owned_on_top();
+        assert!(s.owned_on_top());
+    }
+
+    #[test]
+    fn a_height_edit_under_a_layer_lands_where_it_was_made() {
+        let (mut f, mut s) = stack();
+        s.working = Some(s.add(1, "mine", ""));
+        s.add(2, "road", "road:1#0");
+        s.layers[0].opacity = 0.5;
+        edit(&mut f, 1, 1, 104.0);
+        s.absorb(&mut f, [0, 0, 4, 4]);
+        assert!((f.metres(1, 1) - 104.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn paint_over_a_layer_does_not_keep_that_layer_when_it_goes() {
+        // The base all of channel 0, a road's channel 5 over half of it.
+        let mut base = [0u16; 16];
+        base[0] = 65535;
+        let mut road = [0u16; 16];
+        road[5] = 32768;
+        let mut shown = base;
+        Blend::over(&mut shown, &road, 1.0);
+
+        // A stroke turns what shows half into channel 2.
+        let mut new = shown.map(|v| v / 2);
+        new[2] = 65535 - new.iter().map(|&v| u32::from(v)).sum::<u32>() as u16;
+        Blend::onto(&mut base, &shown, &new, 1.0);
+        assert!(base[5] <= 2, "{base:?}");
+        assert!(base[2] > 30000, "{base:?}");
+        assert_eq!(base.iter().map(|&v| u32::from(v)).sum::<u32>(), 65535, "{base:?}");
+    }
+
+    #[test]
     fn a_hidden_blend_layer_keeps_what_it_held() {
         let mut layer = [0u16; 16];
         layer[1] = 65535;
@@ -867,12 +950,12 @@ mod tests {
         // A quarter of channel 2 painted over what shows, none of which is this layer's.
         let mut new = [0u16; 16];
         (new[0], new[2]) = (49151, 16384);
-        Blend::onto(&mut layer, &shown, &new);
+        Blend::onto(&mut layer, &shown, &new, 1.0);
         assert!(layer[1].abs_diff(49151) <= 2 && layer[2].abs_diff(16384) <= 2, "{layer:?}");
 
         // Ground types: the same, and what was not painted stays.
         let mut layer = [7u8, 7, 7, 255];
-        Ground::onto(&mut layer, &[1, 1, 1, 255], &[1, 1, 1, 255]);
+        Ground::onto(&mut layer, &[1, 1, 1, 255], &[1, 1, 1, 255], 1.0);
         assert_eq!(layer, [7, 7, 7, 255]);
     }
 

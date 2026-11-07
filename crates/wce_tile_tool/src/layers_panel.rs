@@ -48,7 +48,7 @@ impl TileTool {
         let can_add = gui::button(&format!("{} New layer", icons::PLUS));
         if can_add {
             let name = format!("Layer {}", rows.len() + 1);
-            if let Err(why) = d.add_terrain_layer(kind, &name, "") {
+            if let Err(why) = d.add_terrain_layer(kind, &name) {
                 self.status = why;
             }
 
@@ -69,13 +69,8 @@ impl TileTool {
             }
 
             gui::same_line();
-            let label = if row.owner.is_empty() { row.name.clone() } else { format!("{} {}", icons::ROUTE, row.name) };
-            if gui::selectable(&label, working == Some(row.id), 0) && row.owner.is_empty() {
+            if gui::selectable(&row.name, working == Some(row.id), 0) {
                 d.set_working_layer(kind, Some(row.id));
-            }
-
-            if !row.owner.is_empty() && gui::is_item_hovered() {
-                gui::set_tooltip("A road's layer: it is made from the road, so change the road. Paint on a layer above it to touch it up.");
             }
 
             gui::pop_id();
