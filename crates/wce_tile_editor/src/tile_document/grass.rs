@@ -213,6 +213,12 @@ impl Tile {
             for &(x, lz) in patches {
                 // The slope over the patch (height drop per metre along x and z).
                 let z = extent - lz;
+
+                // Not through a road: a tile's packed list was made before it, and the blend map alone need not rule a texture out.
+                if self.road_at(f64::from(x), f64::from(z)) {
+                    continue;
+                }
+
                 let sx = (height(x - half, z) - height(x + half, z)) / (2.0 * half);
                 let sz = (height(x, z - half) - height(x, z + half)) / (2.0 * half);
                 if 1.0 / (sx * sx + 1.0 + sz * sz).sqrt() <= min_ny {

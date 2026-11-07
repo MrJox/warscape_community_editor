@@ -176,6 +176,9 @@ impl Tile {
 
         l.dirty = true;
         self.layers_shown = true;
+
+        // A layer shown, hidden or moved changes what the grass stands on.
+        self.reload_grass();
     }
 
     fn layer_state(&self, kind: LayerType) -> Option<AnyState> {

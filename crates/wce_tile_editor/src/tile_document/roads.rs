@@ -84,6 +84,16 @@ impl Tile {
         format!("{} instances, {bridge} of them bridge pieces: {}", self.road_items.len(), list.join("; "))
     }
 
+    /// Whether a road is at a place (world units), by its ground type layer.
+    pub(super) fn road_at(&self, x: f64, z: f64) -> bool {
+        let p = &self.project;
+        let Some(s) = p.layers.as_ref().and_then(|l| l.ground.as_ref()) else { return false };
+        let Some(f) = p.ground.as_ref() else { return false };
+        let border = p.border_m();
+        let (u, v) = ((x + border) * f64::from(f.width()) / (p.extent_x() + 2.0 * border), (z + border) * f64::from(f.height()) / (p.extent_z() + 2.0 * border));
+        u >= 0.0 && v >= 0.0 && s.owned_at("road:", u as u32, v as u32, |px| px[3] == 0)
+    }
+
     /// An id for a new road.
     pub(super) fn next_road_id(&self) -> u32 {
         let doc = self.tscene().doc();
@@ -146,6 +156,9 @@ impl Tile {
 
         self.roads_stale = false;
         self.layers_shown = true;
+
+        // Grass stands by the blend map and on the heights, and neither is what it was.
+        self.reload_grass();
     }
 
     /// The road over a ground (`sample`, world units): graded with its gaps taken out, so that it does not dip into them.

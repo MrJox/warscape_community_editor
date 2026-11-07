@@ -94,6 +94,8 @@ A road whose signature differs, or a height edit anywhere, makes the roads again
 drag makes its road at the end, and undoing an edit of a road needs nothing of its own. Layers of a road that went are taken out; opening a tile
 makes nothing again. A road's layers are not edited by hand: their rows cannot be made the working layer. A hand edit goes on a layer above.
 
+**Grass** is made again with the road: generated grass takes the new blend map and heights, and packed or generated, no patch stands on a road (`Tile::road_at`, the roads' ground type layers), as a tile's packed list was made before it. So does a stack change, as a layer shown or hidden moves the ground under it. With generated grass that costs about 0.6 s on a large tile each time the roads are made.
+
 **The height at a point** comes from the road's samples near it, by distance, further than 12 past the edge: taken from the nearest alone it jumped where
 a point stopped being nearer one stretch than another, in steps across the banks (`the_terrain_a_road_leaves_has_no_steps`).
 
