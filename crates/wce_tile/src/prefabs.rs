@@ -5,7 +5,8 @@
 //! The editor's prefabs are `<key>.wce` in the projects (`<projects>/assembly_kit/raw_data/art/prefabs`): the same file (a superset, its root
 //! marked, `project_files`), where a prefab placed inside keeps its reference (`wce_prefab`) without its contents. An edit is saved there,
 //! never in the kit; a `.wce` takes the place of the kit's `.xml` of the same key. The editor places a prefab as a reference
-//! (`project_files::PREFAB_ATTR`), and "Save for Assembly Kit" writes a prefab TEd reads (the references in it baked).
+//! (`project_files::PREFAB_ATTR`), and "Save for Assembly Kit" writes a prefab TEd reads (the references in it baked). A `.wce` can also
+//! hold a height layer (`prefab_terrain`), which TEd's prefabs can't: the kit's file goes without it.
 //!
 //! A file as TEd writes it (`\n` line ends, four-space indentation):
 //!
@@ -24,6 +25,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::prefab_terrain::PrefabTerrain;
 use crate::ted_scene::TedScene;
 
 /// The prefab files' version.
@@ -164,6 +166,31 @@ impl PrefabLibrary {
     ///
     /// No such prefab, or a file can't be read or written.
     pub fn save_edit(&self, key: &str, projects_root: &Path, children_text: &[u8]) -> Result<PathBuf, String> {
+        self.save_with(key, projects_root, children_text, None)
+    }
+
+    /// A prefab's height layer (`prefab_terrain`), none if it has none (a kit's `.xml` never has).
+    ///
+    /// # Errors
+    ///
+    /// No such prefab, or its file or its layer does not read.
+    pub fn terrain(&self, key: &str) -> Result<Option<PrefabTerrain>, String> {
+        let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
+        let text = std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        crate::prefab_terrain::read(&text).map_err(|e| format!("{}: {e}", entry.path.display()))
+    }
+
+    /// As [`Self::save_edit`], and the prefab's height layer becomes `terrain` (none: it has none).
+    ///
+    /// # Errors
+    ///
+    /// No such prefab, or a file can't be read or written.
+    pub fn save_with_terrain(&self, key: &str, projects_root: &Path, children_text: &[u8], terrain: Option<&PrefabTerrain>) -> Result<PathBuf, String> {
+        self.save_with(key, projects_root, children_text, Some(terrain))
+    }
+
+    /// `terrain`: none keeps the file's layer.
+    fn save_with(&self, key: &str, projects_root: &Path, children_text: &[u8], terrain: Option<Option<&PrefabTerrain>>) -> Result<PathBuf, String> {
         let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
         let target = if entry.wce && entry.path.starts_with(projects_root) {
             entry.path.clone()
@@ -179,7 +206,12 @@ impl PrefabLibrary {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
 
-        std::fs::write(&target, wce_file_text(scene.save(), Some(&|k: &str| self.contents(k)))).map_err(|e| format!("{}: {e}", target.display()))?;
+        let mut text = wce_file_text(scene.save(), Some(&|k: &str| self.contents(k)));
+        if let Some(terrain) = terrain {
+            text = crate::prefab_terrain::with_terrain(text, terrain).map_err(|e| format!("{}: {e}", target.display()))?;
+        }
+
+        std::fs::write(&target, text).map_err(|e| format!("{}: {e}", target.display()))?;
         Ok(target)
     }
 
@@ -340,6 +372,38 @@ mod tests {
         assert_eq!(back, path);
         let ted = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
         assert!(!ted.contains("wce_") && ted.contains("vector(2,0,0)"), "{ted}");
+    }
+
+    #[test]
+    fn a_height_layer_stays_through_edits_and_does_not_go_to_the_kit() {
+        let (kit, projects) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = prefab_root(kit.path()).join("rocks.xml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, FILE).unwrap();
+        let lib = PrefabLibrary::scan(&[projects.path().to_path_buf(), kit.path().to_path_buf()]);
+        assert_eq!(lib.terrain("rocks").unwrap(), None);
+
+        let mut t = PrefabTerrain::empty([-1.0, -1.0], 1.0, 3, 3);
+        (t.heights[4], t.coverage[4], t.normalize) = (2.0, 1.0, true);
+        let children = b"<BUILDING_INSTANCE position=\"vector(1,0,0)\" key=\"rock\" name=\"rock\"/>\n";
+        let saved = lib.save_with_terrain("rocks", &prefab_root(projects.path()), children, Some(&t)).unwrap();
+        let lib = PrefabLibrary::scan(&[projects.path().to_path_buf(), kit.path().to_path_buf()]);
+        let kept = t.cropped().unwrap();
+        assert_eq!(lib.terrain("rocks").unwrap().as_ref(), Some(&kept));
+        assert_eq!(lib.contents("rocks").unwrap(), children, "the layer is not part of the contents");
+
+        // An edit of the contents keeps the layer; one that sets none takes it away.
+        lib.save_edit("rocks", &prefab_root(projects.path()), b"<BUILDING_INSTANCE position=\"vector(3,0,0)\" key=\"rock\" name=\"rock\"/>\n").unwrap();
+        assert_eq!(lib.terrain("rocks").unwrap().as_ref(), Some(&kept));
+
+        let (ted, report) = lib.save_for_kit("rocks", &prefab_root(kit.path()), None).unwrap();
+        let ted = std::fs::read_to_string(ted).unwrap();
+        assert!(!ted.contains("Wce") && ted.contains("vector(3,0,0)"), "{ted}");
+        assert!(report.dropped.iter().any(|l| l.contains("height layer")), "{report:?}");
+
+        lib.save_with_terrain("rocks", &prefab_root(projects.path()), children, None).unwrap();
+        assert_eq!(lib.terrain("rocks").unwrap(), None);
+        assert!(!std::fs::read_to_string(saved).unwrap().contains("Wce"));
     }
 
     #[test]
