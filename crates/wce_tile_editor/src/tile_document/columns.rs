@@ -17,10 +17,13 @@
 //!
 //! The columns follow the walls live: their placement is recomputed when the walls' transforms, levels or visibility change.
 //!
-//! The effects of the pieces (wce_formats::anim_meta: `<piece file>.meta`), on the buildings' own pieces and on what they attach, are
-//! placed the same way: the torches' `action_vfx_torch_fire_small`, a lighthouse's fire. Shown: the untagged effects that loop (not the
-//! `destruction_vfx_*` bursts a piece plays once when it reaches its level), and the `ip_fire` ones while the building burns (its `burn`
-//! property). A burning piece also plays `burning_entity` over its whole mesh: the engine's fire on a burning entity (flames, smoke,
+//! The effects of the pieces, on the buildings' own pieces and on what they attach, are placed the same way, from two places:
+//! - the `vfx_emitters` of the piece's destruct in its logic file, always: no shipped file has any, but mods can, and they play in game;
+//! - its `.meta` (wce_formats::anim_meta: `<piece file>.meta`), but for Attila, which drops those effects when it loads a standing piece
+//!   (docs/re/buildings.md, "What gates a piece's effects"). Shown: the untagged effects that loop (not the `destruction_vfx_*` bursts a
+//!   piece plays once when it reaches its level), and the `ip_fire` ones while the building burns (its `burn` property).
+//!
+//! A burning piece also plays `burning_entity` over its whole mesh: the engine's fire on a burning entity (flames, smoke,
 //! embers and a light, from the piece's triangles; empire.retail.dll fn 0x104bb1e0 attaches it, its emitters emit from the entity's mesh,
 //! `AllowEmitFromMesh`), whatever its `.meta` holds. The fire preview (fire.rs) plays the later stages the same way: the collapse and the
 //! aftermath. The capture smoke and the timed fires belong to battle events and are not shown.
@@ -65,8 +68,8 @@ pub(crate) struct ColumnState {
     /// update. Walking every building each frame cost ~20 ms on a city.
     pub(crate) dirty: bool,
 
-    /// Building key -> its columns (None: no logic file, or nothing attached).
-    logic: HashMap<String, Option<Arc<Columns>>>,
+    /// Building key -> what its logic file gives (None: no logic file, or nothing of this in it).
+    logic: HashMap<String, Option<Arc<Logic>>>,
     models: HashMap<String, Option<Arc<ColumnModel>>>,
 
     /// Piece file -> the effects of its `.meta` (None: no file, or nothing shown in it).
@@ -102,6 +105,26 @@ impl Default for ColumnState {
     }
 }
 
+/// What the editor takes from a logic file: the buildings attached, and the effects its destructs always play, by destruct name.
+#[derive(Default)]
+struct Logic {
+    columns: Columns,
+    emitters: HashMap<String, Arc<Vec<MetaEffect>>>,
+}
+
+/// The effect a key of `vfx_emitters` plays: the key without its first three `_` tokens and its last (docs/re/buildings.md).
+fn emitter_effect(key: &str) -> Option<&str> {
+    Some(key.splitn(4, '_').nth(3)?.rsplit_once('_')?.0)
+}
+
+/// An entry of `vfx_emitters` as an effect, untagged. The game takes a place and an up from its matrix, and turns the effect only if that
+/// tilts it a lot; these all stand up, so only the place is read.
+fn logic_emitter(entry: &serde_json::Value) -> Option<MetaEffect> {
+    let effect = emitter_effect(entry.get("key")?.as_str()?)?.to_owned();
+    let m = transform_of(entry.get("matrix_1")?)?.m;
+    Some(MetaEffect { tag: String::new(), effect, start: 0.0, end: 0.0, position: [m[0][3], m[1][3], m[2][3]], rotation: [0.0, 0.0, 0.0, 1.0], bone: -1, scale: 1.0, volume: None })
+}
+
 /// A row-vector transform of the logic file (translation in m30..m32) as the editor's column-vector matrix.
 pub(super) fn transform_of(t: &serde_json::Value) -> Option<Float4x4> {
     let g = |r: usize, c: usize| t.get(format!("m{r}{c}")).and_then(serde_json::Value::as_f64).map(|v| v as f32);
@@ -115,13 +138,13 @@ pub(super) fn transform_of(t: &serde_json::Value) -> Option<Float4x4> {
     Some(m)
 }
 
-/// The columns of a logic file.
-fn parse_columns(bytes: &[u8]) -> Result<Columns, String> {
+/// What the editor takes from a logic file.
+fn parse_logic(bytes: &[u8]) -> Result<Logic, String> {
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &Some(DecodeableExtraData::default())).map_err(|e| e.to_string())?;
 
     // rpfm_lib keeps the fields private; their serde form is public.
     let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
-    let mut out = Columns::new();
+    let mut out = Logic::default();
     for piece in v.get("pieces").and_then(serde_json::Value::as_array).into_iter().flatten() {
         let Some(name) = piece.get("name").and_then(serde_json::Value::as_str) else { continue };
         let mut states: Vec<Vec<ColumnRef>> = vec![];
@@ -137,10 +160,15 @@ fn parse_columns(bytes: &[u8]) -> Result<Columns, String> {
                 let Some(local) = f.get("transform").and_then(transform_of) else { continue };
                 states[index].push(ColumnRef { key: building.to_lowercase(), local });
             }
+
+            let emitters = d.get("vfx_emitters").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(logic_emitter).collect::<Vec<_>>();
+            if let (false, Some(destruct)) = (emitters.is_empty(), d.get("name").and_then(serde_json::Value::as_str)) {
+                out.emitters.insert(destruct.to_lowercase(), Arc::new(emitters));
+            }
         }
 
         if states.iter().any(|s| !s.is_empty()) {
-            out.insert(name.to_lowercase(), states);
+            out.columns.insert(name.to_lowercase(), states);
         }
     }
 
@@ -151,7 +179,7 @@ fn parse_columns(bytes: &[u8]) -> Result<Columns, String> {
 /// the first stage of the fire preview; 2: the preview's collapse and aftermath, fire.rs).
 type PlacedPiece = (Float4x4, String, usize, u8);
 
-/// Whether an effect of a `.meta` plays on a standing piece in the editor (see the module notes).
+/// Whether an effect of a `.meta` plays on a standing piece, where the game reads them (see the module notes).
 pub(super) fn shown_effect(e: &MetaEffect, burning: bool) -> bool {
     match e.tag.as_str() {
         "" => e.volume.is_none() && !e.effect.starts_with("destruction_vfx"),
@@ -180,16 +208,35 @@ pub(super) fn piece_name(path: &str) -> Option<String> {
     Some(rest[..end].to_owned())
 }
 
-impl Tile {
+/// The destruct (`piece01_destruct02`) of a piece file.
+fn destruct_name(path: &str) -> Option<String> {
+    let file = path.rsplit('/').next()?;
+    let rest = &file[file.find("_piece")? + 1..];
+    let digits = rest.find("_destruct")? + "_destruct".len();
+    let end = rest[digits..].find(|c: char| !c.is_ascii_digit()).map_or(rest.len(), |n| digits + n);
+    Some(rest[..end].to_lowercase())
+}
 
-    fn building_columns(&mut self, key: &str) -> Option<Arc<Columns>> {
+impl Tile {
+    /// Whether the game plays the effects of a standing piece's `.meta`: Attila does not (see the module notes).
+    pub(super) fn meta_effects_play(&self) -> bool {
+        self.files.as_deref().and_then(|f| f.game()).is_some_and(|g| g.key != wce_foundation::game::GameProfile::ATTILA.key)
+    }
+
+    /// The effects a piece file's destruct has in its building's logic file.
+    pub(super) fn logic_emitters(&mut self, file: &str) -> Option<Arc<Vec<MetaEffect>>> {
+        let key = file.strip_prefix("rigidmodels/buildings/")?.split('/').next()?;
+        self.building_logic(key)?.emitters.get(&destruct_name(file)?).cloned()
+    }
+
+    fn building_logic(&mut self, key: &str) -> Option<Arc<Logic>> {
         if let Some(c) = self.columns.logic.get(key) {
             return c.clone();
         }
 
         let path = format!("rigidmodels/buildings/{key}/{key}_tech.cs2.parsed");
-        let found = self.files.as_deref().filter(|f| f.exists(&path)).and_then(|f| f.read(&path).ok()).and_then(|bytes| match parse_columns(&bytes) {
-            Ok(c) => (!c.is_empty()).then(|| Arc::new(c)),
+        let found = self.files.as_deref().filter(|f| f.exists(&path)).and_then(|f| f.read(&path).ok()).and_then(|bytes| match parse_logic(&bytes) {
+            Ok(l) => (!l.columns.is_empty() || !l.emitters.is_empty()).then(|| Arc::new(l)),
             Err(error) => {
                 log::warn(format!("{path}: {error} (its bridging columns are not drawn)"));
                 None
@@ -200,25 +247,24 @@ impl Tile {
         found
     }
 
-    /// The effects of a piece file's `.meta` that can show (cached).
+    /// The effects of a piece file that can show (cached).
     fn piece_effects(&mut self, file: &str) -> Option<Arc<Vec<MetaEffect>>> {
         if let Some(m) = self.columns.metas.get(file) {
             return m.clone();
         }
 
         let path = format!("{}.meta", file.strip_suffix(".rigid_model_v2").unwrap_or(file));
-        let found = self.files.as_deref().filter(|f| f.exists(&path)).and_then(|f| f.read(&path).ok()).and_then(|bytes| match meta_effects(&bytes) {
-            Some(e) => {
-                let e = e.into_iter().filter(|e| shown_effect(e, true)).collect::<Vec<_>>();
-                (!e.is_empty()).then(|| Arc::new(e))
-            }
-
+        let read = self.files.as_deref().filter(|f| self.meta_effects_play() && f.exists(&path)).and_then(|f| f.read(&path).ok());
+        let mut effects = read.map_or(vec![], |bytes| match meta_effects(&bytes) {
+            Some(e) => e.into_iter().filter(|e| shown_effect(e, true)).collect(),
             None => {
                 log::warn(format!("{path}: an entry this does not read (its effects are not shown)"));
-                None
+                vec![]
             }
         });
 
+        effects.extend(self.logic_emitters(file).iter().flat_map(|e| e.iter()).cloned());
+        let found = (!effects.is_empty()).then(|| Arc::new(effects));
         self.columns.metas.insert(file.to_owned(), found.clone());
         found
     }
@@ -230,7 +276,7 @@ impl Tile {
         }
 
         let metas = self.files.as_deref().is_some_and(|f| f.list(&format!("rigidmodels/buildings/{key}/"), ".meta").iter().any(|p| !p.ends_with("_anim.meta")));
-        let r = metas || self.building_columns(key).is_some();
+        let r = metas || self.building_logic(key).is_some();
         self.columns.relevant.insert(key.to_owned(), r);
         r
     }
@@ -326,7 +372,7 @@ impl Tile {
                 return (out, pieces);
             }
 
-            let columns = self.building_columns(&key);
+            let logic = self.building_logic(&key);
             let saved = self.saved_destruction_level(e, m.levels);
             let world = self.world_matrix(e);
             for (k, piece) in m.pieces.iter().enumerate() {
@@ -341,7 +387,7 @@ impl Tile {
                 let piece_world = props.as_ref().map_or(world, |p| world * piece_local(p));
                 let stage = preview.unwrap_or_else(|| u8::from(props.as_ref().map_or(burns, |p| p.burn || burns)));
                 pieces.push((piece_world, self.piece_file(piece, level, levels), e, stage));
-                let Some(states) = piece_name(piece).and_then(|n| columns.as_ref()?.get(&n).cloned()) else { continue };
+                let Some(states) = piece_name(piece).and_then(|n| logic.as_ref()?.columns.get(&n).cloned()) else { continue };
                 for c in states.get(state).into_iter().flatten() {
                     out.push((piece_world * c.local, c.key.clone(), e));
                 }
@@ -526,11 +572,24 @@ impl Tile {
 
 #[cfg(test)]
 mod tests {
-    use super::piece_name;
+    use super::{destruct_name, emitter_effect, piece_name};
 
     #[test]
     fn piece_names() {
         assert_eq!(piece_name("rigidmodels/buildings/roman_fort_straight/roman_fort_straight_piece01_destruct01.rigid_model_v2").as_deref(), Some("piece01"));
         assert_eq!(piece_name("a/b/x_piece12_destruct03_0.rigid_model_v2").as_deref(), Some("piece12"));
+    }
+
+    #[test]
+    fn destruct_names() {
+        assert_eq!(destruct_name("a/b/x_piece12_destruct03_0.rigid_model_v2").as_deref(), Some("piece12_destruct03"));
+        assert_eq!(destruct_name("a/b/x_piece01_destruct01.rigid_model_v2").as_deref(), Some("piece01_destruct01"));
+        assert_eq!(destruct_name("a/b/x_piece01"), None);
+    }
+
+    #[test]
+    fn emitter_keys() {
+        assert_eq!(emitter_effect("piece01_destruct01_emitter_action_vfx_torch_fire_small_01"), Some("action_vfx_torch_fire_small"));
+        assert_eq!(emitter_effect("piece01_destruct01_emitter"), None);
     }
 }

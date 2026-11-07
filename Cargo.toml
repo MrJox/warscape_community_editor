@@ -15,8 +15,8 @@ windows-bindgen = "0.100"
 
 # rpfm_lib from rpfm's develop branch (ahead of its releases). The path line is for working against a local checkout next to this repo
 # (`../rpfm`) while an rpfm change is not on develop yet.
-rpfm_lib = { git = "https://github.com/Frodo45127/rpfm.git", branch = "develop", default-features = false }
-# rpfm_lib = { path = "../rpfm/rpfm_lib", default-features = false }
+# rpfm_lib = { git = "https://github.com/Frodo45127/rpfm.git", branch = "develop", default-features = false }
+rpfm_lib = { path = "../rpfm/rpfm_lib", default-features = false }
 
 # Windows links SDL3 statically, and the cmake crate builds opt-level 0 as a Debug config against the debug CRT (MSVCRTD), which
 # clashes with the release CRT Rust links. Any opt-level above 0 makes it RelWithDebInfo, on the release CRT.

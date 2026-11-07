@@ -98,7 +98,7 @@ impl TechKind {
             Self::ArrowEmitters => ("Arrow emitters", 2, "The positions the building's arrows are fired from.", [1.0, 0.3, 0.3]),
             Self::ActionVfx => ("Action effects", 2, "The nodes where the building's action effects (and their attachment points) play.", [0.75, 0.45, 1.0]),
             Self::FileRefs => ("Attached buildings", 2, "Buildings the piece's state attaches (torches, the bridging columns of walls) at their places.", [1.0, 0.6, 0.8]),
-            Self::Emitters => ("Particle emitters", 2, "The effects the pieces' .meta files play, at their places. Bright: plays while the building stands; dim: on an event (fire, destruction, capture); a box: a volumetric effect.", [0.4, 1.0, 0.5]),
+            Self::Emitters => ("Particle emitters", 2, "The effects of the pieces' .meta files and their logic file's list, at their places. Bright: plays while the building stands; dim: on an event (fire, destruction, capture), or in a .meta the game drops (Attila); a box: a volumetric effect.", [0.4, 1.0, 0.5]),
             Self::Bounds => ("Bounding boxes", 3, "The building's bounding box (white) and the box of each piece's state (grey).", [0.9, 0.9, 0.95]),
             Self::Flag => ("Minimap flag", 3, "The node of the flag the building has on the tactical map.", [0.4, 1.0, 0.4]),
         };
@@ -797,11 +797,12 @@ impl Tile {
         }
 
         if s.on(TechKind::Emitters) {
+            let meta_plays = self.meta_effects_play();
             for (w, file) in &placed.files {
-                let Some(effects) = self.tech_meta(file) else { continue };
-                for fx in effects.iter() {
+                let (metas, emitters) = (self.tech_meta(file), self.logic_emitters(file));
+                let metas = metas.iter().flat_map(|m| m.iter()).map(|fx| (fx, meta_plays && shown_effect(fx, false)));
+                for (fx, playing) in metas.chain(emitters.iter().flat_map(|e| e.iter()).map(|fx| (fx, true))) {
                     let at = *w * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(fx.rotation);
-                    let playing = shown_effect(fx, false);
                     let rgb = if playing { [0.4, 1.0, 0.5] } else { [0.75, 0.65, 0.25] };
                     let shape = match fx.volume {
                         Some(v) => Shape::BoxAt(at, Float3::new(v[0] * 0.5, v[1] * 0.5, v[2] * 0.5)),
