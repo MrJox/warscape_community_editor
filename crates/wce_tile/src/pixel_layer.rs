@@ -9,6 +9,7 @@ const BLOCK: u32 = 64;
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Record<T> {
     blocks: Vec<(u32, Vec<T>, Vec<T>)>,
+    serial: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -31,6 +32,9 @@ pub struct PixelLayer<T> {
 
     /// The same since `take_edited`, for the terrain layers; the composite they write is not in it.
     edited: Option<(u32, u32, u32, u32)>,
+
+    /// The last record's serial.
+    serial: u64,
 }
 
 impl<T: Copy + PartialEq> PixelLayer<T> {
@@ -38,7 +42,7 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
     /// `v` holds `channels` samples per pixel, row by row.
     pub fn new(w: u32, h: u32, channels: usize, v: Vec<T>) -> Self {
         debug_assert_eq!(v.len(), w as usize * h as usize * channels);
-        Self { w, h, channels, v, editing: false, saved: vec![], touched: vec![], undo: vec![], redo: vec![], changed: None, edited: None }
+        Self { w, h, channels, v, editing: false, saved: vec![], touched: vec![], undo: vec![], redo: vec![], changed: None, edited: None, serial: 0 }
     }
 
     pub fn width(&self) -> u32 {
@@ -184,10 +188,9 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
         }
     }
 
-    /// Forgets the undo history: the terrain layers changed under it.
-    pub fn clear_undo(&mut self) {
-        self.undo.clear();
-        self.redo.clear();
+    /// The serial of the last edit undo would take back, 0 with none, for the terrain layers.
+    pub fn top_id(&self) -> u64 {
+        self.undo.last().map_or(0, |r| r.serial)
     }
 
     fn mark(&mut self, x0: u32, y0: u32, x1: u32, y1: u32) {
@@ -249,7 +252,8 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
             (b, before, after)
         }).collect::<Vec<_>>();
 
-        self.undo.push(Record { blocks });
+        self.serial += 1;
+        self.undo.push(Record { blocks, serial: self.serial });
         self.redo.clear();
     }
 

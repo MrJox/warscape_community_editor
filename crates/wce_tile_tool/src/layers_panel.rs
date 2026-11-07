@@ -65,7 +65,7 @@ impl TileTool {
             gui::push_id(&format!("layer{}", row.id));
             let eye = if row.visible { icons::EYE } else { icons::EYE_OFF };
             if gui::small_button(eye) {
-                d.set_terrain_layer_look(kind, row.id, !row.visible, row.opacity);
+                d.set_terrain_layer_visible(kind, row.id, !row.visible);
             }
 
             gui::same_line();
@@ -88,7 +88,7 @@ impl TileTool {
         match &selected {
             Some(row) if !row.visible => {
                 gui::push_style_color(gui::COL_TEXT, theme::v4(theme::warning()));
-                gui::text_wrapped("Hidden: what you paint goes to the base until it is shown.");
+                gui::text_wrapped("The working layer is hidden: what you paint goes into it, but won't show until you show it.");
                 gui::pop_style_color(1);
             }
 
@@ -105,10 +105,18 @@ impl TileTool {
             d.rename_terrain_layer(kind, row.id, &self.layers.name);
         }
 
+        if gui::is_item_deactivated() {
+            d.commit_terrain_layer("Rename layer", kind);
+        }
+
         let mut opacity = row.opacity;
         gui::row("Opacity");
         if gui::slider_float("##layer_opacity", &mut opacity, 0.0, 1.0, "%.2f") {
-            d.set_terrain_layer_look(kind, row.id, row.visible, opacity);
+            d.set_terrain_layer_opacity(kind, row.id, opacity);
+        }
+
+        if gui::is_item_deactivated() {
+            d.commit_terrain_layer("Layer opacity", kind);
         }
 
         let at = rows.iter().position(|r| r.id == row.id).unwrap_or(0);

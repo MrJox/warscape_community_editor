@@ -101,9 +101,9 @@ impl GroundTypeField {
         self.layer.take_edited()
     }
 
-    /// Forgets the undo history: the terrain layers changed under it.
-    pub fn clear_undo(&mut self) {
-        self.layer.clear_undo();
+    /// The serial of the last edit undo would take back, 0 with none, for the terrain layers.
+    pub fn top_id(&self) -> u64 {
+        self.layer.top_id()
     }
 
     /// Writes a pixel of the composite of the terrain layers: neither an edit nor undoable.
