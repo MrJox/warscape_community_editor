@@ -15,6 +15,9 @@
 //! them with what Terry builds. A height layer adds (0 is nothing there), a blend layer goes over what is below by its weights (all 0 is
 //! nothing), and a ground type layer replaces (Terry's 16 is nothing there, an alpha of 0 here: the field keeps colours, not numbers).
 //!
+//! A layer can depend on a scene layer (`depends`, the scene layer's `wce_layer_id`): an export leaves it out unless that layer is exported
+//! (`TileProject::export_maps`). The editor shows it whatever.
+//!
 //! A stack lives in `terrain_layers.wcl` beside the tile: TEd never sees it, and a tile without layers has no such file.
 
 use std::collections::HashMap;
@@ -30,7 +33,7 @@ use crate::height_field::HeightField;
 pub const FILE: &str = "terrain_layers.wcl";
 
 const MAGIC: &[u8; 4] = b"WCTL";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 /// Pixels a side of a block of samples.
 const BLOCK: u32 = 64;
@@ -341,6 +344,9 @@ pub struct Layer<T> {
 
     /// The procedural feature that writes it (a road), empty for a layer of the user's. Such a layer is not edited by hand.
     pub owner: String,
+
+    /// The scene layer it exports with (its `wce_layer_id`), empty: always.
+    pub depends: String,
     samples: Blocks<T>,
 }
 
@@ -398,7 +404,7 @@ impl<K: Kind> Stack<K> {
     pub fn add(&mut self, id: u64, name: &str, owner: &str) -> u64 {
         let samples = Blocks::new(self.w, self.h);
         let at = if owner.is_empty() { self.layers.iter().position(|l| !l.owner.is_empty()).unwrap_or(self.layers.len()) } else { self.layers.len() };
-        self.layers.insert(at, Layer { id, name: name.to_owned(), visible: true, opacity: 1.0, owner: owner.to_owned(), samples });
+        self.layers.insert(at, Layer { id, name: name.to_owned(), visible: true, opacity: 1.0, owner: owner.to_owned(), depends: String::new(), samples });
         id
     }
 
@@ -493,14 +499,34 @@ impl<K: Kind> Stack<K> {
         }
     }
 
+    /// Whether a layer depends on a scene layer for which `exported` says no.
+    pub fn leaves_out(&self, exported: &dyn Fn(&str) -> bool) -> bool {
+        self.layers.iter().any(|l| !l.depends.is_empty() && !exported(&l.depends))
+    }
+
+    /// Writes into a field what an export gets: the layers `keep` lets through, over the base.
+    pub fn export_into(&self, field: &mut K::Field, keep: &dyn Fn(&Layer<K::Sample>) -> bool) {
+        let mut out = vec![K::Sample::default(); K::CHANNELS];
+        for y in 0..self.h {
+            for x in 0..self.w {
+                self.compose_with(x, y, self.layers.len(), &mut out, keep);
+                K::write(field, x, y, &out);
+            }
+        }
+    }
+
     /// The composite at a pixel from the base up to, not including, layer `end`.
     fn compose(&self, x: u32, y: u32, end: usize, out: &mut [K::Sample]) {
+        self.compose_with(x, y, end, out, &|_| true);
+    }
+
+    fn compose_with(&self, x: u32, y: u32, end: usize, out: &mut [K::Sample], keep: &dyn Fn(&Layer<K::Sample>) -> bool) {
         match self.base.pixel(x, y, K::CHANNELS) {
             Some(px) => out.copy_from_slice(px),
             None => out.fill(K::Sample::default()),
         }
 
-        for layer in self.layers[..end].iter().filter(|l| l.visible && l.opacity > 0.0) {
+        for layer in self.layers[..end].iter().filter(|l| l.visible && l.opacity > 0.0 && keep(l)) {
             if let Some(px) = layer.samples.pixel(x, y, K::CHANNELS) {
                 K::over(out, px, layer.opacity);
             }
@@ -606,21 +632,24 @@ impl<K: Kind> Stack<K> {
             out.extend(l.id.to_le_bytes());
             put_text(out, &l.name);
             put_text(out, &l.owner);
+            put_text(out, &l.depends);
             out.push(u8::from(l.visible));
             out.extend(l.opacity.to_le_bytes());
             write_blocks::<K>(out, &l.samples);
         }
     }
 
-    fn read(r: &mut Reader) -> Result<Self, String> {
+    fn read(r: &mut Reader, version: u32) -> Result<Self, String> {
         let (w, h, n) = (r.u32()?, r.u32()?, r.u32()?);
         let working = Some(r.u64()?).filter(|&id| id != 0);
         let base = read_blocks::<K>(r, w, h)?;
         let mut layers = vec![];
         for _ in 0..n {
-            let (id, name, owner, visible, opacity) = (r.u64()?, r.text()?, r.text()?, r.take(1)?[0] != 0, r.f32()?);
+            let (id, name, owner) = (r.u64()?, r.text()?, r.text()?);
+            let depends = if version >= 3 { r.text()? } else { String::new() };
+            let (visible, opacity) = (r.take(1)?[0] != 0, r.f32()?);
             let samples = read_blocks::<K>(r, w, h)?;
-            layers.push(Layer { id, name, visible, opacity, owner, samples });
+            layers.push(Layer { id, name, visible, opacity, owner, depends, samples });
         }
 
         Ok(Self { w, h, base, layers, working, states: HashMap::new(), seen: 0 })
@@ -784,15 +813,15 @@ impl TerrainLayers {
         let next_id = r.u64()?;
         let mut out = Self { next_id, ..Self::default() };
         if r.take(1)?[0] != 0 {
-            out.height = Some(Stack::read(&mut r)?);
+            out.height = Some(Stack::read(&mut r, version)?);
         }
 
         if r.take(1)?[0] != 0 {
-            out.blend = Some(Stack::read(&mut r)?);
+            out.blend = Some(Stack::read(&mut r, version)?);
         }
 
         if r.take(1)?[0] != 0 {
-            out.ground = Some(Stack::read(&mut r)?);
+            out.ground = Some(Stack::read(&mut r, version)?);
         }
 
         Ok(out)
@@ -1092,6 +1121,7 @@ mod tests {
         let mut l = TerrainLayers::default();
         let id = l.new_id();
         s.working = Some(s.add(id, "Hills ñ", "road:7"));
+        s.layers[0].depends = "12".to_owned();
         edit(&mut f, 1, 2, 104.0);
         s.absorb(&mut f, [0, 0, 4, 4]);
         s.layers[0].opacity = 0.75;
@@ -1104,6 +1134,21 @@ mod tests {
         assert!(back.blend.is_none() && back.ground.is_none());
         let mut back = back;
         assert_eq!(back.new_id(), id + 1);
+    }
+
+    #[test]
+    fn an_export_leaves_out_what_depends_on_a_layer_left_out() {
+        let (mut f, mut s) = stack();
+        s.working = Some(s.add(1, "hills", ""));
+        edit(&mut f, 1, 1, 105.0);
+        s.absorb(&mut f, [0, 0, 4, 4]);
+        s.layers[0].depends = "7".to_owned();
+        assert!(s.leaves_out(&|k| k != "7"));
+        assert!(!s.leaves_out(&|_| true));
+        let mut out = f.clone();
+        s.export_into(&mut out, &|l| l.depends != "7");
+        assert_eq!(out.metres(1, 1), 100.0);
+        assert_eq!(f.metres(1, 1), 105.0);
     }
 
     #[test]
