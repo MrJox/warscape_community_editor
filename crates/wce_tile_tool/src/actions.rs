@@ -54,6 +54,13 @@ const BRUSHES: [(&str, &str); 9] = [
     (icons::PALETTE, "Paint the ground types (shown in the ground types view while painting; Ctrl: erase)"),
 ];
 
+/// The Ground brush on a prefab's stage (its tooltip).
+const FOOTPRINT_TIP: &str = "Paint the prefab's footprint: where a normalized prefab levels the ground it stands on, even where you sculpt nothing \
+    (Ctrl: erase). Sculpted ground is in it already.";
+
+/// The ground type a footprint is painted with on the stage (road: it shows well).
+pub(crate) const FOOTPRINT_GROUND: u8 = 8;
+
 impl TileTool {
     /// The toolbar: the terrain brushes (a click on the active one goes back to selecting).
     pub(crate) fn draw_toolbar(&mut self, e: &mut Editor) {
@@ -63,8 +70,16 @@ impl TileTool {
 
         gui::text_disabled("|");
         gui::same_line();
+        let prefab = self.profile == crate::tool::Profile::Prefab;
         for (i, (icon, tip)) in BRUSHES.iter().enumerate() {
             let mode = TileMode::from_index(i + 1);
+
+            // A prefab's ground is heights only (textures would be another thing in each tile); ground types paint its footprint.
+            if prefab && mode == TileMode::Paint {
+                continue;
+            }
+
+            let tip = if prefab && mode == TileMode::Ground { FOOTPRINT_TIP } else { *tip };
             let on = self.mode == mode;
             if on {
                 gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
@@ -176,7 +191,12 @@ impl TileTool {
         ins.begin(d.id(), u64::MAX - 9);
         ins.section(&format!("{} brush", mode_name(self.mode)));
         ins.edit_slider("radius", "radius (m)", &mut self.brush.radius_m, 1.0, 120.0);
-        if self.mode == TileMode::Ground {
+        if self.mode == TileMode::Ground && self.profile == crate::tool::Profile::Prefab {
+            // The footprint: painted or not.
+            let mut i = i32::from(self.ground_type != GROUND_ERASE);
+            ins.edit_choice("footprint", "footprint", &mut i, &["erase".to_owned(), "paint".to_owned()]);
+            self.ground_type = if i == 0 { GROUND_ERASE } else { FOOTPRINT_GROUND };
+        } else if self.mode == TileMode::Ground {
             // Hard values: no strength or falloff. The eraser is Ctrl, or "none".
             let mut names = vec!["none (erase)".to_owned()];
             names.extend(GROUND_TYPES.iter().map(|(n, _)| (*n).to_owned()));
