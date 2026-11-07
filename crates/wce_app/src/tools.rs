@@ -13,6 +13,9 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
     #[cfg(feature = "tile")]
     tools.push(Box::new(wce_tile_tool::TileTool::default()));
 
+    #[cfg(feature = "prefab")]
+    tools.push(Box::new(wce_tile_tool::PrefabTool::default()));
+
     #[cfg(feature = "ui")]
     tools.push(Box::new(wce_ui_tool::UiTool::default()));
 

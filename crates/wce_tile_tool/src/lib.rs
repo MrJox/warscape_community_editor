@@ -24,6 +24,7 @@ pub mod minimap_panel;
 pub mod new_tile_dialog;
 pub mod placement_modes;
 pub mod prefab_panel;
+pub mod prefab_tool;
 pub mod proton;
 pub mod scene_panel;
 pub mod settings;
@@ -44,4 +45,5 @@ pub mod veg_sets;
 mod water_view;
 pub mod weather_panel;
 
+pub use prefab_tool::PrefabTool;
 pub use tool::TileTool;

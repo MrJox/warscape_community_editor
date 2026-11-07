@@ -244,8 +244,17 @@ impl ExportInputs {
     }
 }
 
+/// What a Tile tool is for: the Tile tool's tiles, or the Prefab tool's stage (`prefab_tool`), which leaves out what is the tile's only.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Profile {
+    #[default]
+    Tile,
+    Prefab,
+}
+
 pub struct TileTool {
     pub status: String,
+    pub(crate) profile: Profile,
     pub(crate) layers: crate::layers_panel::LayersUi,
     pub(crate) mode: TileMode,
     pub(crate) brush: BrushSettings,
@@ -654,7 +663,7 @@ pub struct TileTool {
 impl Default for TileTool {
     fn default() -> Self {
         Self {
-            status: String::new(), layers: Default::default(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snap_edges: false, snap_heights: false, angle_tolerance: 0.0, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None, alt_rotate: None,
+            status: String::new(), profile: Profile::Tile, layers: Default::default(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snap_edges: false, snap_heights: false, angle_tolerance: 0.0, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None, alt_rotate: None,
             off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
@@ -673,13 +682,19 @@ impl Default for TileTool {
 
 /// The tile the tool works on: the active document when it is a tile, else the first open one.
 pub fn document_id(e: &Editor) -> Option<DocumentId> {
+    // The Prefab tool's stages are tiles too: each tool sees its own (another tool, as the Weather tool, sees the tiles).
+    let owner = if e.active_tool_id() == crate::prefab_tool::PREFAB_TOOL_ID { crate::prefab_tool::PREFAB_TOOL_ID } else { TILE_TOOL_ID };
+    let ours = |id: DocumentId| e.docs.find_as::<TileDocument>(id).is_some() && e.docs.tool_of(id) == owner;
     let active = e.docs.active_id();
-    if e.docs.find_as::<TileDocument>(active).is_some() {
+    if ours(active) {
         return Some(active);
     }
 
-    e.docs.order().iter().copied().find(|&id| e.docs.find_as::<TileDocument>(id).is_some())
+    e.docs.order().iter().copied().find(|&id| ours(id))
 }
+
+/// The Tile tool's id: the owner of its documents.
+pub const TILE_TOOL_ID: &str = "tile";
 
 pub fn document(e: &mut Editor) -> Option<&mut TileDocument> {
     let id = document_id(e)?;
@@ -757,6 +772,11 @@ fn project_entries(raw: &Path, location: &str) -> Vec<(PathBuf, Vec<u8>)> {
 
 /// Runs `f` on the tile tool (a command reaching its tool).
 pub(crate) fn with_tile(e: &mut Editor, f: impl FnOnce(&mut TileTool, &mut Editor) -> CommandResult) -> CommandResult {
+    // The Prefab tool's own Tile tool while it is the active one: its stage, its brushes, its selection.
+    if e.active_tool_id() == crate::prefab_tool::PREFAB_TOOL_ID {
+        return e.with_tool::<crate::prefab_tool::PrefabTool, _>(|p, e| f(&mut p.tile, e)).unwrap_or_else(|| CommandResult::fail("the prefab tool is not available"));
+    }
+
     e.with_tool::<TileTool, _>(f).unwrap_or_else(|| CommandResult::fail("the tile tool is not available"))
 }
 
@@ -3067,7 +3087,7 @@ fn ground_group_row(name: &str, on: bool, thumb: Option<u64>) -> bool {
 
 impl Tool for TileTool {
     fn id(&self) -> &str {
-        "tile"
+        TILE_TOOL_ID
     }
 
     fn game_changed(&mut self, e: &mut Editor) {
@@ -3233,6 +3253,10 @@ impl Tool for TileTool {
     }
 
     fn activated(&mut self, e: &mut Editor) {
+        if self.profile == Profile::Tile {
+            Self::show_tiles(e);
+        }
+
         let key = e.tool_settings::<TileSettings>(SETTINGS_ID).sea_state;
         if !key.is_empty()
             && let Some(r) = e.renderer()
@@ -3424,7 +3448,9 @@ impl Tool for TileTool {
     fn draw_panels(&mut self, e: &mut Editor) {
         drop_gone_from_selection(e);
         self.handle_keys(e);
-        {
+        // The stage of a prefab is no tile of the user's: no Tile panel, no browser of tiles, no minimap.
+        let tile = self.profile == Profile::Tile;
+        if tile {
             wce_foundation::wce_prof!("tile.panel.tile");
             self.draw_tile_panel(e);
         }
@@ -3434,7 +3460,7 @@ impl Tool for TileTool {
             crate::scene_panel::draw_layers_panel(self, e);
         }
 
-        {
+        if tile {
             wce_foundation::wce_prof!("tile.panel.tiles");
             self.draw_browser_panel(e);
         }
@@ -3444,7 +3470,7 @@ impl Tool for TileTool {
             self.draw_weather_panel(e);
         }
 
-        {
+        if tile {
             wce_foundation::wce_prof!("tile.panel.minimap");
             self.minimap.draw_panel(e, self.right_dock);
         }
@@ -4150,6 +4176,25 @@ impl Tool for TileTool {
             self.status = project.warning.clone();
         }
 
+        e.pending_focus = Some("Tile".to_owned());
+        Ok(Box::new(self.make_document(e, project)?))
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+impl TileTool {
+    /// A tile's document, from its project: its prefab references filled in, the library's prefabs and buildings handed over, the tool's
+    /// display settings (the Prefab tool's stage is made so too).
+    ///
+    /// # Errors
+    ///
+    /// A prefab reference does not read.
+    pub(crate) fn make_document(&mut self, e: &mut Editor, mut project: TileProject) -> Result<TileDocument, String> {
+        let projects = Self::workspace_dir(e);
+
         // The prefabs placed as references get their contents (and their overrides); a save keeps what they differ by.
         let lib = self.prefab_library(e);
         let missing = project.fill_prefab_references(&|k| lib.contents(k)).map_err(|err| err.to_string())?;
@@ -4191,12 +4236,7 @@ impl Tool for TileTool {
             doc.tile_mut().display_mut().hidden_types.insert(VFX_TYPE.to_owned());
         }
 
-        e.pending_focus = Some("Tile".to_owned());
-        Ok(Box::new(doc))
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
+        Ok(doc)
     }
 }
 
