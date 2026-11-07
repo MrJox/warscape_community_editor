@@ -534,6 +534,15 @@ pub struct Tile {
     /// The layers wrote the height, blend or ground map: the terrain on the scene follows.
     pub(crate) layers_shown: bool,
 
+    /// The instances along the roads, their entities, and what is out of date of them (`roads.rs`).
+    pub(crate) road_items: Vec<roads::RoadItem>,
+    pub(crate) road_entities: Vec<wce_scene::render_scene::EntityId>,
+    pub(crate) road_items_stale: bool,
+    pub(crate) road_items_shown: bool,
+
+    /// The kit's prefabs, which the tool hands over.
+    pub(crate) road_prefabs: Option<std::sync::Arc<wce_tile::prefabs::PrefabLibrary>>,
+
     /// The ground under the roads changed: they are made again (`refresh_roads`).
     pub(crate) roads_stale: bool,
 
@@ -794,7 +803,7 @@ impl TileDocument {
             terrain_stride: 1, instances: vec![], type_ordinal: vec![], markers: Markers::default(), type_counts: BTreeMap::new(), batch_entity: vec![], dirty_type: vec![],
             first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), covers: HashMap::new(), covers_dirty: BTreeSet::new(), cover_spare: HashMap::new(), cover_ground: 0, polygons_published: false, tops: HashMap::new(), tops_wanted: BTreeSet::new(), tops_polls: 0, tops_came: false, models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
             markers_dirty: true, polygons_dirty: false, wall_preview: walls::WallPreview::default(), hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
-            grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false, layers_shown: false, roads_stale: false, roads_seen: 0,
+            grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false, road_items: vec![], road_entities: vec![], road_items_stale: true, road_items_shown: false, road_prefabs: None, layers_shown: false, roads_stale: false, roads_seen: 0,
             stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, saved_blend_depth: 0, blend_on_disk_edited: false, saved_ground_depth: 0, ground_on_disk_edited: false, water_depth: None, auto_nogos: None, nogo_entity: 0, nogo_dirty: true, water_entities: vec![], columns: columns::ColumnState::default(), tech: tech::TechState::default(), collapses: collapse::CollapseState::default(), fire: fire::FirePreview::default(), links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), pack_categories: None, building_db: OnceCell::new(), building_tables: vec![], tile_sets: OnceCell::new(), logic_summaries: RefCell::default(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None, normal_image: None, heights_changed: None, terrain_grid: None,
@@ -847,6 +856,22 @@ impl TileDocument {
 
     pub fn ref_of(&self, elem: usize) -> SourceRef {
         SourceRef { doc: self.id(), item: item_of(elem) }
+    }
+}
+
+impl TileDocument {
+    /// Hands over the kit's prefabs, for what stands along the roads.
+    pub fn set_road_prefabs(&mut self, lib: std::sync::Arc<wce_tile::prefabs::PrefabLibrary>) {
+        let t = self.tile_mut();
+        t.road_prefabs = Some(lib);
+        t.road_items_stale = true;
+    }
+
+    /// Whether it has roads and no prefabs yet.
+    #[must_use]
+    pub fn wants_road_prefabs(&self) -> bool {
+        let t = self.tile();
+        t.road_prefabs.is_none() && t.idx.valid && t.idx.type_names.iter().any(|n| n == ROAD_SPLINE)
     }
 }
 
