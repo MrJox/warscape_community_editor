@@ -1064,7 +1064,8 @@ fn snap(t: &Tile, mode: &[u8], kind: &[u8], elem: usize, w: &mut WorldTransform)
 
     // Only what the game generates onto the terrain: BOB makes the trees and decals from the tile's seeds and the height map, so their y in the
     // file means nothing (lothlorien: every tree at y 0). A building stands where the file says, as in TEd and in the game's building list.
-    if !matches!(el.name.as_str(), "VEGETATION_INSTANCE" | "ProjectedDecalInstance") {
+    // A civilian shelter has no height for the game at all: `civilian_shelter.bin` keeps x and z, so an extracted one is at y 0.
+    if !matches!(el.name.as_str(), "VEGETATION_INSTANCE" | "ProjectedDecalInstance" | "CivilianShelter") {
         return;
     }
 
