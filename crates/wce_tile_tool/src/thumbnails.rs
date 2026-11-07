@@ -18,7 +18,7 @@ use wce_foundation::math::{Float3, Float4x4, length, normalize};
 use wce_render::render_target::RenderTarget;
 use wce_render::renderer::{Renderer, ViewParams};
 use wce_scene::camera::Camera;
-use wce_scene::render_scene::{MeshInstance, Payload, RenderScene, SourceRef};
+use wce_scene::render_scene::{Payload, RenderScene, SourceRef};
 
 /// The size of a thumbnail, pixels.
 pub const SIZE: u32 = 128;
@@ -40,8 +40,20 @@ const VIEW_FROM: [f32; 3] = [0.75, 0.55, -1.0];
 const SUN_TURN: f32 = 35.0;
 const SUN_LEAST_ELEVATION: f32 = 35.0;
 
-/// Goes into a thumbnail's file name: the ones made under another light are not taken for these.
-const LOOK: &str = "sun_behind";
+/// Goes into a thumbnail's file name: the ones made under another light, or without the ground, are not taken for these.
+const LOOK: &str = "sun_behind_grey_ground_effects";
+
+/// The ground under what a thumbnail shows: grey, so that what is pale, small or see-through (effects, decals) shows against it. As
+/// wide as this many times the framed radius.
+const GROUND_GREY: u8 = 110;
+const GROUND_SPAN: f32 = 8.0;
+
+/// An effect is framed as a sphere this big (metres, times its scale) over where it is: it has no bounds to go by.
+const EFFECT_RADIUS: f32 = 1.5;
+
+/// An effect's thumbnail is made after its particles have run this long: the renders step the clock.
+const EFFECT_SECONDS: f32 = 2.0;
+const EFFECT_STEP: f32 = 0.05;
 
 struct Job {
     id: String,
@@ -54,7 +66,7 @@ struct Job {
 pub(crate) struct Thumbnails {
     renderer: Option<Renderer>,
     target: RenderTarget,
-    queue: VecDeque<(String, Vec<(Float4x4, MeshInstance)>)>,
+    queue: VecDeque<(String, Vec<(Float4x4, Payload)>)>,
     job: Option<Job>,
 
     /// Ids with nothing to show (no models, or none loaded).
@@ -127,7 +139,7 @@ impl Thumbnails {
     }
 
     /// Queues an entry's models (`first`: before the others, what the mouse is on).
-    pub fn request(&mut self, id: &str, parts: Vec<(Float4x4, MeshInstance)>, first: bool) {
+    pub fn request(&mut self, id: &str, parts: Vec<(Float4x4, Payload)>, first: bool) {
         if self.known(id) {
             return;
         }
@@ -201,9 +213,12 @@ impl Thumbnails {
             scene.environment.active = Some(env);
             scene.game_units = e.scene.game_units;
             let layer = scene.add_layer(0, "thumbnail");
-            let models = parts.iter().map(|(_, mi)| mi.model.clone()).collect();
-            for (m, mi) in parts {
-                scene.add(layer, m, Payload::MeshInstance(mi), SourceRef::default());
+            let models = parts.iter().filter_map(|(_, p)| match p {
+                Payload::MeshInstance(mi) => Some(mi.model.clone()),
+                _ => None,
+            }).collect();
+            for (m, p) in parts {
+                scene.add(layer, m, p, SourceRef::default());
             }
 
             self.job = Some(Job { id, scene, models, waited: 0 });
@@ -219,15 +234,19 @@ impl Thumbnails {
             return;
         }
 
-        let job = self.job.take().expect("a job");
-        let Some(camera) = frame(r, &job) else {
+        let mut job = self.job.take().expect("a job");
+        let Some((camera, floor, radius)) = frame(r, &job) else {
             self.failed.insert(job.id);
             return;
         };
 
+        add_ground(&mut job.scene, floor, radius);
         r.restart_temporal();
-        for _ in 0..SETTLE_RENDERS {
-            r.render(&job.scene, &params(camera), &mut self.target);
+        let effects = job.scene.entities().iter().any(|en| matches!(en.payload, Payload::VfxEmitter(_)));
+        let renders = if effects { (EFFECT_SECONDS / EFFECT_STEP) as u32 } else { SETTLE_RENDERS };
+        for k in 0..renders {
+            let time_s = if effects { k as f32 * EFFECT_STEP } else { 0.0 };
+            r.render(&job.scene, &ViewParams { camera, time_s }, &mut self.target);
         }
 
         let Some(rgba) = self.target.read_rgba8(e.device(), e.context()) else {
@@ -254,8 +273,25 @@ impl Thumbnails {
     }
 }
 
-/// The camera that frames the job's models (their bounds once loaded), `None` when none loaded.
-fn frame(r: &mut Renderer, job: &Job) -> Option<Camera> {
+/// The grey ground under a thumbnail: a flat terrain at the bottom of what it shows, coloured by a skin.
+fn add_ground(scene: &mut RenderScene, floor: Float3, radius: f32) {
+    let half = (radius * GROUND_SPAN).max(10.0);
+    let skin = wce_scene::render_scene::TerrainSkin {
+        x0: f64::from(-half), z0: f64::from(-half), w_m: f64::from(2.0 * half), h_m: f64::from(2.0 * half), w: 2, h: 2, rgba: [GROUND_GREY, GROUND_GREY, GROUND_GREY, 255].repeat(4), id: 1, dirty: None,
+    };
+    let ground = wce_scene::render_scene::Terrain {
+        nx: 2, nz: 2, origin_x: -half, origin_z: -half, step: 2.0 * half, heights: std::sync::Arc::new(vec![0.0; 4]), skin: Some(std::sync::Arc::new(skin)),
+        ..Default::default()
+    };
+    let layer = scene.add_layer(0, "thumbnail ground");
+    let mut world = Float4x4::IDENTITY;
+    (world.m[0][3], world.m[1][3], world.m[2][3]) = (floor.x, floor.y - 0.01, floor.z);
+    scene.add(layer, world, Payload::Terrain(ground), SourceRef::default());
+}
+
+/// The camera that frames the job's models (their bounds once loaded) and effects, the point under their middle at their bottom, and their
+/// radius. `None` when nothing loaded.
+fn frame(r: &mut Renderer, job: &Job) -> Option<(Camera, Float3, f32)> {
     let mut lo = Float3::new(f32::MAX, f32::MAX, f32::MAX);
     let mut hi = Float3::new(f32::MIN, f32::MIN, f32::MIN);
     for (en, path) in job.scene.entities().iter().zip(&job.models) {
@@ -265,6 +301,15 @@ fn frame(r: &mut Renderer, job: &Job) -> Option<Camera> {
             let p = en.world.transform_point(c);
             lo = Float3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
             hi = Float3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        }
+    }
+
+    for en in job.scene.entities() {
+        if let Payload::VfxEmitter(v) = &en.payload {
+            let p = en.world.transform_point(Float3::new(0.0, 0.0, 0.0));
+            let r = EFFECT_RADIUS * v.scale.max(0.2);
+            lo = Float3::new(lo.x.min(p.x - r), lo.y.min(p.y), lo.z.min(p.z - r));
+            hi = Float3::new(hi.x.max(p.x + r), hi.y.max(p.y + 2.0 * r), hi.z.max(p.z + r));
         }
     }
 
@@ -278,7 +323,8 @@ fn frame(r: &mut Renderer, job: &Job) -> Option<Camera> {
     let d = normalize(Float3::new(VIEW_FROM[0], VIEW_FROM[1], VIEW_FROM[2]));
     // The bounding sphere of the box is loose for long, low models: a little closer than it asks.
     let dist = radius / (cam.fov_y * 0.5).sin() * 0.85;
-    Some(Camera { eye: centre + d * dist, target: centre, znear: (dist - radius * 1.5).max(0.05), zfar: dist + radius * 4.0, ..cam })
+    let camera = Camera { eye: centre + d * dist, target: centre, znear: (dist - radius * 1.5).max(0.05), zfar: dist + radius * (GROUND_SPAN + 4.0), ..cam };
+    Some((camera, Float3::new(centre.x, lo.y, centre.z), radius))
 }
 
 /// Box-filters RGBA8 pixels to half their size, alpha 255.
