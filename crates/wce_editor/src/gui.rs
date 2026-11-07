@@ -1159,6 +1159,7 @@ pub const KEY_L: i32 = sys::ImGuiKey_L;
 pub const KEY_PAGE_DOWN: i32 = sys::ImGuiKey_PageDown;
 pub const WINDOW_NO_NAV: i32 = sys::ImGuiWindowFlags_NoNav;
 pub const SELECTABLE_NO_AUTO_CLOSE: i32 = sys::ImGuiSelectableFlags_NoAutoClosePopups;
+pub const SELECTABLE_SPAN_ALL_COLUMNS: i32 = sys::ImGuiSelectableFlags_SpanAllColumns;
 pub const WINDOW_NO_NAV_INPUTS: i32 = sys::ImGuiWindowFlags_NoNavInputs;
 pub const MOD_CTRL: i32 = sys::ImGuiMod_Ctrl;
 pub const MOD_SHIFT: i32 = sys::ImGuiMod_Shift;

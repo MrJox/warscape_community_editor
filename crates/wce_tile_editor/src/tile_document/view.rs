@@ -191,6 +191,26 @@ impl Tile {
         &self.look
     }
 
+    /// A small picture of a ground texture group, in the look's climate and season: the middle of its first texture, `size` pixels of a mip
+    /// a few times larger. The whole texture that small is a flat colour; a piece of it shows the grain.
+    pub fn ground_thumbnail(&self, group: &str, size: u32) -> Option<wce_formats::dds_decode::Rgba8Image> {
+        let files = self.files.as_deref()?;
+        let climates = self.climates();
+        let climate = climates.find(&self.look.climate).or_else(|| climates.find("default"));
+        let folder = climate.map_or_else(|| climates.default_folder(), |c| climates.folder_of(c));
+        let group = climates.group_of(climate, group);
+        let path = climates.texture_path(&folder, group, 0, &self.look.season, false, |p| files.exists(p))?;
+        let bytes = files.read(&path).ok()?;
+        let info = wce_formats::dds_decode::dds_info(&bytes);
+        let mip = (info.width.max(info.height) / (size.max(1) * 3)).checked_ilog2().unwrap_or(0);
+        let image = wce_formats::dds_decode::dds_decode_mip(&bytes, mip).ok()?;
+        let (w, h) = (size.min(image.w), size.min(image.h));
+        let (x0, y0) = ((image.w - w) / 2, (image.h - h) / 2);
+        let px = (0..h).flat_map(|y| (0..w).flat_map(move |x| [x0 + x, y0 + y])).collect::<Vec<_>>();
+        let px = px.chunks_exact(2).flat_map(|p| image.at(p[0], p[1]).iter().copied()).collect();
+        Some(wce_formats::dds_decode::Rgba8Image { w, h, px })
+    }
+
     /// The water depth view's raster (the tool works it out from stage B's water map); the view is drawn again when it shows.
     pub fn set_water_depth(&mut self, scene: &mut RenderScene, depth: Option<crate::terrain_bake::WaterDepth>) {
         self.water_depth = depth.map(Arc::new);

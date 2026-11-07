@@ -43,6 +43,7 @@ impl TileTool {
 
         // Under the variations' table: it is this variation's.
         let mut edits: Vec<(bool, &str, String, u64)> = vec![];
+        gui::spacing();
         gui::row_tip("Normal strength", NORMAL_TIP);
         gui::set_next_item_width(-1.0);
         if gui::drag_float("##normalstrength", &mut normal, 0.01, 0.01, 50.0, "%.2f") {
@@ -53,7 +54,6 @@ impl TileTool {
             gui::set_tooltip(NORMAL_TIP);
         }
 
-        gui::separator_text("Properties");
         gui::row_tip("Colour", COLOUR_TIP);
         gui::set_next_item_width(-1.0);
         if gui::color_edit3("##tilecolour", &mut colour, 0) {
@@ -66,33 +66,11 @@ impl TileTool {
             gui::set_tooltip(COLOUR_TIP);
         }
 
-        for (i, (a, label, tip)) in FLAGS.iter().enumerate() {
-            let mut on = flags[i];
-            gui::row_tip(label, tip);
-            if gui::checkbox(&format!("##{a}"), &mut on) {
-                edits.push((false, a, if on { "true" } else { "false" }.to_owned(), 0));
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip(tip);
-            }
-        }
-
-        // The mask: a cell a square, rows from the +z edge as the entry counts them.
-        const GROUND_TIP: &str = "The ground's colour over the cells, at this opacity (the Minimap's colour view: north up, as the cells); 0 hides it.";
-        gui::separator_text("Valid cells");
-        gui::row_tip("Ground colour", GROUND_TIP);
-        gui::set_next_item_width(-1.0);
-        gui::slider_float("##maskground", &mut self.cells_ground, 0.0, 1.0, "%.2f");
-        if gui::is_item_hovered() {
-            gui::set_tooltip(GROUND_TIP);
-        }
-
-        gui::row_tip("Cells", MASK_TIP);
-
+        gui::spacing();
         let cells = if mask.len() == w * h { mask.bytes().map(|c| c == b'1').collect::<Vec<_>>() } else { vec![true; w * h] };
         let side = (240.0 / w.max(h) as f32).clamp(4.0, 18.0);
         let origin = gui::cursor_screen_pos();
+        let window_right = origin.x + gui::content_region_avail().x;
         let dl = gui::window_draw_list();
         let mut toggled = None;
         for y in 0..h {
@@ -108,7 +86,8 @@ impl TileTool {
                 }
 
                 if gui::is_item_hovered() {
-                    gui::set_tooltip(&format!("cell ({x}, {y}): {}", if on { "valid" } else { "not the tile's" }));
+                    gui::set_tooltip(&format!("Cell ({x}, {y}): {}.
+{MASK_TIP}", if on { "valid" } else { "not the tile's" }));
                 }
             }
         }
@@ -122,8 +101,35 @@ impl TileTool {
             dl.image(tex, origin, hi, uv(0.0, ez), uv(ex, 0.0), gui::col32(255, 255, 255, (self.cells_ground.clamp(0.0, 1.0) * 255.0).round() as u8));
         }
 
-        gui::set_cursor_screen_pos(gui::v2(origin.x, origin.y + h as f32 * side + 4.0));
-        gui::dummy(gui::v2(w as f32 * side, 1.0));
+        // The rest beside the cells, where there is room for it, else under them.
+        const BESIDE: f32 = 150.0;
+        let (grid_w, grid_h) = (w as f32 * side, h as f32 * side);
+        let room = window_right - (origin.x + grid_w) - 2.0 * gui::item_spacing().x;
+        let beside = room >= BESIDE;
+        let at = if beside { gui::v2(origin.x + grid_w + 2.0 * gui::item_spacing().x, origin.y) } else { gui::v2(origin.x, origin.y + grid_h + 4.0) };
+        gui::set_cursor_screen_pos(at);
+        gui::begin_group();
+        for (i, (a, label, tip)) in FLAGS.iter().enumerate() {
+            let mut on = flags[i];
+            if gui::checkbox(&format!("{label}##{a}"), &mut on) {
+                edits.push((false, a, if on { "true" } else { "false" }.to_owned(), 0));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(tip);
+            }
+        }
+
+        gui::set_next_item_width(-1.0);
+        gui::slider_float("##maskground", &mut self.cells_ground, 0.0, 1.0, "Ground %.2f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The ground's colour over the valid cells, at this opacity (the Minimap's colour view: north up, as the cells); 0 hides it.");
+        }
+
+        gui::end_group();
+        let (_, hi) = gui::item_rect();
+        gui::set_cursor_screen_pos(gui::v2(origin.x, hi.y.max(origin.y + if beside { grid_h } else { 0.0 }) + 4.0));
+        gui::dummy(gui::v2(grid_w, 1.0));
         if let Some(i) = toggled {
             let mut c = cells.clone();
             c[i] = !c[i];

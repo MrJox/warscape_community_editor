@@ -395,6 +395,9 @@ pub struct TileTool {
     /// The opacity of the minimap's ground colour over the Tile panel's valid cells (0: not shown).
     pub(crate) cells_ground: f32,
 
+    /// The ground texture pictures that could not be made (`ground_thumbs`).
+    ground_thumbs_failed: HashSet<String>,
+
     /// The Save tile as and Resize tile dialogs.
     pub(crate) save_as: Option<crate::save_tile_as::SaveAsUi>,
     pub(crate) resize: Option<crate::resize_tile::ResizeUi>,
@@ -652,7 +655,7 @@ impl Default for TileTool {
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
             prefab_save: None, tree_synced: None, tree_scroll_to: None, rename_elem: None, anchor: None, rename_wait: 0, rename_focus: false, rename_active_seen: false,
-            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: 0.75, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
+            begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: 0.75, ground_thumbs_failed: HashSet::new(), save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
             ref_units: Default::default(), drawing: false, flip: None, flip_asked: false, ground_chip_width: 0.0, areas_chip_width: 0.0, pack_categories: None, areas: None, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
@@ -2649,6 +2652,36 @@ impl TileTool {
         }
     }
 
+    /// The pictures of the ground's texture groups, by group. One is made per frame, as they are asked for: a texture has to be read to get
+    /// at its small mip.
+    fn ground_thumbs(&mut self, e: &mut Editor, id: DocumentId) -> HashMap<String, u64> {
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return HashMap::new() };
+        let (t, mut budget) = (d.tile(), true);
+        let look = t.terrain_look();
+        let key = |group: &str| format!("ground_thumb/{}/{}/{group}", look.climate, look.season);
+        let (mut shown, mut made) = (HashMap::new(), vec![]);
+        for group in d.texture_group_names() {
+            let k = key(&group);
+            if let Some(image) = e.images.get(&k) {
+                shown.insert(group, image.id);
+            } else if budget && !e.images.knows(&k) && !self.ground_thumbs_failed.contains(&k) {
+                budget = false;
+                made.push((k, t.ground_thumbnail(&group, GROUND_THUMB)));
+            }
+        }
+
+        for (k, image) in made {
+            match image {
+                Some(image) => e.images.submit(&k, image.w, image.h, image.px),
+                None => {
+                    self.ground_thumbs_failed.insert(k);
+                }
+            }
+        }
+
+        shown
+    }
+
     /// The tile's database entry: where it is, what the tile is, the ground's texture groups (editable), the variation's height / normal values, the
     /// links.
     fn draw_entry_section(&mut self, e: &mut Editor, id: DocumentId) {
@@ -2656,6 +2689,7 @@ impl TileTool {
             return;
         }
 
+        let thumbs = self.ground_thumbs(e, id);
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let p = d.project();
         let Some(en) = &p.entry else {
@@ -2665,48 +2699,62 @@ impl TileTool {
 
         let vars = en.variations();
         let current = p.variation;
-        let value = |label: &str, value: &str, tip: &str| {
-            gui::row_tip(label, tip);
-            gui::begin_group();
-            gui::text_wrapped(value);
-            gui::end_group();
-            if gui::is_item_hovered() {
-                gui::set_tooltip(tip);
-            }
-        };
 
-        let file = en.file().file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        value("File", &file, &en.file().display().to_string());
-        value("Location", &en.location_generic(), "The tile's folder in the game's data.");
-        value("Tile set", &en.tile_set(), "The set of tiles the tile belongs to.");
-        let footprint = if en.mask().is_empty() { "" } else { ", footprint mask" };
-        let size = format!("{} x {} cells, {} x {} m{footprint}", en.width(), en.height(), en.width() * 128, en.height() * 128);
-        value("Size", &size, "Resize it with Tile > Resize tile.");
+        // What the tile is, in a few lines: the rows it had took half the panel.
+        gui::text_disabled(&en.location_generic());
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&en.file().display().to_string());
+        }
+
         let info = &p.info;
-        let heights = format!("{:.2} to {:.2} m", info.min_height, info.min_height + info.scale);
-        value("Heights", &heights, "Fitted to the terrain's heights at every save.");
-        let links = format!("{} target(s), {} rule(s)", en.link_targets().len(), en.links().len());
-        value("Links", &links, "Edited in the Tile links section.");
+        let footprint = if en.mask().is_empty() { "" } else { ", footprint mask" };
+        gui::text_wrapped(&format!(
+            "{} x {} cells, {} x {} m{footprint}, heights {:.2} to {:.2} m", en.width(), en.height(), en.width() * 128, en.height() * 128, info.min_height, info.min_height + info.scale,
+        ));
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The heights are fitted to the terrain's at every save.");
+        }
+
+        gui::text_wrapped(&format!("set {}, {} link target(s), {} link rule(s)", en.tile_set(), en.link_targets().len(), en.links().len()));
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The links are edited in the Tile links section.");
+        }
+
         if !en.custom_alpha_blend_texture().is_empty() {
-            value("Alpha blend", &en.custom_alpha_blend_texture(), "The tile's custom alpha blend texture.");
+            gui::text_wrapped(&format!("custom alpha blend texture: {}", en.custom_alpha_blend_texture()));
         }
 
         if !en.custom_blend_tile().is_empty() {
-            value("Blend tile", &en.custom_blend_tile(), "The tile's custom blend tile.");
+            gui::text_wrapped(&format!("custom blend tile: {}", en.custom_blend_tile()));
         }
 
-        // The ground's four texture groups (the blend map's groups; the paint brush lays their variations).
+        // The ground's four texture groups (the blend map's groups; the paint brush lays their variations), two by two.
+        gui::spacing();
         let g = en.texture_group();
         let names = d.texture_group_names();
         let mut set_group = None;
-        gui::separator_text("Ground textures");
-        for (slot, (label, now)) in ["Red", "Green", "Blue", "Alpha"].iter().zip([&g.red, &g.green, &g.blue, &g.alpha]).enumerate() {
-            let tip = format!("The blend map's group {}, in its {} channel; saved into the entry next to the tile.", slot + 1, label.to_lowercase());
-            gui::row_tip(label, &tip);
-            gui::set_next_item_width(-1.0);
+        let width = (gui::content_region_avail().x - gui::item_spacing().x) * 0.5;
+        let thumb = gui::frame_height();
+        for (slot, (label, now)) in ["red", "green", "blue", "alpha"].iter().zip([&g.red, &g.green, &g.blue, &g.alpha]).enumerate() {
+            if slot % 2 == 1 {
+                gui::same_line();
+            }
+
+            let tip = format!("The blend map's group {}, in its {label} channel; saved into the entry next to the tile.", slot + 1);
+            match thumbs.get(now) {
+                Some(&id) => gui::image(id, gui::v2(thumb, thumb)),
+                None => gui::dummy(gui::v2(thumb, thumb)),
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&tip);
+            }
+
+            gui::same_line();
+            gui::set_next_item_width(width - thumb - gui::item_spacing().x);
             if gui::begin_combo(&format!("##texgroup{slot}"), now) {
                 for n in &names {
-                    if gui::selectable(n, n == now, 0) && n != now {
+                    if ground_group_row(n, n == now, thumbs.get(n).copied()) && n != now {
                         set_group = Some((slot, n.clone()));
                     }
                 }
@@ -2719,24 +2767,9 @@ impl TileTool {
             }
         }
 
+        // The variations; a click opens one, in its own document.
+        gui::spacing();
         let mut reopen = None;
-        gui::separator_text("Variations");
-        if vars.len() > 1 {
-            gui::row_tip("Open", "Each variation opens in its own document.");
-            gui::set_next_item_width(-1.0);
-            let shown = current.and_then(|v| vars.get(v)).map_or("?", |v| v.location.as_str());
-            if gui::begin_combo("##openvariation", shown) {
-                for (i, v) in vars.iter().enumerate() {
-                    if gui::selectable(&v.location, Some(i) == current, 0) && Some(i) != current {
-                        reopen = Some(i);
-                    }
-                }
-
-                gui::end_combo();
-            }
-        }
-
-        // The common maps' column only when a variation has some.
         let common_of = |v: &wce_formats::tile_entry::TileVariation| [v.blend_common.as_str(), v.index_common.as_str(), v.normal_common.as_str()].iter().filter(|m| !m.is_empty()).copied().collect::<Vec<_>>().join(" ");
         let has_common = vars.iter().any(|v| !common_of(v).is_empty());
         let columns: &[&str] = if has_common { &["Variation", "Min h", "Scale", "Normal", "Overlap", "Density", "Common maps"] } else { &["Variation", "Min h", "Scale", "Normal", "Overlap", "Density"] };
@@ -2749,13 +2782,15 @@ impl TileTool {
             for (i, v) in vars.iter().enumerate() {
                 gui::table_next_row();
                 gui::table_next_column();
-                if Some(i) == current {
-                    gui::text_colored(theme::palette().highlight, &v.location);
-                    if gui::is_item_hovered() {
-                        gui::set_tooltip("The variation this document shows.");
-                    }
-                } else {
-                    gui::text(&v.location);
+                let on = Some(i) == current;
+                gui::push_style_color(gui::COL_TEXT, theme::v4(if on { theme::palette().highlight } else { theme::text() }));
+                if gui::selectable(&format!("{}##variation{i}", v.location), false, gui::SELECTABLE_SPAN_ALL_COLUMNS) && !on {
+                    reopen = Some(i);
+                }
+
+                gui::pop_style_color(1);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(if on { "The variation this document shows." } else { "Opens this variation, in its own document." });
                 }
 
                 gui::table_next_column();
@@ -3012,6 +3047,28 @@ const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
         a("tile.grab_lower_more", "Tile: grabbing", "Lower along the ground's normal (1 m)", &["Shift+PageDown"]),
     ]
 };
+
+/// How big a ground texture's picture is made, and shown in its list (pixels).
+const GROUND_THUMB: u32 = 64;
+const GROUND_ROW: f32 = 32.0;
+
+/// A row of the ground texture groups' list: the picture and the name. True when clicked.
+fn ground_group_row(name: &str, on: bool, thumb: Option<u64>) -> bool {
+    let clicked = gui::selectable_sized(&format!("##{name}"), on, 0, gui::v2(0.0, GROUND_ROW));
+    let (lo, _) = gui::item_rect();
+    if let Some(id) = thumb {
+        gui::set_cursor_screen_pos(lo);
+        gui::image(id, gui::v2(GROUND_ROW, GROUND_ROW));
+    }
+
+    gui::set_cursor_screen_pos(gui::v2(lo.x + GROUND_ROW + gui::item_spacing().x, lo.y + (GROUND_ROW - gui::text_line_height()) * 0.5));
+    gui::text(name);
+
+    // The next row starts under the picture, not under the name.
+    gui::set_cursor_screen_pos(gui::v2(lo.x, lo.y + GROUND_ROW));
+    gui::dummy(gui::v2(0.0, 0.0));
+    clicked
+}
 
 impl Tool for TileTool {
     fn id(&self) -> &str {
