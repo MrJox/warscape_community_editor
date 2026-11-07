@@ -41,12 +41,15 @@ const SUN_TURN: f32 = 35.0;
 const SUN_LEAST_ELEVATION: f32 = 35.0;
 
 /// Goes into a thumbnail's file name: the ones made under another light, or without the ground, are not taken for these.
-const LOOK: &str = "sun_behind_grey_ground_effects";
+const LOOK: &str = "sun_behind_grey_ground_decals";
 
 /// The ground under what a thumbnail shows: grey, so that what is pale, small or see-through (effects, decals) shows against it. As
 /// wide as this many times the framed radius.
 const GROUND_GREY: u8 = 110;
 const GROUND_SPAN: f32 = 8.0;
+
+/// The ground's material id: one for every thumbnail, made once per renderer.
+const GROUND_MATERIAL: u64 = u64::MAX - 7;
 
 /// An effect is framed as a sphere this big (metres, times its scale) over where it is: it has no bounds to go by.
 const EFFECT_RADIUS: f32 = 1.5;
@@ -58,7 +61,6 @@ const EFFECT_STEP: f32 = 0.05;
 struct Job {
     id: String,
     scene: RenderScene,
-    models: Vec<String>,
     waited: u32,
 }
 
@@ -213,15 +215,11 @@ impl Thumbnails {
             scene.environment.active = Some(env);
             scene.game_units = e.scene.game_units;
             let layer = scene.add_layer(0, "thumbnail");
-            let models = parts.iter().filter_map(|(_, p)| match p {
-                Payload::MeshInstance(mi) => Some(mi.model.clone()),
-                _ => None,
-            }).collect();
             for (m, p) in parts {
                 scene.add(layer, m, p, SourceRef::default());
             }
 
-            self.job = Some(Job { id, scene, models, waited: 0 });
+            self.job = Some(Job { id, scene, waited: 0 });
         }
 
         let (Some(r), Some(job)) = (self.renderer.as_mut(), self.job.as_mut()) else { return };
@@ -240,7 +238,15 @@ impl Thumbnails {
             return;
         };
 
-        add_ground(&mut job.scene, floor, radius);
+        // The ground's GPU side is made on a loading thread: renders until it is there.
+        let ground = add_ground(&mut job.scene, floor, radius);
+        let mut waited = 0;
+        while !r.terrain_ready(&ground) && waited < MAX_WAIT_FRAMES {
+            r.render(&job.scene, &ViewParams { camera, time_s: 0.0 }, &mut self.target);
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            waited += 1;
+        }
+
         r.restart_temporal();
         let effects = job.scene.entities().iter().any(|en| matches!(en.payload, Payload::VfxEmitter(_)));
         let renders = if effects { (EFFECT_SECONDS / EFFECT_STEP) as u32 } else { SETTLE_RENDERS };
@@ -274,19 +280,29 @@ impl Thumbnails {
 }
 
 /// The grey ground under a thumbnail: a flat terrain at the bottom of what it shows, coloured by a skin.
-fn add_ground(scene: &mut RenderScene, floor: Float3, radius: f32) {
+fn add_ground(scene: &mut RenderScene, floor: Float3, radius: f32) -> wce_scene::render_scene::Terrain {
+    use wce_scene::render_scene::{Terrain, TerrainImage, TerrainMaterial};
+
+    // A baked material (one colour, drawn by the terrain pass): the terrain pass marks what it draws as taking decals, which a plain ground
+    // is not (the `DECAL_RECEIVER` stencil bit), and a prefab's decals were not seen.
     let half = (radius * GROUND_SPAN).max(10.0);
-    let skin = wce_scene::render_scene::TerrainSkin {
-        x0: f64::from(-half), z0: f64::from(-half), w_m: f64::from(2.0 * half), h_m: f64::from(2.0 * half), w: 2, h: 2, rgba: [GROUND_GREY, GROUND_GREY, GROUND_GREY, 255].repeat(4), id: 1, dirty: None,
-    };
-    let ground = wce_scene::render_scene::Terrain {
-        nx: 2, nz: 2, origin_x: -half, origin_z: -half, step: 2.0 * half, heights: std::sync::Arc::new(vec![0.0; 4]), skin: Some(std::sync::Arc::new(skin)),
+    let grey = [GROUND_GREY, GROUND_GREY, GROUND_GREY, 0];
+    let material = TerrainMaterial {
+        baked: true, x0: f64::from(-half), z0: f64::from(-half), x1: f64::from(half), z1: f64::from(half), y0: -5.0, y1: 5.0,
+        blend: TerrainImage { w: 2, h: 2, rgba: Some(std::sync::Arc::new(grey.repeat(4))) },
+        normal: TerrainImage { w: 1, h: 1, rgba: Some(std::sync::Arc::new(vec![255, 127, 0, 127])) },
+        id: GROUND_MATERIAL, normal_id: GROUND_MATERIAL,
         ..Default::default()
+    };
+    let ground = Terrain {
+        nx: 2, nz: 2, origin_x: -half, origin_z: -half, step: 2.0 * half, heights: std::sync::Arc::new(vec![0.0; 4]), legacy: false,
+        material: Some(std::sync::Arc::new(material)), ..Default::default()
     };
     let layer = scene.add_layer(0, "thumbnail ground");
     let mut world = Float4x4::IDENTITY;
     (world.m[0][3], world.m[1][3], world.m[2][3]) = (floor.x, floor.y - 0.01, floor.z);
-    scene.add(layer, world, Payload::Terrain(ground), SourceRef::default());
+    scene.add(layer, world, Payload::Terrain(ground.clone()), SourceRef::default());
+    ground
 }
 
 /// The camera that frames the job's models (their bounds once loaded) and effects, the point under their middle at their bottom, and their
@@ -294,8 +310,21 @@ fn add_ground(scene: &mut RenderScene, floor: Float3, radius: f32) {
 fn frame(r: &mut Renderer, job: &Job) -> Option<(Camera, Float3, f32)> {
     let mut lo = Float3::new(f32::MAX, f32::MAX, f32::MAX);
     let mut hi = Float3::new(f32::MIN, f32::MIN, f32::MIN);
-    for (en, path) in job.scene.entities().iter().zip(&job.models) {
-        let Some(m) = r.models().model(path) else { continue };
+    for en in job.scene.entities() {
+        // A decal is a box, the unit one under its matrix.
+        if matches!(en.payload, Payload::Decal(_)) {
+            for k in 0..8 {
+                let c = Float3::new(if k & 1 != 0 { 0.5 } else { -0.5 }, if k & 2 != 0 { 0.5 } else { -0.5 }, if k & 4 != 0 { 0.5 } else { -0.5 });
+                let p = en.world.transform_point(c);
+                lo = Float3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+                hi = Float3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+            }
+
+            continue;
+        }
+
+        let Payload::MeshInstance(mi) = &en.payload else { continue };
+        let Some(m) = r.models().model(&mi.model) else { continue };
         for k in 0..8 {
             let c = Float3::new(if k & 1 != 0 { m.bmax.x } else { m.bmin.x }, if k & 2 != 0 { m.bmax.y } else { m.bmin.y }, if k & 4 != 0 { m.bmax.z } else { m.bmin.z });
             let p = en.world.transform_point(c);
