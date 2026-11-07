@@ -36,6 +36,9 @@ pub enum Lod {
     /// Their coarse heights, low-resolution materials, buildings and rivers.
     Mid,
 
+    /// Their coarse heights, low-resolution materials and rivers: the ground of the tiles without what stands on it.
+    Ground,
+
     /// The LF ground alone.
     Far,
 }
@@ -278,8 +281,8 @@ pub struct Streamer {
     shown: HashMap<ChunkKey, Lod>,
     wanted: HashMap<ChunkKey, Lod>,
 
-    /// The rings around the focus (cells): near, mid, far.
-    rings: [i32; 3],
+    /// The rings around the focus (cells): near, mid, ground, far.
+    rings: [i32; 4],
     started: std::time::Instant,
     frame_s: f64,
     first_s: Option<f64>,
@@ -308,7 +311,7 @@ impl Streamer {
                 }
             });
         }
-        let rings = [rq.near, rq.mid, rq.far];
+        let rings = [rq.near, rq.mid, rq.ground, rq.far];
         let frame_s = started.elapsed().as_secs_f64();
         let shared = Arc::new(Shared {
             pool, frame: Mutex::new((frame, 0)), rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), custom_tiles: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
@@ -325,8 +328,8 @@ impl Streamer {
     }
 
     /// New rings (cells): the next update moves the chunks to their levels.
-    pub fn set_rings(&mut self, near: i32, mid: i32, far: i32) {
-        self.rings = [near, mid, far];
+    pub fn set_rings(&mut self, near: i32, mid: i32, ground: i32, far: i32) {
+        self.rings = [near, mid, ground, far];
     }
 
     pub fn frame(&self) -> Arc<Frame> {
@@ -357,8 +360,9 @@ impl Streamer {
 
     /// The level a chunk should have at `d` cells from the focus, given the one it has (it keeps it within the slack).
     fn level(&self, d: f64, now: Option<Lod>) -> Option<Lod> {
-        let [near, mid, far] = self.rings;
-        let rings = [(Lod::Near, near), (Lod::Mid, mid.max(near)), (Lod::Far, far.max(mid).max(near))];
+        let [near, mid, ground, far] = self.rings;
+        let (mid, ground) = (mid.max(near), ground.max(mid).max(near));
+        let rings = [(Lod::Near, near), (Lod::Mid, mid), (Lod::Ground, ground), (Lod::Far, far.max(ground))];
         let plain = rings.iter().find(|(_, r)| d <= f64::from(*r)).map(|(l, _)| *l);
         let Some(now) = now else { return plain };
 
@@ -405,7 +409,7 @@ impl Streamer {
             let mut q = lock(&self.shared.queue);
             q.retain(|j| want.get(&j.key).is_some_and(|(l, _)| *l == j.lod));
             for (&k, &(l, d)) in &want {
-                // Near before mid before far, each by distance.
+                // Near before mid before ground before far, each by distance.
                 let order = f64::from(l as i32) * 1.0e6 + d;
                 if self.wanted.get(&k) == Some(&l) {
                     if let Some(j) = q.iter_mut().find(|j| j.key == k) {
@@ -476,8 +480,8 @@ impl Streamer {
     }
 
     /// The chunks on the scene per level.
-    pub fn shown(&self) -> [usize; 3] {
-        let mut n = [0; 3];
+    pub fn shown(&self) -> [usize; 4] {
+        let mut n = [0; 4];
         for l in self.shown.values() {
             n[*l as usize] += 1;
         }
@@ -489,10 +493,10 @@ impl Streamer {
     pub fn report(&self) -> String {
         let f = self.frame();
         let s = lock(&self.shared.stats);
-        let [near, mid, far] = self.shown();
+        let [near, mid, ground, far] = self.shown();
         let failed = if s.failed.is_empty() { String::new() } else { format!(", {} could not be opened", s.failed.len()) };
         format!(
-            "{}: chunks {near} near, {mid} mid, {far} far{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
+            "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
             f.map.name, if self.busy() > 0 { format!(", {} building", self.busy()) } else { String::new() }, s.opened, s.open_s, s.from_cache, s.bytes >> 20,
             f.lf_note(), self.frame_s, self.first_s.map_or(String::new(), |t| format!(", first ring {t:.1} s"))
         )

@@ -59,9 +59,10 @@ pub struct ContextUi {
     pub choice: usize,
     pub manual: [i32; 3],
 
-    /// The rings around the focus (cells): everything, the tiles' coarse ground and buildings, the LF ground.
+    /// The rings around the focus (cells): everything, the buildings, the tiles' coarse ground, the LF ground.
     pub near: i32,
     pub mid: i32,
+    pub ground: i32,
     pub far: i32,
 
     pub trees: bool,
@@ -100,7 +101,7 @@ pub struct ContextUi {
 impl Default for ContextUi {
     fn default() -> Self {
         Self {
-            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, packs_tree: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, far: 64, trees: true, view_distance: GAME_FAR_PLANE, minimap: true,
+            game_dir: wce_vfs::GameProfile::ATTILA.campaign_battle_map, neighbours: None, packs_fallback: None, packs_tree: None, tile_roots: vec![], tile_roots_time: None, shown: false, maps: vec![], map: 0, loaded: None, placements: vec![], choice: 0, manual: [0, 0, 0], near: 8, mid: 24, ground: 24, far: 64, trees: true, view_distance: GAME_FAR_PLANE, minimap: true,
             follow: true, placed_variation: None, status: String::new(), busy: String::new(), rx: None, view: MapView::default(), build: 0, build_look: None, db: None, maps_for: PathBuf::new(), snow_on: true,
             snow_amount: 1.0,
         }
@@ -229,7 +230,7 @@ impl ContextUi {
         let raw = self.raw_of(d)?;
         Some(ContextRequest {
             map: map.clone(), spot: self.spot()?, cells: (p.info.cells_x.max(1) as i32, p.info.cells_y.max(1) as i32), unit: p.unit_scale, near: self.near,
-            mid: self.mid, far: self.far_ring(), raw_root: raw, tile_roots: self.tile_roots.clone(), game_kit: p.game_kit.clone(), look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
+            mid: self.mid, ground: self.ground, far: self.far_ring(), raw_root: raw, tile_roots: self.tile_roots.clone(), game_kit: p.game_kit.clone(), look: d.tile().terrain_look().clone(), trees: self.trees, plain: d.tile().ground_material_base(),
             groups: p.entry.as_ref().map(|e| e.texture_group()),
             cache: Some(cache::cache_dir()),
             provider: self.neighbours.as_ref().map(|(_, provide)| provide.clone()).or_else(|| self.packs_fallback.clone()),
@@ -308,7 +309,7 @@ impl ContextUi {
 
     /// The rings and camera settings of the panel.
     fn rings(&self) -> Rings {
-        Rings { near: self.near, mid: self.mid, far: self.far, view_distance: self.view_distance, follow: self.follow }
+        Rings { near: self.near, mid: self.mid, ground: self.ground, far: self.far, view_distance: self.view_distance, follow: self.follow }
     }
 
     /// A new streamer on the scene: the layer (emptied), the sea, the open tile clipped to its cells and drawn on the map's LF.
@@ -506,8 +507,9 @@ impl ContextUi {
 
         // The rings change the streamer's levels; the rest builds a new one.
         let mut rings = gui::slider_int("full detail (cells)", &mut self.near, 1, 64);
-        rings |= gui::slider_int("ground and buildings (cells)", &mut self.mid, 1, 128);
-        rings |= gui::slider_int("LF ground (cells)", &mut self.far, 1, 512);
+        rings |= gui::slider_int("buildings (cells)", &mut self.mid, 1, 128);
+        rings |= gui::slider_int("tile ground (cells)", &mut self.ground, 1, 1024);
+        rings |= gui::slider_int("LF ground (cells)", &mut self.far, 1, 1024);
         if rings {
             let r = self.rings();
             self.view.set_rings(&r);

@@ -874,7 +874,8 @@ impl CameraController for OrbitCamera {
         }
 
         if input.wheel != 0.0 {
-            self.dist = (self.dist * 0.9f32.powf(input.wheel)).clamp(2.0, 6000.0);
+            // As far back as the view reaches: further, the ground at the target is past the far plane.
+            self.dist = (self.dist * 0.9f32.powf(input.wheel)).clamp(2.0, (self.lens.zfar * 0.9).max(6000.0));
         }
 
         let mut m = fwd * input.edge[1] + right * input.edge[0];

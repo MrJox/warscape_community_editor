@@ -26,9 +26,10 @@ type SnowMap = (u32, u32, Vec<u8>);
 /// The rings and the camera settings a view follows (the tool's panel owns them).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rings {
-    /// Cells around the focus: everything, the tiles' coarse ground and buildings, the LF ground (at least what the camera sees).
+    /// Cells around the focus: everything, the buildings, the tiles' coarse ground, the LF ground (at least what the camera sees).
     pub near: i32,
     pub mid: i32,
+    pub ground: i32,
     pub far: i32,
 
     /// The camera's view distance while the view shows (scene units; the game's battle camera sees 13 000).
@@ -40,7 +41,7 @@ pub struct Rings {
 
 impl Default for Rings {
     fn default() -> Self {
-        Self { near: 8, mid: 24, far: 64, view_distance: GAME_FAR_PLANE, follow: true }
+        Self { near: 8, mid: 24, ground: 24, far: 64, view_distance: GAME_FAR_PLANE, follow: true }
     }
 }
 
@@ -172,7 +173,7 @@ impl MapView {
 
     /// The cells around the focus the sea covers: the far ring and some.
     fn sea_reach(&self, r: &Rings) -> i32 {
-        self.far_ring(r.far).max(r.mid).max(r.near) + 4 * CHUNK
+        self.far_ring(r.far).max(r.ground).max(r.mid).max(r.near) + 4 * CHUNK
     }
 
     /// The cells around the focus the camera sees to: its far plane from its eye, which is off the focus (the orbit's target) by its
@@ -194,7 +195,7 @@ impl MapView {
         self.far_view = view;
         let far = self.far_ring(r.far);
         if let Some(s) = self.streamer.as_mut() {
-            s.set_rings(r.near, r.mid, far);
+            s.set_rings(r.near, r.mid, r.ground, far);
         }
 
         true
@@ -204,7 +205,7 @@ impl MapView {
     pub fn set_rings(&mut self, r: &Rings) {
         let far = self.far_ring(r.far);
         if let Some(s) = self.streamer.as_mut() {
-            s.set_rings(r.near, r.mid, far);
+            s.set_rings(r.near, r.mid, r.ground, far);
         }
     }
 

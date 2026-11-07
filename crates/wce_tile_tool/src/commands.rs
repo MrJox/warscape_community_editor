@@ -373,10 +373,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "map_context", "map_context <map | campaign> [placement number | cell <x> <y> <rotation degrees>] [near cells] [mid cells] [far cells]",
+        "map_context", "map_context <map | campaign> [placement number | cell <x> <y> <rotation degrees>] [near cells] [mid cells] [far cells] [ground cells]",
         "show the open tile among its neighbours in a battle map, streamed around the camera (waits for the chunks around it); 'campaign' is the game's campaign battle map",
         |e, a| {
-            let Some(name) = a.first() else { return fail("usage: map_context <map | campaign> [placement | x y rotation] [near] [mid] [far]") };
+            let Some(name) = a.first() else { return fail("usage: map_context <map | campaign> [placement | x y rotation] [near] [mid] [far] [ground]") };
             let Some(id) = crate::tool::document_id(e) else { return no_tile() };
             with_tile(e, |t, e| {
                 use crate::context_panel::{GAME_MAP, load_map, location_names};
@@ -413,7 +413,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 let nums: Vec<i32> = rest.iter().map(|v| atoi(v) as i32).collect();
                 let used = if cell || ui.placements.is_empty() {
                     if nums.len() < 3 && cell {
-                        return fail("usage: map_context <map> cell <x> <y> <rotation degrees> [near] [mid] [far]");
+                        return fail("usage: map_context <map> cell <x> <y> <rotation degrees> [near] [mid] [far] [ground]");
                     }
 
                     ui.choice = ui.placements.len();
@@ -431,7 +431,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                     0
                 };
 
-                for (k, ring) in [&mut ui.near, &mut ui.mid, &mut ui.far].into_iter().enumerate() {
+                for (k, ring) in [&mut ui.near, &mut ui.mid, &mut ui.far, &mut ui.ground].into_iter().enumerate() {
                     if let Some(&r) = nums.get(used + k) {
                         *ring = r.max(1);
                     }
