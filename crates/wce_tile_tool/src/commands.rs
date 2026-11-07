@@ -1768,6 +1768,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, _| t.set_create_category((!name.is_empty()).then_some(name.as_str())).map_or_else(fail, |()| ok(String::new())))
     });
 
+    c.add("create_view", "create_view list|grid", "the Create panel's view: a list, or a grid of pictures", |e, a| {
+        let grid = match a.first().map(String::as_str) {
+            Some("grid") => true,
+            Some("list") => false,
+            _ => return fail("usage: create_view list|grid"),
+        };
+
+        with_tile(e, |t, e| {
+            t.set_create_grid(e, grid);
+            ok("")
+        })
+    });
+
     c.add("create_filter", "create_filter [words]", "the Create panel's search (no words: clear it); its folders open while it has words", |e, a| {
         let words = a.join(" ");
         with_tile(e, |t, _| {
