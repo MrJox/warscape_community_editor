@@ -2043,13 +2043,17 @@ impl TileTool {
             return;
         };
 
-        let mut action = None;
+        let mut save = false;
         {
             let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let p = d.project();
-            let file_name = |p: &Path| p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-            gui::text(&file_name(&p.dir));
-            gui::text_disabled(&p.dir.parent().map(file_name).unwrap_or_default());
+            // A tile with an entry has its name and variation there.
+            if !p.has_entry() {
+                let file_name = |p: &Path| p.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                gui::text(&file_name(&p.dir));
+                gui::text_disabled(&p.dir.parent().map(file_name).unwrap_or_default());
+            }
+
             if !p.warning.is_empty() {
                 gui::text_colored(theme::warning(), &p.warning);
             }
@@ -2057,17 +2061,11 @@ impl TileTool {
             // Where the tile is: the Assembly Kit's copy (saving makes its project) or a project (tile.wce).
             if d.is_project() {
                 gui::text_disabled(&format!("{}  project (tile.wce)", icons::FOLDER));
-                if e.game().features.kit_tiles {
-                    gui::same_line();
-                    if gui::small_button("Save for Assembly Kit") {
-                        action = Some(true);
-                    }
-                }
             } else {
                 gui::text_colored(theme::warning(), &format!("{}  Assembly Kit copy", icons::PACKAGE));
                 gui::same_line();
                 if gui::small_button("Save as project (Ctrl+S)") {
-                    action = Some(false);
+                    save = true;
                 }
 
                 if gui::is_item_hovered() {
@@ -2076,49 +2074,15 @@ impl TileTool {
             }
         }
 
-        match action {
-            Some(true) => {
-                let msg = self.save_for_kit_ask(e).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
-                e.status(&msg, false);
-            }
-
-            Some(false) => {
-                let msg = e.docs.save_one(id).unwrap_or_else(|m| format!("save failed: {m}"));
-                e.status(&msg, false);
-            }
-
-            None => {}
+        if save {
+            let msg = e.docs.save_one(id).unwrap_or_else(|m| format!("save failed: {m}"));
+            e.status(&msg, false);
         }
 
-        if gui::collapsing_header("Info", gui::TREE_DEFAULT_OPEN) {
-            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-            let t = d.tile();
-            let p = d.project();
-            if self.terrain_hit {
-                gui::text(&format!(
-                    "cursor: {:.1}, {:.1}  height {:.2} m", self.cursor.x, self.cursor.z, t.terrain_height(self.cursor.x, self.cursor.z),
-                ));
-            } else {
-                gui::text_disabled("cursor: -");
-            }
-
-            match &p.height {
-                Some(h) => gui::text(&format!(
-                    "height map {}x{}, {:.2}..{:.2} m (min {:.3} scale {:.3}){}", h.width(), h.height(), h.min_height(), h.min_height() + h.scale(), p.info.min_height,
-                    p.info.scale, if p.info.found { "" } else { "  [no tile database entry: heights stretched over the tile]" },
-                )),
-                None => gui::text_disabled("no height_map_0.png"),
-            }
-
-            gui::text(&format!("tile {} x {} cells, {:.0} x {:.0} m", p.info.cells_x, p.info.cells_y, t.extent_x(), t.extent_z()));
-            gui::text(&format!(
-                "tile.ted v{}, {} instances{}", t.tscene().project_version(), t.instances().len(), if d.modified() { "  (modified)" } else { "" },
-            ));
-            let h = d.history();
-            gui::text(&format!("undo {} / redo {}", h.position(), h.size() - h.position()));
-            if !t.model_fallbacks().is_empty() {
-                gui::text_colored(theme::warning(), &format!("{} building keys have no model (boxes), see the log", t.model_fallbacks().len()));
-            }
+        // What the game would show as boxes: not to be missed, unlike the rest of what the tile holds (`draw_tile_info`).
+        let fallbacks = e.docs.find_as::<TileDocument>(id).expect("a tile").tile().model_fallbacks().len();
+        if fallbacks != 0 {
+            gui::text_colored(theme::warning(), &format!("{fallbacks} building keys have no model (boxes), see the log"));
         }
 
         self.draw_entry_section(e, id);
@@ -2295,6 +2259,38 @@ impl TileTool {
             e.selection.set(SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(el) });
             let _ = wce_editor_core::command_registry::CommandRegistry::run(e, "focus");
         }
+    }
+
+    /// In the Debug section: the cursor, the height map, the file, the undo steps. The size only for a tile without an entry, which has it.
+    pub(crate) fn draw_tile_info(&mut self, e: &mut Editor, id: DocumentId) {
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        let t = d.tile();
+        let p = d.project();
+        if self.terrain_hit {
+            gui::text(&format!(
+                "cursor: {:.1}, {:.1}  height {:.2} m", self.cursor.x, self.cursor.z, t.terrain_height(self.cursor.x, self.cursor.z),
+            ));
+        } else {
+            gui::text_disabled("cursor: -");
+        }
+
+        match &p.height {
+            Some(h) => gui::text(&format!(
+                "height map {}x{}, {:.2}..{:.2} m (min {:.3} scale {:.3}){}", h.width(), h.height(), h.min_height(), h.min_height() + h.scale(), p.info.min_height,
+                p.info.scale, if p.info.found { "" } else { "  [no tile database entry: heights stretched over the tile]" },
+            )),
+            None => gui::text_disabled("no height_map_0.png"),
+        }
+
+        if !p.has_entry() {
+            gui::text(&format!("tile {} x {} cells, {:.0} x {:.0} m", p.info.cells_x, p.info.cells_y, t.extent_x(), t.extent_z()));
+        }
+
+        gui::text(&format!(
+            "tile.ted v{}, {} instances{}", t.tscene().project_version(), t.instances().len(), if d.modified() { "  (modified)" } else { "" },
+        ));
+        let h = d.history();
+        gui::text(&format!("undo {} / redo {}", h.position(), h.size() - h.position()));
     }
 
     /// In the Debug section. Placement (docs/formats/tile_ted.md): landscape instances stand on the terrain, freeform ones keep any height. The counts, and the report
@@ -4183,6 +4179,8 @@ impl Tool for TileTool {
         if !settings.show_vfx_boxes {
             doc.tile_mut().display_mut().hidden_types.insert(VFX_TYPE.to_owned());
         }
+
+        e.pending_focus = Some("Tile".to_owned());
         Ok(Box::new(doc))
     }
 
