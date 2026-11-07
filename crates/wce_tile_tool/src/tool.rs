@@ -2665,32 +2665,45 @@ impl TileTool {
 
         let vars = en.variations();
         let current = p.variation;
-        gui::text_disabled(&en.file().file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default());
-        if gui::is_item_hovered() {
-            gui::set_tooltip(&en.file().display().to_string());
-        }
+        let value = |label: &str, value: &str, tip: &str| {
+            gui::row_tip(label, tip);
+            gui::begin_group();
+            gui::text_wrapped(value);
+            gui::end_group();
+            if gui::is_item_hovered() {
+                gui::set_tooltip(tip);
+            }
+        };
 
-        gui::text(&en.location_generic());
-        gui::text(&format!(
-            "set {}   {} x {} cells = {} x {} m{}", en.tile_set(), en.width(), en.height(), en.width() * 128, en.height() * 128,
-            if en.mask().is_empty() { "" } else { "   (footprint mask)" },
-        ));
+        let file = en.file().file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        value("File", &file, &en.file().display().to_string());
+        value("Location", &en.location_generic(), "The tile's folder in the game's data.");
+        value("Tile set", &en.tile_set(), "The set of tiles the tile belongs to.");
+        let footprint = if en.mask().is_empty() { "" } else { ", footprint mask" };
+        let size = format!("{} x {} cells, {} x {} m{footprint}", en.width(), en.height(), en.width() * 128, en.height() * 128);
+        value("Size", &size, "Resize it with Tile > Resize tile.");
+        let info = &p.info;
+        let heights = format!("{:.2} to {:.2} m", info.min_height, info.min_height + info.scale);
+        value("Heights", &heights, "Fitted to the terrain's heights at every save.");
+        let links = format!("{} target(s), {} rule(s)", en.link_targets().len(), en.links().len());
+        value("Links", &links, "Edited in the Tile links section.");
         if !en.custom_alpha_blend_texture().is_empty() {
-            gui::text(&format!("custom alpha blend texture: {}", en.custom_alpha_blend_texture()));
+            value("Alpha blend", &en.custom_alpha_blend_texture(), "The tile's custom alpha blend texture.");
         }
 
         if !en.custom_blend_tile().is_empty() {
-            gui::text(&format!("custom blend tile: {}", en.custom_blend_tile()));
+            value("Blend tile", &en.custom_blend_tile(), "The tile's custom blend tile.");
         }
 
         // The ground's four texture groups (the blend map's groups; the paint brush lays their variations).
         let g = en.texture_group();
         let names = d.texture_group_names();
         let mut set_group = None;
-        gui::text("texture groups");
-        for (slot, (label, now)) in ["R", "G", "B", "A"].iter().zip([&g.red, &g.green, &g.blue, &g.alpha]).enumerate() {
-            gui::same_line();
-            gui::set_next_item_width(90.0);
+        gui::separator_text("Ground textures");
+        for (slot, (label, now)) in ["Red", "Green", "Blue", "Alpha"].iter().zip([&g.red, &g.green, &g.blue, &g.alpha]).enumerate() {
+            let tip = format!("The blend map's group {}, in its {} channel; saved into the entry next to the tile.", slot + 1, label.to_lowercase());
+            gui::row_tip(label, &tip);
+            gui::set_next_item_width(-1.0);
             if gui::begin_combo(&format!("##texgroup{slot}"), now) {
                 for n in &names {
                     if gui::selectable(n, n == now, 0) && n != now {
@@ -2702,15 +2715,17 @@ impl TileTool {
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{label}: the blend map's group {}; saved into the entry next to the tile", slot + 1));
+                gui::set_tooltip(&tip);
             }
         }
 
         let mut reopen = None;
+        gui::separator_text("Variations");
         if vars.len() > 1 {
-            gui::set_next_item_width(160.0);
+            gui::row_tip("Open", "Each variation opens in its own document.");
+            gui::set_next_item_width(-1.0);
             let shown = current.and_then(|v| vars.get(v)).map_or("?", |v| v.location.as_str());
-            if gui::begin_combo("variation", shown) {
+            if gui::begin_combo("##openvariation", shown) {
                 for (i, v) in vars.iter().enumerate() {
                     if gui::selectable(&v.location, Some(i) == current, 0) && Some(i) != current {
                         reopen = Some(i);
@@ -2719,13 +2734,14 @@ impl TileTool {
 
                 gui::end_combo();
             }
-
-            gui::same_line();
-            gui::text_disabled("opens in its own document");
         }
 
-        if gui::begin_table("variations", 7, gui::TABLE_SIZING_FIXED_FIT | gui::TABLE_ROW_BG | gui::TABLE_BORDERS_INNER_V, gui::v2(0.0, 0.0)) {
-            for c in ["variation", "min h", "scale", "normal", "overlap", "tri density", "common maps"] {
+        // The common maps' column only when a variation has some.
+        let common_of = |v: &wce_formats::tile_entry::TileVariation| [v.blend_common.as_str(), v.index_common.as_str(), v.normal_common.as_str()].iter().filter(|m| !m.is_empty()).copied().collect::<Vec<_>>().join(" ");
+        let has_common = vars.iter().any(|v| !common_of(v).is_empty());
+        let columns: &[&str] = if has_common { &["Variation", "Min h", "Scale", "Normal", "Overlap", "Density", "Common maps"] } else { &["Variation", "Min h", "Scale", "Normal", "Overlap", "Density"] };
+        if gui::begin_table("variations", columns.len() as i32, gui::TABLE_SIZING_STRETCH_PROP | gui::TABLE_ROW_BG | gui::TABLE_BORDERS_INNER_V, gui::v2(0.0, 0.0)) {
+            for c in columns {
                 gui::table_setup_column(c, 0, 0.0);
             }
 
@@ -2733,7 +2749,15 @@ impl TileTool {
             for (i, v) in vars.iter().enumerate() {
                 gui::table_next_row();
                 gui::table_next_column();
-                gui::text(&format!("{}{}", v.location, if Some(i) == current { " *" } else { "" }));
+                if Some(i) == current {
+                    gui::text_colored(theme::palette().highlight, &v.location);
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("The variation this document shows.");
+                    }
+                } else {
+                    gui::text(&v.location);
+                }
+
                 gui::table_next_column();
                 gui::text(&format!("{:.3}", v.min_height));
                 gui::table_next_column();
@@ -2744,15 +2768,14 @@ impl TileTool {
                 gui::text(&format!("{:.0}", v.overlap_border_size));
                 gui::table_next_column();
                 gui::text(&v.raw_data_tri_density.to_string());
-                gui::table_next_column();
-                let common = v.blend_common.is_empty() && v.index_common.is_empty() && v.normal_common.is_empty();
-                gui::text_disabled(&if common { "-".to_owned() } else { format!("{} {} {}", v.blend_common, v.index_common, v.normal_common) });
+                if has_common {
+                    gui::table_next_column();
+                    gui::text_disabled(&common_of(v));
+                }
             }
 
             gui::end_table();
         }
-
-        gui::text_disabled(&format!("{} link target(s), {} link rule(s): edited in Tile links", en.link_targets().len(), en.links().len()));
 
         if let Some((slot, name)) = set_group {
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");

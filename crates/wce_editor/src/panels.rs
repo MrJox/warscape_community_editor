@@ -8,7 +8,7 @@ use wce_foundation::log::{self, LogLevel};
 use wce_scene::render_scene::SourceRef;
 
 use crate::editor::Editor;
-use crate::gui;
+use crate::gui::{self, label_column};
 
 // ---- ImGuiInspector
 
@@ -33,10 +33,6 @@ pub struct ImGuiInspector {
 }
 
 /// The value column starts after the longest label that fits: 40% of the panel, at least 110 px.
-fn label_column() -> f32 {
-    (gui::content_region_avail().x * 0.4).max(110.0)
-}
-
 impl ImGuiInspector {
     fn id(&self, field: &str) -> String {
         format!("##{}", self.path(field))

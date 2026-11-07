@@ -11,11 +11,11 @@ use wce_tile_editor::tile_document::TileDocument;
 use crate::tool::TileTool;
 
 /// The flags of the entry and what each does (their tooltips), with the kit's counts (battle, 626 entries).
-const FLAGS: [(&str, &str); 4] = [
-    ("random_rotatable", "The map fill may turn the tile by 90, 180 or 270 degrees. Off for tiles that must keep their orientation (the wonders, Hadrian's wall, Rome: 8 of the kit's 626)."),
-    ("encampable", "An army may set up its encampment on it (the kit's 9: plains, marsh and dunes of 2 x 2 and 2 x 3 cells). The game reads it; not traced further."),
-    ("scalable", "The kit's 10: the encampments, a few custom and settlement tiles. The game reads it; what it does was not traced."),
-    ("requires_infield_lodding", "TEd turns it on for a new tile (583 of the kit's 626 have it). Not traced."),
+const FLAGS: [(&str, &str, &str); 4] = [
+    ("random_rotatable", "Random rotatable", "The map fill may turn the tile by 90, 180 or 270 degrees. Off for tiles that must keep their orientation (the wonders, Hadrian's wall, Rome: 8 of the kit's 626)."),
+    ("encampable", "Encampable", "An army may set up its encampment on it (the kit's 9: plains, marsh and dunes of 2 x 2 and 2 x 3 cells). The game reads it; not traced further."),
+    ("scalable", "Scalable", "The kit's 10: the encampments, a few custom and settlement tiles. The game reads it; what it does was not traced."),
+    ("requires_infield_lodding", "Infield lodding", "TEd turns it on for a new tile (583 of the kit's 626 have it). Not traced."),
 ];
 
 const NORMAL_TIP: &str = "The strength of the tile's exported normal map (the export bakes tile_normal from the heights with it; TEd's slider, 0.01 .. 50; the kit: 1, 2 or 0.25). The editor's view does not use it.";
@@ -38,13 +38,25 @@ impl TileTool {
         let mut colour = ["red", "green", "blue"].map(|a| num(entry.tile_attr(a), 0.0) / 255.0);
         let v = d.project().variation.unwrap_or(0);
         let mut normal = num(entry.variation_attr(v, "normal_strength"), 1.0);
-        let flags = FLAGS.map(|(a, _)| entry.tile_attr(a).is_some_and(|x| x == "true"));
+        let flags = FLAGS.map(|(a, ..)| entry.tile_attr(a).is_some_and(|x| x == "true"));
         let mask = entry.tile_attr("mask").unwrap_or_default();
-        let info = &d.project().info;
-        gui::text_disabled(&format!("heights {:.2} .. {:.2} m (fitted to the heights at every save)", info.min_height, info.min_height + info.scale));
 
+        // Under the variations' table: it is this variation's.
         let mut edits: Vec<(bool, &str, String, u64)> = vec![];
-        if gui::color_edit3("colour", &mut colour, 0) {
+        gui::row_tip("Normal strength", NORMAL_TIP);
+        gui::set_next_item_width(-1.0);
+        if gui::drag_float("##normalstrength", &mut normal, 0.01, 0.01, 50.0, "%.2f") {
+            edits.push((true, "normal_strength", format!("{:.6}", normal.clamp(0.01, 50.0)), 0x12));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(NORMAL_TIP);
+        }
+
+        gui::separator_text("Properties");
+        gui::row_tip("Colour", COLOUR_TIP);
+        gui::set_next_item_width(-1.0);
+        if gui::color_edit3("##tilecolour", &mut colour, 0) {
             for (a, c) in ["red", "green", "blue"].into_iter().zip(colour) {
                 edits.push((false, a, format!("{:.6}", (c * 255.0).round().clamp(0.0, 255.0)), 0x11));
             }
@@ -54,18 +66,10 @@ impl TileTool {
             gui::set_tooltip(COLOUR_TIP);
         }
 
-        gui::set_next_item_width(200.0);
-        if gui::drag_float("normal strength", &mut normal, 0.01, 0.01, 50.0, "%.2f") {
-            edits.push((true, "normal_strength", format!("{:.6}", normal.clamp(0.01, 50.0)), 0x12));
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(NORMAL_TIP);
-        }
-
-        for (i, (a, tip)) in FLAGS.iter().enumerate() {
+        for (i, (a, label, tip)) in FLAGS.iter().enumerate() {
             let mut on = flags[i];
-            if gui::checkbox(a, &mut on) {
+            gui::row_tip(label, tip);
+            if gui::checkbox(&format!("##{a}"), &mut on) {
                 edits.push((false, a, if on { "true" } else { "false" }.to_owned(), 0));
             }
 
@@ -75,17 +79,16 @@ impl TileTool {
         }
 
         // The mask: a cell a square, rows from the +z edge as the entry counts them.
-        gui::text("valid cells");
+        const GROUND_TIP: &str = "The ground's colour over the cells, at this opacity (the Minimap's colour view: north up, as the cells); 0 hides it.";
+        gui::separator_text("Valid cells");
+        gui::row_tip("Ground colour", GROUND_TIP);
+        gui::set_next_item_width(-1.0);
+        gui::slider_float("##maskground", &mut self.cells_ground, 0.0, 1.0, "%.2f");
         if gui::is_item_hovered() {
-            gui::set_tooltip(MASK_TIP);
+            gui::set_tooltip(GROUND_TIP);
         }
 
-        gui::same_line();
-        gui::set_next_item_width(120.0);
-        gui::slider_float("ground colour##maskground", &mut self.cells_ground, 0.0, 1.0, "%.2f");
-        if gui::is_item_hovered() {
-            gui::set_tooltip("The ground's colour over the cells, at this opacity (the Minimap's colour view: north up, as the cells); 0 hides it.");
-        }
+        gui::row_tip("Cells", MASK_TIP);
 
         let cells = if mask.len() == w * h { mask.bytes().map(|c| c == b'1').collect::<Vec<_>>() } else { vec![true; w * h] };
         let side = (240.0 / w.max(h) as f32).clamp(4.0, 18.0);

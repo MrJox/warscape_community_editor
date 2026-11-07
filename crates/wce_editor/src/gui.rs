@@ -123,6 +123,31 @@ pub fn text_disabled(s: &str) {
     call!(sys::igTextDisabled(c"%s".as_ptr(), c.as_ptr()))
 }
 
+/// Where a panel's values start, as in the Inspector: 40% of the panel, at least 110 pixels. Asked at the start of a line.
+pub fn label_column() -> f32 {
+    (content_region_avail().x * 0.4).max(110.0)
+}
+
+/// A row's label; what is drawn next goes in the value column.
+pub fn row(label: &str) {
+    let at = label_column();
+    align_text_to_frame_padding();
+    text(label);
+    same_line_at(at);
+}
+
+/// [`row`], with a tooltip on the label.
+pub fn row_tip(label: &str, tip: &str) {
+    let at = label_column();
+    align_text_to_frame_padding();
+    text(label);
+    if is_item_hovered() {
+        set_tooltip(tip);
+    }
+
+    same_line_at(at);
+}
+
 pub fn text_colored(col: [f32; 4], s: &str) {
     let c = cs(s);
     call!(sys::igTextColored(v4(col[0], col[1], col[2], col[3]), c"%s".as_ptr(), c.as_ptr()))
@@ -221,6 +246,15 @@ pub fn same_line_at(x: f32) {
 
 pub fn separator() {
     call!(sys::igSeparator())
+}
+
+/// What follows lines up at the cursor, wrapped text too, until [`end_group`].
+pub fn begin_group() {
+    call!(sys::igBeginGroup())
+}
+
+pub fn end_group() {
+    call!(sys::igEndGroup())
 }
 
 pub fn separator_text(s: &str) {
