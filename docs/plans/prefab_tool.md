@@ -129,6 +129,22 @@ Checks: unit tests per step; a `--script` run (open a prefab, sculpt a platform,
 a slope, move and rotate it, Save for Assembly Kit) with a viewport capture, non-activating, ending with `quit`. The user checks in the
 GUI and in game (a prefab with a normalized platform under a building, units walking on it).
 
+## Follow-ups (after step 7, 2026-11-08)
+
+- **How it was built, where it differs from the design above**: the tool is `wce_tile_tool::prefab_tool` (not its own crate: `tool::with_tile`
+  has to name it), behind `wce_app`'s `prefab` feature. The stage is under `<projects>/.prefab_stage`. The footprint is painted with the
+  Ground brush (one ground type) and read back from the stage's ground type map; sculpted samples count as covered too. The flag and
+  feather are attributes of the stage's group (`wce_stage_normalize`, `wce_stage_feather`): undoable, never saved with the contents.
+- Step 8: stage settings in the UI (size, base height, climate / tile set), a grid and origin marker, the feather's edge on the stage,
+  thumbnails with the ground.
+- The camera frames the stage's corner as a new tile's does: it should frame the prefab on open.
+- Prefabs panel: Save as, Duplicate, Rename, Delete of project prefabs.
+- On the stage, a nested prefab's ground (an owned layer) applies over the prefab's own layer; in a tile it is under it. Only visible where
+  they overlap.
+- The in-tile Edit / Apply / Cancel goes once `prefab` is a default feature (decision 4); until then it shows only in builds without it.
+- A reference's opacity and feather change its ground when the drag ends, not while it moves.
+- The user's checks: the GUI flow, and in game a normalized platform under a building with units on it.
+
 ## Decisions (2026-11-07, with the user)
 
 1. Stage ground: a flat stage only for now; a real tile's ground as the base later.
