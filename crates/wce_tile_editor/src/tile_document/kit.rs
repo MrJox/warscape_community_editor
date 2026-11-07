@@ -293,7 +293,7 @@ impl TileDocument {
             wce_foundation::log::info(line);
         }
 
-        Ok(text)
+        self.tile().with_road_items(text)
     }
 
     /// "Save for Assembly Kit": the tile as TEd reads it in the kit `kit_raw` (a raw_data folder), at its folder, with its database entry.

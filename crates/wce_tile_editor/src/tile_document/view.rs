@@ -1381,6 +1381,8 @@ impl Tile {
         self.spare_covers();
         self.covers_dirty.clear();
         self.wall_preview_cleared();
+        self.road_entities.clear();
+        self.road_items_shown = false;
         self.last_highlight = None;
         let pieces = self.instances.iter().filter_map(|&e| self.model_of(e).filter(|m| m.ok)).map(|m| m.pieces.len()).sum::<usize>();
         scene.reserve(pieces + self.instances.len() / 16 + 64);
@@ -1728,6 +1730,7 @@ impl Tile {
             self.update_terrain(scene, false);
         }
 
+        self.show_road_items(scene);
         let layer = self.layer;
         if self.water_dirty && !self.stroke_open {
             self.rebuild_water(scene, layer);

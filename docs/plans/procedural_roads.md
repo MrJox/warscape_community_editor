@@ -5,7 +5,7 @@ bridges over the gaps. All of it lives in layers of its own, so it can be change
 are a feature in their own right, modelled on the newer Terry's: height, blend and ground type layers, which come first. Terry only shows how
 the feature works: its projects are not imported (user, 2026-11-07).
 
-Status (2026-11-07): Phases 1, 2 and 4 are built: layers (`wce_tile::terrain_layers`, `tile_document/layers.rs`, `wce_tile_tool/layers_panel.rs`) and the road on the terrain (`wce_tile::roads`, `tile_document/roads.rs`). Detail and bridges are not.
+Status (2026-11-07): Phases 1, 2 and 4 to 7 are built: layers (`wce_tile::terrain_layers`, `tile_document/layers.rs`, `wce_tile_tool/layers_panel.rs`), the road (`wce_tile::roads`, `tile_document/roads.rs`), its detail (`wce_tile::road_detail`), crossings and bridges from kit pieces. To check in a battle. Left for later: standard models, generated bridges, pinned heights.
 
 ## Decisions (user, 2026-11-07)
 
@@ -97,9 +97,9 @@ makes nothing again. A road's layers are not edited by hand: their rows cannot b
 **The height at a point** comes from the road's samples near it, by distance, further than 12 past the edge: taken from the nearest alone it jumped where
 a point stopped being nearer one stretch than another, in steps across the banks (`the_terrain_a_road_leaves_has_no_steps`).
 
-**Crossings.** Roads sharing a point weld at it: each ends flat at a common height. Road layers apply in the list's order, so a later road
-wins where two overlap. Reaching a tile's edge, the road can end flat at a height the neighbouring tile can match; matching across tiles is
-left for later.
+**Crossings.** A road reads what lies below its layers, so a later road takes an earlier one for ground and joins it at its height. Its bump stays
+off where it runs on the other (that one's is already in the ground). The bump also comes in over the road's first and last 8 units, so a road
+ending at a tile's edge ends on the ground. Matching a neighbouring tile's road is left for later.
 
 **Existing objects** on the terrain follow as they do under a brush (landscape instances). Trees and props on the road are not removed in the
 first version, but the road reports them; an optional "clear vegetation" comes later.
@@ -113,9 +113,15 @@ decals with 0 to 10 buildings. Across all of them the buildings are few: `global
 **This is good news.** Decals are projected, so they take the ground's shape whatever it is, and only need a position and a turn. A
 prefab mostly needs no mesh bent at all. So "slightly altered to follow the road" means the *layout* is bent, not the models:
 
-- Read a prefab's children as (distance along, distance across) a straight line.
-- Lay it down a stretch of road: each child moves to that place on the curve and turns with it. Decals stay decals, and a building stays the
-  same building, rigid.
+- Read a prefab's parts as (distance along, distance across) its long axis, the main direction of their places.
+- Lay it down a stretch of road: each part moves to that place on the curve and turns with it. Decals stay decals, and a building stays the
+  same building, rigid. What is wider than the road goes in towards it; a building goes beside the road, never on it.
+- `global_ground_pathborder`, the one common building, is left out: it is a skirt of ground made for its one spot, and moved along a road it stood
+  as a mound across it.
+
+Like the layers these are derived data: a list of placed instances (`RoadItem`), made again and not saved, drawn as the walls' pieces are, and
+written as the layer *WCE procedural roads* by `text_for_export`, which a kit save and a game launch both go through. `road_detail`: dirt road
+(`global_dirt_road_*`), path (`global_path_*`) or none; `road_seed` chooses and spaces them.
 
 **When a rigid piece is enough.** A straight piece of length L on a curve of radius R is off the curve by L x L / 8R at its middle:
 
@@ -148,13 +154,17 @@ versions are needed. Three variants is the fewest that hides repetition when the
 `road_planks`, all in `models_building` with logic files. Vanilla's `river_crossing` tiles use `bridge_wood_complete` 29 times, and the separate
 pieces 11 times. `battle_bridge_subculture_jcts` is empty in Attila's kit, so nothing there ties bridges to cultures.
 
-**Finding the gap.** Walk the centre line before the height layer is made: where the road would have to rise or cut past a limit against the
-ground, or the ground under it is water, is a gap. Its ends are where the banks can reach. Too short to bother, or wider than the longest
-chain: reported on the road, with no bridge.
+**Sizes**, from vanilla's `river_crossing` tiles, as the database has none: a piece runs along its z, `bridge_wood_1` every 10.4 with its `_end` 5.2 from the
+last, `bridge_wood_2` every 20 with its `_end` 10.1 from it (file's units). They stand level and freeform, `lf_offset` their height.
 
-**Laying it.** The chain is straight, so a gap's line is straightened between its ends. Pieces are fitted to the length with `_end` pieces at
-both ends; the road's height ends at the deck's. The height layer leaves the ground under the bridge alone. Buildings go in as generated instances
-carrying the kit's own logic, so units cross them as in vanilla.
+**Finding the gap** (`find_gaps`). Where the road graded over the ground stands at least 4 over it for at least 8. A gap runs out to where the ground comes
+back up to the road, and on up the walls while they are steeper than the road may climb: following the ground down, the road met it partway
+down the wall, and the first bridges started in the canyon. The road is graded again with the gap taken out (`over_gaps`: rim to rim), so it does
+not dip into it, until the gaps settle. So a gentle valley gets a road through it, and a bridge only comes where the road could not go. `road_bridges` turns them off.
+
+**Laying it.** `bridge_pieces`: `bridge_wood_1` under 60, `bridge_wood_2` over, an `_end` at each end, enough pieces to span it; straight from rim to rim,
+the height going from one rim's to the other's. The layers leave the terrain under the gap alone (`Strip::open_gaps`), and the detail skips it. Buildings go in as generated instances
+carrying the kit's logic, so units should cross them as in vanilla: not yet seen in a battle.
 
 **Later**, generated bridges: any length and curve, on `wce_walls` (warped meshes, generated platforms and pathing). Not before the rest is proven.
 
@@ -171,12 +181,14 @@ the terrain goes as the composite. Nothing new has to go in a pack while pieces 
 | 1 | Layer model, composite, file, saves flatten | done |
 | 2 | Working layer, brushes and undo on it, the panel | done |
 | 4 | `WceRoadSpline`, Create panel, Inspector, height, blend and ground type generation | built; to check in a battle that units take its ground type |
-| 5 | Detail: bent layout of the kit's prefabs, seed, `Clear` | the road reads as a road from close up |
-| 6 | Crossings, tile edge ends | two roads weld |
-| 7 | Bridges from kit pieces | units cross a generated bridge in a battle |
+| 5 | Detail: bent layout of the kit's prefabs, seed | built |
+| 6 | Crossings, tile edge ends | built |
+| 7 | Bridges from kit pieces | built; to check that units cross one in a battle |
 | 8 | Standard models (art), generated bridges | later, on their own |
 
 Phases 1 and 2 are useful on their own.
+
+A road's outline is draped on the terrain, as every outline is, so over a gap it runs down the canyon's sides and not along the bridge.
 
 ## Risks and open questions
 

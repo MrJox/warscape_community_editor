@@ -959,6 +959,11 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("working {}; {}", working.map_or("base".to_owned(), |w| w.to_string()), if list.is_empty() { "no layers".to_owned() } else { list.join("; ") }))
     });
 
+    c.add("road_items", "road_items", "how many instances stand along the roads (prefab parts and bridge pieces), and the bridges' pieces", |e, _| {
+        let Some(d) = document(e) else { return no_tile() };
+        ok(d.tile().road_items_report())
+    });
+
     c.add("road_set", "road_set <attribute> <value>", "set an attribute of the selected procedural road (road_width, road_group ...: one undo entry)", |e, a| {
         let sel = primary(e);
         let (Some(sel), Some(attr), Some(value)) = (sel, a.first(), a.get(1)) else { return fail("select a road: road_set <attribute> <value>") };
