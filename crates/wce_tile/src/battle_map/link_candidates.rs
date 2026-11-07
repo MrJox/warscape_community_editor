@@ -25,6 +25,15 @@ pub struct Candidate {
     pub joins: Vec<usize>,
 }
 
+/// The ground under a pair shown together (metres, the map's flat LF): the sea's level when one of them reaches the sea, as a coast is built
+/// against its own sea at 0 m, and else 100 m up, as on an inland map (with no ground the tiles sit 20 m under the sea, where the game never
+/// puts them).
+pub fn pair_ground(db: &TileDatabase, tiles: [&Tile; 2]) -> f64 {
+    let sea = |set: Option<usize>| link_name(db, set).is_some_and(|name| name.starts_with("sea"));
+    let reaches = |t: &Tile| sea(t.set) || t.links.iter().any(|l| l.test == LinkTest::Equals && sea(l.set)) || t.link_targets.iter().any(|g| sea(g.set));
+    if tiles.into_iter().any(reaches) { 0.0 } else { 100.0 }
+}
+
 /// A tile placed on the little map: its tile, origin and rotation.
 struct Placed<'a> {
     tile: &'a Tile,
@@ -176,5 +185,22 @@ mod tests {
         let c = candidates(&db, &open);
         assert!(c.iter().any(|c| c.tile == 0 && c.rotation == 0x10 && (c.x, c.y) == (1, 0)));
         assert!(c.iter().all(|c| c.tile == 0 && c.joins == vec![0]));
+    }
+
+    #[test]
+    fn a_coast_stands_at_the_sea_and_the_rest_above_it() {
+        let landing = TileSet { link_as_set: "sea_coast".to_owned(), ..set("landing") };
+        let db = TileDatabase { sets: vec![set("plains"), set("sea"), set("sea_coast"), landing], ..Default::default() };
+        let inland = tile("plain", 2, 2, 0, vec![], vec![(0, -1, 0, LinkTest::Equals)]);
+        let port = tile("port", 2, 2, 0, vec![(2, 0, 0)], vec![]);
+        let shore = tile("shore", 2, 2, 0, vec![], vec![(1, 2, 0, LinkTest::Equals)]);
+        let dry = tile("dry", 2, 2, 0, vec![], vec![(1, 2, 0, LinkTest::NotEquals)]);
+        let beach = tile("beach", 1, 1, 3, vec![], vec![]);
+
+        assert_eq!(pair_ground(&db, [&inland, &inland]), 100.0);
+        assert_eq!(pair_ground(&db, [&port, &inland]), 0.0, "a target at the coast");
+        assert_eq!(pair_ground(&db, [&inland, &shore]), 0.0, "either of the two, by a rule");
+        assert_eq!(pair_ground(&db, [&dry, &inland]), 100.0, "a rule that wants no sea is no coast");
+        assert_eq!(pair_ground(&db, [&inland, &beach]), 0.0, "a set that links as the coast");
     }
 }
