@@ -129,7 +129,7 @@ and `destruction_vfx_*` bursts on the damaged states).
 The editor plays: untagged effects except `destruction_vfx_*`; `ip_fire` effects while the building burns (its `burn` property, or a
 piece's own), and then also the engine's `burning_entity` over the piece's mesh (below, "The flames"); nothing else. Placed at `piece world * translation(position) * rotation`, scale `scale / unit` like a placed VFXInstance.
 **ASSUMPTIONS**, to check in game:
-- untagged effects play whenever the piece is serviced (the code agrees, "What gates a piece's effects"; by day too is not checked in game);
+- ~~untagged effects play~~ **wrong for the torches, seen in game** ("What gates a piece's effects"); the other untagged ones are not checked;
 - `destruction_vfx_*` bursts play once when a piece reaches the level, not on a battle that starts with the building already damaged;
 - `ip_fire` means "while the building is on fire", and a tile's `burn = true` building starts burning;
 - `capture` plays on a captured capture point, `fire_transition` / `fire` during the burning sequence;
@@ -146,6 +146,8 @@ draw of a piece or standalone entity (`FUN_10464ce0`, `FUN_105340c0`): after a v
 collapse). No night, weather, season or owner test was found on this path. Not traced: the code that makes the attached buildings of `file_refs`, or which object the entity list of `FUN_10534060` is.
 
 The string flag is read by `FUN_116a8680` into the entry's +0x30 (`"true"`). In `FUN_104b2a80` it keeps a handle to the running effect and moves it every time (`false`: started once, by the `started` table). **Tested in game 2026-11-07**: the three torch `.meta` with `true`, in a mod before TDD, on `gen_dun_minor_final_2`: the torches still did not burn. So the flag is not why. The user sees them never burn in game; the editor draws them (an **ASSUMPTION** of `columns.rs`: that the game plays what the `.meta` says on attached buildings). `_tech.cs2.parsed` has one user in the code, `FUN_10dc5c10`, and that is a prop list (`Filename`, `CollX`, `Burnable`), not the path of the walls' `file_refs`.
+
+**Seen in game 2026-11-07** (`plains/8x8/8x8_aa`, no mods, close up): `action_vfx_torch_fire_small` as a `VFXInstance` burns; `torch_ground_post` and `torch_sconce` as buildings of their own, and the post attached to `barbarian_fort_straight`, show their models and no effect. So the attachment works, the effect works, and **the `.meta` effect of these models does not play**, though the same effect ran in that map (so it was loaded). The editor draws these flames, which the game does not. Why is not known: `FUN_104b2a80` lets an untagged entry through once it has its list, so the entries may not reach that list (its state +8 is also what the collapses use: a **HYPOTHESIS** that it holds another file's entries). `FUN_10d4e050` and `FUN_10d4e3c0` only request a file. Not tested: whether any other untagged `.meta` effect plays (the Carthage lighthouse).
 
 `torch_sconce` and `torch_ground_post` are placed per fort piece by its logic file, per destruction state: 67 of the 191 fort pieces of the kit's tables have any (298 `file_refs`, all pieces of the
 vanilla packs), 202 on state 0 and 96 on state 1, none on later ones. Bridging columns, end caps and most joiners have none, and a damaged piece usually keeps fewer: walls are not lit evenly by data.
