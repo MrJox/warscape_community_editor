@@ -233,7 +233,13 @@ impl RefHuman {
             }
         };
 
-        let Some(at) = self.position(e, id) else { return };
+        let Some(mut at) = self.position(e, id) else { return };
+
+        // It stands on the ground as the ground is now: the terrain may have been edited under it.
+        if let Some(d) = e.docs.find_as::<TileDocument>(id) {
+            at[1] = d.tile().terrain_height(at[0], at[2]);
+        }
+
         let colours = e.tool_settings::<TileSettings>(SETTINGS_ID).ref_human.colours;
         let mut figures = model.instances(e.clock.time() as f32, true);
         if self.entities.len() != figures.len() || self.entities.iter().any(|&id| e.scene.find(id).is_none()) {

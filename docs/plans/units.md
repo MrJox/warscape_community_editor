@@ -181,7 +181,7 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    What the flag does in the engine isn't traced. Left: `stretch`, face poses. Splices are unseen: no standing clip has one.
 7. **First consumers.** `ref_human` (done 2026-11-07, `wce_tile_tool/src/ref_human.rs`): the Tile panel's Reference unit section, or the command
    `tile_ref_human`. A scene layer of its own and the settings (which unit, per tile where it stands), never the tile's files. It can't be
-   picked: Place moves it. No viewer in the Unit tool yet: `ref_human` and `unit_render_check` are the test bench so far.
+   picked: Place moves it. It stands on the ground as it is now, through terrain edits. No viewer in the Unit tool yet: `ref_human` and `unit_render_check` are the test bench so far.
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
    tool needs them.
