@@ -327,4 +327,6 @@ How the editor stays fast on a 100 000 instance tile (instanced draws and cullin
 `libs/render/gpu_adapter` chooses the D3D11 adapter: `WCE_GPU=<part of the adapter name>`, otherwise the high-performance GPU, and the renderer logs `GPU: <name>` when it starts. Two GPUs do not round float math the same way,
 so reference pixels only compare on one adapter (the gate scripts default `WCE_GPU` to `AMD Radeon`, see `docs/baseline.md`).
 
+`WCE_D3D_NO_DRIVER_THREADS=1` creates the device without the driver's internal threads (slower): the access violations in `amdxx64.dll` happen on the driver's worker thread, after the call that caused them, and with this one happens in that call, with the editor's stack in the dump. `WCE_D3D_DEBUG=1` is the debug layer, whose messages only reach a debugger.
+
 A colour target and a depth view must have the same sample count: with MSAA the particles' distortion buffer (one sample) takes the read-only one-sample depth, not the scene's. Paired with the scene's, the runtime let it through and `amdxx64.dll` crashed on its worker thread some time later; only the debug layer turns such a pair down. Its messages go to the debugger, not to the log: run `WCE_D3D_DEBUG=1` under `cdb` and search the output for `D3D11 ERROR`.
