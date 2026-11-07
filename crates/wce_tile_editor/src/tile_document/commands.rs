@@ -29,10 +29,14 @@ pub(crate) struct TedMoveCommand {
 
     /// A layer or group: everything below it moved, these instances are published again (with it, so that there is always one).
     pub below: Option<Vec<u64>>,
+
+    /// What is on the landscape below a moved layer or group, put on the terrain where it went: each one's position as it was before
+    /// (its text, and the value), for the undo.
+    pub grounded: Vec<(usize, Option<String>, Double3)>,
 }
 
 impl TedMoveCommand {
-    fn set(&self, t: &mut Tile, p: Option<Double3>, e: Option<Double3>) {
+    fn set(&mut self, t: &mut Tile, p: Option<Double3>, e: Option<Double3>) {
         if let Some(p) = p {
             t.project.scene.set_position(self.elem, p);
         }
@@ -41,8 +45,30 @@ impl TedMoveCommand {
             t.project.scene.set_euler(self.elem, e);
         }
 
+        if self.below.is_some() {
+            self.ground_below(t);
+        }
+
         // What asks for the world position before the next republish sees the move.
         self.moved(t);
+    }
+
+    /// Puts what is on the landscape below the moved layer or group on the terrain where it is now: it kept its height in the group, and
+    /// floated or sank by the ground's difference.
+    fn ground_below(&mut self, t: &mut Tile) {
+        let unit = t.unit();
+        let inside = t.instances_below(&[self.elem]).into_iter().filter(|&e| e != self.elem && t.on_the_terrain(e)).collect::<Vec<_>>();
+        for e in inside {
+            let w = wce_tile::world_transform::world_transform(t.tscene(), e).position;
+            let (x, z) = ((w.x / unit) as f32, (w.z / unit) as f32);
+            let local = t.local_for_world_y(e, f64::from(t.landscape_y(e, x, z)));
+            let Some(old) = t.tscene().position(e) else { continue };
+            if !self.grounded.iter().any(|g| g.0 == e) {
+                self.grounded.push((e, t.tscene().doc().get(e, "position"), old));
+            }
+
+            t.project.scene.set_position(e, local);
+        }
     }
 
     fn moved(&self, t: &mut Tile) {
@@ -79,6 +105,13 @@ impl Command<Tile> for TedMoveCommand {
             }
         }
 
+        for (e, text, p) in &self.grounded {
+            match text {
+                Some(text) => sc.set_attr(*e, "position", text),
+                None => sc.set_position(*e, *p),
+            }
+        }
+
         self.moved(t);
     }
 
@@ -104,6 +137,13 @@ impl Command<Tile> for TedMoveCommand {
         if self.old_euler.is_none() {
             self.old_euler = n.old_euler;
             self.old_euler_text = n.old_euler_text.clone();
+        }
+
+        // The first step's heights are the ones from before the drag.
+        for g in &n.grounded {
+            if !self.grounded.iter().any(|h| h.0 == g.0) {
+                self.grounded.push(g.clone());
+            }
         }
 
         true
