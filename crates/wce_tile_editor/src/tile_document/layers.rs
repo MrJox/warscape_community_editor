@@ -206,7 +206,7 @@ impl Tile {
 
 impl TileDocument {
     /// Makes a change of a stack, its composite shown, as one undo entry. A change in progress (`preview_stack`) ends here.
-    fn change_stack(&mut self, name: &str, kind: LayerType, mut change: impl FnMut(&mut wce_tile::tile_project::TileProject)) {
+    pub(super) fn change_stack(&mut self, name: &str, kind: LayerType, mut change: impl FnMut(&mut wce_tile::tile_project::TileProject)) {
         let t = self.tile_mut();
         t.sync_terrain_layers();
         let before = t.project.layers.as_mut().and_then(|l| l.pending.take()).or_else(|| t.layer_state(kind));
