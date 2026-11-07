@@ -2119,11 +2119,8 @@ impl TileTool {
         }
 
         self.draw_entry_section(e, id);
-        self.draw_debug_section(e, id);
         self.prepare_neighbours(e);
         self.context.draw(e, id);
-        gui::separator();
-        self.draw_prefabs_section(e, id);
         gui::separator();
         self.draw_links_section(e, id);
         gui::separator();
@@ -2131,6 +2128,7 @@ impl TileTool {
         gui::separator();
         self.draw_polygon_panel(e, id);
         gui::separator();
+        self.draw_debug_section(e, id);
         if !self.status.is_empty() {
             gui::separator();
             gui::text_wrapped(&self.status);
