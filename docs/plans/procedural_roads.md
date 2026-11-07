@@ -61,7 +61,7 @@ the panel warns. A layer's opacity at 0 counts as hidden.
 
 **UI.** A *Terrain layers* section in the Tile panel: a tab per type, the list as a stack (top row applies last, Base at the bottom), an eye per
 row, a click makes it the working layer; name, opacity, up, down, Merge down and remove for the working layer. `terrain_layer` is its command.
-A road's layers will show its icon and be read-only (not enforced yet: nothing owns a layer so far).
+A road's layers are not listed at all (user, 2026-11-07), nor can a command reach them, so they cannot be broken by hand. They apply after every layer of the user's: a new layer goes under them, and a stack saved otherwise is put right when the tile opens. They go with their road. An edit under them is taken by what it did to what shows (`Kind::onto`), not by the pixel it left, or a road's texture would stay in the layer below after the road went.
 
 **Files.** `terrain_layers.wcl` beside the tile (changed from a `tile.wce` element with Terry's TIFFs): one compressed file with the bases and
 layers. TEd never sees it, a tile with no layers has no such file, and saving after the last layer goes removes it. Terry's TIFFs stay an import.
@@ -92,7 +92,7 @@ has its settings; the Inspector shows them; **Create** panel, new section. Reuse
 **When it runs.** The layers are derived data: a road's signature (its line and settings) is kept in its layers' owner, `road:<id>#<signature>`.
 A road whose signature differs, or a height edit anywhere, makes the roads again once the line has stopped moving and no stroke is open, so a
 drag makes its road at the end, and undoing an edit of a road needs nothing of its own. Layers of a road that went are taken out; opening a tile
-makes nothing again. A road's layers are not edited by hand: their rows cannot be made the working layer. A hand edit goes on a layer above.
+makes nothing again.
 
 **Grass** is made again with the road: generated grass takes the new blend map and heights, and packed or generated, no patch stands on a road (`Tile::road_at`, the roads' ground type layers), as a tile's packed list was made before it. So does a stack change, as a layer shown or hidden moves the ground under it. With generated grass that costs about 0.6 s on a large tile each time the roads are made.
 
@@ -206,4 +206,4 @@ A road's outline is draped on the terrain, as every outline is, so over a gap it
 - **The game's own map of the tile:** does a height change need more than the height map (`ai_hints`, baked pathing)? Spline Road works today, so probably not.
 - **Rivers** cut by a road, and a road over a river's baked mesh (a decompiled tile's), are untested.
 - **Memory:** a float layer at Attila tile sizes is several MB; sparse rectangles keep that down, but a tile with many roads pays for each.
-- **Editing after the fact:** a hand edit on a road's layers is lost on regeneration, which is why they are read-only. A hand edit goes on a layer above.
+- **Touching a road up by hand** is not possible: nothing goes over its layers. Its settings are the only way to change it.

@@ -52,7 +52,6 @@ pub struct LayerRow {
     pub name: String,
     pub visible: bool,
     pub opacity: f32,
-    pub owner: String,
     pub bytes: usize,
 }
 
@@ -82,7 +81,8 @@ macro_rules! with_stack {
 }
 
 fn rows<K: wce_tile::terrain_layers::Kind>(s: &Stack<K>) -> (Vec<LayerRow>, Option<u64>) {
-    let list = s.layers.iter().map(|l| LayerRow { id: l.id, name: l.name.clone(), visible: l.visible, opacity: l.opacity, owner: l.owner.clone(), bytes: l.bytes() }).collect();
+    // What a procedural feature owns is not listed: it is made from the feature, and goes with it.
+    let list = s.layers.iter().filter(|l| l.owner.is_empty()).map(|l| LayerRow { id: l.id, name: l.name.clone(), visible: l.visible, opacity: l.opacity, bytes: l.bytes() }).collect();
     (list, s.working)
 }
 
@@ -232,7 +232,7 @@ impl TileDocument {
         }
     }
 
-    /// The layers of a type, in the order they apply (the last is on top), and the working layer.
+    /// The user's layers of a type, in the order they apply (the last is on top), and the working layer.
     #[must_use]
     pub fn terrain_layers(&self, kind: LayerType) -> (Vec<LayerRow>, Option<u64>) {
         let Some(l) = self.project().layers.as_ref() else { return (vec![], None) };
@@ -254,7 +254,7 @@ impl TileDocument {
     /// # Errors
     ///
     /// The tile has no such map.
-    pub fn add_terrain_layer(&mut self, kind: LayerType, name: &str, owner: &str) -> Result<u64, String> {
+    pub fn add_terrain_layer(&mut self, kind: LayerType, name: &str) -> Result<u64, String> {
         let t = self.tile_mut();
         t.sync_terrain_layers();
         let p = &mut t.project;
@@ -292,7 +292,7 @@ impl TileDocument {
 
         let id = layers.new_id();
         self.change_stack(&format!("New layer {name}"), kind, |p| {
-            with_stack!(p, kind, |s, _f| s.working = Some(s.add(id, name, owner)));
+            with_stack!(p, kind, |s, _f| s.working = Some(s.add(id, name, "")));
         });
 
         Ok(id)
@@ -303,7 +303,7 @@ impl TileDocument {
         let t = self.tile_mut();
         t.sync_terrain_layers();
         with_stack!(&mut t.project, kind, |s, _f| {
-            s.working = id;
+            s.working = id.filter(|&i| s.user_index(i).is_some());
             s.remember();
         });
     }
@@ -312,7 +312,7 @@ impl TileDocument {
     pub fn rename_terrain_layer(&mut self, kind: LayerType, id: u64, name: &str) {
         self.preview_stack(kind, |p| {
             with_stack!(p, kind, |s, _f| {
-                if let Some(i) = s.index_of(id) {
+                if let Some(i) = s.user_index(id) {
                     s.layers[i].name = name.to_owned();
                 }
             });
@@ -323,7 +323,7 @@ impl TileDocument {
     pub fn set_terrain_layer_visible(&mut self, kind: LayerType, id: u64, visible: bool) {
         self.change_stack(if visible { "Show layer" } else { "Hide layer" }, kind, |p| {
             with_stack!(p, kind, |s, _f| {
-                if let Some(i) = s.index_of(id) {
+                if let Some(i) = s.user_index(id) {
                     s.layers[i].visible = visible;
                 }
             });
@@ -334,7 +334,7 @@ impl TileDocument {
     pub fn set_terrain_layer_opacity(&mut self, kind: LayerType, id: u64, opacity: f32) {
         self.preview_stack(kind, |p| {
             with_stack!(p, kind, |s, f| {
-                if let Some(i) = s.index_of(id) {
+                if let Some(i) = s.user_index(id) {
                     s.layers[i].opacity = opacity.clamp(0.0, 1.0);
                     s.apply_all(f);
                 }
@@ -346,9 +346,9 @@ impl TileDocument {
     pub fn move_terrain_layer(&mut self, kind: LayerType, id: u64, by: i32) {
         self.change_stack("Move layer", kind, |p| {
             with_stack!(p, kind, |s, _f| {
-                if let Some(i) = s.index_of(id) {
+                if let Some(i) = s.user_index(id) {
                     let j = i as i32 + by;
-                    if j >= 0 && (j as usize) < s.layers.len() {
+                    if j >= 0 && s.layers.get(j as usize).is_some_and(|l| l.owner.is_empty()) {
                         s.layers.swap(i, j as usize);
                     }
                 }
@@ -360,7 +360,7 @@ impl TileDocument {
     pub fn merge_terrain_layer(&mut self, kind: LayerType, id: u64) {
         self.change_stack("Merge layer", kind, |p| {
             with_stack!(p, kind, |s, _f| {
-                if let Some(i) = s.index_of(id) {
+                if let Some(i) = s.user_index(id) {
                     s.merge_down(i);
                 }
             });
@@ -371,7 +371,7 @@ impl TileDocument {
     pub fn remove_terrain_layer(&mut self, kind: LayerType, id: u64) {
         self.change_stack("Remove layer", kind, |p| {
             with_stack!(p, kind, |s, _f| {
-                if let Some(i) = s.index_of(id) {
+                if let Some(i) = s.user_index(id) {
                     s.layers.remove(i);
                     if s.working == Some(id) {
                         s.working = None;

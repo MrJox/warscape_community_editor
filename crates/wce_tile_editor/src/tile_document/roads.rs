@@ -81,7 +81,16 @@ impl Tile {
             let m = self.preview_payloads(&i.text).len();
             format!("{key} at {:.1} {:.1} {:.1} parts {m}", i.position[0], i.position[1], i.position[2])
         }).collect::<Vec<_>>();
-        format!("{} instances, {bridge} of them bridge pieces: {}", self.road_items.len(), list.join("; "))
+        let owned = self.project.layers.as_ref().map_or([0; 3], |l| {
+            let count = |n: Option<Vec<&str>>| n.map_or(0, |v| v.iter().filter(|o| o.starts_with("road:")).count());
+            [
+                count(l.height.as_ref().map(|s| s.layers.iter().map(|x| x.owner.as_str()).collect())),
+                count(l.blend.as_ref().map(|s| s.layers.iter().map(|x| x.owner.as_str()).collect())),
+                count(l.ground.as_ref().map(|s| s.layers.iter().map(|x| x.owner.as_str()).collect())),
+            ]
+        });
+
+        format!("{} instances, road layers {owned:?}, {bridge} of them bridge pieces: {}", self.road_items.len(), list.join("; "))
     }
 
     /// Whether a road is at a place (world units), by its ground type layer.
@@ -137,7 +146,11 @@ impl Tile {
 
         // Each road against what its layers were made from.
         let made = |id: u32| stacks.and_then(|s| s.layers.iter().find_map(|l| parse_owner(&l.owner).filter(|o| o.0 == id).map(|o| o.1)));
-        let stale = self.roads_stale || roads.iter().any(|r| made(r.id) != Some(r.signature));
+        let on_top = self.project.layers.as_ref().is_none_or(|l| {
+            l.height.as_ref().is_none_or(Stack::owned_on_top) && l.blend.as_ref().is_none_or(Stack::owned_on_top) && l.ground.as_ref().is_none_or(Stack::owned_on_top)
+        });
+
+        let stale = self.roads_stale || !on_top || roads.iter().any(|r| made(r.id) != Some(r.signature));
         let gone = stacks.is_some_and(|s| s.layers.iter().filter_map(|l| parse_owner(&l.owner)).any(|o| roads.iter().all(|r| r.id != o.0)));
         if !stale && !gone {
             return;
@@ -201,6 +214,9 @@ impl Tile {
         height.layers.retain(|l| alive(&l.owner));
         blend.layers.retain(|l| alive(&l.owner));
         ground.layers.retain(|l| alive(&l.owner));
+        height.put_owned_on_top();
+        blend.put_owned_on_top();
+        ground.put_owned_on_top();
 
         let (hw, hh) = (hf.width(), hf.height());
         let (bw, bh) = (bf.width(), bf.height());
