@@ -73,6 +73,7 @@ struct Record {
     y1: u32,
     before: Vec<f32>,
     after: Vec<f32>,
+    serial: u64,
 }
 
 /// TEd's height range of a map that is flat (every sample the same): the range is `[h, h + 50]` (`TerrainIO.cpp`, docs/formats/tile_ted.md).
@@ -113,6 +114,9 @@ pub struct HeightField {
     edited: Option<(u32, u32, u32, u32)>,
     undo: Vec<Record>,
     redo: Vec<Record>,
+
+    /// The last record's serial.
+    serial: u64,
 }
 
 impl HeightField {
@@ -278,10 +282,9 @@ impl HeightField {
         }
     }
 
-    /// Forgets the undo history: the terrain layers changed under it.
-    pub fn clear_undo(&mut self) {
-        self.undo.clear();
-        self.redo.clear();
+    /// The serial of the last edit undo would take back, 0 with none, for the terrain layers.
+    pub fn top_id(&self) -> u64 {
+        self.undo.last().map_or(0, |r| r.serial)
     }
 
     fn changed(&mut self, (x0, y0, x1, y1): (u32, u32, u32, u32)) {
@@ -510,6 +513,8 @@ impl HeightField {
             }
         }
 
+        self.serial += 1;
+        r.serial = self.serial;
         self.undo.push(r);
         self.redo.clear();
         self.snapshot.clear();
