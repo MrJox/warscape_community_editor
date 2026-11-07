@@ -1,4 +1,5 @@
-//! The Tile panel's Debug section, for when something needs looking into: the placement report, and the stats (Phase 6b of docs/plans/tile_ted_parity.md): what the tile holds and costs, from what the editor knows. TEd has a
+//! The Tile panel's Debug section, at its bottom, for when something needs looking into: the placement report, the prefab references, and
+//! the stats (Phase 6b of docs/plans/tile_ted_parity.md): what the tile holds and costs, from what the editor knows. TEd has a
 //! `stats_view` module name in its scripts but no stats view in its executable, and the game's per-tile budgets are not known: no limits
 //! are shown, only the numbers (instances by type, building keys and missing models, the files on disk, what the last frame drew).
 
@@ -71,5 +72,7 @@ impl TileTool {
         gui::text_disabled("The game's per-tile budgets are not known: no limits are shown.");
         gui::separator_text("Placement");
         self.draw_placement_report(e, id);
+        gui::separator_text("Prefabs");
+        self.draw_prefab_references(e, id);
     }
 }

@@ -89,13 +89,9 @@ impl TileTool {
         Ok(recognised_message(n, found.named_but_different))
     }
 
-    /// The Tile panel's Prefabs: the references in the tile, and turning the groups that are copies of a prefab into references (done when
+    /// In the Tile panel's Debug section: the references in the tile, and turning the groups that are copies of a prefab into references (done when
     /// a tile opens from the Assembly Kit; this does it again).
-    pub(crate) fn draw_prefabs_section(&mut self, e: &mut Editor, id: wce_scene::render_scene::DocumentId) {
-        if !gui::collapsing_header("Prefabs", 0) {
-            return;
-        }
-
+    pub(crate) fn draw_prefab_references(&mut self, e: &mut Editor, id: wce_scene::render_scene::DocumentId) {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
         let sc = d.tile().tscene();
         let refs = sc.find_all("UserInstanceGroup").into_iter().filter(|&g| d.is_prefab_reference(g)).count();
