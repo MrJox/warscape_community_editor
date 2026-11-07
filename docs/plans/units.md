@@ -173,8 +173,12 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    blending in from the one before over its `blend_in_time`; a mount follows its rider's schedule; a soldier starts at a phase of his own. `SPLICE`s
    (`META_DATA_SPLICE`) over the body regions, as poses or additive. `WEAPON_ON` shows a bone's parts from its start. `unit_render_check` steps a
    schedule at 30 fps and fails on a bone moving over 0.3 m in a frame, or two poses for one time.
-   Left: `single_frame_variant` lines (all of the riders' idles, so riders loop their stand), `weapon_bone_N` flags, `stretch`, `WEAPON_RHAND` and the other
-   weapon moves, face poses, crossbows and slings unseen. Splices are unseen too: no standing clip has one.
+   Crossbows, slings and pikes look right, standing and firing. `weapon_bone_N` flags and `WEAPON_RHAND`, `_LHAND`, `_HIP` are left unused on measurement: the
+   clips' tracks carry the weapons (2500 clips; see `unit_animation.rs`). `bn_weapon_05` is the ammunition's: its parts show only under a `WEAPON_ON`.
+   A clip's travel on the ground (`bn_hips`, first to last frame) is taken out of its root bones, so a walk loops on the spot; `Clip::travel` is there for a
+   timeline that moves a unit.
+   `single_frame_variant` is on plain looping clips too (a horse's `STAND` is nothing else): such lines play only in a slot without other lines, the first.
+   What the flag does in the engine isn't traced. Left: `stretch`, face poses. Splices are unseen: no standing clip has one.
 7. **First consumers.** `ref_human` (done 2026-11-07, `wce_tile_tool/src/ref_human.rs`): the Tile panel's Reference unit section, or the command
    `tile_ref_human`. A scene layer of its own and the settings (which unit, per tile where it stands), never the tile's files. It can't be
    picked: Place moves it. No viewer in the Unit tool yet: `ref_human` and `unit_render_check` are the test bench so far.
