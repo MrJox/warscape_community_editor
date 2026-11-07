@@ -929,7 +929,7 @@ impl TileProject {
         if let Ok(read) = std::fs::read_dir(&self.dir) {
             for entry in read.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let ours = name == TED_FILE || name == WCE_FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some())
+                let ours = name == TED_FILE || name == WCE_FILE || name == crate::terrain_layers::FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some())
                     || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some()) || name.starts_with("river_spline") || name.ends_with(".bak");
                 if !ours && entry.path().is_file() && write(&name, &std::fs::read(entry.path()).map_err(|error| error.to_string())?)? {
                     others += 1;

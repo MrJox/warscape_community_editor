@@ -70,8 +70,12 @@ impl TileTool {
 
             gui::same_line();
             let label = if row.owner.is_empty() { row.name.clone() } else { format!("{} {}", icons::ROUTE, row.name) };
-            if gui::selectable(&label, working == Some(row.id), 0) {
+            if gui::selectable(&label, working == Some(row.id), 0) && row.owner.is_empty() {
                 d.set_working_layer(kind, Some(row.id));
+            }
+
+            if !row.owner.is_empty() && gui::is_item_hovered() {
+                gui::set_tooltip("A road's layer: it is made from the road, so change the road. Paint on a layer above it to touch it up.");
             }
 
             gui::pop_id();

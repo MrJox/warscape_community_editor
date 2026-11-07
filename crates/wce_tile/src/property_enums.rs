@@ -197,6 +197,9 @@ pub const DEPLOYMENT_TYPE: &[(&str, &str)] = &[
     ("EDZT_4V4", "4v4"),
 ];
 
+/// Not TEd's: the ground types a `WceRoadSpline` (docs/plans/procedural_roads.md) can be, by the names of `ground_types::GROUND_TYPES`.
+pub const ROAD_GROUND: &[(&str, &str)] = &[("road", "Road"), ("mud", "Mud"), ("sand", "Sand"), ("grass", "Grass"), ("rock", "Rock"), ("wooden floor", "Wooden floor")];
+
 /// Not TEd's: the base walls a `WceWallSpline` (a procedural wall, docs/plans/procedural_walls.md) is generated from; the keys of
 /// `wce_walls::profile::BASES`, in its order.
 pub const WALL_BASE: &[(&str, &str)] = &[

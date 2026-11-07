@@ -132,8 +132,11 @@ impl Tile {
         let p = &mut self.project;
         let Some(l) = p.layers.as_mut() else { return };
         let mut changed = false;
-        if let (Some(s), Some(f)) = (l.height.as_mut(), p.height.as_mut()) {
-            changed |= s.sync(f);
+        if let (Some(s), Some(f)) = (l.height.as_mut(), p.height.as_mut())
+            && s.sync(f)
+        {
+            changed = true;
+            self.roads_stale = true;
         }
 
         if let (Some(s), Some(f)) = (l.blend.as_mut(), p.blend.as_mut()) {
@@ -145,6 +148,7 @@ impl Tile {
         }
 
         l.dirty |= changed;
+        self.layers_shown |= changed;
     }
 
     fn put_layer_state(&mut self, state: &AnyState) {
@@ -171,6 +175,7 @@ impl Tile {
         }
 
         l.dirty = true;
+        self.layers_shown = true;
     }
 
     fn layer_state(&self, kind: LayerType) -> Option<AnyState> {

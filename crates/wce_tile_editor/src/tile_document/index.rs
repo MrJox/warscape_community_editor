@@ -90,6 +90,7 @@ pub fn polygon_colour(t: &str) -> [f32; 3] {
         "SplineRiverInstance" => [0.3, 0.6, 1.0],
         "SEGMENTED_SPLINE_INSTANCE" => [0.8, 0.62, 0.4],
         "WceWallSpline" => [0.75, 0.75, 0.75],
+        "WceRoadSpline" => [0.8, 0.62, 0.4],
         _ => [0.3, 0.9, 0.9],
     }
 }
