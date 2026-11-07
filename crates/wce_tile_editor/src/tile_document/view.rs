@@ -94,17 +94,23 @@ fn bits_equal(a: &[OverlayVertex], b: &[OverlayVertex]) -> bool {
 }
 
 fn link_colour(set: &str, alpha: f32) -> u32 {
+    let [r, g, b] = link_rgb(set);
+    overlay_colour(r, g, b, alpha)
+}
+
+/// A link set's colour, on the ground and on the Tile panel's map of the links.
+pub fn link_rgb(set: &str) -> [f32; 3] {
     const TABLE: [(&str, f32, f32, f32); 8] = [
         ("sea", 0.15, 0.35, 0.95), ("river", 0.1, 0.85, 0.95), ("roads", 0.9, 0.75, 0.35), ("sea_coast", 0.95, 0.9, 0.2), ("roads_stone", 0.7, 0.7, 0.75),
         ("roads_mountain", 0.6, 0.4, 0.2), ("river_shallow", 0.5, 0.95, 0.8), ("cliff_custom", 0.95, 0.35, 0.2),
     ];
 
     if let Some(&(_, r, g, b)) = TABLE.iter().find(|c| c.0 == set) {
-        return overlay_colour(r, g, b, alpha);
+        return [r, g, b];
     }
 
     let h = set.bytes().fold(2_166_136_261u32, |h, c| (h ^ u32::from(c)).wrapping_mul(16_777_619));
-    overlay_colour(0.35 + (h & 255) as f32 / 400.0, 0.35 + ((h >> 8) & 255) as f32 / 400.0, 0.35 + ((h >> 16) & 255) as f32 / 400.0, alpha)
+    [0.35 + (h & 255) as f32 / 400.0, 0.35 + ((h >> 8) & 255) as f32 / 400.0, 0.35 + ((h >> 16) & 255) as f32 / 400.0]
 }
 
 /// Cuts a material's blend / index maps down to a rectangle inside the one they cover (whole pixels; the rectangle follows them).
@@ -813,17 +819,17 @@ impl Tile {
     pub fn link_cells(&self) -> Vec<LinkCell> {
         let Some(entry) = &self.project.entry else { return vec![] };
         let mut out = entry.link_targets().into_iter().map(|t| LinkCell {
-            x: t.x, y: t.y, text: format!("offers a {} join at cell ({}, {})", t.tile_set, t.x, t.y), set: t.tile_set, equals: true, target: true, base_x: t.x, base_y: t.y,
+            x: t.x, y: t.y, text: format!("offers a {} join at cell ({}, {})", t.tile_set, t.x, t.y), set: t.tile_set, equals: true, target: true,
         }).collect::<Vec<_>>();
 
         for l in entry.links() {
             let equals = l.test != "TLT_NOT_EQUALS";
             let text = format!(
-                "cell ({}, {}) {}{}; belongs to cell ({}, {}){}, blend {} px{}", l.x, l.y, if equals { "must be " } else { "must not be " }, l.link_set, l.base_x, l.base_y,
+                "cell ({}, {}) {}{}, base point ({}, {}){}, blend {} px{}", l.x, l.y, if equals { "must be " } else { "must not be " }, l.link_set, l.base_x, l.base_y,
                 if l.is_entry { ", entry" } else { "" }, l.blend_size, if l.no_offline_blend { ", no offline blend" } else { "" }
             );
 
-            out.push(LinkCell { x: l.x, y: l.y, set: l.link_set, text, equals, target: false, base_x: l.base_x, base_y: l.base_y });
+            out.push(LinkCell { x: l.x, y: l.y, set: l.link_set, text, equals, target: false });
         }
 
         out
@@ -897,11 +903,6 @@ impl Tile {
                     let (a, b) = (s as f32 * QUARTER, (s + 1) as f32 * QUARTER);
                     o.line(Float3::new(m.x + a.cos() * 8.0, m.y + 40.0, m.z + a.sin() * 8.0), Float3::new(m.x + b.cos() * 8.0, m.y + 40.0, m.z + b.sin() * 8.0), line);
                 }
-            } else if c.base_x != c.x || c.base_y != c.y {
-                // The rule's own cell: a line from its centre to the cell it constrains.
-                let (bx0, bz0, bx1, bz1) = self.cell_rect(c.base_x, c.base_y);
-                let (from, to) = (at((bx0 + bx1) * 0.5, (bz0 + bz1) * 0.5), at((x0 + x1) * 0.5, (z0 + z1) * 0.5));
-                o.line(Float3::new(from.x, from.y + 6.0, from.z), Float3::new(to.x, to.y + 6.0, to.z), line);
             }
         }
 
