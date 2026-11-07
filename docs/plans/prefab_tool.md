@@ -5,7 +5,7 @@ prefabs are the editor's (`<key>.wce` in the projects' `art/prefabs`), and they 
 tile, a prefab's height layer shows in the reference's own settings (the Inspector), not in the tile's Terrain layers list. The goal is
 prefabs that stop needing hand-made meshes that fake the terrain.
 
-State: planned 2026-11-07, decisions taken with the user (the list at the end). Nothing implemented.
+State: planned 2026-11-07, decisions taken with the user (the list at the end). Steps 1 to 3 done (2026-11-07).
 
 ## Why
 
@@ -58,11 +58,12 @@ contents into the other copies **of that tile only**, Cancel puts the file's con
 
 ### A prefab placed in a tile
 
-- Every reference gets a stable id (`wce_prefab_id`, like `road_id`), given when placed or recognised.
-- A reference whose prefab (or a prefab nested in it) has a height layer owns one height layer, owner `prefab:<id>#<signature>`; the
-  signature hashes the patch, the reference's position and yaw, the ground under its origin when normalizing, and its settings. A
-  generalised `refresh_owned` pass (today's `refresh_roads`) remakes stale ones: prefabs first, in scene order (later ones over earlier
-  ones), then roads, so a road is graded over a prefab's platform.
+- A reference whose prefab (or a prefab nested in it) has a height layer owns one height layer, owner `prefab:<n>#<signature>` (n: its
+  place among them). No id on the reference: the layers are derived data, known again by their signatures, which hash the prefab's layer,
+  the reference's position and yaw, its settings and, normalized, the ground below its layer over what it reaches. `refresh_prefab_ground`
+  (`tile_document/prefab_ground.rs`) runs before `refresh_roads`, looks again only when the history, the structure, an item or the height
+  map changed, and remakes them all when any differs: nested ones first (an element ends after what is in it), then the scene's order, all
+  over the user's layers and under the roads' (a road is graded over a prefab's platform; the roads are marked stale).
 - The patch is rotated by the group's yaw (pitch and roll ignored for terrain) and resampled bilinearly to the tile's height grid. Nested
   references compose into the outer reference's layer, each with its own flag.
 - Items inside the prefab that stand on the terrain (Landscape: Above) follow the new ground, as they already follow the tile's.
@@ -114,9 +115,9 @@ Each a commit or a few, on `feature/prefab_tool`.
 2. **Applying a patch** (`wce_tile`): rotate and resample into a height stack, normalize off and on (plain at the origin, coverage x
    feather), nested composition. Unit tests on small synthetic fields (a 90 degree yaw lands exactly; a normalized platform on a slope
    comes out as on the stage; off adds).
-3. **References own layers** (`wce_tile_editor`): `wce_prefab_id`, `refresh_owned` with prefabs before roads, refresh on move/rotate, on
-   ground changes under a normalizing origin and on library change, undo through signatures; per-reference settings as `wce_*` attributes
-   in tile.wce. Tests in `tests/tile_document.rs`.
+3. **References own layers** (`wce_tile_editor`): `refresh_prefab_ground` before the roads, remade on move/rotate, on ground changes
+   under a normalized one and on library change, undo through signatures; per-reference settings as `wce_terrain*` attributes in
+   tile.wce. Tests in `tests/tile_document.rs`.
 4. **Inspector Prefab section and Unpack** in the Tile tool; Save prefab for Assembly Kit report.
 5. **Tool shell**: crate, feature, registration, layout, the stage tile, the Prefabs panel, open/new/save/save as/revert, unsaved work.
 6. **Prefab profile** of the Tile tool: scene tree rooted at the prefab, height brushes into the prefab's layer with coverage, base locked,

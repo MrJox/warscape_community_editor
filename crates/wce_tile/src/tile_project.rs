@@ -236,6 +236,9 @@ pub struct TileProject {
     /// overrides (`prefab_refs`). Without it, a save drops them.
     pub prefab_base: Option<PrefabSource>,
 
+    /// The prefabs' height layers (`prefab_terrain`), for the references' ground. Without it, references have none.
+    pub prefab_ground: Option<PrefabGroundSource>,
+
     /// What the last save found about the references (each one that kept its contents: they differ from its prefab by more than values).
     pub prefab_notes: Vec<String>,
 
@@ -249,6 +252,19 @@ pub struct TileProject {
 pub struct PrefabSource(pub std::sync::Arc<SourceFn>);
 
 type SourceFn = dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync;
+
+/// A key's height layer with a hash of what it holds (the same in every run: the layers it makes are known again by it), none when the
+/// prefab has none.
+#[derive(Clone)]
+pub struct PrefabGroundSource(pub std::sync::Arc<GroundFn>);
+
+type GroundFn = dyn Fn(&str) -> Option<(u64, std::sync::Arc<crate::prefab_terrain::PrefabTerrain>)> + Send + Sync;
+
+impl std::fmt::Debug for PrefabGroundSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PrefabGroundSource")
+    }
+}
 
 impl std::fmt::Debug for PrefabSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -377,7 +393,7 @@ impl TileProject {
 
         let mut project = Self {
             dir, info: found.info, entry: found.entry, variation: found.variation, raw_root: found.raw_root, warning, scene, height_png, height,
-            layers: None, height_dirty: false, blend: None, blend_dirty: false, ground: None, ground_dirty: false, ground_file: String::new(), unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_notes: vec![], game_kit: None,
+            layers: None, height_dirty: false, blend: None, blend_dirty: false, ground: None, ground_dirty: false, ground_file: String::new(), unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_ground: None, prefab_notes: vec![], game_kit: None,
         };
 
         let layers_file = project.dir.join(crate::terrain_layers::FILE);
