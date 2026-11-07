@@ -246,6 +246,7 @@ impl ExportInputs {
 
 pub struct TileTool {
     pub status: String,
+    pub(crate) layers: crate::layers_panel::LayersUi,
     pub(crate) mode: TileMode,
     pub(crate) brush: BrushSettings,
     pub(crate) snap_grid: bool,
@@ -653,7 +654,7 @@ pub struct TileTool {
 impl Default for TileTool {
     fn default() -> Self {
         Self {
-            status: String::new(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snap_edges: false, snap_heights: false, angle_tolerance: 0.0, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None, alt_rotate: None,
+            status: String::new(), layers: Default::default(), mode: TileMode::Select, brush: BrushSettings::default(), snap_grid: false, grid_m: 6.0, snap_tolerance: 0.0, snap_vertices: false, snap_edges: false, snap_heights: false, angle_tolerance: 0.0, snapped_cursor: Float3::default(), grab_normal_offset: 0.0, angle_step: 15.0, alt_turn: None, alt_rotate: None,
             off_tol: 0.5, off_list: vec![], off_doc_version: None, off_doc: 0,
             rename_buf: String::new(), tree_rows: vec![], tree_open: HashSet::new(), tree_doc: 0, tree_version: None, tree_open_version: 0,
             tree_open_version_seen: None, tree_filter: String::new(), tree_filter_seen: String::new(), tree_hidden_seen: None, working_layer: None, prefabs: None, prefab_version: 0, prefab_base: Default::default(), tree_prefab_seen: 0, prefab_edit: None, prefab_open: None, prefab_sel_before: vec![], tree_picked: false, override_rows: Default::default(),
@@ -2088,6 +2089,8 @@ impl TileTool {
         self.draw_entry_section(e, id);
         self.prepare_neighbours(e);
         self.context.draw(e, id);
+        gui::separator();
+        self.draw_layers_section(e, id);
         gui::separator();
         self.draw_links_section(e, id);
         gui::separator();

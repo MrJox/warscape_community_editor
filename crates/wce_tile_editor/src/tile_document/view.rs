@@ -1720,6 +1720,7 @@ impl Tile {
             return;
         }
 
+        self.sync_terrain_layers();
         let layer = self.layer;
         if self.water_dirty && !self.stroke_open {
             self.rebuild_water(scene, layer);

@@ -26,6 +26,7 @@ mod edits;
 mod flip;
 pub mod fire;
 mod index;
+pub mod layers;
 pub mod minimap;
 pub mod kit;
 mod pick;
@@ -865,6 +866,10 @@ impl Document for TileDocument {
 
     fn shows_scene(&self) -> bool {
         true
+    }
+
+    fn modified(&self) -> bool {
+        self.history().modified() || self.terrain_layers_dirty()
     }
 
     fn can_save(&self) -> bool {
