@@ -1,20 +1,33 @@
 //! Builds a mod pack that lights what Attila leaves dark: it drops the effects of a standing piece's `.meta`, and plays the `vfx_emitters`
-//! of its logic file (docs/re/buildings.md, "What gates a piece's effects"). Each always-on effect of a `.meta` goes to the list of its
-//! destruct, at the same place. The packs read are the game's; what comes out holds the patched logic files.
+//! of its logic file (docs/re/buildings.md, "What gates a piece's effects"). The game stops that list only when the piece's own state
+//! changes, so an attached building's list would outlive its wall: each always-on effect of a `.meta` goes to the list of the destruct
+//! that attaches the model, at the same place, and to the model's own list only when nothing attaches it. A model that is attached
+//! somewhere stays dark where it stands alone: there is no telling the two apart in its logic file.
+//!
+//! The entries of a destruct that play one effect share one running effect, moved through their places, so only one shows: each one after
+//! the first plays another effect: a shipped one that only the cinematic editor uses (`SPARE`), with the file of the effect in its place.
+//! Those files go in a pack of their own, of movie type: the game ignores `vfx/` in a mod-type pack, and loads a movie-type one always.
+//!
+//! The packs read are the game's, the one with `vfx/` among them. What comes out is <out pack>, the patched logic files, and beside it
+//! `<out pack stem>_vfx.pack`, the effects.
 //!
 //!   cargo run --release -p wce_tile_editor --example effects_mod -- <out pack, or - to only list> <game pack>...
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 use std::path::Path;
 
 use rpfm_lib::files::cs2_parsed::Cs2Parsed;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData, Encodeable};
+use rpfm_lib::games::pfh_file_type::PFHFileType;
 use serde_json::{Value, json};
 use wce_formats::anim_meta::{MetaEffect, meta_effects};
 
 /// Its model is 294 bytes and the game stops with a runtime error when it is placed; nothing attaches it.
 const LEFT_OUT: &[&str] = &["greek_torch_sconce"];
+
+/// Shipped effects given over to the second and later entries of a destruct. As many as the most any destruct needs of one effect, less one.
+const SPARE: &[&str] = &["cindy_fire_torch_loop", "cindy_fire_wide_torch_loop", "cindy_fire_nosmoke_loop", "cindy_fire_nosmoke_wild_loop", "cindy_fire_smoke_short_loop"];
 
 /// The always-on effects of a `.meta` (the `.meta` itself keeps them: the game ignores it).
 fn always_on(bytes: &[u8]) -> Vec<MetaEffect> {
@@ -45,32 +58,72 @@ fn encode(mut parsed: Cs2Parsed) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// The logic file with the effects added, each list by destruct name.
-fn patched(bytes: &[u8], by_destruct: &BTreeMap<String, Vec<MetaEffect>>) -> Result<Vec<u8>, String> {
-    let parsed = decode(bytes)?;
-    if encode(parsed.clone())? != bytes {
-        return Err("does not survive a round trip".to_owned());
+/// `at` through a logic file's row-vector matrix.
+fn through(m: &Value, at: [f32; 3]) -> Option<[f32; 3]> {
+    let g = |r: usize, c: usize| m[format!("m{r}{c}")].as_f64().map(|v| v as f32);
+    let row = |c: usize| Some(at[0] * g(0, c)? + at[1] * g(1, c)? + at[2] * g(2, c)? + g(3, c)?);
+    Some([row(0)?, row(1)?, row(2)?])
+}
+
+/// The building a `file_refs` entry attaches.
+fn attached(file_ref: &Value) -> Option<String> {
+    Some(file_ref["key"].as_str()?.split_once("_file:")?.1.to_lowercase())
+}
+
+/// What a destruct's list gets: its own effects, and those of what it attaches.
+fn list_of(d: &Value, own: Option<&Vec<MetaEffect>>, models: &BTreeMap<String, Vec<MetaEffect>>) -> Vec<(String, [f32; 3])> {
+    let mut out = own.into_iter().flatten().map(|e| (e.effect.clone(), e.position)).collect::<Vec<_>>();
+    for f in d["file_refs"].as_array().into_iter().flatten() {
+        let Some(effects) = attached(f).and_then(|b| models.get(&b)) else { continue };
+        out.extend(effects.iter().filter_map(|e| Some((e.effect.clone(), through(&f["transform"], e.position)?))));
     }
 
+    out
+}
+
+/// The logic file with the effects added, or `None` if it has nothing to add.
+///
+/// `copies`: effect -> the most a destruct plays, kept up.
+fn patched(bytes: &[u8], own: &BTreeMap<String, Vec<MetaEffect>>, models: &BTreeMap<String, Vec<MetaEffect>>, copies: &mut BTreeMap<String, usize>) -> Result<Option<Vec<u8>>, String> {
+    let parsed = decode(bytes)?;
     let mut v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
     let mut added = 0;
     for piece in v["pieces"].as_array_mut().ok_or("no pieces")? {
         for d in piece["destructs"].as_array_mut().ok_or("no destructs")? {
             let name = d["name"].as_str().ok_or("a destruct without a name")?.to_lowercase();
-            let Some(effects) = by_destruct.get(&name) else { continue };
+            let effects = list_of(d, own.get(&name), models);
+            if effects.is_empty() {
+                continue;
+            }
+
+            if name.matches('_').count() != 1 {
+                return Err(format!("{name}: the game would cut the key elsewhere"));
+            }
+
             let list = d["vfx_emitters"].as_array_mut().ok_or("this version has no vfx_emitters")?;
-            for (n, e) in effects.iter().enumerate() {
-                list.push(json!({ "key": format!("{name}_emitter_{}_{:02}", e.effect, n + 1), "matrix_1": matrix(e.position) }));
+            let mut seen = BTreeMap::<String, usize>::new();
+            for (n, (effect, at)) in effects.into_iter().enumerate() {
+                let count = seen.entry(effect.clone()).or_default();
+                *count += 1;
+                let most = copies.entry(effect.clone()).or_default();
+                *most = (*most).max(*count);
+
+                let played = if *count == 1 { effect.as_str() } else { *SPARE.get(*count - 2).ok_or(format!("{name}: more than SPARE holds"))? };
+                list.push(json!({ "key": format!("{name}_emitter_{played}_{:02}", n + 1), "matrix_1": matrix(at) }));
                 added += 1;
             }
         }
     }
 
-    if added != by_destruct.values().map(Vec::len).sum::<usize>() {
-        return Err(format!("{added} placed of {by_destruct:?}"));
+    if added == 0 {
+        return Ok(None);
     }
 
-    encode(serde_json::from_value(v).map_err(|e| e.to_string())?)
+    if encode(parsed)? != bytes {
+        return Err("does not survive a round trip".to_owned());
+    }
+
+    encode(serde_json::from_value(v).map_err(|e| e.to_string())?).map(Some)
 }
 
 fn main() -> Result<(), String> {
@@ -99,17 +152,50 @@ fn main() -> Result<(), String> {
         buildings.entry(key.to_owned()).or_default().entry(destruct).or_default().extend(effects);
     }
 
-    let mut patches = vec![];
-    for (key, by_destruct) in &buildings {
-        let path = format!("rigidmodels/buildings/{key}/{key}_tech.cs2.parsed");
-        let bytes = files.get(&path).ok_or(format!("{path}: not in these packs"))?;
-        let new = patched(bytes, by_destruct).map_err(|e| format!("{path}: {e}"))?;
-        println!("{path}: {} to {} bytes", bytes.len(), new.len());
-        patches.push((path, new));
+    // A model something attaches has its effects in the attaching destruct; the rest keep their own.
+    let attaching = |bytes: &[u8]| -> Vec<String> {
+        let Ok(v) = decode(bytes).and_then(|p| serde_json::to_value(&p).map_err(|e| e.to_string())) else { return vec![] };
+        let destructs = v["pieces"].as_array().into_iter().flatten().flat_map(|p| p["destructs"].as_array().into_iter().flatten());
+        destructs.flat_map(|d| d["file_refs"].as_array().into_iter().flatten()).filter_map(attached).collect()
+    };
+
+    let logic = files.iter().filter(|(p, _)| p.starts_with("rigidmodels/buildings/") && p.ends_with("_tech.cs2.parsed")).collect::<Vec<_>>();
+    let mut models = BTreeMap::new();
+    for key in logic.iter().flat_map(|(_, b)| attaching(b)).collect::<BTreeSet<_>>() {
+        if let Some(by_destruct) = buildings.remove(&key) {
+            println!("{key}: attached: its effects go to the destructs attaching it");
+            models.insert(key, by_destruct.into_values().flatten().collect::<Vec<_>>());
+        }
     }
 
+    let (mut patches, mut entries, mut copies) = (vec![], 0, BTreeMap::new());
+    for (path, bytes) in logic {
+        let own = path.split('/').nth(2).and_then(|key| buildings.get(key)).cloned().unwrap_or_default();
+        let Some(new) = patched(bytes, &own, &models, &mut copies).map_err(|e| format!("{path}: {e}"))? else { continue };
+        println!("{path}: {} to {} bytes", bytes.len(), new.len());
+        entries += 1;
+        patches.push((path.clone(), new));
+    }
+
+    let needing = copies.iter().filter(|(_, most)| **most > 1).collect::<Vec<_>>();
+    if needing.len() > 1 {
+        return Err(format!("SPARE holds one effect's copies: {needing:?}"));
+    }
+
+    for &(effect, &most) in &needing {
+        let path = format!("vfx/{effect}.xml");
+        let xml = files.get(&path).ok_or(format!("{path}: not in these packs"))?;
+        patches.extend(SPARE[..most - 1].iter().map(|spare| (format!("vfx/{spare}.xml"), xml.clone())));
+        println!("{effect}: at most {most} on a destruct");
+    }
+
+    println!("{entries} logic files");
     if out != "-" {
-        wce_walls::pack::write_pack(Path::new(out), "attila", patches, vec![])?;
+        let (vfx, logic) = patches.into_iter().partition::<Vec<_>, _>(|(p, _)| p.starts_with("vfx/"));
+        wce_walls::pack::write_pack(Path::new(out), "attila", logic, vec![])?;
+
+        let movie = format!("{}_vfx.pack", out.trim_end_matches(".pack"));
+        wce_walls::pack::write_pack_as(Path::new(&movie), "attila", PFHFileType::Movie, vfx, vec![], "wce_lit_buildings_vfx")?;
     }
 
     Ok(())
