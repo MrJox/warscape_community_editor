@@ -485,6 +485,13 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         r.map_or_else(fail, ok)
     });
 
+    c.add("save_as_start", "save_as_start [document]", "where File > Save as starts for a document (default the active one), and the folder its dialog opens", |e, a| {
+        let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
+        let start = e.save_as_start(id);
+        let (dir, name) = crate::steam_detect::dialog_start(&start);
+        ok(format!("{} (opens {}, name '{name}')", start.display(), dir.map_or_else(|| "nowhere in particular".to_owned(), |d| d.display().to_string())))
+    });
+
     c.add("revert_to_game", "revert_to_game [document]", "delete the project's copy of a game file and open the packs' file in its place (unsaved changes are lost)", |e, a| {
         let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
         e.revert_to_game(id).map_or_else(fail, ok)
