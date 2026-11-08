@@ -13,6 +13,24 @@ use wce_vfs::{Config, GameProfile, Vfs};
 use wce_walls::bridge::{BASES, BridgeWarp, Deck, make_piece, piece_stretches, prepare};
 use wce_walls::building::{BuildingFiles, is_piece_mesh};
 
+/// The intact collision outlines of a logic file, as their corners.
+fn outlines(bytes: &[u8]) -> Vec<Vec<[f64; 3]>> {
+    let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).expect("a logic file");
+    let v = serde_json::to_value(&parsed).expect("json");
+    let mut out = vec![];
+    for piece in v["pieces"].as_array().into_iter().flatten() {
+        let Some(d) = piece["destructs"].as_array().and_then(|d| d.first()) else { continue };
+        for o in d["collision_outlines"].as_array().into_iter().flatten() {
+            out.push(o["vertices"]["outline"].as_array().into_iter().flatten().map(|q| {
+                let f = |k: &str| q[k].as_f64().unwrap_or(0.0);
+                [f("x"), f("y"), f("z")]
+            }).collect());
+        }
+    }
+
+    out
+}
+
 /// The intact platforms of a logic file, as their corners, and whether each is a ground one (`flag_2`).
 fn platforms(bytes: &[u8]) -> Vec<(Vec<[f64; 3]>, bool)> {
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).expect("a logic file");
@@ -109,6 +127,7 @@ fn main() {
         let mut all: Vec<(usize, Vec<[f64; 3]>)> = vec![];
         let mut ends: Vec<((f64, f64), [f64; 3])> = vec![];
         let mut grounds: Vec<(usize, Vec<[f64; 3]>)> = vec![];
+        let mut footprint: Vec<[f64; 3]> = vec![];
         for (k, &(s, origin)) in stretches.iter().enumerate() {
             let warp = BridgeWarp { deck: &deck, base: &base, s, across, origin, ground: &ground };
             let key = format!("wce_check_bridge_{}_{k:02}", b.name);
@@ -129,6 +148,10 @@ fn main() {
                 } else {
                     all.push((k, r));
                 }
+            }
+
+            for o in outlines(logic) {
+                footprint.extend(o.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]));
             }
 
             ends.push((s, origin));
@@ -223,7 +246,12 @@ fn main() {
                 }
                 _ => false,
             };
-            if !ok {
+            // The footprint out over the ramp, to its foot.
+            let (c, tt) = deck.at(at);
+            let out = if at <= 0.0 { -1.0 } else { 1.0 };
+            let reach = footprint.iter().map(|q| ((q[0] - c[0]) * tt[0] + (q[2] - c[2]) * tt[1]) * out).fold(f64::MIN, f64::max);
+            if !ok || (reach - wce_walls::bridge::END_RAMP).abs() > 0.05 {
+                println!("  end at {at:.1}: ramp and ground platform joined {ok}, footprint {reach:.2} past the deck (the ramp: {})", wce_walls::bridge::END_RAMP);
                 bad_ends += 1;
             }
         }

@@ -481,6 +481,10 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   flags from the history alone, dropping the roads' mark, so `height_map_0.png` was never written after the roads were made again
   (only `terrain_layers.wcl`). It keeps a mark already set now; `ROAD_MAKING` 5 makes tiles saved with the stale map make their roads
   again, and so save it. Every in-game test of the bridges until then ran on the terrain the test tile was made with.
+  With the new terrain in game (checked in a dry launch's `hf_height_map.data`), units still stopped at the deck's end. The kit's
+  footprint (its `collision_outlines`, tech_dump's "outline") runs over its ramps, to z +-52 (its deck +-50), and stops where its
+  ground platforms start; ours was `bridge_wood_2`'s, the deck alone, the ramps outside the building. The first and last pieces'
+  outlines now reach the ramps' foot (`with_ground_platforms`); `bridge_check` checks it.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,
