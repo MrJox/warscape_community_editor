@@ -33,6 +33,9 @@ pub struct RoadSettings {
     /// Whether it crosses gaps on bridges.
     pub bridges: bool,
 
+    /// How far a bridge's deck stands over the water at least (metres).
+    pub clearance: f64,
+
     /// How far the texture fades out past the road's edge.
     pub feather: f64,
     pub seed: u32,
@@ -299,6 +302,12 @@ pub fn with_bump(line: &[[f64; 2]], heights: &[f64], s: &RoadSettings, on_other:
 /// The ground under a line averaged along it, then limited to the maximum grade both ways.
 #[must_use]
 pub fn graded(line: &[[f64; 2]], raw: &[f64], s: &RoadSettings) -> Vec<f64> {
+    graded_pinned(line, raw, &[], s)
+}
+
+/// As [`graded`], the samples with a pin held at it (a ford's, on the bed): the road around comes to them at its grade.
+#[must_use]
+pub fn graded_pinned(line: &[[f64; 2]], raw: &[f64], pins: &[Option<f64>], s: &RoadSettings) -> Vec<f64> {
     if line.is_empty() {
         return vec![];
     }
@@ -322,18 +331,203 @@ pub fn graded(line: &[[f64; 2]], raw: &[f64], s: &RoadSettings) -> Vec<f64> {
         y.push(raw[from..=to].iter().sum::<f64>() / (to - from + 1) as f64);
     }
 
+    let pin = |i: usize| pins.get(i).copied().flatten();
+    for (i, v) in y.iter_mut().enumerate() {
+        if let Some(p) = pin(i) {
+            *v = p;
+        }
+    }
+
     let slope = s.max_grade.to_radians().tan();
     for i in 1..y.len() {
         let d = (along[i] - along[i - 1]) * slope;
-        y[i] = y[i].clamp(y[i - 1] - d, y[i - 1] + d);
+        if pin(i).is_none() {
+            y[i] = y[i].clamp(y[i - 1] - d, y[i - 1] + d);
+        }
     }
 
     for i in (0..y.len() - 1).rev() {
         let d = (along[i + 1] - along[i]) * slope;
-        y[i] = y[i].clamp(y[i + 1] - d, y[i + 1] + d);
+        if pin(i).is_none() {
+            y[i] = y[i].clamp(y[i + 1] - d, y[i + 1] + d);
+        }
     }
 
     y
+}
+
+/// Under this, water a road crosses is a ford; this or deeper, a bridge (metres; user, 2026-11-08).
+pub const FORD_DEPTH: f64 = 0.75;
+
+/// Water less deep than this over the ground is not water to a road (metres): a river's ribbon lies on its banks' edges.
+const WET: f64 = 0.05;
+
+/// Wet stretches nearer each other than this are one crossing (metres).
+const MERGE: f64 = 8.0;
+
+/// The water of a tile, as a road sees it: where it is and the height of its surface (world metres).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WaterMap {
+    /// Each river's samples along it: x, z, its surface's height, half its width.
+    pub rivers: Vec<Vec<[f64; 4]>>,
+
+    /// Each water plane (a lake): its corners on the ground in order, and its height.
+    pub planes: Vec<([[f64; 2]; 4], f64)>,
+
+    /// Whether the sea is under the tile (a tile of the sea's sets): water at 0 m wherever the ground is lower.
+    pub sea: bool,
+}
+
+impl WaterMap {
+    /// The highest water surface over a place, if any is.
+    #[must_use]
+    pub fn level(&self, x: f64, z: f64) -> Option<f64> {
+        let mut best: Option<f64> = self.sea.then_some(0.0);
+        let mut take = |y: f64| best = Some(best.map_or(y, |b: f64| b.max(y)));
+        for river in &self.rivers {
+            for w in river.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let d = [b[0] - a[0], b[1] - a[1]];
+                let l2 = (d[0] * d[0] + d[1] * d[1]).max(1e-12);
+                let t = (((x - a[0]) * d[0] + (z - a[1]) * d[1]) / l2).clamp(0.0, 1.0);
+                let (px, pz) = (a[0] + d[0] * t, a[1] + d[1] * t);
+                if (x - px).hypot(z - pz) <= a[3] + (b[3] - a[3]) * t {
+                    take(a[2] + (b[2] - a[2]) * t);
+                }
+            }
+        }
+
+        for (corners, y) in &self.planes {
+            // Inside a convex quadrilateral: on the same side of every edge.
+            let side = |i: usize| {
+                let (a, b) = (corners[i], corners[(i + 1) % 4]);
+                (b[0] - a[0]) * (z - a[1]) - (b[1] - a[1]) * (x - a[0])
+            };
+
+            let s = (0..4).map(side).collect::<Vec<_>>();
+            if s.iter().all(|&v| v >= 0.0) || s.iter().all(|&v| v <= 0.0) {
+                take(*y);
+            }
+        }
+
+        best
+    }
+}
+
+/// A stretch of a road's line under water: its first and last sample, its deepest water over the ground and its highest surface.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wet {
+    pub from: usize,
+    pub to: usize,
+    pub depth: f64,
+    pub level: f64,
+}
+
+/// Where a road's line runs under water (`raw`: the ground under each sample; `water`: the water's surface over it, if any), stretches
+/// nearer each other than [`MERGE`] taken as one.
+#[must_use]
+pub fn wet_stretches(line: &[[f64; 2]], raw: &[f64], water: &[Option<f64>]) -> Vec<Wet> {
+    let mut out: Vec<Wet> = vec![];
+    let along = |a: usize, b: usize| line[a..=b].windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f64>();
+    for i in 0..raw.len().min(water.len()) {
+        let Some(y) = water[i].filter(|&y| y - raw[i] > WET) else { continue };
+        let depth = y - raw[i];
+        match out.last_mut() {
+            Some(w) if w.to + 1 == i || along(w.to, i) < MERGE => {
+                (w.to, w.depth, w.level) = (i, w.depth.max(depth), w.level.max(y));
+            }
+
+            _ => out.push(Wet { from: i, to: i, depth, level: y }),
+        }
+    }
+
+    out
+}
+
+/// A road laid over its ground: its height at each sample, the stretches its bridges carry (the terrain left alone under them), and its
+/// fords (the road on the bed: the terrain's heights left alone, its texture and ground type laid).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Plan {
+    pub heights: Vec<f64>,
+    pub gaps: Vec<(usize, usize)>,
+    pub fords: Vec<(usize, usize)>,
+
+    /// Each bridge over water: its stretch and the least height of its deck.
+    pub decks: Vec<(usize, usize, f64)>,
+}
+
+/// Lays a road over its ground (`raw`) and the water on it (`water`, per sample): water under [`FORD_DEPTH`] deep is forded, the road
+/// pinned to the bed; deeper water is bridged, the deck at least `clearance` over it and the road climbing to it at its maximum grade on
+/// each side; and where the ground drops away from the road (a canyon) it is bridged too, rim to rim ([`find_gaps`]). Without bridges
+/// (`s.bridges` off) every crossing is a ford and a drop is graded through. `on_other`: whether a place is on an earlier road (no bump).
+#[must_use]
+pub fn plan(line: &[[f64; 2]], raw: &[f64], water: &[Option<f64>], s: &RoadSettings, on_other: &dyn Fn(f64, f64) -> bool) -> Plan {
+    let wet = wet_stretches(line, raw, water);
+    let (shallow, deep): (Vec<Wet>, Vec<Wet>) = wet.into_iter().partition(|w| !s.bridges || w.depth < FORD_DEPTH);
+    let fords = shallow.iter().map(|w| (w.from, w.to)).collect::<Vec<_>>();
+    let mut pins = vec![None; raw.len()];
+    for &(a, b) in &fords {
+        for i in a..=b {
+            pins[i] = Some(raw[i]);
+        }
+    }
+
+    // The deep water's stretches, out to the banks: a bridge spans them.
+    let decks = deep.iter().map(|w| (w.from.saturating_sub(1), (w.to + 1).min(raw.len() - 1), w.level + s.clearance)).collect::<Vec<_>>();
+    let union = |mut g: Vec<(usize, usize)>| {
+        g.extend(decks.iter().map(|d| (d.0, d.1)));
+        g.sort_unstable();
+        let mut out: Vec<(usize, usize)> = vec![];
+        for (a, b) in g {
+            match out.last_mut() {
+                Some(l) if a <= l.1 + 1 => l.1 = l.1.max(b),
+                _ => out.push((a, b)),
+            }
+        }
+
+        out
+    };
+
+    let grade = |gaps: &[(usize, usize)]| graded_pinned(line, &over_gaps(raw, gaps), &pins, s);
+    let mut gaps = union(vec![]);
+    if s.bridges {
+        for _ in 0..4 {
+            let found = union(find_gaps(line, raw, &grade(&gaps), s));
+            if found == gaps {
+                break;
+            }
+
+            gaps = found;
+        }
+    }
+
+    // A deck over water stands at least its clearance up; the road climbs to it at its grade.
+    let mut heights = grade(&gaps);
+    let along = {
+        let mut a = vec![0.0; line.len()];
+        for i in 1..line.len() {
+            a[i] = a[i - 1] + (line[i][0] - line[i - 1][0]).hypot(line[i][1] - line[i - 1][1]);
+        }
+
+        a
+    };
+
+    let slope = s.max_grade.to_radians().tan();
+    for &(a, b, deck) in &decks {
+        for (i, h) in heights.iter_mut().enumerate() {
+            let off = if i < a { along[a] - along[i] } else if i > b { along[i] - along[b] } else { 0.0 };
+            *h = h.max(deck - off * slope);
+        }
+    }
+
+    // The bump stays off a ford, as it does on another road.
+    let on_ford = |x: f64, z: f64| fords.iter().any(|&(a, b)| line[a..=b].iter().any(|p| (p[0] - x).hypot(p[1] - z) < 1.0));
+    let mut heights = with_bump(line, &heights, s, &|x, z| on_other(x, z) || on_ford(x, z));
+    for &(a, b) in &fords {
+        heights[a..=b].copy_from_slice(&raw[a..=b]);
+    }
+
+    Plan { heights, gaps, fords, decks }
 }
 
 /// A road laid out: its samples, found by position.
@@ -344,6 +538,9 @@ pub struct Strip {
 
     /// The samples a bridge carries: the road leaves the terrain under them as it is.
     open: Vec<bool>,
+
+    /// The samples of a ford: the road leaves the terrain's heights as they are, and lays its texture and ground type.
+    kept: Vec<bool>,
     origin: [f64; 2],
     across: usize,
     cells: Vec<Vec<u32>>,
@@ -376,14 +573,21 @@ impl Strip {
             }
         }
 
-        let open = vec![false; line.len()];
-        Self { line, heights, settings, open, origin, across, cells, reach }
+        let (open, kept) = (vec![false; line.len()], vec![false; line.len()]);
+        Self { line, heights, settings, open, kept, origin, across, cells, reach }
     }
 
     /// Leaves the terrain alone over these stretches (first and last sample).
     pub fn open_gaps(&mut self, gaps: &[(usize, usize)]) {
         for &(a, b) in gaps {
             self.open[a..=b].fill(true);
+        }
+    }
+
+    /// Leaves the terrain's heights alone over these stretches (first and last sample): a ford's.
+    pub fn keep_heights(&mut self, fords: &[(usize, usize)]) {
+        for &(a, b) in fords {
+            self.kept[a..=b].fill(true);
         }
     }
 
@@ -399,12 +603,12 @@ impl Strip {
     }
 
     /// The distance from a point to the line and the road's height at the nearest place on it.
-    fn nearest(&self, x: f64, z: f64) -> Option<(f64, f64)> {
-        self.nearest_open(x, z).filter(|n| !n.2).map(|n| (n.0, n.1))
+    fn nearest(&self, x: f64, z: f64) -> Option<(f64, f64, bool)> {
+        self.nearest_open(x, z).filter(|n| !n.2).map(|n| (n.0, n.1, n.3))
     }
 
-    /// As [`Self::nearest`], and whether the place on the line is over a gap.
-    fn nearest_open(&self, x: f64, z: f64) -> Option<(f64, f64, bool)> {
+    /// As [`Self::nearest`] (and whether the place on the line is a ford's), and whether it is over a gap.
+    fn nearest_open(&self, x: f64, z: f64) -> Option<(f64, f64, bool, bool)> {
         let (cx, cz) = ((x - self.origin[0]) / CELL, (z - self.origin[1]) / CELL);
         if cx < 0.0 || cz < 0.0 {
             return None;
@@ -429,18 +633,18 @@ impl Strip {
 
         // The cells keep every fourth sample: the rest of the way between the neighbours of the best one.
         let (_, i) = best?;
-        let (mut near, mut own, mut open) = (f64::MAX, 0.0, false);
+        let (mut near, mut own, mut open, mut kept) = (f64::MAX, 0.0, false, false);
         for k in i.saturating_sub(4)..(i + 5).min(self.line.len()) {
             let p = self.line[k];
             let d = (p[0] - x).hypot(p[1] - z);
             if d < near {
-                (near, own, open) = (d, self.heights[k], self.open[k]);
+                (near, own, open, kept) = (d, self.heights[k], self.open[k], self.kept[k]);
             }
         }
 
         // Near the road its exact height, for a surface with no ripple from the samples the cells left out; the jumps are further out.
         let far = smooth((near - self.settings.width * 0.5) / NEAR);
-        Some((near, own + (sum / weights - own) * far, open))
+        Some((near, own + (sum / weights - own) * far, open, kept))
     }
 
     /// The terrain's height at a point once the road is there, `ground` its height without; none where the road leaves it alone. On the road
@@ -448,7 +652,11 @@ impl Strip {
     #[must_use]
     pub fn height_at(&self, x: f64, z: f64, ground: f64) -> Option<f64> {
         let s = &self.settings;
-        let (d, y) = self.nearest(x, z)?;
+        let (d, y, kept) = self.nearest(x, z)?;
+        if kept {
+            return None;
+        }
+
         let past = d - s.width * 0.5;
         if past <= 0.0 {
             return Some(y);
@@ -464,7 +672,7 @@ impl Strip {
     #[must_use]
     pub fn texture_at(&self, x: f64, z: f64) -> f32 {
         let s = &self.settings;
-        let Some((d, _)) = self.nearest(x, z) else { return 0.0 };
+        let Some((d, _, _)) = self.nearest(x, z) else { return 0.0 };
         let edge = s.width * 0.5 + (noise(x / 5.0, z / 5.0, s.seed) - 0.5) * s.feather;
         (1.0 - smooth((d - edge) / s.feather.max(0.01) + 0.5)) as f32
     }
@@ -472,7 +680,7 @@ impl Strip {
     /// Whether a point is road, for the ground type.
     #[must_use]
     pub fn on_road(&self, x: f64, z: f64) -> bool {
-        self.nearest(x, z).is_some_and(|(d, _)| d <= self.settings.width * 0.5)
+        self.nearest(x, z).is_some_and(|(d, _, _)| d <= self.settings.width * 0.5)
     }
 }
 
@@ -499,7 +707,7 @@ mod tests {
     use super::*;
 
     fn settings() -> RoadSettings {
-        RoadSettings { width: 6.0, shoulder: 3.0, bump: 0.25, max_grade: 10.0, max_side: 30.0, channel: 5, ground: [255, 96, 0], bridges: true, feather: 2.0, seed: 1 }
+        RoadSettings { width: 6.0, shoulder: 3.0, bump: 0.25, max_grade: 10.0, max_side: 30.0, channel: 5, ground: [255, 96, 0], bridges: true, clearance: 2.0, feather: 2.0, seed: 1 }
     }
 
     #[test]
@@ -734,5 +942,86 @@ mod tests {
         };
 
         assert_eq!(run(), run());
+    }
+
+    /// A road along x over flat ground at 0, a river 12 m wide across it at x = 50, its bed `bed` deep and its water at 0.
+    fn river_crossing(bed: f64) -> (Vec<[f64; 2]>, Vec<f64>, Vec<Option<f64>>) {
+        let l = straight();
+        let raw = l.iter().map(|p| if (p[0] - 50.0).abs() < 6.0 { -bed } else { 0.0 }).collect::<Vec<_>>();
+        let water = WaterMap { rivers: vec![vec![[50.0, -50.0, 0.0, 6.0], [50.0, 50.0, 0.0, 6.0]]], ..Default::default() };
+        let wet = l.iter().map(|p| water.level(p[0], p[1])).collect::<Vec<_>>();
+        (l, raw, wet)
+    }
+
+    #[test]
+    fn shallow_water_is_forded_on_its_bed() {
+        let s = settings();
+        let (l, raw, water) = river_crossing(0.5);
+        let p = plan(&l, &raw, &water, &s, &|_, _| false);
+        assert!(p.gaps.is_empty() && p.decks.is_empty(), "{:?}", p.gaps);
+        assert_eq!(p.fords.len(), 1);
+        let (a, b) = p.fords[0];
+        assert!((l[a][0] - 45.0).abs() <= 1.5 && (l[b][0] - 55.0).abs() <= 1.5, "{} {}", l[a][0], l[b][0]);
+        for i in a..=b {
+            assert!((p.heights[i] - raw[i]).abs() < 1e-9, "the road keeps to the bed at {i}");
+        }
+
+        // The terrain's heights are left as they are on it, its texture laid.
+        let mut strip = Strip::new(l.clone(), p.heights.clone(), s);
+        strip.keep_heights(&p.fords);
+        assert!(strip.height_at(50.0, 0.0, -0.5).is_none());
+        assert!(strip.texture_at(50.0, 0.0) > 0.99 && strip.on_road(50.0, 0.0));
+    }
+
+    #[test]
+    fn deep_water_is_bridged_over_its_clearance() {
+        let s = settings();
+        let (l, raw, water) = river_crossing(3.0);
+        let p = plan(&l, &raw, &water, &s, &|_, _| false);
+        assert!(p.fords.is_empty());
+        assert_eq!(p.decks.len(), 1, "{:?}", p.decks);
+        let (a, b, deck) = p.decks[0];
+        assert!((deck - 2.0).abs() < 1e-9);
+        assert!(p.gaps.iter().any(|&(g0, g1)| g0 <= a && g1 >= b), "{:?} over {a}..{b}", p.gaps);
+        for i in a..=b {
+            assert!(p.heights[i] >= deck - 1e-9, "the deck at {i}: {}", p.heights[i]);
+        }
+
+        // It climbs to it at its grade: 20 m before, at most 20 x tan(10 degrees) under it.
+        let slope = s.max_grade.to_radians().tan();
+        let before = (0..a).rev().find(|&i| l[a][0] - l[i][0] >= 20.0).unwrap();
+        assert!(p.heights[before] >= deck - (l[a][0] - l[before][0]) * slope - 1e-6, "{}", p.heights[before]);
+    }
+
+    #[test]
+    fn without_bridges_deep_water_is_forded_too() {
+        let s = RoadSettings { bridges: false, ..settings() };
+        let (l, raw, water) = river_crossing(3.0);
+        let p = plan(&l, &raw, &water, &s, &|_, _| false);
+        assert!(p.gaps.is_empty() && p.decks.is_empty());
+        assert_eq!(p.fords.len(), 1);
+    }
+
+    #[test]
+    fn a_dry_canyon_is_bridged_rim_to_rim() {
+        let s = settings();
+        let l = straight();
+        let raw = l.iter().map(|p| if (30.0..70.0).contains(&p[0]) { -20.0 } else { 0.0 }).collect::<Vec<_>>();
+        let p = plan(&l, &raw, &vec![None; l.len()], &s, &|_, _| false);
+        assert!(p.fords.is_empty() && p.decks.is_empty());
+        assert_eq!(p.gaps.len(), 1, "{:?}", p.gaps);
+    }
+
+    #[test]
+    fn the_water_map_finds_rivers_lakes_and_the_sea() {
+        let mut w = WaterMap { rivers: vec![vec![[0.0, 0.0, 1.0, 5.0], [100.0, 0.0, 3.0, 5.0]]], ..Default::default() };
+        assert!((w.level(50.0, 4.0).unwrap() - 2.0).abs() < 1e-9, "inside the ribbon, its height between its samples");
+        assert!(w.level(50.0, 6.0).is_none());
+        w.planes.push(([[200.0, 0.0], [300.0, 0.0], [300.0, 100.0], [200.0, 100.0]], -6.9));
+        assert_eq!(w.level(250.0, 50.0), Some(-6.9));
+        assert!(w.level(350.0, 50.0).is_none());
+        w.sea = true;
+        assert_eq!(w.level(350.0, 50.0), Some(0.0));
+        assert_eq!(w.level(250.0, 50.0), Some(0.0), "the highest water");
     }
 }

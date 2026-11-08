@@ -291,6 +291,23 @@ Crossings within 8 m of each other are one. A water crossing's **depth** is the 
   under the bridge as it is: `Strip::open_gaps`). `road_bridges` off: every crossing is a ford, whatever its depth, and a drop is graded
   through.
 
+**Built** (R5, 2026-11-08; `roads::plan`, `WaterMap`, `wet_stretches`, `graded_pinned`):
+
+- **The water** (`Tile::water_map`): the rivers' ribbons as the water is drawn (`Tile::river_ribbons`, factored out of `rebuild_water`, so
+  a road meets the water where it shows: a sample's surface height and half its width), the lakes' `water_plane` instances (their model's
+  bounds through their transform, at their height), and the sea at 0 m when the tile's set is `sea`, `sea_coast`, `sea_coast_landing` or
+  `river_mouth` (the sea the editor draws over every tile, as TEd does, is context only). Water is water to a road where it stands at
+  least 5 cm over the ground; wet stretches less than 8 m apart are one.
+- **A ford** pins the road to the bed (`graded_pinned`: the grading holds the pinned samples and brings the road around to them at its
+  grade), its bump off; the road's height layer leaves the terrain's heights alone there (`Strip::keep_heights`), and lays its texture and
+  ground type. `ford` pieces, as long as straights, from bank to bank.
+- **A bridge over water** spans the wet stretch and a sample of bank each side; its deck stands at least `road_bridge_clearance` over the
+  highest water, and the road is raised to it on each side at its grade. Drops are found as before, on the road graded with the water's
+  bridges and fords taken out. The bridge laid is still the kit's (R6 generates it).
+- **A road is made again when the water changes**: its signature has the rivers' and the water planes' elements.
+- Checked on the kit's `river/2x2_bl_rt` and `river_shallow/2x2_bl_rt` (scratch copies with their database entries): the same road is a
+  bridge over the deep river and 7 ford pieces over the shallow one (`road_items` now counts the pieces by kind).
+
 ## Bridges (redesign, 2026-11-08)
 
 ### What was there, and why it goes
@@ -339,7 +356,7 @@ bridges' models and rows into the tile's pack and `@wce_proc_data.pack`, and the
 | R2 | `roads_proc/dirt` generated from the kit's decals | done (2026-11-08): every piece reads, its parts within the bend limit, no building (`road_dirt` tests); seen in the Prefab tool |
 | R3 | `road_layout`: features, stretches, fitting by overrides; the pieces as references, preview, lowering; `road_type`; old `road_detail` out | done (2026-11-08): a curved road with a sharp point and free ends lays dirt pieces that meet port to port (`road_layout` tests); drawn on a kit tile |
 | R4 | Junctions: T on a snapped end, X on a crossing | done (2026-11-08): two crossing roads and a road ending 4 m short of one, every port meeting another (`road_layout` tests); drawn on a kit tile |
-| R5 | Crossings: water and drops found once, depth, fords | a shallow river forded, a deep one and a canyon left to bridges |
+| R5 | Crossings: water and drops found once, depth, fords | done (2026-11-08): a shallow river forded, a deep one and a canyon left to bridges (`roads` tests); both rivers on kit tiles |
 | R6 | Bridges on `wce_walls`: bases, warp along the road's line and height, width, supports, logic, packs | `wall_tech_check`'s checks pass on a curved, sloped bridge |
 | R7 | In game (user): units on a ford and over a bridge, the AI's crossing | |
 
