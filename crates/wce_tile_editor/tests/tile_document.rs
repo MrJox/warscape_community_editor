@@ -1056,37 +1056,15 @@ fn open_with_house() -> (tempfile::TempDir, TileDocument) {
     (dir, d)
 }
 
-fn find_nodes(n: &wce_editor_core::document::OutlinerNode, label: &str, out: &mut Vec<wce_scene::render_scene::SourceRef>) {
-    if n.label == label {
-        out.push(n.source);
-    }
-
-    for c in &n.children {
-        find_nodes(c, label, out);
-    }
-}
-
 #[test]
-fn the_pieces_of_a_building_are_its_children_with_their_own_properties() {
+fn the_pieces_of_a_building_have_their_own_properties() {
     let (_dir, mut d) = open_with_house();
     let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
 
-    // One node per piece (the destruction states of a piece are not nodes), named like TEd names them.
-    let mut pieces = vec![];
-    find_nodes(&d.outline(), "building piece", &mut pieces);
-    assert_eq!(pieces.len(), 2, "two pieces");
-    let has_children = |item: u64| {
-        fn walk(n: &wce_editor_core::document::OutlinerNode, item: u64) -> Option<usize> {
-            if n.source.item == item && n.label.starts_with("a  [") {
-                return Some(n.children.len());
-            }
-
-            n.children.iter().find_map(|c| walk(c, item))
-        }
-
-        walk(&d.outline(), item)
-    };
-    assert_eq!(has_children(item_of(b)), Some(2));
+    // One item per piece (the destruction states of a piece are not pieces).
+    let count = d.tile().model_of(b).filter(|m| m.ok).map_or(0, |m| m.pieces.len());
+    assert_eq!(count, 2, "two pieces");
+    let pieces = (0..count).map(|i| wce_scene::render_scene::SourceRef { doc: d.id(), item: wce_tile_editor::tile_document::piece_item(b, i) }).collect::<Vec<_>>();
 
     // The grid of a piece is TEd's: flags, surface_mode, position, orientation, scale, opacity, burn ..., seasons, destruction_level.
     let rows = {

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use wce_editor_core::command::{Command, CommandStack, History};
-use wce_editor_core::document::{Document, DocumentCore, OutlinerNode, SaveTarget};
+use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
 use wce_editor_core::inspector::Inspector;
 use wce_scene::render_scene::{LayerId, RenderScene, SourceRef};
 use wce_ui_model::{DrawItem, Entry, EntryKind, UiModel};
@@ -274,17 +274,6 @@ impl Document for UiDocument {
 
     fn file_path(&self) -> Option<PathBuf> {
         self.source.vfs_path.is_empty().then(|| self.source.disk.clone())
-    }
-
-    fn outline(&self) -> OutlinerNode {
-        let ents = self.entries();
-        fn build(doc: &UiDocument, ents: &[Entry], i: usize) -> OutlinerNode {
-            let children = ents.iter().enumerate().filter(|(_, e)| e.parent == Some(i)).map(|(k, _)| build(doc, ents, k)).collect();
-            OutlinerNode { label: UiDocument::label(&ents[i]), source: SourceRef { doc: doc.id(), item: item_of(i) }, selectable: true, children }
-        }
-
-        let children = if ents.is_empty() { vec![] } else { vec![build(self, &ents, 0)] };
-        OutlinerNode { label: self.title(), source: SourceRef { doc: self.id(), item: 0xffff_ffff }, selectable: false, children }
     }
 
     fn describe(&self, item: SourceRef) -> String {

@@ -947,10 +947,6 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
                 } else {
                     e.selection.set(ev.hit_source);
                 }
-
-                if ev.hit_source.doc != 0 {
-                    e.docs.set_active(ev.hit_source.doc);
-                }
             }
         }
     }

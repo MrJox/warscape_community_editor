@@ -1,11 +1,10 @@
 //! What a tile document shows: the terrain (and its ground look), the building models, the markers, polygon outlines, water, tile links and the
-//! highlight overlay, and the outline and descriptions of its items.
+//! highlight overlay, and the descriptions of its items.
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use wce_editor_core::document::OutlinerNode;
 use wce_formats::c_num::strtod;
 use wce_foundation::math::{Double3, Float3, Float4x4, dot, translation};
 use wce_foundation::{log, wce_prof};
@@ -20,7 +19,7 @@ use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
 use super::cover::Solid;
 use super::index::{matrix_of, polygon_colour, style_of};
-use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_item, piece_of, scene_key};
+use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_of, scene_key};
 use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view, ground_types_report, ground_types_set};
 use crate::terrain_material::{MaterialRequest, build_terrain_material, patch_blend_maps, patch_terrain_normal, terrain_normal_image};
 
@@ -2086,46 +2085,7 @@ impl Tile {
         }
     }
 
-    // ---- outline and descriptions
-
-    pub(crate) fn outline(&self) -> OutlinerNode {
-        let sc = self.tscene();
-        fn build(t: &Tile, e: usize) -> OutlinerNode {
-            let sc = t.tscene();
-            let ty = sc.type_of(e);
-            let name = sc.name(e);
-            let label = if name.is_empty() { ty.to_owned() } else { name };
-            let kids = sc.children(e);
-            let count = if kids.is_empty() { String::new() } else { format!(", {}", kids.len()) };
-            let mut n = OutlinerNode { label: format!("{label}  [{ty}{count}]"), source: t.source(item_of(e)), selectable: ty != "SCENE_GRAPH", children: vec![] };
-
-            // TEd lists the meshes of a building as its children, "building piece" each.
-            if ty == "BUILDING_INSTANCE" && let Some(m) = t.model_of(e).filter(|m| m.ok) {
-                for i in 0..m.pieces.len().min(0xffff) {
-                    n.children.push(OutlinerNode { label: "building piece".to_owned(), source: t.source(piece_item(e, i)), selectable: true, children: vec![] });
-                }
-            }
-
-            for (shown, &k) in kids.iter().enumerate() {
-                if shown + 1 > 300 {
-                    n.children.push(OutlinerNode { label: format!("... {} more", kids.len() - 300), source: t.source(TERRAIN), selectable: false, children: vec![] });
-                    break;
-                }
-
-                n.children.push(build(t, k));
-            }
-
-            n
-        }
-
-        let mut root = OutlinerNode { label: self.title(), source: self.source(TERRAIN), selectable: true, children: vec![] };
-        root.children.push(OutlinerNode { label: "Terrain".to_owned(), source: self.source(TERRAIN), selectable: true, children: vec![] });
-        if let Some(g) = sc.scene_graph() {
-            root.children.push(build(self, g));
-        }
-
-        root
-    }
+    // ---- descriptions
 
     pub(crate) fn describe(&self, item: SourceRef) -> String {
         if let Some((e, k)) = piece_of(item.item) {

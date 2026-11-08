@@ -524,7 +524,7 @@ impl TileDocument {
 
     /// `push_splice` of an edit of attributes of `elems` alone: the elements keep their indices, only they are published again.
     pub(crate) fn push_splice_touching(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>, elems: Vec<usize>) {
-        self.push_splice_as(name, mark, sel_before, sel_after, SpliceEffect::Touched { elems, outline: false });
+        self.push_splice_as(name, mark, sel_before, sel_after, SpliceEffect::Touched { elems, tree: false });
     }
 
     /// `push_splice` of an edit of `attrs` of `elems`, by what they are: what the tile's structure hangs on, what is drawn, or neither.
@@ -535,7 +535,7 @@ impl TileDocument {
         let effect = if attrs.iter().any(structure) {
             SpliceEffect::Structure
         } else if attrs.iter().all(noted) {
-            SpliceEffect::Touched { elems, outline: true }
+            SpliceEffect::Touched { elems, tree: true }
         } else {
             SpliceEffect::Remade(elems)
         };
@@ -3529,7 +3529,7 @@ impl TileDocument {
 }
 
 impl Tile {
-    /// Every element's own flag, for the outliner (`TERRAIN` has none).
+    /// Every element's own flag, for the Scene panel (`TERRAIN` has none).
     pub fn item_flag(&self, item: u64, flag: &str) -> bool {
         elem_of(item).is_none_or(|e| item == TERRAIN || self.own_flag(e, flag))
     }

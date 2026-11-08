@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use wce_editor_core::document::{Document, OutlinerNode, SaveTarget};
+use wce_editor_core::document::{Document, SaveTarget};
 use wce_editor_core::document_manager::DocumentManager;
 use wce_foundation::math::{Double3, Float3, Float4x4, normalize, rotation_y, translation};
 use wce_scene::render_scene::{Overlay, Payload, RenderScene, TerrainImage};
@@ -171,15 +171,6 @@ fn scene_hash(s: &RenderScene) -> u64 {
     h
 }
 
-fn outline_hash(n: &OutlinerNode, h: u64) -> u64 {
-    let mut h = u8_(u64::from(n.selectable), u8_(n.source.item, fs_(&n.label, h)));
-    for c in &n.children {
-        h = outline_hash(c, h);
-    }
-
-    h
-}
-
 struct Rng(u64);
 
 impl Rng {
@@ -228,7 +219,7 @@ fn main() {
             println!("  fallback {k}");
         }
 
-        let id = docs.add(&mut scene, Box::new(doc), "tile");
+        let id = docs.add(&mut scene, Box::new(doc), "tile").expect("one tile");
         let d = doc_of(&mut docs, id);
 
         // What the model cache would say: every third piece fails, the rest load with a size from their path.
@@ -250,7 +241,7 @@ fn main() {
         let t = d.tile();
         let g = t.ground_info();
         println!(
-            "  start scene {:016x} outline {:016x} terrain [{}] water [{}] ground {} {} {} links {}", scene_hash(&scene), outline_hash(&d.outline(), START), t.terrain_note(), t.water_note(),
+            "  start scene {:016x} terrain [{}] water [{}] ground {} {} {} links {}", scene_hash(&scene), t.terrain_note(), t.water_note(),
             u8::from(g.game_shaders), g.layers, g.climate, t.link_cells().len()
         );
 
@@ -510,8 +501,8 @@ fn main() {
             d.tile_mut().set_highlight(&mut scene, &sel, point, 1.5, &tool);
             let bytes = d.tile().tscene().save();
             println!(
-                "  {k} op {op} {res} ted {:016x} hist {}/{} mod {} struct {} scene {:016x} outline {:016x} water [{}]", fnv(&bytes, START), d.history().size(), d.history().position(),
-                u8::from(d.modified()), d.tile().structure_version(), scene_hash(&scene), outline_hash(&d.outline(), START), d.tile().water_note()
+                "  {k} op {op} {res} ted {:016x} hist {}/{} mod {} struct {} scene {:016x} water [{}]", fnv(&bytes, START), d.history().size(), d.history().position(),
+                u8::from(d.modified()), d.tile().structure_version(), scene_hash(&scene), d.tile().water_note()
             );
 
             if d.history().position() != 0 {

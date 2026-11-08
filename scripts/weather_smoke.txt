@@ -1,4 +1,4 @@
-# Weather tool on the shared shell: environment documents, edits and undo, structural edits, save, cross-fade, the weather picker.
+# Weather tool on the shared shell: environment documents, edits and undo, structural edits, save, one file at a time, the weather picker.
 # Run by scripts/weather_check.sh (the expected values are filled in there; the projects folder is a throw-away one, $WCE_PROJECTS).
 tool weather
 frames 3
@@ -59,14 +59,29 @@ assert_history 0 0
 frames 2
 assert_env sun_elevation 41
 
-# a second environment, cross-fade, the view modes
-open "weather/charlemagne/med_sp_land_day_rain.environment"
+# another file takes the open one's place; with unsaved changes it asks first (a script answers save or discard)
+edit_attr LIGHTING sun_direction_elevation 42
+expect_fail open "weather/charlemagne/med_sp_land_day_rain.environment"
+assert_documents 2
+open_prompt "weather/charlemagne/med_sp_land_day_rain.environment"
+assert_prompt replace 1
+answer cancel
+assert_prompt none
+assert_documents 2
+assert_modified 1
+open_prompt "weather/charlemagne/med_sp_land_day_rain.environment"
+answer discard
 frames 3
-assert_documents 3
-blend 0.5
+assert_prompt none
+assert_documents 2
+assert_modified 0
+expect_fail assert_xml_attr LIGHTING sun_direction_elevation 42
+open "weather/charlemagne/med_sp_land_day_dry.environment"
 frames 3
-assert_env blend_t 0.5
-blend 0
+assert_documents 2
+assert_env sun_elevation 41
+
+# the view modes
 view 5
 frames 2
 view 0

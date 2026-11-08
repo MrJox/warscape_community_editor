@@ -23,6 +23,7 @@ redo 99
 frames 2
 assert_instances 5
 save_to "%OUT%/edited"
+close tile discard
 tile "%OUT%/edited"
 frames 3
 assert_instances 5

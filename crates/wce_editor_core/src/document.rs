@@ -1,5 +1,5 @@
 //! A document is one thing a tool edits (an environment file, a tile, a sample map). It owns the lossless model of that thing, accepts edits as
-//! commands on its own stack, and publishes what it shows into the shared `RenderScene` (one layer per document). The editor core (outliner,
+//! commands on its own stack, and publishes what it shows into the shared `RenderScene` (one layer per document). The editor core (selection,
 //! inspector, gizmo, save) only talks to this interface; what a click on item N means is the document's business.
 
 use std::any::Any;
@@ -20,23 +20,12 @@ pub struct SaveTarget {
     pub path: PathBuf,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct OutlinerNode {
-    pub label: String,
-
-    /// What a click selects.
-    pub source: SourceRef,
-    pub selectable: bool,
-    pub children: Vec<OutlinerNode>,
-}
-
 static NEXT_DOCUMENT: AtomicU32 = AtomicU32::new(1);
 
-/// What every document has: its id (unique in the process, from 1) and the outline cache.
+/// What every document has: its id (unique in the process, from 1).
 #[derive(Debug)]
 pub struct DocumentCore {
     id: DocumentId,
-    outline: Option<(u64, OutlinerNode)>,
 }
 
 impl Default for DocumentCore {
@@ -47,7 +36,7 @@ impl Default for DocumentCore {
 
 impl DocumentCore {
     pub fn new() -> Self {
-        Self { id: NEXT_DOCUMENT.fetch_add(1, Ordering::Relaxed), outline: None }
+        Self { id: NEXT_DOCUMENT.fetch_add(1, Ordering::Relaxed) }
     }
 
     pub fn id(&self) -> DocumentId {
@@ -107,30 +96,6 @@ pub trait Document: Any {
         self.publish(scene, layer);
     }
 
-    fn outline(&self) -> OutlinerNode {
-        OutlinerNode { label: self.title(), source: SourceRef { doc: self.id(), item: 0 }, selectable: false, children: vec![] }
-    }
-
-    /// The outline as of the last edit: rebuilt (through `outline`) only when the history changed, so a panel can ask every frame.
-    fn outline_cached(&mut self) -> &OutlinerNode {
-        let stamp = self.outline_stamp();
-        if self.core().outline.as_ref().is_none_or(|(s, _)| *s != stamp) {
-            let outline = self.outline();
-            self.core_mut().outline = Some((stamp, outline));
-        }
-
-        &self.core().outline.as_ref().expect("the outline was just built").1
-    }
-
-    fn invalidate_outline(&mut self) {
-        self.core_mut().outline = None;
-    }
-
-    /// Changes whenever the outline does (default: with every edit; a document whose edits mostly do not touch the tree overrides it).
-    fn outline_stamp(&self) -> u64 {
-        self.history().version()
-    }
-
     fn inspect(&mut self, item: SourceRef, inspector: &mut dyn Inspector) {
         let _ = (item, inspector);
     }
@@ -163,7 +128,7 @@ pub trait Document: Any {
         vec![item]
     }
 
-    /// Identifies the file a document came from (a normalized in-pack path); an open request for the same key activates the open document instead.
+    /// Identifies the file a document came from (a normalized in-pack path); an open request for the same key shows the open document instead.
     fn source_key(&self) -> String {
         String::new()
     }
@@ -173,7 +138,7 @@ pub trait Document: Any {
         None
     }
 
-    /// Whether opening `path` (a file or a folder on disk) would open this document again; the open request then activates it instead.
+    /// Whether opening `path` (a file or a folder on disk) would open this document again; the open request then shows it instead.
     fn opened_from(&self, _path: &str) -> bool {
         false
     }

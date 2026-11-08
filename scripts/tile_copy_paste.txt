@@ -38,9 +38,10 @@ frames 3
 tile_select CivilianShelter
 assert_shelter_target 120 70 0.6
 
-# Into another tile.
+# Into another tile (it takes this one's place: its edits are discarded).
 tile_select_all BUILDING_INSTANCE
 copy
+close tile discard
 new_tile wce_paste_test_b 2 2 10 32
 frames 5
 paste 30 30

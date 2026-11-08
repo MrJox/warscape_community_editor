@@ -89,9 +89,12 @@ pub struct WeatherTool {
     // Lighting the scene.
     default_env: EnvironmentParams,
     default_env_loaded: bool,
+    /// The tool's document when it is an .environment / .lighting file (it lights the scene, live while it is edited).
     pub(crate) env_doc: DocumentId,
-    pub(crate) blend_doc: DocumentId,
-    pub(crate) blend_t: f32,
+
+    /// The environment that lit the scene last (its path, its parameters as the packs or the project have it): it goes on lighting the scene
+    /// while the tool's document is another kind of file (a VFX's, `weather_definitions.xml`).
+    last_env: Option<(String, EnvironmentParams)>,
 
     /// The game's preferences.script.txt.
     output_gamma: f32,
@@ -126,7 +129,7 @@ pub struct WeatherTool {
 impl Default for WeatherTool {
     fn default() -> Self {
         Self {
-            tile_was_open: false, default_env: EnvironmentParams::default(), default_env_loaded: false, env_doc: 0, blend_doc: 0, blend_t: 0.0, output_gamma: 2.2,
+            tile_was_open: false, default_env: EnvironmentParams::default(), default_env_loaded: false, env_doc: 0, last_env: None, output_gamma: 2.2,
             output_brightness: 1.0, last_params: EnvironmentParams::default(), overlay: Overlay::default(), overlay_rev: None, category: 0, filter: String::new(),
             listing: vec![], listing_dirty: true, attr_filter: String::new(), new_name: String::new(), new_value: String::new(), gesture: 1, select_after: None,
             pending: None, scene_seed: 1, scene_count: 16, picker: WeatherPicker::default(),
@@ -138,17 +141,21 @@ pub(crate) fn find_xml(e: &mut Editor, id: DocumentId) -> Option<&mut XmlFileDoc
     if id == 0 { None } else { e.docs.find_as_mut::<XmlFileDocument>(id) }
 }
 
+/// The Weather tool's document (the file it edits), when it is open.
 pub(crate) fn active_xml(e: &mut Editor) -> Option<&mut XmlFileDocument> {
-    let id = e.docs.active_id();
+    let id = e.docs.of_tool(WEATHER_TOOL_ID).unwrap_or(0);
     find_xml(e, id)
 }
+
+/// The Weather tool's id: the owner of its documents.
+pub const WEATHER_TOOL_ID: &str = "weather";
 
 fn is_environment_doc(e: &Editor, id: DocumentId) -> bool {
     e.docs.find_as::<XmlFileDocument>(id).is_some_and(|x| x.is_environment())
 }
 
 impl WeatherTool {
-    /// The document that lights the scene (the last active .environment / .lighting).
+    /// The document that lights the scene (the tool's document when it is an .environment / .lighting file).
     pub fn environment_document<'a>(&self, e: &'a mut Editor) -> Option<&'a mut XmlFileDocument> {
         find_xml(e, self.env_doc)
     }
@@ -183,12 +190,9 @@ impl WeatherTool {
         let doc = SampleMapDocument::new(&*files, self.scene_seed as u32, self.scene_count as usize);
         let ext = doc.info().bounds_max - doc.info().bounds_min;
         let n = doc.info().buildings;
-        let previous = e.docs.active_id();
-        e.docs.add(&mut e.scene, Box::new(doc), "weather");
-
-        // The environment document being edited stays the active one.
-        if previous != 0 {
-            e.docs.set_active(previous);
+        if let Err(msg) = e.docs.add(&mut e.scene, Box::new(doc), WEATHER_TOOL_ID) {
+            e.status(&msg, true);
+            return;
         }
 
         // With a tile open the camera stays on the tile.
@@ -303,35 +307,13 @@ impl WeatherTool {
         }
 
         let env_title = find_xml(e, self.env_doc).map(|x| x.title());
-        gui::text_colored(theme::dim(), &format!("environment: {}", env_title.as_deref().unwrap_or("(none open: the default dry day)")));
+        let lit_by = match (env_title, &self.last_env) {
+            (Some(t), _) => t,
+            (None, Some((path, _))) if e.docs.of_tool(WEATHER_TOOL_ID).is_some() => format!("{path} (the last one open, as saved)"),
+            _ => "(none open: the default dry day)".to_owned(),
+        };
 
-        // Cross-fade: second environment + slider.
-        gui::set_next_item_width(260.0);
-        let other = if self.blend_doc != 0 && self.blend_doc != self.env_doc { find_xml(e, self.blend_doc).map(|x| x.title()) } else { None };
-        if gui::begin_combo("cross-fade with", other.as_deref().unwrap_or("(none)")) {
-            if gui::selectable("(none)", other.is_none(), 0) {
-                self.blend_doc = 0;
-            }
-
-            for id in e.docs.order().to_vec() {
-                if id == self.env_doc || !is_environment_doc(e, id) {
-                    continue;
-                }
-
-                let title = e.docs.find(id).map(|d| d.title()).unwrap_or_default();
-                if gui::selectable(&format!("{title}##b{id}"), id == self.blend_doc, 0) {
-                    self.blend_doc = id;
-                }
-            }
-
-            gui::end_combo();
-        }
-
-        if other.is_some() {
-            gui::same_line();
-            gui::set_next_item_width(180.0);
-            gui::slider_float("##t", &mut self.blend_t, 0.0, 1.0, "blend %.2f");
-        }
+        gui::text_colored(theme::dim(), &format!("environment: {lit_by}"));
 
         if !errors.is_empty() {
             gui::text_colored(theme::error(), "render errors (hover)");
@@ -351,7 +333,7 @@ impl WeatherTool {
             return;
         }
 
-        let id = e.docs.active_id();
+        let id = e.docs.of_tool(WEATHER_TOOL_ID).unwrap_or(0);
         if find_xml(e, id).is_some() {
             self.draw_document(e, id);
         } else {
@@ -698,7 +680,7 @@ fn draw_changes(d: &XmlFileDocument) {
 
 impl Tool for WeatherTool {
     fn id(&self) -> &str {
-        "weather"
+        WEATHER_TOOL_ID
     }
 
     fn project_folder(&self) -> &'static str {
@@ -723,7 +705,6 @@ impl Tool for WeatherTool {
         let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.22);
         gui::dock_builder_dock_window("Viewport", center);
         gui::dock_builder_dock_window("Files", left);
-        gui::dock_builder_dock_window("Outliner", left);
         gui::dock_builder_dock_window("Properties", right);
         gui::dock_builder_dock_window("Inspector", right);
         gui::dock_builder_dock_window("Weather scene", bottom);
@@ -801,23 +782,30 @@ impl Tool for WeatherTool {
         }
 
         self.tile_was_open = e.docs.shows_scene();
-        let active = e.docs.active_id();
-        if is_environment_doc(e, active) {
-            self.env_doc = active;
-        }
-
-        let env = find_xml(e, self.env_doc).map(|x| read_environment(x.xml()));
-        if env.is_none() {
-            self.env_doc = 0;
-        }
-
-        let other = if self.blend_doc != 0 && self.blend_doc != self.env_doc { find_xml(e, self.blend_doc).map(|x| read_environment(x.xml())) } else { None };
-        if other.is_none() && self.blend_doc != 0 && e.docs.find(self.blend_doc).is_none() {
-            self.blend_doc = 0;
-        }
-
+        let doc = e.docs.of_tool(WEATHER_TOOL_ID).unwrap_or(0);
+        self.env_doc = if is_environment_doc(e, doc) { doc } else { 0 };
+        let env = find_xml(e, self.env_doc).map(|x| (x.source().vfs_path.clone(), read_environment(x.xml())));
         let lit = env.is_some();
-        let mut params = env.unwrap_or_else(|| self.default_env.clone());
+        let params = match env {
+            Some((path, params)) => {
+                // Remembered as the packs (or the project) have it: unsaved edits are not what lights a VFX file opened after it.
+                if !path.is_empty() && self.last_env.as_ref().is_none_or(|(p, _)| *p != path) {
+                    let saved = e.vfs().and_then(|v| v.read(&path).ok()).and_then(|b| XmlDoc::parse(b).ok()).map(|d| read_environment(&d));
+                    self.last_env = saved.map(|p| (path, p));
+                }
+
+                Some(params)
+            }
+
+            // Another kind of file: the last environment goes on lighting it. No document: the default light.
+            None if doc != 0 => self.last_env.as_ref().map(|(_, p)| p.clone()),
+            None => {
+                self.last_env = None;
+                None
+            }
+        };
+
+        let mut params = params.unwrap_or_else(|| self.default_env.clone());
         params.output_gamma = self.output_gamma;
         params.output_brightness = self.output_brightness;
         let slot = &mut e.scene.environment;
@@ -825,14 +813,6 @@ impl Tool for WeatherTool {
         slot.blend = None;
         slot.blend_t = 0.0;
         slot.owner = if lit { self.env_doc } else { 0 };
-        if let (true, Some(mut b)) = (lit, other)
-            && self.blend_t > 0.0
-        {
-            b.output_gamma = self.output_gamma;
-            b.output_brightness = self.output_brightness;
-            slot.blend = Some(b);
-            slot.blend_t = self.blend_t;
-        }
 
         self.last_params = slot.resolved();
 

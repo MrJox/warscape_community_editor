@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use wce_editor_core::command::{Command, CommandStack, History};
-use wce_editor_core::document::{Document, DocumentCore, OutlinerNode, SaveTarget};
+use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
 use wce_editor_core::inspector::Inspector;
 use wce_formats::env_value::{ValueKind, format_value, parse_value};
 use wce_formats::xml_doc::{XmlDoc, decode_entities, encode_entities};
@@ -109,15 +109,6 @@ pub enum Op {
     AddChild,
     AddAttr,
     RemoveAttr,
-}
-
-fn element_label(doc: &XmlDoc, e: usize) -> String {
-    let mut label = doc.elements()[e].name.clone();
-    if let Some(n) = doc.get(e, "name").or_else(|| doc.get(e, "inst_name")) {
-        label += &format!("  '{n}'");
-    }
-
-    label
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -326,17 +317,6 @@ impl Document for XmlFileDocument {
 
     /// Lights the scene through the weather tool, owns no entities.
     fn publish(&mut self, _: &mut RenderScene, _: LayerId) {}
-
-    fn outline(&self) -> OutlinerNode {
-        fn build(doc: &XmlFileDocument, e: usize) -> OutlinerNode {
-            let xml = doc.xml();
-            let children = xml.elements()[e].children.iter().map(|&c| build(doc, c)).collect();
-            OutlinerNode { label: element_label(xml, e), source: SourceRef { doc: doc.id(), item: e as u64 }, selectable: true, children }
-        }
-
-        let children = self.xml().roots().iter().map(|&r| build(self, r)).collect();
-        OutlinerNode { label: self.title(), source: SourceRef { doc: self.id(), item: 0xffff_ffff }, selectable: false, children }
-    }
 
     fn describe(&self, item: SourceRef) -> String {
         if (item.item as usize) < self.xml().elements().len() { self.xml().path_of(item.item as usize) } else { String::new() }

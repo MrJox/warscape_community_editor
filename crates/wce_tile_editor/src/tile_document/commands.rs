@@ -290,8 +290,8 @@ pub(crate) enum SpliceEffect {
     /// Not known: the index and the scene are built again.
     Structure,
 
-    /// Only attributes of these elements: no element moved in the list. `outline`: the outliner shows them.
-    Touched { elems: Vec<usize>, outline: bool },
+    /// Only attributes of these elements: no element moved in the list. `tree`: the Scene panel's tree shows them (a name).
+    Touched { elems: Vec<usize>, tree: bool },
 
     /// Attributes of these elements that change how they are drawn: their entities are made again.
     Remade(Vec<usize>),
@@ -303,7 +303,7 @@ pub(crate) enum SpliceEffect {
 impl TedSpliceCommand {
     fn changed(&self, t: &mut Tile, forward: bool) {
         match &self.effect {
-            SpliceEffect::Touched { elems, outline } => {
+            SpliceEffect::Touched { elems, tree } => {
                 for &e in elems {
                     if !t.is_instance(e) {
                         continue;
@@ -313,7 +313,7 @@ impl TedSpliceCommand {
                     t.index_attr_edited(e);
                 }
 
-                t.structure_version += u64::from(*outline);
+                t.structure_version += u64::from(*tree);
                 return;
             }
 

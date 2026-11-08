@@ -376,36 +376,6 @@ impl Document for MapDocument {
         true
     }
 
-    /// The `.terry` scene: its entities by kind (battle catchment areas by type, deployment zones, the others), each with its children.
-    fn outline(&self) -> wce_editor_core::document::OutlinerNode {
-        use wce_editor_core::document::OutlinerNode;
-        use wce_terrain::terry::EntityKind;
-        let doc = self.id();
-        let node = |label: String, item: u64, selectable: bool, children: Vec<OutlinerNode>| OutlinerNode {
-            label, source: wce_scene::render_scene::SourceRef { doc, item }, selectable, children,
-        };
-
-        let Some(p) = self.project() else { return node(self.name.clone(), 0, false, vec![]) };
-        fn tree(p: &wce_terrain::terry::TerryProject, doc: u32, id: u64, depth: u32) -> wce_editor_core::document::OutlinerNode {
-            let e = p.entity(id);
-            let label = e.map_or_else(|| format!("{id:x}"), |e| if e.name.is_empty() { format!("{id:x}") } else { e.name.clone() });
-            let children = if depth < 16 { e.map(|e| e.children.iter().map(|&c| tree(p, doc, c, depth + 1)).collect()).unwrap_or_default() } else { vec![] };
-            wce_editor_core::document::OutlinerNode { label, source: wce_scene::render_scene::SourceRef { doc, item: id }, selectable: true, children }
-        }
-
-        let mut groups: std::collections::BTreeMap<EntityKind, Vec<u64>> = std::collections::BTreeMap::new();
-        for e in p.entities.iter().filter(|e| p.parent_of(e.id).is_none()) {
-            groups.entry(p.kind(e)).or_default().push(e.id);
-        }
-
-        let children = groups.into_iter().map(|(k, ids)| {
-            let label = format!("{} ({})", k.name(), ids.len());
-            node(label, 0, false, ids.into_iter().map(|id| tree(p, doc, id, 0)).collect())
-        }).collect();
-
-        node(format!("{} - {} .terry entities", self.name, p.entities.len()), 0, false, children)
-    }
-
     fn describe(&self, item: wce_scene::render_scene::SourceRef) -> String {
         let Some(p) = self.project() else { return String::new() };
         p.entity(item.item).map_or_else(String::new, |e| format!("{} ({})", e.name, p.kind(e).name()))

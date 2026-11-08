@@ -127,21 +127,29 @@ impl PrefabTool {
         self.open.as_ref().map(|o| o.key.as_str())
     }
 
-    /// Opens a prefab on the stage (the one there goes, if it has nothing unsaved).
+    /// Opens a prefab on the stage in place of the one there (asked about first when it has unsaved changes: the open goes on after the
+    /// prompt's Save or Discard).
     ///
     /// # Errors
     ///
-    /// The one there has unsaved changes, no such prefab, or the stage can't be made.
+    /// The one there has unsaved changes (a script gave no answer), no such prefab, or the stage can't be made.
     pub fn open_prefab(&mut self, e: &mut Editor, key: &str) -> Result<String, String> {
-        if let Some(d) = self.stage(e) {
-            self.look = Some(d.tile().terrain_look().clone());
+        let again = key.to_owned();
+        let retry = Box::new(move |e: &mut Editor| e.with_tool::<Self, _>(|p, e| p.open_prefab(e, &again)).unwrap_or_else(|| Err("the Prefab tool is busy".to_owned())));
+        if !e.clear_to_replace(PREFAB_TOOL_ID, retry)? {
+            return Ok(format!("asking about the stage's unsaved changes before opening {key}"));
         }
 
-        self.close_stage(e, false)?;
         let lib = self.library(e);
         let entry = lib.get(key).ok_or_else(|| format!("no prefab '{key}'"))?.clone();
         let prefab = lib.load(&entry.key)?;
         let terrain = lib.terrain(&entry.key)?;
+        if let Some(d) = self.stage(e) {
+            self.look = Some(d.tile().terrain_look().clone());
+        }
+
+        // The stage is made again in its folder: the old one goes first (cleared above).
+        self.close_stage(e, true)?;
 
         let mut project = wce_tile::prefab_stage::make(&Self::stage_root(e), &self.stage, &prefab.group_text)?;
         let group = project.scene.find_all("UserInstanceGroup").into_iter().find(|&g| project.scene.doc().get(g, STAGE_ATTR).is_some()).ok_or("the stage lost its group")?;
@@ -168,8 +176,7 @@ impl PrefabTool {
             Ok(format!("prefab saved to {}{}", path.display(), if terrain.is_some() { " with its ground" } else { "" }))
         }));
 
-        let id = e.docs.add(&mut e.scene, Box::new(doc), PREFAB_TOOL_ID);
-        e.docs.set_active(id);
+        let id = e.replace_document(PREFAB_TOOL_ID, Box::new(doc))?;
 
         // The climate and season of the last stage; the prefab selected (its origin, its gizmo).
         if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
@@ -399,10 +406,6 @@ impl PrefabTool {
             } else if tool == PREFAB_TOOL_ID {
                 e.docs.set_visible(&mut e.scene, id, true);
             }
-        }
-
-        if let Some(open) = &self.open {
-            e.docs.set_active(open.doc);
         }
     }
 
@@ -1043,10 +1046,6 @@ impl TileTool {
             } else if hidden.contains(&id) {
                 e.docs.set_visible(&mut e.scene, id, true);
             }
-        }
-
-        if let Some(id) = e.docs.order().iter().copied().find(|&id| e.docs.tool_of(id) == TILE_TOOL_ID) {
-            e.docs.set_active(id);
         }
     }
 }

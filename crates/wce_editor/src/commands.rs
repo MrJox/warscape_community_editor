@@ -49,7 +49,7 @@ fn atof(s: &str) -> f64 {
     (1..=s.len()).rev().filter(|&n| s.is_char_boundary(n)).find_map(|n| s[..n].parse::<f64>().ok()).unwrap_or(0.0)
 }
 
-/// A document is named by its id, "active", its kind (the first one: tile, environment, ...) or part of its title.
+/// A document is named by its id, "active" (the active tool's), its kind (the first one: tile, environment, ...) or part of its title.
 fn resolve_doc(e: &Editor, spec: &str) -> Option<DocumentId> {
     if spec.is_empty() || spec == "active" {
         return e.docs.active().map(|d| d.id());
@@ -67,14 +67,13 @@ fn resolve_doc(e: &Editor, spec: &str) -> Option<DocumentId> {
     })
 }
 
-const PANELS: [&str; 7] = ["viewport", "outliner", "inspector", "assets", "log", "history", "commands"];
-const PANEL_TITLES: [&str; 7] = ["Viewport", "Outliner", "Inspector", "Assets", "Log", "History", "Commands"];
+const PANELS: [&str; 6] = ["viewport", "inspector", "assets", "log", "history", "commands"];
+const PANEL_TITLES: [&str; 6] = ["Viewport", "Inspector", "Assets", "Log", "History", "Commands"];
 
 fn panel_flag<'a>(e: &'a mut Editor, name: &str) -> Option<&'a mut bool> {
     let p = &mut e.panels;
     Some(match name {
         "viewport" => &mut p.viewport,
-        "outliner" => &mut p.outliner,
         "inspector" => &mut p.inspector,
         "assets" => &mut p.assets,
         "log" => &mut p.log,
@@ -274,10 +273,31 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         if !active.is_empty() && active == id { ok("") } else { fail(format!("active tool is {}", if active.is_empty() { "none" } else { active })) }
     });
 
-    c.add("open", "open <path> [disk]", "open a file from the game packs (or from disk)", |e, a| {
-        let Some(path) = a.first() else { return fail("usage: open <path> [disk]") };
+    // A tool has one document: opening another file in it closes the open one, which needs `save` or `discard` when it has unsaved changes.
+    c.add(
+        "open", "open <path> [disk] [save|discard]",
+        "open a file from the game packs (or from disk) in its tool, in place of the tool's document (with unsaved changes: `save` or `discard` them)", |e, a| {
+            let Some(path) = a.first() else { return fail("usage: open <path> [disk] [save|discard]") };
+            let packs = !a.iter().skip(1).any(|w| w == "disk");
+            e.replace_answer = a.iter().skip(1).find_map(|w| match w.as_str() {
+                "save" => Some(Answer::Save),
+                "discard" => Some(Answer::Discard),
+                _ => None,
+            });
+
+            let r = e.open_path(path, packs, true);
+            e.replace_answer = None;
+            r.map_or_else(fail, ok)
+        },
+    );
+
+    c.add("open_prompt", "open_prompt <path> [disk]", "what an open does in the menus: opens at once, or asks about the unsaved changes of the tool's document first", |e, a| {
+        let Some(path) = a.first() else { return fail("usage: open_prompt <path> [disk]") };
         let packs = !(a.len() > 1 && a[1] == "disk");
-        e.open_path(path, packs, true).map_or_else(fail, ok)
+        let script = std::mem::replace(&mut e.in_script, false);
+        let r = e.open_path(path, packs, true);
+        e.in_script = script;
+        r.map_or_else(fail, ok)
     });
 
     // Closing asks about unsaved changes (the menu opens a prompt; a script says what to do with them).
@@ -353,12 +373,13 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "assert_prompt", "assert_prompt none|close|quit [N]",
-        "test: the unsaved-changes prompt is closed / asking about closing / asking about quitting (about N documents)", |e, a| {
-            let Some(want) = a.first() else { return fail("usage: assert_prompt none|close|quit [N]") };
+        "assert_prompt", "assert_prompt none|close|quit|replace [N]",
+        "test: the unsaved-changes prompt is closed / asking about closing / quitting / opening another file in a tool (about N documents)", |e, a| {
+            let Some(want) = a.first() else { return fail("usage: assert_prompt none|close|quit|replace [N]") };
             let want = match want.as_str() {
                 "close" => PromptKind::Close,
                 "quit" => PromptKind::Quit,
+                "replace" => PromptKind::Replace,
                 _ => PromptKind::None,
             };
 
@@ -367,6 +388,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                 let now = match kind {
                     PromptKind::Close => "close",
                     PromptKind::Quit => "quit",
+                    PromptKind::Replace => "replace",
                     PromptKind::None => "closed",
                 };
 
@@ -386,13 +408,6 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         let Some(name) = a.first() else { return fail("usage: expect_fail <command...>") };
         let r = CommandRegistry::run_args(e, name, &a[1..]);
         if r.ok { fail(format!("'{name}' succeeded: {}", r.message)) } else { ok(r.message) }
-    });
-
-    c.add("activate", "activate <document>", "make a document the active one (id, kind or part of the title); `tool` switches the tool", |e, a| {
-        let Some(spec) = a.first() else { return fail("usage: activate <id|kind|title>") };
-        let Some(id) = resolve_doc(e, spec) else { return fail(format!("no document '{spec}'")) };
-        e.docs.set_active(id);
-        ok(e.docs.find(id).map(|d| d.title()).unwrap_or_default())
     });
 
     c.add("game_file", "game_file <path in the packs> <file> [--packs]", "test: write a game file as the editor reads it (a loose folder's copy first; --packs: as the packs have it) to a file on disk", |e, a| {
@@ -426,16 +441,6 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
 
         log::info(format!("documents:\n{s}"));
         ok(s)
-    });
-
-    c.add("layer_visible", "layer_visible <document> 0|1", "show or hide the layer of a document (the outliner's checkbox)", |e, a| {
-        if a.len() < 2 {
-            return fail("usage: layer_visible <document> 0|1");
-        }
-
-        let Some(id) = resolve_doc(e, &a[0]) else { return fail(format!("no document '{}'", a[0])) };
-        e.docs.set_visible(&mut e.scene, id, a[1] != "0");
-        ok("")
     });
 
     c.add("assert_layer_visible", "assert_layer_visible <document> 0|1", "test: the layer of a document is (not) shown", |e, a| {
@@ -575,17 +580,22 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         if have as u64 == n { ok("") } else { fail(format!("selected {have}, expected {}", a[0])) }
     });
 
-    c.add("assert_modified", "assert_modified 0|1", "test: the active document is (not) modified", |e, a| {
-        let (Some(d), Some(want)) = (e.docs.active(), a.first()) else { return fail("usage: assert_modified 0|1 (needs a document)") };
+    c.add("assert_modified", "assert_modified 0|1 [document]", "test: the document (default the active one) is (not) modified", |e, a| {
+        let d = resolve_doc(e, a.get(1).map_or("", String::as_str)).and_then(|id| e.docs.find(id));
+        let (Some(d), Some(want)) = (d, a.first()) else { return fail("usage: assert_modified 0|1 [document] (needs a document)") };
         if d.modified() == (want == "1") { ok("") } else { fail(format!("modified is {}", if d.modified() { "1" } else { "0" })) }
     });
 
-    c.add("assert_history", "assert_history size position", "test: the active document's undo stack has `size` entries, `position` applied", |e, a| {
-        let want = (a.len() >= 2).then(|| Some((parse_u64(&a[0])?, parse_u64(&a[1])?))).flatten();
-        let (Some(d), Some((s, p))) = (e.docs.active(), want) else { return fail("usage: assert_history size position") };
-        let h = d.history();
-        if h.size() as u64 == s && h.position() as u64 == p { ok("") } else { fail(format!("history is {}/{}", h.size(), h.position())) }
-    });
+    c.add(
+        "assert_history", "assert_history size position [document]", "test: the document's (default the active one's) undo stack has `size` entries, `position` applied",
+        |e, a| {
+            let want = (a.len() >= 2).then(|| Some((parse_u64(&a[0])?, parse_u64(&a[1])?))).flatten();
+            let d = resolve_doc(e, a.get(2).map_or("", String::as_str)).and_then(|id| e.docs.find(id));
+            let (Some(d), Some((s, p))) = (d, want) else { return fail("usage: assert_history size position [document]") };
+            let h = d.history();
+            if h.size() as u64 == s && h.position() as u64 == p { ok("") } else { fail(format!("history is {}/{}", h.size(), h.position())) }
+        },
+    );
 
     c.add("assert_documents", "assert_documents N", "test: N documents are open", |e, a| {
         let Some(n) = a.first().and_then(|x| parse_u64(x)) else { return fail("usage: assert_documents N") };
@@ -819,7 +829,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("panel", "panel <name> on|off", "show or hide a panel (viewport outliner inspector assets log history commands)", |e, a| {
+    c.add("panel", "panel <name> on|off", "show or hide a panel (viewport inspector assets log history commands)", |e, a| {
         if a.len() < 2 {
             return fail("usage: panel <name> on|off");
         }
@@ -1111,7 +1121,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add("show_panel", "show_panel <name>", "show a panel and bring it to the front of its tab group", |e, a| {
-        let Some(name) = a.first() else { return fail("usage: show_panel <viewport|outliner|inspector|assets|log|history|commands>") };
+        let Some(name) = a.first() else { return fail("usage: show_panel <viewport|inspector|assets|log|history|commands>") };
         let n = name.to_lowercase();
         if let Some(i) = PANELS.iter().position(|p| *p == n) {
             *panel_flag(e, PANELS[i]).expect("a panel") = true;

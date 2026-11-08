@@ -247,6 +247,9 @@ struct OpenInputs {
     install: Option<PathBuf>,
 }
 
+/// The Terrain tool's id: the owner of its documents.
+pub const TERRAIN_TOOL_ID: &str = "terrain";
+
 pub struct TerrainTool {
     maps: Vec<String>,
     map: i32,
@@ -601,8 +604,28 @@ impl TerrainTool {
         Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, files: e.files(), packs: self.packs.clone(), built: None, game: e.game(), install: e.settings_ref().game_dir() })
     }
 
-    /// Starts reading a map.
+    /// Starts reading a map (the open map gives way: asked about first when it has unsaved changes, the read starts after the prompt's Save
+    /// or Discard).
     fn start_open(&mut self, e: &mut Editor, name: &str) {
+        let again = name.to_owned();
+        let retry = Box::new(move |e: &mut Editor| {
+            e.with_tool::<Self, _>(|t, e| {
+                t.start_open(e, &again);
+                Ok(format!("reading {again}"))
+            })
+            .unwrap_or_else(|| Err("the Terrain tool is busy".to_owned()))
+        });
+
+        match e.clear_to_replace(TERRAIN_TOOL_ID, retry) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(err) => {
+                e.status(&format!("Terrain: {err}"), true);
+                self.status = err;
+                return;
+            }
+        }
+
         match self.inputs(e, name) {
             Ok(i) => {
                 let (tx, rx) = channel();
@@ -643,14 +666,41 @@ impl TerrainTool {
         })
     }
 
-    /// A document read: on the editor's list (the active one: the view follows it).
-    fn adopt(&mut self, e: &mut Editor, mut d: Box<MapDocument>) {
+    /// A document read: the tool's document in place of the open one (the view follows it). The open one was cleared when the read
+    /// started; changes made to it during the read are asked about again.
+    fn adopt(&mut self, e: &mut Editor, d: Box<MapDocument>) {
+        let mut d = d;
+        if e.docs.of_tool(TERRAIN_TOOL_ID).and_then(|id| e.docs.find(id)).is_some_and(|old| old.modified()) {
+            // The read map waits in the prompt's open; it comes back here when the open can go on at once.
+            let held = std::rc::Rc::new(std::cell::RefCell::new(Some(d)));
+            let waiting = held.clone();
+            let retry = Box::new(move |e: &mut Editor| {
+                let Some(d) = waiting.borrow_mut().take() else { return Err("the map was opened already".to_owned()) };
+                let name = d.name.clone();
+                e.with_tool::<Self, _>(|t, e| t.adopt(e, d)).map(|()| format!("opened {name}")).ok_or_else(|| "the Terrain tool is busy".to_owned())
+            });
+
+            match e.clear_to_replace(TERRAIN_TOOL_ID, retry) {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(err) => {
+                    e.status(&format!("Terrain: {err}"), true);
+                    self.status = err;
+                    return;
+                }
+            }
+
+            let Some(back) = held.borrow_mut().take() else { return };
+            d = back;
+        }
+
         self.status = format!("{}: {}", d.name, d.summary());
         self.take_start_season(&d);
         d.save_dir = save_dir(e, &d);
-        let id = e.docs.add(&mut e.scene, d, "terrain");
-        e.docs.set_active(id);
-        self.start_view(e, id);
+        match e.replace_document(TERRAIN_TOOL_ID, d) {
+            Ok(id) => self.start_view(e, id),
+            Err(err) => e.status(&format!("Terrain: {err}"), true),
+        }
     }
 
     /// Starts making the view's frame of a map document on a worker.
@@ -857,7 +907,7 @@ impl TerrainTool {
             }
 
             Job::Built(id, s) => {
-                if e.docs.find(id).is_some() && e.docs.active_id() == id {
+                if e.docs.find(id).is_some() && e.docs.of_tool(TERRAIN_TOOL_ID) == Some(id) {
                     self.show(e, id, s);
                 } else {
                     self.building = 0;
@@ -868,6 +918,12 @@ impl TerrainTool {
 
     /// Opens a map and waits for its view (scripts).
     fn open_now(&mut self, e: &mut Editor, name: &str) -> Result<String, String> {
+        let again = name.to_owned();
+        let retry = Box::new(move |e: &mut Editor| e.with_tool::<Self, _>(|t, e| t.open_now(e, &again)).unwrap_or_else(|| Err("the Terrain tool is busy".to_owned())));
+        if !e.clear_to_replace(TERRAIN_TOOL_ID, retry)? {
+            return Ok(format!("asking about the map's unsaved changes before opening {name}"));
+        }
+
         self.refresh_maps(e);
         let i = self.inputs(e, name)?;
         let mut d = open_map(&i)?.document();
@@ -875,8 +931,7 @@ impl TerrainTool {
         self.take_start_season(&d);
         let summary = format!("{}: {}", d.name, d.summary());
         let rq = self.request(e, &d).ok_or("no kit with a tile database")?;
-        let id = e.docs.add(&mut e.scene, d, "terrain");
-        e.docs.set_active(id);
+        let id = e.replace_document(TERRAIN_TOOL_ID, d)?;
         let s = Box::new(Streamer::new(rq, e.files()));
         self.show(e, id, s);
         self.status.clone_from(&summary);
@@ -1566,7 +1621,7 @@ fn with_terrain(e: &mut Editor, f: impl FnOnce(&mut TerrainTool, &mut Editor) ->
 
 impl Tool for TerrainTool {
     fn id(&self) -> &str {
-        "terrain"
+        TERRAIN_TOOL_ID
     }
 
     fn project_folder(&self) -> &'static str {
@@ -1662,7 +1717,6 @@ impl Tool for TerrainTool {
         let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.22);
         gui::dock_builder_dock_window("Viewport", center);
         gui::dock_builder_dock_window("Map", left);
-        gui::dock_builder_dock_window("Outliner", left);
         gui::dock_builder_dock_window("Terrain", right);
         gui::dock_builder_dock_window("Inspector", right);
         gui::dock_builder_dock_window("Assets", bottom);
@@ -1804,8 +1858,8 @@ impl Tool for TerrainTool {
             self.shown = 0;
         }
 
-        // The view follows the active map document.
-        let active = e.docs.active_id();
+        // The view follows the tool's map document.
+        let active = e.docs.of_tool(TERRAIN_TOOL_ID).unwrap_or(0);
         if active != self.shown && active != self.building && self.rx.is_none() && e.docs.find_as::<MapDocument>(active).is_some() {
             self.start_view(e, active);
         }

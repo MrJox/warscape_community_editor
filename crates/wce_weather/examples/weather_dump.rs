@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use wce_editor_core::document::{Document, OutlinerNode};
+use wce_editor_core::document::Document;
 use wce_editor_core::document_manager::DocumentManager;
 use wce_foundation::math::{Float3, rotation_y, translation};
 use wce_foundation::std_random::{Mt19937, shuffle};
@@ -32,10 +32,6 @@ impl Rng {
         self.0 ^= self.0 << 17;
         (self.0 >> 32) as u32
     }
-}
-
-fn count_nodes(n: &OutlinerNode) -> usize {
-    1 + n.children.iter().map(count_nodes).sum::<usize>()
 }
 
 fn files_under(root: &Path, dir: &Path, out: &mut Vec<String>) {
@@ -90,7 +86,7 @@ fn main() {
         let _unused = SampleMapDocument::new(&models, 3, 8);
         let mut scene = RenderScene::default();
         let mut docs = DocumentManager::default();
-        let id = docs.add(&mut scene, Box::new(SampleMapDocument::new(&models, 3, 8)), "weather");
+        let id = docs.add(&mut scene, Box::new(SampleMapDocument::new(&models, 3, 8)), "weather").expect("a stand-in");
         for k in 0..400 {
             let item = 1 + u64::from(rnd.next() % 8);
             let a = ((rnd.next() % 2000) as i32 - 1000) as f32 / 100.0;
@@ -123,7 +119,7 @@ fn main() {
                 }
 
                 let p = docs.find_as::<SampleMapDocument>(id).unwrap();
-                println!("doc {k} size {} pos {} scene {h:016x} outline {} {}", p.history().size(), p.history().position(), count_nodes(&p.outline()), p.describe(SourceRef { doc: id, item }));
+                println!("doc {k} size {} pos {} scene {h:016x} {}", p.history().size(), p.history().position(), p.describe(SourceRef { doc: id, item }));
             }
         }
     }
@@ -176,8 +172,8 @@ fn main() {
 
             if k % 10 == 9 {
                 let bytes = d.xml().save();
-                println!("  {k} save {:016x} size {} pos {} modified {} outline {} env {}", fnv(&bytes), d.history().size(), d.history().position(), u8::from(d.modified()),
-                    count_nodes(&d.outline()), u8::from(d.environment().is_some()));
+                println!("  {k} save {:016x} size {} pos {} modified {} env {}", fnv(&bytes), d.history().size(), d.history().position(), u8::from(d.modified()),
+                    u8::from(d.environment().is_some()));
                 if d.history().position() != 0 {
                     println!("  name {}", d.history().name(d.history().position() - 1));
                 }

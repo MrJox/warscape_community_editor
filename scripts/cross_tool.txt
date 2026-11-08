@@ -51,11 +51,10 @@ assert_preview weather/charlemagne/med_sp_land_day_dry.environment
 frames 3
 assert_env sun_elevation 26
 capture 640x360 "%OUT%/tile_previewed.png" 6
-activate environment
 edit_attr LIGHTING sun_direction_elevation 41
 frames 3
 assert_env sun_elevation 41
-assert_modified 1
+assert_modified 1 environment
 capture 640x360 "%OUT%/tile_edited_light.png" 6
 tile_weather none
 assert_preview none
@@ -64,16 +63,14 @@ capture 640x360 "%OUT%/tile_none.png" 6
 tile_weather weather/charlemagne/med_sp_land_day_dry.environment
 frames 3
 
-# one edit in the tile; every document knows its own state
-activate tile
+# one edit in the tile; every document knows its own state (the active one is the active tool's: the tile)
 tile_select BUILDING_INSTANCE
 tile_move 5 5
 frames 2
 assert_modified 1
 assert_history 1 1
-activate environment
-assert_modified 1
-assert_history 1 1
+assert_modified 1 environment
+assert_history 1 1 environment
 
 # closing and quitting ask first; a script says what to do with the changes
 expect_fail close tile
@@ -96,8 +93,7 @@ expect_fail answer save
 # Save All writes both documents; the files are checked against the originals by the script
 save_all
 assert_modified 0
-activate tile
-assert_modified 0
+assert_modified 0 environment
 assert_saved weather/charlemagne/med_sp_land_day_dry.environment
 # Save All writes the tile into the project (tile.wce), never into the kit
 expect_fail assert_file_exists "%TILE%/tile.ted.bak"
@@ -107,12 +103,6 @@ echo kit copy untouched by Save All
 save_for_kit "%KIT%"
 assert_file_exists "%TILE%/tile.ted.bak"
 
-# hiding the environment's layer and the tile's, per document
-layer_visible tile 0
-assert_layer_visible tile 0
-layer_visible tile 1
-assert_layer_visible tile 1
-
 # closing the document (with a discarded edit) keeps the tile's weather: the saved file (the project's loose copy, read before the packs) lights it
 tile_weather none
 frames 3
@@ -120,9 +110,8 @@ capture 640x360 "%OUT%/tile_moved_default.png" 6
 tile_weather weather/charlemagne/med_sp_land_day_dry.environment
 frames 2
 assert_env sun_elevation 41
-activate environment
 edit_attr FOG fog_distance_start 0.8
-assert_modified 1
+assert_modified 1 environment
 close environment discard
 frames 3
 assert_documents 2
@@ -148,7 +137,6 @@ frames 2
 assert_documents 2
 
 # the window's close button with an unsaved edit: the prompt, then discard (the tile on disk keeps what Save All wrote)
-activate tile
 tile_select BUILDING_INSTANCE
 tile_move 1 1
 quit_prompt

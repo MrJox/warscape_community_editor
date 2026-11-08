@@ -1073,7 +1073,6 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 e.selection.add(wce_scene::render_scene::SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(el) });
             }
 
-            e.docs.set_active(id);
             ok(format!("{} selected", found.len()))
         },
     );
@@ -1947,7 +1946,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     c.add("tree_pick", "tree_pick <element>", "select an element as a click on its Scene panel row does: what was placed or painted stops, a line being drawn is finished, the Inspector shows it", |e, a| {
         let Some(el) = a.first().and_then(|x| x.parse::<u64>().ok()) else { return fail("usage: tree_pick <element>") };
         with_tile(e, |t, e| {
-            let Some(id) = e.docs.active().map(|d| d.id()) else { return fail("no tile open") };
+            let Some(id) = crate::tool::document_id(e) else { return fail("no tile open") };
             let points = t.draw_pts.len();
             e.selection.set(wce_scene::render_scene::SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(el as usize) });
             t.leave_for_selection(e);
