@@ -638,6 +638,60 @@ pub fn junctions(lines: &[Vec<[f64; 2]>], halves: &[f64]) -> Junctions {
     out
 }
 
+/// How far a crossing's AI hint reaches past the road's edge on each side, and past the crossing's ends (metres): vanilla's bridges' hints
+/// are 7 scene units wider than the bridge on each side and reach its feet (`river_crossing` tiles, `AIH_BRIDGE_CROSSING`).
+pub const HINT_SIDE: f64 = 3.5;
+pub const HINT_ENDS: f64 = 2.0;
+
+/// The least half width of a ford's AI hint (metres): vanilla's fords' hints are 32 to 40 m across (`river_ford` tiles).
+pub const FORD_HINT_HALF: f64 = 16.0;
+
+/// The outline of a stretch of a road (from and to: distances along its line, metres), `half` each side of its centre line, sampled about
+/// every 4 m: one side forward, the other back, closed. In the file's units (`unit` a metre), on the ground (x, z).
+#[must_use]
+pub fn strip_outline(line: &[[f64; 2]], from: f64, to: f64, half: f64, unit: f64) -> Vec<[f64; 2]> {
+    let st = Stations::new(line);
+    let (from, to) = (from.max(0.0), to.min(st.length()));
+    let n = (((to - from) / 4.0).ceil() as usize).max(1);
+    let (mut left, mut right) = (vec![], vec![]);
+    for k in 0..=n {
+        let s = from + (to - from) * k as f64 / n as f64;
+        let (p, t) = st.at(s);
+        let nrm = [t[1], -t[0]];
+        right.push([(p[0] + nrm[0] * half) * unit, (p[1] + nrm[1] * half) * unit]);
+        left.push([(p[0] - nrm[0] * half) * unit, (p[1] - nrm[1] * half) * unit]);
+    }
+
+    right.extend(left.into_iter().rev());
+    right
+}
+
+/// A crossing's AI hint as vanilla's bridges and fords have one: a closed `AIH_BRIDGE_CROSSING` polygon on the ground over it (its outline
+/// in the file's units: [`strip_outline`]). Its text at column 0.
+///
+/// # Errors
+///
+/// Fewer than three points.
+pub fn crossing_hint(outline: &[[f64; 2]]) -> Result<Vec<u8>, String> {
+    use crate::new_instances::{NewInstance, NewPoint, element_text, polygon_area};
+    if outline.len() < 3 {
+        return Err("a crossing's hint needs three points".to_owned());
+    }
+
+    let n = outline.len() as f64;
+    let c = outline.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / n, a[1] + p[1] / n]);
+    let local = outline.iter().map(|p| Double3::new(p[0] - c[0], 0.0, p[1] - c[1])).collect::<Vec<_>>();
+    let mut h = NewInstance::new("AI_HINT_POLYGON_INSTANCE")
+        .position(Double3::new(c[0], 0.0, c[1]))
+        .attr("name", "Road crossing")
+        .attr("hint_type", "AIH_BRIDGE_CROSSING")
+        .attr("polygon_closed", "1")
+        .attr("surface_mode", "MSM_LANDSCAPE")
+        .attr("area", format_number(polygon_area(&local)));
+    h.points = local.into_iter().map(NewPoint::at).collect();
+    element_text(&h)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,5 +885,42 @@ mod tests {
             let w = crate::world_transform::world_transform(&scene, d);
             assert!(w.position.z < 0.0, "{:?}", w.position);
         }
+    }
+
+    #[test]
+    fn a_crossing_hint_covers_the_crossing_and_its_sides() {
+        // A road along x, bent up towards its end; a crossing from 40 to 60 m.
+        let line = (0..=100).map(|i| { let x = f64::from(i); [x, if x > 50.0 { (x - 50.0) * 0.3 } else { 0.0 }] }).collect::<Vec<_>>();
+        let outline = strip_outline(&line, 38.0, 62.0, 6.5, 2.0);
+        assert!(outline.len() >= 8 && outline.len() % 2 == 0);
+        let inside = |p: [f64; 2]| {
+            let mut odd = false;
+            for i in 0..outline.len() {
+                let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+                if (a[1] > p[1]) != (b[1] > p[1]) && p[0] < a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]) {
+                    odd = !odd;
+                }
+            }
+
+            odd
+        };
+
+        // The road's centre and its edges over the crossing are inside, in the file's units; past its ends, not.
+        let st = Stations::new(&line);
+        for s in [40.0, 50.0, 60.0] {
+            let (p, t) = st.at(s);
+            let n = [t[1], -t[0]];
+            for d in [0.0, 3.0, -3.0] {
+                assert!(inside([(p[0] + n[0] * d) * 2.0, (p[1] + n[1] * d) * 2.0]), "{s} {d}");
+            }
+        }
+
+        assert!(!inside([30.0 * 2.0, 0.0]) && !inside([50.0 * 2.0, 8.0 * 2.0]));
+
+        let text = String::from_utf8(crossing_hint(&outline).unwrap()).unwrap();
+        assert!(text.starts_with("<AI_HINT_POLYGON_INSTANCE") && text.contains("hint_type=\"AIH_BRIDGE_CROSSING\"") && text.contains("polygon_closed=\"1\""), "{text}");
+        assert_eq!(text.matches("<point ").count(), outline.len());
+        let scene = TedScene::parse_any(text.into_bytes()).unwrap();
+        assert!(scene.polygon_area(0) > 2.0 * 20.0 * 2.0 * 13.0 * 0.9, "{}", scene.polygon_area(0));
     }
 }

@@ -368,6 +368,35 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
 - **Not yet**: units crossing in a battle (R7); `bridge_stone_1` is a humped stone bridge of its own, made into pieces its arch repeats
   and its deck is taken at the hump's top (17 units up): it walks, but looks it; Rome II's and Thrones' bases; the AI's hints.
 
+## The AI at a crossing, and the checks in game (R7, 2026-11-08)
+
+**What vanilla has.** Every `river_crossing` tile of Attila's kit has one closed `AIH_BRIDGE_CROSSING` hint polygon over its bridge
+(`bridge_wood_complete`): about 35 scene units across (the bridge's 20 and 7 more each side) by 115 to 120 along, from foot to foot. Its
+`river_ford` tiles have one too, over the ford, not an `AIH_FORDING_POINT`: 65 to 80 across by 100 to 115 along. Their `AIH_RIVER_EDGE`
+lines and `AIH_COVER_LINE`s are the river's and the map's, not the crossing's.
+
+**What a road writes.** Each of its bridges and fords gets that hint in an export (`road_layout::crossing_hint`): closed, on the ground,
+its outline following the road (`strip_outline`, a side forward and the other back every 4 m, so a curved crossing is covered as it
+bends): over a bridge the road's width and 3.5 m more each side, from 2 m before its gap to 2 m past; over a ford at least 32 m across, as
+vanilla's. In the layer *WCE procedural roads* with the pieces; not drawn in the editor. `tile_export_text <file>` writes the scene as an
+export reads it (the pieces, the bridges' spans, the hints): on the kit's `river` tile a road has one span and one hint, on
+`river_shallow` seven ford pieces and one hint.
+
+**Checks in game (user)**, with Launch in game on a tile with a road over a shallow and a deep river (or the kit's `river` and
+`river_shallow` 2x2_bl_rt in the projects):
+
+1. A unit marched over the ford crosses on the road, at the road's speed or the ford's (the ground type under a ford is the road's: is
+   that what the game wants, or the river's?).
+2. A unit marched over a generated wood bridge walks on its deck from bank to bank, through its joints (no stop or detour at a piece's
+   end), and on a curved bridge too.
+3. The AI attacking or defending across the river goes over the bridge and the ford (the hints), not around or into the water.
+4. Nothing of a bridge floats or sinks: its posts in the bed, its deck on the road at both banks, and its pieces in the pack (a mod pack
+   save, or the launch's).
+5. Save for Assembly Kit, then TEd: the bridge's pieces show (from `@wce_proc_data.pack`), the hints are there, and Import from Assembly
+   Kit gives back the road.
+
+What fails comes back as a change to the plan.
+
 ## Save for Assembly Kit and the game
 
 As walls do: the pieces go down into a top layer *WCE procedural roads* (Import from Assembly Kit drops it and restores the road), the
@@ -389,7 +418,7 @@ the terrain goes as the composite.
 | R4 | Junctions: T on a snapped end, X on a crossing | done (2026-11-08): two crossing roads and a road ending 4 m short of one, every port meeting another (`road_layout` tests); drawn on a kit tile |
 | R5 | Crossings: water and drops found once, depth, fords | done (2026-11-08): a shallow river forded, a deep one and a canyon left to bridges (`roads` tests); both rivers on kit tiles |
 | R6 | Bridges on `wce_walls`: bases, warp along the road's line and height, width, supports, logic, packs | done (2026-11-08): `bridge_check` passes on curved, sloped bridges of both bases, and lowers them as an export does |
-| R7 | In game (user): units on a ford and over a bridge, the AI's crossing | |
+| R7 | In game (user): units on a ford and over a bridge, the AI's crossing | crossing hints written (2026-11-08) as vanilla's; the checks in game are the user's ("The AI at a crossing") |
 
 The terrain part's phases keep their numbers; the old Phases 5 (detail), 7 (bridges from kit pieces) and 8 (standard models, generated
 bridges) are replaced by R1 to R7.

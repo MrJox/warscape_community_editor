@@ -411,6 +411,19 @@ impl Tile {
             // Each bridge's deck from rim to rim: the road's line and height over its gap (scene units).
             let st = Stations::new(&plan.line);
             let mut spans = vec![];
+            // Each crossing's AI hint, as vanilla's bridges and fords have one (`road_layout::crossing_hint`), for an export.
+            let width = road.settings.width;
+            let crossings = plan.gaps.iter().map(|&g| (g, width * 0.5 + wce_tile::road_layout::HINT_SIDE))
+                .chain(plan.fords.iter().map(|&g| (g, (width * 0.5 + wce_tile::road_layout::HINT_SIDE).max(wce_tile::road_layout::FORD_HINT_HALF))));
+            for ((a, b), half) in crossings {
+                let ends = wce_tile::road_layout::HINT_ENDS;
+                let outline = wce_tile::road_layout::strip_outline(&plan.line, st.of_sample(a) - ends, st.of_sample(b) + ends, half, unit);
+                match wce_tile::road_layout::crossing_hint(&outline) {
+                    Ok(hint) => items.push(RoadItem { road: elem, text: vec![], position: [0.0; 3], meshes: vec![], export: Some(hint) }),
+                    Err(why) => wce_foundation::log::warn(format!("road {}: {why}", road.id)),
+                }
+            }
+
             for &(a, b) in &plan.gaps {
                 spans.push((st.of_sample(a), st.of_sample(b)));
                 let path = (a..=b).map(|i| [plan.line[i][0] * unit, plan.heights[i] * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
@@ -565,7 +578,7 @@ impl Tile {
     /// Whether the roads have generated bridges: an export makes them as walls are made.
     #[must_use]
     pub fn has_road_bridges(&self) -> bool {
-        self.road_items.iter().any(|i| i.export.as_ref().is_some_and(|t| !t.is_empty()))
+        self.road_items.iter().any(|i| i.export.as_ref().is_some_and(|t| t.starts_with(format!("<{}", wce_walls::bridge::BRIDGE_SPAN).as_bytes())))
     }
 
     fn road_elems(&self) -> Vec<usize> {
