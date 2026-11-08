@@ -7,8 +7,9 @@ use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::RenderScene;
 use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile::new_instances::{NewInstance, element_text};
-use wce_tile::road_detail::{Layout, Stations, lay, placed_text, read_prefab};
-use wce_tile::roads::{RoadSettings, Strip, centre_line, choose_bridge, find_gaps, graded, lay_bridge, over_gaps, with_bump};
+use wce_tile::road_layout::{End, Measures, Site, Stations, fit, layout, placed_text};
+use wce_tile::road_pieces::{BASE, PIECES, Piece, key, read};
+use wce_tile::roads::{RoadSettings, Strip, centre_line_sharp, choose_bridge, find_gaps, graded, lay_bridge, over_gaps, sharp_points, with_bump};
 use wce_tile::ted_scene::TedScene;
 use wce_tile::terrain_layers::{Kind, Stack, TerrainLayers};
 
@@ -22,9 +23,18 @@ pub const KIT_LAYER: &str = "WCE procedural roads";
 struct Road {
     id: u32,
     line: Vec<[f64; 2]>,
+
+    /// Which of its points are corners (`roads::sharp_points`).
+    sharp: Vec<bool>,
     settings: RoadSettings,
+
+    /// Its road type: the folder of `roads_proc` its pieces come from (`none`: no pieces).
+    road_type: String,
     signature: u64,
 }
+
+/// A road type's pieces, read: each one's name, what it reads as, its prefab's key and contents.
+type Pieces = Vec<(&'static str, Piece, String, Vec<u8>)>;
 
 fn owner_of(id: u32, signature: u64) -> String {
     format!("road:{id}#{signature:x}")
@@ -44,6 +54,9 @@ fn hash_text(text: &str) -> u64 {
 /// A road's line, laid out over what lies below it.
 struct Plan {
     line: Vec<[f64; 2]>,
+
+    /// The sample of each of the road's points.
+    at_point: Vec<usize>,
     heights: Vec<f64>,
     gaps: Vec<(usize, usize)>,
 }
@@ -63,7 +76,7 @@ impl Tile {
     /// The curve a road follows, on the terrain: what its outline draws, so that the line is where the road is.
     pub(super) fn road_world_curve(&self, elem: usize) -> Vec<Float3> {
         let points = self.polygon_world_points(elem).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>();
-        let line = centre_line(&points);
+        let line = centre_line_sharp(&points, &self.road_sharp(elem, &points)).0;
         let every = (line.len() / 400).max(2);
         let mut curve: Vec<_> = line.iter().step_by(every).chain(line.last()).map(|p| Float3::new(p[0] as f32, self.terrain_height(p[0] as f32, p[1] as f32), p[1] as f32)).collect();
         curve.dedup();
@@ -109,6 +122,13 @@ impl Tile {
         (0..doc.elements().len()).filter(|&e| self.is_road(e)).filter_map(|e| doc.get(e, "road_id")?.parse::<u32>().ok()).max().unwrap_or(0) + 1
     }
 
+    /// A road's corners: its points marked `sharp`, and those it turns at by 90 degrees or more.
+    fn road_sharp(&self, elem: usize, points: &[[f64; 2]]) -> Vec<bool> {
+        let sc = self.tscene();
+        let marked = sc.polygon_points(elem).iter().map(|&p| sc.doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v))).collect::<Vec<_>>();
+        sharp_points(points, &marked)
+    }
+
     fn roads(&self) -> Vec<Road> {
         let doc = self.tscene().doc();
         let number = |e: usize, name: &str, or: f64| doc.get(e, name).and_then(|v| wce_formats::c_num::strtod(&v)).unwrap_or(or);
@@ -123,8 +143,10 @@ impl Tile {
                 feather: number(e, "road_feather", 2.0).max(0.0), seed: number(e, "road_seed", 1.0) as u32,
             };
 
-            let signature = hash_text(&format!("{line:?} {settings:?} {:?}", doc.get(e, "road_detail")));
-            Road { id: number(e, "road_id", 0.0) as u32, line, settings, signature }
+            let sharp = self.road_sharp(e, &line);
+            let road_type = doc.get(e, "road_type").filter(|t| !t.is_empty()).unwrap_or_else(|| wce_tile::road_dirt::TYPE.to_owned());
+            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type}"));
+            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, settings, road_type, signature }
         }).collect()
     }
 
@@ -177,7 +199,7 @@ impl Tile {
     /// The road over a ground (`sample`, world units): graded with its gaps taken out, so that it does not dip into them.
     fn plan_road(road: &Road, sample: &dyn Fn(f64, f64) -> f64, on_other: &dyn Fn(f64, f64) -> bool) -> Plan {
         let s = &road.settings;
-        let line = centre_line(&road.line);
+        let (line, at_point) = centre_line_sharp(&road.line, &road.sharp);
         let raw = line.iter().map(|p| sample(p[0], p[1])).collect::<Vec<_>>();
         let mut gaps = vec![];
         if s.bridges {
@@ -193,7 +215,7 @@ impl Tile {
         }
 
         let heights = with_bump(&line, &graded(&line, &over_gaps(&raw, &gaps), s), s, on_other);
-        Plan { line, heights, gaps }
+        Plan { line, at_point, heights, gaps }
     }
 
     fn make_roads(&mut self, roads: &[Road]) -> Result<(), String> {
@@ -400,14 +422,40 @@ impl Tile {
                 }
             }
 
-            let layouts = self.road_layouts(self.road_detail_of(elem).as_str());
-            let half = road.settings.width * 0.5 + road.settings.shoulder;
-            let terrain = |x: f64, z: f64| f64::from(self.terrain_height(x as f32, z as f32));
-            let skip = |s: f64| spans.iter().any(|&(a, b): &(f64, f64)| s > a - 1.0 && s < b + 1.0);
-            for laid in lay(&layouts, &plan.line, unit, half, &terrain, &skip, road.settings.seed) {
-                items.push(RoadItem { road: elem, text: laid.text, position: laid.position });
+            // The road's pieces, from end to end, but over its bridges.
+            let pieces = self.road_pieces_of(&road.road_type);
+            if pieces.is_empty() {
+                continue;
             }
 
+            let piece = |name: &str| pieces.iter().find(|p| p.0 == name);
+            let arm = |name: &str| piece(name).and_then(|p| p.1.arms.first()).map(|a| a.length);
+            let defaults = Measures::default();
+            let measures = Measures {
+                straight: arm("straight").unwrap_or(defaults.straight),
+                end: arm("end").unwrap_or(defaults.end),
+                corner_arm: arm("corner").unwrap_or(defaults.corner_arm),
+            };
+
+            let width = road.settings.width;
+            let scale = width / piece("straight").map_or(wce_tile::road_pieces::WIDTH, |p| p.1.width).max(1e-6);
+            let (ex, ez) = (self.project.extent_x(), self.project.extent_z());
+            let end_of = |p: [f64; 2]| if p[0] < 1.0 || p[1] < 1.0 || p[0] > ex - 1.0 || p[1] > ez - 1.0 { End::Edge } else { End::Free };
+            let corners = plan.at_point.iter().zip(&road.sharp).filter(|(_, s)| **s).map(|(i, _)| *i).collect::<Vec<_>>();
+            let ends = [end_of(road.line[0]), end_of(road.line[road.line.len() - 1])];
+            let laid = layout(&plan.line, &corners, ends, &spans, &measures, scale, road.settings.seed);
+            for note in &laid.notes {
+                wce_foundation::log::warn(format!("road {}: {note}", road.id));
+            }
+
+            let terrain = |x: f64, z: f64| f64::from(self.terrain_height(x as f32, z as f32));
+            for l in &laid.laid {
+                let Some((_, p, key, children)) = piece(l.piece) else { continue };
+                match fit(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }) {
+                    Ok(f) => items.push(RoadItem { road: elem, text: f.text, position: f.position }),
+                    Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
+                }
+            }
         }
 
         self.road_items = items;
@@ -418,22 +466,28 @@ impl Tile {
         (0..self.tscene().doc().elements().len()).filter(|&e| self.is_road(e)).collect()
     }
 
-    fn road_detail_of(&self, elem: usize) -> String {
-        self.tscene().doc().get(elem, "road_detail").unwrap_or_else(|| "dirt".to_owned())
-    }
-
-    /// The prefabs of a road's detail, read once.
-    fn road_layouts(&self, detail: &str) -> Vec<Layout> {
+    /// A road type's pieces (`roads_proc/<type>`), each its type's or, missing there, the base's (`none`: none).
+    fn road_pieces_of(&self, road_type: &str) -> Pieces {
         let Some(lib) = &self.road_prefabs else { return vec![] };
-        let prefix = match detail {
-            "dirt" => "global_dirt_road",
-            "path" => "global_path",
-            _ => return vec![],
-        };
+        if road_type == "none" {
+            return vec![];
+        }
 
-        let mut keys = lib.entries().filter(|e| e.key.starts_with(prefix)).map(|e| e.key.clone()).collect::<Vec<_>>();
-        keys.sort();
-        keys.iter().filter_map(|k| lib.load(k).ok()).filter_map(|p| read_prefab(&p.group_text)).collect()
+        PIECES.iter().filter_map(|&name| {
+            let found = [key(road_type, name), key(BASE, name)].into_iter().find(|k| lib.get(k).is_some());
+            let Some(k) = found else {
+                wce_foundation::log::warn(format!("roads: no {} piece for the road type {road_type}, nor a base one", name));
+                return None;
+            };
+
+            if k != key(road_type, name) {
+                wce_foundation::log::warn(format!("roads: the road type {road_type} has no {name}: the base's is laid (guides only)"));
+            }
+
+            let prefab = lib.load(&k).map_err(|e| wce_foundation::log::warn(format!("roads: {k}: {e}"))).ok()?;
+            let piece = read(&prefab.group_text).map_err(|e| wce_foundation::log::warn(format!("roads: {k} is not a road piece: {e}"))).ok()?;
+            Some((name, piece, k, prefab.children_text))
+        }).collect()
     }
 
     /// Puts the instances along the roads on the scene.
@@ -447,7 +501,7 @@ impl Tile {
         }
 
         self.road_items_shown = true;
-        for id in self.road_entities.drain(..).collect::<Vec<_>>() {
+        for id in std::mem::take(&mut self.road_entities) {
             scene.remove(id);
         }
 

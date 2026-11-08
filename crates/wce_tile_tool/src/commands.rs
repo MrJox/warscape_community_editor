@@ -1310,6 +1310,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if d.set_point_attribute(el, i, "sharp", wce_tile::properties::format_bool(on)) { ok("") } else { fail("no such point") }
     });
 
+    c.add("road_sharp", "road_sharp <point index> on|off", "mark a point of the selected procedural road (WceRoadSpline) as a corner (a corner piece) or a bend", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let (Some(i), Some(on)) = (a.first().and_then(|x| x.parse::<usize>().ok()), a.get(1).map(|x| x == "on")) else { return fail("usage: road_sharp <point index> on|off") };
+        let Some(el) = el.filter(|&el| d.tile().is_road(el)) else { return fail("no road selected") };
+        if d.set_point_attribute(el, i, "sharp", wce_tile::properties::format_bool(on)) { ok("") } else { fail("no such point") }
+    });
+
     c.add("wall_info", "wall_info", "log the selected wall's layout: base, length, corners, runs, step sections, attached ends, warnings", |e, _| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };

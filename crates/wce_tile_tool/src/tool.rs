@@ -2898,6 +2898,15 @@ impl TileTool {
 
             if d.tile().is_wall(s) {
                 self.draw_wall_rows(e, id, s);
+            } else if d.tile().is_road(s)
+                && let Some(pt) = self.poly_point
+                && let Some(&p) = d.tile().tscene().polygon_points(s).get(pt)
+            {
+                // A point turned at by 90 degrees or more is a corner whatever its mark.
+                let mut sharp = d.tile().tscene().doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
+                if gui::checkbox("sharp corner (a corner piece instead of a bend)", &mut sharp) {
+                    d.set_point_attribute(s, pt, "sharp", wce_tile::properties::format_bool(sharp));
+                }
             }
         }
     }

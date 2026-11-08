@@ -6,14 +6,15 @@
 //! kit's `path_2` is a bent rut, not a patch: it is not used.
 //!
 //! **How long a part may be.** A part is moved onto the road's curve rigidly, so it is a chord of it, off it by `L x L / 8R` at its middle.
-//! At 0.3 m at most: a straight (bent up to 15 degrees over 8 m, R of about 30 m) takes parts up to 8.56 m, the ruts as one decal a
-//! straight; a curve (bent up to 90 degrees, R down to 7.5 m) up to 4.2 m. Corners, junctions and ends are not bent: their arms turn whole.
+//! At 0.3 m at most: a straight (bent up to 15 degrees over 8 m, R of about 30 m) takes parts up to 8.56 m: its ruts and borders are one
+//! 8.5 m decal each, past its ports by 0.25 m (the kit overlaps its ruts by about 0.5 m; end to end, each one's faded end showed as a band
+//! of grass across the road); a curve (bent up to 90 degrees, R down to 7.5 m) up to 4.2 m. Corners, junctions and ends are not bent: their arms turn whole.
 //! Where a kit decal is shortened, it is by no more than 2.5 times (the curve's and the end's 4 m ruts from the kit's 10 m). Corners and
 //! junctions are their arms' ruts run on to cross in the middle, worn where they overlap.
 
 use std::path::{Path, PathBuf};
 
-use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, UNIT, VERGE, WIDTH, base_guides, group_text, key};
+use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, UNIT, VERGE, WIDTH, base_guides};
 
 /// The road type's folder and name.
 pub const TYPE: &str = "dirt";
@@ -35,10 +36,10 @@ pub fn kit_has_decals(lib: &crate::prefabs::PrefabLibrary) -> bool {
     })
 }
 
-/// Whether every dirt piece is in a prefab folder.
+/// Whether every dirt piece is in a prefab folder as this generation makes it, or as the user made it.
 #[must_use]
 pub fn all_written(prefab_root: &Path) -> bool {
-    PIECES.iter().all(|p| prefab_root.join(road_pieces::FOLDER).join(TYPE).join(format!("{}.wce", key(TYPE, p))).exists())
+    !road_pieces::generated_stale(prefab_root, TYPE, &pieces())
 }
 
 /// How tall a decal's box is (metres): enough for a road's banks.
@@ -106,9 +107,9 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
     let mut out = vec![];
     match piece {
         "straight" | "ford" => {
-            out.extend(ruts(0.0, 8.0));
-            out.push(decal("border_1", [-h, 0.0], DOWN, 8.0, 1.5, None));
-            out.push(decal("border_1", [h, 0.0], UP, 8.0, 1.5, None));
+            out.extend(ruts(0.0, 8.5));
+            out.push(decal("border_1", [-h, 0.0], DOWN, 8.5, 1.5, None));
+            out.push(decal("border_1", [h, 0.0], UP, 8.5, 1.5, None));
             out.push(decal("global_terrain_rocks_04", [h - 0.6, -2.2], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_rocks_01", [-h - 0.5, 1.6], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_erossion_12", [h + VERGE * 0.6, 0.8], RIGHT, 2.5, 6.0, None));
@@ -203,34 +204,30 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
     out
 }
 
-/// Writes the dirt pieces into a prefab folder (the projects'), each only where it is missing. Returns the files written.
+/// The dirt pieces' contents: the base's guides and the decals.
+#[must_use]
+pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
+    PIECES.iter().map(|&p| {
+        let mut children = base_guides(p);
+        children.extend(parts(p));
+        (p, children)
+    }).collect()
+}
+
+/// Writes the dirt pieces into a prefab folder (the projects'): each where it is missing, or an older generation nobody edited
+/// (`road_pieces::write_generated`). Returns the files written.
 ///
 /// # Errors
 ///
 /// A file can't be written.
 pub fn write(prefab_root: &Path) -> Result<Vec<PathBuf>, String> {
-    let dir = prefab_root.join(road_pieces::FOLDER).join(TYPE);
-    let mut written = vec![];
-    for piece in PIECES {
-        let key = key(TYPE, piece);
-        let path = dir.join(format!("{key}.wce"));
-        if path.exists() {
-            continue;
-        }
-
-        let mut children = base_guides(piece);
-        children.extend(parts(piece));
-        crate::prefabs::write(&path, &group_text(&key, &children), None)?;
-        written.push(path);
-    }
-
-    Ok(written)
+    road_pieces::write_generated(prefab_root, TYPE, &pieces())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::road_pieces::{Anchor, read};
+    use crate::road_pieces::{Anchor, group_text, key, read};
 
     #[test]
     fn every_dirt_piece_reads_and_its_parts_fit() {
@@ -271,7 +268,7 @@ mod tests {
         let p = read(&group_text("road_dirt_straight", &children)).unwrap();
         for q in p.parts.iter().filter(|q| q.key.contains("path_1") || q.key.contains("border_1")) {
             assert!(q.turn.sin().abs() < 1e-6, "{q:?}");
-            assert!((q.size[0] - 8.0).abs() < 1e-6, "{q:?}");
+            assert!((q.size[0] - 8.5).abs() < 1e-6, "{q:?}");
         }
     }
 

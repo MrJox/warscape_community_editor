@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use wce_foundation::math::Double3;
+use wce_foundation::math::{Double3, Double3x3};
 
 use crate::new_instances::{NewInstance, NewPoint, ROAD_GUIDE, element_text};
 use crate::ted_scene::TedScene;
@@ -153,6 +153,17 @@ pub struct Part {
 
     /// Its turn from the road's way where it is (radians, about up): where its x points, from the arm's way towards its right.
     pub turn: f64,
+
+    /// Where it is in the piece's frame (x, z, metres), and its rotation there.
+    pub at: [f64; 2],
+    pub rotation: Double3x3,
+
+    /// Its parent's place and rotation in the piece's frame (metres), when its parent is not the piece's group: what its own values are
+    /// relative to.
+    pub parent: Option<(Double3, Double3x3)>,
+
+    /// Its own scale, when it has one (the file's units).
+    pub scale: Option<Double3>,
 }
 
 /// A piece read.
@@ -348,6 +359,10 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
         let t = tangent_at(&arms[arm].centre, along);
         let n = [t[1], -t[0]];
         let rot = back * w.rotation;
+        let parent = el.parent.and_then(|c| els[c].parent).filter(|&g| g != root).map(|g| {
+            let pw = world_transform(&scene, g);
+            (local(pw.position) * (1.0 / UNIT), back * pw.rotation)
+        });
         let (xa, za) = (rot * Double3::new(1.0, 0.0, 0.0), rot * Double3::new(0.0, 0.0, 1.0));
         let dot = |a: Double3, b: [f64; 2]| (a.x * b[0] + a.z * b[1]).abs();
         let turn = (xa.x * n[0] + xa.z * n[1]).atan2(xa.x * t[0] + xa.z * t[1]);
@@ -360,7 +375,7 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
         };
 
         let length = arms[arm].length.max(1e-9);
-        parts.push(Part { path, kind: el.name.clone(), key, arm, along: along / length, across, up: p.y / UNIT, anchor, solid, size, turn });
+        parts.push(Part { path, kind: el.name.clone(), key, arm, along: along / length, across, up: p.y / UNIT, anchor, solid, size, turn, at, rotation: rot, parent, scale: scene.scale(e) });
     }
 
     Ok(Piece { arms, ports, width, verge, parts, notes })
@@ -486,27 +501,87 @@ pub fn group_text(key: &str, children: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
-/// Writes the base pieces into a prefab folder (the projects'), each one only where it is missing: what is there is the user's. Returns
-/// the files written.
+/// A generated piece's group keeps what its contents hashed to when they were written: while they still do, nobody edited the piece,
+/// and a newer generation may take its place.
+pub const GENERATED_ATTR: &str = "wce_generated";
+
+fn hash(bytes: &[u8]) -> String {
+    format!("{:016x}", bytes.iter().fold(0xCBF2_9CE4_8422_2325u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3)))
+}
+
+/// A group's contents, as a prefab file holding it reads them back.
+fn contents_of(group_text: &[u8]) -> Option<Vec<u8>> {
+    let scene = TedScene::parse_any(crate::prefabs::file_text(group_text)).ok()?;
+    let group = *scene.find_all("UserInstanceGroup").first()?;
+    Some(scene.children_text(group))
+}
+
+/// Whether a generated piece (`children`, its contents) is to be written at `path`: it is missing, or it is an older generation that
+/// nobody edited since (its contents still hash to its mark). A piece without the mark, or edited, is the user's.
+fn to_write(path: &Path, key: &str, children: &[Vec<u8>]) -> Option<Vec<u8>> {
+    let fresh = contents_of(&group_text(key, children))?;
+    if path.exists() {
+        let on_disk = crate::prefabs::load(path).ok()?;
+        let scene = TedScene::parse_any(on_disk.group_text).ok()?;
+        let mark = scene.doc().get(0, GENERATED_ATTR)?;
+        if mark != hash(&on_disk.children_text) || on_disk.children_text == fresh {
+            return None;
+        }
+    }
+
+    let text = group_text(key, children);
+    let at = text.iter().position(|&c| c == b' ')?;
+    let mut marked = text[..at].to_vec();
+    marked.extend_from_slice(format!(" {GENERATED_ATTR}=\"{}\"", hash(&fresh)).as_bytes());
+    marked.extend_from_slice(&text[at..]);
+    Some(marked)
+}
+
+/// Writes generated pieces of a road type (each piece's name and contents) into a prefab folder (the projects'), where [`to_write`]
+/// says so. Returns the files written.
+///
+/// # Errors
+///
+/// A file can't be written.
+pub fn write_generated(prefab_root: &Path, road_type: &str, pieces: &[(&str, Vec<Vec<u8>>)]) -> Result<Vec<PathBuf>, String> {
+    let dir = prefab_root.join(FOLDER).join(road_type);
+    let mut written = vec![];
+    for (piece, children) in pieces {
+        let key = key(road_type, piece);
+        let path = dir.join(format!("{key}.wce"));
+        if let Some(text) = to_write(&path, &key, children) {
+            crate::prefabs::write(&path, &text, None)?;
+            written.push(path);
+        }
+    }
+
+    Ok(written)
+}
+
+/// Whether [`write_generated`] would write any of these pieces.
+#[must_use]
+pub fn generated_stale(prefab_root: &Path, road_type: &str, pieces: &[(&str, Vec<Vec<u8>>)]) -> bool {
+    let dir = prefab_root.join(FOLDER).join(road_type);
+    pieces.iter().any(|(piece, children)| {
+        let key = key(road_type, piece);
+        to_write(&dir.join(format!("{key}.wce")), &key, children).is_some()
+    })
+}
+
+/// The base pieces' contents.
+#[must_use]
+pub fn base_pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
+    PIECES.iter().map(|&p| (p, base_guides(p))).collect()
+}
+
+/// Writes the base pieces into a prefab folder (the projects'): each one where it is missing, or an older generation nobody edited. What
+/// the user made of one is kept. Returns the files written.
 ///
 /// # Errors
 ///
 /// A file can't be written.
 pub fn write_base(prefab_root: &Path) -> Result<Vec<PathBuf>, String> {
-    let dir = prefab_root.join(FOLDER).join(BASE);
-    let mut written = vec![];
-    for piece in PIECES {
-        let key = key(BASE, piece);
-        let path = dir.join(format!("{key}.wce"));
-        if path.exists() {
-            continue;
-        }
-
-        crate::prefabs::write(&path, &group_text(&key, &base_guides(piece)), None)?;
-        written.push(path);
-    }
-
-    Ok(written)
+    write_generated(prefab_root, BASE, &base_pieces())
 }
 
 #[cfg(test)]
@@ -621,6 +696,31 @@ mod tests {
         let corner = lib.load("road_base_corner").unwrap();
         assert_eq!(read(&corner.group_text).unwrap().arms.len(), 2);
         assert_eq!(lib.get("road_base_corner").unwrap().folder, "roads_proc/base");
+    }
+
+    #[test]
+    fn an_older_generation_nobody_edited_is_replaced_and_an_edited_one_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = vec![("straight", vec![guide(Role::Centre, "c", &[[0.0, -4.0], [0.0, 4.0]]), guide(Role::Port, "p", &[[-3.0, 4.0], [3.0, 4.0]])])];
+        assert_eq!(write_generated(dir.path(), "t", &old).unwrap().len(), 1);
+        assert!(write_generated(dir.path(), "t", &old).unwrap().is_empty(), "the same generation is not written again");
+
+        // A newer generation takes the place of the unedited one.
+        let new = vec![("straight", base_guides("straight"))];
+        assert!(generated_stale(dir.path(), "t", &new));
+        assert_eq!(write_generated(dir.path(), "t", &new).unwrap().len(), 1);
+        let path = dir.path().join(FOLDER).join("t").join("road_t_straight.wce");
+        assert_eq!(read(&crate::prefabs::load(&path).unwrap().group_text).unwrap().arms.len(), 1);
+
+        // Edited (its contents no longer what its mark says): kept.
+        crate::prefabs::update_children(&path, b"<WceRoadGuide guide_role=\"centre\"/>\n").unwrap();
+        assert!(!generated_stale(dir.path(), "t", &old));
+        assert!(write_generated(dir.path(), "t", &old).unwrap().is_empty());
+
+        // A file without the mark is the user's.
+        let mine = dir.path().join(FOLDER).join("t");
+        std::fs::write(mine.join("road_t_straight.wce"), crate::prefabs::file_text(&group_text("road_t_straight", &[]))).unwrap();
+        assert!(write_generated(dir.path(), "t", &new).unwrap().is_empty());
     }
 
     #[test]
