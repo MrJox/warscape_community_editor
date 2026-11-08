@@ -488,6 +488,15 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   Units then stopped further off, at the ground platforms' outer end. A logic file keeps its footprint twice: its collision outlines
   and `orange_thingies` (the same ring in x and z, `vertex.x` / `vertex.y`, `vertex_type` 2 on every corner of the kit's). Only the
   first had been extended; the second now is too, and `bridge_check` checks every ring.
+- **End pieces, the deck at the kit's height, the outlines on the ground** (user, 2026-11-08: still no crossing; a complete bridge
+  laid by hand in the same tile was crossed, its collision outline on the ground where ours stood over the road with the deck). A
+  base names its end piece (`BridgeBase::end`: `bridge_wood_2_end`, a ramp whose platform drops 1 unit over 2); `bridge::parts` lays
+  one past each end of the deck, on a line of its own from as far out as it is long to the deck's end, at the deck's scale across
+  (its own model is narrower: scaled by it, its platform missed the deck's corners). The pieces' ends by `Ends`: `Ramps` (no end
+  piece: the made ramp, as before), `Ground` (an end piece: a ground platform past its outer end, from its platform's low edge), `Plain`
+  (the deck between). `DECK_LIFT` 0.6 m, the complete bridge's 1.2 units: the end piece takes it down to just over the road. Every
+  piece's collision outlines lie on the ground under them (`outlines_on_ground`). `bridge_check` checks the end pieces' joins (an edge
+  may share a middle point too) and the outlines' heights.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,

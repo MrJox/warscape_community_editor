@@ -105,6 +105,10 @@ names or with wrong descriptions. To rename and document in rpfm (`~/Proyectos/r
   made the other way round, were the only platforms that did not follow it. Worth a doc comment on rpfm's `Platform`.
 - **Platform shapes**: in the fort pieces (TDD's pack, 2530 platforms) every platform is convex, has at most 6 corners (3 or 4 nearly
   all), and only 11 are under 0.2 across (median area 8.6). Whether the game needs that was not traced.
+- **`orange_thingies`** (rpfm's name, given only for their colour in Terry; to be renamed in rpfm, user 2026-11-08): a level's
+  footprint ring beside its collision outlines, in x and z (`vertex.x`, `vertex.y`) with a `vertex_type` per corner (2 on every corner
+  of `bridge_wood_complete`'s, which has the outline's corners). The game reads it with the outlines: extended apart from them, units
+  kept off what only one covered.
 - **Pipes** name no platforms: a polyline (`line.outline`) and its `line_type` (`WallDoorTeleport`, ...).
 
 ## Effects from `.meta`

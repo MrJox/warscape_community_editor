@@ -133,16 +133,19 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
             continue;
         };
 
-        let base = prepared.entry(key.clone()).or_insert_with(|| BuildingFiles::read_files(files, &key).ok().and_then(|b| crate::bridge::prepare(&b).ok()));
-        let Some(base) = base.as_ref() else {
+        let mut prepare = |k: &str| prepared.entry(k.to_owned()).or_insert_with(|| BuildingFiles::read_files(files, k).ok().and_then(|b| crate::bridge::prepare(&b).ok())).clone();
+        let Some(base) = prepare(&key) else {
             out.notes.push(format!("bridge {n}: its base {key} is in no pack, left out"));
             continue;
         };
 
-        let stretches = crate::bridge::piece_stretches(&deck, base);
-        let keys = (0..stretches.len()).map(|k| format!("{prefix}_r{n}_{k:02}")).collect::<Vec<_>>();
-        renames.extend(keys.iter().map(|k| (key.clone(), k.clone())));
-        bridges.push((n, key, deck, width, stretches, keys));
+        // Its end pieces, when the base has them and they are in the packs.
+        let end_key = crate::bridge::base_of_key(&key).and_then(|b| b.end);
+        let end = end_key.and_then(&mut prepare);
+        let parts = crate::bridge::parts(&deck, &base, end.as_ref());
+        let keys = (0..parts.len()).map(|k| format!("{prefix}_r{n}_{k:02}")).collect::<Vec<_>>();
+        renames.extend(parts.iter().zip(&keys).map(|(p, k)| (if p.end { end_key.unwrap_or(&key).to_owned() } else { key.clone() }, k.clone())));
+        bridges.push((n, key, end_key, width, parts, keys));
     }
 
     let rows = db::copy_rows(files, schema, &renames)?;
@@ -220,15 +223,18 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
 
     // The bridges' pieces, made.
     let mut placed_bridges = vec![];
-    for (n, key, deck, width, stretches, keys) in &bridges {
-        let Some(base) = prepared.get(key).and_then(Option::as_ref) else { continue };
-        let across = width / (base.z.1 - base.z.0).max(1e-6);
+    for (n, key, end_key, width, parts, keys) in &bridges {
+        let Some(main) = prepared.get(key).and_then(Option::as_ref) else { continue };
+        let end = end_key.and_then(|k| prepared.get(k).and_then(Option::as_ref));
         let mut placed = vec![];
-        for (&(s, origin), k) in stretches.iter().zip(keys) {
-            let warp = crate::bridge::BridgeWarp { deck, base, s, across, origin, ground };
-            let made = crate::bridge::make_piece(base, k, &warp)?;
+        for (part, k) in parts.iter().zip(keys) {
+            let base = if part.end { end.unwrap_or(main) } else { main };
+            // The deck's scale across for its end pieces too: their platforms then meet the deck's corner to corner.
+            let across = width / (main.z.1 - main.z.0).max(1e-6);
+            let warp = crate::bridge::BridgeWarp { deck: &part.deck, base, s: part.s, across, origin: part.origin, ground };
+            let made = crate::bridge::make_piece(base, k, &warp, part.ends(end.is_some()))?;
             out.files.extend(made.into_pack_files());
-            placed.push((k.clone(), origin));
+            placed.push((k.clone(), part.origin));
         }
 
         placed_bridges.push((*n, placed));

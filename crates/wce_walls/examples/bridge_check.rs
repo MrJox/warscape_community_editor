@@ -10,26 +10,27 @@ use std::path::PathBuf;
 
 use rpfm_lib::files::{Decodeable, cs2_parsed::Cs2Parsed};
 use wce_vfs::{Config, GameProfile, Vfs};
-use wce_walls::bridge::{BASES, BridgeWarp, Deck, make_piece, piece_stretches, prepare};
+use wce_walls::bridge::{BASES, BridgeWarp, Deck, make_piece, prepare};
 use wce_walls::building::{BuildingFiles, is_piece_mesh};
 
-/// The intact collision outlines of a logic file, as their corners.
-fn outlines(bytes: &[u8]) -> Vec<Vec<[f64; 3]>> {
+/// The intact collision outlines of a logic file, as their corners (and whether each is a collision outline, with heights, or the
+/// footprint ring beside them, without).
+fn outlines(bytes: &[u8]) -> Vec<(Vec<[f64; 3]>, bool)> {
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).expect("a logic file");
     let v = serde_json::to_value(&parsed).expect("json");
     let mut out = vec![];
     for piece in v["pieces"].as_array().into_iter().flatten() {
         let Some(d) = piece["destructs"].as_array().and_then(|d| d.first()) else { continue };
         for o in d["collision_outlines"].as_array().into_iter().flatten() {
-            out.push(o["vertices"]["outline"].as_array().into_iter().flatten().map(|q| {
+            out.push((o["vertices"]["outline"].as_array().into_iter().flatten().map(|q| {
                 let f = |k: &str| q[k].as_f64().unwrap_or(0.0);
                 [f("x"), f("y"), f("z")]
-            }).collect());
+            }).collect(), true));
         }
 
         // The footprint ring beside it, as points on the ground (y 0).
         for ring in d["orange_thingies"].as_array().into_iter().flatten() {
-            out.push(ring.as_array().into_iter().flatten().map(|q| [q["vertex"]["x"].as_f64().unwrap_or(0.0), 0.0, q["vertex"]["y"].as_f64().unwrap_or(0.0)]).collect());
+            out.push((ring.as_array().into_iter().flatten().map(|q| [q["vertex"]["x"].as_f64().unwrap_or(0.0), 0.0, q["vertex"]["y"].as_f64().unwrap_or(0.0)]).collect(), false));
         }
     }
 
@@ -128,15 +129,23 @@ fn main() {
         println!("== {} ({}): x {:.2}..{:.2}, z {:.2}..{:.2}, bottom {:.2}, deck {:.2}{}", b.name, b.key, base.x.0, base.x.1, base.z.0, base.z.1, base.bottom, base.deck,
             if base.made_platform { ", its platform made" } else { "" });
 
-        let stretches = piece_stretches(&deck, &base);
+        // Its end piece, when the base has one.
+        let end = b.end.and_then(|k| BuildingFiles::read(&vfs, k).ok()).map(|f| prepare(&f).expect("the end piece prepared"));
+        let parts = wce_walls::bridge::parts(&deck, &base, end.as_ref());
+        if let (Some(e), true) = (&end, std::env::var("BRIDGE_CHECK_DEBUG").is_ok()) {
+            println!("    end piece: x {:.2?} z {:.2?} deck {:.2} bottom {:.2}; its platforms {:.2?}", e.x, e.z, e.deck, e.bottom, platforms(e.files.files.get(&e.files.logic_name()).unwrap()));
+        }
+        let deck_pieces = parts.iter().filter(|p| !p.end).count();
         let mut all: Vec<(usize, Vec<[f64; 3]>)> = vec![];
         let mut ends: Vec<((f64, f64), [f64; 3])> = vec![];
         let mut grounds: Vec<(usize, Vec<[f64; 3]>)> = vec![];
-        let mut footprints: Vec<Vec<Vec<[f64; 3]>>> = vec![];
-        for (k, &(s, origin)) in stretches.iter().enumerate() {
-            let warp = BridgeWarp { deck: &deck, base: &base, s, across, origin, ground: &ground };
+        let mut footprints: Vec<Vec<(Vec<[f64; 3]>, bool)>> = vec![];
+        for (k, part) in parts.iter().enumerate() {
+            let (s, origin) = (part.s, part.origin);
+            let pb = if part.end { end.as_ref().unwrap_or(&base) } else { &base };
+            let warp = BridgeWarp { deck: &part.deck, base: pb, s, across, origin, ground: &ground };
             let key = format!("wce_check_bridge_{}_{k:02}", b.name);
-            let made = make_piece(&base, &key, &warp).expect("a piece made");
+            let made = make_piece(pb, &key, &warp, part.ends(end.is_some())).expect("a piece made");
             for (name, bytes) in &made.files {
                 let ok = if is_piece_mesh(name) { wce_walls::mesh::round_trips(bytes) } else if name.ends_with(".cs2.parsed") { wce_walls::logic::round_trips(bytes) } else { Ok(true) };
                 if !ok.unwrap_or(false) {
@@ -155,12 +164,13 @@ fn main() {
                 }
             }
 
-            footprints.push(outlines(logic).into_iter().map(|o| o.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect()).collect::<Vec<Vec<[f64; 3]>>>());
-
-            ends.push((s, origin));
+            footprints.push(outlines(logic).into_iter().map(|(o, c)| (o.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect(), c)).collect());
+            if !part.end {
+                ends.push((s, origin));
+            }
         }
 
-        println!("  {} piece(s), {} platform(s)", stretches.len(), all.len());
+        println!("  {} piece(s) ({} of them end pieces), {} platform(s)", parts.len(), parts.len() - deck_pieces, all.len());
         if all.is_empty() {
             println!("  FAIL: no platform");
             failed = true;
@@ -230,35 +240,55 @@ fn main() {
             }
         }
 
-        // Past each end of the deck (the first piece's and the last one's): a plain ramp sharing the deck's end edge, then a ground platform
-        // (`flag_2`) sharing the ramp's outer edge, running into the ground.
+        // Past each end of the deck: a plain ramp (its own platform or an end piece's) sharing two corners with a platform of the deck,
+        // then a ground platform (`flag_2`) sharing two corners with the ramp and running into the ground; the footprint of the piece the
+        // ramp is in reaching out as far as the ramp does.
         let mut bad_ends = 0;
         let same = |a: &[f64; 3], b: &[f64; 3]| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01 && (a[2] - b[2]).abs() < 0.01;
-        for (piece, at) in [(0, 0.0), (ends.len() - 1, deck.length())] {
-            let c = deck.at(at).0;
-            let near = |r: &Vec<[f64; 3]>| r.iter().any(|q| (q[0] - c[0]).hypot(q[2] - c[2]) < width);
-            let plain = all.iter().filter(|(p, _)| *p == piece).map(|(_, r)| r).collect::<Vec<_>>();
-            let ramp = plain.iter().find(|r| near(r) && r.iter().any(|q| (q[1] + 20.0 - wce_walls::bridge::RAMP_FOOT).abs() < 0.01));
-            let ground = grounds.iter().filter(|(p, r)| *p == piece && near(r)).map(|(_, r)| r).collect::<Vec<_>>();
-            let ok = match (ramp, ground.as_slice()) {
-                (Some(ramp), [g]) => {
-                    let to_deck = ramp.iter().filter(|q| plain.iter().any(|d| !std::ptr::eq(*d, *ramp) && d.iter().any(|n| same(n, q)))).count();
-                    let to_ground = g.iter().filter(|q| ramp.iter().any(|n| same(n, q))).count();
-                    let buried = g.iter().filter(|q| (q[1] + 20.0 + wce_walls::bridge::GROUND_PLATFORM_BURY).abs() < 0.01).count();
-                    to_deck == 2 && to_ground == 2 && buried == 2
-                }
-                _ => false,
-            };
-            // The footprint out over the ramp, to its foot.
+        let shared = |a: &[[f64; 3]], b: &[[f64; 3]]| a.iter().filter(|q| b.iter().any(|n| same(n, q))).count();
+        for at in [0.0, deck.length()] {
             let (c, tt) = deck.at(at);
-            let out = if at <= 0.0 { -1.0 } else { 1.0 };
-            // Each ring of that piece's footprint (its collision outlines, its orange_thingies) reaches the ramp's foot.
-            let reaches = footprints[piece].iter().map(|r| r.iter().map(|q| ((q[0] - c[0]) * tt[0] + (q[2] - c[2]) * tt[1]) * out).fold(f64::MIN, f64::max)).collect::<Vec<_>>();
-            let short = reaches.is_empty() || reaches.iter().any(|r| (r - wce_walls::bridge::END_RAMP).abs() > 0.05);
-            if !ok || short {
-                println!("  end at {at:.1}: ramp and ground platform joined {ok}, footprint rings past the deck {reaches:.2?} (the ramp: {})", wce_walls::bridge::END_RAMP);
+            let away = if at <= 0.0 { -1.0 } else { 1.0 };
+            let past = |q: &[f64; 3]| ((q[0] - c[0]) * tt[0] + (q[2] - c[2]) * tt[1]) * away;
+            let near = |r: &[[f64; 3]]| r.iter().any(|q| (q[0] - c[0]).hypot(q[2] - c[2]) < width + 8.0);
+            let gs = grounds.iter().filter(|(_, r)| near(r)).collect::<Vec<_>>();
+            let found = gs.first().and_then(|(_, g)| {
+                let ramp = all.iter().find(|(_, r)| shared(g, r) >= 2)?;
+                let deck_side = all.iter().any(|(p, r)| !std::ptr::eq(r, &ramp.1) && *p != ramp.0 && shared(&ramp.1, r) >= 2)
+                    || all.iter().any(|(p, r)| *p == ramp.0 && !std::ptr::eq(r, &ramp.1) && shared(&ramp.1, r) >= 2);
+                Some((g, ramp, deck_side))
+            });
+            let ok = match found {
+                Some((g, (piece, ramp), true)) if gs.len() == 1 => {
+                    let buried = g.iter().filter(|q| (q[1] + 20.0 + wce_walls::bridge::GROUND_PLATFORM_BURY).abs() < 0.01).count() == 2;
+                    let ramp_out = ramp.iter().map(&past).fold(f64::MIN, f64::max);
+                    let reaches = footprints[*piece].iter().map(|(r, _)| r.iter().map(&past).fold(f64::MIN, f64::max)).collect::<Vec<_>>();
+                    let covered = !reaches.is_empty() && reaches.iter().all(|r| (r - ramp_out).abs() < 0.05);
+                    if !(buried && covered) {
+                        println!("  end at {at:.1}: buried {buried}, ramp out {ramp_out:.2}, footprint rings out {reaches:.2?}");
+                    }
+
+                    buried && covered
+                }
+                _ => {
+                    println!("  end at {at:.1}: {} ground platform(s) near, ramp and deck joined: {}", gs.len(), found.is_some_and(|f| f.2));
+                    if std::env::var("BRIDGE_CHECK_DEBUG").is_ok() {
+                        for (p, g) in &gs { println!("    ground (piece {p}): {g:.2?}"); }
+                        for (p, r) in all.iter().filter(|(_, r)| near(r)) { println!("    plain (piece {p}): {r:.2?}"); }
+                    }
+                    false
+                }
+            };
+            if !ok {
                 bad_ends += 1;
             }
+        }
+
+        // Every collision outline on the ground (as the kit's lie).
+        let lifted = footprints.iter().flatten().filter(|(_, c)| *c).flat_map(|(r, _)| r).filter(|q| (q[1] + 20.0).abs() > 0.01).count();
+        if lifted > 0 {
+            println!("  {lifted} collision outline corner(s) off the ground");
+            bad_ends += 1;
         }
 
         println!("  gaps along the deck: {gaps}; platforms stacked: {stacked}; joint corners unmatched: {loose}; corners off the deck: {off}; ends without a ground platform: {bad_ends} ({} made)", grounds.len());
