@@ -510,6 +510,9 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   held level with each rim for `LEVEL_PAST_RIM` (3 m: the end piece's 1 m and a height-map pixel, the game's ground being interpolated
   between pixels) and graded down from there (`level_past_rims`); in a dry launch the ground under both ramps' feet is now the feet's
   height.
+  Units then got on and off by one corner of an end (user, 2026-11-08): level only across the road's flat, the ground fell away towards
+  one side of a ramp's foot, the 2 m pixels past the edge being on the bank. Under the end pieces the bank is held back as under the
+  deck (`under_deck` for `LEVEL_PAST_RIM` past the rims): in a dry launch the ground is at the feet's height 4 m each side of the centre.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,
