@@ -12,6 +12,11 @@ use crate::tile_project::TileProject;
 /// The mark of the stage's group.
 pub const STAGE_ATTR: &str = "wce_stage_root";
 
+/// The stage group's attributes for the prefab's height layer while it is edited (saved into the prefab's `WceTerrain`): whether it
+/// normalizes the ground, and its feather.
+pub const NORMALIZE_ATTR: &str = "wce_stage_normalize";
+pub const FEATHER_ATTR: &str = "wce_stage_feather";
+
 /// The stage's tile name.
 pub const STAGE_NAME: &str = "prefab_stage";
 

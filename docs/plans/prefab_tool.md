@@ -135,7 +135,7 @@ GUI and in game (a prefab with a normalized platform under a building, units wal
   has to name it), behind `wce_app`'s `prefab` feature. The stage is under `<projects>/.prefab_stage`. The footprint is painted with the
   Ground brush (one ground type) and read back from the stage's ground type map; sculpted samples count as covered too. The flag and
   feather are attributes of the stage's group (`wce_stage_normalize`, `wce_stage_feather`): undoable, never saved with the contents.
-- Done 2026-11-08: step 8's stage settings (size, ground height, density in the Prefabs panel's Stage section; climate and season in the
+- Done 2026-11-08: step 8's stage settings (size, ground height, density; now in the Inspector under the root; climate and season in the
   viewport's ground chip, kept from one stage to the next), the camera close on the prefab and the prefab selected on open, outlines of the
   ground's cover (orange) and the feather's reach (yellow), Save as / Duplicate / Rename / Delete (projects' prefabs only; a rename leaves
   tiles' references to the old name as they are), nested prefabs' ground under the prefab's own on a stage, a reference's ground
@@ -143,6 +143,11 @@ GUI and in game (a prefab with a normalized platform under a building, units wal
   order is Weather, Prefab, Tile, Terrain, UI.
 - The stage puts the group's origin on its ground and what is on the landscape inside onto the ground, as placing in a tile does
   (f55cf611); a save gives the file's height back to what is still where the stage put it. A stage starts without grass (`grass on`).
+- UX pass (2026-11-08, with the user): the working layer on a stage is the prefab's group by default and never the root (the root
+  and the stage's `Prefab` layer are not the prefab: nothing is added, dropped, moved or grouped outside the group; a layer inside it can
+  be the working layer); the Prefabs panel lists the library by folder as the Create panel does (folders first, with counts; the
+  projects' prefabs green with the link icon); the stage's settings are in the Inspector under the root, the prefab's ground settings
+  (Normalize ground, feather, its size) under the prefab's group, saved in the prefab's `WceTerrain` as before.
 - Still open: thumbnails of prefabs with their ground; smoother outlines (they follow the samples, in steps).
 - The user's checks: the GUI flow, and in game a normalized platform under a building with units on it.
 

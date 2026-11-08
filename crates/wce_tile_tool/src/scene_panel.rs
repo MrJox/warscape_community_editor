@@ -343,11 +343,16 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         let sc = d.tile().tscene();
 
-        // Where a new layer goes: inside the selected layer, else next to the selected item, else the scene graph.
+        // Where a new layer goes: inside the selected layer, else next to the selected item, else the scene graph (on a prefab's stage,
+        // the prefab: nothing goes outside it).
         let target = match sel.first() {
             Some(&s) if sc.is_layer(s) => s,
             Some(&s) => parent_layer(sc, s).map_or(graph, |p| p.max(graph)),
             None => graph,
+        };
+        let target = match tool.stage_group(d) {
+            Some(g) if target != g && !sc.is_descendant(target, g) => g,
+            _ => target,
         };
 
         let one_layer = sel.len() == 1 && sc.is_layer(sel[0]) && sc.type_of(sel[0]) != "SCENE_GRAPH";
@@ -421,7 +426,9 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         gui::align_text_to_frame_padding();
         gui::text_colored(theme::palette().highlight, wce_editor::icons::SQUARE_PEN);
         gui::same_line();
+        let stage = tool.stage_group(d);
         match working {
+            Some(l) if Some(l) == stage => gui::text(&format!("Working layer: the prefab ({})", d.tile().tscene().name(l))),
             Some(l) => {
                 gui::text(&format!("Working layer: {}", TileTool::layer_label(d, l)));
                 gui::same_line();
@@ -430,7 +437,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
                 }
 
                 if gui::is_item_hovered() {
-                    gui::set_tooltip("Clear the working layer: new items go to the root");
+                    gui::set_tooltip(if stage.is_some() { "Clear the working layer: new items go to the prefab" } else { "Clear the working layer: new items go to the root" });
                 }
             }
 
@@ -652,6 +659,9 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
         }
 
         let working = tool.working_layer_of(d);
+        let stage = tool.stage_group(d);
+        let in_stage = |l: usize| stage.is_none_or(|g| l == g || d.tile().tscene().is_descendant(l, g));
+        let can_work = |l: usize| TileTool::can_work_in(stage, d.tile().tscene(), l);
         let lib = tool.prefabs.clone();
         let prefab_of = |el: usize| -> Option<String> {
             d.prefab_key(el).and_then(|k| lib.as_ref().and_then(|l| l.get(&k).map(|p| p.key.clone())))
@@ -753,6 +763,8 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                         dl.line(v2(rmin.x, y), v2(rmax.x, y), c, 2.0);
                     }
 
+                    // On a prefab's stage, nothing goes outside the prefab.
+                    let layer = layer.filter(|&l| in_stage(l));
                     if let (true, Some(l)) = (delivered, layer) {
                         pending_drop = Some((data.iter().filter_map(|&x| usize::try_from(x).ok()).collect(), l, before));
                     }
@@ -804,9 +816,9 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     None => {}
                 }
 
-                if matches!(sc.type_of(el), "LayerInstance" | "SCENE_GRAPH") {
+                if can_work(el) {
                     if Some(el) == working {
-                        if gui::menu_item("Clear the working layer", None, false, true) {
+                        if Some(el) != stage && gui::menu_item("Clear the working layer", None, false, true) {
                             actions.push(RowAction::SetWorking(None));
                         }
                     } else if gui::menu_item("Set as the working layer", None, false, true) {
@@ -814,7 +826,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     }
                 }
 
-                if row.layer && !sel.is_empty() && !sel.contains(&el) && gui::menu_item("Move selection here", None, false, true) {
+                if row.layer && in_stage(el) && !sel.is_empty() && !sel.contains(&el) && gui::menu_item("Move selection here", None, false, true) {
                     actions.push(RowAction::MoveInto(sel.clone(), el));
                 }
 

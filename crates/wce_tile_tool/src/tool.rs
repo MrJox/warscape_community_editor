@@ -835,11 +835,25 @@ impl TileTool {
         roots
     }
 
-    /// The working layer of the tile `id`, if one is set and still there.
+    /// The working layer of the tile `id`, if one is set and still there. On a prefab's stage, the prefab's group when none is: the root is
+    /// never the working layer there (what is outside the group is not the prefab's).
     pub(crate) fn working_layer_of(&self, d: &TileDocument) -> Option<usize> {
-        let (doc, key) = self.working_layer.as_ref().filter(|(doc, _)| *doc == d.id())?;
-        let _ = doc;
-        crate::scene_panel::layer_by_key(d.tile().tscene(), key)
+        let set = self.working_layer.as_ref().filter(|(doc, _)| *doc == d.id()).and_then(|(_, key)| crate::scene_panel::layer_by_key(d.tile().tscene(), key));
+        set.or_else(|| self.stage_group(d))
+    }
+
+    /// The prefab's group, on a prefab's stage.
+    pub(crate) fn stage_group(&self, d: &TileDocument) -> Option<usize> {
+        d.stage_group().filter(|_| self.profile == Profile::Prefab)
+    }
+
+    /// Whether a layer can be the working layer: a layer or the root in a tile; on a prefab's stage (`stage`: its group), the prefab's group
+    /// or a layer in it.
+    pub(crate) fn can_work_in(stage: Option<usize>, sc: &wce_tile::ted_scene::TedScene, layer: usize) -> bool {
+        match stage {
+            Some(g) => layer == g || (sc.type_of(layer) == "LayerInstance" && sc.is_descendant(layer, g)),
+            None => matches!(sc.type_of(layer), "LayerInstance" | "SCENE_GRAPH"),
+        }
     }
 
     /// The keys of a type in the open tile's files (read once per tile).
@@ -848,7 +862,7 @@ impl TileTool {
         self.catalogues.entry((d.id(), kind.to_owned())).or_insert_with(|| Arc::new(d.tile().key_catalogue(kind))).clone()
     }
 
-    /// Where new items go in the tile: the working layer, else the scene graph.
+    /// Where new items go in the tile: the working layer, else the scene graph (on a prefab's stage, the prefab's group).
     pub(crate) fn new_items_layer(&self, d: &TileDocument) -> Option<usize> {
         self.working_layer_of(d).or_else(|| d.tile().tscene().scene_graph())
     }
@@ -866,15 +880,16 @@ impl TileTool {
 
     /// Makes a layer the working layer (`None`: none, new items go to the scene graph).
     pub fn set_working_layer(&mut self, d: &TileDocument, layer: Option<usize>) -> Result<String, String> {
-        let Some(layer) = layer else {
+        let Some(layer) = layer.filter(|&l| Some(l) != self.stage_group(d)) else {
             self.working_layer = None;
-            return Ok("no working layer: new items go to the root".to_owned());
+            return Ok(if self.stage_group(d).is_some() { "working layer: the prefab" } else { "no working layer: new items go to the root" }.to_owned());
         };
 
-        let sc = d.tile().tscene();
-        if !matches!(sc.type_of(layer), "LayerInstance" | "SCENE_GRAPH") {
-            return Err("only a layer can be the working layer".to_owned());
+        if !Self::can_work_in(self.stage_group(d), d.tile().tscene(), layer) {
+            return Err(if self.stage_group(d).is_some() { "only the prefab or a layer in it can be the working layer" } else { "only a layer can be the working layer" }.to_owned());
         }
+
+        let sc = d.tile().tscene();
 
         let key = crate::scene_panel::layer_key(sc, layer).ok_or("that layer is not in the scene graph")?;
         self.working_layer = Some((d.id(), key));

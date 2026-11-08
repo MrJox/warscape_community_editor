@@ -2740,6 +2740,9 @@ impl TileDocument {
         // A reference's ground has its own rows, above.
         shown.extend([super::prefab_ground::TERRAIN_ATTR, super::prefab_ground::TERRAIN_OPACITY_ATTR, super::prefab_ground::TERRAIN_FEATHER_ATTR]);
 
+        // A stage's group: the Prefab tool's rows (its ground's settings), below.
+        shown.extend([wce_tile::prefab_stage::STAGE_ATTR, wce_tile::prefab_stage::NORMALIZE_ATTR, wce_tile::prefab_stage::FEATHER_ATTR]);
+
         // A reference's own are the tool's rows, below.
         if matches!(tag.as_str(), super::REF_HUMAN | super::REF_UNIT) {
             shown.extend(wce_tile::new_instances::REF_TOOL_ATTRS);

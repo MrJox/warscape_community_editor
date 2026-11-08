@@ -15,24 +15,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use wce_editor::editor::Editor;
 use wce_editor::tool::{Tool, ViewportEvent};
-use wce_editor::{gui, icons};
+use wce_editor::{gui, icons, theme};
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_editor_core::document::Document;
 use wce_scene::render_scene::{DocumentId, SourceRef};
-use wce_tile::prefab_stage::{STAGE_ATTR, StageSettings};
+use wce_tile::prefab_stage::{FEATHER_ATTR, NORMALIZE_ATTR, STAGE_ATTR, StageSettings};
 use wce_tile::prefab_terrain::DEFAULT_FEATHER;
 use wce_tile::prefabs::{self, PrefabLibrary};
 use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::{TileDocument, item_of};
 
+use crate::create_panel::{FolderRows, PROJECT_PREFAB_ICON, PROJECT_PREFAB_TIP, folder_order, folder_tree};
 use crate::tool::{Profile, TILE_TOOL_ID, TileTool};
 
 /// The tool's id: the owner of its stages.
 pub const PREFAB_TOOL_ID: &str = "prefab";
 
-/// The stage group's attributes for the prefab's height layer: whether it normalizes the ground, and its feather.
-pub const NORMALIZE_ATTR: &str = "wce_stage_normalize";
-pub const FEATHER_ATTR: &str = "wce_stage_feather";
 
 /// What the stage's ground's size was found for: the stage, its history's and terrain's versions, the flag and the feather's bits.
 type SizeKey = (DocumentId, u64, bool, u32);
@@ -70,8 +68,10 @@ pub struct PrefabTool {
     /// The stage's ground's size, and what it was found for (the stage, its history's and terrain's versions, the flag and feather).
     ground_size: (SizeKey, Option<(f64, f64)>),
 
-    // The Prefabs panel.
+    // The Prefabs panel: its filter, and the list it shows (by folder, as the Create panel's) and what it was made for (the library, the
+    // filter).
     filter: String,
+    list: Option<((usize, String), Vec<prefabs::PrefabEntry>, FolderRows)>,
     new_name: String,
     new_folder: String,
     status: String,
@@ -81,7 +81,7 @@ impl Default for PrefabTool {
     fn default() -> Self {
         let mut tile = TileTool::default();
         tile.profile = Profile::Prefab;
-        Self { tile, stage: StageSettings::default(), stage_draft: StageSettings::default(), outline: true, look: None, asking: None, open: None, hidden: vec![], ground_size: ((0, 0, false, 0), None), filter: String::new(), new_name: String::new(), new_folder: String::new(), status: String::new() }
+        Self { tile, stage: StageSettings::default(), stage_draft: StageSettings::default(), outline: true, look: None, asking: None, open: None, hidden: vec![], ground_size: ((0, 0, false, 0), None), filter: String::new(), list: None, new_name: String::new(), new_folder: String::new(), status: String::new() }
     }
 }
 
@@ -455,11 +455,9 @@ impl PrefabTool {
                 self.report(e, r);
             }
 
-            self.draw_properties(e);
+            gui::text_wrapped("Settings in the Inspector: select the prefab (its ground) or the root (the stage)");
             gui::separator();
         }
-
-        self.draw_stage_settings(e);
 
         // New.
         gui::set_next_item_width(140.0);
@@ -487,51 +485,74 @@ impl PrefabTool {
         }
 
         gui::set_next_item_width(-1.0);
-        gui::input_text("##prefab_filter", Some("filter"), &mut self.filter, 256, 0);
-        gui::begin_child("prefab_list", gui::v2(0.0, 0.0), 0, 0);
-        let needle = self.filter.to_lowercase();
-        let mut folder = None;
+        gui::input_text("##prefab_filter", Some(&format!("{}  search", icons::SEARCH)), &mut self.filter, 256, 0);
+
+        // By folder, folders first, as the Create panel lists them; made again for another library or filter.
+        let stamp = (Arc::as_ptr(&lib) as usize, self.filter.clone());
+        if self.list.as_ref().is_none_or(|(s, _, _)| *s != stamp) {
+            let words = self.filter.to_lowercase().split_whitespace().map(str::to_owned).collect::<Vec<_>>();
+            let mut list = lib.entries().filter(|p| {
+                let path = format!("{}/{}", p.folder, p.key).to_lowercase();
+                words.iter().all(|w| path.contains(w))
+            }).cloned().collect::<Vec<_>>();
+            list.sort_by_cached_key(|p| (folder_order(&p.folder), p.key.to_lowercase()));
+            let folders = FolderRows::of(list.iter().enumerate().map(|(i, p)| (i, p.folder.as_str())));
+            self.list = Some((stamp, list, folders));
+        }
+
+        let (_, list, folders) = self.list.as_ref().expect("made above");
+        let filtering = !self.filter.trim().is_empty();
+        let on = self.open_key().map(str::to_owned);
         let mut open = None;
-        for p in lib.entries() {
-            let path = if p.folder.is_empty() { p.key.clone() } else { format!("{}/{}", p.folder, p.key) };
-            if !needle.is_empty() && !path.to_lowercase().contains(&needle) {
-                continue;
+        if gui::begin_child("prefab_list", gui::v2(0.0, 0.0), 0, 0) {
+            if list.is_empty() {
+                gui::text_disabled(if filtering { "No prefab found." } else { "No prefabs: make one above." });
             }
 
-            if folder.as_ref() != Some(&p.folder) {
-                folder = Some(p.folder.clone());
-                gui::text_disabled(&format!("{}  {}", icons::FOLDER, if p.folder.is_empty() { "(top)" } else { &p.folder }));
-            }
+            folder_tree("prefab_lib", folders, filtering, |rows| {
+                gui::clipped(rows.len(), |r| {
+                    let p = &list[rows[r]];
+                    let ours = p.wce && p.path.starts_with(&projects);
+                    if ours {
+                        let c = theme::palette().success;
+                        gui::push_style_color(gui::COL_TEXT, gui::v4(c[0], c[1], c[2], c[3]));
+                    }
 
-            let label = format!("    {}{}##{}", p.key, if p.wce { "" } else { "  [kit]" }, path);
-            if gui::selectable(&label, self.open_key() == Some(p.key.as_str()), gui::SELECTABLE_ALLOW_DOUBLE_CLICK) && gui::is_mouse_double_clicked(0) {
-                open = Some(p.key.clone());
-            }
+                    let label = format!("{}  {}##{}/{}", if ours { PROJECT_PREFAB_ICON } else { icons::COMPONENT }, p.key, p.folder, p.key);
+                    if gui::selectable(&label, on.as_deref() == Some(p.key.as_str()), gui::SELECTABLE_ALLOW_DOUBLE_CLICK) && gui::is_mouse_double_clicked(0) {
+                        open = Some(p.key.clone());
+                    }
 
-            if gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{}\nDouble-click: open it on the stage; right click: more", p.path.display()));
-            }
+                    if ours {
+                        gui::pop_style_color(1);
+                    }
 
-            if gui::begin_popup_context_item(&format!("##ctx{path}")) {
-                let ours = p.wce && p.path.starts_with(&projects);
-                if gui::menu_item("Open", None, false, true) {
-                    open = Some(p.key.clone());
-                }
+                    if gui::is_item_hovered() {
+                        let from = if ours { PROJECT_PREFAB_TIP } else { "A prefab of an Assembly Kit (TEd's): a save makes the projects' copy." };
+                        gui::set_tooltip(&format!("{}\n{from}\nDouble-click: open it on the stage; right click: more", p.path.display()));
+                    }
 
-                if gui::menu_item("Duplicate...", None, false, true) {
-                    ask_now = Some((Ask::Duplicate, p.key.clone()));
-                }
+                    if gui::begin_popup_context_item(&format!("##ctx{}/{}", p.folder, p.key)) {
+                        if gui::menu_item("Open", None, false, true) {
+                            open = Some(p.key.clone());
+                        }
 
-                if gui::menu_item("Rename...", None, false, ours) {
-                    ask_now = Some((Ask::Rename, p.key.clone()));
-                }
+                        if gui::menu_item("Duplicate...", None, false, true) {
+                            ask_now = Some((Ask::Duplicate, p.key.clone()));
+                        }
 
-                if gui::menu_item("Delete...", None, false, ours) {
-                    ask_now = Some((Ask::Delete, p.key.clone()));
-                }
+                        if gui::menu_item("Rename...", None, false, ours) {
+                            ask_now = Some((Ask::Rename, p.key.clone()));
+                        }
 
-                gui::end_popup();
-            }
+                        if gui::menu_item("Delete...", None, false, ours) {
+                            ask_now = Some((Ask::Delete, p.key.clone()));
+                        }
+
+                        gui::end_popup();
+                    }
+                });
+            });
         }
 
         gui::end_child();
@@ -615,9 +636,10 @@ impl PrefabTool {
         self.report(e, r);
     }
 
-    /// The stage's size and ground, applied by opening the prefab again on a new stage; whether the outlines show.
+    /// The stage's size and ground, applied by opening the prefab again on a new stage; whether the outlines show. In the Inspector, under the
+    /// stage's root.
     fn draw_stage_settings(&mut self, e: &mut Editor) {
-        if !gui::collapsing_header("Stage", 0) {
+        if !gui::collapsing_header("Stage", gui::TREE_DEFAULT_OPEN) {
             return;
         }
 
@@ -659,11 +681,14 @@ impl PrefabTool {
         }
 
         gui::text_disabled("The climate and season: the ground chip at the viewport's top right.");
-        gui::separator();
     }
 
-    /// The prefab's own settings: its height layer's.
+    /// The prefab's own settings, saved in it (with its ground): its height layer's. In the Inspector, under the prefab's group.
     fn draw_properties(&mut self, e: &mut Editor) {
+        if !gui::collapsing_header("Prefab ground", gui::TREE_DEFAULT_OPEN) {
+            return;
+        }
+
         let Some(d) = self.stage(e) else { return };
         let Some(group) = d.stage_group() else { return };
         let doc = d.tile().tscene().doc();
@@ -674,8 +699,9 @@ impl PrefabTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("On: placed in a tile, the ground under the prefab's footprint is taken as this stage's plain (at the height under its origin) and its \
-                ground goes over it, so it looks as it does here. Off: its ground adds to whatever ground it is put on.");
+            gui::set_tooltip("Saved in the prefab, with its ground. On: placed in a tile, the ground under the prefab's footprint is taken as this stage's \
+                plain (at the height under its origin) and its ground goes over it, so it looks as it does here. Off: its ground adds to whatever \
+                ground it is put on.");
         }
 
         if normalize {
@@ -887,7 +913,34 @@ impl Tool for PrefabTool {
         self.tile.inspect(e, ins)
     }
 
+    /// The prefab's settings under its group, the stage's under the root.
     fn inspect_below(&mut self, e: &mut Editor) {
+        let Some(id) = self.open.as_ref().map(|o| o.doc) else { return self.tile.inspect_below(e) };
+        let sel = e.selection.items();
+        let one = (sel.len() == 1 && sel[0].doc == id).then(|| wce_tile_editor::tile_document::elem_of(sel[0].item)).flatten();
+        let what = one.and_then(|el| {
+            let d = e.docs.find_as::<TileDocument>(id)?;
+            if Some(el) == d.stage_group() {
+                Some(true)
+            } else {
+                (d.tile().tscene().type_of(el) == "SCENE_GRAPH").then_some(false)
+            }
+        });
+
+        match what {
+            Some(true) => {
+                gui::separator();
+                self.draw_properties(e);
+            }
+
+            Some(false) => {
+                gui::separator();
+                self.draw_stage_settings(e);
+            }
+
+            None => {}
+        }
+
         self.tile.inspect_below(e);
     }
 
