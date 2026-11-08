@@ -123,6 +123,10 @@ impl Default for Measures {
 pub struct Layout {
     pub laid: Vec<Laid>,
 
+    /// The stretches of the line something other than a straight or a curve took (bridges, junctions, corners, fords, ends), as distances
+    /// along it, in order: where a road's fences stop.
+    pub held: Vec<(f64, f64)>,
+
     /// What could not be laid as asked.
     pub notes: Vec<String>,
 }
@@ -205,6 +209,7 @@ pub fn layout(line: &[[f64; 2]], corners: &[usize], ends: [End; 2], holds: &[Hol
     }
 
     held.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.held = held.iter().map(|h| (h.0, h.1)).collect();
 
     // The stretches between: straights, or curves where a straight would bend too much.
     let mut stretches = vec![];
@@ -475,6 +480,69 @@ pub fn ports_at(piece: &Piece, laid: &Laid, line: &[[f64; 2]], width: f64) -> Ve
     }
 
     out
+}
+
+/// How far a fence stands past a road's edge (metres), and how far its runs stop short of what the road holds (a corner, a junction, a
+/// bridge, a ford, an end).
+pub const FENCE_OUT: f64 = 1.0;
+pub const FENCE_GAP: f64 = 0.5;
+
+/// A road's fences along one side (`side`: +1 its right, -1 its left, as it runs): the line they stand on (`offset` from the centre line,
+/// metres) and the fence pieces on it, `length` each, end to end in the stretches the road holds nothing on (`held`: `Layout::held`),
+/// each run centred in its stretch. A fence is never stretched: a run is as many as fit.
+#[must_use]
+pub fn fence_runs(line: &[[f64; 2]], held: &[(f64, f64)], side: f64, offset: f64, length: f64) -> (Vec<[f64; 2]>, Vec<Laid>) {
+    let n = line.len();
+    if n < 2 || length <= 0.0 {
+        return (vec![], vec![]);
+    }
+
+    let fence_line = (0..n).map(|i| {
+        let t = unit([line[(i + 1).min(n - 1)][0] - line[i.saturating_sub(1)][0], line[(i + 1).min(n - 1)][1] - line[i.saturating_sub(1)][1]]);
+        [line[i][0] + t[1] * side * offset, line[i][1] - t[0] * side * offset]
+    }).collect::<Vec<_>>();
+    let (centre, beside) = (Stations::new(line), Stations::new(&fence_line));
+
+    // A distance along the centre line as one along the fence's line, by the samples it falls between.
+    let onto = |s: f64| {
+        let i = (1..n).find(|&i| centre.of_sample(i) >= s).unwrap_or(n - 1);
+        let (a, b) = (centre.of_sample(i - 1), centre.of_sample(i));
+        let f = ((s - a) / (b - a).max(1e-9)).clamp(0.0, 1.0);
+        beside.of_sample(i - 1) + f * (beside.of_sample(i) - beside.of_sample(i - 1))
+    };
+
+    // The stretches nothing holds.
+    let total = centre.length();
+    let mut free = vec![];
+    let mut from = 0.0;
+    for &(a, b) in held {
+        if a - FENCE_GAP > from + FENCE_GAP {
+            free.push((from + if from > 0.0 { FENCE_GAP } else { 0.0 }, a - FENCE_GAP));
+        }
+
+        from = from.max(b);
+    }
+
+    if from < total {
+        free.push((from + if from > 0.0 { FENCE_GAP } else { 0.0 }, total));
+    }
+
+    let mut laid = vec![];
+    for (a, b) in free {
+        let (a, b) = (onto(a), onto(b));
+        let count = ((b - a) / length).floor();
+        if count < 1.0 {
+            continue;
+        }
+
+        let start = a + ((b - a) - count * length) * 0.5;
+        for k in 0..count as usize {
+            let s = start + length * k as f64;
+            laid.push(Laid { piece: "fence", frame: Frame::Along { from: s, to: s + length } });
+        }
+    }
+
+    (fence_line, laid)
 }
 
 /// How near another road a road's end is to be taken onto it (metres), and how near it is once taken.
@@ -822,10 +890,14 @@ mod tests {
         let f = fit(&piece, &children, "c", corner, &Site { line: &line, width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }).unwrap();
         let scene = TedScene::parse_any(f.text).unwrap();
 
-        // The outer edge's corner border (at -3, 3 in the piece) is outside the turn: +x, +z of the corner.
-        let fixed_border = scene.find_all("ProjectedDecalInstance").into_iter().find(|&d| scene.doc().get(d, "key").unwrap().contains("border_2") && scene.doc().get(d, "road_anchor").is_some()).unwrap();
-        let p = scene.position(fixed_border).unwrap();
-        assert!(p.x > 0.0 && p.z > 0.0, "{p:?}");
+        // The outer edge (the arc of border_1 chords) lies outside the inner one (border_2): towards +x, +z, the turn's outside.
+        let mean = |name: &str| {
+            let ps = scene.find_all("ProjectedDecalInstance").into_iter().filter(|&d| scene.doc().get(d, "key").unwrap().contains(name)).map(|d| scene.position(d).unwrap()).collect::<Vec<_>>();
+            let n = ps.len() as f64;
+            (ps.iter().map(|p| p.x).sum::<f64>() / n, ps.iter().map(|p| p.z).sum::<f64>() / n)
+        };
+        let (outer, inner) = (mean("border_1"), mean("border_2"));
+        assert!(outer.0 - inner.0 > 2.0 && outer.1 - inner.1 > 2.0, "{outer:?} {inner:?}");
     }
 
     /// Two roads crossing (A along +x, B along +z through it at x = 50), and a third (C) stopping 3 m short of A from its left (+z) side.
@@ -922,5 +994,23 @@ mod tests {
         assert_eq!(text.matches("<point ").count(), outline.len());
         let scene = TedScene::parse_any(text.into_bytes()).unwrap();
         assert!(scene.polygon_area(0) > 2.0 * 20.0 * 2.0 * 13.0 * 0.9, "{}", scene.polygon_area(0));
+    }
+
+    #[test]
+    fn fences_run_beside_the_road_and_stop_at_what_it_holds() {
+        let line = (0..=100).map(|i| [f64::from(i), 0.0]).collect::<Vec<_>>();
+        let (fence_line, laid) = fence_runs(&line, &[(40.0, 60.0)], 1.0, 4.0, 5.0);
+        // On the right (+x ahead: -z), 4 m out.
+        assert!(fence_line.iter().all(|p| (p[1] + 4.0).abs() < 1e-9), "{:?}", &fence_line[..3]);
+        assert_eq!(laid.len(), 14, "7 a side of the held stretch (39.5 m each): {laid:?}");
+        for l in &laid {
+            let Frame::Along { from, to } = l.frame else { panic!("along") };
+            assert!((to - from - 5.0).abs() < 1e-9);
+            assert!(to <= 39.5 + 1e-9 || from >= 60.5 - 1e-9, "{from}..{to} in the held stretch");
+        }
+
+        // The left side is the other way across.
+        let (left, _) = fence_runs(&line, &[], -1.0, 4.0, 5.0);
+        assert!(left.iter().all(|p| (p[1] - 4.0).abs() < 1e-9));
     }
 }

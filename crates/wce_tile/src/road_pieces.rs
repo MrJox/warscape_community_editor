@@ -35,6 +35,10 @@ pub const VERGE: f64 = 3.0;
 pub const CURVE_RADIUS: f64 = 15.0;
 pub const CURVE_TURN: f64 = std::f64::consts::FRAC_PI_4;
 
+/// A fence piece's length along its line and the width of that line (metres).
+pub const FENCE: f64 = 5.0;
+pub const FENCE_WIDTH: f64 = 1.0;
+
 /// How near an edge a part is an edge's (metres).
 const EDGE_BAND: f64 = 1.0;
 
@@ -42,7 +46,8 @@ const EDGE_BAND: f64 = 1.0;
 const PORT_SNAP: f64 = 0.5;
 
 /// The pieces every road type has.
-pub const PIECES: [&str; 7] = ["straight", "curve", "corner", "t_junction", "x_junction", "end", "ford"];
+/// `fence` is not laid on the road but beside it, along a line just past its edge (`road_layout::fence_runs`): a road that asks for fences.
+pub const PIECES: [&str; 8] = ["straight", "curve", "corner", "t_junction", "x_junction", "end", "ford", "fence"];
 
 /// A prefab's key for a road type's piece: keys are one list across every folder, so the type is in it.
 #[must_use]
@@ -416,6 +421,17 @@ pub fn base_guides(piece: &str) -> Vec<Vec<u8>> {
 
     match piece {
         "straight" | "ford" => straight(STRAIGHT),
+        "fence" => {
+            // A fence's line, no verge: its centre and its two joins.
+            let (z, w) = (FENCE * 0.5, FENCE_WIDTH * 0.5);
+            vec![
+                guide(Role::Centre, "centre", &[[0.0, -z], [0.0, z]]),
+                guide(Role::Edge, "edge left", &[[-w, -z], [-w, z]]),
+                guide(Role::Edge, "edge right", &[[w, -z], [w, z]]),
+                guide(Role::Port, "port back", &[[-w, -z], [w, -z]]),
+                guide(Role::Port, "port front", &[[-w, z], [w, z]]),
+            ]
+        }
         "end" => {
             // The road stops at z = -2: a port at the front only, the edges closed across the back.
             let z = END * 0.5;
@@ -614,9 +630,9 @@ mod tests {
         let arms = |p: &Piece| p.arms.iter().map(|a| (a.start.is_some(), a.end.is_some())).collect::<Vec<_>>();
         for piece in PIECES {
             let p = base(piece);
-            assert!(near(p.width, WIDTH), "{piece}: {}", p.width);
+            assert!(near(p.width, if piece == "fence" { FENCE_WIDTH } else { WIDTH }), "{piece}: {}", p.width);
             assert!(p.notes.is_empty() && p.parts.is_empty(), "{piece}: {p:?}");
-            if piece != "x_junction" {
+            if piece != "x_junction" && piece != "fence" {
                 assert!(p.verge.is_some_and(|v| (v - VERGE).abs() < 0.2), "{piece}: {:?}", p.verge);
             }
 
@@ -624,6 +640,11 @@ mod tests {
                 "straight" | "ford" => {
                     assert_eq!(arms(&p), [(true, true)]);
                     assert!(near(p.arms[0].length, STRAIGHT));
+                }
+
+                "fence" => {
+                    assert_eq!(arms(&p), [(true, true)]);
+                    assert!(near(p.arms[0].length, FENCE));
                 }
 
                 "end" => {
