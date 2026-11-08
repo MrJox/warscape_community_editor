@@ -446,6 +446,32 @@ impl<'a> PieceWarp<'a> {
         s
     }
 
+    /// The level of a point near a corner's face: towards the corner's own level as it nears the face, over `FACE_BLEND` (as `s_at` moves
+    /// it onto the bisector), so that both arms meet at one height along it. On a slope the face's points are at another distance along
+    /// each arm (inside the corner before it on one, after it on the other): at their own levels the inner sides stood apart in height
+    /// (user 2026-11-08).
+    fn level_at_faces(&self, level: f64, s: f64, z: f64) -> f64 {
+        // `s`: where the point is before the face's move (`s_of`), as `s_at` measures it.
+        let mut level = level;
+        for k in 0..2 {
+            if self.corner_face(k).is_none() {
+                continue;
+            }
+
+            let (corner, shear) = if k == 1 { (self.section.1, self.shears.1) } else { (self.section.0, self.shears.0) };
+            let lin = corner + shear * z;
+            let gap = if k == 1 { lin - s } else { s - lin };
+            if gap >= FACE_BLEND {
+                continue;
+            }
+
+            let w = if gap <= 0.0 { 1.0 } else { 1.0 - gap / FACE_BLEND };
+            level += (wall_level(self.plan, corner) - level) * w;
+        }
+
+        level
+    }
+
     /// A corner face at the section's start (0) or end (1): the corner and the bisector's normal, the same from both pieces of the
     /// corner (the two arms' lines from a unit in, met halfway).
     fn corner_face(&self, k: usize) -> Option<([f64; 2], [f64; 2])> {
@@ -546,7 +572,9 @@ impl<'a> PieceWarp<'a> {
 
     /// A point of the base's frame in the scene.
     pub fn scene(&self, [x, y, z]: [f64; 3]) -> [f64; 3] {
-        let (c, dir, level) = self.along(self.s_at(x, z));
+        let s = self.s_at(x, z);
+        let (c, dir, level) = self.along(s);
+        let level = self.level_at_faces(level, self.s_of(x, z), z);
         let z_axis = [-dir[1], dir[0]];
         let (wx, wz) = (c[0] + z_axis[0] * z, c[1] + z_axis[1] * z);
         let (bottom, split) = self.profile.foot;
