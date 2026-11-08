@@ -215,7 +215,10 @@ impl Tile {
             }
 
             let models = match mini.type_of(e) {
-                "BUILDING_INSTANCE" => get("key").map(|k| self.preview_building(&k)).unwrap_or_default(),
+                "BUILDING_INSTANCE" => get("key").map(|k| {
+                    let level = get("destruction_level").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0);
+                    self.preview_building(&k, level)
+                }).unwrap_or_default(),
                 "VEGETATION_INSTANCE" => get("key").and_then(|k| vegetation_model(self.files.as_deref(), &k)).into_iter().collect(),
                 "SIMPLE_MESH_INSTANCE" => get("key").map(|k| k.replace('\\', "/").to_lowercase()).filter(|p| self.files.as_deref().is_some_and(|f| f.exists(p))).into_iter().collect(),
                 _ => vec![],
@@ -252,16 +255,20 @@ impl Tile {
     }
 
     /// A building's standing pieces: the document's when it uses the key, else its folder's intact pieces.
-    fn preview_building(&self, key: &str) -> Vec<String> {
+    /// A building's piece models at a destruction level (0: intact; as the scene draws one, `view::piece_model`: a generated fence the road
+    /// destroyed shows destroyed).
+    fn preview_building(&self, key: &str, level: i64) -> Vec<String> {
         if let Some(m) = self.models.get(key).filter(|m| m.ok) {
-            return m.pieces.clone();
+            return m.pieces.iter().enumerate().map(|(i, p)| self.piece_file(p, level, m.piece_levels.get(i).copied().unwrap_or(m.levels))).collect();
         }
 
         let Some(files) = self.files.as_deref() else { return vec![] };
-        files.list(&format!("rigidmodels/buildings/{}/", key.to_lowercase()), ".rigid_model_v2").into_iter().filter(|p| {
+        let all = files.list(&format!("rigidmodels/buildings/{}/", key.to_lowercase()), ".rigid_model_v2");
+        let levels = all.iter().map(|p| wce_walls::pieces::level_of(p)).max().unwrap_or(1).max(1);
+        all.iter().filter(|p| {
             let file = &p[p.rfind('/').map_or(0, |s| s + 1)..];
             static_piece(file) && (!file.contains("destruct") || file.contains("destruct01")) && !piece_copy(p, |q| files.exists(q))
-        }).collect()
+        }).map(|p| self.piece_file(p, level, levels)).collect()
     }
 }
 

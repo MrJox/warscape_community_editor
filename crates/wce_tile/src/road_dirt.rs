@@ -218,9 +218,11 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
         }
 
         "fence" => {
-            // One fence along the road, its x along it (as the kit's prefabs have them), where the fence line is.
+            // One fence along the road, its x along it (as the kit's prefabs have them), where the fence line is. Its model runs from its
+            // pivot along its x (0 to 5.25 m): the pivot at the piece's back port, so that it spans the piece.
             out.push(format!(
-                "<BUILDING_INSTANCE flags=\" OIF_VISIBLE|OIF_ACTIVE\" key=\"{FENCE_KEY}\" name=\"{FENCE_KEY}\" surface_mode=\"MSM_LANDSCAPE\" position=\"vector(0,0,0)\" orientation=\"euler({},0,0)\" {ANCHOR_ATTR}=\"fixed\"/>\n",
+                "<BUILDING_INSTANCE flags=\" OIF_VISIBLE|OIF_ACTIVE\" key=\"{FENCE_KEY}\" name=\"{FENCE_KEY}\" surface_mode=\"MSM_LANDSCAPE\" position=\"vector(0,0,{})\" orientation=\"euler({},0,0)\" {ANCHOR_ATTR}=\"fixed\"/>\n",
+                crate::ted_scene::format_number(-road_pieces::FENCE * 0.5 * UNIT),
                 crate::ted_scene::format_number(-std::f64::consts::FRAC_PI_2)
             ).into_bytes());
         }
@@ -334,6 +336,8 @@ mod tests {
         let q = &p.parts[0];
         assert!(q.solid && q.key == FENCE_KEY && q.anchor == Anchor::Fixed, "{q:?}");
         assert!(q.turn.sin().abs() < 1e-6 && q.across.abs() < 1e-9, "its x along the line: {q:?}");
+        // Its pivot (the model's end) at the back port: the model runs forward from it over the piece.
+        assert!(q.along.abs() < 1e-9, "its pivot at the back: {q:?}");
     }
 
     #[test]
