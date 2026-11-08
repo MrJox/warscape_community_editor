@@ -775,7 +775,7 @@ impl Tile {
 
     /// A building's overlay, in the world: its logic file's shapes at the states its pieces show, its emitters. None without a logic file.
     fn tech_building(&mut self, e: usize, s: &TechSettings) -> Option<Overlay> {
-        if self.is_wall(e) {
+        if self.is_wall(e) || self.is_road(e) {
             return self.tech_wall(e, s);
         }
 
@@ -851,10 +851,15 @@ impl Tile {
         emit(o, &Float4x4::IDENTITY, &Item { kind: item.kind, rgb: item.rgb, shape: Shape::Lines { pts: draped, closed: *closed } }, fill);
     }
 
-    /// A procedural wall's overlay: its preview pieces' logic files (made with them), each piece at its frame and intact. None before its
+    /// A wall's or a road's generated buildings (a wall's pieces, a road's bridges' pieces): each one's frame and key.
+    pub(crate) fn generated_buildings(&self, e: usize) -> Vec<(Float4x4, String)> {
+        if self.is_road(e) { self.road_buildings(e) } else { self.wall_preview.wall_buildings(e).to_vec() }
+    }
+
+    /// A procedural wall's (or a road's bridges') overlay: its preview pieces' logic files (made with them), each piece at its frame and intact. None before its
     /// pieces are made.
     fn tech_wall(&mut self, e: usize, s: &TechSettings) -> Option<Overlay> {
-        let pieces = self.wall_preview.wall_buildings(e).to_vec();
+        let pieces = self.generated_buildings(e);
         let mut o = Overlay { depth_test: !s.xray, pickable: false, ..Default::default() };
         let mut any = false;
         for (world, key) in pieces {
@@ -879,7 +884,7 @@ impl Tile {
     /// A procedural wall's pieces checked together, in the world: the spots along the wall no piece's footprint covers, the platforms of
     /// the walkway that lie over one another, and the formation lines whose ends stand on no platform. None before its pieces are made.
     pub fn wall_tech_check(&mut self, e: usize) -> Option<WallTechReport> {
-        let pieces = self.wall_preview.wall_buildings(e).to_vec();
+        let pieces = self.generated_buildings(e);
         if pieces.is_empty() {
             return None;
         }
@@ -1010,11 +1015,12 @@ impl Tile {
 
         let building = |e: usize| self.tscene().type_of(e) == "BUILDING_INSTANCE";
         // A procedural wall is as far as its nearest piece (it can be long).
-        let wall_distance = |e: usize| self.wall_preview.wall_buildings(e).iter().map(|(w, _)| {
+        let wall_distance = |e: usize| self.generated_buildings(e).iter().map(|(w, _)| {
             let d = w.transform_point(Float3::new(0.0, 0.0, 0.0)) - eye;
             dot(d, d).sqrt()
         }).fold(f32::MAX, f32::min);
-        let walls = self.wall_preview.shown_walls();
+        let mut walls = self.wall_preview.shown_walls();
+        walls.extend(self.roads_with_buildings());
         let mut found: Vec<(f32, usize)> = match s.scope {
             TechScope::All => self.instances.iter().copied().filter(|&e| building(e) && self.shown(e)).filter_map(|e| {
                 let d = self.world_position(e) - eye;
