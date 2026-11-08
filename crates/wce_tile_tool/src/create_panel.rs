@@ -167,7 +167,7 @@ pub(crate) const PROJECT_PREFAB_ICON: &str = icons::LINK_2;
 pub(crate) const PROJECT_PREFAB_TIP: &str = "A prefab of the projects folder (the editor's .wce): the prefabs placed in it stay references, and edits of it are saved there.";
 
 /// The order of an entry in its category: its folder's parts, each before the entries (folders first), then the entry.
-fn folder_order(folder: &str) -> Vec<(u8, String)> {
+pub(crate) fn folder_order(folder: &str) -> Vec<(u8, String)> {
     folder.split('/').filter(|p| !p.is_empty()).map(|p| (0, p.to_lowercase())).chain([(1, String::new())]).collect()
 }
 
@@ -183,9 +183,77 @@ impl Entry {
 
 /// The rows of a category shown by folder: each run of rows in the same folder, and how many rows each folder holds (its sub-folders' too).
 #[derive(Clone, Debug, Default)]
-struct FolderRows {
+pub(crate) struct FolderRows {
     runs: Vec<(String, Vec<usize>)>,
     counts: std::collections::HashMap<String, usize>,
+}
+
+impl FolderRows {
+    /// The rows (an index and its folder each, in `folder_order`), by folder.
+    pub(crate) fn of<'a>(rows: impl IntoIterator<Item = (usize, &'a str)>) -> Self {
+        let mut f = Self::default();
+        for (i, folder) in rows {
+            match f.runs.last_mut() {
+                Some((last, run)) if last == folder => run.push(i),
+                _ => f.runs.push((folder.to_owned(), vec![i])),
+            }
+
+            let parts = folder.split('/').filter(|p| !p.is_empty()).collect::<Vec<_>>();
+            for n in 1..=parts.len() {
+                *f.counts.entry(parts[..n].join("/")).or_default() += 1;
+            }
+        }
+
+        f
+    }
+}
+
+/// Rows in their folders: a tree node per folder (`id`: what their ids start with; open while a filter is typed), `rows` drawing each run of
+/// rows.
+pub(crate) fn folder_tree(id: &str, folders: &FolderRows, filtering: bool, mut rows: impl FnMut(&[usize])) {
+    // The folders open now (their nodes pushed), and the folder whose node is closed (what is below it is not drawn).
+    let mut open: Vec<&str> = vec![];
+    let mut closed: Option<Vec<&str>> = None;
+    for (folder, run) in &folders.runs {
+        let parts = folder.split('/').filter(|p| !p.is_empty()).collect::<Vec<_>>();
+        if let Some(shut) = &closed {
+            if parts.starts_with(shut) {
+                continue;
+            }
+
+            closed = None;
+        }
+
+        let common = open.iter().zip(&parts).take_while(|(a, b)| a == b).count();
+        while open.len() > common {
+            gui::tree_pop();
+            open.pop();
+        }
+
+        while open.len() < parts.len() {
+            let path = parts[..=open.len()].join("/");
+            if filtering {
+                gui::set_next_item_open(true, gui::COND_ALWAYS);
+            }
+
+            let count = folders.counts.get(&path).copied().unwrap_or_default();
+            let label = format!("{}  {} ({count})", icons::FOLDER, parts[open.len()]);
+            if !gui::tree_node_ex_id(&format!("{id}/{path}"), gui::TREE_SPAN_AVAIL_WIDTH, &label) {
+                closed = Some(parts[..=open.len()].to_vec());
+                break;
+            }
+
+            open.push(parts[open.len()]);
+        }
+
+        if closed.is_none() {
+            rows(run);
+        }
+    }
+
+    for _ in open {
+        gui::tree_pop();
+    }
 }
 
 /// What the entries were made for: the tile and the prefab library's version.
@@ -772,23 +840,7 @@ impl TileTool {
             }
         }
 
-        self.create.folders = self.create.shown.iter().map(|rows| {
-            let mut f = FolderRows::default();
-            for &i in rows {
-                let folder = &entries[i].folder;
-                match f.runs.last_mut() {
-                    Some((last, run)) if last == folder => run.push(i),
-                    _ => f.runs.push((folder.clone(), vec![i])),
-                }
-
-                let parts = folder.split('/').filter(|p| !p.is_empty()).collect::<Vec<_>>();
-                for n in 1..=parts.len() {
-                    *f.counts.entry(parts[..n].join("/")).or_default() += 1;
-                }
-            }
-
-            f
-        }).collect();
+        self.create.folders = self.create.shown.iter().map(|rows| FolderRows::of(rows.iter().map(|&i| (i, entries[i].folder.as_str())))).collect();
 
         self.create.shown_for = stamp;
     }
@@ -1020,53 +1072,6 @@ impl TileTool {
         words.clone_into(&mut self.create.filter);
     }
 
-    /// A category's rows in their folders: a tree node per folder (open while a filter is typed), `rows` drawing each run of rows.
-    fn folder_tree(&self, category: usize, folders: &FolderRows, filtering: bool, mut rows: impl FnMut(&Self, &[usize])) {
-        // The folders open now (their nodes pushed), and the folder whose node is closed (what is below it is not drawn).
-        let mut open: Vec<&str> = vec![];
-        let mut closed: Option<Vec<&str>> = None;
-        for (folder, run) in &folders.runs {
-            let parts = folder.split('/').filter(|p| !p.is_empty()).collect::<Vec<_>>();
-            if let Some(shut) = &closed {
-                if parts.starts_with(shut) {
-                    continue;
-                }
-
-                closed = None;
-            }
-
-            let common = open.iter().zip(&parts).take_while(|(a, b)| a == b).count();
-            while open.len() > common {
-                gui::tree_pop();
-                open.pop();
-            }
-
-            while open.len() < parts.len() {
-                let path = parts[..=open.len()].join("/");
-                if filtering {
-                    gui::set_next_item_open(true, gui::COND_ALWAYS);
-                }
-
-                let count = folders.counts.get(&path).copied().unwrap_or_default();
-                let label = format!("{}  {} ({count})", icons::FOLDER, parts[open.len()]);
-                if !gui::tree_node_ex_id(&format!("create_cat{category}/{path}"), gui::TREE_SPAN_AVAIL_WIDTH, &label) {
-                    closed = Some(parts[..=open.len()].to_vec());
-                    break;
-                }
-
-                open.push(parts[open.len()]);
-            }
-
-            if closed.is_none() {
-                rows(self, run);
-            }
-        }
-
-        for _ in open {
-            gui::tree_pop();
-        }
-    }
-
     /// The Create panel.
     pub(crate) fn draw_create_panel(&mut self, e: &mut Editor) {
         gui::set_next_window_size(gui::v2(360.0, 480.0), gui::COND_FIRST_USE_EVER);
@@ -1231,7 +1236,8 @@ impl TileTool {
                 }
 
                 let folders = self.create.folders.get(c).cloned().unwrap_or_default();
-                self.folder_tree(c, &folders, filtering, |t, rows| {
+                let t = &*self;
+                folder_tree(&format!("create_cat{c}"), &folders, filtering, |rows| {
                     if grid {
                         t.create_cells(rows, &entries, &favourites, "", |i, (cl, s, h)| {
                             if cl {
