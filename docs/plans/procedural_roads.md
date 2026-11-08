@@ -157,10 +157,10 @@ A prefab's key is its file's name and the library has one list of keys across ev
 - They are ordinary `.wce` prefabs: the Prefab tool opens, edits and saves them like any other.
 - **Dirt** (`wce_tile::road_dirt`, R2): the kit's road decals as its `global_dirt_road_*` prefabs use them, a decal's x along the road.
   Two strips of `path_1` ruts down the road (grass between them, as on the kit's roads), `border_1` / `border_2` on the edges with their
-  dark lip facing out, rocks, a puddle and erosion as spots; the ford wetter and stonier. The curve is four 4 m chords of ruts and
+  dark lip facing out, rocks, a puddle and erosion as spots; the ford wetter and stonier. The curve is five 4.6 m chords of ruts and
   borders a side; corners and junctions run their arms' ruts across the middle with one more laid diagonally over it (`road_anchor=
   "fixed"`) so that the meeting is worn all over. The kit's `path_2` is a bent rut, not a patch, and is not used. Its ruts are cut down
-  by at most 2.5 times (the curve's and the end's 4 m from the kit's 10 m).
+  by at most 2.2 times (the curve's 4.6 m from the kit's 10 m).
 
 ### The measures and the guides
 
@@ -217,9 +217,9 @@ its arm:
 - heights: decals are projected; buildings stand on the ground (Landscape: Above), as they do anywhere.
 
 Decals cannot bend: a curve is made of its parts moved onto the arc, each rigid, so a part is a chord of the road, off it by `L x L / 8R`
-at its middle. **A part may be off the road by 0.3 m at most where its piece is bent the most** (changed 2026-11-08 from a flat 4 m, which
+at its middle. **A part may be off the road by 0.4 m at most where its piece is bent the most** (0.3 at first; raised with the overlaps below) (changed 2026-11-08 from a flat 4 m, which
 cut the kit's 10 m ruts to 4 m on straights too; `road_dirt::max_part_length`): a straight, bent up to 15 degrees over 8 m (R of about
-30 m), takes parts up to 8.56 m; a curve, bent up to 90 degrees (R down to 7.5 m), up to 4.2 m. Corners, junctions and ends are not
+30 m), takes parts up to 9.9 m; a curve, bent up to 90 degrees (R down to 7.5 m), up to 4.9 m. **Ruts and borders run 0.75 m past a piece's ports** (`road_dirt::OVERLAP`; user 2026-11-08: a decal fades at its ends, and pieces end to end left bands of grass between them, along the ruts and the edges): a straight's are 9.5 m, a curve has five 4.6 m chords a side, and junctions', corners' and ends' run past their ports too; borders are 2 m wide, over the ruts' edge. Pieces written before the generation mark (R1's, R2's) are known by their contents (`road_pieces::UNMARKED_GENERATIONS`) and replaced too when unedited. Corners, junctions and ends are not
 bent (their arms turn whole) and have no limit.
 
 ### Laying a road out

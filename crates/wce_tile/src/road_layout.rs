@@ -745,7 +745,7 @@ mod tests {
         let ruts = scene.find_all("ProjectedDecalInstance").into_iter().filter(|&d| scene.doc().get(d, "key").unwrap().contains("path_1")).collect::<Vec<_>>();
         for d in ruts {
             let s = scene.scale(d).unwrap();
-            assert!((s.x - 17.0 * 1.25).abs() < 1e-6 && (s.z.abs() - 5.0 * 1.5).abs() < 1e-6, "{s:?}");
+            assert!((s.x - 19.0 * 1.25).abs() < 1e-6 && (s.z.abs() - 5.2 * 1.5).abs() < 1e-6, "{s:?}");
             let x = scene.position(d).unwrap().x / 2.0;
             assert!((x.abs() - 1.3 * 1.5).abs() < 1e-6, "{x}");
         }
@@ -753,7 +753,7 @@ mod tests {
         // An edge's border keeps its width and moves out with the edge.
         let border = scene.find_all("ProjectedDecalInstance").into_iter().find(|&d| scene.doc().get(d, "key").unwrap().contains("border_1")).unwrap();
         assert!((scene.position(border).unwrap().x.abs() / 2.0 - 4.5).abs() < 1e-6);
-        assert!((scene.scale(border).unwrap().z.abs() - 3.0).abs() < 1e-6);
+        assert!((scene.scale(border).unwrap().z.abs() - 4.0).abs() < 1e-6);
     }
 
     #[test]
