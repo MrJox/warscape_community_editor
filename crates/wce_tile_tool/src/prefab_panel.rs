@@ -1,7 +1,7 @@
 //! Prefabs in the Tile tool (`wce_tile::prefabs`): the library of TEd's saved groups (`<kit raw_data>/art/prefabs` of the kits and of the
 //! tile), the Prefabs panel to place them, and the copies in the tile: a reference to a prefab (`wce_prefab`) is a copy, shown as a
-//! Prefab row (its items listed when it is opened in the tree; a click on them in the viewport selects the copy). "Edit prefab" opens a copy for editing; Apply writes the
-//! prefab file and gives every other copy in the tile the new contents (one undo entry), Cancel gives the copy the file's contents back.
+//! Prefab row (its items listed when it is opened in the tree; a click on them in the viewport selects the copy). "Open in Prefab tool" edits
+//! its prefab there (`prefab_tool`); a save there gives every open tile's copies the new contents (`refresh_copies`, one undo entry each).
 //! "Unpack prefab" renames a copy so that it is a plain group; "Save as prefab" writes a group as a new prefab and names it after it.
 
 use std::collections::HashMap;
@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use wce_editor::editor::Editor;
-use wce_editor::{gui, icons, theme};
+use wce_editor::{gui, icons};
 use wce_editor_core::document::Document;
 use wce_foundation::log;
 use wce_foundation::math::Float3;
@@ -191,13 +191,6 @@ impl TileTool {
         self.prefabs.as_ref()?.get(&key).map(|p| p.key.clone())
     }
 
-    /// The copy being edited in this tile, if there is one.
-    pub(crate) fn edited_copy(&self, d: &TileDocument) -> Option<usize> {
-        let (doc, key, _) = self.prefab_edit.as_ref().filter(|(doc, _, _)| *doc == d.id())?;
-        let _ = doc;
-        layer_by_key(d.tile().tscene(), key)
-    }
-
     /// The copy opened for its items (a click on one of the items of a selected copy; for a reference, what is edited in them is an
     /// override), if there is one in this tile.
     pub(crate) fn opened_copy(&self, d: &TileDocument) -> Option<usize> {
@@ -209,16 +202,16 @@ impl TileTool {
         layer_by_key(d.tile().tscene(), key)
     }
 
-    /// A copy whose contents the Scene tree does not list and whose contents a click does not select: every copy but the edited one and the
-    /// opened one (and the copies inside those).
+    /// A copy whose contents the Scene tree does not list and whose contents a click does not select: every copy but the opened one (and the
+    /// copies inside it).
     pub(crate) fn closed_prefab(&self, d: &TileDocument, elem: usize) -> bool {
         if self.prefab_of(d, elem).is_none() {
             return false;
         }
 
-        let open = [self.edited_copy(d), self.opened_copy(d)];
+        let open = self.opened_copy(d);
         let els = d.tile().tscene().doc().elements();
-        !std::iter::successors(Some(elem), |&x| els.get(x).and_then(|el| el.parent)).any(|x| open.contains(&Some(x)))
+        !std::iter::successors(Some(elem), |&x| els.get(x).and_then(|el| el.parent)).any(|x| open == Some(x))
     }
 
     /// The selection with the contents of closed copies replaced by the copies (once per frame, after the clicks). A click on an item of a
@@ -226,12 +219,6 @@ impl TileTool {
     /// reference's edits are its overrides) until the selection leaves it.
     pub(crate) fn select_whole_prefabs(&mut self, e: &mut Editor) {
         let Some(id) = document_id(e) else { return };
-
-        // The edited copy may change in structure.
-        if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
-            let copy = self.edited_copy(d);
-            d.set_unlocked_reference(copy);
-        }
 
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
         if self.prefabs.is_none() {
@@ -335,79 +322,6 @@ impl TileTool {
         if self.terrain_hit { self.cursor } else { e.viewport.camera().target }
     }
 
-    /// Opens a copy for editing (the one selected).
-    ///
-    /// # Errors
-    ///
-    /// Not a copy of a prefab, or another copy is being edited.
-    pub fn edit_prefab(&mut self, e: &mut Editor, copy: usize) -> Result<String, String> {
-        let d = document(e).ok_or("no tile open")?;
-        let key = self.prefab_of(d, copy).ok_or("not a copy of a prefab")?;
-        if self.edited_copy(d).is_some() {
-            return Err("another copy is being edited: apply or cancel it first".to_owned());
-        }
-
-        let path = layer_key(d.tile().tscene(), copy).ok_or("the copy is not in the scene graph")?;
-        self.prefab_edit = Some((d.id(), path, key.clone()));
-        self.prefab_version += 1;
-        Ok(format!("editing {key}: Apply writes the prefab and updates its copies in this tile"))
-    }
-
-    /// Ends the edit: writes the prefab file from the edited copy, and gives every other copy in the tile its contents (one undo entry).
-    ///
-    /// # Errors
-    ///
-    /// No edit, or the file can't be written.
-    pub fn apply_prefab_edit(&mut self, e: &mut Editor) -> Result<String, String> {
-        let lib = self.prefab_library(e);
-        let d = document(e).ok_or("no tile open")?;
-        let copy = self.edited_copy(d).ok_or("no prefab is being edited")?;
-        let key = self.prefab_edit.as_ref().map(|p| p.2.clone()).unwrap_or_default();
-        let entry = lib.get(&key).ok_or_else(|| format!("no prefab '{key}'"))?.clone();
-        let children = d.children_text(copy);
-        let old = lib.contents(&key).unwrap_or_default();
-        let (each, kept) = copies_with(d, &key, &old, &children, Some(copy));
-
-        // The edit goes into the projects' prefab (its .wce), never into the kit.
-        let projects = prefabs::prefab_root(&Self::workspace_dir(e).join("raw_data"));
-        let saved = lib.save_edit(&entry.key, &projects, &children)?;
-        let d = document(e).ok_or("no tile open")?;
-        let n = d.set_each_group_children(&each, &format!("Update the copies of {key}"))?;
-        if kept != 0 {
-            log::warn(format!("{kept} reference(s) to {key} differ from it by more than values: they keep their own contents"));
-        }
-
-        self.end_prefab_edit(e);
-        self.rescan_prefabs(e);
-        Ok(format!("{key} saved to {}; {n} other cop{} updated", saved.display(), if n == 1 { "y" } else { "ies" }))
-    }
-
-    /// Ends the edit without saving: the copy gets the prefab file's contents back.
-    ///
-    /// # Errors
-    ///
-    /// No edit, or the file can't be read.
-    pub fn cancel_prefab_edit(&mut self, e: &mut Editor) -> Result<String, String> {
-        let lib = self.prefab_library(e);
-        let d = document(e).ok_or("no tile open")?;
-        let copy = self.edited_copy(d).ok_or("no prefab is being edited")?;
-        let key = self.prefab_edit.as_ref().map(|p| p.2.clone()).unwrap_or_default();
-        let p = lib.load(&key)?;
-        d.set_groups_children(&[copy], &p.children_text, &format!("Cancel the edit of {key}"))?;
-        self.end_prefab_edit(e);
-        Ok(format!("{key}: edit cancelled"))
-    }
-
-    fn end_prefab_edit(&mut self, e: &mut Editor) {
-        // The copy stays selected (as a whole again).
-        let copy = document(e).and_then(|d| self.edited_copy(d));
-        self.prefab_edit = None;
-        self.prefab_version += 1;
-        if let (Some(c), Some(id)) = (copy, document_id(e)) {
-            e.selection.set(SourceRef { doc: id, item: item_of(c) });
-        }
-    }
-
     /// Makes a copy a plain group (renamed `<key> (unpacked)`).
     ///
     /// # Errors
@@ -416,10 +330,6 @@ impl TileTool {
     pub fn unpack_prefab(&mut self, e: &mut Editor, copy: usize) -> Result<String, String> {
         let d = document(e).ok_or("no tile open")?;
         let key = self.prefab_of(d, copy).ok_or("not a copy of a prefab")?;
-        if self.edited_copy(d) == Some(copy) {
-            return Err("the copy is being edited: apply or cancel it first".to_owned());
-        }
-
         d.unpack_prefab_copy(copy, &format!("{key} (unpacked)"));
         self.prefab_version += 1;
         Ok(format!("{key} unpacked into a plain group"))
@@ -615,9 +525,6 @@ impl TileTool {
     }
 }
 
-pub(crate) fn edited_colour() -> [f32; 4] {
-    theme::palette().highlight
-}
 
 /// What turning copies into references says.
 pub(crate) fn recognised_message(n: usize, different: usize) -> String {

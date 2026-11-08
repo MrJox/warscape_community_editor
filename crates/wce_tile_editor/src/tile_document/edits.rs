@@ -1800,13 +1800,8 @@ impl TileDocument {
         renamed
     }
 
-    /// The copy being edited (Edit prefab), whose contents may change in structure too (`check_structure`); the tool says which.
-    pub fn set_unlocked_reference(&mut self, copy: Option<usize>) {
-        self.tile_mut().unlocked_reference = copy;
-    }
-
     /// A structural edit (adding, taking away, moving or grouping items) of items inside a prefab reference, or into one, is refused: what
-    /// changes in a reference's items is kept as overrides, values only. Not inside the copy being edited.
+    /// changes in a reference's items is kept as overrides, values only.
     ///
     /// # Errors
     ///
@@ -1814,18 +1809,15 @@ impl TileDocument {
     pub fn check_structure(&self, elems: &[usize], into: Option<usize>) -> Result<(), String> {
         let doc = self.tile().tscene().doc();
         let els = doc.elements();
-        let unlocked = self.tile().unlocked_reference;
         let locked = |e: usize, itself: bool| -> Option<usize> {
             let mut chain = std::iter::successors(if itself { Some(e) } else { els.get(e)?.parent }, |&p| els.get(p).and_then(|x| x.parent));
-            let r = chain.find(|&p| self.is_prefab_reference(p))?;
-            let open = std::iter::successors(Some(e), |&p| els.get(p).and_then(|x| x.parent)).any(|p| Some(p) == unlocked);
-            (!open).then_some(r)
+            chain.find(|&p| self.is_prefab_reference(p))
         };
 
         let hit = elems.iter().find_map(|&e| locked(e, false)).or_else(|| into.and_then(|i| locked(i, true)));
         match hit {
             Some(r) => Err(format!(
-                "that is part of the prefab {}: a reference's items change only in their values (overrides); Edit prefab changes the prefab, Unpack prefab makes it a plain group",
+                "that is part of the prefab {}: a reference's items change only in their values (overrides); Open in Prefab tool changes the prefab, Unpack prefab makes it a plain group",
                 self.prefab_key(r).unwrap_or_default()
             )),
 

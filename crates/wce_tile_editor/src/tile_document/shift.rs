@@ -142,7 +142,6 @@ impl Tile {
             map.second(&mut self.piece_props);
             map.second(&mut self.drafts);
             self.piece_pending = self.piece_pending.iter().filter_map(|&(e, k)| Some((map.map(e)?, k))).collect();
-            self.unlocked_reference = self.unlocked_reference.and_then(|e| map.map(e));
         }
 
         map.keys(self.siege_buildings.get_mut());

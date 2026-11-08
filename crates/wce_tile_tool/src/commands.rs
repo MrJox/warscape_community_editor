@@ -2140,19 +2140,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         selected(e).into_iter().find(|&el| d.tile().tscene().type_of(el) == "UserInstanceGroup")
     }
 
-    c.add("prefab_edit", "prefab_edit", "edit the selected copy of a prefab", |e, _| {
-        let Some(g) = selected_group(e) else { return fail("select a copy of a prefab") };
-        with_tile(e, |t, e| t.edit_prefab(e, g).map_or_else(fail, ok))
-    });
-
     c.add("prefab_open_in_tool", "prefab_open_in_tool", "open the selected copy's prefab in the Prefab tool", |e, _| {
         let Some(g) = selected_group(e) else { return fail("select a copy of a prefab") };
         with_tile(e, |t, e| t.open_in_prefab_tool(e, g).map_or_else(fail, ok))
-    });
-
-    c.add("prefab_apply", "prefab_apply", "write the edited prefab and update its copies in this tile", |e, _| with_tile(e, |t, e| t.apply_prefab_edit(e).map_or_else(fail, ok)));
-    c.add("prefab_cancel", "prefab_cancel", "end the prefab edit without saving: the copy gets the file's contents back", |e, _| {
-        with_tile(e, |t, e| t.cancel_prefab_edit(e).map_or_else(fail, ok))
     });
 
     c.add("prefab_recognise", "prefab_recognise", "make the instance groups that are exact copies of a prefab references to it (as opening a tile from the Assembly Kit does)", |e, _| {
