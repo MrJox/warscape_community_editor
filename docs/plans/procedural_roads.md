@@ -242,11 +242,27 @@ As the walls' solver, on the road's centre line (`road_layout`, a new module of 
    and `lf_offset` (its height, the ground's there, as the kit's tiles keep a freeform instance); they are applied to the prefab's
    contents (`prefab_refs::apply`) and the guides taken out, which gives the piece as a group: what is shown, and what an export lowers.
 
-Built as said (2026-11-08) but for junctions (R4) and fords (R5). An end within 1 m of the tile's edge gets no end piece. The bridges are
+Built as said (2026-11-08) but for fords (R5). An end within 1 m of the tile's edge gets no end piece. The bridges are
 still the kit's pieces until R6. The same piece repeats every 8 m (its rocks and puddle show the period, `the road on a kit tile` check):
 variants are the remedy, when a type has them.
 
 A road crossing another is still graded over it (the terrain part, as built); the junction pieces only cover the meeting.
+
+**Junctions** (R4, 2026-11-08; `road_layout::snap_ends`, `junctions`). Every road's line is known before any is laid:
+
+- **An end on a road.** A road's end within 8 m (`SNAP`) of another road's line, and more than 8 m from that road's own ends, is taken
+  onto it, for its terrain and its pieces alike (`roads()` in the document), so the road reaches it and its signature follows the other
+  road. A road's end within 1 m of another's line makes a `t_junction` on that road, its through arms along it and its branch along the
+  ending road; the ending road leaves the junction its last stretch and has no end piece there (`End::Joined`). Two ends meeting end to
+  end are not joined: two roads, each with its end.
+- **Two roads crossing**, more than 1 m from either's ends, make an `x_junction`, laid by the first of them in the document; the other
+  leaves it its stretch.
+- A junction's ports are where each road's line is its arms' length from the meeting in a straight line, as a corner's are, and it is the
+  size of the road that lays it. One with no room (too near an end) is reported and not made.
+- **Arms to ways**: a star piece's arms are matched to the roads' ways by the order whose angles between ways are nearest the piece's,
+  turning the same way (`arranged`, every order of up to 5 arms). So a T drawn with its branch on the right, laid with the branch on the
+  left, takes its through arms swapped and keeps its unbroken edge opposite the branch, and a corner the same (this replaced R3's swap).
+  Each arm then turns on its own to its way, so roads may meet at any angle.
 
 ### As walls do
 
@@ -322,7 +338,7 @@ bridges' models and rows into the tile's pack and `@wce_proc_data.pack`, and the
 | R1 | `WceRoadGuide`, `road_pieces::read` (arms, anchors), `roads_proc/base` written on mount, guides drawn in the Prefab tool and hidden in tiles | done (2026-11-08): the base pieces open in the Prefab tool and read back as their measures (`road_pieces` tests, `a_road_pieces_guides_show_on_the_prefab_stage_only`) |
 | R2 | `roads_proc/dirt` generated from the kit's decals | done (2026-11-08): every piece reads, its parts within the bend limit, no building (`road_dirt` tests); seen in the Prefab tool |
 | R3 | `road_layout`: features, stretches, fitting by overrides; the pieces as references, preview, lowering; `road_type`; old `road_detail` out | done (2026-11-08): a curved road with a sharp point and free ends lays dirt pieces that meet port to port (`road_layout` tests); drawn on a kit tile |
-| R4 | Junctions: T on a snapped end, X on a crossing | two crossing roads and a road ending on one |
+| R4 | Junctions: T on a snapped end, X on a crossing | done (2026-11-08): two crossing roads and a road ending 4 m short of one, every port meeting another (`road_layout` tests); drawn on a kit tile |
 | R5 | Crossings: water and drops found once, depth, fords | a shallow river forded, a deep one and a canyon left to bridges |
 | R6 | Bridges on `wce_walls`: bases, warp along the road's line and height, width, supports, logic, packs | `wall_tech_check`'s checks pass on a curved, sloped bridge |
 | R7 | In game (user): units on a ford and over a bridge, the AI's crossing | |
