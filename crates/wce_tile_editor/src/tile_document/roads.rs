@@ -1133,7 +1133,7 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
 /// The version of how roads are made, in every road's signature: a road's layers are saved with the tile and made again only when its
 /// signature changes, so a change to how they are made bumps this, or a tile keeps the old terrain (user 2026-11-08: the bridges' fixes
 /// did not show on a tile saved before them).
-const ROAD_MAKING: u32 = 8;
+const ROAD_MAKING: u32 = 9;
 
 /// How far past each rim of a bridge the road stays level with it (metres): its end piece's length (`bridge_wood_2_end`, 2 units: 1 m)
 /// and a height-map pixel more (2 m on a 64-density tile: the ground the game reads is interpolated between pixels, and at 1.5 the ramps'
@@ -1189,8 +1189,10 @@ fn road_strip(plan: &Plan, settings: &RoadSettings) -> Strip {
         for i in 0..plan.line.len() {
             let s = st.of_sample(i);
             let off = if s < sa { sa - s } else if s > sb { s - sb } else { 0.0 };
-            // Under the deck the ground stays at the road's height (the deck DECK_LIFT over it), the bank beside it held back.
-            if off <= 0.0 {
+            // Under the deck the ground stays at the road's height (the deck DECK_LIFT over it), the bank beside it held back; and under the
+            // end pieces too, level with the road across their whole width and past it (user 2026-11-08: the ground fell away towards one
+            // side of a ramp's foot, and units got on and off only by the corner where it met the ground).
+            if off <= LEVEL_PAST_RIM {
                 strip.under_deck(i, DECK_SIDE, 0.0);
             }
         }
