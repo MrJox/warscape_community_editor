@@ -193,23 +193,37 @@ fn main() {
         for (_, r) in &all {
             for q in r {
                 let (s, _, _) = nearest(&deck, [q[0], q[2]]);
+                // Past the deck's ends: its end ramps, down to the ground.
+                if s <= 0.1 || s >= deck.length() - 0.1 {
+                    continue;
+                }
+
                 if (deck.at(s).0[1] - q[1]).abs() > 0.1 {
                     off += 1;
                 }
             }
         }
 
-        // A ground platform past each end of the deck (the first piece's and the last one's), from the deck's end edge (two of its corners
-        // the deck platform's) down to the ground.
+        // Past each end of the deck (the first piece's and the last one's): a plain ramp sharing the deck's end edge, then a ground platform
+        // (`flag_2`) sharing the ramp's outer edge, running into the ground.
         let mut bad_ends = 0;
+        let same = |a: &[f64; 3], b: &[f64; 3]| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01 && (a[2] - b[2]).abs() < 0.01;
         for (piece, at) in [(0, 0.0), (ends.len() - 1, deck.length())] {
-            let theirs = grounds.iter().filter(|(p, r)| *p == piece && r.iter().any(|q| { let c = deck.at(at).0; (q[0] - c[0]).hypot(q[2] - c[2]) < width })).collect::<Vec<_>>();
-            let joined = theirs.len() == 1 && {
-                let r = &theirs[0].1;
-                let shared = r.iter().filter(|q| all.iter().filter(|(p, _)| *p == piece).any(|(_, d)| d.iter().any(|n| (n[0] - q[0]).abs() < 0.01 && (n[1] - q[1]).abs() < 0.01 && (n[2] - q[2]).abs() < 0.01))).count();
-                shared == 2 && r.iter().filter(|q| (q[1] + 20.0 + wce_walls::bridge::GROUND_PLATFORM_BURY).abs() < 0.01).count() == 2
+            let c = deck.at(at).0;
+            let near = |r: &Vec<[f64; 3]>| r.iter().any(|q| (q[0] - c[0]).hypot(q[2] - c[2]) < width);
+            let plain = all.iter().filter(|(p, _)| *p == piece).map(|(_, r)| r).collect::<Vec<_>>();
+            let ramp = plain.iter().find(|r| near(r) && r.iter().any(|q| (q[1] + 20.0 - wce_walls::bridge::RAMP_FOOT).abs() < 0.01));
+            let ground = grounds.iter().filter(|(p, r)| *p == piece && near(r)).map(|(_, r)| r).collect::<Vec<_>>();
+            let ok = match (ramp, ground.as_slice()) {
+                (Some(ramp), [g]) => {
+                    let to_deck = ramp.iter().filter(|q| plain.iter().any(|d| !std::ptr::eq(*d, *ramp) && d.iter().any(|n| same(n, q)))).count();
+                    let to_ground = g.iter().filter(|q| ramp.iter().any(|n| same(n, q))).count();
+                    let buried = g.iter().filter(|q| (q[1] + 20.0 + wce_walls::bridge::GROUND_PLATFORM_BURY).abs() < 0.01).count();
+                    to_deck == 2 && to_ground == 2 && buried == 2
+                }
+                _ => false,
             };
-            if !joined {
+            if !ok {
                 bad_ends += 1;
             }
         }

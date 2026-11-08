@@ -472,6 +472,11 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   platforms. Now the deck runs rim to rim only, `DECK_LIFT` (1 m) over the road profile, the ground under it kept at the road's height,
   and the ground platforms ramp from its ends down to the road 3 m out. No ramp mesh yet: the deck's ends stand in the air. To be
   checked in game.
+  In game units reached the ground platform and went no further (user, 2026-11-08). Rome II's `bridge_wood_complete` has the same
+  platforms as Attila's (tech_dump with `WCE_GAME_KEY=rome_2`): the deck, a plain ramp (flags false) 2 units from it down to 0.2 over
+  the ground, then the ground platform (`flag_2`) from there 6 units into the ground (3.4 and 3.7 under). The `flag_2` platform is the
+  link to the terrain, not to the deck. Each end now has both (`bridge::END_RAMP` 4 units, `RAMP_FOOT` 0.2, `GROUND_PLATFORM` 6,
+  `GROUND_PLATFORM_BURY` 3.5), the ramp sharing the deck's end edge and the ground platform the ramp's; `bridge_check` checks both.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,
