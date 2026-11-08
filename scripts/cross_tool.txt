@@ -1,6 +1,6 @@
 # Cross-tool composition (Phase 7): a tile lit by a weather file of the packs (no weather document needed), then the same file open in the weather tool
 # lighting the tile live while it is edited, one edit in each document, unsaved-changes prompts, Save All.
-# Run by scripts/cross_tool_check.sh (%TILE% is a copy of a kit tile, %OUT% a folder for the captures; the projects folder, where Save writes the
+# Run by scripts/cross_tool_check.sh (%TILE% is a copy of a vanilla kit tile in a scratch kit, %KIT% that kit, %OUT% a folder for the captures; the projects folder, where Save writes the
 # weather file, is a throw-away one: $WCE_PROJECTS).
 
 # the weather tool starts with its sample map; opening a tile hides that stand-in scene and puts the tile tool on top
@@ -99,6 +99,12 @@ assert_modified 0
 activate tile
 assert_modified 0
 assert_saved weather/charlemagne/med_sp_land_day_dry.environment
+# Save All writes the tile into the project (tile.wce), never into the kit
+expect_fail assert_file_exists "%TILE%/tile.ted.bak"
+echo kit copy untouched by Save All
+
+# File > Export > For Assembly Kit into the scratch kit: tile.ted as TEd reads it, the original kept as .bak (the script compares them)
+save_for_kit "%KIT%"
 assert_file_exists "%TILE%/tile.ted.bak"
 
 # hiding the environment's layer and the tile's, per document

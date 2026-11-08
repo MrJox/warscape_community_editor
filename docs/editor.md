@@ -158,8 +158,13 @@ switches to that tool (`open_path(..., switch_tool = false)` does not); `activat
 | Outliner | The documents of all tools are listed together: `[Tool] title *`, the checkbox is the document's layer visibility (`layer_visible <doc> 0\|1`), the context menu has Save, Close, Edit in its tool, Show only this document, Show all documents; the document lighting the scene says "(weather preview)". |
 | Test commands | `expect_fail <command...>`, `documents`, `activate`, `assert_preview`, `assert_prompt none\|close\|quit [N]`, `assert_layer_visible`. |
 
-Gate: `scripts/cross_tool_check.sh` (`cross_tool_check`): a copy of a kit tile and `med_sp_land_day_dry.environment` open at once, the tile lit by the file of the packs, then by the open document (the capture differs, follows an edit, equals the default light again with `tile_weather none`, and the file of the packs lights it again after the document closed), one edit in each, the prompts
-(close and quit, cancel, discard), Save All, and then `scripts/span_diff.py` shows that the saved `.environment` differs from the pack file in exactly the one value, `tile.ted` in exactly one span inside one tag, every other file of the tile is untouched and the `.bak` is the original; two runs write the same bytes and captures.
+Gate: `scripts/cross_tool_check.sh` (`cross_tool_check`): a copy of a vanilla kit tile (`dense_forest_rugged/1x1/aa`, in a scratch kit) and
+`med_sp_land_day_dry.environment` open at once, the tile lit by the file of the packs, then by the open document (the capture differs,
+follows an edit, equals the default light again with `tile_weather none`, and the saved file lights it after the document closed), one
+edit in each, the prompts (close and quit, cancel, discard), Save All (into the project: `tile.wce`, the weather file in `loose/`; the kit
+untouched), File > Export > For Assembly Kit into the scratch kit, Revert to game's version; then `scripts/span_diff.py` shows that the
+saved `.environment` differs from the pack file in exactly the one value, the exported `tile.ted` from the original in exactly one span
+inside one tag, every other file of the tile is untouched and the `.bak` is the original; two runs write the same bytes and captures.
 
 ## Saving and exporting
 
