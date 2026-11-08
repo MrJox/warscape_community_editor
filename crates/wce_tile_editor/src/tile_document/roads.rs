@@ -36,8 +36,9 @@ struct Road {
     /// The base its bridges are made from (`wce_walls::bridge::BASES`).
     bridge: String,
 
-    /// Its fences: on its left, on its right (as it runs).
+    /// Its fences: on its left, on its right (as it runs); and how many of them are destroyed (0 to 1: the chance each one is).
     fences: [bool; 2],
+    fence_damage: f64,
     signature: u64,
 }
 
@@ -193,8 +194,9 @@ impl Tile {
                 _ => [false, false],
             };
 
-            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type} {bridge} {fences:?} {water:x}"));
-            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, settings, road_type, bridge, fences, signature }
+            let fence_damage = number(e, "road_fence_damage", 0.0).clamp(0.0, 1.0);
+            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {water:x}"));
+            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, settings, road_type, bridge, fences, fence_damage, signature }
         }).collect()
     }
 
@@ -405,7 +407,17 @@ impl Tile {
         let frame = (p.unit_scale, p.border_m(), p.extent_x(), p.extent_z(), p.mpp_x(), p.mpp_z());
         let ground = super::jobs::Ground::of(p);
         self.road_making += 1;
-        let input = ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, making: self.road_making };
+        // How many destruction levels the pieces' buildings have (a fence destroyed takes one of them).
+        let mut levels = HashMap::new();
+        for p in pieces.values().flatten() {
+            for part in p.1.parts.iter().filter(|q| q.solid) {
+                if !levels.contains_key(&part.key) {
+                    levels.insert(part.key.clone(), self.building_levels(&part.key));
+                }
+            }
+        }
+
+        let input = ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, levels, making: self.road_making };
         self.road_items_job = Some(super::jobs::Job::spawn("road items", move || road_items(input)));
     }
 
@@ -450,6 +462,13 @@ impl Tile {
         }
 
         self.take_road_items(true);
+    }
+
+    /// How many destruction levels a building has: its piece files' `_destructNN` (1: one, intact).
+    fn building_levels(&self, key: &str) -> u32 {
+        let Some(files) = self.files.as_deref() else { return 1 };
+        let folder = wce_walls::building::folder(key);
+        files.list(&folder, ".rigid_model_v2").iter().filter(|p| wce_walls::building::is_piece_mesh(p)).map(|p| wce_walls::pieces::level_of(p)).max().unwrap_or(1).max(1)
     }
 
     /// A bridge base, turned and measured (`wce_walls::bridge::prepare`), read once.
@@ -714,6 +733,7 @@ struct ItemsInput {
     ground: super::jobs::Ground,
     pieces: HashMap<String, Pieces>,
     bases: HashMap<&'static str, Option<std::sync::Arc<wce_walls::bridge::Prepared>>>,
+    levels: HashMap<String, u32>,
     making: u64,
 }
 
@@ -729,7 +749,7 @@ pub(crate) struct ItemsMade {
 /// their bases (their files given back, to go among the generated ones). Off the editor's thread.
 fn road_items(i: ItemsInput) -> ItemsMade {
 wce_foundation::wce_prof!("tile.make_road_items");
-let ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, making } = i;
+let ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, levels, making } = i;
 let (unit, border, ex, ez, mx, mz) = frame;
 let mut items = vec![];
 let mut made = ItemsMade::default();
@@ -853,17 +873,69 @@ let mut planned = vec![];
             }
         }
 
-        // Its fences, along a line past its edge, stopping at what it holds: the fence piece laid along it as long as it is.
+        // Its fences: along a line past its edge up to what it holds, then round its corners and the junctions it lays from one arm's
+        // fence line to the next (`road_layout::star_fences`), the fence piece end to end at its own length; each tilted to the ground
+        // and, by the road's damage, destroyed or not.
         if let Some((_, p, key, children)) = piece("fence").filter(|_| road.fences.iter().any(|&f| f)) {
             let length = p.arms.first().map_or(wce_tile::road_pieces::FENCE, |a| a.length);
+            let offset = width * 0.5 + wce_tile::road_layout::FENCE_OUT;
+            let mut lines = vec![];
             for (side, on) in [(-1.0, road.fences[0]), (1.0, road.fences[1])] {
-                if !on {
-                    continue;
+                if on {
+                    let (fence_line, runs) = wce_tile::road_layout::fence_runs(&plan.line, &laid.held, side, offset, length);
+                    lines.push((fence_line, runs));
                 }
+            }
 
-                let (fence_line, runs) = wce_tile::road_layout::fence_runs(&plan.line, &laid.held, side, width * 0.5 + wce_tile::road_layout::FENCE_OUT, length);
-                for l in &runs {
-                    match fit(p, children, key, l, &Site { line: &fence_line, width: p.width, unit, ground: &terrain }) {
+            for l in &laid.laid {
+                let wce_tile::road_layout::Frame::Star { at, ways } = &l.frame else { continue };
+                let reach = match l.piece {
+                    "corner" => measures.corner_arm,
+                    other => piece(other).and_then(|q| q.1.arms.first()).map_or(measures.corner_arm, |a| a.length),
+                } * scale;
+
+                // The sector's side of the road as it runs through: from its first way (behind) to its second (ahead).
+                let t = [ways[1][0] - ways[0][0], ways[1][1] - ways[0][1]];
+                let fenced = |m: [f64; 2]| if m[0] * t[1] - m[1] * t[0] > 0.0 { road.fences[1] } else { road.fences[0] };
+                for star in wce_tile::road_layout::star_fences(*at, ways, reach, offset, &fenced) {
+                    // An arc much shorter than a fence, or whose ends are (a junction's inside corner), is left open: a fence
+                    // across it stood diagonally into the road.
+                    let st = Stations::new(&star);
+                    let (first, last) = (star[0], star[star.len() - 1]);
+                    if st.length() < length * 0.75 || (first[0] - last[0]).hypot(first[1] - last[1]) < length * 0.75 {
+                        continue;
+                    }
+
+                    let runs = wce_tile::road_layout::fences_between(0.0, st.length(), length);
+                    lines.push((star, runs));
+                }
+            }
+
+            let mut k = 0u64;
+            for (fence_line, runs) in &lines {
+                for l in runs {
+                    k += 1;
+                    let n = k;
+                    let damage = |_: usize, part: &wce_tile::road_pieces::Part| {
+                        let max = levels.get(&part.key).copied().unwrap_or(1);
+                        let roll = |salt: u64| {
+                            let mut h = u64::from(road.settings.seed).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(road.id).rotate_left(17) ^ n.wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ salt;
+                            h ^= h >> 31;
+                            h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                            h ^= h >> 29;
+                            (h >> 11) as f64 / (1u64 << 53) as f64
+                        };
+
+                        if !part.solid || max < 2 || roll(1) >= road.fence_damage {
+                            return vec![];
+                        }
+
+                        let level = 1 + (roll(2) * f64::from(max - 1)).floor().min(f64::from(max - 2)) as u32;
+                        vec![("destruction_level".to_owned(), level.to_string())]
+                    };
+
+                    let dress = wce_tile::road_layout::Dress { tilt: true, attrs: Some(&damage) };
+                    match wce_tile::road_layout::fit_dressed(p, children, key, l, &Site { line: fence_line, width: p.width, unit, ground: &terrain }, &dress) {
                         Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
                         Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
                     }

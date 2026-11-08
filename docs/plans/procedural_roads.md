@@ -291,6 +291,20 @@ from Assembly Kit drops that layer and restores the road.
   port to port about the inside of the turn (radius 6 at the centre, the outer edge 9, the inner 3), in chords, laid as road (`surface`)
   so that a wider road widens it, each chord with the arm it is nearer. It replaced the L of two arms' ruts and edges with a square patch at
   the outer corner, which was too abrupt.
+- **Fences round corners and junctions** (user, 2026-11-08). Between each two arms next to each other of a corner or a junction the road
+  lays, a fence runs on the arc that meets both arms' fence lines square at their ports (`road_layout::star_fences`): round the outside of
+  a corner (radius 10 for a square one), straight along a junction's through side; an arc shorter than three quarters of a fence, or whose
+  ends are that close (a square inside corner, 2 m about its middle), is left open: a fence across it stood diagonally into the road.
+  Which sides: those of the road laying the piece, as it runs through it. Along the road the fences now cover each free stretch end to end
+  (`fences_between`: the first from its start, the last to its end, those between spread, overlapping a little), so they meet the arcs.
+- **Fences follow the ground**: a road piece's buildings are tilted to the ground under them (`fit_dressed`, `Dress::tilt`: the slope
+  along them from end to end, 2 m each way, and across, 0.5 m), their up onto its normal, their heading kept.
+- **Destroyed fences**: `road_fence_damage` (0 to 1) is the chance each fence is destroyed: a destroyed one takes a random damaged
+  `destruction_level` (1 to its building's last; `lowfence_3` has one), from the road's seed, so it stays as it was. Checked: 48 of 121 at 0.4.
+- **Junctions' curves**: the T's branch turns into the through road either way and the X has a turn in each quarter: ruts and the inside
+  edges on quarter circles about the inside corners (`road_dirt::quarter`, as the corner's), in place of two pairs of straight ruts crossing
+  and L-shaped inside edges. The kit's bent rut (`path_2`) was measured for it (a capture traced from above): it turns about 25 degrees
+  over its length after a straight start, too little for a junction's turn alone, so the turns are chords of `path_1`.
 
 ## Crossings (redesign, 2026-11-08)
 
