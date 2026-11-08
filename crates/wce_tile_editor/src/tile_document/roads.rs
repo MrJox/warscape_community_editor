@@ -1119,7 +1119,7 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
 /// The version of how roads are made, in every road's signature: a road's layers are saved with the tile and made again only when its
 /// signature changes, so a change to how they are made bumps this, or a tile keeps the old terrain (user 2026-11-08: the bridges' fixes
 /// did not show on a tile saved before them).
-const ROAD_MAKING: u32 = 4;
+const ROAD_MAKING: u32 = 5;
 
 /// How far a bridge's deck stands over the road under it (metres): more than a unit steps up (Rome II's are about 0.6 over the ground
 /// at their ends; 1 to be sure, user 2026-11-08).
