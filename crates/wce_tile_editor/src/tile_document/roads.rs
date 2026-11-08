@@ -35,6 +35,9 @@ struct Road {
 
     /// The base its bridges are made from (`wce_walls::bridge::BASES`).
     bridge: String,
+
+    /// Its fences: on its left, on its right (as it runs).
+    fences: [bool; 2],
     signature: u64,
 }
 
@@ -183,8 +186,15 @@ impl Tile {
             let sharp = self.road_sharp(e, &line);
             let road_type = doc.get(e, "road_type").filter(|t| !t.is_empty()).unwrap_or_else(|| wce_tile::road_dirt::TYPE.to_owned());
             let bridge = doc.get(e, "road_bridge").filter(|b| wce_walls::bridge::base(b).is_some()).unwrap_or_else(|| wce_walls::bridge::BASES[0].name.to_owned());
-            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type} {bridge} {water:x}"));
-            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, settings, road_type, bridge, signature }
+            let fences = match doc.get(e, "road_fences").as_deref() {
+                Some("left") => [true, false],
+                Some("right") => [false, true],
+                Some("both") => [true, true],
+                _ => [false, false],
+            };
+
+            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type} {bridge} {fences:?} {water:x}"));
+            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, settings, road_type, bridge, fences, signature }
         }).collect()
     }
 
@@ -840,6 +850,24 @@ let mut planned = vec![];
             match fit(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }) {
                 Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
                 Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
+            }
+        }
+
+        // Its fences, along a line past its edge, stopping at what it holds: the fence piece laid along it as long as it is.
+        if let Some((_, p, key, children)) = piece("fence").filter(|_| road.fences.iter().any(|&f| f)) {
+            let length = p.arms.first().map_or(wce_tile::road_pieces::FENCE, |a| a.length);
+            for (side, on) in [(-1.0, road.fences[0]), (1.0, road.fences[1])] {
+                if !on {
+                    continue;
+                }
+
+                let (fence_line, runs) = wce_tile::road_layout::fence_runs(&plan.line, &laid.held, side, width * 0.5 + wce_tile::road_layout::FENCE_OUT, length);
+                for l in &runs {
+                    match fit(p, children, key, l, &Site { line: &fence_line, width: p.width, unit, ground: &terrain }) {
+                        Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
+                        Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
+                    }
+                }
             }
         }
     }

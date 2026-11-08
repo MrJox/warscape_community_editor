@@ -43,6 +43,9 @@ pub fn all_written(prefab_root: &Path) -> bool {
     !road_pieces::generated_stale(prefab_root, TYPE, &pieces())
 }
 
+/// The kit's fence the dirt road's fence piece is (`lowfence_3`, about 5 m long along its x: the kit's road prefabs space them so).
+pub const FENCE_KEY: &str = "lowfence_3";
+
 /// How tall a decal's box is (metres): enough for a road's banks.
 const DEPTH: f64 = 15.0;
 
@@ -178,17 +181,37 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
         }
 
         "corner" => {
-            // From the back (-z) turning right (+x): each arm's ruts run on across the middle, the outer edge round the corner.
-            out.extend(ruts(-j, 1.5));
-            out.extend(ruts_x(-1.5, j));
-            out.push(worn_middle([1.0, 1.0]));
-            out.push(border_z("border_1", -h, -j, h + 0.5));
-            out.push(border_x("border_1", h, -h - 0.5, j));
-            out.push(decal("border_2", [-h, h], UP, 2.5, 2.5, Some("fixed")));
-            out.push(border_z("border_2", h, -j, -h + 0.5));
-            out.push(border_x("border_2", -h, h - 0.5, j));
-            out.push(decal("global_terrain_rocks_04", [-h - 0.4, h + 0.4], UP, 2.5, 2.5, None));
-            out.push(decal("global_terrain_rocks_01", [h - 0.2, -h + 0.2], UP, 2.5, 2.5, None));
+            // From the back (-z) turning right (+x), as a quarter circle from port to port about the inside of the turn (user 2026-11-08:
+            // the L of two arms' ruts and edges was too abrupt): the ruts and the edges along it in chords, the outer edge's lip out
+            // of the road, the inner's too (towards the turn's middle). Each part goes with the arm it is nearer; as a road (`surface`), so
+            // that a wider road widens it.
+            let (c, r) = ([road_pieces::JUNCTION * 0.5, -road_pieces::JUNCTION * 0.5], road_pieces::JUNCTION * 0.5);
+            let arc = |rr: f64, n: u32, name: &str, width: f64, out_side: bool, out: &mut Vec<Vec<u8>>| {
+                let step = std::f64::consts::FRAC_PI_2 / f64::from(n);
+                for k in 0..n {
+                    let t = (f64::from(k) + 0.5) * step;
+                    let at = [c[0] - rr * t.cos(), c[1] + rr * t.sin()];
+                    let way = [t.sin(), t.cos()];
+                    // The lip is on the right of the way the decal's x runs: the outer edge's runs back.
+                    let way = if out_side { [-way[0], -way[1]] } else { way };
+                    out.push(decal(name, at, way, rr * step + 2.0 * OVERLAP, width, Some("surface")));
+                }
+            };
+
+            arc(r + h, 4, "border_1", BORDER, true, &mut out);
+            arc(r - h, 2, "border_2", BORDER, false, &mut out);
+            arc(r + 1.3, 3, "path_1", RUT, false, &mut out);
+            arc(r - 1.3, 2, "path_1", RUT, true, &mut out);
+            out.push(decal("global_terrain_rocks_04", [-h - 1.2, h + 1.2], UP, 2.5, 2.5, None));
+            out.push(decal("global_terrain_rocks_01", [h + 0.6, -h - 0.6], UP, 2.5, 2.5, None));
+        }
+
+        "fence" => {
+            // One fence along the road, its x along it (as the kit's prefabs have them), where the fence line is.
+            out.push(format!(
+                "<BUILDING_INSTANCE flags=\" OIF_VISIBLE|OIF_ACTIVE\" key=\"{FENCE_KEY}\" name=\"{FENCE_KEY}\" surface_mode=\"MSM_LANDSCAPE\" position=\"vector(0,0,0)\" orientation=\"euler({},0,0)\" {ANCHOR_ATTR}=\"fixed\"/>\n",
+                crate::ted_scene::format_number(-std::f64::consts::FRAC_PI_2)
+            ).into_bytes());
         }
 
         "t_junction" => {
@@ -256,7 +279,7 @@ mod tests {
 
     #[test]
     fn every_dirt_piece_reads_and_its_parts_fit() {
-        for piece in PIECES {
+        for piece in PIECES.into_iter().filter(|&p| p != "fence") {
             let mut children = base_guides(piece);
             children.extend(parts(piece));
             let p = read(&group_text(&key(TYPE, piece), &children)).unwrap();
@@ -279,10 +302,37 @@ mod tests {
                     assert_eq!(q.anchor, Anchor::Surface, "{piece}: {q:?}");
                 }
 
-                if name.starts_with("border_1") {
+                // The corner's edges are arcs, laid as the road is (`surface`).
+                if name.starts_with("border_1") && piece != "corner" {
                     assert_eq!(q.anchor, Anchor::Edge, "{piece}: {q:?}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn the_fence_is_one_building_along_its_line() {
+        let mut children = base_guides("fence");
+        children.extend(parts("fence"));
+        let p = read(&group_text(&key(TYPE, "fence"), &children)).unwrap();
+        assert!(p.notes.is_empty(), "{:?}", p.notes);
+        assert_eq!(p.parts.len(), 1);
+        let q = &p.parts[0];
+        assert!(q.solid && q.key == FENCE_KEY && q.anchor == Anchor::Fixed, "{q:?}");
+        assert!(q.turn.sin().abs() < 1e-6 && q.across.abs() < 1e-9, "its x along the line: {q:?}");
+    }
+
+    #[test]
+    fn the_corner_runs_round_from_port_to_port() {
+        let mut children = base_guides("corner");
+        children.extend(parts("corner"));
+        let p = read(&group_text(&key(TYPE, "corner"), &children)).unwrap();
+        // The outer edge's chords lie on a quarter circle of radius 9 about (6, -6): none at the L's corner (-3, 3) any more.
+        let outer = p.parts.iter().filter(|q| q.key.contains("border_1")).collect::<Vec<_>>();
+        assert_eq!(outer.len(), 4);
+        for q in outer {
+            let r = (q.at[0] - 6.0).hypot(q.at[1] + 6.0);
+            assert!((r - 9.0).abs() < 1e-6, "{r}");
         }
     }
 

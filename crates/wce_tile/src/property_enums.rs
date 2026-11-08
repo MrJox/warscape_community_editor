@@ -197,6 +197,9 @@ pub const DEPLOYMENT_TYPE: &[(&str, &str)] = &[
     ("EDZT_4V4", "4v4"),
 ];
 
+/// Not TEd's: the sides a `WceRoadSpline` has fences on, as it runs.
+pub const ROAD_FENCES: &[(&str, &str)] = &[("none", "None"), ("left", "Left"), ("right", "Right"), ("both", "Both")];
+
 /// Not TEd's: the bases a `WceRoadSpline`'s bridges are generated from, by the names of `wce_walls::bridge::BASES`.
 pub const ROAD_BRIDGE: &[(&str, &str)] = &[("wood", "Wood (bridge_wood_2)"), ("stone", "Stone (bridge_stone_1)")];
 

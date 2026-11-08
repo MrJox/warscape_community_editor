@@ -279,6 +279,19 @@ change, kept by that signature, not saved in tile.wce. Not selectable one by one
 game export lower them into the top layer *WCE procedural roads*, the references baked to groups (as every reference is for TEd); Import
 from Assembly Kit drops that layer and restores the road.
 
+## Fences and rounder corners (user, 2026-11-08)
+
+- **Fences, optional per road** (`road_fences`: none, left, right, both, as the road runs). A road type has a `fence` piece
+  (`road_<type>_fence`: a fence's line, 5 m long and 1 m wide, its guides as a straight's; dirt's is one `lowfence_3`, its x along the line,
+  as the kit's path prefabs place theirs about every 5 m; the base's has nothing). Fences are not laid on the road but along a line 1 m past
+  its edge (`road_layout::fence_runs`), end to end at the piece's own length (never stretched), each run centred in a stretch the road holds
+  nothing on: they stop 0.5 m short of its corners, junctions, bridges, fords and end pieces (`Layout::held`). `lowfence_3` is a low
+  dry-stone wall; another fence is the piece's to change.
+- **The corner piece is a rounded turn** (the road's line and terrain stay as they are): dirt's ruts and edges follow a quarter circle from
+  port to port about the inside of the turn (radius 6 at the centre, the outer edge 9, the inner 3), in chords, laid as road (`surface`)
+  so that a wider road widens it, each chord with the arm it is nearer. It replaced the L of two arms' ruts and edges with a square patch at
+  the outer corner, which was too abrupt.
+
 ## Crossings (redesign, 2026-11-08)
 
 What a road crosses is found once, on what lies below its layers, and both the terrain and the pieces read it (the first version found its
