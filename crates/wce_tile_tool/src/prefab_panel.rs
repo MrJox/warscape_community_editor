@@ -161,6 +161,14 @@ impl TileTool {
         }
 
         let folders = self.prefab_folders(e);
+
+        // The road pieces' placeholders, in the projects' folder of this game where they are missing (docs/plans/procedural_roads.md).
+        match wce_tile::road_pieces::write_base(&folders[0]) {
+            Ok(written) if !written.is_empty() => wce_foundation::log::info(format!("road pieces: {} base piece(s) written to {}", written.len(), folders[0].join(wce_tile::road_pieces::FOLDER).display())),
+            Ok(_) => {}
+            Err(err) => wce_foundation::log::warn(format!("road pieces: {err}")),
+        }
+
         let lib = Arc::new(PrefabLibrary::scan_folders(&folders));
         self.prefabs = Some(lib.clone());
         if let Ok(mut base) = self.prefab_base.lock() {

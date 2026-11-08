@@ -925,7 +925,7 @@ impl TedScene {
             "NOGO_REGION_POLYGON_INSTANCE" => set("line_colour", "argb(0.65,0.0,0.0,1.0)"),
             "SIEGE_AI_POLYGON_INSTANCE" => set("polygon_closed", "0"),
             // Not TEd's: a procedural wall (docs/plans/procedural_walls.md), with its template's values.
-            crate::new_instances::WALL_SPLINE | crate::new_instances::ROAD_SPLINE => {
+            crate::new_instances::WALL_SPLINE | crate::new_instances::ROAD_SPLINE | crate::new_instances::ROAD_GUIDE => {
                 for (k, v) in crate::new_instances::template(kind).map_or(&[][..], |t| t.attrs) {
                     if !matches!(*k, "position" | "name" | "area") {
                         set(k, v);

@@ -4,6 +4,7 @@
 pub mod link_checks;
 pub mod resize;
 pub mod road_detail;
+pub mod road_pieces;
 pub mod roads;
 pub mod terrain_layers;
 pub mod tile_sets;

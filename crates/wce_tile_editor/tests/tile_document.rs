@@ -1354,6 +1354,38 @@ fn import_from_the_kit_puts_the_walls_back_in_place_of_their_pieces() {
 }
 
 #[test]
+fn a_road_pieces_guides_show_on_the_prefab_stage_only() {
+    use wce_scene::render_scene::RenderScene;
+    use wce_tile::road_pieces::{base_guides, group_text};
+
+    // A base piece placed in a tile, and the same piece as the Prefab tool's stage holds it.
+    let piece = String::from_utf8(group_text("road_base_straight", &base_guides("straight"))).unwrap();
+    let staged = piece.replacen("<UserInstanceGroup ", "<UserInstanceGroup wce_stage_root=\"true\" ", 1);
+    let inside = format!("{piece}{staged}").lines().map(|l| format!("                        {l}
+")).collect::<String>();
+    let ted = TED.replacen("                    </children>
+                </LayerInstance>", &format!("{inside}                    </children>
+                </LayerInstance>"), 1);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("tile.ted"), &ted).unwrap();
+    let mut d = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
+    let check = |d: &TileDocument| {
+        let t = d.tile();
+        let guides = t.tscene().find_all(wce_tile::new_instances::ROAD_GUIDE);
+        assert_eq!(guides.len(), 14);
+        let (tile, stage) = guides.split_at(7);
+        assert!(tile.iter().all(|&g| !t.shown(g)) && stage.iter().all(|&g| t.shown(g)), "in a tile hidden, on the stage shown");
+        assert!(t.is_polygon(guides[0]));
+    };
+
+    check(&d);
+    let mut scene = RenderScene::default();
+    let layer = scene.add_layer(d.id(), "tile");
+    d.publish(&mut scene, layer);
+    check(&d);
+}
+
+#[test]
 fn a_wall_is_drawn_as_the_create_panel_draws_it() {
     use wce_tile_editor::tile_document::WALL_SPLINE;
 
