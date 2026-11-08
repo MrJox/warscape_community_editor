@@ -519,6 +519,11 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   to no ground and only the ramp's sides could. An end piece's collision outlines and `orange_thingies` ring are now made from its
   platform's corners in the other order (`footprint_from_platform`, `Ends::EndPiece`), as the kit's are; `bridge_check` reports 2 of 2
   foot edges along the outline for the generated end pieces and for a dry launch's pack (the kit's: 1 of 1).
+  Then units crossed, by one half of each end (user, 2026-11-08): the game links one edge per platform and ground region, and one per
+  pair of platforms, and the foot and the deck-to-end joint were each split in two by a middle corner of the warp's. The bridge pieces'
+  platforms drop corners lying on the line through their neighbours (`without_inline_corners`, within 0.02), so each end has one
+  full-width foot edge and one full-width joint, as the kit's. `bridge_check` fails a foot split into several edges and an end piece not
+  joined to the deck by one whole edge (both caught on the previous generator).
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,

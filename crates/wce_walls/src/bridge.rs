@@ -405,7 +405,7 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp, ends: Ends) -> 
             *bytes = crate::mesh::warp_mesh(bytes, warp, &cuts)?;
         } else if *name == logic_name {
             let warped = crate::logic::warp_logic(bytes, warp, &cuts)?.0;
-            let made = with_ground_platforms(&warped, base, warp, ends)?;
+            let made = without_inline_corners(&with_ground_platforms(&warped, base, warp, ends)?)?;
             *bytes = if ends == Ends::EndPiece { footprint_from_platform(&made)? } else { made };
         } else if *name == zones_name {
             *bytes = crate::zones::warp_zones(&String::from_utf8_lossy(bytes), warp, STEP)?.into_bytes();
@@ -515,6 +515,58 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode:
             crate::logic::wind_as_the_game(&mut platform);
             if let Some(ps) = d["platforms"].as_array_mut() {
                 ps.push(platform);
+            }
+        }
+    }
+
+    encode(v)
+}
+
+/// How far a platform corner may be off the line through its neighbours and still be dropped (scene units).
+const INLINE: f64 = 0.02;
+
+/// A piece's platforms without the corners that lie on the line through their neighbours (the warp's cuts leave some across the deck's
+/// ends and the end pieces' feet). The game links one edge per pair of platforms, and one per platform and ground region
+/// (docs/re/platforms_and_bridges.md): a foot or a joint split in two by such a corner linked by half its width only (user 2026-11-08:
+/// units crossed by one side of each end).
+fn without_inline_corners(logic: &[u8]) -> Result<Vec<u8>, String> {
+    let mut v = decode(logic)?;
+    for piece in v["pieces"].as_array_mut().into_iter().flatten() {
+        for d in piece["destructs"].as_array_mut().into_iter().flatten() {
+            for p in d["platforms"].as_array_mut().into_iter().flatten() {
+                let Some(o) = p["vertices"]["outline"].as_array().cloned() else { continue };
+                let pt = |q: &Value| [q["x"].as_f64().unwrap_or(0.0), q["y"].as_f64().unwrap_or(0.0), q["z"].as_f64().unwrap_or(0.0)];
+                let mut kept = o.clone();
+                loop {
+                    let n = kept.len();
+                    if n <= 3 {
+                        break;
+                    }
+
+                    let drop = (0..n).find(|&i| {
+                        let (a, b, c) = (pt(&kept[(i + n - 1) % n]), pt(&kept[i]), pt(&kept[(i + 1) % n]));
+                        let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+                        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                        let l2 = ac[0] * ac[0] + ac[1] * ac[1] + ac[2] * ac[2];
+                        if l2 < 1e-12 {
+                            return true;
+                        }
+
+                        let t = ((ab[0] * ac[0] + ab[1] * ac[1] + ab[2] * ac[2]) / l2).clamp(0.0, 1.0);
+                        let off = [ab[0] - ac[0] * t, ab[1] - ac[1] * t, ab[2] - ac[2] * t];
+                        (off[0] * off[0] + off[1] * off[1] + off[2] * off[2]).sqrt() <= INLINE
+                    });
+                    match drop {
+                        Some(i) => {
+                            kept.remove(i);
+                        }
+                        None => break,
+                    }
+                }
+
+                if kept.len() != o.len() {
+                    p["vertices"]["outline"] = Value::Array(kept);
+                }
             }
         }
     }

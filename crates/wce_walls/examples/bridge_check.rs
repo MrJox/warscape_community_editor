@@ -121,8 +121,11 @@ fn ramps_reach_the_ground<'a>(files: impl Iterator<Item = (&'a str, &'a [u8])>) 
         }
 
         let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
-        let good = along == feet;
-        println!("  {name}: {along} of its ramps' {feet} foot edge(s) along its collision outline{}", if good { "" } else { ": the ground cannot link to the rest, FAIL" });
+        // One foot edge, along the outline: the game links one edge per platform and ground region (docs/re/platforms_and_bridges.md), so
+        // a foot split in two is crossed by one half only.
+        let good = along == feet && feet == 1;
+        let why = if along != feet { ": the ground cannot link to the rest, FAIL" } else if feet > 1 { ": split, the game links one of them only, FAIL" } else { "" };
+        println!("  {name}: {along} of its ramps' {feet} foot edge(s) along its collision outline{why}");
         ok &= good;
     }
 
@@ -335,7 +338,14 @@ fn main() {
 
             for (k, part) in parts.iter().enumerate().filter(|(_, p)| p.end) {
                 let ramps = all.iter().filter(|(p, _)| *p == k).map(|(_, r)| r).collect::<Vec<_>>();
-                let joined = ramps.iter().any(|r| all.iter().any(|(p, d)| !parts[*p].end && shared(r, d) >= 2));
+                // Joined as the game links platforms (docs/re/platforms_and_bridges.md): an edge of the ramp with the same two corners as an
+                // edge of the deck, run the other way, and only one link per pair: that edge must span the deck's whole end (its corners the
+                // ramp's two corners on the deck's side, nothing between).
+                let edges = |r: &[[f64; 3]]| (0..r.len()).map(|i| (r[i], r[(i + 1) % r.len()])).collect::<Vec<_>>();
+                let joined = ramps.iter().any(|r| all.iter().filter(|(p, _)| !parts[*p].end).any(|(_, d)| {
+                    let on_deck = r.iter().filter(|q| d.iter().any(|n| same(n, q))).count();
+                    on_deck == 2 && edges(r).iter().any(|(a, b)| edges(d).iter().any(|(c, e)| same(a, e) && same(b, c)))
+                }));
                 let top = part.deck.at(part.s.1).0[1];
                 let drop = ramps.iter().flat_map(|r| r.iter()).map(|q| top - q[1]).fold(f64::MIN, f64::max);
                 if !joined || (drop - 1.0).abs() > 0.05 {
