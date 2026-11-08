@@ -446,6 +446,12 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   the deck's edge to 10 m along the water (`road_layout::nogo_region`, `side_outline`; export only, as the crossing's hint). Vanilla's
   river crossings have none there (5 of 6 checked; they have the nogo map). The platform is the kit's own (`bridge_wood_2`: one at deck
   height, 10 x 20 m, its flags all false, as every wall's), bent along the deck.
+- **Ground platforms at the ends** (user, 2026-11-08: units still red-crossed the far end, and went round the bridge's sides). The kit's
+  `bridge_wood_complete` (tech_dump) is its deck (1.2 up, flags false), a 2-unit ramp at each end down to 0.2 (flags false), and past each
+  ramp a platform down to the terrain, 6 units long, `flag_2` set: the editor draws it as ground. A generated bridge's first and last
+  pieces now get one past each end of the deck (`bridge::with_ground_platforms`, `GROUND_PLATFORM`: 3 m): from the deck platform's end
+  edge (its two corners shared, as the game's pieces join platforms) on along the road down to the ground, `flag_2` set, wound as the
+  game's. The deck's own 2 m on the road stands for the kit's ramp. `bridge_check` checks each end has one, joined to the deck.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,

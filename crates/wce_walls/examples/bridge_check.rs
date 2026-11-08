@@ -13,8 +13,8 @@ use wce_vfs::{Config, GameProfile, Vfs};
 use wce_walls::bridge::{BASES, BridgeWarp, Deck, make_piece, piece_stretches, prepare};
 use wce_walls::building::{BuildingFiles, is_piece_mesh};
 
-/// The intact platforms of a logic file, as their corners.
-fn platforms(bytes: &[u8]) -> Vec<Vec<[f64; 3]>> {
+/// The intact platforms of a logic file, as their corners, and whether each is a ground one (`flag_2`).
+fn platforms(bytes: &[u8]) -> Vec<(Vec<[f64; 3]>, bool)> {
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).expect("a logic file");
     let v = serde_json::to_value(&parsed).expect("json");
     let mut out = vec![];
@@ -25,7 +25,7 @@ fn platforms(bytes: &[u8]) -> Vec<Vec<[f64; 3]>> {
                 let f = |k: &str| q[k].as_f64().unwrap_or(0.0);
                 [f("x"), f("y"), f("z")]
             }).collect::<Vec<_>>();
-            out.push(pts);
+            out.push((pts, p["flag_2"].as_bool() == Some(true)));
         }
     }
 
@@ -108,6 +108,7 @@ fn main() {
         let stretches = piece_stretches(&deck, &base);
         let mut all: Vec<(usize, Vec<[f64; 3]>)> = vec![];
         let mut ends: Vec<((f64, f64), [f64; 3])> = vec![];
+        let mut grounds: Vec<(usize, Vec<[f64; 3]>)> = vec![];
         for (k, &(s, origin)) in stretches.iter().enumerate() {
             let warp = BridgeWarp { deck: &deck, base: &base, s, across, origin, ground: &ground };
             let key = format!("wce_check_bridge_{}_{k:02}", b.name);
@@ -121,8 +122,13 @@ fn main() {
             }
 
             let logic = made.files.get(&made.logic_name()).expect("a logic file");
-            for p in platforms(logic) {
-                all.push((k, p.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect()));
+            for (p, ground) in platforms(logic) {
+                let r = p.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect::<Vec<_>>();
+                if ground {
+                    grounds.push((k, r));
+                } else {
+                    all.push((k, r));
+                }
             }
 
             ends.push((s, origin));
@@ -193,8 +199,23 @@ fn main() {
             }
         }
 
-        println!("  gaps along the deck: {gaps}; platforms stacked: {stacked}; joint corners unmatched: {loose}; corners off the deck: {off}");
-        if gaps + stacked + loose + off > 0 {
+        // A ground platform past each end of the deck (the first piece's and the last one's), from the deck's end edge (two of its corners
+        // the deck platform's) down to the ground.
+        let mut bad_ends = 0;
+        for (piece, at) in [(0, 0.0), (ends.len() - 1, deck.length())] {
+            let theirs = grounds.iter().filter(|(p, r)| *p == piece && r.iter().any(|q| { let c = deck.at(at).0; (q[0] - c[0]).hypot(q[2] - c[2]) < width })).collect::<Vec<_>>();
+            let joined = theirs.len() == 1 && {
+                let r = &theirs[0].1;
+                let shared = r.iter().filter(|q| all.iter().filter(|(p, _)| *p == piece).any(|(_, d)| d.iter().any(|n| (n[0] - q[0]).abs() < 0.01 && (n[1] - q[1]).abs() < 0.01 && (n[2] - q[2]).abs() < 0.01))).count();
+                shared == 2 && r.iter().filter(|q| (q[1] + 20.0).abs() < 0.01).count() == 2
+            };
+            if !joined {
+                bad_ends += 1;
+            }
+        }
+
+        println!("  gaps along the deck: {gaps}; platforms stacked: {stacked}; joint corners unmatched: {loose}; corners off the deck: {off}; ends without a ground platform: {bad_ends} ({} made)", grounds.len());
+        if gaps + stacked + loose + off + bad_ends > 0 {
             failed = true;
         }
     }

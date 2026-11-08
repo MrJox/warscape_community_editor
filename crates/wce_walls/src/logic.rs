@@ -968,7 +968,7 @@ const CONVEX: f32 = 2e-3;
 /// A platform's corners in the order the game's go round (every platform of the game's pieces, its stairs too: clockwise seen from
 /// above, a negative area over x and z). Two neighbours then run their shared edge opposite ways; the stairs, made the other way round,
 /// were the only platforms that did not, and units never stepped onto them (user 2026-11-05).
-fn wind_as_the_game(p: &mut Value) {
+pub(crate) fn wind_as_the_game(p: &mut Value) {
     let o = outline(&p["vertices"]);
     let area = (0..o.len()).map(|i| {
         let (a, b) = (o[(i + o.len() - 1) % o.len()], o[i]);
