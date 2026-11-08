@@ -78,7 +78,8 @@ fn extent(files: &dyn Files, key: &str) -> Option<(f64, f64)> {
 pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files: &dyn Files, schema: &Schema, prefix: &str, into: Option<&str>) -> Result<LoweredWalls, String> {
     let mut out = LoweredWalls::default();
     let walls = scene::walls(scene);
-    if walls.is_empty() {
+    let spans = scene.find_all(crate::bridge::BRIDGE_SPAN);
+    if walls.is_empty() && spans.is_empty() {
         return Ok(out);
     }
 
@@ -121,7 +122,29 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         None if p.doors.contains(&i) => p.layout.profile.door,
         None => p.layout.profile.key,
     };
-    let renames = planned.iter().flat_map(|p| p.keys.iter().enumerate().map(move |(i, k)| (base_of(p, i).to_owned(), k.clone()))).collect::<Vec<_>>();
+    let mut renames = planned.iter().flat_map(|p| p.keys.iter().enumerate().map(move |(i, k)| (base_of(p, i).to_owned(), k.clone()))).collect::<Vec<_>>();
+
+    // The roads' bridges (`bridge::BRIDGE_SPAN`): each cut into pieces of its base, keyed `<prefix>_r<n>_<k>`.
+    let mut prepared: HashMap<String, Option<crate::bridge::Prepared>> = HashMap::new();
+    let mut bridges = vec![];
+    for (n, &e) in spans.iter().enumerate() {
+        let Some((key, deck, width)) = crate::bridge::span_of(scene, e) else {
+            out.notes.push(format!("bridge {n}: no base or fewer than 2 points, left out"));
+            continue;
+        };
+
+        let base = prepared.entry(key.clone()).or_insert_with(|| BuildingFiles::read_files(files, &key).ok().and_then(|b| crate::bridge::prepare(&b).ok()));
+        let Some(base) = base.as_ref() else {
+            out.notes.push(format!("bridge {n}: its base {key} is in no pack, left out"));
+            continue;
+        };
+
+        let stretches = crate::bridge::piece_stretches(&deck, base);
+        let keys = (0..stretches.len()).map(|k| format!("{prefix}_r{n}_{k:02}")).collect::<Vec<_>>();
+        renames.extend(keys.iter().map(|k| (key.clone(), k.clone())));
+        bridges.push((n, key, deck, width, stretches, keys));
+    }
+
     let rows = db::copy_rows(files, schema, &renames)?;
     out.tables = rows.tables;
     for (base, key) in &renames {
@@ -195,11 +218,43 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         lowered.push((p.wall, placed));
     }
 
+    // The bridges' pieces, made.
+    let mut placed_bridges = vec![];
+    for (n, key, deck, width, stretches, keys) in &bridges {
+        let Some(base) = prepared.get(key).and_then(Option::as_ref) else { continue };
+        let across = width / (base.z.1 - base.z.0).max(1e-6);
+        let mut placed = vec![];
+        for (&(s, origin), k) in stretches.iter().zip(keys) {
+            let warp = crate::bridge::BridgeWarp { deck, base, s, across, origin, ground };
+            let made = crate::bridge::make_piece(base, k, &warp)?;
+            out.files.extend(made.into_pack_files());
+            placed.push((k.clone(), origin));
+        }
+
+        placed_bridges.push((*n, placed));
+    }
+
     // Lower the walls, the last first (an edit only moves the indices of the elements after it).
     lowered.sort_by(|a, b| b.0.cmp(&a.0));
     for (wall, placed) in lowered {
         // A layer made at the end of the scene graph comes after every wall: removing one does not move it.
         scene::lower(scene, wall, &placed, into)?;
+    }
+
+    // Each bridge's element gives way to its pieces, in its layer, the last first (found again: the walls moved the indices).
+    let spans = scene.find_all(crate::bridge::BRIDGE_SPAN);
+    for (n, placed) in placed_bridges.into_iter().rev() {
+        let Some(&e) = spans.get(n) else { continue };
+        let els = scene.doc().elements();
+        let Some(layer) = els[e].parent.and_then(|c| els[c].parent) else { continue };
+        for (key, at) in &placed {
+            let instance = wce_tile::new_instances::NewInstance::new("BUILDING_INSTANCE")
+                .position(wce_foundation::math::Double3::new(at[0], at[1], at[2]))
+                .attr("key", key.as_str()).attr("name", key.as_str()).attr("surface_mode", "MSM_FREEFORM").attr("lf_offset", wce_tile::ted_scene::format_number(at[1]));
+            scene.insert_element_text(layer, &wce_tile::new_instances::element_text(&instance)?)?;
+        }
+
+        scene.remove(e)?;
     }
 
     Ok(out)

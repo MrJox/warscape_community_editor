@@ -95,6 +95,12 @@ impl Tile {
     }
 
     /// Whether the tile has a wall (what decides that terrain and building edits redraw the walls).
+    /// Whether an export makes buildings for the tile (`wce_walls::export::lower_walls`): its walls' pieces, its roads' bridges.
+    #[must_use]
+    pub fn has_generated_buildings(&self) -> bool {
+        self.has_walls() || self.has_road_bridges()
+    }
+
     pub fn has_walls(&self) -> bool {
         if self.idx.valid {
             return self.idx.type_names.iter().any(|t| t == WALL_SPLINE);
