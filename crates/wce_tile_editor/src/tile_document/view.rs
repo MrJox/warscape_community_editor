@@ -2172,7 +2172,8 @@ impl Tile {
         let (points, sharp) = wce_walls::scene::wall_points(self.tscene(), elem);
         let handles = wce_walls::scene::wall_handles(self.tscene(), elem);
         let u = self.unit();
-        let (line, _) = wce_walls::solver::centre_line_marked(&points, &sharp, &handles);
+        let fold = wce_walls::scene::wall_profile(self.tscene(), elem).map_or(0.0, wce_walls::profile::Profile::fold_radius);
+        let (line, _) = wce_walls::solver::centre_line_marked(&points, &sharp, &handles, fold);
         line.iter().step_by(4).chain(line.last()).map(|(p, _)| {
             let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
             Float3::new(x, self.terrain_height(x, z), z)

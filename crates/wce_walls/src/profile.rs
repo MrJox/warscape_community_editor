@@ -100,6 +100,11 @@ impl Profile {
     pub fn length(&self) -> f64 {
         self.x.1 - self.x.0
     }
+
+    /// How tightly the wall's line may bend before the wall folds over itself: as far as its footprint reaches from the line.
+    pub fn fold_radius(&self) -> f64 {
+        self.depth.0.abs().max(self.depth.1.abs())
+    }
 }
 
 const EIGHT: Profile = Profile {
@@ -186,7 +191,10 @@ pub const BASES: [Profile; 15] = [
     Profile { key: "gondor_fort_straight", defences: &["gondor_fort_tower_c_straight", "gondor_fort_bastion"], cap_start: "gondor_fort_tower_end_left", cap_end: "gondor_fort_tower_end_right", door: "gondor_fort_straight_with_doors_a", step_up: "gondor_fort_straight_stepped_up_bastion_a", step_down: "gondor_fort_straight_stepped_down_bastion_a",
         // TDD's gondor pieces are 21 long (their logic files' boxes, walkways and footprints: -10.5..10.5; user 2026-11-04: at 20 the
         // pieces lay a metre over each other, platforms over platforms).
-        x: (-10.5, 10.5), cap_join: (10.5, -10.5), ..FIFTEEN },
+        // Their step pieces' stair lies further out than the game's (treads z 3.99..7.49, its side beams 3.74..8.09, measured in their
+        // meshes; the game's and TDD's other step pieces 5.15..8.65 and 4.90..9.25): spread over the walkway from the game's z, its treads
+        // stuck a metre out of the parapet's outer face and stopped short of the walkway's inner side (user 2026-11-08).
+        x: (-10.5, 10.5), cap_join: (10.5, -10.5), slab_zy: Some(((3.74, 8.09), (14.0, 26.5))), ..FIFTEEN },
 ];
 
 /// The editor's list of bases (`wce_tile::property_enums::WALL_BASE`) that the game's files have whole (every piece's logic file: Rome 2
