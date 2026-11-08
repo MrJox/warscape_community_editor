@@ -50,6 +50,10 @@ const BURY: f64 = 0.5;
 /// bridge (user 2026-11-08: the far end red-crossed, units went round its sides).
 const GROUND_PLATFORM: f64 = 6.0;
 
+/// How far under the ground a ground platform's outer edge is (scene units): the kit's run from 0.2 over it to 3.4 and 3.7 under it,
+/// through the terrain. Ending on the ground, as they did at first, units still did not leave the bridge (user 2026-11-08).
+const GROUND_PLATFORM_BURY: f64 = 3.5;
+
 /// The base turned a quarter about y: its +z onto +x, its +x onto -z (a turn, not a mirror).
 pub struct QuarterTurn;
 
@@ -347,7 +351,8 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp) -> Result<Build
 }
 
 /// A piece's logic file with a ground platform past each end of the deck it has (the first piece's start, the last one's end): from the
-/// deck's end edge (its corners the deck platform's there) [`GROUND_PLATFORM`] on along the road, down to the ground, `flag_2` set.
+/// deck's end edge (its corners the deck platform's there) [`GROUND_PLATFORM`] on along the road, down through the ground to
+/// [`GROUND_PLATFORM_BURY`] under it, `flag_2` set.
 fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Result<Vec<u8>, String> {
     let len = warp.deck.length();
     let ends = [(warp.s.0 <= 1e-6).then_some((0.0, -1.0)), (warp.s.1 >= len - 1e-6).then_some((len, 1.0))];
@@ -374,7 +379,7 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Re
         let n = [-t[1], t[0]];
         let corner = |z: f64, along: f64| {
             let (x, zz) = (c[0] + n[0] * z * warp.across + t[0] * out * along, c[2] + n[1] * z * warp.across + t[1] * out * along);
-            let y = if along > 0.0 { (warp.ground)(x, zz) } else { c[1] };
+            let y = if along > 0.0 { (warp.ground)(x, zz) - GROUND_PLATFORM_BURY } else { c[1] };
             [x - warp.origin[0], y - warp.origin[1], zz - warp.origin[2]]
         };
 

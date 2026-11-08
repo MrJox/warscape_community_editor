@@ -452,6 +452,9 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   pieces now get one past each end of the deck (`bridge::with_ground_platforms`, `GROUND_PLATFORM`: 3 m): from the deck platform's end
   edge (its two corners shared, as the game's pieces join platforms) on along the road down to the ground, `flag_2` set, wound as the
   game's. The deck's own 2 m on the road stands for the kit's ramp. `bridge_check` checks each end has one, joined to the deck.
+  Ending on the ground, they changed nothing in game (user, 2026-11-08: built and launched with them). The kit's run through the
+  terrain, from 0.2 over it to 3.4 and 3.7 under it at their outer edge: theirs end 3.5 units under it now (`GROUND_PLATFORM_BURY`), on
+  the guess that the game joins a building's platform to the ground where it crosses it. Not yet seen in game.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,
