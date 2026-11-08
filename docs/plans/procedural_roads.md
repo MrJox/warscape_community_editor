@@ -439,6 +439,13 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   the road. The technology overlay did not draw the bridges' pieces: a road's are drawn as a wall's are (`generated_buildings`: its
   bridges' pieces' logic files at their frames), and `wall_tech_check` takes a selected road's too.
 - **Not yet**: units crossing in a battle (R7); Rome II's and Thrones' bases; the AI's hints.
+- **Under the deck, and beside it** (user, 2026-11-08: units did not path onto a bridge; ground showed over its end). The bridge is as
+  wide as the road, and on a 64-density tile the height map's pixels are 2 m: the first one past the road's edge, up its bank, stood over
+  the deck's side. From end to end of a deck the terrain is kept under it, 0.3 m at its rims to 0.15 m at its ends, and its bank starts
+  2.5 m past the road's edge (`Strip::under_deck`, `road_strip`). A bridge over water also gets a no-go region on each side, from 1 m past
+  the deck's edge to 10 m along the water (`road_layout::nogo_region`, `side_outline`; export only, as the crossing's hint). Vanilla's
+  river crossings have none there (5 of 6 checked; they have the nogo map). The platform is the kit's own (`bridge_wood_2`: one at deck
+  height, 10 x 20 m, its flags all false, as every wall's), bent along the deck.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,

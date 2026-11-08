@@ -128,6 +128,9 @@ struct Plan {
 
     /// Its fords: the road on the bed, the terrain's heights left as they are.
     fords: Vec<(usize, usize)>,
+
+    /// Its bridges over water: their stretches and the least height of their decks.
+    decks: Vec<(usize, usize, f64)>,
 }
 
 /// An instance generated along a road: a prefab's part or a bridge's piece.
@@ -341,7 +344,7 @@ impl Tile {
         let raw = line.iter().map(|p| sample(p[0], p[1])).collect::<Vec<_>>();
         let wet = line.iter().map(|p| water.level(p[0], p[1])).collect::<Vec<_>>();
         let p = wce_tile::roads::plan(&line, &raw, &wet, &road.settings, on_other);
-        Plan { line, at_point, heights: p.heights, gaps: p.gaps, fords: p.fords }
+        Plan { line, at_point, heights: p.heights, gaps: p.gaps, fords: p.fords, decks: p.decks }
     }
 
     /// The tile's water, as a road crossing it finds it (world metres): its rivers' ribbons as they are drawn, its lakes' water planes, and
@@ -883,6 +886,18 @@ let mut planned = vec![];
             }
         }
 
+        // Beside each bridge over water, a no-go region on either side along the water, clear of the deck.
+        for &(a, b, _) in &plan.decks {
+            for side in [-1.0, 1.0] {
+                let half = width * 0.5;
+                let outline = wce_tile::road_layout::side_outline(&plan.line, st.of_sample(a), st.of_sample(b), half + NOGO_NEAR, half + NOGO_FAR, side, unit);
+                match wce_tile::road_layout::nogo_region(&outline) {
+                    Ok(nogo) => items.push(RoadItem { road: elem, text: vec![], position: [0.0; 3], meshes: vec![], export: Some(nogo), building: None }),
+                    Err(why) => wce_foundation::log::warn(format!("road {}: {why}", road.id)),
+                }
+            }
+        }
+
         for &(a, b) in &plan.gaps {
             spans.push((st.of_sample(a), st.of_sample(b)));
 
@@ -1099,12 +1114,37 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
 /// How far a bridge runs onto the road at each end, past its gap's rims (metres).
 const BRIDGE_ON_ROAD: f64 = 2.0;
 
+/// Under a bridge's deck the terrain is kept this far past its sides (more than a height-map pixel: 2 m on a 64-density tile), this far
+/// under it at the rims, and this far at its ends (metres).
+const DECK_SIDE: f64 = 2.5;
+const DECK_SINK: f64 = 0.3;
+const DECK_END_SINK: f64 = 0.15;
+
+/// The no-go regions beside a bridge over water: from this far past the deck's side to this far (metres).
+const NOGO_NEAR: f64 = 1.0;
+const NOGO_FAR: f64 = 10.0;
+
 /// A road's strip as its terrain is made: the terrain left alone under its bridges but for their rims (the road comes up to the deck
 /// there, so the bridge's ends lie on it), its heights left alone on its fords.
 fn road_strip(plan: &Plan, settings: &RoadSettings) -> Strip {
     let mut strip = Strip::new(plan.line.clone(), plan.heights.clone(), settings.clone());
     let inner = plan.gaps.iter().filter(|&&(a, b)| b > a + 1).map(|&(a, b)| (a + 1, b - 1)).collect::<Vec<_>>();
     strip.open_gaps(&inner);
+
+    // Under each deck, from end to end: the terrain under it and past its sides (`Strip::under_deck`), the most at its rims, less at its
+    // ends, which lie on the road.
+    let st = Stations::new(&plan.line);
+    for &(a, b) in &plan.gaps {
+        let (sa, sb) = (st.of_sample(a), st.of_sample(b));
+        for i in 0..plan.line.len() {
+            let s = st.of_sample(i);
+            let off = if s < sa { sa - s } else if s > sb { s - sb } else { 0.0 };
+            if off <= BRIDGE_ON_ROAD {
+                strip.under_deck(i, DECK_SIDE, DECK_SINK - (DECK_SINK - DECK_END_SINK) * off / BRIDGE_ON_ROAD);
+            }
+        }
+    }
+
     strip.keep_heights(&plan.fords);
     strip
 }
