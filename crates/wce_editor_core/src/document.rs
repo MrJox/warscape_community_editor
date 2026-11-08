@@ -168,6 +168,11 @@ pub trait Document: Any {
         String::new()
     }
 
+    /// The file on disk the document was opened from and saves to, when it is one file outside the packs (Save as starts there).
+    fn file_path(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
     /// Whether opening `path` (a file or a folder on disk) would open this document again; the open request then activates it instead.
     fn opened_from(&self, _path: &str) -> bool {
         false

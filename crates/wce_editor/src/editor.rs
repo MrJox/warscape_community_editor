@@ -90,6 +90,9 @@ struct ToolInfo {
     title: String,
     icon: String,
     opens: Vec<String>,
+
+    /// `Tool::project_folder`.
+    folder: &'static str,
 }
 
 pub struct Editor {
@@ -374,7 +377,7 @@ impl Editor {
         self.settings.set_game_fields(tool.id(), tool.game_settings_fields());
         crate::shortcuts::register(tool.shortcuts());
         crate::shortcuts::set_overrides(&self.settings.shortcuts);
-        self.tool_info.push(ToolInfo { id: tool.id().to_owned(), title: tool.title().to_owned(), icon: tool.icon().to_owned(), opens: tool.opens() });
+        self.tool_info.push(ToolInfo { id: tool.id().to_owned(), title: tool.title().to_owned(), icon: tool.icon().to_owned(), opens: tool.opens(), folder: tool.project_folder() });
         self.fixes.list.extend(tool.fixes());
         self.tools.push(Some(tool));
     }
@@ -770,6 +773,7 @@ impl Editor {
     /// The game folder is not set or cannot be read.
     pub fn remount_vfs(&mut self) -> Result<(), String> {
         let dir = self.settings.game_dir().ok_or("the game folder is not set")?;
+        self.make_project_folders();
         let vfs = Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())?;
         self.vfs = Some(Arc::new(vfs));
         self.images.clear();
@@ -782,6 +786,10 @@ impl Editor {
         log::info(format!("Data paths: game={}", game_dir.as_ref().map_or_else(|| "(unset)".to_owned(), |d| d.display().to_string())));
         // Another game's folder would mount (the data folders look alike) and show that game as this one.
         let game = self.game();
+        if game_dir.is_some() {
+            self.make_project_folders();
+        }
+
         let mounted = game_dir.ok_or_else(|| "the game folder is not set".to_owned()).and_then(|dir| match game.folder_problem(&dir) {
             Some(problem) => Err(problem),
             None => Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string()),
@@ -844,9 +852,38 @@ impl Editor {
         self.settings.projects_dir().join("build")
     }
 
-    /// The projects folder of the game (`Settings::projects_dir`): where file dialogs start.
+    /// The projects folder of the game (`Settings::projects_dir`).
     pub fn projects_dir(&self) -> PathBuf {
         self.settings.projects_dir()
+    }
+
+    /// A tool's folder in the projects folder (`Tool::project_folder`; the projects folder itself for a tool without one, or no such tool):
+    /// where its file dialogs start.
+    pub fn tool_folder(&self, tool_id: &str) -> PathBuf {
+        let folder = self.tool_info.iter().find(|t| t.id == tool_id).map_or("", |t| t.folder);
+        folder.split('/').filter(|p| !p.is_empty()).fold(self.projects_dir(), |d, p| d.join(p))
+    }
+
+    /// Makes the projects folder's layout: `loose/` and every tool's folder, so that the dialogs can start in them.
+    fn make_project_folders(&self) {
+        let ids: Vec<String> = self.tool_info.iter().map(|t| t.id.clone()).collect();
+        for dir in std::iter::once(self.loose_dir()).chain(ids.iter().map(|id| self.tool_folder(id))) {
+            if let Err(err) = std::fs::create_dir_all(&dir) {
+                log::warn(format!("cannot make the project folder {}: {err}", dir.display()));
+            }
+        }
+    }
+
+    /// Where File > Save as starts for a document: its file on disk; a file of the packs at its place in the project's loose folder; else
+    /// its tool's folder, with its title as the name.
+    fn save_as_start(&self, id: DocumentId) -> PathBuf {
+        let Some(d) = self.docs.find(id) else { return self.projects_dir() };
+        let key = d.source_key();
+        if !key.is_empty() {
+            return self.loose_path(&key);
+        }
+
+        d.file_path().unwrap_or_else(|| self.tool_folder(&self.docs.tool_of(id)).join(d.title()))
     }
 
     /// Where the File > Export entry `key` writes when nothing else is asked: its last destination, else the projects folder.
@@ -1761,7 +1798,7 @@ impl Editor {
             }
 
             if gui::menu_item(&format!("{}  Open file...", icons::FOLDER_OPEN), None, false, true)
-                && let Some(p) = file_dialog(false, &self.projects_dir(), &self.open_filters())
+                && let Some(p) = file_dialog(false, &self.tool_folder(self.active_tool_id()), &self.open_filters())
             {
                 match self.open_path(&p.display().to_string(), false, true) {
                     Ok(msg) => self.status(&msg, false),
@@ -1778,8 +1815,8 @@ impl Editor {
             }
 
             if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save) {
-                let title = self.docs.active().map(|d| d.title()).unwrap_or_default();
-                if let Some(p) = file_dialog(true, &self.projects_dir().join(title), &[("All files".to_owned(), "*.*".to_owned())])
+                let start = self.save_as_start(active);
+                if let Some(p) = file_dialog(true, &start, &[("All files".to_owned(), "*.*".to_owned())])
                     && let Some(d) = self.docs.find_mut(active)
                 {
                     let result = d.save(&wce_editor_core::document::SaveTarget { path: p });

@@ -272,6 +272,10 @@ impl Document for UiDocument {
         self.source.vfs_path.clone()
     }
 
+    fn file_path(&self) -> Option<PathBuf> {
+        self.source.vfs_path.is_empty().then(|| self.source.disk.clone())
+    }
+
     fn outline(&self) -> OutlinerNode {
         let ents = self.entries();
         fn build(doc: &UiDocument, ents: &[Entry], i: usize) -> OutlinerNode {

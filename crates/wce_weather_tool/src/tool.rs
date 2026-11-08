@@ -701,6 +701,10 @@ impl Tool for WeatherTool {
         "weather"
     }
 
+    fn project_folder(&self) -> &'static str {
+        "loose/weather"
+    }
+
     fn title(&self) -> &str {
         "Weather"
     }

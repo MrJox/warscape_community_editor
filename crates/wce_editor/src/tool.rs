@@ -86,6 +86,12 @@ pub trait Tool: Any {
         vec![]
     }
 
+    /// The tool's folder in the game's projects folder (relative to it, `/` separated; empty: the projects folder itself). The editor
+    /// makes it when it mounts the game's files, and the tool's Save as and Open file dialogs start in it.
+    fn project_folder(&self) -> &'static str {
+        ""
+    }
+
     /// False for a tool that has its own canvas and no use for the 3D viewport.
     fn shows_viewport(&self) -> bool {
         true

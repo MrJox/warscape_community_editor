@@ -383,6 +383,10 @@ impl Document for XmlFileDocument {
         self.source.vfs_path.clone()
     }
 
+    fn file_path(&self) -> Option<PathBuf> {
+        self.source.vfs_path.is_empty().then(|| self.source.disk.clone())
+    }
+
     /// An .environment / .lighting file can light any scene.
     fn environment(&self) -> Option<EnvironmentParams> {
         self.is_environment().then(|| read_environment(self.xml()))

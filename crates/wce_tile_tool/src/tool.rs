@@ -3109,6 +3109,10 @@ impl Tool for TileTool {
         TILE_TOOL_ID
     }
 
+    fn project_folder(&self) -> &'static str {
+        "assembly_kit/raw_data/terrain/tiles/battle"
+    }
+
     fn game_changed(&mut self, e: &mut Editor) {
         // Everything but the tool's choices belongs to the old game: the map context, the browser's kits and packs, the prefabs. A launch
         // being prepared or a launched game goes on (it knows its game), so that its files are removed when it ends.
