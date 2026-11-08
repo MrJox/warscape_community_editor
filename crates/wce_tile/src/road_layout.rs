@@ -924,23 +924,57 @@ pub fn strip_outline(line: &[[f64; 2]], from: f64, to: f64, half: f64, unit: f64
 ///
 /// Fewer than three points.
 pub fn crossing_hint(outline: &[[f64; 2]]) -> Result<Vec<u8>, String> {
+    closed_polygon("AI_HINT_POLYGON_INSTANCE", outline, &[("name", "Road crossing"), ("hint_type", "AIH_BRIDGE_CROSSING")])
+}
+
+/// A no-go region over an outline (file units, as [`strip_outline`] gives): the water beside a bridge, so that units do not path through it
+/// there (user 2026-11-08).
+///
+/// # Errors
+///
+/// Fewer than three points.
+pub fn nogo_region(outline: &[[f64; 2]]) -> Result<Vec<u8>, String> {
+    closed_polygon("NOGO_REGION_POLYGON_INSTANCE", outline, &[("name", "Road bridge: no-go")])
+}
+
+/// A closed polygon on the landscape round an outline, its own attributes `attrs`.
+fn closed_polygon(kind: &str, outline: &[[f64; 2]], attrs: &[(&str, &str)]) -> Result<Vec<u8>, String> {
     use crate::new_instances::{NewInstance, NewPoint, element_text, polygon_area};
     if outline.len() < 3 {
-        return Err("a crossing's hint needs three points".to_owned());
+        return Err(format!("a {kind} needs three points"));
     }
 
     let n = outline.len() as f64;
     let c = outline.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / n, a[1] + p[1] / n]);
     let local = outline.iter().map(|p| Double3::new(p[0] - c[0], 0.0, p[1] - c[1])).collect::<Vec<_>>();
-    let mut h = NewInstance::new("AI_HINT_POLYGON_INSTANCE")
-        .position(Double3::new(c[0], 0.0, c[1]))
-        .attr("name", "Road crossing")
-        .attr("hint_type", "AIH_BRIDGE_CROSSING")
-        .attr("polygon_closed", "1")
-        .attr("surface_mode", "MSM_LANDSCAPE")
-        .attr("area", format_number(polygon_area(&local)));
+    let mut h = NewInstance::new(kind).position(Double3::new(c[0], 0.0, c[1]));
+    for &(k, v) in attrs {
+        h = h.attr(k, v);
+    }
+
+    let mut h = h.attr("polygon_closed", "1").attr("surface_mode", "MSM_LANDSCAPE").attr("area", format_number(polygon_area(&local)));
     h.points = local.into_iter().map(NewPoint::at).collect();
     element_text(&h)
+}
+
+/// The outline of a band beside a stretch of a road (from and to: distances along its line, metres), from `near` to `far` off its centre
+/// line on `side` (+1 its right, -1 its left), sampled about every 4 m. In the file's units (`unit` a metre), on the ground (x, z).
+#[must_use]
+pub fn side_outline(line: &[[f64; 2]], from: f64, to: f64, near: f64, far: f64, side: f64, unit: f64) -> Vec<[f64; 2]> {
+    let st = Stations::new(line);
+    let (from, to) = (from.max(0.0), to.min(st.length()));
+    let n = (((to - from) / 4.0).ceil() as usize).max(1);
+    let (mut inner, mut outer) = (vec![], vec![]);
+    for k in 0..=n {
+        let s = from + (to - from) * k as f64 / n as f64;
+        let (p, t) = st.at(s);
+        let nrm = [t[1] * side, -t[0] * side];
+        inner.push([(p[0] + nrm[0] * near) * unit, (p[1] + nrm[1] * near) * unit]);
+        outer.push([(p[0] + nrm[0] * far) * unit, (p[1] + nrm[1] * far) * unit]);
+    }
+
+    inner.extend(outer.into_iter().rev());
+    inner
 }
 
 #[cfg(test)]

@@ -540,6 +540,9 @@ pub struct Strip {
 
     /// The samples of a ford: the road leaves the terrain's heights as they are, and lays its texture and ground type.
     kept: Vec<bool>,
+
+    /// Under a bridge's deck: how much wider the road's flat is each side, and how far under the road's height (metres).
+    deck: Vec<(f64, f64)>,
     origin: [f64; 2],
     across: usize,
     cells: Vec<Vec<u32>>,
@@ -572,14 +575,23 @@ impl Strip {
             }
         }
 
-        let (open, kept) = (vec![false; line.len()], vec![false; line.len()]);
-        Self { line, heights, settings, open, kept, origin, across, cells, reach }
+        let (open, kept, deck) = (vec![false; line.len()], vec![false; line.len()], vec![(0.0, 0.0); line.len()]);
+        Self { line, heights, settings, open, kept, deck, origin, across, cells, reach }
     }
 
     /// Leaves the terrain alone over these stretches (first and last sample).
     pub fn open_gaps(&mut self, gaps: &[(usize, usize)]) {
         for &(a, b) in gaps {
             self.open[a..=b].fill(true);
+        }
+    }
+
+    /// Under a bridge's deck (sample `i`): the terrain kept `sink` under the road's height and as far `wider` past its edge each side, before
+    /// its bank starts (user 2026-11-08: the bank's first height-map pixel past the edge stood over the deck's side, which the game took for
+    /// ground in the way, and units did not walk onto the bridge).
+    pub fn under_deck(&mut self, i: usize, wider: f64, sink: f64) {
+        if let Some(d) = self.deck.get_mut(i) {
+            *d = (d.0.max(wider), d.1.max(sink));
         }
     }
 
@@ -606,8 +618,18 @@ impl Strip {
         self.nearest_open(x, z).filter(|n| !n.2).map(|n| (n.0, n.1, n.3))
     }
 
+    /// As [`Self::nearest`], with the nearest sample's deck (`under_deck`).
+    fn nearest_deck(&self, x: f64, z: f64) -> Option<(f64, f64, bool, (f64, f64))> {
+        self.nearest_at(x, z).filter(|n| !n.2).map(|n| (n.0, n.1, n.3, self.deck[n.4]))
+    }
+
     /// As [`Self::nearest`] (and whether the place on the line is a ford's), and whether it is over a gap.
     fn nearest_open(&self, x: f64, z: f64) -> Option<(f64, f64, bool, bool)> {
+        self.nearest_at(x, z).map(|n| (n.0, n.1, n.2, n.3))
+    }
+
+    /// As [`Self::nearest_open`], and the nearest sample.
+    fn nearest_at(&self, x: f64, z: f64) -> Option<(f64, f64, bool, bool, usize)> {
         let (cx, cz) = ((x - self.origin[0]) / CELL, (z - self.origin[1]) / CELL);
         if cx < 0.0 || cz < 0.0 {
             return None;
@@ -632,18 +654,18 @@ impl Strip {
 
         // The cells keep every fourth sample: the rest of the way between the neighbours of the best one.
         let (_, i) = best?;
-        let (mut near, mut own, mut open, mut kept) = (f64::MAX, 0.0, false, false);
+        let (mut near, mut own, mut open, mut kept, mut at) = (f64::MAX, 0.0, false, false, i);
         for k in i.saturating_sub(4)..(i + 5).min(self.line.len()) {
             let p = self.line[k];
             let d = (p[0] - x).hypot(p[1] - z);
             if d < near {
-                (near, own, open, kept) = (d, self.heights[k], self.open[k], self.kept[k]);
+                (near, own, open, kept, at) = (d, self.heights[k], self.open[k], self.kept[k], k);
             }
         }
 
         // Near the road its exact height, for a surface with no ripple from the samples the cells left out; the jumps are further out.
         let far = smooth((near - self.settings.width * 0.5) / NEAR);
-        Some((near, own + (sum / weights - own) * far, open, kept))
+        Some((near, own + (sum / weights - own) * far, open, kept, at))
     }
 
     /// The terrain's height at a point once the road is there, `ground` its height without; none where the road leaves it alone. On the road
@@ -651,14 +673,15 @@ impl Strip {
     #[must_use]
     pub fn height_at(&self, x: f64, z: f64, ground: f64) -> Option<f64> {
         let s = &self.settings;
-        let (d, y, kept) = self.nearest(x, z)?;
+        let (d, y, kept, (wider, sink)) = self.nearest_deck(x, z)?;
         if kept {
             return None;
         }
 
-        let past = d - s.width * 0.5;
+        let y = y - sink;
+        let past = d - s.width * 0.5 - wider;
         if past <= 0.0 {
-            return Some(y);
+            return Some(if sink > 0.0 { y.min(ground) } else { y });
         }
 
         // The steepest part of `smooth` is 1.5 times the mean slope.
@@ -1012,6 +1035,24 @@ mod tests {
         let (line, at) = centre_line_handled(&pts, &turned, &[]);
         let q = line[at[1] + 2];
         assert!((q[0] - 40.0).abs() < 1.0 && q[1] > 11.0, "{q:?}");
+    }
+
+    #[test]
+    fn under_a_deck_the_terrain_stays_under_it_past_its_sides() {
+        // A road along x over ground rising beside it; samples 40..60 under a deck.
+        let l = straight();
+        let s = settings();
+        let mut strip = Strip::new(l.clone(), vec![0.0; l.len()], s.clone());
+        for i in 40..=60 {
+            strip.under_deck(i, 2.5, 0.3);
+        }
+
+        // On the deck's stretch, 1 m past the road's edge (half width 3): under the deck, where the bank rose before.
+        let h = strip.height_at(50.0, 4.0, 5.0).unwrap();
+        assert!((h + 0.3).abs() < 1e-9, "{h}");
+        // Away from it, the bank as before.
+        let away = strip.height_at(20.0, 4.0, 5.0).unwrap();
+        assert!(away > 0.0, "{away}");
     }
 
     #[test]
