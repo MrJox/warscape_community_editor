@@ -45,7 +45,7 @@ camera orbit
 frames 2
 
 # keyboard: tool switch, undo, redo, focus
-key Ctrl+2
+key Ctrl+3
 frames 4
 assert_tool tile
 key Ctrl+1

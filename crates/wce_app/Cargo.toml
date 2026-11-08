@@ -12,10 +12,10 @@ path = "src/main.rs"
 # One feature per editor, so that a release builds only the editors that work. The default set is the release's; scripts and gates build with
 # --all-features.
 [features]
-default = ["weather", "tile", "ui", "terrain"]
+default = ["weather", "prefab", "tile", "terrain", "ui"]
 weather = ["dep:wce_weather_tool"]
 tile = ["dep:wce_tile_tool"]
-# The Prefab tool (docs/plans/prefab_tool.md): a Tile tool on a stage of its own. Off until it works.
+# The Prefab tool (docs/plans/prefab_tool.md): a Tile tool on a stage of its own.
 prefab = ["tile"]
 ui = ["dep:wce_ui_tool"]
 terrain = ["dep:wce_terrain_tool"]
