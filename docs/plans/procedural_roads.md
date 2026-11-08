@@ -152,6 +152,12 @@ A prefab's key is its file's name and the library has one list of keys across ev
 - The editor writes `base/` and `dirt/` into a game's projects when the prefab library is first scanned for that game (the Tile and Prefab
   tools share it; `road_pieces::write_base`), each piece only where its file is missing: the user's edits are kept. `dirt/` is written only when the game's kit has its decals; else the log says so.
 - They are ordinary `.wce` prefabs: the Prefab tool opens, edits and saves them like any other.
+- **Dirt** (`wce_tile::road_dirt`, R2): the kit's road decals as its `global_dirt_road_*` prefabs use them, a decal's x along the road.
+  Two strips of `path_1` ruts down the road (grass between them, as on the kit's roads), `border_1` / `border_2` on the edges with their
+  dark lip facing out, rocks, a puddle and erosion as spots; the ford wetter and stonier. The curve is four 4 m chords of ruts and
+  borders a side; corners and junctions run their arms' ruts across the middle with one more laid diagonally over it (`road_anchor=
+  "fixed"`) so that the meeting is worn all over. The kit's `path_2` is a bent rut, not a patch, and is not used. Its ruts are cut down
+  by at most 2.5 times (the curve's and the end's 4 m from the kit's 10 m).
 
 ### The measures and the guides
 
@@ -207,8 +213,11 @@ its arm:
   piece's stretch and, `surface` only, across by the width;
 - heights: decals are projected; buildings stand on the ground (Landscape: Above), as they do anywhere.
 
-Decals cannot bend: a curve is made of its parts moved onto the arc, each rigid. So **a piece's parts are 4 m long at most** (the
-off-curve table of the first plan: 7 cm at R = 30 m). A longer decal stays a straight chord of the road.
+Decals cannot bend: a curve is made of its parts moved onto the arc, each rigid, so a part is a chord of the road, off it by `L x L / 8R`
+at its middle. **A part may be off the road by 0.3 m at most where its piece is bent the most** (changed 2026-11-08 from a flat 4 m, which
+cut the kit's 10 m ruts to 4 m on straights too; `road_dirt::max_part_length`): a straight, bent up to 15 degrees over 8 m (R of about
+30 m), takes parts up to 8.56 m; a curve, bent up to 90 degrees (R down to 7.5 m), up to 4.2 m. Corners, junctions and ends are not
+bent (their arms turn whole) and have no limit.
 
 ### Laying a road out
 
@@ -297,7 +306,7 @@ bridges' models and rows into the tile's pack and `@wce_proc_data.pack`, and the
 | 4 | `WceRoadSpline`, Create panel, Inspector, height, blend and ground type generation | built; to check in a battle that units take its ground type |
 | 6 | Crossings of roads, tile edge ends | built |
 | R1 | `WceRoadGuide`, `road_pieces::read` (arms, anchors), `roads_proc/base` written on mount, guides drawn in the Prefab tool and hidden in tiles | done (2026-11-08): the base pieces open in the Prefab tool and read back as their measures (`road_pieces` tests, `a_road_pieces_guides_show_on_the_prefab_stage_only`) |
-| R2 | `roads_proc/dirt` generated from the kit's decals | every piece reads, parts at most 4 m, no building on the road |
+| R2 | `roads_proc/dirt` generated from the kit's decals | done (2026-11-08): every piece reads, its parts within the bend limit, no building (`road_dirt` tests); seen in the Prefab tool |
 | R3 | `road_layout`: features, stretches, fitting by overrides; the pieces as references, preview, lowering; `road_type`; old `road_detail` out | a curved road with a sharp point and a free end lays dirt pieces that join at their ports |
 | R4 | Junctions: T on a snapped end, X on a crossing | two crossing roads and a road ending on one |
 | R5 | Crossings: water and drops found once, depth, fords | a shallow river forded, a deep one and a canyon left to bridges |

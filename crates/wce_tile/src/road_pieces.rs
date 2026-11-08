@@ -148,8 +148,11 @@ pub struct Part {
     /// It stands (a building or a mesh), so it never goes on the road.
     pub solid: bool,
 
-    /// A decal's size on the ground: along its own z and across its x (metres); 0 for the rest.
+    /// A decal's size on the ground along the road and across it, where it is (metres); 0 for the rest.
     pub size: [f64; 2],
+
+    /// Its turn from the road's way where it is (radians, about up): where its x points, from the arm's way towards its right.
+    pub turn: f64,
 }
 
 /// A piece read.
@@ -184,6 +187,24 @@ fn len(a: [f64; 2]) -> f64 {
 
 fn polyline_length(line: &[[f64; 2]]) -> f64 {
     line.windows(2).map(|w| len(sub(w[1], w[0]))).sum()
+}
+
+/// The way a line runs at a distance along it (a unit vector).
+fn tangent_at(line: &[[f64; 2]], at: f64) -> [f64; 2] {
+    let mut run = 0.0;
+    let last = line.len().saturating_sub(2);
+    for (i, w) in line.windows(2).enumerate() {
+        let d = sub(w[1], w[0]);
+        let l = len(d);
+        if run + l >= at || i == last {
+            let l = l.max(1e-12);
+            return [d[0] / l, d[1] / l];
+        }
+
+        run += l;
+    }
+
+    [0.0, 1.0]
 }
 
 /// Where a point is on a line: (distance along it, signed distance from it, + to the right of the way it runs, distance to it).
@@ -323,15 +344,23 @@ pub fn read(group_text: &[u8]) -> Result<Piece, String> {
             notes.push(format!("{key} is {dist:.1} m from the road"));
         }
 
+        // Its axes in the piece's frame against the road's way there (+x of the frame is right of +z).
+        let t = tangent_at(&arms[arm].centre, along);
+        let n = [t[1], -t[0]];
+        let rot = back * w.rotation;
+        let (xa, za) = (rot * Double3::new(1.0, 0.0, 0.0), rot * Double3::new(0.0, 0.0, 1.0));
+        let dot = |a: Double3, b: [f64; 2]| (a.x * b[0] + a.z * b[1]).abs();
+        let turn = (xa.x * n[0] + xa.z * n[1]).atan2(xa.x * t[0] + xa.z * t[1]);
         let size = if solid {
             [0.0, 0.0]
         } else {
             let s = scene.scale(e).unwrap_or(Double3::new(1.0, 1.0, 1.0));
-            [s.z.abs() / UNIT, s.x.abs() / UNIT]
+            let (sx, sz) = (s.x.abs() / UNIT, s.z.abs() / UNIT);
+            [sx * dot(xa, t) + sz * dot(za, t), sx * dot(xa, n) + sz * dot(za, n)]
         };
 
         let length = arms[arm].length.max(1e-9);
-        parts.push(Part { path, kind: el.name.clone(), key, arm, along: along / length, across, up: p.y / UNIT, anchor, solid, size });
+        parts.push(Part { path, kind: el.name.clone(), key, arm, along: along / length, across, up: p.y / UNIT, anchor, solid, size, turn });
     }
 
     Ok(Piece { arms, ports, width, verge, parts, notes })
