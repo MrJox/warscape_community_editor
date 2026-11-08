@@ -838,13 +838,21 @@ impl Editor {
     /// Where Save writes a file opened from the game's packs: `<projects>/loose/<its path in the packs>`. The loose folder is mounted
     /// before every pack, so the copy is what every loader reads from then on.
     pub fn loose_path(&self, path: &str) -> PathBuf {
-        self.loose_dir().join(normalize(path))
+        normalize(path).split('/').filter(|p| !p.is_empty()).fold(self.loose_dir(), |d, p| d.join(p))
     }
 
-    /// The loose copy of a game file in the project (Save writes files there, under their path in the packs), if there is one.
+    /// The loose copy of a game file in the project (Save writes files there, under their path in the packs), if there is one. A path on
+    /// disk (a tile's `source_key` is its folder) is no game file: none.
     pub fn loose_copy(&self, path: &str) -> Option<PathBuf> {
-        let p = self.loose_path(path);
+        let p = self.loose_path(self.game_path(path)?);
         p.is_file().then_some(p)
+    }
+
+    /// `path` when it is a path in the game's files (relative: what a document of a file of the packs gives as its `source_key`), not a
+    /// path on disk (a tile's folder) or nothing.
+    fn game_path<'a>(&self, path: &'a str) -> Option<&'a str> {
+        let disk = Path::new(path).is_absolute() || path.starts_with('/') || path.as_bytes().get(1) == Some(&b':');
+        (!path.is_empty() && !disk).then_some(path)
     }
 
     /// The project's throw-away build files (`<projects>/build`): launch staging, dry runs. Nothing reads them back between runs.
@@ -876,11 +884,12 @@ impl Editor {
 
     /// Where File > Save as starts for a document: its file on disk; a file of the packs at its place in the project's loose folder; else
     /// its tool's folder, with its title as the name.
-    fn save_as_start(&self, id: DocumentId) -> PathBuf {
+    pub fn save_as_start(&self, id: DocumentId) -> PathBuf {
         let Some(d) = self.docs.find(id) else { return self.projects_dir() };
+        // A file of the game's files (packs or loose), at its place in the project's loose folder; not a tile's or a map's folder.
         let key = d.source_key();
-        if !key.is_empty() {
-            return self.loose_path(&key);
+        if let Some(key) = self.game_path(&key).filter(|k| self.vfs.as_ref().is_some_and(|v| v.owner(k).is_some())) {
+            return self.loose_path(key);
         }
 
         d.file_path().unwrap_or_else(|| self.tool_folder(&self.docs.tool_of(id)).join(d.title()))
