@@ -516,15 +516,28 @@ fn contents_of(group_text: &[u8]) -> Option<Vec<u8>> {
     Some(scene.children_text(group))
 }
 
+/// What the generations written before the mark existed hashed to (2026-11-08, R1's base pieces and R2's dirt ones): such a file without
+/// the mark is still ours, unedited.
+const UNMARKED_GENERATIONS: [&str; 13] = [
+    "0ea06c28e2cbf9f1", "a119a0807ad50a77", "ae8682a019e54c98", "b28b133b4107e64f", "2de3689d6c29c133", "efc5d95f569d98db",
+    "b4d97e3924d340e1", "7c0571253d797e06", "1290d469aa26f852", "d782de44fe71c570", "a361417b204538bf", "01b363212a0a2570", "122c4720a8834886",
+];
+
 /// Whether a generated piece (`children`, its contents) is to be written at `path`: it is missing, or it is an older generation that
-/// nobody edited since (its contents still hash to its mark). A piece without the mark, or edited, is the user's.
+/// nobody edited since (its contents still hash to its mark, or, written before the mark, to [`UNMARKED_GENERATIONS`]). A piece without
+/// the mark otherwise, or edited, is the user's.
 fn to_write(path: &Path, key: &str, children: &[Vec<u8>]) -> Option<Vec<u8>> {
     let fresh = contents_of(&group_text(key, children))?;
     if path.exists() {
         let on_disk = crate::prefabs::load(path).ok()?;
         let scene = TedScene::parse_any(on_disk.group_text).ok()?;
-        let mark = scene.doc().get(0, GENERATED_ATTR)?;
-        if mark != hash(&on_disk.children_text) || on_disk.children_text == fresh {
+        let now = hash(&on_disk.children_text);
+        let unedited = match scene.doc().get(0, GENERATED_ATTR) {
+            Some(mark) => mark == now,
+            None => UNMARKED_GENERATIONS.contains(&now.as_str()),
+        };
+
+        if !unedited || on_disk.children_text == fresh {
             return None;
         }
     }
