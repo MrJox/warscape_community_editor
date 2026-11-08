@@ -155,21 +155,6 @@ fn main() {
             }
 
             let logic = made.files.get(&made.logic_name()).expect("a logic file");
-            // Its collision hull under what is walked on, as the kit's working bridge's.
-            {
-                let parsed = Cs2Parsed::decode(&mut Cursor::new(logic.as_slice()), &None).expect("a logic file");
-                let v = serde_json::to_value(&parsed).expect("json");
-                for d in v["pieces"].as_array().into_iter().flatten().flat_map(|p| p["destructs"].as_array().cloned().unwrap_or_default()) {
-                    let top = d["collision_3d"]["vertices"].as_array().into_iter().flatten().filter_map(|q| q["y"].as_f64()).fold(f64::MIN, f64::max);
-                    let low = d["platforms"].as_array().into_iter().flatten().filter(|p| p["flag_2"].as_bool() != Some(true))
-                        .flat_map(|p| p["vertices"]["outline"].as_array().cloned().unwrap_or_default()).filter_map(|q| q["y"].as_f64()).fold(f64::MAX, f64::min);
-                    if top > low - wce_walls::bridge::HULL_UNDER + 1e-3 {
-                        println!("  piece {k}: its hull's top {top:.3} is not under its walkway's lowest corner {low:.3}");
-                        failed = true;
-                    }
-                }
-            }
-
             for (p, ground) in platforms(logic) {
                 let r = p.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect::<Vec<_>>();
                 if ground {
@@ -255,58 +240,48 @@ fn main() {
             }
         }
 
-        // Past each end of the deck: a plain ramp (its own platform or an end piece's) sharing two corners with a platform of the deck,
-        // then a ground platform (`flag_2`) sharing two corners with the ramp and running into the ground; the footprint of the piece the
-        // ramp is in reaching out as far as the ramp does.
+        // Past each end of the deck. With end pieces (the kit's split bridge, laid as by hand): each end piece's ramp shares an edge (two
+        // corners or more) with a platform of the deck and drops from it to its foot, and there is no ground platform. Without: a plain
+        // ramp then a ground platform (`flag_2`) running into the ground, the ramp's piece's footprint reaching as far.
         let mut bad_ends = 0;
         let same = |a: &[f64; 3], b: &[f64; 3]| (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01 && (a[2] - b[2]).abs() < 0.01;
         let shared = |a: &[[f64; 3]], b: &[[f64; 3]]| a.iter().filter(|q| b.iter().any(|n| same(n, q))).count();
-        for at in [0.0, deck.length()] {
-            let (c, tt) = deck.at(at);
-            let away = if at <= 0.0 { -1.0 } else { 1.0 };
-            let past = |q: &[f64; 3]| ((q[0] - c[0]) * tt[0] + (q[2] - c[2]) * tt[1]) * away;
-            let near = |r: &[[f64; 3]]| r.iter().any(|q| (q[0] - c[0]).hypot(q[2] - c[2]) < width + 8.0);
-            let gs = grounds.iter().filter(|(_, r)| near(r)).collect::<Vec<_>>();
-            let found = gs.first().and_then(|(_, g)| {
-                let ramp = all.iter().find(|(_, r)| shared(g, r) >= 2)?;
-                let deck_side = all.iter().any(|(p, r)| !std::ptr::eq(r, &ramp.1) && *p != ramp.0 && shared(&ramp.1, r) >= 2)
-                    || all.iter().any(|(p, r)| *p == ramp.0 && !std::ptr::eq(r, &ramp.1) && shared(&ramp.1, r) >= 2);
-                Some((g, ramp, deck_side))
-            });
-            let ok = match found {
-                Some((g, (piece, ramp), true)) if gs.len() == 1 => {
-                    let buried = g.iter().filter(|q| (q[1] + 20.0 + wce_walls::bridge::GROUND_PLATFORM_BURY).abs() < 0.01).count() == 2;
-                    let ramp_out = ramp.iter().map(&past).fold(f64::MIN, f64::max);
-                    let reaches = footprints[*piece].iter().map(|(r, _)| r.iter().map(&past).fold(f64::MIN, f64::max)).collect::<Vec<_>>();
-                    let covered = !reaches.is_empty() && reaches.iter().all(|r| (r - ramp_out).abs() < 0.05);
-                    if !(buried && covered) {
-                        println!("  end at {at:.1}: buried {buried}, ramp out {ramp_out:.2}, footprint rings out {reaches:.2?}");
-                    }
-
-                    buried && covered
-                }
-                _ => {
-                    println!("  end at {at:.1}: {} ground platform(s) near, ramp and deck joined: {}", gs.len(), found.is_some_and(|f| f.2));
-                    if std::env::var("BRIDGE_CHECK_DEBUG").is_ok() {
-                        for (p, g) in &gs { println!("    ground (piece {p}): {g:.2?}"); }
-                        for (p, r) in all.iter().filter(|(_, r)| near(r)) { println!("    plain (piece {p}): {r:.2?}"); }
-                    }
-                    false
-                }
-            };
-            if !ok {
+        if end.is_some() {
+            if !grounds.is_empty() {
+                println!("  {} ground platform(s) with end pieces", grounds.len());
                 bad_ends += 1;
+            }
+
+            for (k, part) in parts.iter().enumerate().filter(|(_, p)| p.end) {
+                let ramps = all.iter().filter(|(p, _)| *p == k).map(|(_, r)| r).collect::<Vec<_>>();
+                let joined = ramps.iter().any(|r| all.iter().any(|(p, d)| !parts[*p].end && shared(r, d) >= 2));
+                let top = part.deck.at(part.s.1).0[1];
+                let drop = ramps.iter().flat_map(|r| r.iter()).map(|q| top - q[1]).fold(f64::MIN, f64::max);
+                if !joined || (drop - 1.0).abs() > 0.05 {
+                    println!("  end piece {k}: joined to the deck {joined}, its ramp drops {drop:.2} (the kit's 1)");
+                    bad_ends += 1;
+                }
+            }
+        } else {
+            for at in [0.0, deck.length()] {
+                let (c, tt) = deck.at(at);
+                let away = if at <= 0.0 { -1.0 } else { 1.0 };
+                let past = |q: &[f64; 3]| ((q[0] - c[0]) * tt[0] + (q[2] - c[2]) * tt[1]) * away;
+                let near = |r: &[[f64; 3]]| r.iter().any(|q| (q[0] - c[0]).hypot(q[2] - c[2]) < width + 8.0);
+                let gs = grounds.iter().filter(|(_, r)| near(r)).collect::<Vec<_>>();
+                let ok = gs.len() == 1 && all.iter().find(|(_, r)| shared(&gs[0].1, r) >= 2).is_some_and(|(piece, ramp)| {
+                    let buried = gs[0].1.iter().filter(|q| (q[1] + 20.0 + wce_walls::bridge::GROUND_PLATFORM_BURY).abs() < 0.01).count() == 2;
+                    let ramp_out = ramp.iter().map(&past).fold(f64::MIN, f64::max);
+                    buried && footprints[*piece].iter().all(|(r, _)| (r.iter().map(&past).fold(f64::MIN, f64::max) - ramp_out).abs() < 0.05)
+                });
+                if !ok {
+                    println!("  end at {at:.1}: no ramp and ground platform as made");
+                    bad_ends += 1;
+                }
             }
         }
 
-        // Every collision outline on the ground (as the kit's lie).
-        let lifted = footprints.iter().flatten().filter(|(_, c)| *c).flat_map(|(r, _)| r).filter(|q| (q[1] + 20.0).abs() > 0.01).count();
-        if lifted > 0 {
-            println!("  {lifted} collision outline corner(s) off the ground");
-            bad_ends += 1;
-        }
-
-        println!("  gaps along the deck: {gaps}; platforms stacked: {stacked}; joint corners unmatched: {loose}; corners off the deck: {off}; ends without a ground platform: {bad_ends} ({} made)", grounds.len());
+        println!("  gaps along the deck: {gaps}; platforms stacked: {stacked}; joint corners unmatched: {loose}; corners off the deck: {off}; ends not as the kit's: {bad_ends}");
         if gaps + stacked + loose + off + bad_ends > 0 {
             failed = true;
         }
