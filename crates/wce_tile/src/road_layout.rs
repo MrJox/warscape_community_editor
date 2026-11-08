@@ -468,7 +468,8 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
             world_rot = up_to(up) * world_rot;
         }
 
-        let world_pos = Double3::new((at[0] - origin[0]) * unit, height * unit, (at[1] - origin[1]) * unit);
+        // Its own height in the piece kept over the ground (a bank's mesh sunk into it).
+        let world_pos = Double3::new((at[0] - origin[0]) * unit, (height + part.up) * unit, (at[1] - origin[1]) * unit);
         let (pos, rot) = match part.parent {
             Some((pp, pr)) => (pr.transpose() * (world_pos - pp * unit), pr.transpose() * world_rot),
             None => (world_pos, world_rot),

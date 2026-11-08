@@ -318,6 +318,15 @@ from Assembly Kit drops that layer and restores the road.
   edges on quarter circles about the inside corners (`road_dirt::quarter`, as the corner's), in place of two pairs of straight ruts crossing
   and L-shaped inside edges. The kit's bent rut (`path_2`) was measured for it (a capture traced from above): it turns about 25 degrees
   over its length after a straight start, too little for a junction's turn alone, so the turns are chords of `path_1`.
+- **Variants** (user, 2026-11-08: the roads were monotonous, the same straight every 8 m). A road type may have variants of a piece
+  (`road_pieces::VARIANTS`: `straight_2` to `straight_5`), read as the piece they vary; each straight laid is it or one of them, by the
+  road's seed and its place (`pick`). The dirt ones carry what else the kit's `global_dirt_road_*` prefabs have along their roads
+  (measured in the road's frame: their angles are radians): its worn patch (`global_terrain_path_04`, 7.5 x 3.5 m), a puddle, erosion
+  beside the road (`erossion_03` and `_12`), rocks; and its banks of ground, `global_ground_pathborder`: a ridge of grassy ground 18.6 m
+  long and about 10 m across, its crest over its origin, on one side, the other or both. The kit lays a bank at its road's edge, rolled
+  10 degrees and 0.4 m down, on sloping ground, which shows it; on a generated road's levelled ground that sank it out of sight, so it lies
+  2.5 m out on the verge, 0.1 m down. Being long, a variant with a bank is laid only between straights and curves, not by a junction, a
+  corner, an end, a bridge or a ford. A part's own height in its piece is now kept when it is fitted (`up`).
 
 ## Crossings (redesign, 2026-11-08)
 

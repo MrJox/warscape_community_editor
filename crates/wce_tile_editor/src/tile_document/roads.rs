@@ -7,7 +7,7 @@ use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::RenderScene;
 use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit, junctions, layout, snap_ends};
-use wce_tile::road_pieces::{BASE, PIECES, Piece, key, read};
+use wce_tile::road_pieces::{BASE, PIECES, Piece, VARIANTS, key, read};
 use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_sharp, sharp_points};
 use wce_tile::ted_scene::TedScene;
 use std::collections::HashMap;
@@ -53,6 +53,34 @@ fn owner_of(id: u32, signature: u64) -> String {
 fn parse_owner(owner: &str) -> Option<(u32, u64)> {
     let (id, signature) = owner.strip_prefix("road:")?.split_once('#')?;
     Some((id.parse().ok()?, u64::from_str_radix(signature, 16).ok()?))
+}
+
+/// The piece laid for `laid[k]`: it or one of its variants (`road_pieces::VARIANTS`) the road's type has, by the road's seed. A variant
+/// with buildings (a bank 18.6 m long) only between pieces running on along the road (straights, curves), not over a junction, a corner
+/// or an end, nor a bridge or a ford next to it.
+fn pick<'a>(laid: &[wce_tile::road_layout::Laid], k: usize, pieces: &'a [(&'static str, Piece, String, Vec<u8>)], road: &Road) -> Option<&'a (&'static str, Piece, String, Vec<u8>)> {
+    use wce_tile::road_layout::Frame;
+    let l = &laid[k];
+    let own = pieces.iter().find(|p| p.0 == l.piece)?;
+    let span = |l: &wce_tile::road_layout::Laid| match l.frame {
+        Frame::Along { from, to } => Some((from.min(to), from.max(to))),
+        Frame::Star { .. } => None,
+    };
+
+    let runs_on = |j: Option<usize>, at: f64| j.and_then(|j| laid.get(j)).is_some_and(|n| {
+        matches!(n.piece, "straight" | "curve") && span(n).is_some_and(|(a, b)| (a - at).abs() < 0.5 || (b - at).abs() < 0.5)
+    });
+    let between = span(l).is_some_and(|(a, b)| runs_on(k.checked_sub(1), a) && runs_on(Some(k + 1), b));
+    let options = std::iter::once(own)
+        .chain(pieces.iter().filter(|p| wce_tile::road_pieces::varies(p.0) == Some(l.piece)))
+        .filter(|p| between || p.1.parts.iter().all(|q| !q.solid))
+        .collect::<Vec<_>>();
+
+    let mut h = u64::from(road.settings.seed).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(road.id).rotate_left(23) ^ (k as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    h ^= h >> 31;
+    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h ^= h >> 29;
+    Some(options[(h % options.len() as u64) as usize])
 }
 
 /// The roads in the order they are made: a road that ends on another after it (each is laid on the ground with the earlier ones on it, and
@@ -552,6 +580,15 @@ impl Tile {
             return vec![];
         }
 
+        // The type's variants of its pieces, those it has (the base has none).
+        let variants = VARIANTS.iter().filter_map(|&(name, _)| {
+            let k = key(road_type, name);
+            lib.get(&k)?;
+            let prefab = lib.load(&k).map_err(|e| wce_foundation::log::warn(format!("roads: {k}: {e}"))).ok()?;
+            let piece = read(&prefab.group_text).map_err(|e| wce_foundation::log::warn(format!("roads: {k} is not a road piece: {e}"))).ok()?;
+            Some((name, piece, k, prefab.children_text))
+        }).collect::<Vec<_>>();
+
         PIECES.iter().filter_map(|&name| {
             let found = [key(road_type, name), key(BASE, name)].into_iter().find(|k| lib.get(k).is_some());
             let Some(k) = found else {
@@ -566,7 +603,7 @@ impl Tile {
             let prefab = lib.load(&k).map_err(|e| wce_foundation::log::warn(format!("roads: {k}: {e}"))).ok()?;
             let piece = read(&prefab.group_text).map_err(|e| wce_foundation::log::warn(format!("roads: {k} is not a road piece: {e}"))).ok()?;
             Some((name, piece, k, prefab.children_text))
-        }).collect()
+        }).chain(variants).collect()
     }
 
     /// Puts the instances along the roads on the scene.
@@ -896,8 +933,8 @@ let mut planned = vec![];
         }
 
         let width = road.settings.width;
-        for l in &laid.laid {
-            let Some((_, p, key, children)) = piece(l.piece) else { continue };
+        for (k, l) in laid.laid.iter().enumerate() {
+            let Some((_, p, key, children)) = pick(&laid.laid, k, &pieces[..], road) else { continue };
             match fit(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }) {
                 Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
                 Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),

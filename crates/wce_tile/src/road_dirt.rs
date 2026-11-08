@@ -15,14 +15,25 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, UNIT, VERGE, WIDTH, base_guides};
+use crate::road_pieces::{self, ANCHOR_ATTR, CURVE_RADIUS, CURVE_TURN, PIECES, UNIT, VARIANTS, VERGE, WIDTH, base_guides};
 
 /// The road type's folder and name.
 pub const TYPE: &str = "dirt";
 
 /// The kit's decals the pieces are made of (`rigidmodels\decals\battle\<name>.rigid_model_v2`).
-pub const DECALS: [&str; 7] =
-    ["path_1", "border_1", "border_2", "global_terrain_rocks_01", "global_terrain_rocks_04", "global_terrain_puddle_02", "global_terrain_erossion_12"];
+pub const DECALS: [&str; 9] = [
+    "path_1", "border_1", "border_2", "global_terrain_rocks_01", "global_terrain_rocks_04", "global_terrain_puddle_02", "global_terrain_erossion_12",
+    "global_terrain_erossion_03", "global_terrain_path_04",
+];
+
+/// The kit's bank of ground along a road (`global_ground_pathborder`, a building): a ridge of grassy ground along its x, 18.6 m long and
+/// about 10 m across, its crest over its origin. The kit's prefabs lay it at a road's edge, its +z out of the road, rolled 10 degrees to
+/// raise its outer side, 0.4 m down; their roads lie on slopes, which shows it. On the level ground a generated road levels, it sank out
+/// of sight there: here it lies out on the verge, [`BANK_OUT`] past the edge, [`BANK_DOWN`] down, rolled as the kit's.
+pub const BANK_KEY: &str = "global_ground_pathborder";
+const BANK_ROLL: f64 = 0.174_533;
+pub const BANK_OUT: f64 = 2.5;
+pub const BANK_DOWN: f64 = 0.1;
 
 /// The kit's prefabs that hold every one of [`DECALS`] between them: what says that a game's kit has them.
 pub const KIT_PREFABS: &str = "global_dirt_road_";
@@ -56,6 +67,7 @@ pub const MAX_SAGITTA: f64 = 0.4;
 /// pieces have no limit.
 #[must_use]
 pub fn max_part_length(piece: &str) -> f64 {
+    let piece = road_pieces::varies(piece).unwrap_or(piece);
     let tightest = match piece {
         // 15 degrees over 8 m.
         "straight" | "ford" => road_pieces::STRAIGHT / 15f64.to_radians(),
@@ -118,6 +130,17 @@ fn border_x(name: &str, side: f64, x0: f64, x1: f64) -> Vec<u8> {
     decal(name, [(x0 + x1) * 0.5, side], way, x1 - x0, BORDER, None)
 }
 
+/// A bank along an edge (`side`: its x), its middle at `z`: as the kit lays one ([`BANK_KEY`]), held to the edge (`edge`).
+fn bank(side: f64, z: f64) -> Vec<u8> {
+    // Its x along the road, its +z out of it (`world_transform::euler_matrix`: Ry(pi/2) takes z to +x, Ry(-pi/2) to -x).
+    let yaw = if side > 0.0 { std::f64::consts::FRAC_PI_2 } else { -std::f64::consts::FRAC_PI_2 };
+    let n = crate::ted_scene::format_number;
+    format!(
+        "<BUILDING_INSTANCE flags=\" OIF_VISIBLE|OIF_ACTIVE\" key=\"{BANK_KEY}\" name=\"{BANK_KEY}\" surface_mode=\"MSM_FREEFORM\" position=\"vector({},{},{})\" orientation=\"euler({},{},0)\" {ANCHOR_ATTR}=\"edge\"/>\n",
+        n((side + side.signum() * BANK_OUT) * UNIT), n(-BANK_DOWN * UNIT), n(z * UNIT), n(yaw), n(BANK_ROLL)
+    ).into_bytes()
+}
+
 /// Where roads meet the middle is worn all over, not grass between two pairs of ruts: a rut laid across it diagonally (`way`, not a unit
 /// vector), where the piece has it.
 fn worn_middle(way: [f64; 2]) -> Vec<u8> {
@@ -172,6 +195,48 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
                 out.push(decal("global_terrain_rocks_01", [-0.4, 0.3], RIGHT, 2.5, 2.5, None));
                 out.push(decal("global_terrain_rocks_04", [1.6, -0.6], UP, 2.5, 2.5, None));
             }
+        }
+
+        // The straight's variants (`road_pieces::VARIANTS`), the kit's other things along its roads in each: its banks of ground on one side,
+        // the other or both, its worn patch (`path_04`), a puddle, erosion beside the road, rocks. Laid one or another along a road.
+        "straight_2" => {
+            out.extend(ruts(-s, s));
+            out.push(border_z("border_1", -h, -s, s));
+            out.push(border_z("border_1", h, -s, s));
+            out.push(bank(h, 0.0));
+            out.push(decal("global_terrain_path_04", [-0.8, -1.2], UP, 7.5, 3.5, None));
+            out.push(decal("global_terrain_erossion_03", [-h - 1.4, 0.8], UP, 6.0, 2.5, None));
+            out.push(decal("global_terrain_rocks_04", [-h + 0.4, 2.4], UP, 2.5, 2.5, None));
+        }
+
+        "straight_3" => {
+            out.extend(ruts(-s, s));
+            out.push(border_z("border_1", -h, -s, s));
+            out.push(border_z("border_1", h, -s, s));
+            out.push(bank(-h, 0.0));
+            out.push(decal("global_terrain_puddle_02", [0.9, -1.4], RIGHT, 2.5, 5.0, None));
+            out.push(decal("global_terrain_erossion_12", [h + VERGE * 0.5, -1.0], RIGHT, 2.5, 6.0, None));
+            out.push(decal("global_terrain_rocks_01", [h - 0.5, 2.5], UP, 2.5, 2.5, None));
+        }
+
+        "straight_4" => {
+            out.extend(ruts(-s, s));
+            out.push(border_z("border_1", -h, -s, s));
+            out.push(border_z("border_1", h, -s, s));
+            out.push(bank(-h, 0.5));
+            out.push(bank(h, -0.5));
+            out.push(decal("global_terrain_path_04", [1.0, 1.5], DOWN, 7.5, 3.5, None));
+            out.push(decal("global_terrain_rocks_04", [0.3, -2.0], UP, 2.5, 2.5, None));
+        }
+
+        "straight_5" => {
+            out.extend(ruts(-s, s));
+            out.push(border_z("border_1", -h, -s, s));
+            out.push(border_z("border_1", h, -s, s));
+            out.push(decal("global_terrain_erossion_03", [h + 1.3, -0.6], DOWN, 6.0, 2.5, None));
+            out.push(decal("global_terrain_rocks_04", [-1.5, 2.8], UP, 2.5, 2.5, None));
+            out.push(decal("global_terrain_rocks_04", [h + 0.9, -1.8], UP, 2.5, 2.5, None));
+            out.push(decal("global_terrain_rocks_01", [-h - 0.6, -2.6], UP, 2.5, 2.5, None));
         }
 
         "end" => {
@@ -271,7 +336,7 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
 /// The dirt pieces' contents: the base's guides and the decals.
 #[must_use]
 pub fn pieces() -> Vec<(&'static str, Vec<Vec<u8>>)> {
-    PIECES.iter().map(|&p| {
+    PIECES.iter().copied().chain(VARIANTS.iter().map(|v| v.0)).map(|p| {
         let mut children = base_guides(p);
         children.extend(parts(p));
         (p, children)
@@ -295,16 +360,17 @@ mod tests {
 
     #[test]
     fn every_dirt_piece_reads_and_its_parts_fit() {
-        for piece in PIECES.into_iter().filter(|&p| p != "fence") {
+        for piece in PIECES.into_iter().chain(VARIANTS.iter().map(|v| v.0)).filter(|&p| p != "fence") {
             let mut children = base_guides(piece);
             children.extend(parts(piece));
             let p = read(&group_text(&key(TYPE, piece), &children)).unwrap();
             assert!(p.notes.is_empty(), "{piece}: {:?}", p.notes);
             assert!(p.parts.len() >= 6, "{piece}: {} parts", p.parts.len());
-            assert!(p.parts.iter().all(|q| !q.solid), "{piece}: no building, so none on the road");
+            // No building on the road: the banks alone, held to its edges.
+            assert!(p.parts.iter().filter(|q| q.solid).all(|q| q.key == BANK_KEY && q.anchor == Anchor::Edge), "{piece}");
 
             // Every decal of the kit's road set, and only those.
-            assert!(p.parts.iter().all(|q| DECALS.iter().any(|d| q.key.ends_with(&format!("\\{d}.rigid_model_v2")))), "{piece}");
+            assert!(p.parts.iter().filter(|q| !q.solid).all(|q| DECALS.iter().any(|d| q.key.ends_with(&format!("\\{d}.rigid_model_v2")))), "{piece}");
 
             let most = max_part_length(piece);
             for q in &p.parts {
@@ -324,6 +390,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_bank_lies_along_its_edge_its_outer_side_raised() {
+        let mut children = base_guides("straight_2");
+        children.extend(parts("straight_2"));
+        let p = read(&group_text(&key(TYPE, "straight_2"), &children)).unwrap();
+        let b = p.parts.iter().find(|q| q.key == BANK_KEY).unwrap();
+        assert!((b.across - WIDTH * 0.5 - BANK_OUT).abs() < 1e-6 && (b.up + BANK_DOWN).abs() < 1e-6, "{b:?}");
+        assert!(b.turn.sin().abs() < 1e-6, "its x along the road: {b:?}");
+        // Its +z out of the road (+x on the right edge), rising.
+        let z = b.rotation * wce_foundation::math::Double3::new(0.0, 0.0, 1.0);
+        assert!(z.x > 0.9 && z.y > 0.1, "{z:?}");
     }
 
     #[test]
@@ -375,7 +454,7 @@ mod tests {
     #[test]
     fn written_once_and_kept() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(write(dir.path()).unwrap().len(), PIECES.len());
+        assert_eq!(write(dir.path()).unwrap().len(), PIECES.len() + VARIANTS.len());
         assert!(write(dir.path()).unwrap().is_empty());
         let lib = crate::prefabs::PrefabLibrary::scan_folders(&[dir.path().to_path_buf()]);
         let curve = lib.load("road_dirt_curve").unwrap();

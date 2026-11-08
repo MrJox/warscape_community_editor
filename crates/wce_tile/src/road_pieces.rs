@@ -49,6 +49,17 @@ const PORT_SNAP: f64 = 0.5;
 /// `fence` is not laid on the road but beside it, along a line just past its edge (`road_layout::fence_runs`): a road that asks for fences.
 pub const PIECES: [&str; 8] = ["straight", "curve", "corner", "t_junction", "x_junction", "end", "ford", "fence"];
 
+/// Variants a road type may have of a piece besides the piece itself (variant, piece): each laid in the piece's place, one or another by
+/// the road's seed (user 2026-11-08: the same straight every 8 m was monotonous). A variant is read as the piece it varies (its guides);
+/// the base has none, and a type without one lays the piece alone.
+pub const VARIANTS: [(&str, &str); 4] = [("straight_2", "straight"), ("straight_3", "straight"), ("straight_4", "straight"), ("straight_5", "straight")];
+
+/// The piece a variant varies.
+#[must_use]
+pub fn varies(name: &str) -> Option<&'static str> {
+    VARIANTS.iter().find(|v| v.0 == name).map(|v| v.1)
+}
+
 /// A prefab's key for a road type's piece: keys are one list across every folder, so the type is in it.
 #[must_use]
 pub fn key(road_type: &str, piece: &str) -> String {
@@ -405,6 +416,10 @@ fn arc(c: [f64; 2], r: f64, a0: f64, a1: f64) -> Vec<[f64; 2]> {
 /// The guides of a base piece, at the standard measures.
 #[must_use]
 pub fn base_guides(piece: &str) -> Vec<Vec<u8>> {
+    if let Some(p) = varies(piece) {
+        return base_guides(p);
+    }
+
     let (h, v, j) = (WIDTH * 0.5, WIDTH * 0.5 + VERGE, JUNCTION * 0.5);
     let straight = |l: f64| {
         let z = l * 0.5;
