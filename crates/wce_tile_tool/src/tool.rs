@@ -697,6 +697,9 @@ const STAGE_ORBIT_M: f32 = 70.0;
 /// The Tile tool's id: the owner of its documents.
 pub const TILE_TOOL_ID: &str = "tile";
 
+/// The File > Export > As exported tile entry's key for its last destination (`Editor::export_dir`).
+pub const EXPORTED_TILE_KEY: &str = "exported_tile";
+
 pub fn document(e: &mut Editor) -> Option<&mut TileDocument> {
     let id = document_id(e)?;
     e.docs.find_as_mut::<TileDocument>(id)
@@ -3608,23 +3611,6 @@ impl Tool for TileTool {
             e.status(&msg, false);
         }
 
-        if gui::menu_item("Save as exported tile", None, false, document(e).is_some()) {
-            let out = e.output_dir();
-            let msg = self.save_exported(e, &out).unwrap_or_else(|m| format!("save failed: {m}"));
-            e.status(&msg, false);
-        }
-
-        if gui::menu_item("Save to mod pack...", None, false, document(e).is_some())
-            && let Some(pack) = file_dialog(true, &Self::default_mod_pack(e), &[("Mod pack".to_owned(), "*.pack".to_owned())])
-        {
-            let msg = self.save_to_pack(e, &pack).unwrap_or_else(|m| format!("save failed: {m}"));
-            e.status(&msg, false);
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Writes the tile as the game reads it (its folder and the tile database) into a mod pack; the pack's files of the tile's folder are replaced.");
-        }
-
         let label = if self.launch_job.is_some() { "Launch in game (preparing)" } else if self.launched.is_some() { "Launch in game (running)" } else { "Launch in game" };
         if gui::menu_item(label, None, false, document(e).is_some() && self.launched.is_none() && self.launch_job.is_none()) {
             let msg = self.launch_in_game(e, false, false, true).unwrap_or_else(|m| format!("launch failed: {m}"));
@@ -3639,15 +3625,6 @@ impl Tool for TileTool {
         if e.game().features.kit_tiles {
             gui::separator();
             let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
-            if gui::menu_item("Save for Assembly Kit", None, false, project.is_some()) {
-                let msg = self.save_for_kit_ask(e).unwrap_or_else(|m| format!("save for the Assembly Kit failed: {m}"));
-                e.status(&msg, false);
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip("Writes the tile as TEd reads it (tile.ted, the river files, the maps, its database entry) into the Assembly Kit; what TEd lacks is converted or dropped (see the log). Files it replaces keep a .bak.");
-            }
-
             if gui::menu_item("Import from Assembly Kit", None, false, project.is_some_and(|p| p.0)) {
                 let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
                 e.status(&msg, false);
@@ -4132,6 +4109,46 @@ impl Tool for TileTool {
 
     fn unsaved_work(&self) -> Vec<String> {
         self.scratch_set.iter().filter(|s| !s.entries.is_empty()).map(|s| format!("the new vegetation set ({} kind(s) of tree; Tile tool, the Inspector)", s.entries.len())).collect()
+    }
+
+    fn export_menu(&mut self, e: &mut Editor) -> bool {
+        let has = document(e).is_some();
+
+        // A game without the tiles in its kit (Rome 2) exports into mod packs only.
+        if e.game().features.kit_tiles {
+            if gui::menu_item("For Assembly Kit", None, false, has) {
+                let msg = self.save_for_kit_ask(e).unwrap_or_else(|m| format!("export for the Assembly Kit failed: {m}"));
+                e.status(&msg, false);
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Writes the tile as TEd reads it (tile.ted, the river files, the maps, its database entry) into an Assembly Kit; what TEd lacks is converted or dropped (see the log). Files it replaces keep a .bak.");
+            }
+        }
+
+        if gui::menu_item("As exported tile...", None, false, has)
+            && let Some(out) = e.pick_export_folder(EXPORTED_TILE_KEY, "Folder for the exported tile (its terrain/tiles/... and the tile database go under it)")
+        {
+            let msg = self.save_exported(e, &out).unwrap_or_else(|m| format!("export failed: {m}"));
+            e.status(&msg, false);
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Saves the tile, then writes it as the game reads it (the exported tile's folder and the tile database) under a folder you choose.");
+        }
+
+        if gui::menu_item("To mod pack...", None, false, has)
+            && let Some(pack) = file_dialog(true, &Self::default_mod_pack(e), &[("Mod pack".to_owned(), "*.pack".to_owned())])
+        {
+            let msg = self.save_to_pack(e, &pack).unwrap_or_else(|m| format!("export failed: {m}"));
+            e.status(&msg, false);
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Writes the tile as the game reads it (its folder and the tile database) into a mod pack; the pack's files of the tile's folder are replaced.");
+        }
+
+        true
     }
 
     fn edit_menu(&mut self, e: &mut Editor) {

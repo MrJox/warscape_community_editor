@@ -33,6 +33,11 @@ use wce_tile_editor::tile_document::context::{ContextRequest, Streamer, TileProv
 use wce_vfs::files::Files;
 
 /// Scene units per metre (the tiles' editor units: the map context's frame is in them).
+/// The File > Export > Built files entry's key for its last destination (`Editor::export_dir`).
+const EXPORT_KEY: &str = "terrain";
+
+const EXPORT_TIP: &str = "What BOB_Terrain builds (tile map, battle field, LF heights, locations.blm and its masks, deployment files), made from the map as it is, loose under a folder you choose and as a mod pack there";
+
 const UNIT: f64 = 2.0;
 
 /// A map read on a worker: what its document is made of (the document itself stays on the UI thread).
@@ -1367,15 +1372,15 @@ impl TerrainTool {
         }
     }
 
-    /// Export starts a build of the shown map on a worker (one at a time).
-    pub(crate) fn start_export(&mut self, e: &mut Editor) -> Result<String, String> {
+    /// Export starts a build of the shown map on a worker (one at a time), written under `out`.
+    pub(crate) fn start_export(&mut self, e: &mut Editor, out: PathBuf) -> Result<String, String> {
         if self.export.is_some() {
             return Err("an export is on its way".to_owned());
         }
 
         let d = e.docs.find_as::<MapDocument>(self.shown).ok_or("no map shown")?;
         let db = d.db.clone();
-        let job = crate::export::start(e, self.shown, db, &kit_roots(e))?;
+        let job = crate::export::start(e, self.shown, db, &kit_roots(e), out)?;
         let m = format!("exporting {}...", job.map);
         self.export = Some(job);
         Ok(m)
@@ -1397,7 +1402,7 @@ impl TerrainTool {
         let d = e.docs.find_as::<MapDocument>(self.shown).ok_or("no map shown")?;
         let fresh = self.exported.as_ref().is_some_and(|x| x.map == d.name && x.revision == wce_editor_core::document::Document::history(d).version());
         if !fresh {
-            let m = self.start_export(e)?;
+            let m = self.start_export(e, e.build_dir().join("terrain_export"))?;
             self.launch_after_export = Some((spot, dry_run, ignore_movie_packs));
             return Ok(format!("{m} (then the launch)"));
         }
@@ -1412,7 +1417,7 @@ impl TerrainTool {
         let p = crate::launch::prepare(e, &x, w, h, spot, dry_run, ignore_movie_packs)?;
         let at = format!("{} ({}) at cell {:.0}, {:.0}", spot.name, spot.kind, spot.cell.0, spot.cell.1);
         if dry_run {
-            let xml = e.output_dir().join("dry_wce_launch.xml");
+            let xml = e.build_dir().join("dry_wce_launch.xml");
             let _ = std::fs::write(&xml, &p.xml);
             return Ok(format!("dry run: {} at {at}: the pack {}, the battle {}; command line: {}", x.map, p.pack.display(), xml.display(), p.command));
         }
@@ -1450,6 +1455,15 @@ impl TerrainTool {
         Some(r)
     }
 
+    /// File > Export > Built files: asks for the folder, then starts the export.
+    fn export_asked(&mut self, e: &mut Editor) {
+        let Some(out) = e.pick_export_folder(EXPORT_KEY, "Folder for the map's built files (loose, and a mod pack)") else { return };
+        match self.start_export(e, out) {
+            Ok(m) => e.status(&m, false),
+            Err(err) => e.status(&err, true),
+        }
+    }
+
     fn draw_export(&mut self, e: &mut Editor) {
         if !gui::collapsing_header("Export", 0) {
             return;
@@ -1461,16 +1475,13 @@ impl TerrainTool {
         }
 
         gui::begin_disabled(!can || self.export.is_some());
-        if gui::button("Export built files") {
-            match self.start_export(e) {
-                Ok(m) => e.status(&m, false),
-                Err(err) => e.status(&err, true),
-            }
+        if gui::button("Export built files...") {
+            self.export_asked(e);
         }
 
         gui::end_disabled();
         if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("What BOB_Terrain builds (tile map, battle field, LF heights, locations.blm and its masks, deployment files), made from the map as it is, loose under the output folder and as a mod pack");
+            gui::set_tooltip(EXPORT_TIP);
         }
 
         gui::same_line();
@@ -1556,6 +1567,19 @@ fn with_terrain(e: &mut Editor, f: impl FnOnce(&mut TerrainTool, &mut Editor) ->
 impl Tool for TerrainTool {
     fn id(&self) -> &str {
         "terrain"
+    }
+
+    fn export_menu(&mut self, e: &mut Editor) -> bool {
+        let can = e.docs.find_as::<MapDocument>(self.shown).is_some_and(|d| d.model().is_some());
+        if gui::menu_item("Built files...", None, false, can && self.export.is_none()) {
+            self.export_asked(e);
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(EXPORT_TIP);
+        }
+
+        true
     }
 
     fn title(&self) -> &str {
@@ -2027,8 +2051,9 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_export", "terrain_export [--wait]", "the Terrain tool: export the shown kit map's built files (loose under the output folder and as a pack); --wait: until done", |e, a| {
-            let started = with_terrain(e, |t, e| match t.start_export(e) {
+        c.add("terrain_export", "terrain_export [folder] [--wait]", "the Terrain tool: File > Export > Built files of the shown kit map, loose under the folder and as a pack (default: its last one, else the projects folder); --wait: until done", |e, a| {
+            let out = a.iter().find(|v| *v != "--wait").map_or_else(|| e.export_dir(EXPORT_KEY), PathBuf::from);
+            let started = with_terrain(e, |t, e| match t.start_export(e, out) {
                 Ok(m) => CommandResult::success(m),
                 Err(err) => CommandResult::fail(err),
             });

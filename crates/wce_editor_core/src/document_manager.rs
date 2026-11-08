@@ -20,6 +20,9 @@ pub struct DocumentManager {
 
     /// `shows_scene` as of the last `apply_stand_ins`.
     real_scene: bool,
+
+    /// The source keys of the documents saved since the last `take_saved` (the editor indexes loose copies again).
+    saved: Vec<String>,
 }
 
 impl DocumentManager {
@@ -167,10 +170,18 @@ impl DocumentManager {
 
         e.doc.save(&SaveTarget::default())?;
         e.doc.history_mut().mark_saved();
-        Ok(match e.doc.save_message() {
+        let key = e.doc.source_key();
+        let message = match e.doc.save_message() {
             Some(m) if !m.is_empty() => format!("saved {}: {m}", e.doc.title()),
             _ => format!("saved {}", e.doc.title()),
-        })
+        };
+        self.saved.push(key);
+        Ok(message)
+    }
+
+    /// The source keys of the documents saved since the last call (`source_key`: a game file's path, empty for others).
+    pub fn take_saved(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.saved)
     }
 
     /// Saves every modified document that can be saved. The messages say what was saved and explain each failure; true when nothing failed.

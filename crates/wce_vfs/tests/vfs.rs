@@ -133,3 +133,39 @@ fn files_go_into_a_mod_pack_replacing_their_folder() {
     assert_eq!(vfs.list("terrain/tiles/", ""), ["terrain/tiles/battle/a/aa/new.markers", "terrain/tiles/battle/b/aa/x"]);
     assert!(vfs.packs()[0].is_mod);
 }
+
+#[test]
+fn a_loose_file_saved_or_deleted_after_the_mount_is_indexed_again() {
+    let game = game_folder(&[("data/manifest.txt", "")]);
+    let high = game_folder(&[("keep.xml", "k")]);
+    let low = game_folder(&[("weather/a.environment", "low")]);
+
+    let mut config = Config::new(game.path(), GameProfile::ATTILA);
+    config.overlay_folders = vec![high.path().to_path_buf(), low.path().to_path_buf()];
+    let mut vfs = Vfs::mount(&config).unwrap();
+    assert_eq!(vfs.owner("weather/a.environment"), Some(1));
+
+    // saved into the higher folder: it wins from now on, the lower one still has it
+    fs::create_dir_all(high.path().join("weather")).unwrap();
+    fs::write(high.path().join("weather/a.environment"), "high").unwrap();
+    fs::write(high.path().join("new.xml"), "n").unwrap();
+    assert!(vfs.read("new.xml").is_err());
+    let before = vfs.clone();
+    vfs.refresh_loose(r"Weather\A.environment");
+    vfs.refresh_loose("new.xml");
+    assert_eq!(vfs.owners("weather/a.environment"), [0, 1]);
+    assert_eq!(vfs.read("weather/a.environment").unwrap(), b"high");
+    assert_eq!(vfs.read("new.xml").unwrap(), b"n");
+    assert_eq!(vfs.list("", ".xml"), ["keep.xml", "new.xml"]);
+    assert_eq!(before.read("weather/a.environment").unwrap(), b"low", "a clone keeps its own index");
+
+    // deleted again: the lower folder's shows, a path nobody has goes
+    fs::remove_file(high.path().join("weather/a.environment")).unwrap();
+    fs::remove_file(high.path().join("new.xml")).unwrap();
+    vfs.refresh_loose("weather/a.environment");
+    vfs.refresh_loose("new.xml");
+    assert_eq!(vfs.owners("weather/a.environment"), [1]);
+    assert_eq!(vfs.read("weather/a.environment").unwrap(), b"low");
+    assert!(vfs.owner("new.xml").is_none());
+    assert!(vfs.owners("new.xml").is_empty());
+}

@@ -200,10 +200,18 @@ pub struct GameSettings {
     /// Loose folders read before every pack, after the project folder, highest priority first.
     pub overlay_folders: Vec<PathBuf>,
 
-    /// Where "Save" writes loose files (under their in-pack path); none: the editor's default for the game. Per game: the files saved there
-    /// are read back as the game's own (a weather file of one game must not show in another).
+    /// The last destination of each File > Export entry (by its key: `exported_tile`, `ui_xml`, `terrain`...), where its dialog starts.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub export_dirs: BTreeMap<String, PathBuf>,
+
+    /// TODO(pre-release): the old output folder, where Save wrote the game's loose files before they went into the projects' `loose`;
+    /// kept until its files were offered to the project once ([`Settings::old_output_dir`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_dir: Option<PathBuf>,
+
+    /// TODO(pre-release): the old output folder's files were offered to the project (moved or left): not asked again.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub output_dir_offered: bool,
 
     /// The renderer's graphics options for this game: the game's own (its preferences file) or the editor's, and the editor's render
     /// scale.
@@ -582,9 +590,21 @@ impl Settings {
         self.projects_dir().join("assembly_kit")
     }
 
-    /// The current game's output folder: `$WCE_OUTPUT_DIR`, else the file's.
-    pub fn output_dir(&self) -> Option<PathBuf> {
-        env_value("WCE_OUTPUT_DIR").map(PathBuf::from).or_else(|| self.game_settings().output_dir)
+    /// TODO(pre-release): the current game's old output folder (the file's, else the old default: `<Documents>/AttilaWeatherEditor/out`
+    /// for Attila, `<Documents>/WCE/<game>/out` for the others) until its files were offered to the project; then none.
+    pub fn old_output_dir(&self) -> Option<PathBuf> {
+        let g = self.game_settings();
+        if g.output_dir_offered {
+            return None;
+        }
+
+        g.output_dir.or_else(|| {
+            let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)?;
+            Some(match self.game.as_str() {
+                "attila" => home.join("Documents").join("AttilaWeatherEditor").join("out"),
+                key => home.join("Documents").join("WCE").join(key).join("out"),
+            })
+        })
     }
 
     /// The DB schemas folder: `$WCE_DB_SCHEMAS`, else the file's.

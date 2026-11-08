@@ -1,7 +1,7 @@
 # Opening and saving exported tiles in the editor
 
 `wce_tile_io::attila::workflow` ties the round trip together for the editor (the tile tool's `open_exported` / `save_exported` commands
-and the Tile menu's "Open exported tile..." / "Save as exported tile").
+and Tile > "Open exported tile..." / File > Export > "As exported tile...").
 
 ## The game
 
@@ -27,11 +27,11 @@ log.
 
 `save_exported(game, project folder, out)`: the editor saves the project first (tile.ted, the height map), then the project is compiled
 with stages A, B (the kit's `raw_data` for BOB's inputs: the tile database settings, the linking tiles' heights, the buildings' height
-meshes) and C, and written to `<out>/<folder>`; the default `out` is the editor's output folder. The tile database in effect for the
+meshes) and C, and written to `<out>/<folder>`; `out` is the folder File > Export asks for (`save_exported [folder]`: by default the entry's last one, else the projects folder). The tile database in effect for the
 tile's kind gets the project's entry (`merge_entries`: the row of the same location replaced, or a new one where BOB's order puts it,
 larger tiles first; a missing tile set added) and is written to `<out>/terrain/tiles/<kind>/tile_database.bin`: packs replace a file by
 its path, so the mod's database must hold every tile. While a decompiled project's terrain is unchanged the row keeps the database's
-`min_height`, `scale` and `raw_data_tri_density` (the decompiled entry's are its height map's range). Files already in the output folder
+`min_height`, `scale` and `raw_data_tri_density` (the decompiled entry's are its height map's range). Files already in that folder
 that the compile did not write are noted, not removed.
 
 `save_exported_with(game, project folder, scene, out, base_of)` is the same for a project with buildings the game's packs don't have yet
@@ -40,7 +40,7 @@ thresholds the compile uses for it.
 
 ## Saving into a mod pack
 
-`save_exported_to_pack(game, project folder, scene, pack)` (Tile > Save to mod pack..., `save_to_pack <pack>`): the same compile into a
+`save_exported_to_pack(game, project folder, scene, pack)` (File > Export > To mod pack..., `save_to_pack <pack>`): the same compile into a
 scratch folder, then its files (the tile's folder, the tile database's: Attila's `tile_database.bin`, Rome 2's tile set file and
 `_settings.xml` when a texture group was added) into the pack, created if missing; the pack's files below the tile's folder go first.
 A game whose kit has no tiles (Rome 2) saves only so. An extracted tile is read without its extracted mark, as it was fingerprinted.

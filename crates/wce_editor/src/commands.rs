@@ -395,6 +395,24 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok(e.docs.find(id).map(|d| d.title()).unwrap_or_default())
     });
 
+    c.add("game_file", "game_file <path in the packs> <file> [--packs]", "test: write a game file as the editor reads it (a loose folder's copy first; --packs: as the packs have it) to a file on disk", |e, a| {
+        let (Some(path), Some(to)) = (a.first(), a.get(1)) else { return fail("usage: game_file <path in the packs> <file> [--packs]") };
+        let packs_only = a.iter().skip(2).any(|x| x == "--packs");
+        let Some(vfs) = e.vfs() else { return fail("the game packs are not mounted") };
+        let Some(&pack) = vfs.owners(path).iter().find(|&&i| !packs_only || !vfs.packs()[i].loose) else { return fail(format!("no pack or folder has {path}")) };
+        let bytes = match vfs.read_from(pack, path) {
+            Ok(b) => b,
+            Err(err) => return fail(err.to_string()),
+        };
+
+        let to = std::path::PathBuf::from(to);
+        if let Some(p) = to.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+
+        std::fs::write(&to, bytes).map_or_else(|err| fail(format!("{}: {err}", to.display())), |()| ok(""))
+    });
+
     c.add("documents", "documents", "list the open documents (id, tool, kind, title, unsaved, visible)", |e, _| {
         let mut s = String::new();
         for &id in e.docs.order() {
@@ -462,12 +480,20 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
 
     c.add("save", "save [document]", "save a document (default the active one)", |e, a| {
         let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
-        e.docs.save_one(id).map_or_else(fail, ok)
+        let r = e.docs.save_one(id);
+        e.follow_saves();
+        r.map_or_else(fail, ok)
+    });
+
+    c.add("revert_to_game", "revert_to_game [document]", "delete the project's copy of a game file and open the packs' file in its place (unsaved changes are lost)", |e, a| {
+        let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
+        e.revert_to_game(id).map_or_else(fail, ok)
     });
 
     c.add("save_all", "save_all", "save every modified document", |e, _| {
         let mut msgs = vec![];
         let all = e.docs.save_all(&mut msgs);
+        e.follow_saves();
         let s = msgs.join("; ");
         if all { ok(s) } else { fail(s) }
     });

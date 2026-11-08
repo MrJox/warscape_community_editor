@@ -1,7 +1,7 @@
 # Cross-tool composition (Phase 7): a tile lit by a weather file of the packs (no weather document needed), then the same file open in the weather tool
 # lighting the tile live while it is edited, one edit in each document, unsaved-changes prompts, Save All.
-# Run by scripts/cross_tool_check.sh (%TILE% is a copy of a kit tile, %OUT% a folder for the captures and the loose files).
-output_dir "%OUT%/saved" temp
+# Run by scripts/cross_tool_check.sh (%TILE% is a copy of a kit tile, %OUT% a folder for the captures; the projects folder, where Save writes the
+# weather file, is a throw-away one: $WCE_PROJECTS).
 
 # the weather tool starts with its sample map; opening a tile hides that stand-in scene and puts the tile tool on top
 frames 3
@@ -107,7 +107,7 @@ assert_layer_visible tile 0
 layer_visible tile 1
 assert_layer_visible tile 1
 
-# closing the document (with a discarded edit) keeps the tile's weather: the file as the packs have it lights it again
+# closing the document (with a discarded edit) keeps the tile's weather: the saved file (the project's loose copy, read before the packs) lights it
 tile_weather none
 frames 3
 capture 640x360 "%OUT%/tile_moved_default.png" 6
@@ -121,8 +121,25 @@ close environment discard
 frames 3
 assert_documents 2
 assert_preview weather/charlemagne/med_sp_land_day_dry.environment
-assert_env sun_elevation 26
+assert_env sun_elevation 41
 capture 640x360 "%OUT%/tile_after_close.png" 6
+
+# what the editor reads for the file now: the saved copy (the script compares it with the packs' file)
+game_file weather/charlemagne/med_sp_land_day_dry.environment "%OUT%/saved.environment"
+
+# Revert to game's version: the project's copy goes, the packs' file lights the tile again
+open "weather/charlemagne/med_sp_land_day_dry.environment"
+frames 2
+revert_to_game environment
+frames 3
+expect_fail assert_saved weather/charlemagne/med_sp_land_day_dry.environment
+tool tile
+frames 3
+assert_preview weather/charlemagne/med_sp_land_day_dry.environment
+assert_env sun_elevation 26
+close environment
+frames 2
+assert_documents 2
 
 # the window's close button with an unsaved edit: the prompt, then discard (the tile on disk keeps what Save All wrote)
 activate tile

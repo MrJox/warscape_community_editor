@@ -520,7 +520,7 @@ impl WeatherUi {
 
         if let Some(f) = file {
             gui::same_line_touching();
-            if chip(false, icons::PENCIL, "editweather", "Edit it in the Weather tool: a copy in the output folder, which the tile follows (and keeps)") {
+            if chip(false, icons::PENCIL, "editweather", "Edit it in the Weather tool: the tile follows the edits; Save writes the file into the project, which every tile reads from then on") {
                 self.edit(e, &f);
             }
         }
@@ -530,14 +530,10 @@ impl WeatherUi {
         }
     }
 
-    /// Opens the weather file in the Weather tool: copied into the output folder first (unless it is there), where its edits are saved; the
-    /// tile is lit by that copy and follows its edits.
+    /// Opens the weather file in the Weather tool (the project's copy when it has one): the tile follows its edits, and Save writes it
+    /// into the project's loose folder, which every tool reads before the packs.
     pub(crate) fn edit(&mut self, e: &mut Editor, file: &str) {
-        let result = e.copy_to_output(file).and_then(|copy| {
-            e.open_path(file, true, true).map(|m| format!("{m} (a copy in {})", copy.display()))
-        });
-
-        match result {
+        match e.open_path(file, true, true) {
             Ok(m) => e.status(&m, false),
             Err(m) => e.status(&m, true),
         }

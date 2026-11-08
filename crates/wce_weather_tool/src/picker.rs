@@ -1,6 +1,6 @@
 //! The weather selection database (warscape_asset_variation_db): which .environment file the game picks for a set of battle conditions, and
 //! an editor for the whole file (see docs/re/variation_db.md). Loads the .bin the game uses from the packs, or any .bin / .xml file; Save
-//! writes both forms as loose files under the output folder (as the packs ship them), Save As one file whose extension picks the format, and
+//! writes both forms as loose files in the project's loose folder (as the packs ship them, read before the packs from then on), Save As one file whose extension picks the format, and
 //! Convert turns a .xml into a .bin or back without opening it.
 
 use std::collections::BTreeMap;
@@ -130,6 +130,9 @@ pub struct WeatherPicker {
     save_anyway: bool,
     edit: VariationEditState,
     script: String,
+
+    /// The database's paths in the packs that Save wrote into the project since the last `take_changed`.
+    changed: Vec<String>,
 
     /// What the packs say about the climates and climate change phases the game sends (read with the database).
     facts: GameFacts,
@@ -296,7 +299,7 @@ impl WeatherPicker {
     /// Commands separated by ';' for automated tests: add-value:<category>=<value>, remove-value:<category>=<value>,
     /// rename-value:<category>=<from>><to>, clone-value:<category>=<from>><to>, add-variation:<file>, save:xml|bin|both, save-as:<file>,
     /// open:<file>, convert:<in>><out>. The result is shown in the picker window.
-    fn run_script(&mut self, output_dir: &Path) {
+    fn run_script(&mut self, loose_dir: &Path) {
         let script = std::mem::take(&mut self.script);
         let mut log = String::new();
         for cmd in script.split(';').filter(|c| !c.is_empty()) {
@@ -306,7 +309,7 @@ impl WeatherPicker {
             let result = match (op, eq) {
                 ("save", _) | ("save-as", _) | ("open", _) | ("convert", _) => {
                     match op {
-                        "save" => self.save(output_dir, arg == "xml" || arg == "both", arg == "bin" || arg == "both"),
+                        "save" => self.save(loose_dir, arg == "xml" || arg == "both", arg == "bin" || arg == "both"),
                         "save-as" => self.save_as(Path::new(arg)),
                         "open" => self.load_file(Path::new(arg)),
                         _ => match arrow(0) {
@@ -350,25 +353,27 @@ impl WeatherPicker {
         self.message = log;
     }
 
-    /// Writes the working copy as loose files under the output folder, at the in-pack path of the database.
-    fn save(&mut self, output_dir: &Path, xml: bool, bin: bool) {
+    /// Writes the working copy as loose files in the project's loose folder, at the in-pack path of the database.
+    fn save(&mut self, loose_dir: &Path, xml: bool, bin: bool) {
         let Some(db) = &self.db else { return };
         if let Some(why) = self.refuse_saving(db) {
             self.message = why;
             return;
         }
 
-        let dir = output_dir.join("warscape_asset_variation_db");
+        let dir = loose_dir.join("warscape_asset_variation_db");
         let written = (|| -> Result<String, String> {
             let mut done = String::new();
             if xml {
                 write_db(db, &dir.join("warscape_asset_variation_db.xml"))?;
                 done += "warscape_asset_variation_db.xml ";
+                self.changed.push(VDB_XML.to_owned());
             }
 
             if bin {
                 write_db(db, &dir.join("warscape_asset_variation_db.bin"))?;
                 done += "warscape_asset_variation_db.bin ";
+                self.changed.push(VDB_BIN.to_owned());
             }
 
             Ok(done)
@@ -382,6 +387,12 @@ impl WeatherPicker {
 
             Err(e) => self.message = format!("Cannot save: {e}"),
         }
+    }
+
+    /// The database's paths in the packs that Save wrote into the project since the last call: the editor indexes them again
+    /// (`Editor::loose_changed`).
+    pub fn take_changed(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.changed)
     }
 
     /// Writes the working copy to one file; .xml or .bin by its extension.
@@ -416,20 +427,20 @@ impl WeatherPicker {
     }
 
     /// Loads the database now (otherwise on first draw) and runs a pending script; true when a database is loaded.
-    pub fn ensure_loaded(&mut self, e: &Editor, output_dir: &Path) -> bool {
+    pub fn ensure_loaded(&mut self, e: &Editor, loose_dir: &Path) -> bool {
         if !self.loaded {
             self.load(e);
         }
 
         if !self.script.is_empty() {
-            self.run_script(output_dir);
+            self.run_script(loose_dir);
         }
 
         self.db.is_some()
     }
 
     /// Source, Open, Save, Save As, Convert, Undo / Redo / Revert; true when the window must stop drawing this frame (a new database was loaded).
-    fn draw_file_bar(&mut self, e: &mut Editor, output_dir: &Path) -> bool {
+    fn draw_file_bar(&mut self, e: &mut Editor, loose_dir: &Path) -> bool {
         gui::set_next_item_width(420.0);
         if gui::begin_combo("##source", &self.source) {
             let mut chosen = None;
@@ -461,7 +472,7 @@ impl WeatherPicker {
 
         gui::same_line();
         if gui::button("Open...")
-            && let Some(path) = file_dialog(false, &output_dir.join(VDB_BIN), &[("Weather database".to_owned(), "*.bin *.xml".to_owned())])
+            && let Some(path) = file_dialog(false, &loose_dir.join(VDB_BIN), &[("Weather database".to_owned(), "*.bin *.xml".to_owned())])
         {
             self.load_file(&path);
             return true;
@@ -476,19 +487,19 @@ impl WeatherPicker {
 
         gui::same_line_at(140.0);
         if gui::button("Save") {
-            self.save(output_dir, true, true);
+            self.save(loose_dir, true, true);
         }
 
         if gui::is_item_hovered() {
             gui::set_tooltip(&format!(
-                "Writes warscape_asset_variation_db.xml and .bin (the game reads the .bin) to\n{}",
-                output_dir.join("warscape_asset_variation_db").display()
+                "Writes warscape_asset_variation_db.xml and .bin (the game reads the .bin) into the project, read before the packs from then on:\n{}",
+                loose_dir.join("warscape_asset_variation_db").display()
             ));
         }
 
         gui::same_line();
         if gui::button("Save As...")
-            && let Some(path) = file_dialog(true, &output_dir.join(VDB_BIN), &db_filters())
+            && let Some(path) = file_dialog(true, &loose_dir.join(VDB_BIN), &db_filters())
         {
             self.save_as(&path);
         }
@@ -499,7 +510,7 @@ impl WeatherPicker {
 
         gui::same_line();
         if gui::button("Convert...")
-            && let Some(from) = file_dialog(false, &output_dir.join(VDB_XML), &[("Weather database".to_owned(), "*.bin *.xml".to_owned())])
+            && let Some(from) = file_dialog(false, &loose_dir.join(VDB_XML), &[("Weather database".to_owned(), "*.bin *.xml".to_owned())])
             && let Some(to) = file_dialog(true, &other_format(&from), &if is_xml(&from).unwrap_or(false) { db_filters() } else { db_filters().into_iter().rev().collect() })
         {
             self.convert(&from, &to);
@@ -550,7 +561,7 @@ impl WeatherPicker {
 
     /// The candidate list the game builds for a battle; `active_environment` is the in-pack path of the open environment (reverse lookup).
     /// Returns the in-pack path of a candidate to open (its Open button).
-    pub fn draw(&mut self, e: &mut Editor, output_dir: &Path, active_environment: &str) -> Option<String> {
+    pub fn draw(&mut self, e: &mut Editor, loose_dir: &Path, active_environment: &str) -> Option<String> {
         if !self.open {
             return None;
         }
@@ -582,7 +593,7 @@ impl WeatherPicker {
 
             gui::same_line();
             if gui::button("Open...")
-                && let Some(path) = file_dialog(false, &output_dir.join(VDB_BIN), &[("Weather database".to_owned(), "*.bin *.xml".to_owned())])
+                && let Some(path) = file_dialog(false, &loose_dir.join(VDB_BIN), &[("Weather database".to_owned(), "*.bin *.xml".to_owned())])
             {
                 self.load_file(&path);
             }
@@ -592,10 +603,10 @@ impl WeatherPicker {
         }
 
         if !self.script.is_empty() {
-            self.run_script(output_dir);
+            self.run_script(loose_dir);
         }
 
-        if self.draw_file_bar(e, output_dir) || !gui::begin_tab_bar("vdbtabs") {
+        if self.draw_file_bar(e, loose_dir) || !gui::begin_tab_bar("vdbtabs") {
             gui::end();
             return None;
         }

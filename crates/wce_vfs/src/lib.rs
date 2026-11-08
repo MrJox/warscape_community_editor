@@ -13,6 +13,7 @@
 //! forward slashes; each pack keeps its own spelling for reading.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -98,11 +99,12 @@ enum Source {
     Pack(Box<Mutex<RpfmPack>>),
 }
 
-/// The game's file system.
+/// The game's file system. A clone shares the packs' readers and copies the index.
+#[derive(Clone)]
 pub struct Vfs {
     profile: GameProfile,
     packs: Vec<Pack>,
-    sources: Vec<Source>,
+    sources: Vec<Arc<Source>>,
     missing_mods: Vec<String>,
 
     /// Path -> index of the pack it's read from.
@@ -113,6 +115,9 @@ pub struct Vfs {
 
     /// Per pack, path -> the path as the pack spells it, where that's not the normalized path.
     spelling: Vec<HashMap<String, String>>,
+
+    /// Path -> every pack that removes it (an empty file), highest priority first.
+    removed_by: HashMap<String, Vec<usize>>,
 }
 
 impl Vfs {
@@ -138,6 +143,7 @@ impl Vfs {
             files: BTreeMap::new(),
             owners: HashMap::new(),
             spelling: vec![],
+            removed_by: HashMap::new(),
         };
 
         for folder in &config.overlay_folders {
@@ -169,7 +175,9 @@ impl Vfs {
     fn add(&mut self, pack: Pack, source: Source, paths: Vec<String>, removed: Vec<String>) {
         let index = self.packs.len();
         for path in removed {
-            self.files.entry(normalize(&path)).or_insert(REMOVED);
+            let normalized = normalize(&path);
+            self.files.entry(normalized.clone()).or_insert(REMOVED);
+            self.removed_by.entry(normalized).or_default().push(index);
         }
 
         let mut spelling = HashMap::new();
@@ -183,8 +191,38 @@ impl Vfs {
         }
 
         self.packs.push(pack);
-        self.sources.push(source);
+        self.sources.push(Arc::new(source));
         self.spelling.push(spelling);
+    }
+
+    /// Indexes one path of the loose folders again, after a file was written into one of them or deleted from it since the mount (an
+    /// editor's save, a revert): which folders have it now, and which pack it is read from.
+    pub fn refresh_loose(&mut self, path: &str) {
+        let normalized = normalize(path);
+        let mut owners = self.owners.remove(&normalized).unwrap_or_default();
+        owners.retain(|&i| !self.packs[i].loose);
+        for (i, pack) in self.packs.iter().enumerate().filter(|(_, p)| p.loose) {
+            let stored = self.spelling[i].get(&normalized).map_or(normalized.as_str(), String::as_str);
+            if pack.path.join(stored).is_file() {
+                owners.push(i);
+            }
+        }
+
+        owners.sort_unstable();
+        let removed = self.removed_by.get(&normalized).and_then(|r| r.first().copied());
+        match owners.first().copied() {
+            Some(first) if removed.is_none_or(|r| first < r) => {
+                self.files.insert(normalized.clone(), first);
+            }
+
+            _ => {
+                self.files.remove(&normalized);
+            }
+        }
+
+        if !owners.is_empty() {
+            self.owners.insert(normalized, owners);
+        }
     }
 
     /// The game the packs are of.
@@ -251,7 +289,7 @@ impl Vfs {
 
         let stored = self.spelling[pack].get(&normalized).unwrap_or(&normalized);
         let read_error = |error: String| VfsError::Read(path.to_owned(), self.packs[pack].name.clone(), error);
-        match &self.sources[pack] {
+        match self.sources[pack].as_ref() {
             Source::Folder => std::fs::read(self.packs[pack].path.join(stored)).map_err(|error| read_error(error.to_string())),
             Source::Pack(rpfm_pack) => {
                 let mut rpfm_pack = rpfm_pack.lock().map_err(|_| read_error("another read panicked".to_owned()))?;

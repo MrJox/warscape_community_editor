@@ -140,6 +140,9 @@ struct AnimPlay {
 }
 
 /// Screen sizes to preview the layout at.
+/// The File > Export > XML entry's key for its last destination (`Editor::export_dir`).
+const UI_XML_KEY: &str = "ui_xml";
+
 const SCREEN_SIZES: [(i32, i32); 7] = [(1024, 768), (1280, 720), (1366, 768), (1600, 900), (1920, 1080), (2560, 1440), (3840, 2160)];
 
 const HANDLES: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0)];
@@ -2269,6 +2272,37 @@ impl Tool for UiTool {
         self.project_popups(e);
     }
 
+    fn export_menu(&mut self, e: &mut Editor) -> bool {
+        let has = active_doc(e).is_some();
+        if gui::menu_item("Layout into a mod pack...", None, false, has) {
+            self.open_pack_popup = true;
+        }
+
+        if gui::menu_item("Project as a mod pack...", None, false, true) {
+            self.export_popup = true;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The project's UI files (skins, saved layouts, pictures in its loose folder) as one mod pack.");
+        }
+
+        if gui::menu_item("XML...", None, false, has)
+            && let Some(id) = active_doc(e)
+        {
+            let name = format!("{}.uixml", ui_doc_ref(e, id).map(|d| d.title()).unwrap_or_default());
+            let filters = [("UI layout XML".to_owned(), "*.uixml *.xml".to_owned()), ("All files".to_owned(), "*.*".to_owned())];
+            if let Some(path) = e.pick_export_file(UI_XML_KEY, &name, &filters) {
+                let xml = ui_doc_ref(e, id).map(|d| d.xml()).unwrap_or_default();
+                match std::fs::write(&path, xml.as_bytes()) {
+                    Ok(()) => e.status(&format!("wrote {}", path.display()), false),
+                    Err(err) => e.status(&format!("cannot write {}: {err}", path.display()), true),
+                }
+            }
+        }
+
+        true
+    }
+
     fn draw_menus(&mut self, e: &mut Editor) {
         if gui::begin_menu("UI") {
             let has = active_doc(e).is_some();
@@ -2316,41 +2350,10 @@ impl Tool for UiTool {
 
             gui::end_disabled();
             gui::separator();
-            gui::begin_disabled(!has);
-            if gui::menu_item("Save into a mod pack...", None, false, true) {
-                self.open_pack_popup = true;
-            }
-
-            gui::end_disabled();
-            gui::separator();
             if gui::menu_item("New skin...", None, false, true) {
                 self.new_skin_popup = true;
             }
 
-            if gui::menu_item("Export mod pack...", None, false, true) {
-                self.export_popup = true;
-            }
-
-            gui::begin_disabled(!has);
-
-            if gui::menu_item("Export XML...", None, false, true) {
-                if let Some(id) = active_doc(e) {
-                    let d = ui_doc_ref(e, id).unwrap();
-                    let name = format!("{}.uixml", d.title());
-                    let path = e.output_dir().join("ui_xml").join(name);
-                    let xml = d.xml();
-                    if let Some(p) = path.parent() {
-                        let _ = std::fs::create_dir_all(p);
-                    }
-
-                    match std::fs::write(&path, xml.as_bytes()) {
-                        Ok(()) => e.status(&format!("wrote {}", path.display()), false),
-                        Err(err) => e.status(&format!("cannot write {}: {err}", path.display()), true),
-                    }
-                }
-            }
-
-            gui::end_disabled();
             gui::end_menu();
         }
     }

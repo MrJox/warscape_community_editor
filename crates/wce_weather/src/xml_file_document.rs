@@ -1,7 +1,7 @@
 //! A weather file as a document: .environment (battle), .lighting (campaign, porthole), weather_definitions.xml, vfx/*.xml. The lossless XmlDoc
 //! is the model; every edit is a command on the document's stack, so undo and redo, merged drags and the modified marker come from the shared
-//! core. Saving writes the original bytes with only the edited spans changed (`XmlDoc::save`), as a loose file under the output folder keeping
-//! the in-pack path.
+//! core. Saving writes the original bytes with only the edited spans changed (`XmlDoc::save`), as a loose file in the project's loose folder
+//! (`<projects>/loose`, mounted before the packs) keeping the in-pack path.
 
 use std::any::Any;
 use std::path::PathBuf;
@@ -128,7 +128,9 @@ pub struct XmlFileDocument {
     core: DocumentCore,
     history: CommandStack<XmlDoc>,
     source: Source,
-    output_dir: PathBuf,
+
+    /// The project's loose folder: where a file of the packs is saved, under its path in the packs.
+    loose_dir: PathBuf,
 }
 
 impl XmlFileDocument {
@@ -136,9 +138,9 @@ impl XmlFileDocument {
     /// # Errors
     ///
     /// The bytes are not an XML document.
-    pub fn new(source: Source, bytes: Vec<u8>, output_dir: PathBuf) -> Result<Self, String> {
+    pub fn new(source: Source, bytes: Vec<u8>, loose_dir: PathBuf) -> Result<Self, String> {
         let xml = XmlDoc::parse(bytes).map_err(|error| error.to_string())?;
-        Ok(Self { core: DocumentCore::new(), history: CommandStack::new(xml), source, output_dir })
+        Ok(Self { core: DocumentCore::new(), history: CommandStack::new(xml), source, loose_dir })
     }
 
     pub fn xml(&self) -> &XmlDoc {
@@ -149,12 +151,8 @@ impl XmlFileDocument {
         &self.source
     }
 
-    pub fn set_output_dir(&mut self, dir: PathBuf) {
-        self.output_dir = dir;
-    }
-
     pub fn default_save_path(&self) -> PathBuf {
-        if self.source.vfs_path.is_empty() { self.source.disk.clone() } else { self.output_dir.join(&self.source.vfs_path) }
+        if self.source.vfs_path.is_empty() { self.source.disk.clone() } else { self.loose_dir.join(&self.source.vfs_path) }
     }
 
     /// .environment or .lighting: the kinds that light the scene.

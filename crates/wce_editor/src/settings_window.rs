@@ -472,14 +472,6 @@ impl Editor {
         }
 
         env_note("WCE_GAME");
-        let default_output = crate::editor::default_output_dir_for(d.game_profile()).display().to_string();
-        let mut output = d.game_mut().output_dir.clone();
-        if folder_field("Output folder", &mut output, &default_output) {
-            d.game_mut().output_dir = output;
-        }
-
-        env_note("WCE_OUTPUT_DIR");
-        help("Save writes this game's loose files here, under their path in the packs (and reads them back as the game's).");
         let game = d.game_dir();
         if let Some(problem) = game.as_ref().and_then(|g| d.game_profile().folder_problem(g)) {
             gui::set_cursor_pos_x(LABEL_WIDTH);

@@ -520,6 +520,10 @@ pub fn outliner(e: &mut Editor) {
                 close = true;
             }
 
+            if e.is_loose_copy(id) && gui::menu_item("Revert to game's version...", None, false, true) {
+                e.ask_revert(id);
+            }
+
             gui::separator();
             if gui::menu_item("Edit in its tool", None, false, !tool.is_empty()) {
                 e.set_tool(&tool);

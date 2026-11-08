@@ -20,7 +20,7 @@ use crate::launch::{self, Battle, BattleMap, BattleWeather, Delivery, LAUNCH_PAC
 use crate::settings::{LaunchArmy, LaunchDelivery, LaunchMap, LaunchSettings, SETTINGS_ID, TileSettings};
 use crate::tool::{ExportInputs, TileTool, document_id};
 
-/// The staging folder under the output folder: a subfolder per launch (`d…` for a dry run) with the exported tile, the loose files the
+/// The staging folder under the project's build folder (`Editor::build_dir`): a subfolder per launch (`d…` for a dry run) with the exported tile, the loose files the
 /// game reads (`game/`) or the launch pack, and a copy of the battle's XML. A launch's folder is removed when its game exits; the others
 /// only when no game runs (a running game reads its loose files there).
 const STAGING: &str = "launch";
@@ -192,7 +192,7 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
         }
     }
 
-    // The editor's own edits the tile uses (a weather file saved in the output folder): carried along.
+    // The editor's own edits the tile uses (a weather file saved into the project's loose folder): carried along.
     if let Some(vfs) = plan.vfs.as_ref() {
         for path in &overlay {
             if let Ok(bytes) = vfs.read(path) {
@@ -382,7 +382,7 @@ impl TileTool {
         }
 
         // A folder of its own. The other launches' folders go when no game can be reading them (a real launch: the game is not running).
-        let root = e.output_dir().join(STAGING);
+        let root = e.build_dir().join(STAGING);
         clear_staging(&root, dry_run);
         let staging = root.join(launch_folder_name(dry_run));
         std::fs::create_dir_all(&staging).map_err(|err| format!("{}: {err}", staging.display()))?;
@@ -534,7 +534,7 @@ impl TileTool {
             if let Some(dir) = e.settings_ref().game_dir() {
                 let game = e.game();
                 let data = dir.join(game.data_dir);
-                let root = e.output_dir().join(STAGING);
+                let root = e.build_dir().join(STAGING);
                 let left = data.join(LAUNCH_PACK).is_file() || std::fs::read_dir(&root).is_ok_and(|mut d| d.next().is_some());
                 if left && launch::process_running(game.exe) != Some(true) {
                     clear_staging(&root, false);
