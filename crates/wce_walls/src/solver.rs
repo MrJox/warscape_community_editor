@@ -189,7 +189,7 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
     }
 
     // The centre line: Catmull-Rom between corners (Bezier where handles are written), then resampled by distance.
-    let (line, _) = centre_line_marked(&input.points, &input.sharp, &input.handles);
+    let (line, _) = centre_line_marked(&input.points, &input.sharp, &input.handles, profile.fold_radius());
 
     let (samples, corner_s) = resample(&line);
     plan.length = samples.last().map_or(0.0, |s| s.0);
@@ -342,14 +342,18 @@ pub type MarkedLine = Vec<([f64; 2], Option<usize>)>;
 
 /// A wall's centre line (x, z), dense: Catmull-Rom between its corners, a segment with a handle written the Bezier through its handles (the
 /// one not written: the Catmull-Rom one), each sample with the point it is at; and which points are corners (the ends, those marked, the
-/// sharp turns without handles).
+/// sharp turns, unless their handles make a curve there no tighter than `fold_radius`; a corner's own handles are not used).
+///
+/// A wall folds over itself where its line bends tighter than its footprint reaches from the line (`fold_radius`): short handles on a
+/// sharp turn (129 degrees, handles of 2 m rotated along one side; user 2026-11-08) squeezed the whole turn into a few metres.
 #[must_use]
-pub fn centre_line_marked(points: &[[f64; 2]], sharp: &[bool], handles: &[Handles]) -> (MarkedLine, Vec<bool>) {
+pub fn centre_line_marked(points: &[[f64; 2]], sharp: &[bool], handles: &[Handles], fold_radius: f64) -> (MarkedLine, Vec<bool>) {
     let n = points.len();
     let written = |i: usize, side: usize| handles.get(i).and_then(|h| h[side]);
     let mut is_corner = corners(points, sharp);
     for (i, c) in is_corner.iter_mut().enumerate().take(n.saturating_sub(1)).skip(1) {
-        if *c && !sharp.get(i).copied().unwrap_or(false) && (written(i, 0).is_some() || written(i, 1).is_some()) {
+        let handled = written(i, 0).is_some() || written(i, 1).is_some();
+        if *c && !sharp.get(i).copied().unwrap_or(false) && handled && tightest_bend(points, handles, i) >= fold_radius {
             *c = false;
         }
     }
@@ -363,8 +367,8 @@ pub fn centre_line_marked(points: &[[f64; 2]], sharp: &[bool], handles: &[Handle
         let m = section.len();
         for j in 0..m - 1 {
             let (i0, i1) = (w[0] + j, w[0] + j + 1);
-            let h1 = if j == 0 && is_corner[i0] && i0 != 0 && sharp.get(i0).copied().unwrap_or(false) { None } else { written(i0, 1) };
-            let h2 = if j + 2 == m && is_corner[i1] && i1 + 1 != n && sharp.get(i1).copied().unwrap_or(false) { None } else { written(i1, 0) };
+            let h1 = if j == 0 && is_corner[i0] && i0 != 0 { None } else { written(i0, 1) };
+            let h2 = if j + 2 == m && is_corner[i1] && i1 + 1 != n { None } else { written(i1, 0) };
             if h1.is_none() && h2.is_none() {
                 continue;
             }
@@ -389,6 +393,34 @@ pub fn centre_line_marked(points: &[[f64; 2]], sharp: &[bool], handles: &[Handle
     }
 
     (line, is_corner)
+}
+
+/// The tightest radius the line bends with over the two segments at point `i` were it a curve there: each the Bezier through its handles
+/// (one not written: the Catmull-Rom one), sampled.
+fn tightest_bend(points: &[[f64; 2]], handles: &[Handles], i: usize) -> f64 {
+    let n = points.len() as isize;
+    let at = |k: isize| points[k.clamp(0, n - 1) as usize];
+    let written = |k: usize, side: usize| handles.get(k).and_then(|h| h[side]);
+    let mut pts = vec![];
+    for j in [i - 1, i] {
+        let (p0, p1, p2, p3) = (at(j as isize - 1), at(j as isize), at(j as isize + 1), at(j as isize + 2));
+        let b1 = written(j, 1).unwrap_or([p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0]);
+        let b2 = written(j + 1, 0).unwrap_or([p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0]);
+        for k in 0..=64u32 {
+            let t = f64::from(k) / 64.0;
+            let s = 1.0 - t;
+            let c = |a: f64, b: f64, c: f64, d: f64| a * s * s * s + b * 3.0 * s * s * t + c * 3.0 * s * t * t + d * t * t * t;
+            pts.push([c(p1[0], b1[0], b2[0], p2[0]), c(p1[1], b1[1], b2[1], p2[1])]);
+        }
+    }
+
+    // The circle through each three samples in a row.
+    let d = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]);
+    pts.windows(3).map(|w| {
+        let (a, b, c) = (w[0], w[1], w[2]);
+        let cross = ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs();
+        if cross < 1e-12 { f64::INFINITY } else { d(a, b) * d(b, c) * d(a, c) / (2.0 * cross) }
+    }).fold(f64::INFINITY, f64::min)
 }
 
 /// A centripetal Catmull-Rom through the points, `per` samples per segment (the ends extended by reflection).
@@ -944,15 +976,30 @@ mod tests {
     fn a_handle_turns_the_wall_and_makes_a_sharp_turn_a_curve() {
         // A right angle at (50, 0): a corner without handles; with its handles written across it, a curve through it.
         let pts = [[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]];
-        let (_, plain) = centre_line_marked(&pts, &[false; 3], &[]);
+        let (_, plain) = centre_line_marked(&pts, &[false; 3], &[], 8.0);
         assert!(plain[1], "a corner");
         let handles = [[None, None], [Some([35.0, -15.0]), Some([65.0, 15.0])], [None, None]];
-        let (line, corners) = centre_line_marked(&pts, &[false; 3], &handles);
+        let (line, corners) = centre_line_marked(&pts, &[false; 3], &handles, 8.0);
         assert!(!corners[1], "no corner with handles");
         // Just past the point (sample 16: 16 a segment), the line runs as its handle does (+x and +z together).
         let (p, q) = (line[16].0, line[17].0);
         assert!((p[0] - 50.0).abs() < 1e-9 && p[1].abs() < 1e-9, "{p:?}");
         assert!(q[0] - p[0] > 0.0 && q[1] - p[1] > 0.0, "{p:?} {q:?}");
+    }
+
+    #[test]
+    fn a_sharp_turn_stays_a_corner_when_its_handles_would_fold_the_wall() {
+        // The user's wall 29 (2026-11-08): a 129 degree turn, its handles rotated along x, 3 and 4 long. As a curve the turn would take a
+        // few units, and a wall reaching 16 from its line folds there: a corner, its handles unused (the line straight to the point).
+        let pts = [[153.0, 438.0], [213.0, 334.0], [262.0, 462.0]];
+        let handles = [[None, None], [Some([210.0, 334.0]), Some([217.0, 334.0])], [None, None]];
+        let (line, corners) = centre_line_marked(&pts, &[false; 3], &handles, 16.0);
+        assert!(corners[1], "a corner");
+        let (before, step) = (line[15].0, [(pts[1][0] - pts[0][0]) / 16.0, (pts[1][1] - pts[0][1]) / 16.0]);
+        assert!((before[0] - (pts[1][0] - step[0])).abs() < 1e-6 && (before[1] - (pts[1][1] - step[1])).abs() < 1e-6, "{before:?}");
+        // Handles 45 long: a curve wide enough (its tightest radius about 21), no corner.
+        let wide = [[None, None], [Some([168.0, 334.0]), Some([258.0, 334.0])], [None, None]];
+        assert!(!centre_line_marked(&pts, &[false; 3], &wide, 16.0).1[1], "a curve");
     }
 
     #[test]

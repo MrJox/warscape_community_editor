@@ -90,14 +90,19 @@ pub fn wall_handles(scene: &TedScene, elem: usize) -> Vec<[Option<[f64; 2]>; 2]>
     }))).collect()
 }
 
+/// A wall's base (its `wall_base`, else the default).
+pub fn wall_profile(scene: &TedScene, elem: usize) -> Option<&'static Profile> {
+    let base = scene.doc().get(elem, "wall_base").unwrap_or_default();
+    profile(&base).or_else(|| profile(DEFAULT_BASE))
+}
+
 /// A wall's layout; `None` for an element that is not a wall or has fewer than 2 points.
 pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn(f64, f64) -> f64) -> Option<WallLayout> {
     if scene.type_of(elem) != WALL_SPLINE {
         return None;
     }
 
-    let base = scene.doc().get(elem, "wall_base").unwrap_or_default();
-    let profile = profile(&base).or_else(|| profile(DEFAULT_BASE))?;
+    let profile = wall_profile(scene, elem)?;
     let tolerance = scene.doc().get(elem, "wall_tolerance").and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(0.5).max(0.0);
     let flip = scene.doc().get(elem, "wall_flip").is_some_and(|v| parse_bool(&v));
     let every = |attr: &str, default: f64| scene.doc().get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);

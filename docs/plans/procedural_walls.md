@@ -59,6 +59,15 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
   - steps keep from a corner as far along each arm as it takes to be the margin away from the other arm: the margin over the sine of
     the turn (at most 5 times). At an acute corner (25 degrees inside, the test tile's wall) the stepped bastions 18 m from the tip
     stood across the other arm; now 33 m.
+- **A sharp turn with handles stays a corner when its curve would fold the wall** (`solver::centre_line_marked`, user 2026-11-08: a
+  129 degree turn whose handles, 1.5 and 2 m, had been rotated folded over itself). Handles make a sharp turn a curve only when the
+  curve's tightest radius over the point's two segments is at least the footprint's reach from the line (`Profile::fold_radius`, the
+  larger of `depth`); otherwise the point is a corner and its handles are not used, as a marked corner's. The test tile's turn: radius
+  0.66 with its handles; 45-unit handles give about 21, a curve.
+- **TDD's gondor stair has its own z range** (`slab_zy` 3.74..8.09, user 2026-11-08: the stairs looked misaligned). Measured in the
+  step pieces' meshes: the game's and TDD's other 15 m step pieces have their treads at z 5.15..8.65 (side beams 4.90..9.25), the
+  gondor ones at 3.99..7.49 (beams 3.74..8.09). Spread over the gondor walkway (1.8..8.5) from the game's 5.1..8.9, the treads stuck
+  a metre out of the parapet's outer face (0.74) and stopped short of the inner side; now the beams lie on the walkway's two edges.
 - **Audit of a step against the stepped bastion** (user 2026-11-05: units still did not climb the stairs; every part of the logic file
   checked on Amon Calen, `~/wce_re/scratch/audit`):
   - `bin_data` groups the hull's triangles (as many groups as `action_vfx`; each triangle in one): the remade hull kept the base's
