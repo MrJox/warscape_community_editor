@@ -1358,6 +1358,8 @@ impl TileTool {
         let kit = tiles_kit(e);
         let game = self.exported_game.clone().filter(|g| Arc::ptr_eq(&g.files, &files));
         let id = document_id(e).ok_or("no tile is open")?;
+        // The roads being made finished first: what they change is in the maps the save writes and the compile reads.
+        e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?.tile_mut().finish_road_jobs();
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         if d.modified() {
             e.docs.save_one(id)?;
@@ -1382,6 +1384,7 @@ impl TileTool {
     pub fn save_to_pack(&mut self, e: &mut Editor, pack: &Path) -> Result<String, String> {
         let game = self.exported_game(e)?;
         let id = document_id(e).ok_or("no tile is open")?;
+        e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?.tile_mut().finish_road_jobs();
         if e.docs.find(id).is_some_and(|d| d.modified()) {
             e.docs.save_one(id)?;
         }
@@ -1527,6 +1530,7 @@ impl TileTool {
     /// No tile, no kit, or the save fails.
     pub fn save_for_kit(&mut self, e: &mut Editor, kit_raw: Option<PathBuf>) -> Result<String, String> {
         let id = document_id(e).ok_or("no tile is open")?;
+        e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?.tile_mut().finish_road_jobs();
         if e.docs.find(id).is_some_and(|d| d.modified()) {
             e.docs.save_one(id)?;
         }
