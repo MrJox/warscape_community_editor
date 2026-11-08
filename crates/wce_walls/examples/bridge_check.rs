@@ -207,7 +207,7 @@ fn main() {
             let joined = theirs.len() == 1 && {
                 let r = &theirs[0].1;
                 let shared = r.iter().filter(|q| all.iter().filter(|(p, _)| *p == piece).any(|(_, d)| d.iter().any(|n| (n[0] - q[0]).abs() < 0.01 && (n[1] - q[1]).abs() < 0.01 && (n[2] - q[2]).abs() < 0.01))).count();
-                shared == 2 && r.iter().filter(|q| q[1] < -20.0 - 1.0).count() == 2
+                shared == 2 && r.iter().filter(|q| (q[1] + 20.0 + wce_walls::bridge::GROUND_PLATFORM_BURY).abs() < 0.01).count() == 2
             };
             if !joined {
                 bad_ends += 1;
