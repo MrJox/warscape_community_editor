@@ -28,9 +28,10 @@ pub struct BridgeBase {
     pub key: &'static str,
 }
 
-/// The bases (Attila's kit). `bridge_wood_2`: a 20 x 10 deck on posts, one platform at 1. `bridge_stone_1`: stone, no platforms: one is
-/// made at its deck's height.
-pub const BASES: [BridgeBase; 2] = [BridgeBase { name: "wood", key: "bridge_wood_2" }, BridgeBase { name: "stone", key: "bridge_stone_1" }];
+/// The bases (Attila's kit). `bridge_wood_2`: a 20 x 10 deck on posts, one platform at 1. The wooden one alone for now (user,
+/// 2026-11-08): `bridge_stone_1` is a humped bridge of its own, and cut into pieces it repeated its hump and its arch (its deck in steps);
+/// other bases wait for a standard shape a base is made to. A road asking for one it does not have gets the first.
+pub const BASES: [BridgeBase; 1] = [BridgeBase { name: "wood", key: "bridge_wood_2" }];
 
 /// A base by its name or its key.
 #[must_use]

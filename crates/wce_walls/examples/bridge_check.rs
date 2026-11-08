@@ -203,7 +203,7 @@ fn main() {
     if let Some(schema) = a.iter().find(|x| x.ends_with(".ron")) {
         let schema = rpfm_lib::schema::Schema::load(std::path::Path::new(schema), None).expect("the schema");
         let half = deck.path.iter().take(46).copied().collect::<Vec<_>>();
-        let spans = [wce_walls::bridge::span_text("wood", 12.0, &deck.path), wce_walls::bridge::span_text("stone", 10.0, &half)];
+        let spans = [wce_walls::bridge::span_text("wood", 12.0, &deck.path), wce_walls::bridge::span_text("wood", 10.0, &half)];
         let mut layer = String::new();
         for s in &spans {
             for line in String::from_utf8_lossy(s).lines() {
