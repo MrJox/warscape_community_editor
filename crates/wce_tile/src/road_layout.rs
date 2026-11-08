@@ -71,6 +71,18 @@ pub enum End {
 
     /// On the tile's edge: it runs on into the next tile, nothing there.
     Edge,
+
+    /// On another road: that road's junction takes it.
+    Joined,
+}
+
+/// A stretch of a road's line something else takes (distances along it): a piece of its own (a junction), or nothing (a bridge, another
+/// road's junction).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hold {
+    pub from: f64,
+    pub to: f64,
+    pub laid: Option<Laid>,
 }
 
 /// Where a laid piece is.
@@ -149,10 +161,10 @@ fn chord(st: &Stations, p: [f64; 2], c: f64, reach: f64, total: f64) -> Option<f
 
 /// Lays a road's pieces on its centre line (`roads::centre_line_sharp`): a corner on each of `corners` (the samples of its sharp
 /// points), an end piece on each free end, and straights and curves between, `round(length / straight)` to a stretch, each bent less
-/// than [`STRAIGHT_BEND`] a straight. `skip`: stretches of the line that take no piece (a bridge's), as distances along it. `scale`: the
+/// than [`STRAIGHT_BEND`] a straight. `holds`: what takes stretches of the line first (bridges, junctions: [`junctions`]). `scale`: the
 /// road's width over the pieces': a corner grows with it. The seed turns straights and curves end for end.
 #[must_use]
-pub fn layout(line: &[[f64; 2]], corners: &[usize], ends: [End; 2], skip: &[(f64, f64)], measures: &Measures, scale: f64, seed: u32) -> Layout {
+pub fn layout(line: &[[f64; 2]], corners: &[usize], ends: [End; 2], holds: &[Hold], measures: &Measures, scale: f64, seed: u32) -> Layout {
     let mut out = Layout::default();
     let st = Stations::new(line);
     let total = st.length();
@@ -160,8 +172,8 @@ pub fn layout(line: &[[f64; 2]], corners: &[usize], ends: [End; 2], skip: &[(f64
         return out;
     }
 
-    // What takes the line first: bridges, corners, ends; each as the stretch it holds.
-    let mut held: Vec<(f64, f64, Option<Laid>)> = skip.iter().map(|&(a, b)| (a.max(0.0), b.min(total), None)).collect();
+    // What takes the line first: bridges and junctions, corners, ends; each as the stretch it holds.
+    let mut held: Vec<(f64, f64, Option<Laid>)> = holds.iter().map(|h| (h.from.max(0.0), h.to.min(total), h.laid.clone())).collect();
     let overlaps = |held: &[(f64, f64, Option<Laid>)], a: f64, b: f64| held.iter().any(|h| a < h.1 && b > h.0);
     let half = measures.corner_arm * scale;
     for &i in corners {
@@ -183,6 +195,7 @@ pub fn layout(line: &[[f64; 2]], corners: &[usize], ends: [End; 2], skip: &[(f64
     }
 
     let end = measures.end;
+    // A joined end is its junction's (a hold); an end on the tile's edge has nothing.
     if ends[0] == End::Free && !overlaps(&held, 0.0, end) && end < total {
         held.push((0.0, end, Some(Laid { piece: "end", frame: Frame::Along { from: 0.0, to: end } })));
     }
@@ -301,6 +314,51 @@ fn arm_way(arm: &crate::road_pieces::Arm) -> [f64; 2] {
     unit([b[0] - a[0], b[1] - a[1]])
 }
 
+/// Every order of `n` things.
+fn orders(n: usize) -> Vec<Vec<usize>> {
+    if n == 0 {
+        return vec![vec![]];
+    }
+
+    let mut out = vec![];
+    for rest in orders(n - 1) {
+        for at in 0..=rest.len() {
+            let mut o = rest.clone();
+            o.insert(at, n - 1);
+            out.push(o);
+        }
+    }
+
+    out
+}
+
+/// A star's ways put in the order of the piece's arms: the order whose angles between ways are nearest the piece's between arms, turning
+/// the same way. So a right-turning corner laid on a left turn takes its arms the other way round, and a T junction drawn with its branch
+/// on the right, laid where the branch is on the left, takes its through arms swapped: its outer side stays outside.
+fn arranged(piece: &Piece, frame: &Frame) -> Frame {
+    let Frame::Star { at, ways } = frame else { return frame.clone() };
+    let n = piece.arms.len();
+    if ways.len() != n || n > 5 {
+        return frame.clone();
+    }
+
+    let arms = piece.arms.iter().map(arm_way).collect::<Vec<_>>();
+    let wrap = |a: f64| (a + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+    let cost = |o: &[usize]| {
+        let mut c = 0.0;
+        for i in 0..n {
+            for j in i + 1..n {
+                c += wrap(angle_between(arms[i], arms[j]) - angle_between(ways[o[i]], ways[o[j]])).abs();
+            }
+        }
+
+        c
+    };
+
+    let best = orders(n).into_iter().min_by(|a, b| cost(a).total_cmp(&cost(b))).unwrap_or_else(|| (0..n).collect());
+    Frame::Star { at: *at, ways: best.iter().map(|&i| ways[i]).collect() }
+}
+
 /// The heading of a direction on the ground as the files turn it (`euler_matrix`: Ry(a) takes +x to (cos a, 0, -sin a)).
 fn heading(v: [f64; 2]) -> f64 {
     (-v[1]).atan2(v[0])
@@ -316,16 +374,7 @@ fn heading(v: [f64; 2]) -> f64 {
 pub fn fit(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site: &Site) -> Result<Fitted, String> {
     let Site { line, width, unit, ground } = *site;
     let st = Stations::new(line);
-    let frame = match &laid.frame {
-        // The corner's ways in the order its arms turn: a turn the other way takes them the other way round.
-        Frame::Star { at, ways } if ways.len() == 2 && piece.arms.len() == 2 => {
-            let own = angle_between(arm_way(&piece.arms[0]), arm_way(&piece.arms[1]));
-            let road = angle_between(ways[0], ways[1]);
-            if own.signum() == road.signum() { laid.frame.clone() } else { Frame::Star { at: *at, ways: vec![ways[1], ways[0]] } }
-        }
-
-        f => f.clone(),
-    };
+    let frame = arranged(piece, &laid.frame);
 
     let origin = match &frame {
         Frame::Along { from, to } => st.at((from + to) * 0.5).0,
@@ -421,7 +470,168 @@ pub fn ports_at(piece: &Piece, laid: &Laid, line: &[[f64; 2]], width: f64) -> Ve
                 path: vec![], kind: String::new(), key: String::new(), arm: i, along: f, across: 0.0, up: 0.0, anchor: Anchor::Surface, solid: false,
                 size: [0.0; 2], turn: 0.0, at: [0.0; 2], rotation: Double3x3::default(), parent: None, scale: None,
             };
-            out.push(place(piece, &probe, &laid.frame, &st, width).0);
+            out.push(place(piece, &probe, &arranged(piece, &laid.frame), &st, width).0);
+        }
+    }
+
+    out
+}
+
+/// How near another road a road's end is to be taken onto it (metres), and how near it is once taken.
+pub const SNAP: f64 = 8.0;
+const ON: f64 = 1.0;
+
+/// The nearest place to a point on a line: (distance along it, distance to it, the place).
+#[must_use]
+pub fn nearest(line: &[[f64; 2]], p: [f64; 2]) -> (f64, f64, [f64; 2]) {
+    let (mut best, mut at, mut place) = (f64::MAX, 0.0, line.first().copied().unwrap_or(p));
+    let mut run = 0.0;
+    for w in line.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let d = [b[0] - a[0], b[1] - a[1]];
+        let l2 = (d[0] * d[0] + d[1] * d[1]).max(1e-12);
+        let t = (((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1]) / l2).clamp(0.0, 1.0);
+        let q = [a[0] + d[0] * t, a[1] + d[1] * t];
+        let dist = (p[0] - q[0]).hypot(p[1] - q[1]);
+        if dist < best {
+            (best, at, place) = (dist, run + t * l2.sqrt(), q);
+        }
+
+        run += l2.sqrt();
+    }
+
+    (at, best, place)
+}
+
+/// Takes roads' ends onto the roads they stop near (`points`: each road's points; `centres`: each one's centre line): an end within
+/// [`SNAP`] of another road's line, away from that road's own ends, goes onto it, so that the road reaches the junction it makes there.
+pub fn snap_ends(points: &mut [Vec<[f64; 2]>], centres: &[Vec<[f64; 2]>]) {
+    for (a, own) in points.iter_mut().enumerate() {
+        let n = own.len();
+        if n < 2 {
+            continue;
+        }
+
+        for end in [0, n - 1] {
+            let p = own[end];
+            let best = (0..centres.len()).filter(|&b| b != a && centres[b].len() >= 2).map(|b| {
+                let (s, d, q) = nearest(&centres[b], p);
+                (s, d, q, Stations::new(&centres[b]).length())
+            }).filter(|&(s, d, _, l)| d <= SNAP && s > SNAP && s < l - SNAP).min_by(|x, y| x.1.total_cmp(&y.1));
+            if let Some((_, _, q, _)) = best {
+                own[end] = q;
+            }
+        }
+    }
+}
+
+/// The junctions of a tile's roads.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Junctions {
+    /// Each road's: what its junctions take of its line.
+    pub holds: Vec<Vec<Hold>>,
+
+    /// Each road's ends that end on another road.
+    pub joined: Vec<[bool; 2]>,
+    pub notes: Vec<String>,
+}
+
+/// Where two lines cross: (distance along the first, distance along the second, the place).
+fn crossings(a: &[[f64; 2]], b: &[[f64; 2]]) -> Vec<(f64, f64, [f64; 2])> {
+    let mut out: Vec<(f64, f64, [f64; 2])> = vec![];
+    let (sa, sb) = (Stations::new(a), Stations::new(b));
+    let bounds = |l: &[[f64; 2]]| l.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |m, p| [m[0].min(p[0]), m[1].min(p[1]), m[2].max(p[0]), m[3].max(p[1])]);
+    let (ba, bb) = (bounds(a), bounds(b));
+    if ba[0] > bb[2] || bb[0] > ba[2] || ba[1] > bb[3] || bb[1] > ba[3] {
+        return out;
+    }
+
+    for i in 0..a.len().saturating_sub(1) {
+        let (p, r) = (a[i], [a[i + 1][0] - a[i][0], a[i + 1][1] - a[i][1]]);
+        for j in 0..b.len().saturating_sub(1) {
+            let (q, t) = (b[j], [b[j + 1][0] - b[j][0], b[j + 1][1] - b[j][1]]);
+            let den = r[0] * t[1] - r[1] * t[0];
+            if den.abs() < 1e-12 {
+                continue;
+            }
+
+            let w = [q[0] - p[0], q[1] - p[1]];
+            let (u, v) = ((w[0] * t[1] - w[1] * t[0]) / den, (w[0] * r[1] - w[1] * r[0]) / den);
+            if (0.0..1.0).contains(&u) && (0.0..1.0).contains(&v) {
+                let at = [p[0] + r[0] * u, p[1] + r[1] * u];
+                let (da, db) = (sa.of_sample(i) + u * r[0].hypot(r[1]), sb.of_sample(j) + v * t[0].hypot(t[1]));
+                if out.iter().all(|o| (o.0 - da).abs() > 1.0) {
+                    out.push((da, db, at));
+                }
+            }
+        }
+    }
+
+    out
+}
+
+/// Finds where a tile's roads meet (`lines`: each one's centre line, ends already taken onto the roads they stop on: [`snap_ends`]): a
+/// road ending on another makes a T junction on that one, two roads crossing an X junction on the first of them. `halves`: how far each
+/// road's junctions reach each way (their arms' length, by its width). A junction is laid by the road it is on; the others leave it
+/// their stretch.
+#[must_use]
+pub fn junctions(lines: &[Vec<[f64; 2]>], halves: &[f64]) -> Junctions {
+    let n = lines.len();
+    let mut out = Junctions { holds: vec![vec![]; n], joined: vec![[false; 2]; n], notes: vec![] };
+    let st = lines.iter().map(|l| Stations::new(l)).collect::<Vec<_>>();
+    let way = |r: usize, s: f64, at: [f64; 2]| {
+        let q = st[r].at(s).0;
+        unit([q[0] - at[0], q[1] - at[1]])
+    };
+
+    // A road's end on another.
+    for a in 0..n {
+        if lines[a].len() < 2 {
+            continue;
+        }
+
+        let la = st[a].length();
+        for (e, p) in [(0, lines[a][0]), (1, lines[a][lines[a].len() - 1])] {
+            let found = (0..n)
+                .filter(|&b| b != a && lines[b].len() >= 2)
+                .map(|b| (b, nearest(&lines[b], p)))
+                .filter(|(_, (_, d, _))| *d <= ON)
+                .min_by(|x, y| x.1.1.total_cmp(&y.1.1));
+            let Some((b, (sb, _, q))) = found else { continue };
+            let (lb, half) = (st[b].length(), halves[b]);
+            let on_b = (chord(&st[b], q, sb, -half, lb), chord(&st[b], q, sb, half, lb));
+            let on_a = if e == 1 { chord(&st[a], q, la, -half, la) } else { chord(&st[a], q, 0.0, half, la) };
+            let (Some(b1), Some(b2), Some(sa)) = (on_b.0, on_b.1, on_a) else {
+                out.notes.push(format!("a road ends on another at {:.0}, {:.0} with no room for a junction", q[0], q[1]));
+                continue;
+            };
+
+            let ways = vec![way(b, b1, q), way(b, b2, q), way(a, sa, q)];
+            out.holds[b].push(Hold { from: b1, to: b2, laid: Some(Laid { piece: "t_junction", frame: Frame::Star { at: q, ways } }) });
+            out.holds[a].push(if e == 1 { Hold { from: sa, to: la, laid: None } } else { Hold { from: 0.0, to: sa, laid: None } });
+            out.joined[a][e] = true;
+        }
+    }
+
+    // Two roads crossing, away from their ends (an end on a road is a T, above).
+    for a in 0..n {
+        for b in a + 1..n {
+            for (da, db, x) in crossings(&lines[a], &lines[b]) {
+                let (la, lb, half) = (st[a].length(), st[b].length(), halves[a]);
+                if da < ON || db < ON || da > la - ON || db > lb - ON {
+                    continue;
+                }
+
+                let found = (chord(&st[a], x, da, -half, la), chord(&st[a], x, da, half, la), chord(&st[b], x, db, -half, lb), chord(&st[b], x, db, half, lb));
+                let (Some(a1), Some(a2), Some(b1), Some(b2)) = found else {
+                    out.notes.push(format!("two roads cross at {:.0}, {:.0} too near an end for a junction", x[0], x[1]));
+                    continue;
+                };
+
+                let ways = vec![way(a, a1, x), way(a, a2, x), way(b, b1, x), way(b, b2, x)];
+                out.holds[a].push(Hold { from: a1, to: a2, laid: Some(Laid { piece: "x_junction", frame: Frame::Star { at: x, ways } }) });
+                out.holds[b].push(Hold { from: b1, to: b2, laid: None });
+            }
         }
     }
 
@@ -562,5 +772,64 @@ mod tests {
         let fixed_border = scene.find_all("ProjectedDecalInstance").into_iter().find(|&d| scene.doc().get(d, "key").unwrap().contains("border_2") && scene.doc().get(d, "road_anchor").is_some()).unwrap();
         let p = scene.position(fixed_border).unwrap();
         assert!(p.x > 0.0 && p.z > 0.0, "{p:?}");
+    }
+
+    /// Two roads crossing (A along +x, B along +z through it at x = 50), and a third (C) stopping 3 m short of A from its left (+z) side.
+    fn three_roads() -> (Vec<Vec<[f64; 2]>>, Junctions, Vec<Layout>) {
+        let mut points = vec![vec![[0.0, 0.0], [100.0, 0.0]], vec![[50.0, -50.0], [50.0, 50.0]], vec![[20.0, 40.0], [30.0, 3.0]]];
+        let centre = |p: &Vec<[f64; 2]>| centre_line_sharp(p, &[]).0;
+        let centres = points.iter().map(centre).collect::<Vec<_>>();
+        snap_ends(&mut points, &centres);
+        assert!(points[2][1][1].abs() < 1e-9, "C's end is taken onto A: {:?}", points[2][1]);
+        let lines = points.iter().map(centre).collect::<Vec<_>>();
+        let j = junctions(&lines, &[6.0, 6.0, 6.0]);
+        let laid = (0..3).map(|r| {
+            let ends = [0, 1].map(|e| if j.joined[r][e] { End::Joined } else { End::Free });
+            layout(&lines[r], &[], ends, &j.holds[r], &Measures::default(), 1.0, 3)
+        }).collect::<Vec<_>>();
+        (lines, j, laid)
+    }
+
+    #[test]
+    fn crossing_roads_make_an_x_and_an_end_on_a_road_a_t() {
+        let (_, j, laid) = three_roads();
+        assert!(j.notes.is_empty(), "{:?}", j.notes);
+        assert_eq!(j.joined, [[false, false], [false, false], [false, true]]);
+        let names = |r: usize| laid[r].laid.iter().map(|l| l.piece).collect::<Vec<_>>();
+        assert_eq!(names(0).iter().filter(|n| **n == "t_junction").count(), 1, "{:?}", names(0));
+        assert_eq!(names(0).iter().filter(|n| **n == "x_junction").count(), 1, "the first road lays the crossing: {:?}", names(0));
+        assert!(!names(1).contains(&"x_junction"), "the second leaves it its stretch: {:?}", names(1));
+        assert_eq!(names(2).iter().filter(|n| **n == "end").count(), 1, "C's end on A has no end piece: {:?}", names(2));
+    }
+
+    #[test]
+    fn the_pieces_of_roads_that_meet_meet_port_to_port() {
+        let (lines, _, laid) = three_roads();
+        let pieces = PIECES.iter().map(|p| (*p, dirt(p).0)).collect::<Vec<_>>();
+        let piece = |name: &str| &pieces.iter().find(|p| p.0 == name).unwrap().1;
+        let ports = laid.iter().zip(&lines).flat_map(|(l, line)| l.laid.iter().map(|p| (p.piece, ports_at(piece(p.piece), p, line, 6.0))).collect::<Vec<_>>()).collect::<Vec<_>>();
+        for (i, (name, own)) in ports.iter().enumerate() {
+            for p in own {
+                let met = ports.iter().enumerate().any(|(k, (_, q))| k != i && q.iter().any(|q| (q[0] - p[0]).hypot(q[1] - p[1]) < 0.05));
+                assert!(met, "a {name}'s port at {p:?} meets nothing");
+            }
+        }
+    }
+
+    #[test]
+    fn a_t_with_its_branch_on_the_left_keeps_its_through_edge_opposite() {
+        let (lines, _, laid) = three_roads();
+        let t = laid[0].laid.iter().find(|l| l.piece == "t_junction").unwrap();
+        let (piece, children) = dirt("t_junction");
+        let f = fit(&piece, &children, "t", t, &Site { line: &lines[0], width: 6.0, unit: 2.0, ground: &|_, _| 0.0 }).unwrap();
+        let scene = TedScene::parse_any(f.text).unwrap();
+
+        // The through edge (border_1, at x = -3 in the piece, away from its branch) lies on A's far side from C: -z.
+        let borders = scene.find_all("ProjectedDecalInstance").into_iter().filter(|&d| scene.doc().get(d, "key").unwrap().contains("border_1")).collect::<Vec<_>>();
+        assert_eq!(borders.len(), 2);
+        for d in borders {
+            let w = crate::world_transform::world_transform(&scene, d);
+            assert!(w.position.z < 0.0, "{:?}", w.position);
+        }
     }
 }

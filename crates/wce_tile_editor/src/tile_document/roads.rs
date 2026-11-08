@@ -7,7 +7,7 @@ use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::RenderScene;
 use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile::new_instances::{NewInstance, element_text};
-use wce_tile::road_layout::{End, Measures, Site, Stations, fit, layout, placed_text};
+use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit, junctions, layout, placed_text, snap_ends};
 use wce_tile::road_pieces::{BASE, PIECES, Piece, key, read};
 use wce_tile::roads::{RoadSettings, Strip, centre_line_sharp, choose_bridge, find_gaps, graded, lay_bridge, over_gaps, sharp_points, with_bump};
 use wce_tile::ted_scene::TedScene;
@@ -129,11 +129,16 @@ impl Tile {
         sharp_points(points, &marked)
     }
 
+    /// The roads, their ends taken onto the roads they stop near (`road_layout::snap_ends`): what their terrain and their pieces are made
+    /// from, so a road reaches the junction it makes.
     fn roads(&self) -> Vec<Road> {
         let doc = self.tscene().doc();
         let number = |e: usize, name: &str, or: f64| doc.get(e, name).and_then(|v| wce_formats::c_num::strtod(&v)).unwrap_or(or);
-        (0..doc.elements().len()).filter(|&e| self.is_road(e)).map(|e| {
-            let line = self.polygon_world_points(e).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>();
+        let elems = self.road_elems();
+        let mut lines = elems.iter().map(|&e| self.polygon_world_points(e).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>()).collect::<Vec<_>>();
+        let centres = elems.iter().zip(&lines).map(|(&e, l)| centre_line_sharp(l, &self.road_sharp(e, l)).0).collect::<Vec<_>>();
+        snap_ends(&mut lines, &centres);
+        elems.into_iter().zip(lines).map(|(e, line)| {
             let ground = doc.get(e, "road_ground").and_then(|g| GROUND_TYPES.iter().find(|t| t.0 == g.as_str())).map_or([255, 96, 0], |t| t.1);
             let settings = RoadSettings {
                 width: number(e, "road_width", 6.0).max(0.5), shoulder: number(e, "road_shoulder", 3.0).max(0.5), bump: number(e, "road_bump", 0.25),
@@ -341,6 +346,9 @@ impl Tile {
         let unit = self.project.unit_scale;
         let roads = self.roads();
         let mut items = vec![];
+
+        // Each road's line and bridges first: where roads meet is found on all their lines.
+        let mut planned = vec![];
         for (elem, road) in self.road_elems().into_iter().zip(&roads) {
             if road.line.len() < 2 {
                 continue;
@@ -422,14 +430,13 @@ impl Tile {
                 }
             }
 
-            // The road's pieces, from end to end, but over its bridges.
-            let pieces = self.road_pieces_of(&road.road_type);
-            if pieces.is_empty() {
-                continue;
-            }
+            planned.push((elem, road, plan, spans));
+        }
 
-            let piece = |name: &str| pieces.iter().find(|p| p.0 == name);
-            let arm = |name: &str| piece(name).and_then(|p| p.1.arms.first()).map(|a| a.length);
+        // The pieces of each road's type, its measures, and how far its junctions reach.
+        let kit = planned.iter().map(|(_, road, _, _)| {
+            let pieces = self.road_pieces_of(&road.road_type);
+            let arm = |name: &str| pieces.iter().find(|p| p.0 == name).and_then(|p| p.1.arms.first()).map(|a| a.length);
             let defaults = Measures::default();
             let measures = Measures {
                 straight: arm("straight").unwrap_or(defaults.straight),
@@ -437,22 +444,43 @@ impl Tile {
                 corner_arm: arm("corner").unwrap_or(defaults.corner_arm),
             };
 
-            let width = road.settings.width;
-            let scale = width / piece("straight").map_or(wce_tile::road_pieces::WIDTH, |p| p.1.width).max(1e-6);
-            let (ex, ez) = (self.project.extent_x(), self.project.extent_z());
-            let end_of = |p: [f64; 2]| if p[0] < 1.0 || p[1] < 1.0 || p[0] > ex - 1.0 || p[1] > ez - 1.0 { End::Edge } else { End::Free };
+            let width = pieces.iter().find(|p| p.0 == "straight").map_or(wce_tile::road_pieces::WIDTH, |p| p.1.width).max(1e-6);
+            let scale = road.settings.width / width;
+            let half = arm("x_junction").or_else(|| arm("t_junction")).unwrap_or(defaults.corner_arm) * scale;
+            (pieces, measures, scale, half)
+        }).collect::<Vec<_>>();
+
+        let lines = planned.iter().map(|p| p.2.line.clone()).collect::<Vec<_>>();
+        let meet = junctions(&lines, &kit.iter().map(|k| k.3).collect::<Vec<_>>());
+        for note in &meet.notes {
+            wce_foundation::log::warn(format!("roads: {note}"));
+        }
+
+        // Each road's pieces, from end to end, but over its bridges and the junctions of other roads.
+        let (ex, ez) = (self.project.extent_x(), self.project.extent_z());
+        let end_of = |p: [f64; 2], joined: bool| if joined { End::Joined } else if p[0] < 1.0 || p[1] < 1.0 || p[0] > ex - 1.0 || p[1] > ez - 1.0 { End::Edge } else { End::Free };
+        let terrain = |x: f64, z: f64| f64::from(self.terrain_height(x as f32, z as f32));
+        for (r, ((elem, road, plan, spans), (pieces, measures, scale, _))) in planned.iter().zip(&kit).enumerate() {
+            if pieces.is_empty() {
+                continue;
+            }
+
+            let piece = |name: &str| pieces.iter().find(|p| p.0 == name);
             let corners = plan.at_point.iter().zip(&road.sharp).filter(|(_, s)| **s).map(|(i, _)| *i).collect::<Vec<_>>();
-            let ends = [end_of(road.line[0]), end_of(road.line[road.line.len() - 1])];
-            let laid = layout(&plan.line, &corners, ends, &spans, &measures, scale, road.settings.seed);
+            let joined = meet.joined[r];
+            let ends = [end_of(road.line[0], joined[0]), end_of(road.line[road.line.len() - 1], joined[1])];
+            let mut holds = spans.iter().map(|&(from, to)| Hold { from, to, laid: None }).collect::<Vec<_>>();
+            holds.extend(meet.holds[r].iter().cloned());
+            let laid = layout(&plan.line, &corners, ends, &holds, measures, *scale, road.settings.seed);
             for note in &laid.notes {
                 wce_foundation::log::warn(format!("road {}: {note}", road.id));
             }
 
-            let terrain = |x: f64, z: f64| f64::from(self.terrain_height(x as f32, z as f32));
+            let width = road.settings.width;
             for l in &laid.laid {
                 let Some((_, p, key, children)) = piece(l.piece) else { continue };
                 match fit(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }) {
-                    Ok(f) => items.push(RoadItem { road: elem, text: f.text, position: f.position }),
+                    Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position }),
                     Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
                 }
             }
