@@ -264,6 +264,10 @@ type EntriesStamp = (DocumentId, u64, u64);
 #[derive(Default)]
 pub struct CreateUi {
     entries: Option<(EntriesStamp, Arc<Vec<Entry>>)>,
+
+    /// The entries' indices by their ids, made with them (a favourite or a recent one looked for through all of them, each id formatted
+    /// again, cost 15 ms a frame with a mod's thousands of buildings: user 2026-11-08).
+    entry_ids: Arc<std::collections::HashMap<String, usize>>,
     filter: String,
 
     /// The type of item the list shows (the rail, `CATEGORIES`); none: only the favourites and the recent ones.
@@ -406,6 +410,7 @@ impl TileTool {
 
         // By category, then folder (stable: the order within a folder stays the catalogue's).
         out.sort_by_cached_key(|en| (en.category, folder_order(&en.folder)));
+        self.create.entry_ids = Arc::new(out.iter().enumerate().map(|(i, en)| (en.id(), i)).collect());
         let entries = Arc::new(out);
         self.create.entries = Some((stamp, entries.clone()));
         self.create.shown_for = "\u{1}".to_owned();
@@ -1112,7 +1117,8 @@ impl TileTool {
 
         let words = words(&self.create.filter);
         let (favourites, recent) = self.create_marks(e);
-        let by_id = |id: &str| entries.iter().position(|en| en.id() == id);
+        let ids = self.create.entry_ids.clone();
+        let by_id = |id: &str| ids.get(id).copied();
 
         // A search looks through everything; otherwise the list is the chosen type's.
         let filtering = !words.is_empty();
@@ -1165,6 +1171,7 @@ impl TileTool {
         gui::end_child();
         gui::same_line_touching();
         if gui::begin_child("createlist", gui::v2(0.0, -footer), 0, 0) {
+            wce_foundation::wce_prof!("tile.panel.create.list");
             // Favourites and recent entries (filtered alike), then the categories (open while a filter is typed).
             for (title, icon, ids) in [("Favourites", icons::STAR, &favourites), ("Recent", icons::HISTORY, &recent)] {
                 let rows = ids.iter().filter_map(|id| by_id(id)).filter(|&i| passes(&entries[i], &words) && only.is_none_or(|c| entries[i].category == c)).collect::<Vec<_>>();
@@ -1389,7 +1396,7 @@ impl TileTool {
 
         // With no words: the recent entries; else every match.
         let rows = if words.is_empty() {
-            recent.iter().filter_map(|id| entries.iter().position(|en| en.id() == *id)).collect::<Vec<_>>()
+            recent.iter().filter_map(|id| self.create.entry_ids.get(id).copied()).collect::<Vec<_>>()
         } else {
             entries.iter().enumerate().filter(|(_, en)| passes(en, &words)).map(|(i, _)| i).collect()
         };
