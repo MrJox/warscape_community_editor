@@ -198,6 +198,10 @@ impl TileTool {
         // The open tiles' references find their prefabs' layers again.
         for id in e.docs.order().to_vec() {
             if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
+                if d.has_road_prefabs() {
+                    d.set_road_prefabs(lib.clone());
+                }
+
                 d.prefab_ground_changed();
             }
         }

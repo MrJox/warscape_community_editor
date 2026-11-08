@@ -197,9 +197,6 @@ pub const DEPLOYMENT_TYPE: &[(&str, &str)] = &[
     ("EDZT_4V4", "4v4"),
 ];
 
-/// Not TEd's: the prefabs laid along a `WceRoadSpline`: `road_detail::prefab_keys`.
-pub const ROAD_DETAIL: &[(&str, &str)] = &[("dirt", "Dirt road"), ("path", "Path"), ("none", "None")];
-
 /// Not TEd's: the ground types a `WceRoadSpline` (docs/plans/procedural_roads.md) can be, by the names of `ground_types::GROUND_TYPES`.
 pub const ROAD_GROUND: &[(&str, &str)] = &[("road", "Road"), ("mud", "Mud"), ("sand", "Sand"), ("grass", "Grass"), ("rock", "Rock"), ("wooden floor", "Wooden floor")];
 

@@ -3,8 +3,8 @@
 
 pub mod link_checks;
 pub mod resize;
-pub mod road_detail;
 pub mod road_dirt;
+pub mod road_layout;
 pub mod road_pieces;
 pub mod roads;
 pub mod terrain_layers;

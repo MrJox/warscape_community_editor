@@ -895,9 +895,11 @@ impl TileDocument {
         t.road_items_stale = true;
     }
 
-    /// The prefabs' height layers changed (one was saved, the library scanned again): the references' ground is made again.
+    /// The prefabs' height layers changed (one was saved, the library scanned again): the references' ground is made again, and so are
+    /// the roads' pieces (a road piece may be what was saved).
     pub fn prefab_ground_changed(&mut self) {
         self.tile_mut().prefab_ground_stale = true;
+        self.tile_mut().road_items_stale = true;
     }
 
     /// Makes the tile a stage for something else: its title, and what saving it writes instead of the tile (the stage's own files are not
@@ -969,6 +971,12 @@ impl TileDocument {
         let t = self.tile_mut();
         t.history_version = version;
         t.update_view(scene, eye);
+    }
+
+    /// Whether it was handed the prefabs for its roads.
+    #[must_use]
+    pub fn has_road_prefabs(&self) -> bool {
+        self.tile().road_prefabs.is_some()
     }
 
     /// Whether it has roads and no prefabs yet.

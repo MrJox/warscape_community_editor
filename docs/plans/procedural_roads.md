@@ -147,8 +147,11 @@ roads_proc/
 A prefab's key is its file's name and the library has one list of keys across every folder, so the type is in the key: `road_<type>_<piece>`
 (`road_pieces::key`); the folder is where it is kept.
 
-- A road type is a folder; `road_type` (in place of `road_detail`) lists the folders but `base`, and `none`. A type missing a piece
-  takes `base`'s, which lays nothing but its guides' measures (a warning names the missing piece).
+- A road type is a folder; `road_type` (in place of `road_detail`; a text field for now, default `dirt`) names one, or `none`. A type
+  missing a piece takes `base`'s, which lays nothing but its guides' measures (a warning names the missing piece).
+- **Generated pieces carry a mark** (`wce_generated`, a hash of their contents when written, `road_pieces::write_generated`): while a
+  piece still hashes to it, nobody edited it, and a newer generation replaces it; edited, or without the mark (written before 2026-11-08's
+  R3), it is the user's and stays.
 - The editor writes `base/` and `dirt/` into a game's projects when the prefab library is first scanned for that game (the Tile and Prefab
   tools share it; `road_pieces::write_base`), each piece only where its file is missing: the user's edits are kept. `dirt/` is written only when the game's kit has its decals; else the log says so.
 - They are ordinary `.wce` prefabs: the Prefab tool opens, edits and saves them like any other.
@@ -223,14 +226,25 @@ bent (their arms turn whole) and have no limit.
 
 As the walls' solver, on the road's centre line (`road_layout`, a new module of `wce_tile`):
 
-1. **Features first.** A point marked `sharp` (as walls' points are), or a turn of 90 degrees or less, takes a `corner`, its arms turned
-   to the real angle (down to 30 degrees, past which the point is reported and laid as a corner at 30). A road's end within 8 m of another
+1. **Features first.** A point marked `sharp` (as walls' points are: `road_sharp`, or the Polygon panel's checkbox), or one the road turns
+   at by 90 degrees or more (`roads::sharp_points`), takes a `corner`. The road's line comes into such a point straight from each side
+   (`roads::centre_line_sharp`: its curve is cut there, as at an end), for the terrain too. The corner's ports are where the line is its arm's
+   length from the point in a straight line (`road_layout::chord`), so the next pieces meet them exactly; each arm turns on its own to its
+   way, and a left turn takes the right-turning piece's arms the other way round, so its outer edge stays outside. A corner with no room
+   (too near an end, a bridge or another corner) is reported and the road bends there instead. A road's end within 8 m of another
    road snaps onto it and takes a `t_junction` there, on the other road; two roads crossing take an `x_junction`, its arms turned to the
    angles they cross at. A free end takes an `end`; an end on the tile's edge nothing. A ford takes `ford` pieces; a bridge nothing (it is
    its own, below).
 2. **Stretches** between features: where the line bends more than `STRAIGHT_BEND` over a straight's length (15 degrees over 8 m, a radius
    of about 30 m), `curve` pieces, bent from their 45 degrees to the bend's own (between 15 and 90 degrees each); elsewhere straights.
-3. **Fit** every piece (above); the seed turns pieces end for end and, later, chooses between variants of a piece (`straight_2`, ...).
+3. **Fit** every piece (above, `road_layout::fit`); the seed turns straights and curves end for end and, later, chooses between variants
+   of a piece (`straight_2`, ...). Each part's overrides are its `position`, `orientation`, `scale` (decals), `surface_mode` (freeform)
+   and `lf_offset` (its height, the ground's there, as the kit's tiles keep a freeform instance); they are applied to the prefab's
+   contents (`prefab_refs::apply`) and the guides taken out, which gives the piece as a group: what is shown, and what an export lowers.
+
+Built as said (2026-11-08) but for junctions (R4) and fords (R5). An end within 1 m of the tile's edge gets no end piece. The bridges are
+still the kit's pieces until R6. The same piece repeats every 8 m (its rocks and puddle show the period, `the road on a kit tile` check):
+variants are the remedy, when a type has them.
 
 A road crossing another is still graded over it (the terrain part, as built); the junction pieces only cover the meeting.
 
@@ -307,7 +321,7 @@ bridges' models and rows into the tile's pack and `@wce_proc_data.pack`, and the
 | 6 | Crossings of roads, tile edge ends | built |
 | R1 | `WceRoadGuide`, `road_pieces::read` (arms, anchors), `roads_proc/base` written on mount, guides drawn in the Prefab tool and hidden in tiles | done (2026-11-08): the base pieces open in the Prefab tool and read back as their measures (`road_pieces` tests, `a_road_pieces_guides_show_on_the_prefab_stage_only`) |
 | R2 | `roads_proc/dirt` generated from the kit's decals | done (2026-11-08): every piece reads, its parts within the bend limit, no building (`road_dirt` tests); seen in the Prefab tool |
-| R3 | `road_layout`: features, stretches, fitting by overrides; the pieces as references, preview, lowering; `road_type`; old `road_detail` out | a curved road with a sharp point and a free end lays dirt pieces that join at their ports |
+| R3 | `road_layout`: features, stretches, fitting by overrides; the pieces as references, preview, lowering; `road_type`; old `road_detail` out | done (2026-11-08): a curved road with a sharp point and free ends lays dirt pieces that meet port to port (`road_layout` tests); drawn on a kit tile |
 | R4 | Junctions: T on a snapped end, X on a crossing | two crossing roads and a road ending on one |
 | R5 | Crossings: water and drops found once, depth, fords | a shallow river forded, a deep one and a canyon left to bridges |
 | R6 | Bridges on `wce_walls`: bases, warp along the road's line and height, width, supports, logic, packs | `wall_tech_check`'s checks pass on a curved, sloped bridge |

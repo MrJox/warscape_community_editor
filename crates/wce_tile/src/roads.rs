@@ -159,16 +159,29 @@ fn smooth(t: f64) -> f64 {
 /// its points are where it goes). Fewer than two points: none.
 #[must_use]
 pub fn centre_line(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
+    centre_line_sharp(points, &[]).0
+}
+
+/// As [`centre_line`], with the points marked `sharp` corners: the curve comes into one straight from each side, as if the road ended
+/// there, so a corner piece's arms lie on it. Also the sample each point is at.
+#[must_use]
+pub fn centre_line_sharp(points: &[[f64; 2]], sharp: &[bool]) -> (Vec<[f64; 2]>, Vec<usize>) {
     if points.len() < 2 {
-        return vec![];
+        return (vec![], vec![]);
     }
 
-    let at = |i: isize| points[i.clamp(0, points.len() as isize - 1) as usize];
+    let last = points.len() as isize - 1;
+    let is_sharp = |i: isize| sharp.get(i as usize).copied().unwrap_or(false);
+    let at = |i: isize| points[i.clamp(0, last) as usize];
     let mut out = vec![];
-    for i in 0..points.len() as isize - 1 {
-        let (p0, p1, p2, p3) = (at(i - 1), at(i), at(i + 1), at(i + 2));
+    let mut at_point = vec![];
+    for i in 0..last {
+        let (p1, p2) = (at(i), at(i + 1));
+        let p0 = if is_sharp(i) { p1 } else { at(i - 1) };
+        let p3 = if is_sharp(i + 1) { p2 } else { at(i + 2) };
         let len = (p2[0] - p1[0]).hypot(p2[1] - p1[1]);
         let n = ((len / SAMPLE).ceil() as usize).max(1);
+        at_point.push(out.len());
         for k in 0..n {
             let t = k as f64 / n as f64;
             let (t2, t3) = (t * t, t * t * t);
@@ -177,8 +190,25 @@ pub fn centre_line(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
         }
     }
 
+    at_point.push(out.len());
     out.push(points[points.len() - 1]);
-    out
+    (out, at_point)
+}
+
+/// Which of a road's points are corners: those marked so, and those it turns at by 90 degrees or more (an inside angle of 90 or less). Its
+/// ends are not.
+#[must_use]
+pub fn sharp_points(points: &[[f64; 2]], marked: &[bool]) -> Vec<bool> {
+    (0..points.len()).map(|i| {
+        if i == 0 || i + 1 >= points.len() {
+            return false;
+        }
+
+        let (a, b, c) = (points[i - 1], points[i], points[i + 1]);
+        let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+        let turn = (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]).abs();
+        marked.get(i).copied().unwrap_or(false) || turn >= std::f64::consts::FRAC_PI_2 - 1e-9
+    }).collect()
 }
 
 /// The road's height at each sample: the ground under it averaged along the line, then limited to the maximum grade both ways, and the bump.
