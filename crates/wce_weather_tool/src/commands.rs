@@ -1,7 +1,6 @@
 //! The weather tool's commands: everything the menus and panels do, plus the test commands (assert_*) the scripted checks use, and the old
 //! weather_editor command-line flags (--view, --blend, --pick, --picker, --vdb-script, --no-flare), which the app forwards as commands.
 
-use std::path::PathBuf;
 
 use wce_editor::editor::Editor;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
@@ -201,7 +200,12 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_weather(e, |t, e| {
             t.picker.open = true;
             t.picker.set_script(script);
-            if !t.picker.ensure_loaded(e, &e.output_dir()) {
+            let loaded = t.picker.ensure_loaded(e, &e.loose_dir());
+            for path in t.picker.take_changed() {
+                e.loose_changed(&path);
+            }
+
+            if !loaded {
                 return fail("the database did not load");
             }
 
@@ -212,7 +216,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     c.add("assert_candidates", "assert_candidates <n> [file]", "test: the picker finds n environment files for its conditions, optionally including <file>", |e, a| {
         let Some(n) = a.first() else { return fail("usage: assert_candidates <n> [file]") };
         with_weather(e, |t, e| {
-            if !t.picker.ensure_loaded(e, &e.output_dir()) {
+            if !t.picker.ensure_loaded(e, &e.loose_dir()) {
                 return fail("the database did not load");
             }
 
@@ -236,12 +240,6 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             r.settings.lens_flare = false;
         }
 
-        ok("")
-    });
-
-    c.add("output_dir", "output_dir <folder>", "where Save writes loose files (stored in the settings unless 'temp' is added)", |e, a| {
-        let Some(dir) = a.first() else { return fail("usage: output_dir <folder> [temp]") };
-        e.set_output_dir(&PathBuf::from(dir), !a.get(1).is_some_and(|x| x == "temp"));
         ok("")
     });
 
@@ -329,8 +327,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("assert_saved", "assert_saved <relative path>", "test: a loose file exists under the output folder", |e, a| {
-        let Some(rel) = a.first() else { return fail("usage: assert_saved <path under the output folder>") };
-        if e.output_dir().join(rel).exists() { ok("") } else { fail("no such file") }
+    c.add("assert_saved", "assert_saved <path in the packs>", "test: the project has a loose copy of a game file (Save wrote it)", |e, a| {
+        let Some(rel) = a.first() else { return fail("usage: assert_saved <path in the packs>") };
+        if e.loose_copy(rel).is_some() { ok("") } else { fail("no such file") }
     });
 }

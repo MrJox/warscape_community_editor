@@ -122,17 +122,30 @@ pub fn file_dialog(save: bool, initial: &Path, filters: &[(String, String)]) -> 
 
 /// A folder picker. `None` when cancelled.
 pub fn pick_folder(title: &str) -> Option<PathBuf> {
+    pick_folder_at(title, Path::new(""))
+}
+
+/// A folder picker that starts at `start` (when it exists). `None` when cancelled.
+pub fn pick_folder_at(title: &str, start: &Path) -> Option<PathBuf> {
+    let start = if start.is_dir() { start.display().to_string() } else { String::new() };
     if cfg!(windows) {
+        let at = if start.is_empty() { String::new() } else { format!("$d.SelectedPath = '{}'; ", start.replace('\'', "''")) };
         let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '{title}'; if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}"
+            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '{title}'; {at}if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}"
         );
 
         return run_dialog(Some(PathBuf::from("powershell")), &["-NoProfile".to_owned(), "-Command".to_owned(), script]);
     }
 
     if let Some(zenity) = find_in_path("zenity") {
-        return run_dialog(Some(zenity), &["--file-selection".to_owned(), "--directory".to_owned(), format!("--title={title}")]);
+        let mut args = vec!["--file-selection".to_owned(), "--directory".to_owned(), format!("--title={title}")];
+        if !start.is_empty() {
+            args.push(format!("--filename={start}/"));
+        }
+
+        return run_dialog(Some(zenity), &args);
     }
 
-    run_dialog(find_in_path("kdialog"), &["--getexistingdirectory".to_owned(), ".".to_owned(), "--title".to_owned(), title.to_owned()])
+    let at = if start.is_empty() { ".".to_owned() } else { start };
+    run_dialog(find_in_path("kdialog"), &["--getexistingdirectory".to_owned(), at, "--title".to_owned(), title.to_owned()])
 }

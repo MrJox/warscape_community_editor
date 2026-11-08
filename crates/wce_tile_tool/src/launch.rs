@@ -338,7 +338,8 @@ pub struct Needs {
     /// one.
     pub shadowing: Vec<(String, String)>,
 
-    /// Dependencies read from the editor's loose folders (its own edits, the output folder): the launch carries them.
+    /// Dependencies read from the editor's loose folders (its own edits in the project's loose folder, the user's loose folders): the launch
+    /// carries them.
     pub overlay: Vec<String>,
 
     /// The files followed (asset paths in the shipped files, in the models they name, and so on).

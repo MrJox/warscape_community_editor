@@ -134,9 +134,14 @@ show_sea = true
     let mut s = Settings::load(paths.clone());
     s.set_game_fields("tile", &["kits"]);
 
-    // The old output folder is Attila's; the old shared field reads in every game until it is written.
-    assert_eq!(s.output_dir(), None);
+    // The old output folder is Attila's, offered to its project until that was asked once; Rome 2 had none set (its old default).
     assert_eq!(s.games["attila"].output_dir.as_deref(), Some(std::path::Path::new("/out")));
+    assert!(s.old_output_dir().is_some_and(|d| d.ends_with("WCE/rome_2/out")));
+    s.game = "attila".to_owned();
+    assert_eq!(s.old_output_dir().as_deref(), Some(std::path::Path::new("/out")));
+    s.game_mut().output_dir_offered = true;
+    assert_eq!(s.old_output_dir(), None);
+    s.game = "rome_2".to_owned();
     assert_eq!(s.tool::<ToolSettings>("tile").kits, ["/recent"]);
 
     // Writing in Rome 2 keeps the old value for Attila, and the editor's own field stays shared.

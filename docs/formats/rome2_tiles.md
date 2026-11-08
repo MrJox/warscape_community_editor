@@ -98,7 +98,7 @@ the project's.
 
 ## Saving (docs/formats/tile_workflow.md)
 
-`Tile > Save to mod pack...` (`save_to_pack <pack>`) compiles the project and puts the tile's folder and its tile set's file
+`File > Export > To mod pack...` (`save_to_pack <pack>`) compiles the project and puts the tile's folder and its tile set's file
 (`_tile_database/<set>.xml`, `_settings.xml` when a texture group was added) into the pack, replacing the pack's files of the folder.
 
 - Stage A (the logic, markers, building lists): compiled from the project.

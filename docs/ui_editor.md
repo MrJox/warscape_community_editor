@@ -41,10 +41,11 @@ Games: the converter has the layout logic of every version etwng reads (Empire t
   The fields carry the names of the Fields panel (`<offset_x>`, `<visible>yes</visible>`, `<component>`, `<picture_use>`); tick *Converter names* for the converter's own tags and guessed comments. Either form can be edited and pasted, and the file saved is the same. Fields the editor has no name for keep their primitive tag (`<i>`) and comment. Values are shown as stored (a dock point is its number); the Fields panel shows them in words.
 
 Everything is one model with one undo stack, so the canvas, the XML and the fields cannot disagree. Menu `UI`: add child, duplicate, delete, paint
-order, move into the previous sibling / out of the parent (the place on screen is kept), save into a mod pack, export XML.
+order, move into the previous sibling / out of the parent (the place on screen is kept), new skin. File > Export: the layout into a mod pack,
+the project as a mod pack, XML.
 
-Saving: File > Save writes the binary layout as a loose file under the output folder (`output_dir` in the settings) at its in-pack path, or in place for
-a file opened from disk. `UI > Save into a mod pack...` writes it into a `.pack` (created if missing). The game's own packs are never written.
+Saving: File > Save writes the binary layout as a loose file into the project's loose folder at its in-pack path, or in place for
+a file opened from disk. `File > Export > Layout into a mod pack...` writes it into a `.pack` (created if missing). The game's own packs are never written.
 
 How a layout is drawn (checked against a game screenshot of the Custom Battle screen):
 
@@ -135,7 +136,7 @@ the skin has one, else from the default skin.
   the pack's own priority decides).
 * **Layouts**: Ctrl+S saves a layout into the working folder under its game path; that version opens next time. A layout file that changes on disk
   reloads by itself (as an undo step) unless you have unsaved changes in it; the status line says so then.
-* **Export**: *UI > Export mod pack...* saves layouts with unsaved changes into the folder, then writes every file of it (all your skins and layouts)
+* **Export**: *File > Export > Project as a mod pack...* saves layouts with unsaved changes into the folder, then writes every file of it (all your skins and layouts)
   into a new `.pack` to share. The game's own packs are never written.
 
 ## Which packs are read

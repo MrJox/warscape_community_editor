@@ -121,6 +121,13 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// Items of File > Export: what the tool writes for the game or for TEd (a kit, a mod pack, an exported tile...), each asking for its
+    /// destination. Saves go into the project; exports go where they are asked to. True when the tool drew any.
+    fn export_menu(&mut self, editor: &mut Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
     /// Widgets over the viewport image (inside the viewport window, after the image): `origin` and `size` are the image's, in screen
     /// pixels. A child window there takes the mouse before the viewport.
     fn viewport_overlay(&mut self, editor: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {

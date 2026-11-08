@@ -6,8 +6,9 @@ The editor has two places where it writes the user's work: the **projects folder
 This plan drops it: **Save** always writes into the project, everything written for the game or for TEd goes under **File > Export**, and
 throw-away build files get a folder of their own.
 
-State: planned 2026-11-08 with the user. The Outliner (the other half of that discussion) is out of scope: it stays as it is until it has
-been discussed further.
+State: planned 2026-11-08 with the user, steps 1 to 10 done the same day (how it works now: [editor.md, Saving and
+exporting](../editor.md#saving-and-exporting)). The Outliner (the other half of that discussion) is out of scope: it stays as it is until it
+has been discussed further.
 
 ## Why
 
@@ -20,7 +21,7 @@ been discussed further.
   don't say which.
 - Its default name refers to an app that no longer exists, and the setting is one more thing a new user has to understand.
 
-## Where things are written now
+## Where things were written (before this plan)
 
 | Action | Writes to |
 |---|---|
@@ -28,7 +29,7 @@ been discussed further.
 | UI skins, saved layouts, pictures | `<projects>/loose/...` (mounted) |
 | Weather file > Save (opened from the packs) | `<output>/<path in the packs>` (`XmlFileDocument::default_save_path`) |
 | Weather database > Save | `<output>/warscape_asset_variation_db/warscape_asset_variation_db.{xml,bin}` (`picker.rs`) |
-| UI layout > Save (opened from the packs) | `<output>/<path in the packs>` (`UiDocument::default_save_path`) |
+| UI layout > Save (opened from the packs) | `<projects>/loose/<path in the packs>` already (`UiDocument::default_save_path`), but not indexed again after a save |
 | UI > Export XML | `<output>/ui_xml/<name>.uixml` |
 | Tile > Save as exported tile, `save_exported` | `<output>/...` (exported tile folders and the tile database) |
 | Terrain export | `<output>/...` (the map's folder and pack, `wce_terrain_tool::export`) |
@@ -39,7 +40,7 @@ been discussed further.
 | Tile > Save to mod pack, UI > Export mod pack | the chosen `.pack` |
 | Launch in game (launch pack) | `<game>/data/wce_launch.pack`, removed afterwards |
 
-## Where they will be written
+## Where they are written now
 
 | Action | Writes to |
 |---|---|
@@ -94,9 +95,24 @@ Each Export entry asks for its destination and remembers the last one per game (
     folder (`$WCE_SETTINGS_DIR` already gives scripts a throw-away one). Update `docs/editor.md`: the Weather tool section, Save All, the
     settings table, and the Save All row that still says tiles save as `tile.ted` with a `.bak` (tiles save as `tile.wce` in the project).
 
+## Launch in game
+
+Checked 2026-11-08: the battle XML names the weather file itself (`<environment_key>`, `launch::battle_xml`), and the launch carries that
+file whenever the mounted files read it from a loose folder (`launch_prompt.rs`: in both deliveries; the loose delivery also carries every
+other dependency read from a loose folder, `launch::Needs::overlay`). Before this plan a saved weather file never reached the game: the
+output folder was not mounted, so the launch shipped nothing and the game used the packs' file. Now a weather file saved into `loose/`
+is carried. The weather database is not carried: the battle names its environment file, so the game's own pick (the database) only
+matters for a tile without a weather file.
+
+## Found on the way (not changed)
+
+- `scripts/weather_smoke.txt` fails at its first `assert_attr` on master too: the Tile tool's `assert_attr` (2026-11, `a5e89232`) is
+  registered after the Weather tool's and replaces it. The rest of the script passes with those lines left out.
+- `scripts/cross_tool_check.sh` copies `assembly_kit_battle_tilemap/.../khazad_wall_test`, which this machine's kit doesn't have, and
+  expects `tile.ted` saved in place with a `.bak` (`cross_tool.txt`'s `assert_file_exists %TILE%/tile.ted.bak`, the tile.ted span
+  check): tiles save as `tile.wce` in the project now. Its weather half passes on a copy of another kit tile with that line left out.
+
 ## Open points
 
-- **Launch in game and the weather database.** The launch carries the loose files it depends on (`launch::Needs::overlay`). Check that a
-  weather file saved into `loose/` is among them, and decide whether an edited weather database should be carried too.
 - **Several tiles drawn at once** (from the Outliner discussion): the user is checking whether that is ever wanted. It doesn't change this
   plan.

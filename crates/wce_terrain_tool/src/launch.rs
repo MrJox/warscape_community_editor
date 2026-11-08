@@ -74,7 +74,7 @@ pub fn battle_xml(e: &mut Editor, map: &str, w: u32, h: u32, s: &Spot) -> String
     })
 }
 
-/// A launch made ready: the pack in `data\` and the command line; a dry run stops here (the pack written into the output folder).
+/// A launch made ready: the pack in `data\` and the command line; a dry run stops here (the pack written into the project's build folder).
 pub struct Prepared {
     pub command: String,
     pub pack: PathBuf,
@@ -112,7 +112,11 @@ pub fn prepare(e: &mut Editor, x: &crate::export::Exported, w: u32, h: u32, s: &
     }
 
     let xml = battle_xml(e, &x.map, w, h, s);
-    let pack = if dry_run { e.output_dir().join(format!("dry_{LAUNCH_PACK}")) } else { data.join(LAUNCH_PACK) };
+    let pack = if dry_run { e.build_dir().join(format!("dry_{LAUNCH_PACK}")) } else { data.join(LAUNCH_PACK) };
+    if let Some(p) = pack.parent() {
+        std::fs::create_dir_all(p).map_err(|err| format!("{}: {err}", p.display()))?;
+    }
+
     launch::write_launch_pack(&pack, profile.key, crate::export::pack_files(&x.map, &x.files), &xml)?;
     let mods: Vec<String> = e.selected_mod_packs().into_iter().filter(|m| data.join(m).is_file()).collect();
     Ok(Prepared { command: launch::command_line(&Delivery::Pack, &mods), pack, xml })
@@ -127,7 +131,7 @@ pub fn start(e: &Editor, p: &Prepared) -> Result<(Running, String), String> {
     let profile = e.game();
     let game_dir = e.settings_ref().game_dir().ok_or("no game folder")?;
     let data = game_dir.join(profile.data_dir);
-    let staging = e.output_dir().join("launch").join("terrain");
+    let staging = e.build_dir().join("launch").join("terrain");
     let _ = std::fs::create_dir_all(&staging);
     wce_foundation::log::info(format!("launch in game: {} {}", profile.exe, p.command));
     match launch::start(&game_dir, profile, &p.command, None, &staging) {

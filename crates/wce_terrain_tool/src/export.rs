@@ -1,9 +1,9 @@
 //! Export (docs/plans/terrain_editor.md, Phase 7): a kit map's built files (`wce_terrain_io::attila::build`: what BOB_Terrain's
 //! `Tilemap` and `Heights & Normals` write, and `tile_map.png`) made from the map as it is in the editor, on a worker, written two ways:
 //!
-//! - loose, under the output folder as the packs hold them: `<output>/terrain/battles/<map>/...` (the deployment files in `deployment/`), a
-//!   campaign map's under `terrain/campaigns/<map>/`;
-//! - a mod pack `<output>/terrain_<map>.pack` with the same paths.
+//! - loose, under the folder asked for (File > Export > Built files; Launch in game's own export: the project's build folder) as the packs
+//!   hold them: `<folder>/terrain/battles/<map>/...` (the deployment files in `deployment/`), a campaign map's under `terrain/campaigns/<map>/`;
+//! - a mod pack `<folder>/terrain_<map>.pack` with the same paths.
 //!
 //! The game's LF normal chunks are not made: a map of the game's packs keeps its own, a map the game doesn't have has none.
 //!
@@ -94,14 +94,13 @@ fn write(out: &Path, map: &str, files: &[(String, Vec<u8>)], profile: &wce_vfs::
 /// # Errors
 ///
 /// No such document, a map of the packs (no model to build from).
-pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[PathBuf]) -> Result<ExportJob, String> {
+pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[PathBuf], out: PathBuf) -> Result<ExportJob, String> {
     let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
     let model = d.model().ok_or("a map of the game's packs can't be exported (open the kit's map)")?.clone();
     let map = d.name.clone();
     let revision = wce_editor_core::document::Document::history(d).version();
     let env = kit_file(kit_roots, "warscape_asset_variation_db/environment_map.xml");
     let upgrades = kit_file(kit_roots, "terrain/tiles/battle/tile_upgrades.xml");
-    let out = e.output_dir();
     let profile = e.game();
     let packs = e.files();
     let (tx, rx) = channel();

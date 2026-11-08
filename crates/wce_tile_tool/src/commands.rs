@@ -355,10 +355,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "save_exported", "save_exported [output folder]",
-        "save the open tile, then write it as an exported tile (stages A, B and C) and the tile database under the folder (default: the output folder)",
+        "save_exported", "save_exported [folder]",
+        "File > Export > As exported tile: save the open tile, then write it as an exported tile (stages A, B and C) and the tile database under the folder (default: its last one, else the projects folder)",
         |e, a| {
-            let out = a.first().map_or_else(|| e.output_dir(), PathBuf::from);
+            let out = a.first().map_or_else(|| e.export_dir(crate::tool::EXPORTED_TILE_KEY), PathBuf::from);
             with_tile(e, |t, e| t.save_exported(e, &out).map_or_else(fail, ok))
         },
     );
@@ -3171,7 +3171,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_weather_edit", "tile_weather_edit", "edit the open tile's weather in the Weather tool (a copy in the output folder, which the tile follows)", |e, _| {
+    c.add("tile_weather_edit", "tile_weather_edit", "edit the open tile's weather in the Weather tool (the tile follows the edits; Save writes it into the project)", |e, _| {
         with_tile(e, |t, e| {
             let Some(file) = e.weather_preview().map(str::to_owned) else { return fail("the tile has no weather file") };
             t.weather.edit(e, &file);

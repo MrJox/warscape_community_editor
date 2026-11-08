@@ -869,10 +869,6 @@ impl Tool for PrefabTool {
                 r = Some(self.revert(e));
             }
 
-            if gui::menu_item("Save for Assembly Kit", None, false, open) {
-                r = Some(self.save_for_kit(e));
-            }
-
             gui::separator();
             if gui::menu_item("Close the stage", None, false, open) {
                 r = Some(self.close_stage(e, false).map(|()| "stage closed".to_owned()));
@@ -891,6 +887,19 @@ impl Tool for PrefabTool {
 
     fn edit_menu(&mut self, e: &mut Editor) {
         self.tile.edit_menu(e);
+    }
+
+    fn export_menu(&mut self, e: &mut Editor) -> bool {
+        if gui::menu_item("For Assembly Kit", None, false, self.open.is_some()) {
+            let r = self.save_for_kit(e);
+            self.report(e, r);
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Writes the stage's prefab as TEd reads it (its .xml: references baked, props as models, no ground) into an Assembly Kit.");
+        }
+
+        true
     }
 
     fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {

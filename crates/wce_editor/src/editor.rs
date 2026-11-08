@@ -161,6 +161,9 @@ pub struct Editor {
     mod_checks_for: String,
     mods_popup: bool,
 
+    /// Revert to game's version, the old output folder's files.
+    pub(crate) project_prompts: crate::project_prompts::ProjectPrompts,
+
     /// The Fixes menu.
     pub(crate) fixes: crate::fixes::Fixes,
 
@@ -218,7 +221,7 @@ impl Editor {
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(), prompt_game: None,
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
-            first_run_message: String::new(), mod_checks: vec![], mod_filter: String::new(), mod_removed: vec![], fixes: Default::default(), game_before: None, mod_checks_for: String::new(), mods_popup: false, perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
+            first_run_message: String::new(), mod_checks: vec![], mod_filter: String::new(), mod_removed: vec![], fixes: Default::default(), game_before: None, mod_checks_for: String::new(), mods_popup: false, project_prompts: Default::default(), perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
             panel_data: PanelData::default(), settings_window: Default::default(), updates: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
         };
 
@@ -824,49 +827,130 @@ impl Editor {
         self.settings.paths().layouts_dir().join(format!("{tool_id}.ini"))
     }
 
-    /// Where "Save" writes loose files (under their in-pack path): `output_dir` in the settings, else <Documents>/AttilaWeatherEditor/out as
-    /// the old weather editor did for Attila, <Documents>/WCE/<game>/out for the other games.
-    pub fn output_dir(&self) -> PathBuf {
-        self.settings.output_dir().unwrap_or_else(|| self.default_output_dir())
+    /// Where Save writes a file opened from the game's packs: `<projects>/loose/<its path in the packs>`. The loose folder is mounted
+    /// before every pack, so the copy is what every loader reads from then on.
+    pub fn loose_path(&self, path: &str) -> PathBuf {
+        self.loose_dir().join(normalize(path))
     }
 
-    /// The loose copy of a game file in the output folder (Save writes files there, under their path in the packs), if there is one.
-    pub fn output_copy(&self, path: &str) -> Option<PathBuf> {
-        let p = self.output_dir().join(normalize(path));
+    /// The loose copy of a game file in the project (Save writes files there, under their path in the packs), if there is one.
+    pub fn loose_copy(&self, path: &str) -> Option<PathBuf> {
+        let p = self.loose_path(path);
         p.is_file().then_some(p)
     }
 
-    /// Copies a game file from the packs into the output folder, unless a copy is there already; returns the copy.
+    /// The project's throw-away build files (`<projects>/build`): launch staging, dry runs. Nothing reads them back between runs.
+    pub fn build_dir(&self) -> PathBuf {
+        self.settings.projects_dir().join("build")
+    }
+
+    /// The projects folder of the game (`Settings::projects_dir`): where file dialogs start.
+    pub fn projects_dir(&self) -> PathBuf {
+        self.settings.projects_dir()
+    }
+
+    /// Where the File > Export entry `key` writes when nothing else is asked: its last destination, else the projects folder.
+    pub fn export_dir(&self, key: &str) -> PathBuf {
+        self.settings.game_settings().export_dirs.get(key).cloned().unwrap_or_else(|| self.projects_dir())
+    }
+
+    /// Remembers the destination of the File > Export entry `key` (per game; kept in the settings file in interactive sessions).
+    pub fn set_export_dir(&mut self, key: &str, dir: &Path) {
+        if self.settings.game_settings().export_dirs.get(key).is_some_and(|d| d == dir) {
+            return;
+        }
+
+        self.settings.game_mut().export_dirs.insert(key.to_owned(), dir.to_path_buf());
+        if self.interactive() {
+            self.save_settings();
+        }
+    }
+
+    /// Asks for the folder of the File > Export entry `key`, starting at its last one, and remembers the answer.
+    pub fn pick_export_folder(&mut self, key: &str, title: &str) -> Option<PathBuf> {
+        let start = self.export_dir(key);
+        let dir = crate::steam_detect::pick_folder_at(title, &start)?;
+        self.set_export_dir(key, &dir);
+        Some(dir)
+    }
+
+    /// Asks for the file of the File > Export entry `key` (a pack, an XML), starting in its last folder, and remembers its folder.
+    pub fn pick_export_file(&mut self, key: &str, name: &str, filters: &[(String, String)]) -> Option<PathBuf> {
+        let start = self.export_dir(key).join(name);
+        let path = file_dialog(true, &start, filters)?;
+        if let Some(dir) = path.parent() {
+            self.set_export_dir(key, dir);
+        }
+
+        Some(path)
+    }
+
+    /// A file of the loose folders was written or deleted (a save, a revert): the mounted files index it again, and the weather preview
+    /// reads it again when it is that file.
+    pub fn loose_changed(&mut self, path: &str) {
+        let path = normalize(path);
+        if path.is_empty() {
+            return;
+        }
+
+        if let Some(vfs) = self.vfs.as_mut() {
+            Arc::make_mut(vfs).refresh_loose(&path);
+        }
+
+        if self.weather_preview.as_ref().is_some_and(|w| w.path == path) {
+            self.weather_preview = None;
+            if let Err(err) = self.set_weather_preview(Some(&path)) {
+                log::warn(format!("weather preview: {err}"));
+            }
+        }
+    }
+
+    /// The documents saved since the last call whose file is a loose copy of a game file: [`Editor::loose_changed`] for each.
+    pub fn follow_saves(&mut self) {
+        for key in self.docs.take_saved() {
+            if !key.is_empty() && self.loose_copy(&key).is_some() {
+                self.loose_changed(&key);
+            }
+        }
+    }
+
+    /// Deletes the project's loose copy of the document's game file and opens the packs' file in its place (the document closes,
+    /// unsaved changes and all: ask first).
     ///
     /// # Errors
     ///
-    /// The packs are not mounted, the file is not in them, or the copy can't be written.
-    pub fn copy_to_output(&self, path: &str) -> Result<PathBuf, String> {
-        if let Some(copy) = self.output_copy(path) {
-            return Ok(copy);
-        }
+    /// No such document, it is not a loose copy of a game file, or the copy can't be deleted.
+    pub fn revert_to_game(&mut self, id: DocumentId) -> Result<String, String> {
+        let d = self.docs.find(id).ok_or("no such document")?;
+        let key = d.source_key();
+        let copy = (!key.is_empty()).then(|| self.loose_copy(&key)).flatten().ok_or_else(|| format!("{} is not a project's copy of a game file", d.title()))?;
+        let tool = self.docs.tool_of(id);
+        std::fs::remove_file(&copy).map_err(|e| format!("{}: {e}", copy.display()))?;
 
-        let path = normalize(path);
-        let bytes = self.vfs.as_ref().ok_or("the game packs are not mounted")?.read(&path).map_err(|e| format!("{path}: {e}"))?;
-        let to = self.output_dir().join(&path);
-        if let Some(parent) = to.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-        }
+        // The folders the copy leaves empty go too, up to the loose folder.
+        let loose = self.loose_dir();
+        let mut dir = copy.parent().map(Path::to_path_buf);
+        while let Some(d) = dir.filter(|d| d.starts_with(&loose) && *d != loose) {
+            if std::fs::remove_dir(&d).is_err() {
+                break;
+            }
 
-        std::fs::write(&to, bytes).map_err(|e| format!("{}: {e}", to.display()))?;
-        Ok(to)
+            dir = d.parent().map(Path::to_path_buf);
+        }
+        self.docs.close(&mut self.scene, id);
+        self.selection.clear();
+        self.loose_changed(&key);
+        let switch = self.active_tool_id() == tool;
+        self.open_path(&key, true, switch).map(|_| format!("{key}: the game's file again (the project's copy deleted)"))
     }
 
-    /// The output folder when the settings name none.
-    pub fn default_output_dir(&self) -> PathBuf {
-        default_output_dir_for(self.game())
-    }
-
-    pub fn set_output_dir(&mut self, dir: &Path, persist: bool) {
-        self.settings.game_mut().output_dir = Some(dir.to_path_buf());
-        if persist {
-            self.save_settings();
-        }
+    /// If the document is a game file the project has a loose copy of (Revert to game's version applies): the copy is what it was
+    /// opened from, or what its first save wrote.
+    pub fn is_loose_copy(&self, id: DocumentId) -> bool {
+        self.docs.find(id).is_some_and(|d| {
+            let key = d.source_key();
+            !key.is_empty() && self.loose_copy(&key).is_some()
+        })
     }
 
     pub fn save_layout(&self) {
@@ -952,6 +1036,11 @@ impl Editor {
         self.mouse_queue.clear();
         self.mouse_active = false;
         self.mouse_cur = MouseState::default();
+    }
+
+    /// A plain interactive session (no script, command, capture or `--tool`): what only the user should be asked happens in it.
+    pub fn interactive(&self) -> bool {
+        self.remember_tool
     }
 
     /// Scripted (fixed-step) runs ignore the real mouse; the `mouse` commands drive the same Dear ImGui events.
@@ -1116,11 +1205,8 @@ impl Editor {
             return Err(format!("{path} is not an .environment or .lighting file"));
         }
 
-        // A copy in the output folder (one being edited) before the packs.
-        let bytes = match self.output_copy(&path) {
-            Some(copy) => std::fs::read(&copy).map_err(|e| format!("{}: {e}", copy.display()))?,
-            None => self.vfs.as_ref().ok_or("the game packs are not mounted")?.read(&path).map_err(|e| format!("{path}: {e}"))?,
-        };
+        // The project's loose copy (a saved edit) wins over the packs: it is mounted before them.
+        let bytes = self.vfs.as_ref().ok_or("the game packs are not mounted")?.read(&path).map_err(|e| format!("{path}: {e}"))?;
 
         let doc = XmlDoc::parse(bytes).map_err(|e| format!("{path}: {e}"))?;
 
@@ -1387,6 +1473,11 @@ impl Editor {
             self.request_quit(1);
         }
 
+        self.follow_saves();
+        if !self.first_run {
+            self.check_old_output();
+        }
+
         {
             wce_prof!("editor.docs_update");
             self.docs.update(&mut self.scene);
@@ -1429,6 +1520,7 @@ impl Editor {
 
         gui::end();
         self.draw_mods_popup();
+        self.draw_project_prompts();
         self.draw_fix_window();
         self.draw_settings_window();
         self.draw_updates();
@@ -1669,7 +1761,7 @@ impl Editor {
             }
 
             if gui::menu_item(&format!("{}  Open file...", icons::FOLDER_OPEN), None, false, true)
-                && let Some(p) = file_dialog(false, &self.output_dir().join("x"), &self.open_filters())
+                && let Some(p) = file_dialog(false, &self.projects_dir().join("x"), &self.open_filters())
             {
                 match self.open_path(&p.display().to_string(), false, true) {
                     Ok(msg) => self.status(&msg, false),
@@ -1687,7 +1779,7 @@ impl Editor {
 
             if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save) {
                 let title = self.docs.active().map(|d| d.title()).unwrap_or_default();
-                if let Some(p) = file_dialog(true, &self.output_dir().join(title), &[("All files".to_owned(), "*.*".to_owned())])
+                if let Some(p) = file_dialog(true, &self.projects_dir().join(title), &[("All files".to_owned(), "*.*".to_owned())])
                     && let Some(d) = self.docs.find_mut(active)
                 {
                     let result = d.save(&wce_editor_core::document::SaveTarget { path: p });
@@ -1704,6 +1796,24 @@ impl Editor {
             let label = if unsaved != 0 { format!("{}  Save all ({unsaved})", icons::SAVE_ALL) } else { format!("{}  Save all", icons::SAVE_ALL) };
             if gui::menu_item(&label, crate::shortcuts::label("save_all").as_deref(), false, unsaved > 0) {
                 let _ = CommandRegistry::run(self, "save_all");
+            }
+
+            let loose = has_doc && self.is_loose_copy(active);
+            if gui::menu_item("Revert to game's version...", None, false, loose) {
+                self.ask_revert(active);
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Deletes the project's copy of this game file (what Save wrote into the project's loose folder): the packs' file is read again, by every tool.");
+            }
+
+            if gui::begin_menu(&format!("{}  Export", icons::PACKAGE)) {
+                let drew = self.with_tool_at(self.active_tool, |t, e| t.export_menu(e)).unwrap_or(false);
+                if !drew {
+                    gui::menu_item("Nothing to export in this tool", None, false, false);
+                }
+
+                gui::end_menu();
             }
 
             if gui::menu_item(&format!("{}  Close document", icons::X), None, false, has_doc) {
@@ -2007,12 +2117,3 @@ impl Editor {
     }
 }
 
-/// A game's output folder when the settings name none: <Documents>/AttilaWeatherEditor/out for Attila (the old weather editor's),
-/// <Documents>/WCE/<game>/out for the other games.
-pub fn default_output_dir_for(game: &GameProfile) -> PathBuf {
-    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map_or_else(|| PathBuf::from(if cfg!(windows) { "C:\\" } else { "/tmp" }), PathBuf::from);
-    match game.key {
-        "attila" => home.join("Documents").join("AttilaWeatherEditor").join("out"),
-        key => home.join("Documents").join("WCE").join(key).join("out"),
-    }
-}

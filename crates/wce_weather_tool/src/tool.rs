@@ -868,8 +868,13 @@ impl Tool for WeatherTool {
         self.draw_properties(e);
         self.draw_scene_bar(e);
         let env = find_xml(e, self.env_doc).map(|x| x.source().vfs_path.clone()).unwrap_or_default();
-        let out = e.output_dir();
-        if let Some(path) = self.picker.draw(e, &out, &env)
+        let loose = e.loose_dir();
+        let picked = self.picker.draw(e, &loose, &env);
+        for path in self.picker.take_changed() {
+            e.loose_changed(&path);
+        }
+
+        if let Some(path) = picked
             && let Err(msg) = e.open_path_from(self, &path, true, true)
         {
             e.status(&msg, true);
@@ -878,15 +883,7 @@ impl Tool for WeatherTool {
 
     fn draw_menus(&mut self, e: &mut Editor) {
         if gui::begin_menu("Settings") {
-            let mut buf = e.output_dir().display().to_string();
-            gui::text("Output folder (files are saved under their in-pack path):");
-            gui::set_next_item_width(600.0);
-            if gui::input_text("##out", None, &mut buf, 1024, gui::INPUT_ENTER_RETURNS_TRUE) {
-                e.set_output_dir(&PathBuf::from(&buf), true);
-            }
-
             if let Some(r) = e.renderer() {
-                gui::separator();
                 gui::text("Game graphics options (read from preferences.script.txt):");
                 gui::checkbox("Vignette (gfx_vignette)", &mut r.settings.vignette);
                 gui::checkbox("Depth of field (gfx_depth_of_field)", &mut r.settings.depth_of_field);
@@ -984,24 +981,21 @@ impl Tool for WeatherTool {
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {
-        let copy = from_packs.then(|| e.output_copy(path)).flatten();
-        let (source, bytes) = if let Some(copy) = copy {
-            // The copy in the output folder (where Save writes it) before the packs.
-            let bytes = std::fs::read(&copy).map_err(|e| format!("cannot read {}: {e}", copy.display()))?;
-            (Source { vfs_path: normalize(path), disk: copy, label: "output folder".to_owned() }, bytes)
-        } else if from_packs {
+        let (source, bytes) = if from_packs {
+            // The project's loose copy (where Save writes it) wins over the packs: it is mounted before them.
             let vfs = e.vfs().ok_or("the game packs are not mounted")?;
             let p = normalize(path);
             let owner = vfs.owner(&p).ok_or("not found in the packs")?;
             let bytes = vfs.read(&p).map_err(|e| e.to_string())?;
             let pack = &vfs.packs()[owner];
-            (Source { vfs_path: p, disk: pack.path.clone(), label: pack.name.clone() }, bytes)
+            let label = if e.loose_copy(&p).is_some() { "project".to_owned() } else { pack.name.clone() };
+            (Source { vfs_path: p, disk: pack.path.clone(), label }, bytes)
         } else {
             let bytes = std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
             (Source { vfs_path: String::new(), disk: PathBuf::from(path), label: "loose".to_owned() }, bytes)
         };
 
-        Ok(Box::new(XmlFileDocument::new(source, bytes, e.output_dir())?))
+        Ok(Box::new(XmlFileDocument::new(source, bytes, e.loose_dir())?))
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

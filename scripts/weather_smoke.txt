@@ -1,6 +1,5 @@
 # Weather tool on the shared shell: environment documents, edits and undo, structural edits, save, cross-fade, the weather picker.
-# Run by scripts/weather_check.sh (the output folder and the expected values are filled in there).
-output_dir "%OUT%" temp
+# Run by scripts/weather_check.sh (the expected values are filled in there; the projects folder is a throw-away one, $WCE_PROJECTS).
 tool weather
 frames 3
 assert_tool weather
@@ -51,7 +50,7 @@ assert_xml_elements %ELEMENTS%
 assert_modified 0
 assert_history 0 0
 
-# save: loose file under the output folder, modified marker gone, history cleared
+# save: a loose file in the project's loose folder, modified marker gone, history cleared
 edit_attr LIGHTING sun_direction_elevation 41
 save
 assert_saved weather/charlemagne/med_sp_land_day_dry.environment

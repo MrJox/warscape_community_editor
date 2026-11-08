@@ -107,7 +107,7 @@ ones in Expert), add / rename / remove categories (Expert, or categories the gam
 precipitation x time of day for one value of every other category: files the game picks from, `*` = after the default_map retry,
 red = none; values the game never sends are left out; open by default; a cell lists its files and adds a file for exactly its conditions); the variations with a per-category conditions grid
 (All / None); the file's problems and `variation_rules::check` (climates checked against the packs' battle tile database). Undo /
-Redo. Files: Open (.bin or .xml), Save (both forms into `<output>/warscape_asset_variation_db/`), Save As (format by extension),
+Redo. Files: Open (.bin or .xml), Save (both forms into the project's `loose/warscape_asset_variation_db/`, read before the packs from then on), Save As (format by extension),
 Convert (a file to the other format without opening it); saving is refused when the game would lose weather, unless "save anyway".
 
 ## Findings on the TDD data (variation_check, 2026-10-08)
