@@ -5,7 +5,10 @@ bridges over the gaps. All of it lives in layers of its own, so it can be change
 are a feature in their own right, modelled on the newer Terry's: height, blend and ground type layers, which come first. Terry only shows how
 the feature works: its projects are not imported (user, 2026-11-07).
 
-Status (2026-11-07): Phases 1, 2 and 4 to 7 are built: layers (`wce_tile::terrain_layers`, `tile_document/layers.rs`, `wce_tile_tool/layers_panel.rs`), the road (`wce_tile::roads`, `tile_document/roads.rs`), its detail (`wce_tile::road_detail`), crossings and bridges from kit pieces. To check in a battle. Left for later: standard models, generated bridges, pinned heights.
+Status (2026-11-08): the terrain part (layers, height, texture, ground type: Phases 1, 2, 4 and 6) is built and stays. The first detail and
+bridges (old Phases 5 and 7: the kit's path prefabs strung along the road, chains of the kit's bridge buildings) were not up to spec and are
+redesigned below (branch `feature/road_detail_redesign`): road pieces from `roads_proc` prefabs fitted by overrides, crossings of water and
+drops as fords or bridges, bridges generated on the walls' code. Left for later: pinned heights.
 
 ## Decisions (user, 2026-11-07)
 
@@ -14,8 +17,21 @@ Status (2026-11-07): Phases 1, 2 and 4 to 7 are built: layers (`wce_tile::terrai
 - **Battle tiles first.** The data model stays generic, so that maps can have them later; the Terrain tool does not get them now.
 - **A road's height follows the terrain**: the ground under its centre line, smoothed to a maximum grade, plus its bump. A control point can
   pin a height.
-- **Bridges from the kit's pieces first**, chained straight over the gap; generated ones later, on the procedural walls' code.
-- **Decals first, models later**: the kit's decals and small props now, a spec for a standard model set to author later.
+- ~~Bridges from the kit's pieces first~~ and ~~decals first, models later~~ (2026-11-07): replaced by the decisions of 2026-11-08 below.
+
+### Redesign of the detail and bridges (user, 2026-11-08)
+
+- **Road pieces are prefabs of our own** in `roads_proc` (the projects' prefab folder), built from the kit's decals and small props: one
+  basic design per main piece (straight, curve, corner, T junction, X junction, ...), the base of every road type (dirt, mud, ...). The
+  spline system lays them along the road and adapts each with **prefab overrides** (a slightly curved stretch takes the straight piece,
+  bent about its centre).
+- **`roads_proc` lives in the projects folder**, made per game. The base pieces start as **placeholders**: measure splines where the real
+  assets go, so whoever draws a piece (the user, or Claude) knows where decals and buildings go for the feature to recognise and adapt them.
+- **The first road type is generated** from the kit's decals, to see how it works in the tool; refined by hand afterwards.
+- **Standard measures**: a 6 m road, 8 m straights, 12 x 12 m junctions, 4 m ends; the width scales from 0.5 to 2 times.
+- **Editing as procedural walls**: a road is not edited piece by piece; its pieces and bridges are made again from its line and settings.
+- **Crossings**: water (rivers, lakes, the sea) and big drops. **A crossing less than 0.75 m deep under water is a ford; deeper is a bridge.**
+- **Bridges are generated on the walls' logic** (warped base pieces, generated platforms): the kit's bridge buildings are too restrictive.
 
 ## What the example shows (Warhammer III, `nuln_map_reduced_wh1`)
 
@@ -89,7 +105,7 @@ has its settings; the Inspector shows them; **Create** panel, new section. Reuse
    to a limit. This is what "level the sides to a maximum degree" means: the bank's width comes from the height it has to cover.
 3. **Blend layer.** The chosen channel at full weight on the road, feathered with noise over the edge so that it is not a clean line.
 4. **Ground type layer.** Road where the road is, 16 elsewhere. Units and speed in the game follow it.
-5. **Detail** (below) and **bridges** (below), as generated instances.
+5. **Pieces**, **fords** and **bridges** (below), as generated instances.
 
 **When it runs.** The layers are derived data: a road's signature (its line and settings) is kept in its layers' owner, `road:<id>#<signature>`.
 A road whose signature differs, or a height edit anywhere, makes the roads again once the line has stopped moving and no stroke is open, so a
@@ -108,81 +124,163 @@ ending at a tile's edge ends on the ground. Matching a neighbouring tile's road 
 **Existing objects** on the terrain follow as they do under a brush (landscape instances). Trees and props on the road are not removed in the
 first version, but the road reports them; an optional "clear vegetation" comes later.
 
-## Detail: prefabs along the road
+## Road pieces (redesign, 2026-11-08)
 
-**What the kit has** (`art/prefabs/global/paths`): 8 `global_dirt_road_*` and 6 `global_path_*`, plus `race_track`. Each is 8 to 24 projected
-decals with 0 to 10 buildings. Across all of them the buildings are few: `global_ground_pathborder` (29), `lowfence_3` (19), `lowfence_1`
-(5), `tree_stump` (2). The decals are `global_terrain_rocks_*`, `global_terrain_path_01`, `border_1`, `path_1`, puddles.
+### What was there, and why it goes
 
-**This is good news.** Decals are projected, so they take the ground's shape whatever it is, and only need a position and a turn. A
-prefab mostly needs no mesh bent at all. So "slightly altered to follow the road" means the *layout* is bent, not the models:
+The first detail (`wce_tile::road_detail`) strung the kit's `global_dirt_road_*` and `global_path_*` prefabs end to end along the line,
+each part moved to its distance along and across the road. Those prefabs were made for one straight spot, so laid in a row they read as
+a repeated pattern, not as a road; nothing knew a junction, an end or a bend, and the decals kept their size whatever the road's width. It
+is replaced, and `road_detail` (the setting and the module) with it.
 
-- Read a prefab's parts as (distance along, distance across) its long axis, the main direction of their places.
-- Lay it down a stretch of road: each part moves to that place on the curve and turns with it. Decals stay decals, and a building stays the
-  same building, rigid. What is wider than the road goes in towards it; a building goes beside the road, never on it.
-- `global_ground_pathborder`, the one common building, is left out: it is a skirt of ground made for its one spot, and moved along a road it stood
-  as a mound across it.
+### The folder
 
-Like the layers these are derived data: a list of placed instances (`RoadItem`), made again and not saved, drawn as the walls' pieces are, and
-written as the layer *WCE procedural roads* by `text_for_export`, which a kit save and a game launch both go through. `road_detail`: dirt road
-(`global_dirt_road_*`), path (`global_path_*`) or none; `road_seed` chooses and spaces them.
+`<projects>/assembly_kit/raw_data/art/prefabs/roads_proc/`, one folder per road type, each with the same pieces:
 
-**When a rigid piece is enough.** A straight piece of length L on a curve of radius R is off the curve by L x L / 8R at its middle:
+```
+roads_proc/
+    base/       straight  curve  corner  t_junction  x_junction  end  ford     (guides only: the placeholders)
+    dirt/       the same keys, guides and the kit's decals                       (generated, refined by hand)
+    <type>/     ...
+```
 
-| Piece | R = 30 m | R = 60 m | R = 100 m |
+- A road type is a folder; `road_type` (in place of `road_detail`) lists the folders but `base`, and `none`. A type missing a piece
+  takes `base`'s, which lays nothing but its guides' measures (a warning names the missing piece).
+- The editor writes `base/` and `dirt/` into a game's projects when the Tile tool mounts them and they are missing, and never writes over
+  a file that is there: the user's edits are kept. `dirt/` is written only when the game's kit has its decals; else the log says so.
+- They are ordinary `.wce` prefabs: the Prefab tool opens, edits and saves them like any other.
+
+### The measures and the guides
+
+Every piece is drawn at the standard measures, in the prefab's frame: origin at the piece's centre on the road's centre line, the road
+along +z, its width across x, the ground at y = 0. Metres below; the file's units are twice as many in a battle tile.
+
+| Piece | Size | Ports (where the next piece joins) | Laid where |
 |---|---|---|---|
-| 2 m | 2 cm | 1 cm | 1 cm |
-| 4 m | 7 cm | 3 cm | 2 cm |
-| 10 m | 42 cm | 21 cm | 13 cm |
+| `straight` | 8 long, 6 wide | z = -4 and +4 | every stretch, bent up to `STRAIGHT_BEND` |
+| `curve` | 45 degrees on a 15 m centre radius (11.8 along the centre) | its two ends | bends tighter than a straight takes |
+| `corner` | 12 x 12, two arms at 90 degrees | the two arms' ends | a sharp point |
+| `t_junction` | 12 x 12, three arms | the three arms' ends | a road's end on another road |
+| `x_junction` | 12 x 12, four arms | the four arms' ends | two roads crossing |
+| `end` | 4 long | z = +2 | a free end (none at the tile's edge) |
+| `ford` | 8 long, as a straight | z = -4 and +4 | over a ford, the length of the crossing |
 
-Pieces up to 4 m never need bending on a road that a unit can follow; a 10 m piece does below about 60 m. So the set is **short pieces, placed
-rigid**, which avoids a generated model and a pack per tile. Bending stays possible (`wce_walls::warp`) for anything longer.
+The placeholders are **guides**: `WceRoadGuide` elements, open polylines of the editor's own (TEd never sees them, `project_files::to_ted`
+drops them as it drops every `Wce*` element), drawn in the Prefab tool and hidden in a tile. A guide's `guide_role` is one of:
 
-**Standard set (decals now, models to author later).** Three styles: dirt, gravel, stone. Per style:
+- `centre`: the road's centre line, port to port (a junction or corner: one per arm, from the centre out);
+- `edge`: the road's edge each side of each arm, 3 m out;
+- `verge`: the shoulder's outer limit each side, 3 m past the edge: where the road's buildings stand;
+- `port`: a line across the road at a join, its points the two edges.
 
-| Piece | Size | Variants | For |
-|---|---|---|---|
-| Road surface decal | 8 x 4 m | 3 | ruts, wear down the middle |
-| Edge decal | 6 x 2 m | 3 | a broken edge on each side |
-| Spot decal | 2 to 4 m | 3 | puddles, stones, patches |
-| Verge or kerb model | 4 m | 3 | a low solid edge; the only piece needing a mesh |
-| End cap | 2 m | 1 | where a road stops |
-| Junction patch | 12 x 12 m | 1 | hides a crossing |
+The ports are what makes a piece a piece: the reader finds the piece's arms and their directions from its ports and centre guides, so a
+piece drawn to other measures still reads (its own length and width are what it is fitted by). A piece without them is not used.
 
-So 14 pieces a style, 42 in all, of which 6 decals (2 a style) and 12 models are new work once the kit's decals are reused for the rest; no curved
-versions are needed. Three variants is the fewest that hides repetition when they are shuffled with the seed.
+### How a part is anchored
 
-## Bridges
+A part is a decal, building or simple mesh of the piece (its guides aside). Where it is, read once from the prefab, says how it follows
+the road (`road_pieces::read`):
 
-**The kit has** `bridge_wood_1`, `bridge_wood_2`, `bridge_wood_20m`, each with an `_end`, `bridge_wood_complete`, `bridge_stone_1`, `pontoon` and
-`road_planks`, all in `models_building` with logic files. Vanilla's `river_crossing` tiles use `bridge_wood_complete` 29 times, and the separate
-pieces 11 times. `battle_bridge_subculture_jcts` is empty in Attila's kit, so nothing there ties bridges to cultures.
+- **its arm**: the arm whose centre guide is nearest; in a straight, curve or ford, the one arm;
+- **along**: its distance along that centre guide, as a fraction of the arm;
+- **anchor**: `surface` when its origin is between the edges further than 1 m from them; `edge` within 1 m of an edge; `verge` past an
+  edge; a building is never `surface` (one on the road is reported, and laid on the verge). A part may say otherwise with
+  `road_anchor="surface|edge|verge|fixed"` (an attribute of the editor's, which a kit save drops), `fixed` staying where it is in the
+  piece's frame (a junction's middle).
 
-**What units walk on** (the logic files, `examples/bridge_dump`, user 2026-11-07: a bridge must be one surface touching the ground at both ends; the first
-version's ends pointed inwards and its height ignored them). `bridge_wood_2`: one platform along its z, -10 .. 10, at height 1, 10 wide. `bridge_wood_1`: -5 .. 5,
-5 wide. An `_end`: a ramp from height 0 at z = -2 up to height 1 at its origin. `bridge_wood_complete`: one building, a deck 100 long and 20 wide at 1.2, a ramp
-at each end down to -3.7 at z = -58.49 and -3.4 at z = 57.97. `bridge_stone_1` has no platforms at all, so it is not used. Pieces join by their platforms meeting
-edge to edge, as the wall pieces do (docs/re/buildings.md).
+### Fitting a piece to the road
 
-**Finding the gap** (`find_gaps`). Where the road graded over the ground stands at least 4 over it for at least 8. A gap runs out to where the ground comes
-back up to the road, and on up the walls while they are steeper than the road may climb: following the ground down, the road met it partway
-down the wall, and the first bridges started in the canyon. The road is graded again with the gap taken out (`over_gaps`: rim to rim), so it does
-not dip into it, until the gaps settle. So a gentle valley gets a road through it, and a bridge only comes where the road could not go. `road_bridges` turns them off.
+Every piece laid is a **prefab reference** (`wce_prefab="roads_proc/<type>/<piece>"`) with **overrides** (`WceOverrides`) for each part's
+`position`, `orientation` and `scale`; no element is added or taken out, which overrides cannot do. For a part at `along` and `across` on
+its arm:
 
-**Laying it.** `choose_bridge`: `bridge_wood_complete` for a gap of 60 to 104 (file's units) under a road at least 10 wide, as it is the one surface
-already; else a chain of `bridge_wood_2`, or `bridge_wood_1` under a narrower road, with an `_end` at each end, enough to span it. Its feet, where its ramps
-meet the road, are found by going out along the road from the gap's middle until they are as far apart as the bridge is long. `lay_bridge` then lays all of
-it on the straight line between them, sloped if the rims differ: its platforms stay in one plane and meet edge to edge, and both feet are on the road
-surface, whose height there is the road's own (tests: `a_chain_is_one_surface_from_foot_to_foot`, `a_gap_of_its_size_takes_the_whole_bridge_and_its_feet_touch`). The
-layers leave the terrain under the gap alone (`Strip::open_gaps`), and the detail skips the bridge. Buildings go in as generated instances with the kit's
-own logic. Units crossing is not yet seen in a battle. A gap too near the road's end for the feet gets no bridge, with a warning in the log.
+- `along` goes to that fraction of the stretch the piece covers: the piece is stretched to fit, `round(stretch / piece length)` pieces a
+  stretch as walls are cut, so a straight is 6 to 10 m long at most;
+- `across`: a `surface` part's is scaled by the road's width over 6, an `edge` part keeps its distance from the edge (it moves out with
+  the width, its size the same), a `verge` part its distance from the verge;
+- the part goes to that place on the road's curve and turns with the curve's direction there; a decal's scale is stretched along by the
+  piece's stretch and, `surface` only, across by the width;
+- heights: decals are projected; buildings stand on the ground (Landscape: Above), as they do anywhere.
 
-**Later**, generated bridges: any length and curve, on `wce_walls` (warped meshes, generated platforms and pathing). Not before the rest is proven.
+Decals cannot bend: a curve is made of its parts moved onto the arc, each rigid. So **a piece's parts are 4 m long at most** (the
+off-curve table of the first plan: 7 cm at R = 30 m). A longer decal stays a straight chord of the road.
+
+### Laying a road out
+
+As the walls' solver, on the road's centre line (`road_layout`, a new module of `wce_tile`):
+
+1. **Features first.** A point marked `sharp` (as walls' points are), or a turn of 90 degrees or less, takes a `corner`, its arms turned
+   to the real angle (down to 30 degrees, past which the point is reported and laid as a corner at 30). A road's end within 8 m of another
+   road snaps onto it and takes a `t_junction` there, on the other road; two roads crossing take an `x_junction`, its arms turned to the
+   angles they cross at. A free end takes an `end`; an end on the tile's edge nothing. A ford takes `ford` pieces; a bridge nothing (it is
+   its own, below).
+2. **Stretches** between features: where the line bends more than `STRAIGHT_BEND` over a straight's length (15 degrees over 8 m, a radius
+   of about 30 m), `curve` pieces, bent from their 45 degrees to the bend's own (between 15 and 90 degrees each); elsewhere straights.
+3. **Fit** every piece (above); the seed turns pieces end for end and, later, chooses between variants of a piece (`straight_2`, ...).
+
+A road crossing another is still graded over it (the terrain part, as built); the junction pieces only cover the meeting.
+
+### As walls do
+
+The pieces are derived data: made again from the road's line, settings and the pieces' files (their signature), 300 ms after the last
+change, kept by that signature, not saved in tile.wce. Not selectable one by one: a click picks the road. Save for Assembly Kit and the
+game export lower them into the top layer *WCE procedural roads*, the references baked to groups (as every reference is for TEd); Import
+from Assembly Kit drops that layer and restores the road.
+
+## Crossings (redesign, 2026-11-08)
+
+What a road crosses is found once, on what lies below its layers, and both the terrain and the pieces read it (the first version found its
+gaps twice, from samplers that did not agree). Along the centre line, a crossing is a stretch where:
+
+- **water** is over the ground: inside a river's width about its curve (`SplineRiverInstance`, its height by the rule in docs/re/water.md:
+  freeform at its stored height, landscape `terrain_offset` over the ground), inside a lake's `water_plane` instance (its scaled box, at
+  its height), or under y = 0 in a tile of the sea tile sets; or
+- **the ground drops away**: as now, the road graded over the ground stands at least 4 m over it for at least 8 m, run out to the top of
+  the walls.
+
+Crossings within 8 m of each other are one. A water crossing's **depth** is the deepest the water is over the ground along it:
+
+- **under 0.75 m: a ford.** The road keeps to the bed (no bump, graded on the ground), its texture and ground type as elsewhere, `ford`
+  pieces over it. The river is not changed.
+- **0.75 m or more, or a drop: a bridge.** Its deck is at the water plus `road_bridge_clearance` (default 2 m) over water, rim to rim over
+  a drop; the road climbs to it over its approaches at no more than its maximum grade (the terrain part raises them, and leaves the ground
+  under the bridge as it is: `Strip::open_gaps`). `road_bridges` off: every crossing is a ford, whatever its depth, and a drop is graded
+  through.
+
+## Bridges (redesign, 2026-11-08)
+
+### What was there, and why it goes
+
+Chains of `bridge_wood_1` or `bridge_wood_2` with their ends, or the whole `bridge_wood_complete`, laid on the straight line between two
+feet: straight on a curved road, longer than the gap by up to a piece, 5 or 10 wide whatever the road's width, wood only, and
+`bridge_stone_1` unusable (no platforms). `choose_bridge` and `lay_bridge` go.
+
+### Generated on the walls' code
+
+A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), with what a bridge needs on top:
+
+- **Bases**: a table, as `profile::BASES`, of the kits' bridge buildings to bend, per game: a deck piece, its end (abutment) if it has
+  one, the deck's height and walkway width (from its logic file, as `examples/bridge_dump` reads them). Attila: `bridge_wood_2` with
+  `bridge_wood_2_end`, `bridge_stone_1`. `road_bridge` chooses one, as `wall_base` does; the Inspector lists the bases the mounted packs
+  have whole.
+- **Warp**: the deck pieces along the road's line from rim to rim, `round(length / base length)` pieces, x by arc length; **the deck
+  follows the road's height** (a slope, which walls never have: their walkways step), so the warp takes y from the road's profile; scaled
+  across from its walkway's width to the road's (walls never scale across). The ends' pieces bent onto each rim, their ramps meeting the
+  road's surface.
+- **Supports**: the base's feet stretched down to the ground under them (the bed of a river, the floor of a drop), as a wall's foot is
+  stretched to stay buried; a support whose ground is further than the base's height times `SUPPORT_STRETCH` is reported.
+- **Logic**: the base's platforms warped, or, for a base with none (`bridge_stone_1`), platforms made from the deck's upward faces as a
+  stair's treads are (`mesh::treads`); then the walls' fixes: welded edge to edge, merged where they can be, wound as the game's, the
+  collision hull bent and closed, every platform's end on the road's surface at both rims. `wall_tech_check`'s checks run on bridges too.
+- **Files**: the walls' (`wce_<tile>.pack`, the rows copied from the base, the TEd polyfill in `@wce_proc_data.pack`), keys
+  `wce_<tile>_<variation>_road<id>_bridge<n>_<piece>`.
+- **AI**: vanilla's `river_crossing` tiles are to be read for what stands beside a bridge (`AIH_BRIDGE_CROSSING` hints, the ground types
+  under it); the bridge writes what they have.
 
 ## Save for Assembly Kit and the game
 
-As walls do: detail and bridges go down into a top layer *WCE procedural roads* (Import from Assembly Kit drops it and restores the road), and
-the terrain goes as the composite. Nothing new has to go in a pack while pieces are rigid kit assets, which is a large simplification over walls.
+As walls do: the pieces go down into a top layer *WCE procedural roads* (Import from Assembly Kit drops it and restores the road), the
+bridges' models and rows into the tile's pack and `@wce_proc_data.pack`, and the terrain goes as the composite.
 
 ## Phases
 
@@ -192,20 +290,31 @@ the terrain goes as the composite. Nothing new has to go in a pack while pieces 
 | 1 | Layer model, composite, file, saves flatten | done |
 | 2 | Working layer, brushes and undo on it, the panel | done |
 | 4 | `WceRoadSpline`, Create panel, Inspector, height, blend and ground type generation | built; to check in a battle that units take its ground type |
-| 5 | Detail: bent layout of the kit's prefabs, seed | built |
-| 6 | Crossings, tile edge ends | built |
-| 7 | Bridges from kit pieces | built; to check that units cross one in a battle |
-| 8 | Standard models (art), generated bridges | later, on their own |
+| 6 | Crossings of roads, tile edge ends | built |
+| R1 | `WceRoadGuide`, `road_pieces::read` (arms, anchors), `roads_proc/base` written on mount, guides drawn in the Prefab tool and hidden in tiles | the base pieces open in the Prefab tool and read back as their measures |
+| R2 | `roads_proc/dirt` generated from the kit's decals | every piece reads, parts at most 4 m, no building on the road |
+| R3 | `road_layout`: features, stretches, fitting by overrides; the pieces as references, preview, lowering; `road_type`; old `road_detail` out | a curved road with a sharp point and a free end lays dirt pieces that join at their ports |
+| R4 | Junctions: T on a snapped end, X on a crossing | two crossing roads and a road ending on one |
+| R5 | Crossings: water and drops found once, depth, fords | a shallow river forded, a deep one and a canyon left to bridges |
+| R6 | Bridges on `wce_walls`: bases, warp along the road's line and height, width, supports, logic, packs | `wall_tech_check`'s checks pass on a curved, sloped bridge |
+| R7 | In game (user): units on a ford and over a bridge, the AI's crossing | |
 
-Phases 1 and 2 are useful on their own.
+The terrain part's phases keep their numbers; the old Phases 5 (detail), 7 (bridges from kit pieces) and 8 (standard models, generated
+bridges) are replaced by R1 to R7.
 
 A road's outline is draped on the terrain, as every outline is, so over a gap it runs down the canyon's sides and not along the bridge.
 
 ## Risks and open questions
 
 - **Composition is inferred** (Phase 0). The riskiest guess is the blend's "over".
-- **Bridges and pathing:** a bridge's logic may expect flat ground at its ends, or the game's pathing a certain ground under it. Battles are the only test.
-- **The game's own map of the tile:** does a height change need more than the height map (`ai_hints`, baked pathing)? Spline Road works today, so probably not.
-- **Rivers** cut by a road, and a road over a river's baked mesh (a decompiled tile's), are untested.
+- **Decals as a curve**: whether short rigid decals read as one road through a bend, and how much they overlap at a piece's joints, is
+  only known once dirt is generated (R2, R3).
+- **Junction pieces over graded crossings**: the second road is graded over the first; a 12 m junction piece may not cover where their
+  banks meet.
+- **A ford's ground type**: the road's, or the river's (vanilla's `river_ford` tiles to read). Units' speed in it is a battle test.
+- **Bridges and pathing**: the game's pathing under and beside a generated bridge, and whether it needs AI hints, are battle tests.
+- **Bridge bases in other games**: the table is Attila's first; Rome II's and Thrones' bridge buildings to measure.
+- **The game's own map of the tile:** does a height change need more than the height map (`ai_hints`, baked pathing)? Spline Road works
+  today, so probably not.
 - **Memory:** a float layer at Attila tile sizes is several MB; sparse rectangles keep that down, but a tile with many roads pays for each.
 - **Touching a road up by hand** is not possible: nothing goes over its layers. Its settings are the only way to change it.
