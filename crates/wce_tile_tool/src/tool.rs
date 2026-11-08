@@ -691,6 +691,9 @@ pub fn document_id(e: &Editor) -> Option<DocumentId> {
     e.docs.order().iter().copied().find(|&id| ours(id))
 }
 
+/// How far the camera stands from a prefab on its stage when it opens (world units).
+const STAGE_ORBIT_M: f32 = 70.0;
+
 /// The Tile tool's id: the owner of its documents.
 pub const TILE_TOOL_ID: &str = "tile";
 
@@ -3306,7 +3309,15 @@ impl Tool for TileTool {
             self.camera_set_for = id;
             let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let (ex, ez) = (d.tile().extent_x(), d.tile().extent_z());
-            e.viewport.controller().set_orbit(0.8, 0.6, (ex.max(ez) * 1.2) as f32, Float3::new((ex * 0.5) as f32, 0.0, (ez * 0.5) as f32));
+            match d.stage_group().filter(|_| self.profile == Profile::Prefab) {
+                // A prefab's stage: around the prefab, close.
+                Some(g) => {
+                    let p = d.tile().world_position(g);
+                    e.viewport.controller().set_orbit(0.8, 0.6, STAGE_ORBIT_M, p);
+                }
+
+                None => e.viewport.controller().set_orbit(0.8, 0.6, (ex.max(ez) * 1.2) as f32, Float3::new((ex * 0.5) as f32, 0.0, (ez * 0.5) as f32)),
+            }
 
             self.weather.tile_changed(e, id);
             self.note_recent(e, id);

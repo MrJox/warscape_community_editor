@@ -63,6 +63,11 @@ fn number(doc: &wce_formats::xml_doc::XmlDoc, e: usize, attr: &str) -> Option<f6
     doc.get(e, attr).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite())
 }
 
+/// Whether an attribute is one of a reference's ground settings.
+fn is_ground_attr(attr: &str) -> bool {
+    matches!(attr, TERRAIN_ATTR | TERRAIN_OPACITY_ATTR | TERRAIN_FEATHER_ATTR)
+}
+
 impl Tile {
     /// The references that bring ground, in the order their layers go: the ones inside another first (an element ends after what is in
     /// it), then the scene's.
@@ -72,6 +77,12 @@ impl Tile {
         let doc = sc.doc();
         let els = doc.elements();
         let is_ref = |g: usize| els[g].name == "UserInstanceGroup" && doc.get(g, PREFAB_ATTR).is_some_and(|k| !k.is_empty());
+
+        // A value being dragged in the Inspector (a draft) counts already: the ground follows the drag.
+        let value = |g: usize, attr: &str| -> Option<f64> {
+            self.drafts.get(&(g, attr.to_owned())).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()).or_else(|| number(doc, g, attr))
+        };
+
         let mut out = vec![];
         for e in sc.find_all("UserInstanceGroup") {
             if !is_ref(e) {
@@ -84,7 +95,7 @@ impl Tile {
             while let Some(g) = at {
                 if is_ref(g) {
                     off |= doc.get(g, TERRAIN_ATTR).is_some_and(|v| v == "off");
-                    opacity *= number(doc, g, TERRAIN_OPACITY_ATTR).unwrap_or(1.0).clamp(0.0, 1.0);
+                    opacity *= value(g, TERRAIN_OPACITY_ATTR).unwrap_or(1.0).clamp(0.0, 1.0);
                 }
 
                 at = els[g].parent;
@@ -97,12 +108,19 @@ impl Tile {
             let key = doc.get(e, PREFAB_ATTR).unwrap_or_default();
             let Some((hash, terrain)) = (source.0)(&key) else { continue };
             let w = world_transform(sc, e);
-            let feather = number(doc, e, TERRAIN_FEATHER_ATTR).map(|f| f.max(0.0));
+            let feather = value(e, TERRAIN_FEATHER_ATTR).map(|f| f.max(0.0));
             out.push(Ground { elem: e, key, terrain, hash, at: Placement::from_transform(w.position, &w.rotation), opacity: opacity as f32, feather });
         }
 
         out.sort_by_key(|g| els[g.elem].end_off);
         out
+    }
+
+    /// A hash of the ground settings being dragged.
+    fn ground_drafts(&self) -> u64 {
+        let mut all = self.drafts.iter().filter(|((_, a), _)| is_ground_attr(a)).map(|((e, a), v)| format!("{e} {a} {v}")).collect::<Vec<_>>();
+        all.sort();
+        fnv(FNV_START, &all.join("|").bytes().map(u64::from).collect::<Vec<_>>())
     }
 
     /// What a reference's layer is made from: its prefab's layer, where it is, its settings and, normalized, the ground under it (what lies
@@ -143,9 +161,10 @@ impl Tile {
             return;
         }
 
-        // Looked at again only when something could have changed it.
+        // Looked at again only when something could have changed it (a ground setting being dragged too).
         let version = self.project.height.as_ref().map_or(0, |f| f.version().1);
-        let seen = fnv(FNV_START, &[self.history_version, self.structure_version, self.edits_seen, version, u64::from(self.prefab_ground_stale)]);
+        let drafts = self.ground_drafts();
+        let seen = fnv(FNV_START, &[self.history_version, self.structure_version, self.edits_seen, version, u64::from(self.prefab_ground_stale), drafts]);
         if seen == self.prefab_ground_seen {
             return;
         }
@@ -172,7 +191,7 @@ impl Tile {
         self.prefab_ground_stale = false;
 
         let version = self.project.height.as_ref().map_or(0, |f| f.version().1);
-        self.prefab_ground_seen = fnv(FNV_START, &[self.history_version, self.structure_version, self.edits_seen, version, 0]);
+        self.prefab_ground_seen = fnv(FNV_START, &[self.history_version, self.structure_version, self.edits_seen, version, 0, drafts]);
     }
 
     fn make_prefab_ground(&mut self, grounds: &[Ground], grid: &Grid) -> Result<(), String> {
@@ -186,8 +205,15 @@ impl Tile {
         height.layers.retain(|l| !is_prefab_layer(&l.owner));
         height.put_owned_on_top();
 
-        // Each over the ones before it, all under what other features own (the roads).
-        let first = height.layers.iter().position(|l| !l.owner.is_empty()).unwrap_or(height.layers.len());
+        // Each over the ones before it, all under what other features own (the roads). On a stage, under its prefab's own layer too: in a
+        // tile, a prefab's layer goes over the ones nested in it.
+        let mut first = height.layers.iter().position(|l| !l.owner.is_empty()).unwrap_or(height.layers.len());
+        if self.stage_layer_last
+            && let Some(i) = height.layers.iter().position(|l| l.owner.is_empty() && l.name == super::stage::STAGE_LAYER)
+        {
+            first = first.min(i);
+        }
+
         let mut owners = vec![];
         for (n, (g, &id)) in grounds.iter().zip(&ids).enumerate() {
             height.add(id, &format!("Prefab {}", g.key), "pending");

@@ -370,6 +370,15 @@ impl PrefabTerrain {
         Weights { margin, width: w, height: h, values }
     }
 
+    /// The weights normalizing gives (`feather`: the reference's, else the layer's), on the layer's samples grown by the feather: where the
+    /// first is (x, z in the prefab's frame), how many across and down, and the values (row by row). The spacing is the layer's.
+    #[must_use]
+    pub fn weight_grid(&self, feather: Option<f64>) -> ([f64; 2], u32, u32, Vec<f32>) {
+        let w = self.weights(feather.unwrap_or(self.feather));
+        let m = f64::from(w.margin) * self.spacing;
+        ([self.origin[0] - m, self.origin[1] - m], w.width, w.height, w.values)
+    }
+
     /// The pixels of a grid the layer placed `at` can change (x0, y0, x1, y1; ends exclusive): its samples, normalized with the feather
     /// (`feather`: the reference's, else the layer's) around them.
     #[must_use]
