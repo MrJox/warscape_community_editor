@@ -365,6 +365,12 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   another, every platform corner at a joint shared by the next piece, every corner on the deck's surface, the files reading back; with the
   schema, a scene of two bridges lowered as an export lowers it (every piece with its files and its row). Both bases pass on radii of 30
   and 60 with rises of 10 and 6 (scene units). Drawn on the kit's deep river, straight and curved.
+- **Fixed after a look in the editor** (user, 2026-11-08): a bridge's ends stood off the ground. Its deck was laid on a plan made another
+  way than the terrain's (the ground sampled at the nearest pixel, not between pixels; no earlier road taken for ground), and the terrain
+  was left alone over the whole gap, its rims too. Now one plan for both (`bilinear`, the earlier roads' strips), the terrain made up to
+  the rims and left alone only inside (`road_strip`), and the deck run 2 m past each rim onto the road (`BRIDGE_ON_ROAD`): its ends lie on
+  the road. The technology overlay did not draw the bridges' pieces: a road's are drawn as a wall's are (`generated_buildings`: its
+  bridges' pieces' logic files at their frames), and `wall_tech_check` takes a selected road's too.
 - **Not yet**: units crossing in a battle (R7); `bridge_stone_1` is a humped stone bridge of its own, made into pieces its arch repeats
   and its deck is taken at the hump's top (17 units up): it walks, but looks it; Rome II's and Thrones' bases; the AI's hints.
 

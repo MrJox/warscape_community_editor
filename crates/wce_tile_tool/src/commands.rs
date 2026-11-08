@@ -2253,13 +2253,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "wall_tech_check", "wall_tech_check [gaps stacked loose]",
-        "check the selected walls' pieces together (as the technology overlay draws them): the stretches no footprint covers, the platforms over one another, the formation line ends on no platform; with numbers, test them (at most that many)",
+        "check the selected walls' pieces (or roads' bridges') together (as the technology overlay draws them): the stretches no footprint covers, the platforms over one another, the formation line ends on no platform; with numbers, test them (at most that many)",
         |e, a| {
             let walls = crate::tool::selected(e);
             let Some(id) = crate::tool::document_id(e) else { return no_tile() };
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
             let (mut gaps, mut stacked, mut loose, mut text) = (0, 0, 0, String::new());
-            let walls = walls.into_iter().filter(|&w| d.tile().is_wall(w)).collect::<Vec<_>>();
+            let walls = walls.into_iter().filter(|&w| d.tile().is_wall(w) || d.tile().is_road(w)).collect::<Vec<_>>();
             for w in walls {
                 let Some(r) = d.tile_mut().wall_tech_check(w) else { continue };
                 (gaps, stacked, loose) = (gaps + r.gaps.len(), stacked + r.stacked.len(), loose + r.loose_lines.len());

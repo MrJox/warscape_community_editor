@@ -77,6 +77,9 @@ pub(crate) struct RoadItem {
 
     /// What an export writes for it, when not its text (a bridge: its `WceBridgeSpan` with its first piece, nothing with the others).
     export: Option<Vec<u8>>,
+
+    /// A generated building's key (a bridge's piece): the technology overlay draws its logic file.
+    building: Option<String>,
 }
 
 impl Tile {
@@ -304,19 +307,9 @@ impl Tile {
                 f64::from(px[0]) / unit
             };
 
-            let sample = |x: f64, z: f64| {
-                let (u, v) = (((x + border) / mx).clamp(0.0, f64::from(hw - 1)), ((z + border) / mz).clamp(0.0, f64::from(hh - 1)));
-                let (x0, y0) = (u.floor() as u32, v.floor() as u32);
-                let (fx, fy) = (u - f64::from(x0), v - f64::from(y0));
-                let top = under(x0, y0) + (under(x0 + 1, y0) - under(x0, y0)) * fx;
-                let bottom = under(x0, y0 + 1) + (under(x0 + 1, y0 + 1) - under(x0, y0 + 1)) * fx;
-                top + (bottom - top) * fy
-            };
-
+            let sample = |x: f64, z: f64| bilinear(&under, x, z, (border, mx, mz), (hw, hh));
             let plan = Self::plan_road(road, &sample, &water, &|x, z| earlier.iter().any(|s| s.on_road(x, z)));
-            let mut strip = Strip::new(plan.line, plan.heights, road.settings.clone());
-            strip.open_gaps(&plan.gaps);
-            strip.keep_heights(&plan.fords);
+            let strip = road_strip(&plan, &road.settings);
             let b = strip.bounds();
             let rect = |pp: (f64, f64), off: f64, w: u32, h: u32| {
                 let lo = |v: f64, n: u32| (v.floor().max(0.0) as u32).min(n);
@@ -387,27 +380,31 @@ impl Tile {
         let water = self.water_map();
         let mut planned = vec![];
         let mut decks = vec![];
+        let mut earlier: Vec<Strip> = vec![];
         for (elem, road) in self.road_elems().into_iter().zip(&roads) {
             if road.line.len() < 2 {
                 continue;
             }
 
-            // Gaps are the road's own: found on what lies below its layer.
+            // Laid as the terrain pass lays it (`make_roads`): on what lies below its layer, sampled the same way, the earlier roads taken
+            // for ground with no bump. Laid another way, a bridge's deck and the road it lands on were not at the same height (user
+            // 2026-11-08: its ends stood off the ground).
             let below = self.project.layers.as_ref().and_then(|l| l.height.as_ref()).and_then(|s| s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|o| o.0 == road.id)).map(|l| (s, l.id)));
             let (w, h) = self.project.height.as_ref().map_or((1, 1), |f| (f.width(), f.height()));
             let (border, mx, mz) = (self.project.border_m(), self.project.mpp_x(), self.project.mpp_z());
-            let sample = |x: f64, z: f64| match below {
+            let under = |x: u32, y: u32| match below {
                 Some((s, id)) => {
                     let mut px = [0.0f32];
-                    let (u, v) = (((x + border) / mx).round().clamp(0.0, f64::from(w - 1)) as u32, ((z + border) / mz).round().clamp(0.0, f64::from(h - 1)) as u32);
-                    s.below(id, u, v, &mut px);
+                    s.below(id, x.min(w - 1), y.min(h - 1), &mut px);
                     f64::from(px[0]) / unit
                 }
 
-                None => self.project.height_at(x, z) / unit,
+                None => self.project.height_at(f64::from(x) * mx - border, f64::from(y) * mz - border) / unit,
             };
 
-            let plan = Self::plan_road(road, &sample, &water, &|_, _| false);
+            let sample = |x: f64, z: f64| bilinear(&under, x, z, (border, mx, mz), (w, h));
+            let plan = Self::plan_road(road, &sample, &water, &|x, z| earlier.iter().any(|s: &Strip| s.on_road(x, z)));
+            earlier.push(road_strip(&plan, &road.settings));
             // Each bridge's deck from rim to rim: the road's line and height over its gap (scene units).
             let st = Stations::new(&plan.line);
             let mut spans = vec![];
@@ -419,13 +416,17 @@ impl Tile {
                 let ends = wce_tile::road_layout::HINT_ENDS;
                 let outline = wce_tile::road_layout::strip_outline(&plan.line, st.of_sample(a) - ends, st.of_sample(b) + ends, half, unit);
                 match wce_tile::road_layout::crossing_hint(&outline) {
-                    Ok(hint) => items.push(RoadItem { road: elem, text: vec![], position: [0.0; 3], meshes: vec![], export: Some(hint) }),
+                    Ok(hint) => items.push(RoadItem { road: elem, text: vec![], position: [0.0; 3], meshes: vec![], export: Some(hint), building: None }),
                     Err(why) => wce_foundation::log::warn(format!("road {}: {why}", road.id)),
                 }
             }
 
             for &(a, b) in &plan.gaps {
                 spans.push((st.of_sample(a), st.of_sample(b)));
+
+                // Past the rims onto the road, whose terrain is the road's there (`road_strip`): its ends lie on the ground.
+                let (from, to) = (st.of_sample(a) - BRIDGE_ON_ROAD, st.of_sample(b) + BRIDGE_ON_ROAD);
+                let (a, b) = ((0..a).rev().find(|&i| st.of_sample(i) <= from).unwrap_or(0), (b..plan.line.len()).find(|&i| st.of_sample(i) >= to).unwrap_or(plan.line.len() - 1));
                 let path = (a..=b).map(|i| [plan.line[i][0] * unit, plan.heights[i] * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
                 decks.push((elem, road.id, road.bridge.clone(), road.settings.width * unit, path));
             }
@@ -492,7 +493,7 @@ impl Tile {
             for l in &laid.laid {
                 let Some((_, p, key, children)) = piece(l.piece) else { continue };
                 match fit(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }) {
-                    Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None }),
+                    Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
                     Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
                 }
             }
@@ -509,6 +510,9 @@ impl Tile {
 
         self.road_items = items;
         self.road_items_shown = false;
+
+        // The technology overlay draws the bridges' pieces made now.
+        self.tech.dirty = true;
     }
 
     /// A road's bridge over a gap (`path`: its deck from rim to rim, scene units), made from its base as walls are (`wce_walls::bridge`):
@@ -550,7 +554,7 @@ impl Tile {
             }
 
             let export = Some(if k == 0 { wce_walls::bridge::span_text(base, width, &path) } else { vec![] });
-            out.push(RoadItem { road: elem, text: vec![], position: origin, meshes, export });
+            out.push(RoadItem { road: elem, text: vec![], position: origin, meshes, export, building: Some(key.clone()) });
             keys.push(key);
         }
 
@@ -573,6 +577,24 @@ impl Tile {
         });
         self.bridge_bases.insert(key.to_owned(), made.clone());
         made
+    }
+
+    /// A road's generated buildings (its bridges' pieces): each one's frame (as drawn) and key.
+    pub(crate) fn road_buildings(&self, elem: usize) -> Vec<(wce_foundation::math::Float4x4, String)> {
+        let unit = self.unit();
+        self.road_items.iter().filter(|i| i.road == elem).filter_map(|i| {
+            let key = i.building.clone()?;
+            let [x, y, z] = i.position;
+            let wt = wce_tile::world_transform::WorldTransform { position: Double3::new(x, y, z), rotation: Double3x3::default() };
+            Some((super::index::matrix_of(&wt, unit, Some(Double3::new(1.0 / unit, 1.0 / unit, 1.0 / unit))), key))
+        }).collect()
+    }
+
+    /// The roads with generated buildings.
+    pub(crate) fn roads_with_buildings(&self) -> Vec<usize> {
+        let mut out = self.road_items.iter().filter(|i| i.building.is_some()).map(|i| i.road).collect::<Vec<_>>();
+        out.dedup();
+        out
     }
 
     /// Whether the roads have generated bridges: an export makes them as walls are made.
@@ -675,6 +697,30 @@ impl Tile {
 
         Ok(scene.save())
     }
+}
+
+/// How far a bridge runs onto the road at each end, past its gap's rims (metres).
+const BRIDGE_ON_ROAD: f64 = 2.0;
+
+/// A road's strip as its terrain is made: the terrain left alone under its bridges but for their rims (the road comes up to the deck
+/// there, so the bridge's ends lie on it), its heights left alone on its fords.
+fn road_strip(plan: &Plan, settings: &RoadSettings) -> Strip {
+    let mut strip = Strip::new(plan.line.clone(), plan.heights.clone(), settings.clone());
+    let inner = plan.gaps.iter().filter(|&&(a, b)| b > a + 1).map(|&(a, b)| (a + 1, b - 1)).collect::<Vec<_>>();
+    strip.open_gaps(&inner);
+    strip.keep_heights(&plan.fords);
+    strip
+}
+
+/// The ground at a place (world units) from a height map's pixels (`under`, world units), between them bilinearly: `frame` the map's
+/// border and metres a pixel across and down, `size` its pixels.
+fn bilinear(under: &dyn Fn(u32, u32) -> f64, x: f64, z: f64, (border, mx, mz): (f64, f64, f64), (w, h): (u32, u32)) -> f64 {
+    let (u, v) = (((x + border) / mx).clamp(0.0, f64::from(w - 1)), ((z + border) / mz).clamp(0.0, f64::from(h - 1)));
+    let (x0, y0) = (u.floor() as u32, v.floor() as u32);
+    let (fx, fy) = (u - f64::from(x0), v - f64::from(y0));
+    let top = under(x0, y0) + (under(x0 + 1, y0) - under(x0, y0)) * fx;
+    let bottom = under(x0, y0 + 1) + (under(x0 + 1, y0 + 1) - under(x0, y0 + 1)) * fx;
+    top + (bottom - top) * fy
 }
 
 /// A road's layer in a stack, emptied: the one it has, else a new one.
