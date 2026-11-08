@@ -338,10 +338,41 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
 - **AI**: vanilla's `river_crossing` tiles are to be read for what stands beside a bridge (`AIH_BRIDGE_CROSSING` hints, the ground types
   under it); the bridge writes what they have.
 
+### Built (R6, 2026-11-08; `wce_walls::bridge`)
+
+- **A base is turned, then bent.** The kit's bridges run along their z, the walls' cuts and warps along x: `bridge::prepare` turns a base's
+  files a quarter (`QuarterTurn`, a turn, not a mirror: the walls' own warp with a yaw of -90 degrees and no cuts), then measures it: its
+  length where its platforms end (`logic::joint_extent_x`, as a wall piece's joint: bridge_wood_2's meshes reach to -10.02..10.01 for its
+  platform's -10..10, and two pieces' platforms missed each other by that), its width and lowest point from its intact meshes, and the
+  height walked on: its platforms', else the widest upward face along its middle (`mesh::treads`), where a platform is made across 0.8 of
+  its width (`bridge_stone_1` has none).
+- **`BridgeWarp`**: the base's x onto its piece's stretch of the deck, its z across, widened by the road's width over the base's, its
+  walked-on height onto the deck's surface (the road's height there: a deck slopes as the road does); what lies more than a metre under
+  that (its posts) is stretched down to the ground under it, half a metre into it. Its yaw is the deck's way, so the meshes' normals and
+  the logic's directions turn with it. Points come out relative to the piece's place, a building turned by nothing.
+- **Pieces** (`piece_stretches`): the deck cut into `round(length / base length)`, each a building made from the base under a key of its
+  own (`bridge::make_piece`: every level's meshes, the logic file through `logic::warp_logic`, which brings the walls' cutting, welding,
+  merging, winding and hull bending, and the zones). Two pieces meet on one cross-section: their ends are the same points.
+- **In the editor** the bridges of a road are made with its pieces (`Tile::bridge_items`), their files among the generated ones
+  (`wce_vfs::generated`) under keys new at each making, drawn as they are; the bases are read once per tile. `road_bridge` chooses the base
+  (`wood`, `stone`), `road_bridge_clearance` the deck's height over water. The old chains of kit buildings are gone.
+- **In an export** a bridge is its element, `WceBridgeSpan` (its deck's points, base and width, `bridge::span_text`), which
+  `export::lower_walls` makes into pieces as it makes walls: keys `<tile prefix>_r<n>_<k>`, the base's rows copied under each, files and
+  rows into the tile's pack (game export, launch, mod pack) or `@wce_proc_data.pack` (Save for Assembly Kit). The exports go that way when
+  the tile has walls or bridges (`Tile::has_generated_buildings`).
+- **Checked**: `cargo run --release -p wce_walls --example bridge_check -- <game folder> [radius rise] [schema_att.ron]` bends both bases
+  along a quarter circle rising over it and checks what `wall_tech_check` checks: the deck walkable from end to end, no platforms over one
+  another, every platform corner at a joint shared by the next piece, every corner on the deck's surface, the files reading back; with the
+  schema, a scene of two bridges lowered as an export lowers it (every piece with its files and its row). Both bases pass on radii of 30
+  and 60 with rises of 10 and 6 (scene units). Drawn on the kit's deep river, straight and curved.
+- **Not yet**: units crossing in a battle (R7); `bridge_stone_1` is a humped stone bridge of its own, made into pieces its arch repeats
+  and its deck is taken at the hump's top (17 units up): it walks, but looks it; Rome II's and Thrones' bases; the AI's hints.
+
 ## Save for Assembly Kit and the game
 
 As walls do: the pieces go down into a top layer *WCE procedural roads* (Import from Assembly Kit drops it and restores the road), the
-bridges' models and rows into the tile's pack and `@wce_proc_data.pack`, and the terrain goes as the composite.
+bridges, made again from their spans there (`lower_walls`), with their models and rows into the tile's pack or `@wce_proc_data.pack`, and
+the terrain goes as the composite.
 
 ## Phases
 
@@ -357,7 +388,7 @@ bridges' models and rows into the tile's pack and `@wce_proc_data.pack`, and the
 | R3 | `road_layout`: features, stretches, fitting by overrides; the pieces as references, preview, lowering; `road_type`; old `road_detail` out | done (2026-11-08): a curved road with a sharp point and free ends lays dirt pieces that meet port to port (`road_layout` tests); drawn on a kit tile |
 | R4 | Junctions: T on a snapped end, X on a crossing | done (2026-11-08): two crossing roads and a road ending 4 m short of one, every port meeting another (`road_layout` tests); drawn on a kit tile |
 | R5 | Crossings: water and drops found once, depth, fords | done (2026-11-08): a shallow river forded, a deep one and a canyon left to bridges (`roads` tests); both rivers on kit tiles |
-| R6 | Bridges on `wce_walls`: bases, warp along the road's line and height, width, supports, logic, packs | `wall_tech_check`'s checks pass on a curved, sloped bridge |
+| R6 | Bridges on `wce_walls`: bases, warp along the road's line and height, width, supports, logic, packs | done (2026-11-08): `bridge_check` passes on curved, sloped bridges of both bases, and lowers them as an export does |
 | R7 | In game (user): units on a ford and over a bridge, the AI's crossing | |
 
 The terrain part's phases keep their numbers; the old Phases 5 (detail), 7 (bridges from kit pieces) and 8 (standard models, generated

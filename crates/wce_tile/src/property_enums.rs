@@ -197,6 +197,9 @@ pub const DEPLOYMENT_TYPE: &[(&str, &str)] = &[
     ("EDZT_4V4", "4v4"),
 ];
 
+/// Not TEd's: the bases a `WceRoadSpline`'s bridges are generated from, by the names of `wce_walls::bridge::BASES`.
+pub const ROAD_BRIDGE: &[(&str, &str)] = &[("wood", "Wood (bridge_wood_2)"), ("stone", "Stone (bridge_stone_1)")];
+
 /// Not TEd's: the ground types a `WceRoadSpline` (docs/plans/procedural_roads.md) can be, by the names of `ground_types::GROUND_TYPES`.
 pub const ROAD_GROUND: &[(&str, &str)] = &[("road", "Road"), ("mud", "Mud"), ("sand", "Sand"), ("grass", "Grass"), ("rock", "Rock"), ("wooden floor", "Wooden floor")];
 

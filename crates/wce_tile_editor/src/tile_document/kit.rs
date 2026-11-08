@@ -309,7 +309,7 @@ impl TileDocument {
         let target = kit_raw.join(&folder);
         let text = self.text_for_export(true)?;
         let (msg, report) = match walls {
-            Some(w) if self.tile().has_walls() => {
+            Some(w) if self.tile().has_generated_buildings() => {
                 let (scene, n, notes) = wce_walls::export::walls_for_kit(self.project(), text, w.files, w.schema, &folder, w.data)?;
                 for line in &notes {
                     wce_foundation::log::info(format!("Save for Assembly Kit: {line}"));
@@ -320,7 +320,7 @@ impl TileDocument {
                 self.project().save_for_kit_scene(&target, scene, vec![polyfill], &maps)?
             }
 
-            None if self.tile().has_walls() => {
+            None if self.tile().has_generated_buildings() => {
                 return Err(format!("the procedural walls need the game's files and rpfm's schema to be written for TEd (as their pieces, in {})", wce_walls::pack::PROC_PACK));
             }
 

@@ -10,6 +10,7 @@
 //! - [`pieces`]: a layout cut into pieces, each made from the base along the wall's path;
 //! - [`profile`]: what the generator knows of each base wall; [`solver`]: a wall's spline to its layout (centre line, corners, runs, steps).
 
+pub mod bridge;
 pub mod building;
 pub mod db;
 pub mod export;

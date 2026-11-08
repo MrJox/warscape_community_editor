@@ -1367,7 +1367,7 @@ impl TileTool {
         let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
         let project_dir = d.project().dir.clone();
         let text = d.text_for_export(false)?;
-        let walls = if d.tile().has_walls() { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
+        let walls = if d.tile().has_generated_buildings() { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
         Ok(ExportInputs { files, kit, game, pending, project_dir, text, walls })
     }
@@ -1390,7 +1390,7 @@ impl TileTool {
         let text = d.text_for_export(false)?;
 
         // A tile with procedural walls: lowered to buildings of their own, whose pieces and rows go into the pack with the tile.
-        let (folder, notes) = if d.tile().has_walls() {
+        let (folder, notes) = if d.tile().has_generated_buildings() {
             let files = e.files().ok_or("no game files are mounted")?;
             let schema = walls_schema(e)?;
             wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack)?
@@ -1538,7 +1538,7 @@ impl TileTool {
 
         // The procedural walls are written as their pieces, which go into the game's data (and a tile without walls takes its old ones out).
         let data = e.settings_ref().game_dir().map(|g| g.join("data"));
-        let has_walls = e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.tile().has_walls());
+        let has_walls = e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.tile().has_generated_buildings());
         let pack_there = data.as_ref().is_some_and(|d| d.join(wce_walls::pack::PROC_PACK).is_file());
         let files = e.files();
         let schema = if has_walls || pack_there { Some(walls_schema(e)) } else { None };

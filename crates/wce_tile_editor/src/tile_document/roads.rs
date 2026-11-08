@@ -6,10 +6,9 @@
 use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::RenderScene;
 use wce_tile::ground_types::GROUND_TYPES;
-use wce_tile::new_instances::{NewInstance, element_text};
-use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit, junctions, layout, placed_text, snap_ends};
+use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit, junctions, layout, snap_ends};
 use wce_tile::road_pieces::{BASE, PIECES, Piece, key, read};
-use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_sharp, choose_bridge, lay_bridge, sharp_points};
+use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_sharp, sharp_points};
 use wce_tile::ted_scene::TedScene;
 use wce_tile::terrain_layers::{Kind, Stack, TerrainLayers};
 
@@ -30,6 +29,9 @@ struct Road {
 
     /// Its road type: the folder of `roads_proc` its pieces come from (`none`: no pieces).
     road_type: String,
+
+    /// The base its bridges are made from (`wce_walls::bridge::BASES`).
+    bridge: String,
     signature: u64,
 }
 
@@ -69,6 +71,12 @@ pub(crate) struct RoadItem {
     road: usize,
     text: Vec<u8>,
     position: [f64; 3],
+
+    /// A generated building's models (a bridge's piece, in `wce_vfs::generated`): drawn as they are, not from `text`.
+    meshes: Vec<String>,
+
+    /// What an export writes for it, when not its text (a bridge: its `WceBridgeSpan` with its first piece, nothing with the others).
+    export: Option<Vec<u8>>,
 }
 
 impl Tile {
@@ -168,8 +176,9 @@ impl Tile {
 
             let sharp = self.road_sharp(e, &line);
             let road_type = doc.get(e, "road_type").filter(|t| !t.is_empty()).unwrap_or_else(|| wce_tile::road_dirt::TYPE.to_owned());
-            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type} {water:x}"));
-            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, settings, road_type, signature }
+            let bridge = doc.get(e, "road_bridge").filter(|b| wce_walls::bridge::base(b).is_some()).unwrap_or_else(|| wce_walls::bridge::BASES[0].name.to_owned());
+            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type} {bridge} {water:x}"));
+            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, settings, road_type, bridge, signature }
         }).collect()
     }
 
@@ -377,6 +386,7 @@ impl Tile {
         // Each road's line and bridges first: where roads meet is found on all their lines.
         let water = self.water_map();
         let mut planned = vec![];
+        let mut decks = vec![];
         for (elem, road) in self.road_elems().into_iter().zip(&roads) {
             if road.line.len() < 2 {
                 continue;
@@ -398,64 +408,13 @@ impl Tile {
             };
 
             let plan = Self::plan_road(road, &sample, &water, &|_, _| false);
-            // Each bridge from foot to foot: where its ramps meet the road, as far apart as it is long.
-            let stations = Stations::new(&plan.line);
-            let along = |i: usize| plan.line[..=i].windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f64>();
-            let height = |s: f64| {
-                let (at, _) = (s.round().clamp(0.0, plan.heights.len() as f64 - 1.0) as usize, ());
-                let (mut best, mut near) = (at, f64::MAX);
-                for k in at.saturating_sub(8)..(at + 9).min(plan.heights.len()) {
-                    let d = (along(k) - s).abs();
-                    if d < near {
-                        (best, near) = (k, d);
-                    }
-                }
-
-                plan.heights[best]
-            };
-
+            // Each bridge's deck from rim to rim: the road's line and height over its gap (scene units).
+            let st = Stations::new(&plan.line);
             let mut spans = vec![];
             for &(a, b) in &plan.gaps {
-                let (sa, sb) = (along(a), along(b));
-                let (p, q) = (plan.line[a], plan.line[b]);
-                let gap = (q[0] - p[0]).hypot(q[1] - p[1]) * unit;
-                let (bridge, length) = choose_bridge(gap, road.settings.width * unit);
-
-                // Out from the gap's middle along the road, until the feet are that far apart (a straight line between them).
-                let middle = (sa + sb) * 0.5;
-                let chord = |d: f64| {
-                    let (x, y) = (stations.at(middle - d).0, stations.at(middle + d).0);
-                    (x[0] - y[0]).hypot(x[1] - y[1]) * unit
-                };
-
-                let total = stations.length();
-                let (mut lo, mut hi) = (0.0, total);
-                for _ in 0..40 {
-                    let d = (lo + hi) * 0.5;
-                    if chord(d) < length { lo = d } else { hi = d }
-                }
-
-                let d = hi;
-                if middle - d < 0.0 || middle + d > total {
-                    wce_foundation::log::warn(format!("road {}: a gap too near its end for a bridge", road.id));
-                    continue;
-                }
-
-                let (pa, pb) = (stations.at(middle - d).0, stations.at(middle + d).0);
-                let (ya, yb) = (height(middle - d), height(middle + d));
-                let (a3, b3) = ([pa[0] * unit, ya * unit, pa[1] * unit], [pb[0] * unit, yb * unit, pb[1] * unit]);
-
-                // The heights may not leave the distance exact: the line is run out to the bridge's length.
-                let run = ((b3[0] - a3[0]).powi(2) + (b3[2] - a3[2]).powi(2)).sqrt().max(1e-9);
-                let rise = b3[1] - a3[1];
-                let flat = (length * length - rise * rise).max(0.0).sqrt();
-                let b3 = [a3[0] + (b3[0] - a3[0]) * flat / run, b3[1], a3[2] + (b3[2] - a3[2]) * flat / run];
-                spans.push((middle - d, middle + d));
-                for piece in lay_bridge(bridge, a3, b3) {
-                    if let Some(text) = bridge_text(piece.key, piece.position, &piece.rotation) {
-                        items.push(RoadItem { road: elem, text, position: piece.position });
-                    }
-                }
+                spans.push((st.of_sample(a), st.of_sample(b)));
+                let path = (a..=b).map(|i| [plan.line[i][0] * unit, plan.heights[i] * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
+                decks.push((elem, road.id, road.bridge.clone(), road.settings.width * unit, path));
             }
 
             planned.push((elem, road, plan, spans));
@@ -520,14 +479,93 @@ impl Tile {
             for l in &laid.laid {
                 let Some((_, p, key, children)) = piece(l.piece) else { continue };
                 match fit(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }) {
-                    Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position }),
+                    Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None }),
                     Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
                 }
             }
         }
 
+        // The bridges, generated: what was made for the last ones goes first.
+        for key in std::mem::take(&mut self.road_generated) {
+            wce_vfs::generated::remove_prefix(&wce_walls::building::folder(&key));
+        }
+
+        for (elem, id, base, width, path) in decks {
+            items.extend(self.bridge_items(elem, id, &base, width, path));
+        }
+
         self.road_items = items;
         self.road_items_shown = false;
+    }
+
+    /// A road's bridge over a gap (`path`: its deck from rim to rim, scene units), made from its base as walls are (`wce_walls::bridge`):
+    /// its pieces' files put among the generated ones under keys of this making, drawn as they are; an export writes the bridge's span
+    /// instead, to be made again there (`wce_walls::export::lower_walls`).
+    fn bridge_items(&mut self, elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 3]>) -> Vec<RoadItem> {
+        let Some(key) = wce_walls::bridge::base(base).map(|b| b.key) else { return vec![] };
+        let Some(prepared) = self.bridge_base(key) else {
+            wce_foundation::log::warn(format!("road {road}: the bridge base {key} is in no pack: no bridge"));
+            return vec![];
+        };
+
+        let unit = self.unit();
+        let deck = wce_walls::bridge::Deck::new(path.clone());
+        let across = width / (prepared.z.1 - prepared.z.0).max(1e-6);
+        self.road_making += 1;
+        let making = self.road_making;
+        let ground = |x: f64, z: f64| f64::from(self.terrain_height((x / unit) as f32, (z / unit) as f32)) * unit;
+        let mut out = vec![];
+        let mut keys = vec![];
+        for (k, (s, origin)) in wce_walls::bridge::piece_stretches(&deck, &prepared).into_iter().enumerate() {
+            let key = format!("wce_preview_road{road}_{making}_{k:02}");
+            let warp = wce_walls::bridge::BridgeWarp { deck: &deck, base: &prepared, s, across, origin, ground: &ground };
+            let made = match wce_walls::bridge::make_piece(&prepared, &key, &warp) {
+                Ok(m) => m,
+                Err(err) => {
+                    wce_foundation::log::warn(format!("road {road}: bridge piece {k}: {err}"));
+                    continue;
+                }
+            };
+
+            let mut meshes = vec![];
+            for (path, bytes) in made.into_pack_files() {
+                if path.ends_with(".rigid_model_v2") && path.contains("_destruct01") && !path.contains("_anim") {
+                    meshes.push(path.clone());
+                }
+
+                wce_vfs::generated::put(&path, bytes);
+            }
+
+            let export = Some(if k == 0 { wce_walls::bridge::span_text(base, width, &path) } else { vec![] });
+            out.push(RoadItem { road: elem, text: vec![], position: origin, meshes, export });
+            keys.push(key);
+        }
+
+        self.road_generated.extend(keys);
+        out
+    }
+
+    /// A bridge base, turned and measured (`wce_walls::bridge::prepare`), read once.
+    fn bridge_base(&mut self, key: &str) -> Option<std::sync::Arc<wce_walls::bridge::Prepared>> {
+        if let Some(b) = self.bridge_bases.get(key) {
+            return b.clone();
+        }
+
+        let made = self.files.as_deref().and_then(|f| wce_walls::building::BuildingFiles::read_files(f, key).ok()).and_then(|b| match wce_walls::bridge::prepare(&b) {
+            Ok(p) => Some(std::sync::Arc::new(p)),
+            Err(err) => {
+                wce_foundation::log::warn(format!("bridge base {key}: {err}"));
+                None
+            }
+        });
+        self.bridge_bases.insert(key.to_owned(), made.clone());
+        made
+    }
+
+    /// Whether the roads have generated bridges: an export makes them as walls are made.
+    #[must_use]
+    pub fn has_road_bridges(&self) -> bool {
+        self.road_items.iter().any(|i| i.export.as_ref().is_some_and(|t| !t.is_empty()))
     }
 
     fn road_elems(&self) -> Vec<usize> {
@@ -578,6 +616,17 @@ impl Tile {
         for item in &self.road_items {
             let source = self.source(super::item_of(item.road));
             let [x, y, z] = item.position;
+            if !item.meshes.is_empty() {
+                let wt = wce_tile::world_transform::WorldTransform { position: Double3::new(x, y, z), rotation: Double3x3::default() };
+                let world = super::index::matrix_of(&wt, unit, Some(Double3::new(1.0 / unit, 1.0 / unit, 1.0 / unit)));
+                for model in &item.meshes {
+                    let mi = wce_scene::render_scene::MeshInstance { model: model.clone(), lod: true, ..Default::default() };
+                    ids.push(scene.add(self.layer, world, wce_scene::render_scene::Payload::MeshInstance(mi), source));
+                }
+
+                continue;
+            }
+
             for (local, payload) in self.preview_payloads(&item.text) {
                 let mut world = local;
                 world.m[0][3] += (x / unit) as f32;
@@ -599,17 +648,20 @@ impl Tile {
         let mut scene = TedScene::parse_any(text)?;
         let layer = scene.add_layer(scene.scene_graph(), KIT_LAYER)?;
         for item in &self.road_items {
-            scene.insert_element_text(layer, &item.text)?;
+            match &item.export {
+                Some(t) if t.is_empty() => {}
+                Some(t) => {
+                    scene.insert_element_text(layer, t)?;
+                }
+
+                None => {
+                    scene.insert_element_text(layer, &item.text)?;
+                }
+            }
         }
 
         Ok(scene.save())
     }
-}
-
-/// A piece of a bridge, as the kit's tiles place them: freeform, along its z.
-fn bridge_text(key: &str, position: [f64; 3], rotation: &Double3x3) -> Option<Vec<u8>> {
-    let n = NewInstance::new("BUILDING_INSTANCE").position(Double3::new(position[0], position[1], position[2])).attr("key", key).attr("name", key).attr("surface_mode", "MSM_FREEFORM");
-    placed_text(&element_text(&n).ok()?, position, rotation)
 }
 
 /// A road's layer in a stack, emptied: the one it has, else a new one.

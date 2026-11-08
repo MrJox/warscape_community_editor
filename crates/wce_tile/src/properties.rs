@@ -282,6 +282,7 @@ const ROAD: &[Prop] = &[
     p("road_type", Kind::Text),
     p("road_bridges", Kind::Bool),
     p("road_bridge_clearance", Kind::Slider(0.0, 10.0)),
+    p("road_bridge", Kind::Enum(en::ROAD_BRIDGE)),
 ];
 
 const AI_HINT: &[Prop] = polygon![    p("subdivision_length", Kind::Slider(0.0, 100.0)),
