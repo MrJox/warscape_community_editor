@@ -968,6 +968,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("working {}; {}", working.map_or("base".to_owned(), |w| w.to_string()), if list.is_empty() { "no layers".to_owned() } else { list.join("; ") }))
     });
 
+    c.add("tile_export_text", "tile_export_text <file>", "write the scene as an export reads it (the roads' pieces, bridge spans and crossing hints in their layer) to a file", |e, a| {
+        let Some(path) = a.first().cloned() else { return fail("usage: tile_export_text <file>") };
+        let Some(d) = document(e) else { return no_tile() };
+        match d.text_for_export(false).and_then(|t| std::fs::write(&path, t).map_err(|err| format!("{path}: {err}"))) {
+            Ok(()) => ok(format!("written to {path}")),
+            Err(why) => fail(why),
+        }
+    });
+
     c.add("road_items", "road_items", "how many instances stand along the roads (prefab parts and bridge pieces), and the bridges' pieces", |e, _| {
         let Some(d) = document(e) else { return no_tile() };
         ok(d.tile().road_items_report())
