@@ -106,8 +106,9 @@ matters for a tile without a weather file.
 
 ## Found on the way (not changed)
 
-- `scripts/weather_smoke.txt` fails at its first `assert_attr` on master too: the Tile tool's `assert_attr` (2026-11, `a5e89232`) is
-  registered after the Weather tool's and replaces it. The rest of the script passes with those lines left out.
+- `scripts/weather_smoke.txt` failed at its first `assert_attr` on master too: the Tile tool's `assert_attr` (`a5e89232`) was
+  registered after the Weather tool's and replaced it (the registry is a map by name). The Weather tool's is `assert_xml_attr` now, and
+  `CommandRegistry::add` keeps the first command of a name and logs an error for a second one (fixed 2026-11-08).
 - `scripts/cross_tool_check.sh` used a tile not every kit has (`khazad_wall_test`) and expected Save to write `tile.ted` in place: it
   uses the vanilla `dense_forest_rugged/1x1/aa` now (five of the game's rock buildings, no rivers; the kit found under `WCE_GAME`, or
   `WCE_KIT_TILES`), checks that Save All writes the project (`tile.wce`) and not the kit, and makes the `tile.ted` it compares with

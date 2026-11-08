@@ -302,8 +302,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("assert_attr", "assert_attr <element index|name> <attribute> <value>", "test: an attribute of the active weather file shows this value", |e, a| {
-        let (Some(d), true) = (active_xml(e), a.len() >= 3) else { return fail("usage: assert_attr <element> <attribute> <value>") };
+    c.add("assert_xml_attr", "assert_xml_attr <element index|name> <attribute> <value>", "test: an attribute of the active weather file shows this value", |e, a| {
+        let (Some(d), true) = (active_xml(e), a.len() >= 3) else { return fail("usage: assert_xml_attr <element> <attribute> <value>") };
         let Some(el) = resolve_element(d.xml(), &a[0]) else { return fail(format!("no element '{}'", a[0])) };
         let Some(attr) = resolve_attr(d.xml(), el, &a[1]) else { return fail(format!("no attribute '{}'", a[1])) };
         let now = String::from_utf8_lossy(&decode_entities(d.xml().attr_raw(el, attr))).into_owned();
