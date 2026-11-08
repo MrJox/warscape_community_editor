@@ -428,8 +428,11 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   the rims and left alone only inside (`road_strip`), and the deck run 2 m past each rim onto the road (`BRIDGE_ON_ROAD`): its ends lie on
   the road. The technology overlay did not draw the bridges' pieces: a road's are drawn as a wall's are (`generated_buildings`: its
   bridges' pieces' logic files at their frames), and `wall_tech_check` takes a selected road's too.
-- **Not yet**: units crossing in a battle (R7); `bridge_stone_1` is a humped stone bridge of its own, made into pieces its arch repeats
-  and its deck is taken at the hump's top (17 units up): it walks, but looks it; Rome II's and Thrones' bases; the AI's hints.
+- **Not yet**: units crossing in a battle (R7); Rome II's and Thrones' bases; the AI's hints.
+- **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
+  hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
+  a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,
+  what is stretched to the ground).
 
 ## The AI at a crossing, and the checks in game (R7, 2026-11-08)
 
