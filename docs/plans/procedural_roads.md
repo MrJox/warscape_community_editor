@@ -497,15 +497,13 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   (the deck between). `DECK_LIFT` 0.6 m, the complete bridge's 1.2 units: the end piece takes it down to just over the road. Every
   piece's collision outlines lie on the ground under them (`outlines_on_ground`). `bridge_check` checks the end pieces' joins (an edge
   may share a middle point too) and the outlines' heights.
-- **The collision hull under the walkway** (2026-11-08, from comparing a dry launch's pack with a complete bridge laid by hand in the
-  same tile, which units crossed). The rows (`battlefield_buildings`, `models_building`), the outlines, the footprint rings and the
-  platforms' joins all matched; the heights too (the editor's road heights are in half scene units: the deck stood 1.2 over the road,
-  the complete's 1.2). The hulls did not: the complete's is a slab whose top is 0.04 under its deck's platform; `bridge_wood_2`'s
-  (in TDD's packs: no logic file in vanilla's) tops out 0.01 over its platform, and `bridge_wood_2_end`'s is a plane on its ramp. Each
-  piece's hull is lowered now so that its top is `HULL_UNDER` (0.04) under its lowest walked-on corner (`hull_under_platforms`);
-  `bridge_check` checks it. Still to see in game. If it is not that: the complete bridge is one building and ours three, joined by
-  their platforms' corners; laying `bridge_wood_2` and two `bridge_wood_2_end` by hand would tell whether the kit's own split bridge
-  is crossed.
+- **As the kit's split bridge, nothing added** (user, 2026-11-08). Thrones' tiles (its compiled `building_list`s: 53 with wooden
+  bridges) never use `bridge_wood_2`; TDD ported every wooden piece to Attila and changed them (added platforms to `bridge_wood_1`, which
+  has none in Thrones; dropped the 20 m pieces' outlines). A `bridge_wood_2` with a `bridge_wood_2_end` at each end, laid by hand in the
+  test tile, is crossed. So with end pieces nothing is added to the pieces (`Ends::Plain`): no ground platform past them, the hulls and
+  outlines as the kit's (the hull lowering, `hull_under_platforms`, and the outlines put on the terrain, `outlines_on_ground`, are gone),
+  and the deck 1 unit over the road (`DECK_LIFT` 0.5 m; the roads' heights are half units), the end pieces' ramps from it down to the
+  road. `bridge_check` checks each end piece's ramp joins the deck and drops 1 unit, and that no ground platform is made.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,

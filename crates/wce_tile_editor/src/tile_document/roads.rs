@@ -1079,12 +1079,13 @@ let mut planned = vec![];
     made
 }
 
+/// A bridge's base and its end piece, prepared (`wce_walls::bridge::prepare`), each if in the packs.
+type Bases = (Option<std::sync::Arc<wce_walls::bridge::Prepared>>, Option<std::sync::Arc<wce_walls::bridge::Prepared>>);
+
 /// A road's bridge over a gap (`path`: its deck from rim to rim, scene units), made from its base as walls are (`wce_walls::bridge`):
 /// its pieces' files put among the generated ones under keys of this making, drawn as they are; an export writes the bridge's span
 /// instead, to be made again there (`wce_walls::export::lower_walls`).
 #[allow(clippy::too_many_arguments, reason = "what a bridge is made from")]
-type Bases = (Option<std::sync::Arc<wce_walls::bridge::Prepared>>, Option<std::sync::Arc<wce_walls::bridge::Prepared>>);
-
 fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 3]>, (prepared, end): Bases, (making, n): (u64, usize), ground: &super::jobs::Ground, unit: f64, made_files: &mut ItemsMade) -> Vec<RoadItem> {
     let Some(prepared) = prepared else {
         wce_foundation::log::warn(format!("road {road}: the bridge base {base} is in no pack: no bridge"));
@@ -1133,9 +1134,10 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
 /// did not show on a tile saved before them).
 const ROAD_MAKING: u32 = 6;
 
-/// How far a bridge's deck stands over the road under it (metres): the kit's complete bridge's (1.2 units; units cross it), its end
-/// pieces taking it down 0.5 to just over the road (`wce_walls::bridge::parts`).
-const DECK_LIFT: f64 = 0.6;
+/// How far a bridge's deck stands over the road under it (the road's heights are half scene units: 0.5 is 1 unit): the kit's split bridge
+/// as laid by hand and crossed, `bridge_wood_2`'s walkway 1 unit over the ground and its end pieces' ramps from it down to the ground
+/// (user 2026-11-08).
+const DECK_LIFT: f64 = 0.5;
 
 /// Under a bridge's deck the bank beside the road is held back this far past its sides (more than a height-map pixel: 2 m on a
 /// 64-density tile; metres).

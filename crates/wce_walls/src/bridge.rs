@@ -49,10 +49,9 @@ pub enum Ends {
     /// A base without an end piece: at the deck's ends a ramp platform and a ground platform past it, the footprint over the ramp.
     Ramps,
 
-    /// An end piece: a ground platform past its outer end (the start of its stretch).
-    Ground,
-
-    /// A piece of the deck between end pieces: nothing.
+    /// With end pieces: nothing, the pieces as the kit has them. A split bridge laid by hand from the kit's pieces (`bridge_wood_2` and
+    /// two `bridge_wood_2_end`, the deck 1 unit over the ground and each end's ramp from it down to the ground) is crossed; with a ground
+    /// platform added past each end piece, the hulls lowered and the outlines put on the terrain, ours was not (user 2026-11-08).
     Plain,
 }
 
@@ -71,8 +70,7 @@ impl Part {
     pub fn ends(&self, with_end_pieces: bool) -> Ends {
         match (with_end_pieces, self.end) {
             (false, _) => Ends::Ramps,
-            (true, true) => Ends::Ground,
-            (true, false) => Ends::Plain,
+            (true, _) => Ends::Plain,
         }
     }
 }
@@ -402,7 +400,7 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp, ends: Ends) -> 
             *bytes = crate::mesh::warp_mesh(bytes, warp, &cuts)?;
         } else if *name == logic_name {
             let warped = crate::logic::warp_logic(bytes, warp, &cuts)?.0;
-            *bytes = hull_under_platforms(&outlines_on_ground(&with_ground_platforms(&warped, base, warp, ends)?, warp)?)?;
+            *bytes = with_ground_platforms(&warped, base, warp, ends)?;
         } else if *name == zones_name {
             *bytes = crate::zones::warp_zones(&String::from_utf8_lossy(bytes), warp, STEP)?.into_bytes();
         } else if !name.ends_with(".meta") {
@@ -424,17 +422,12 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode:
     let len = warp.deck.length();
     let ends = match mode {
         Ends::Ramps => [(warp.s.0 <= 1e-6).then_some((0.0, -1.0)), (warp.s.1 >= len - 1e-6).then_some((len, 1.0))],
-        // An end piece's line runs from past the deck to it: its outer end is the line's start.
-        Ends::Ground => [Some((warp.s.0, -1.0)), None],
         Ends::Plain => [None, None],
     };
     if ends.iter().all(Option::is_none) {
         return Ok(logic.to_vec());
     }
 
-    // Where its platforms are lowest under its walked-on height: an end piece's outer edge (bridge_wood_2_end's 0 under its 1).
-    let low = base.files.files.get(&base.files.logic_name()).map(|b| decode(b)).transpose()?.as_ref().map(intact_platform_points)
-        .unwrap_or_default().iter().map(|p| p[1]).fold(base.deck, f64::min) - base.deck;
 
     // Across: the base's own platforms', else its meshes'.
     let base_logic = base.files.files.get(&base.files.logic_name()).map(|b| decode(b)).transpose()?;
@@ -459,7 +452,7 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode:
         let ramps = mode == Ends::Ramps;
         let y_at = |x: f64, zz: f64, along: f64| {
             if along <= 0.0 {
-                if ramps { c[1] } else { c[1] + low }
+                c[1]
             } else if ramps && along <= END_RAMP + 1e-9 {
                 (warp.ground)(x, zz) + RAMP_FOOT
             } else {
@@ -516,57 +509,6 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode:
             crate::logic::wind_as_the_game(&mut platform);
             if let Some(ps) = d["platforms"].as_array_mut() {
                 ps.push(platform);
-            }
-        }
-    }
-
-    encode(v)
-}
-
-/// How far a bridge piece's collision hull is kept under what is walked on (scene units): `bridge_wood_complete`'s, which units cross,
-/// has its top 0.04 under its deck's platform; `bridge_wood_2`'s top is 0.01 over its platform and `bridge_wood_2_end`'s lies on its
-/// ramp (user 2026-11-08: units got onto a generated bridge from no side, while a complete one laid in the same tile was crossed).
-pub const HULL_UNDER: f64 = 0.04;
-
-/// A piece's collision hull (`collision_3d`) lowered so that its top is [`HULL_UNDER`] under its lowest platform corner over it: as the
-/// kit's working bridge has it, the walkway clear of the solid.
-fn hull_under_platforms(logic: &[u8]) -> Result<Vec<u8>, String> {
-    let mut v = decode(logic)?;
-    for piece in v["pieces"].as_array_mut().into_iter().flatten() {
-        for d in piece["destructs"].as_array_mut().into_iter().flatten() {
-            // The walked-on heights (not the ground platforms, which run into the terrain).
-            let walk = d["platforms"].as_array().into_iter().flatten().filter(|p| p["flag_2"].as_bool() != Some(true))
-                .flat_map(|p| p["vertices"]["outline"].as_array().cloned().unwrap_or_default()).filter_map(|q| q["y"].as_f64()).collect::<Vec<_>>();
-            let Some(vs) = d["collision_3d"]["vertices"].as_array_mut() else { continue };
-            let top = vs.iter().filter_map(|q| q["y"].as_f64()).fold(f64::MIN, f64::max);
-            let Some(low) = walk.iter().copied().reduce(f64::min) else { continue };
-            let drop = top - (low - HULL_UNDER);
-            if drop <= 0.0 {
-                continue;
-            }
-
-            for q in vs.iter_mut() {
-                if let Some(y) = q["y"].as_f64() {
-                    q["y"] = serde_json::json!((y - drop) as f32);
-                }
-            }
-        }
-    }
-
-    encode(v)
-}
-
-/// A piece's collision outlines on the ground under them, as the kit's lie (its origin on the ground, their y 0): warped with the deck
-/// they stood over the road with it (user 2026-11-08: the only difference seen from a complete bridge laid by hand, which units crossed).
-fn outlines_on_ground(logic: &[u8], warp: &BridgeWarp) -> Result<Vec<u8>, String> {
-    let mut v = decode(logic)?;
-    for piece in v["pieces"].as_array_mut().into_iter().flatten() {
-        for d in piece["destructs"].as_array_mut().into_iter().flatten() {
-            for o in d["collision_outlines"].as_array_mut().into_iter().flatten() {
-                for q in o["vertices"]["outline"].as_array_mut().into_iter().flatten() {
-                    let (x, z) = (q["x"].as_f64().unwrap_or(0.0) + warp.origin[0], q["z"].as_f64().unwrap_or(0.0) + warp.origin[2]);
-                    q["y"] = serde_json::json!(((warp.ground)(x, z) - warp.origin[1]) as f32);
-                }
             }
         }
     }
