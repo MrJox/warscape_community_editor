@@ -141,6 +141,7 @@ impl Tile {
         if !same_elements {
             map.second(&mut self.piece_props);
             map.second(&mut self.drafts);
+            self.stage_snapped = std::mem::take(&mut self.stage_snapped).into_iter().filter_map(|(e, a, b)| Some((map.map(e)?, a, b))).collect();
             self.piece_pending = self.piece_pending.iter().filter_map(|&(e, k)| Some((map.map(e)?, k))).collect();
         }
 

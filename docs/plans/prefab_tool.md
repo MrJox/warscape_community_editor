@@ -141,6 +141,8 @@ GUI and in game (a prefab with a normalized platform under a building, units wal
   tiles' references to the old name as they are), nested prefabs' ground under the prefab's own on a stage, a reference's ground
   following its opacity and feather while dragged, `prefab` a default feature and the in-tile Edit / Apply / Cancel removed. The tools'
   order is Weather, Prefab, Tile, Terrain, UI.
+- The stage puts the group's origin on its ground and what is on the landscape inside onto the ground, as placing in a tile does
+  (f55cf611); a save gives the file's height back to what is still where the stage put it. A stage starts without grass (`grass on`).
 - Still open: thumbnails of prefabs with their ground; smoother outlines (they follow the samples, in steps).
 - The user's checks: the GUI flow, and in game a normalized platform under a building with units on it.
 

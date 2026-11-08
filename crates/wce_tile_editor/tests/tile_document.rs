@@ -1669,3 +1669,32 @@ fn a_references_ground_follows_its_opacity_while_it_is_dragged() {
     assert!((ground_at(&d, x, z) - before - 1.0).abs() < 0.01, "{}", ground_at(&d, x, z) - before);
     assert_eq!(text(&d), edited, "not an edit while dragged");
 }
+
+#[test]
+fn on_a_stage_what_is_on_the_landscape_stands_on_the_ground_and_saves_as_it_was() {
+    use wce_tile::prefab_stage::{StageSettings, make};
+
+    let dir = tempfile::tempdir().unwrap();
+    let group = b"<UserInstanceGroup flags=\" OIF_VISIBLE\" position=\"vector(0,0,0)\" name=\"path\" orientation=\"euler(0,0,0)\">\n    <children>\n        <BUILDING_INSTANCE position=\"vector(4,2.08,0)\" key=\"border\" name=\"border\" surface_mode=\"MSM_LANDSCAPE\"/>\n        <BUILDING_INSTANCE position=\"vector(-4,2,0)\" key=\"post\" name=\"post\" surface_mode=\"MSM_FREEFORM\"/>\n    </children>\n</UserInstanceGroup>\n";
+    let s = StageSettings { cells: 1, density: 32, ..Default::default() };
+    let mut d = TileDocument::new(make(&dir.path().join("stage"), &s, group).unwrap(), None);
+    let g = d.stage_group().unwrap();
+    let file_children = d.children_text(g);
+    d.begin_stage(None).unwrap();
+    assert!(!d.modified());
+
+    let find = |d: &TileDocument, name: &str| d.tile().tscene().find_all("BUILDING_INSTANCE").into_iter().find(|&e| d.tile().tscene().name(e) == name).unwrap();
+    let world_y = |d: &TileDocument, e: usize| wce_tile::world_transform::world_transform(d.tile().tscene(), e).position.y;
+    let (border, post) = (find(&d, "border"), find(&d, "post"));
+    assert!((world_y(&d, border) - s.height).abs() < 1e-3, "on the ground: {}", world_y(&d, border));
+    assert!((world_y(&d, post) - s.height - 2.0).abs() < 1e-9, "freeform keeps its height");
+
+    // Saved untouched: the file's heights.
+    assert_eq!(d.stage_children_text(g), file_children);
+
+    // Moved: where it was moved to.
+    let local = d.tile().tscene().position(border).unwrap();
+    assert!(d.set_local(border, Some(local + Double3::new(1.0, 0.0, 0.0)), None, 0));
+    let saved = String::from_utf8(d.stage_children_text(g)).unwrap();
+    assert!(!saved.contains("vector(4,2.08,0)") && saved.contains("vector(-4,2,0)"), "{saved}");
+}
