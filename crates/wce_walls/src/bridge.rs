@@ -402,7 +402,7 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp, ends: Ends) -> 
             *bytes = crate::mesh::warp_mesh(bytes, warp, &cuts)?;
         } else if *name == logic_name {
             let warped = crate::logic::warp_logic(bytes, warp, &cuts)?.0;
-            *bytes = outlines_on_ground(&with_ground_platforms(&warped, base, warp, ends)?, warp)?;
+            *bytes = hull_under_platforms(&outlines_on_ground(&with_ground_platforms(&warped, base, warp, ends)?, warp)?)?;
         } else if *name == zones_name {
             *bytes = crate::zones::warp_zones(&String::from_utf8_lossy(bytes), warp, STEP)?.into_bytes();
         } else if !name.ends_with(".meta") {
@@ -516,6 +516,39 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode:
             crate::logic::wind_as_the_game(&mut platform);
             if let Some(ps) = d["platforms"].as_array_mut() {
                 ps.push(platform);
+            }
+        }
+    }
+
+    encode(v)
+}
+
+/// How far a bridge piece's collision hull is kept under what is walked on (scene units): `bridge_wood_complete`'s, which units cross,
+/// has its top 0.04 under its deck's platform; `bridge_wood_2`'s top is 0.01 over its platform and `bridge_wood_2_end`'s lies on its
+/// ramp (user 2026-11-08: units got onto a generated bridge from no side, while a complete one laid in the same tile was crossed).
+pub const HULL_UNDER: f64 = 0.04;
+
+/// A piece's collision hull (`collision_3d`) lowered so that its top is [`HULL_UNDER`] under its lowest platform corner over it: as the
+/// kit's working bridge has it, the walkway clear of the solid.
+fn hull_under_platforms(logic: &[u8]) -> Result<Vec<u8>, String> {
+    let mut v = decode(logic)?;
+    for piece in v["pieces"].as_array_mut().into_iter().flatten() {
+        for d in piece["destructs"].as_array_mut().into_iter().flatten() {
+            // The walked-on heights (not the ground platforms, which run into the terrain).
+            let walk = d["platforms"].as_array().into_iter().flatten().filter(|p| p["flag_2"].as_bool() != Some(true))
+                .flat_map(|p| p["vertices"]["outline"].as_array().cloned().unwrap_or_default()).filter_map(|q| q["y"].as_f64()).collect::<Vec<_>>();
+            let Some(vs) = d["collision_3d"]["vertices"].as_array_mut() else { continue };
+            let top = vs.iter().filter_map(|q| q["y"].as_f64()).fold(f64::MIN, f64::max);
+            let Some(low) = walk.iter().copied().reduce(f64::min) else { continue };
+            let drop = top - (low - HULL_UNDER);
+            if drop <= 0.0 {
+                continue;
+            }
+
+            for q in vs.iter_mut() {
+                if let Some(y) = q["y"].as_f64() {
+                    q["y"] = serde_json::json!((y - drop) as f32);
+                }
             }
         }
     }

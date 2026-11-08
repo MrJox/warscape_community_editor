@@ -155,6 +155,21 @@ fn main() {
             }
 
             let logic = made.files.get(&made.logic_name()).expect("a logic file");
+            // Its collision hull under what is walked on, as the kit's working bridge's.
+            {
+                let parsed = Cs2Parsed::decode(&mut Cursor::new(logic.as_slice()), &None).expect("a logic file");
+                let v = serde_json::to_value(&parsed).expect("json");
+                for d in v["pieces"].as_array().into_iter().flatten().flat_map(|p| p["destructs"].as_array().cloned().unwrap_or_default()) {
+                    let top = d["collision_3d"]["vertices"].as_array().into_iter().flatten().filter_map(|q| q["y"].as_f64()).fold(f64::MIN, f64::max);
+                    let low = d["platforms"].as_array().into_iter().flatten().filter(|p| p["flag_2"].as_bool() != Some(true))
+                        .flat_map(|p| p["vertices"]["outline"].as_array().cloned().unwrap_or_default()).filter_map(|q| q["y"].as_f64()).fold(f64::MAX, f64::min);
+                    if top > low - wce_walls::bridge::HULL_UNDER + 1e-3 {
+                        println!("  piece {k}: its hull's top {top:.3} is not under its walkway's lowest corner {low:.3}");
+                        failed = true;
+                    }
+                }
+            }
+
             for (p, ground) in platforms(logic) {
                 let r = p.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect::<Vec<_>>();
                 if ground {
