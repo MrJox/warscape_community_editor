@@ -88,8 +88,7 @@ not wanted).
    (`xml_file_document.rs:330`, `sample_map_document.rs:178`), `wce_ui_tool/src/document.rs:279`, `wce_terrain_editor/src/document.rs:380`;
    `SpliceEffect::Touched::outline` and what feeds it in `tile_document/commands.rs` and `edits.rs` (it only told the outline stamp to
    move). Tests and examples: `wce_tile_editor/tests/tile_document.rs` finds pieces through `piece_item` instead of the outline;
-   `doc_dump` and `weather_dump` drop their outline column (`doc_dump` was compared line for line with the C++ dump: that comparison,
-   if run again, ignores the column).
+   `doc_dump` and `weather_dump` drop their outline column (the C++ comparison is retired and its code gone, so nothing else changes).
 8. **Docs.** `docs/editor.md` (the panels row, the documents paragraph at line 62, the activate / Outliner sentence at 149, the Save
    All, Dirty markers, Close prompts and Outliner rows, the Revert paragraph, the default layout at 202: describe one document per tool,
    the replace prompt, the menu bar label); `docs/ui_editor.md:40`; `docs/rust_port_app_and_gates.md` (the shell's panel list);
