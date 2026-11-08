@@ -26,12 +26,75 @@ pub const WIDTH_ATTR: &str = "bridge_width";
 pub struct BridgeBase {
     pub name: &'static str,
     pub key: &'static str,
+
+    /// The kit's end piece of the base, laid at each end of the deck (a ramp down from it: `bridge_wood_2_end`'s platform drops 1 unit
+    /// over 2), if it has one.
+    pub end: Option<&'static str>,
 }
 
 /// The bases (Attila's kit). `bridge_wood_2`: a 20 x 10 deck on posts, one platform at 1. The wooden one alone for now (user,
 /// 2026-11-08): `bridge_stone_1` is a humped bridge of its own, and cut into pieces it repeated its hump and its arch (its deck in steps);
 /// other bases wait for a standard shape a base is made to. A road asking for one it does not have gets the first.
-pub const BASES: [BridgeBase; 1] = [BridgeBase { name: "wood", key: "bridge_wood_2" }];
+pub const BASES: [BridgeBase; 1] = [BridgeBase { name: "wood", key: "bridge_wood_2", end: Some("bridge_wood_2_end") }];
+
+/// A base by its key or its end piece's key.
+#[must_use]
+pub fn base_of_key(key: &str) -> Option<BridgeBase> {
+    BASES.iter().copied().find(|b| b.key == key || b.end == Some(key))
+}
+
+/// What a piece of a bridge gets at its ends besides its base's platforms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ends {
+    /// A base without an end piece: at the deck's ends a ramp platform and a ground platform past it, the footprint over the ramp.
+    Ramps,
+
+    /// An end piece: a ground platform past its outer end (the start of its stretch).
+    Ground,
+
+    /// A piece of the deck between end pieces: nothing.
+    Plain,
+}
+
+/// A piece of a bridge: an end piece or not, the line it is laid along (the deck's, or its own from past the deck's end to it), its
+/// stretch of that line and where it stands.
+#[derive(Clone, Debug)]
+pub struct Part {
+    pub end: bool,
+    pub deck: Deck,
+    pub s: (f64, f64),
+    pub origin: [f64; 3],
+}
+
+impl Part {
+    #[must_use]
+    pub fn ends(&self, with_end_pieces: bool) -> Ends {
+        match (with_end_pieces, self.end) {
+            (false, _) => Ends::Ramps,
+            (true, true) => Ends::Ground,
+            (true, false) => Ends::Plain,
+        }
+    }
+}
+
+/// A bridge's pieces: its deck's ([`piece_stretches`]), then, with an end piece, one past each end of the deck (on a line of its own
+/// from as far out as the end piece is long to the deck's end, level with it: the end piece's own slope takes it down).
+#[must_use]
+pub fn parts(deck: &Deck, base: &Prepared, end: Option<&Prepared>) -> Vec<Part> {
+    let mut out = piece_stretches(deck, base).into_iter().map(|(s, origin)| Part { end: false, deck: deck.clone(), s, origin }).collect::<Vec<_>>();
+    if let Some(e) = end {
+        let l = (e.x.1 - e.x.0).max(1e-6);
+        for (at, away) in [(0.0, -1.0), (deck.length(), 1.0)] {
+            let (c, t) = deck.at(at);
+            let outer = [c[0] + t[0] * away * l, c[1], c[2] + t[1] * away * l];
+            let d = Deck::new(vec![outer, c]);
+            let len = d.length();
+            out.push(Part { end: true, origin: d.at(len * 0.5).0, s: (0.0, len), deck: d });
+        }
+    }
+
+    out
+}
 
 /// A base by its name or its key.
 #[must_use]
@@ -329,7 +392,7 @@ pub fn piece_stretches(deck: &Deck, base: &Prepared) -> Vec<((f64, f64), [f64; 3
 /// # Errors
 ///
 /// A file doesn't read or write back.
-pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp) -> Result<BuildingFiles, String> {
+pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp, ends: Ends) -> Result<BuildingFiles, String> {
     let mut b = base.files.clone().renamed(key);
     let (logic_name, zones_name) = (b.logic_name(), b.zones_name());
     let cuts = Cuts::every(STEP);
@@ -339,7 +402,7 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp) -> Result<Build
             *bytes = crate::mesh::warp_mesh(bytes, warp, &cuts)?;
         } else if *name == logic_name {
             let warped = crate::logic::warp_logic(bytes, warp, &cuts)?.0;
-            *bytes = with_ground_platforms(&warped, base, warp)?;
+            *bytes = outlines_on_ground(&with_ground_platforms(&warped, base, warp, ends)?, warp)?;
         } else if *name == zones_name {
             *bytes = crate::zones::warp_zones(&String::from_utf8_lossy(bytes), warp, STEP)?.into_bytes();
         } else if !name.ends_with(".meta") {
@@ -357,12 +420,21 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp) -> Result<Build
 /// A piece's logic file with a ground platform past each end of the deck it has (the first piece's start, the last one's end): from the
 /// deck's end edge (its corners the deck platform's there) [`GROUND_PLATFORM`] on along the road, down through the ground to
 /// [`GROUND_PLATFORM_BURY`] under it, `flag_2` set.
-fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Result<Vec<u8>, String> {
+fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode: Ends) -> Result<Vec<u8>, String> {
     let len = warp.deck.length();
-    let ends = [(warp.s.0 <= 1e-6).then_some((0.0, -1.0)), (warp.s.1 >= len - 1e-6).then_some((len, 1.0))];
+    let ends = match mode {
+        Ends::Ramps => [(warp.s.0 <= 1e-6).then_some((0.0, -1.0)), (warp.s.1 >= len - 1e-6).then_some((len, 1.0))],
+        // An end piece's line runs from past the deck to it: its outer end is the line's start.
+        Ends::Ground => [Some((warp.s.0, -1.0)), None],
+        Ends::Plain => [None, None],
+    };
     if ends.iter().all(Option::is_none) {
         return Ok(logic.to_vec());
     }
+
+    // Where its platforms are lowest under its walked-on height: an end piece's outer edge (bridge_wood_2_end's 0 under its 1).
+    let low = base.files.files.get(&base.files.logic_name()).map(|b| decode(b)).transpose()?.as_ref().map(intact_platform_points)
+        .unwrap_or_default().iter().map(|p| p[1]).fold(base.deck, f64::min) - base.deck;
 
     // Across: the base's own platforms', else its meshes'.
     let base_logic = base.files.files.get(&base.files.logic_name()).map(|b| decode(b)).transpose()?;
@@ -384,10 +456,11 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Re
         // As the kit's bridge_wood_complete (Attila's and Rome II's alike): a plain ramp from the deck down to just over the ground, then
         // the ground platform (`flag_2`) from there into it. A ground platform joined to the deck itself was walked onto and no further
         // (user 2026-11-08: units stopped at the deck's edge).
+        let ramps = mode == Ends::Ramps;
         let y_at = |x: f64, zz: f64, along: f64| {
             if along <= 0.0 {
-                c[1]
-            } else if along <= END_RAMP + 1e-9 {
+                if ramps { c[1] } else { c[1] + low }
+            } else if ramps && along <= END_RAMP + 1e-9 {
                 (warp.ground)(x, zz) + RAMP_FOOT
             } else {
                 (warp.ground)(x, zz) - GROUND_PLATFORM_BURY
@@ -399,10 +472,10 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Re
             [x - warp.origin[0], y_at(x, zz, along) - warp.origin[1], zz - warp.origin[2]]
         };
 
-        // The building's footprint (its collision outlines) over the ramp too, as the kit's runs over its ramps and stops at its ground
+        // The building's footprint over the ramp too (an end piece has its own), as the kit's runs over its ramps and stops at its ground
         // platforms (bridge_wood_complete's to z +-52: its deck's 50 and its ramps' 2). Its corners at this end of the deck go out by the
         // ramp's length.
-        for o in d["collision_outlines"].as_array_mut().into_iter().flatten() {
+        for o in d["collision_outlines"].as_array_mut().into_iter().flatten().filter(|_| ramps) {
             for q in o["vertices"]["outline"].as_array_mut().into_iter().flatten() {
                 let (x, z) = (q["x"].as_f64().unwrap_or(0.0) + warp.origin[0], q["z"].as_f64().unwrap_or(0.0) + warp.origin[2]);
                 let along = ((x - c[0]) * t[0] + (z - c[2]) * t[1]) * out;
@@ -416,7 +489,7 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Re
         // And the footprint the game also keeps beside it (`orange_thingies`: the same ring, x and z as `vertex.x` and `vertex.y`; the
         // kit's has the outline's corners): left as the deck's, the two disagreed and units kept off the ramps' ground too (user
         // 2026-11-08).
-        for ring in d["orange_thingies"].as_array_mut().into_iter().flatten() {
+        for ring in d["orange_thingies"].as_array_mut().into_iter().flatten().filter(|_| ramps) {
             for q in ring.as_array_mut().into_iter().flatten() {
                 let v = &mut q["vertex"];
                 let (x, z) = (v["x"].as_f64().unwrap_or(0.0) + warp.origin[0], v["y"].as_f64().unwrap_or(0.0) + warp.origin[2]);
@@ -428,7 +501,8 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Re
             }
         }
 
-        for ((from, to), ground) in [((0.0, END_RAMP), false), ((END_RAMP, END_RAMP + GROUND_PLATFORM), true)] {
+        let segments: &[((f64, f64), bool)] = if ramps { &[((0.0, END_RAMP), false), ((END_RAMP, END_RAMP + GROUND_PLATFORM), true)] } else { &[((0.0, GROUND_PLATFORM), true)] };
+        for &((from, to), ground) in segments {
             let pts = [corner(z0, from), corner(z1, from), corner(z1, to), corner(z0, to)];
             let (a, b) = ([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]], [pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]]);
             let mut nrm = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -442,6 +516,24 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Re
             crate::logic::wind_as_the_game(&mut platform);
             if let Some(ps) = d["platforms"].as_array_mut() {
                 ps.push(platform);
+            }
+        }
+    }
+
+    encode(v)
+}
+
+/// A piece's collision outlines on the ground under them, as the kit's lie (its origin on the ground, their y 0): warped with the deck
+/// they stood over the road with it (user 2026-11-08: the only difference seen from a complete bridge laid by hand, which units crossed).
+fn outlines_on_ground(logic: &[u8], warp: &BridgeWarp) -> Result<Vec<u8>, String> {
+    let mut v = decode(logic)?;
+    for piece in v["pieces"].as_array_mut().into_iter().flatten() {
+        for d in piece["destructs"].as_array_mut().into_iter().flatten() {
+            for o in d["collision_outlines"].as_array_mut().into_iter().flatten() {
+                for q in o["vertices"]["outline"].as_array_mut().into_iter().flatten() {
+                    let (x, z) = (q["x"].as_f64().unwrap_or(0.0) + warp.origin[0], q["z"].as_f64().unwrap_or(0.0) + warp.origin[2]);
+                    q["y"] = serde_json::json!(((warp.ground)(x, z) - warp.origin[1]) as f32);
+                }
             }
         }
     }

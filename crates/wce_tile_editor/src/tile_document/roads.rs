@@ -478,9 +478,13 @@ impl Tile {
                 pieces.insert(r.road_type.clone(), self.road_pieces_of(&r.road_type));
             }
 
-            if let Some(b) = wce_walls::bridge::base(&r.bridge).filter(|b| !bases.contains_key(b.key)) {
-                let prepared = self.bridge_base(b.key);
-                bases.insert(b.key, prepared);
+            if let Some(b) = wce_walls::bridge::base(&r.bridge) {
+                for k in std::iter::once(b.key).chain(b.end) {
+                    if !bases.contains_key(k) {
+                        let prepared = self.bridge_base(k);
+                        bases.insert(k, prepared);
+                    }
+                }
             }
         }
 
@@ -1065,8 +1069,10 @@ let mut planned = vec![];
 
     // The bridges, generated.
     for (n, (elem, id, base, width, path)) in decks.into_iter().enumerate() {
-        let prepared = wce_walls::bridge::base(&base).and_then(|b| bases.get(b.key).cloned().flatten());
-        items.extend(bridge_items(elem, id, &base, width, path, prepared, (making, n), &ground, unit, &mut made));
+        let b = wce_walls::bridge::base(&base);
+        let prepared = b.and_then(|b| bases.get(b.key).cloned().flatten());
+        let end = b.and_then(|b| b.end).and_then(|k| bases.get(k).cloned().flatten());
+        items.extend(bridge_items(elem, id, &base, width, path, (prepared, end), (making, n), &ground, unit, &mut made));
     }
 
     made.items = items;
@@ -1077,20 +1083,26 @@ let mut planned = vec![];
 /// its pieces' files put among the generated ones under keys of this making, drawn as they are; an export writes the bridge's span
 /// instead, to be made again there (`wce_walls::export::lower_walls`).
 #[allow(clippy::too_many_arguments, reason = "what a bridge is made from")]
-fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 3]>, prepared: Option<std::sync::Arc<wce_walls::bridge::Prepared>>, (making, n): (u64, usize), ground: &super::jobs::Ground, unit: f64, made_files: &mut ItemsMade) -> Vec<RoadItem> {
+type Bases = (Option<std::sync::Arc<wce_walls::bridge::Prepared>>, Option<std::sync::Arc<wce_walls::bridge::Prepared>>);
+
+fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 3]>, (prepared, end): Bases, (making, n): (u64, usize), ground: &super::jobs::Ground, unit: f64, made_files: &mut ItemsMade) -> Vec<RoadItem> {
     let Some(prepared) = prepared else {
         wce_foundation::log::warn(format!("road {road}: the bridge base {base} is in no pack: no bridge"));
         return vec![];
     };
 
     let deck = wce_walls::bridge::Deck::new(path.clone());
-    let across = width / (prepared.z.1 - prepared.z.0).max(1e-6);
     let ground = |x: f64, z: f64| ground.height_at(x / unit, z / unit);
     let mut out = vec![];
-    for (k, (s, origin)) in wce_walls::bridge::piece_stretches(&deck, &prepared).into_iter().enumerate() {
+    // Its deck's pieces and, with the base's end piece, one past each end (`wce_walls::bridge::parts`), as an export makes them.
+    for (k, part) in wce_walls::bridge::parts(&deck, &prepared, end.as_deref()).into_iter().enumerate() {
         let key = format!("wce_preview_road{road}_{making}_{n}_{k:02}");
-        let warp = wce_walls::bridge::BridgeWarp { deck: &deck, base: &prepared, s, across, origin, ground: &ground };
-        let made = match wce_walls::bridge::make_piece(&prepared, &key, &warp) {
+        let b: &wce_walls::bridge::Prepared = if part.end { end.as_deref().unwrap_or(&prepared) } else { &prepared };
+        // The deck's scale across for its end pieces too: their platforms then meet the deck's corner to corner.
+        let across = width / (prepared.z.1 - prepared.z.0).max(1e-6);
+        let origin = part.origin;
+        let warp = wce_walls::bridge::BridgeWarp { deck: &part.deck, base: b, s: part.s, across, origin, ground: &ground };
+        let made = match wce_walls::bridge::make_piece(b, &key, &warp, part.ends(end.is_some())) {
             Ok(m) => m,
             Err(err) => {
                 wce_foundation::log::warn(format!("road {road}: bridge piece {k}: {err}"));
@@ -1119,11 +1131,11 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
 /// The version of how roads are made, in every road's signature: a road's layers are saved with the tile and made again only when its
 /// signature changes, so a change to how they are made bumps this, or a tile keeps the old terrain (user 2026-11-08: the bridges' fixes
 /// did not show on a tile saved before them).
-const ROAD_MAKING: u32 = 5;
+const ROAD_MAKING: u32 = 6;
 
-/// How far a bridge's deck stands over the road under it (metres): more than a unit steps up (Rome II's are about 0.6 over the ground
-/// at their ends; 1 to be sure, user 2026-11-08).
-const DECK_LIFT: f64 = 1.0;
+/// How far a bridge's deck stands over the road under it (metres): the kit's complete bridge's (1.2 units; units cross it), its end
+/// pieces taking it down 0.5 to just over the road (`wce_walls::bridge::parts`).
+const DECK_LIFT: f64 = 0.6;
 
 /// Under a bridge's deck the bank beside the road is held back this far past its sides (more than a height-map pixel: 2 m on a
 /// 64-density tile; metres).
