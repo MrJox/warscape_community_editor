@@ -380,12 +380,15 @@ pub fn fit(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site: &Site) 
     fit_dressed(piece, children, key, laid, site, &Dress::default())
 }
 
+/// A part's own attributes, by its index in the piece: (name, value) pairs.
+pub type PartAttrs<'a> = &'a dyn Fn(usize, &Part) -> Vec<(String, String)>;
+
 /// What a piece's parts get besides their place: buildings tilted to the ground (`tilt`: a fence follows the slope it stands on), and
 /// attributes of their own (`attrs`, by the part's index in the piece: a fence's `destruction_level`).
 #[derive(Default)]
 pub struct Dress<'a> {
     pub tilt: bool,
-    pub attrs: Option<&'a dyn Fn(usize, &Part) -> Vec<(String, String)>>,
+    pub attrs: Option<PartAttrs<'a>>,
 }
 
 /// How far along and across a building the ground is read to tilt it (metres): a fence's ends, its width.
