@@ -45,6 +45,11 @@ const STEP: f32 = 2.0;
 /// How far a post goes into the ground (scene units).
 const BURY: f64 = 0.5;
 
+/// How long a bridge's ground platform is past each end of its deck (scene units: 3 m), as the kit's `bridge_wood_complete` has them (6
+/// units from its ramps down to the terrain, `flag_2` set: the editor draws them as ground). Without them units did not leave a generated
+/// bridge (user 2026-11-08: the far end red-crossed, units went round its sides).
+const GROUND_PLATFORM: f64 = 6.0;
+
 /// The base turned a quarter about y: its +z onto +x, its +x onto -z (a turn, not a mirror).
 pub struct QuarterTurn;
 
@@ -325,7 +330,8 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp) -> Result<Build
         if is_piece_mesh(name) {
             *bytes = crate::mesh::warp_mesh(bytes, warp, &cuts)?;
         } else if *name == logic_name {
-            *bytes = crate::logic::warp_logic(bytes, warp, &cuts)?.0;
+            let warped = crate::logic::warp_logic(bytes, warp, &cuts)?.0;
+            *bytes = with_ground_platforms(&warped, base, warp)?;
         } else if *name == zones_name {
             *bytes = crate::zones::warp_zones(&String::from_utf8_lossy(bytes), warp, STEP)?.into_bytes();
         } else if !name.ends_with(".meta") {
@@ -338,6 +344,57 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp) -> Result<Build
     }
 
     Ok(b)
+}
+
+/// A piece's logic file with a ground platform past each end of the deck it has (the first piece's start, the last one's end): from the
+/// deck's end edge (its corners the deck platform's there) [`GROUND_PLATFORM`] on along the road, down to the ground, `flag_2` set.
+fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Result<Vec<u8>, String> {
+    let len = warp.deck.length();
+    let ends = [(warp.s.0 <= 1e-6).then_some((0.0, -1.0)), (warp.s.1 >= len - 1e-6).then_some((len, 1.0))];
+    if ends.iter().all(Option::is_none) {
+        return Ok(logic.to_vec());
+    }
+
+    // Across: the base's own platforms', else its meshes'.
+    let base_logic = base.files.files.get(&base.files.logic_name()).map(|b| decode(b)).transpose()?;
+    let zs = base_logic.as_ref().map(intact_platform_points).unwrap_or_default().iter().map(|p| p[2]).collect::<Vec<_>>();
+    let (z0, z1) = if zs.is_empty() { base.z } else { (zs.iter().copied().fold(f64::MAX, f64::min), zs.iter().copied().fold(f64::MIN, f64::max)) };
+
+    let mut v = decode(logic)?;
+    let Some(d) = v["pieces"].as_array_mut().and_then(|p| p.first_mut()).and_then(|piece| piece["destructs"].as_array_mut()).and_then(|d| d.first_mut()) else {
+        return Ok(logic.to_vec());
+    };
+
+    if !d["platforms"].is_array() {
+        d["platforms"] = Value::Array(vec![]);
+    }
+
+    for (s, out) in ends.into_iter().flatten() {
+        let (c, t) = warp.deck.at(s);
+        let n = [-t[1], t[0]];
+        let corner = |z: f64, along: f64| {
+            let (x, zz) = (c[0] + n[0] * z * warp.across + t[0] * out * along, c[2] + n[1] * z * warp.across + t[1] * out * along);
+            let y = if along > 0.0 { (warp.ground)(x, zz) } else { c[1] };
+            [x - warp.origin[0], y - warp.origin[1], zz - warp.origin[2]]
+        };
+
+        let pts = [corner(z0, 0.0), corner(z1, 0.0), corner(z1, GROUND_PLATFORM), corner(z0, GROUND_PLATFORM)];
+        let (a, b) = ([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]], [pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]]);
+        let mut nrm = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+        let l = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt().max(1e-12);
+        let up = if nrm[1] < 0.0 { -1.0 } else { 1.0 };
+        nrm = [nrm[0] * up / l, nrm[1] * up / l, nrm[2] * up / l];
+        let point = |p: [f64; 3]| serde_json::json!({ "x": p[0] as f32, "y": p[1] as f32, "z": p[2] as f32 });
+        let mut platform = serde_json::json!({ "flag_1": false, "flag_2": true, "flag_3": false,
+            "normal": { "x": nrm[0] as f32, "y": nrm[1] as f32, "z": nrm[2] as f32 },
+            "vertices": { "outline": pts.iter().map(|&p| point(p)).collect::<Vec<_>>() } });
+        crate::logic::wind_as_the_game(&mut platform);
+        if let Some(ps) = d["platforms"].as_array_mut() {
+            ps.push(platform);
+        }
+    }
+
+    encode(v)
 }
 
 /// A bridge read from its export element: its base's key, its deck, its width (scene units).
