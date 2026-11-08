@@ -485,6 +485,9 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   footprint (its `collision_outlines`, tech_dump's "outline") runs over its ramps, to z +-52 (its deck +-50), and stops where its
   ground platforms start; ours was `bridge_wood_2`'s, the deck alone, the ramps outside the building. The first and last pieces'
   outlines now reach the ramps' foot (`with_ground_platforms`); `bridge_check` checks it.
+  Units then stopped further off, at the ground platforms' outer end. A logic file keeps its footprint twice: its collision outlines
+  and `orange_thingies` (the same ring in x and z, `vertex.x` / `vertex.y`, `vertex_type` 2 on every corner of the kit's). Only the
+  first had been extended; the second now is too, and `bridge_check` checks every ring.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,

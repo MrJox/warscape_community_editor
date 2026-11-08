@@ -26,6 +26,11 @@ fn outlines(bytes: &[u8]) -> Vec<Vec<[f64; 3]>> {
                 [f("x"), f("y"), f("z")]
             }).collect());
         }
+
+        // The footprint ring beside it, as points on the ground (y 0).
+        for ring in d["orange_thingies"].as_array().into_iter().flatten() {
+            out.push(ring.as_array().into_iter().flatten().map(|q| [q["vertex"]["x"].as_f64().unwrap_or(0.0), 0.0, q["vertex"]["y"].as_f64().unwrap_or(0.0)]).collect());
+        }
     }
 
     out
@@ -127,7 +132,7 @@ fn main() {
         let mut all: Vec<(usize, Vec<[f64; 3]>)> = vec![];
         let mut ends: Vec<((f64, f64), [f64; 3])> = vec![];
         let mut grounds: Vec<(usize, Vec<[f64; 3]>)> = vec![];
-        let mut footprint: Vec<[f64; 3]> = vec![];
+        let mut footprints: Vec<Vec<Vec<[f64; 3]>>> = vec![];
         for (k, &(s, origin)) in stretches.iter().enumerate() {
             let warp = BridgeWarp { deck: &deck, base: &base, s, across, origin, ground: &ground };
             let key = format!("wce_check_bridge_{}_{k:02}", b.name);
@@ -150,9 +155,7 @@ fn main() {
                 }
             }
 
-            for o in outlines(logic) {
-                footprint.extend(o.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]));
-            }
+            footprints.push(outlines(logic).into_iter().map(|o| o.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect()).collect::<Vec<Vec<[f64; 3]>>>());
 
             ends.push((s, origin));
         }
@@ -249,9 +252,11 @@ fn main() {
             // The footprint out over the ramp, to its foot.
             let (c, tt) = deck.at(at);
             let out = if at <= 0.0 { -1.0 } else { 1.0 };
-            let reach = footprint.iter().map(|q| ((q[0] - c[0]) * tt[0] + (q[2] - c[2]) * tt[1]) * out).fold(f64::MIN, f64::max);
-            if !ok || (reach - wce_walls::bridge::END_RAMP).abs() > 0.05 {
-                println!("  end at {at:.1}: ramp and ground platform joined {ok}, footprint {reach:.2} past the deck (the ramp: {})", wce_walls::bridge::END_RAMP);
+            // Each ring of that piece's footprint (its collision outlines, its orange_thingies) reaches the ramp's foot.
+            let reaches = footprints[piece].iter().map(|r| r.iter().map(|q| ((q[0] - c[0]) * tt[0] + (q[2] - c[2]) * tt[1]) * out).fold(f64::MIN, f64::max)).collect::<Vec<_>>();
+            let short = reaches.is_empty() || reaches.iter().any(|r| (r - wce_walls::bridge::END_RAMP).abs() > 0.05);
+            if !ok || short {
+                println!("  end at {at:.1}: ramp and ground platform joined {ok}, footprint rings past the deck {reaches:.2?} (the ramp: {})", wce_walls::bridge::END_RAMP);
                 bad_ends += 1;
             }
         }
