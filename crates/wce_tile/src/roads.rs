@@ -618,11 +618,6 @@ impl Strip {
         self.nearest_open(x, z).filter(|n| !n.2).map(|n| (n.0, n.1, n.3))
     }
 
-    /// As [`Self::nearest`], with the nearest sample's deck (`under_deck`).
-    fn nearest_deck(&self, x: f64, z: f64) -> Option<(f64, f64, bool, (f64, f64))> {
-        self.nearest_at(x, z).filter(|n| !n.2).map(|n| (n.0, n.1, n.3, self.deck[n.4]))
-    }
-
     /// As [`Self::nearest`] (and whether the place on the line is a ford's), and whether it is over a gap.
     fn nearest_open(&self, x: f64, z: f64) -> Option<(f64, f64, bool, bool)> {
         self.nearest_at(x, z).map(|n| (n.0, n.1, n.2, n.3))
@@ -673,7 +668,16 @@ impl Strip {
     #[must_use]
     pub fn height_at(&self, x: f64, z: f64, ground: f64) -> Option<f64> {
         let s = &self.settings;
-        let (d, y, kept, (wider, sink)) = self.nearest_deck(x, z)?;
+        let (d, y, open, kept, at) = self.nearest_at(x, z)?;
+        let (wider, sink) = self.deck[at];
+
+        // Under a bridge's span the ground is left as it is, but where it would reach the deck (user 2026-11-08: the bank came up
+        // through it beside the water).
+        if open {
+            let cap = y - sink;
+            return (sink > 0.0 && d <= s.width * 0.5 + wider && ground > cap).then_some(cap);
+        }
+
         if kept {
             return None;
         }
@@ -694,7 +698,9 @@ impl Strip {
     #[must_use]
     pub fn texture_at(&self, x: f64, z: f64) -> f32 {
         let s = &self.settings;
-        let Some((d, _, _)) = self.nearest(x, z) else { return 0.0 };
+        // Under a bridge's span too: the ground there is cut to just under the deck, and grass on it came up through the planks (user
+        // 2026-11-08).
+        let Some((d, _, _, _, _)) = self.nearest_at(x, z) else { return 0.0 };
         let edge = s.width * 0.5 + (noise(x / 5.0, z / 5.0, s.seed) - 0.5) * s.feather;
         (1.0 - smooth((d - edge) / s.feather.max(0.01) + 0.5)) as f32
     }
@@ -703,6 +709,12 @@ impl Strip {
     #[must_use]
     pub fn on_road(&self, x: f64, z: f64) -> bool {
         self.nearest(x, z).is_some_and(|(d, _, _)| d <= self.settings.width * 0.5)
+    }
+
+    /// Whether a point takes the road's ground type: on the road, and under its bridges' spans (their decks' width).
+    #[must_use]
+    pub fn covers(&self, x: f64, z: f64) -> bool {
+        self.nearest_at(x, z).is_some_and(|n| n.0 <= self.settings.width * 0.5 + if n.2 { self.deck[n.4].0 } else { 0.0 })
     }
 }
 
@@ -780,8 +792,10 @@ mod tests {
         let mut strip = Strip::new(l, y, s);
         strip.open_gaps(&[(40, 60)]);
         assert!(strip.height_at(50.0, 0.0, -20.0).is_none());
-        assert_eq!(strip.texture_at(50.0, 0.0), 0.0);
-        assert!(!strip.on_road(50.0, 0.0));
+        // Its texture and ground type go on under the span (the ground there is cut under the deck: no grass through it); it is no road
+        // for another road to meet.
+        assert!(strip.texture_at(50.0, 0.0) > 0.99);
+        assert!(strip.covers(50.0, 0.0) && !strip.on_road(50.0, 0.0));
         assert_eq!(strip.height_at(20.0, 0.0, -20.0), Some(10.0));
     }
 
@@ -1053,6 +1067,22 @@ mod tests {
         // Away from it, the bank as before.
         let away = strip.height_at(20.0, 4.0, 5.0).unwrap();
         assert!(away > 0.0, "{away}");
+    }
+
+    #[test]
+    fn under_a_span_the_ground_is_cut_only_where_it_reaches_the_deck() {
+        let l = straight();
+        let s = settings();
+        let mut strip = Strip::new(l.clone(), vec![0.0; l.len()], s.clone());
+        strip.open_gaps(&[(40, 60)]);
+        for i in 40..=60 {
+            strip.under_deck(i, 2.5, 0.3);
+        }
+
+        // Low ground under the span: left alone; a bank up to the deck: cut under it; beside the deck: left alone.
+        assert_eq!(strip.height_at(50.0, 0.0, -5.0), None);
+        assert!((strip.height_at(50.0, 1.0, 1.0).unwrap() + 0.3).abs() < 1e-9);
+        assert_eq!(strip.height_at(50.0, 8.0, 1.0), None);
     }
 
     #[test]

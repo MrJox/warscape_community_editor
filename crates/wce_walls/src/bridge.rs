@@ -48,11 +48,12 @@ const BURY: f64 = 0.5;
 /// How long a bridge's ground platform is past each end of its deck (scene units: 3 m), as the kit's `bridge_wood_complete` has them (6
 /// units from its ramps down to the terrain, `flag_2` set: the editor draws them as ground). Without them units did not leave a generated
 /// bridge (user 2026-11-08: the far end red-crossed, units went round its sides).
-const GROUND_PLATFORM: f64 = 6.0;
+pub const GROUND_PLATFORM: f64 = 6.0;
 
-/// How far under the ground a ground platform's outer edge is (scene units): the kit's run from 0.2 over it to 3.4 and 3.7 under it,
-/// through the terrain. Ending on the ground, as they did at first, units still did not leave the bridge (user 2026-11-08).
-const GROUND_PLATFORM_BURY: f64 = 3.5;
+/// How far under the ground a ground platform's outer edge is (scene units): just under it, so that the platform lies over the ground
+/// from the deck and meets it at its outer edge, as Rome II's bridges' are seen (user 2026-11-08: 3.5 under, the ground covered it and
+/// met the deck itself). The kit's own start 0.2 units over theirs.
+pub const GROUND_PLATFORM_BURY: f64 = 0.2;
 
 /// The base turned a quarter about y: its +z onto +x, its +x onto -z (a turn, not a mirror).
 pub struct QuarterTurn;

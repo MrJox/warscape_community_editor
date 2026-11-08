@@ -268,7 +268,7 @@ impl Tile {
             };
 
             let fence_damage = number(e, "road_fence_damage", 0.0).clamp(0.0, 1.0);
-            let signature = hash_text(&format!("{line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {water:x}"));
+            let signature = hash_text(&format!("{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {water:x}"));
             Road { id: number(e, "road_id", 0.0) as u32, line, sharp, handles, settings, road_type, bridge, fences, fence_damage, signature }
         }).collect()
     }
@@ -798,7 +798,7 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
         let [x0, y0, x1, y1] = rect((gpx, gpz), border, gw, gh);
         for y in y0..y1 {
             for x in x0..x1 {
-                if strip.on_road((f64::from(x) + 0.5) / gpx - border, (f64::from(y) + 0.5) / gpz - border) {
+                if strip.covers((f64::from(x) + 0.5) / gpx - border, (f64::from(y) + 0.5) / gpz - border) {
                     ground.put(ground_id, x, y, &[c0, c1, c2, 255]);
                 }
             }
@@ -1111,6 +1111,11 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
 }
 
 
+/// The version of how roads are made, in every road's signature: a road's layers are saved with the tile and made again only when its
+/// signature changes, so a change to how they are made bumps this, or a tile keeps the old terrain (user 2026-11-08: the bridges' fixes
+/// did not show on a tile saved before them).
+const ROAD_MAKING: u32 = 2;
+
 /// How far a bridge runs onto the road at each end, past its gap's rims (metres).
 const BRIDGE_ON_ROAD: f64 = 2.0;
 
@@ -1132,8 +1137,10 @@ fn road_strip(plan: &Plan, settings: &RoadSettings) -> Strip {
     strip.open_gaps(&inner);
 
     // Under each deck, from end to end: the terrain under it and past its sides (`Strip::under_deck`), the most at its rims, less at its
-    // ends, which lie on the road.
+    // ends, which lie on the road; past them, under its ground platforms, less and less to none at their outer edges, where they meet
+    // the ground (`wce_walls::bridge::GROUND_PLATFORM`).
     let st = Stations::new(&plan.line);
+    let ramp = wce_walls::bridge::GROUND_PLATFORM / 2.0;
     for &(a, b) in &plan.gaps {
         let (sa, sb) = (st.of_sample(a), st.of_sample(b));
         for i in 0..plan.line.len() {
@@ -1141,6 +1148,8 @@ fn road_strip(plan: &Plan, settings: &RoadSettings) -> Strip {
             let off = if s < sa { sa - s } else if s > sb { s - sb } else { 0.0 };
             if off <= BRIDGE_ON_ROAD {
                 strip.under_deck(i, DECK_SIDE, DECK_SINK - (DECK_SINK - DECK_END_SINK) * off / BRIDGE_ON_ROAD);
+            } else if off < BRIDGE_ON_ROAD + ramp {
+                strip.under_deck(i, DECK_SIDE, DECK_END_SINK * (1.0 - (off - BRIDGE_ON_ROAD) / ramp));
             }
         }
     }

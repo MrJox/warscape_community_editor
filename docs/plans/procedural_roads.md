@@ -454,7 +454,14 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   game's. The deck's own 2 m on the road stands for the kit's ramp. `bridge_check` checks each end has one, joined to the deck.
   Ending on the ground, they changed nothing in game (user, 2026-11-08: built and launched with them). The kit's run through the
   terrain, from 0.2 over it to 3.4 and 3.7 under it at their outer edge: theirs end 3.5 units under it now (`GROUND_PLATFORM_BURY`), on
-  the guess that the game joins a building's platform to the ground where it crosses it. Not yet seen in game.
+  the guess that the game joins a building's platform to the ground where it crosses it. Wrong (user, 2026-11-08, Rome II's
+  `bridge_wood_complete` in its tile): there the green platform lies over the ground from the deck and meets it only at its outer edge;
+  buried, ours had the ground over it, meeting the deck itself. Now they end 0.2 units under the ground, and the terrain under them is
+  kept below them, less and less to none at their outer edge (`road_strip`). Under the span the terrain is left as it is but where it
+  would reach the deck, cut to under it there (the bank on the far side came up through the planks), and the road's texture and ground
+  type go on under the span. None of the bridge fixes had shown on the test tile: a road's layers are saved with the tile and made again
+  only when its signature changes, which code changes did not. The signature has the making's version now (`ROAD_MAKING`): bump it
+  when roads are made differently.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,
