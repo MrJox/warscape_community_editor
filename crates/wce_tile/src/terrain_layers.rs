@@ -332,6 +332,31 @@ impl<T: Copy + Default> Blocks<T> {
     fn bytes(&self) -> usize {
         self.blocks.iter().flatten().map(|b| b.len() * size_of::<T>()).sum()
     }
+
+    /// Whether two hold the very same blocks (shared, not equal by value): one is a copy of the other with nothing written since.
+    fn same(&self, other: &Self) -> bool {
+        self.across == other.across && self.blocks.len() == other.blocks.len() && self.blocks.iter().zip(&other.blocks).all(|(a, b)| match (a, b) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        })
+    }
+
+    /// The pixels its blocks cover (x0, y0, x1, y1, the ends past), none without a block.
+    fn extent(&self) -> Option<[u32; 4]> {
+        let mut out: Option<[u32; 4]> = None;
+        for (i, b) in self.blocks.iter().enumerate() {
+            if b.is_none() {
+                continue;
+            }
+
+            let (bx, by) = (i as u32 % self.across.max(1), i as u32 / self.across.max(1));
+            let r = [bx * BLOCK, by * BLOCK, (bx + 1) * BLOCK, (by + 1) * BLOCK];
+            out = Some(out.map_or(r, |o| [o[0].min(r[0]), o[1].min(r[1]), o[2].max(r[2]), o[3].max(r[3])]));
+        }
+
+        out
+    }
 }
 
 /// A layer.
@@ -355,6 +380,13 @@ impl<T: Copy + Default> Layer<T> {
     #[must_use]
     pub fn bytes(&self) -> usize {
         self.samples.bytes()
+    }
+
+    /// The rectangle of pixels it may hold samples in (x0, y0, x1, y1, the ends past; by its 64 x 64 blocks), none when it holds none: what
+    /// it changes of the composite.
+    #[must_use]
+    pub fn extent(&self) -> Option<[u32; 4]> {
+        self.samples.extent()
     }
 }
 
@@ -381,7 +413,24 @@ pub struct Stack<K: Kind> {
     seen: u64,
 }
 
+// Cheap: the samples are shared blocks (a job works on a copy, `tile_document::jobs`).
+impl<K: Kind> Clone for Stack<K> {
+    fn clone(&self) -> Self {
+        Self { w: self.w, h: self.h, base: self.base.clone(), layers: self.layers.clone(), working: self.working, states: self.states.clone(), seen: self.seen }
+    }
+}
+
 impl<K: Kind> Stack<K> {
+    /// Whether it is as a copy of it was taken (`clone`): the same base and layers, block for block, the same edits seen. What a job made
+    /// from a copy may then take its place (`tile_document::jobs`).
+    #[must_use]
+    pub fn unchanged_since(&self, copy: &Self) -> bool {
+        self.seen == copy.seen && self.working == copy.working && self.base.same(&copy.base) && self.layers.len() == copy.layers.len()
+            && self.layers.iter().zip(&copy.layers).all(|(a, b)| {
+                a.id == b.id && a.name == b.name && a.visible == b.visible && a.opacity == b.opacity && a.owner == b.owner && a.depends == b.depends && a.samples.same(&b.samples)
+            })
+    }
+
     /// A stack with no layers over what a field holds.
     pub fn new(field: &K::Field) -> Self {
         let (w, h) = K::size(field);
@@ -838,6 +887,29 @@ impl TerrainLayers {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_copy_is_unchanged_until_one_is_written() {
+        let mut s = Stack::<Height> { w: 128, h: 128, base: Blocks::new(128, 128), layers: vec![], working: None, states: HashMap::new(), seen: 0 };
+        let id = s.add(7, "a", "");
+        s.put(id, 3, 3, &[1.0]);
+        let copy = s.clone();
+        assert!(s.unchanged_since(&copy));
+        let mut written = copy.clone();
+        written.put(id, 100, 100, &[2.0]);
+        assert!(s.unchanged_since(&copy) && !written.unchanged_since(&copy), "a write copies the block it touches");
+        s.layers[0].visible = false;
+        assert!(!s.unchanged_since(&copy));
+    }
+
+    #[test]
+    fn a_layers_extent_is_its_blocks() {
+        let mut l = Layer::<f32> { id: 1, name: String::new(), visible: true, opacity: 1.0, owner: String::new(), depends: String::new(), samples: Blocks::new(300, 200) };
+        assert_eq!(l.extent(), None);
+        *l.samples.pixel_mut(70, 10, 1).first_mut().unwrap() = 1.0;
+        *l.samples.pixel_mut(130, 140, 1).first_mut().unwrap() = 1.0;
+        assert_eq!(l.extent(), Some([64, 0, 192, 192]));
+    }
 
     fn stack() -> (HeightField, Stack<Height>) {
         let field = HeightField::flat(4, 4, 100.0);

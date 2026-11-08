@@ -128,7 +128,11 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **Shared scene code** (`wce_walls::scene`): walls, anchors, layouts, doors and lowering over a `TedScene`, for the editor and exporters.
 - **Preview** (`wce_tile_editor` `tile_document/walls.rs`): intact meshes and the logic file (the technology overlay draws it) made 300 ms after the last change, served from `wce_vfs::generated`;
   kept by what they were made from (the layout, the doors, the ground across the wall: `wall_signature`), so an edit elsewhere or a
-  republish of the tile takes them again instead of making them (`scripts/tile_wall_preview_cache.txt`).
+  republish of the tile takes them again instead of making them (`scripts/tile_wall_preview_cache.txt`). **Made off the editor's thread**
+  (user, 2026-11-08: the editor stopped for a second each time; `tile_document/jobs.rs`): the pieces are warped on a thread of their own from
+  what they need (the layout, the bases, a copy of the heights), and put on the scene when they are done; the old ones stay until then, and
+  a newer request lets an older one go. A Roman wall of three points: its worst frame 1022 ms before, 24 ms after. Scripts wait for them with
+  `tile_wait_jobs`.
 - **Lowering happens at export, not in the compile:** `workflow::save_exported_prepared` compiles with the walls lowered in memory
   (`lower_walls`) into `BUILDING_INSTANCE`s keyed `wce_<tile>_<variation>_<wall>_<piece>`; rows copied from the bases (`db::copy_rows`),
   `EFLines` rebuilt from the piece, `DockingLines` warped and cut to 5 units, none over steps. `wce_walls::pack` writes

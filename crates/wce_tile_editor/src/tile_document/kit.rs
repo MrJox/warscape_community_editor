@@ -285,7 +285,9 @@ impl TileDocument {
     /// # Errors
     ///
     /// The text does not read.
-    pub fn text_for_export(&self, for_kit: bool) -> Result<Vec<u8>, String> {
+    pub fn text_for_export(&mut self, for_kit: bool) -> Result<Vec<u8>, String> {
+        // The roads' pieces and bridges as they are now, not as a job left them.
+        self.tile_mut().finish_road_jobs();
         let files = self.tile().files.as_deref();
         let models_in = |folder: &str| files.map_or_else(Vec::new, |f| f.list(folder, ".rigid_model_v2"));
         let (text, report) = wce_tile::export_as_prop::apply(self.tile().tscene().save(), files.is_some().then_some(&models_in as wce_tile::export_as_prop::ModelsIn))?;

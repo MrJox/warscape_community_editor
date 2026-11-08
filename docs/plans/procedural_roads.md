@@ -112,6 +112,14 @@ A road whose signature differs, or a height edit anywhere, makes the roads again
 drag makes its road at the end, and undoing an edit of a road needs nothing of its own. Layers of a road that went are taken out; opening a tile
 makes nothing again.
 
+**Off the editor's thread** (user, 2026-11-08; `tile_document/jobs.rs`). The layers are made on a thread of their own (`road_terrain`), in
+copies of the stacks (their samples are shared blocks: cheap), and take the stacks' place when they are done, the maps composed again only
+over where the roads' layers were and are (the whole of each map before: `Layer::extent`); written to meanwhile (a brush, an undo, a
+prefab's ground: `Stack::unchanged_since`), the result is let go and the roads are made again. The instances (pieces, hints, bridges) are
+made the same way (`road_items`) once the terrain is, their bridges' files put among the generated ones when they are done. An export waits
+for both (`finish_road_jobs`, from `text_for_export`); scripts with `tile_wait_jobs`. A road with a bridge on the kit's river tile: its worst
+frame 176 ms before, 29 ms after (the work, 145 ms, on the threads).
+
 **Grass** is made again with the road: generated grass takes the new blend map and heights, and packed or generated, no patch stands on a road (`Tile::road_at`, the roads' ground type layers), as a tile's packed list was made before it. So does a stack change, as a layer shown or hidden moves the ground under it. With generated grass that costs about 0.6 s on a large tile each time the roads are made.
 
 **The height at a point** comes from the road's samples near it, by distance, further than 12 past the edge: taken from the nearest alone it jumped where

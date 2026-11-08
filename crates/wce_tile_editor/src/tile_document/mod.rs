@@ -26,6 +26,10 @@ mod edits;
 mod flip;
 pub mod fire;
 mod index;
+mod jobs;
+
+/// Whether anything is being made off the editor's thread (`tile_wait_jobs`).
+pub use jobs::running as jobs_running;
 pub mod layers;
 pub mod minimap;
 pub mod kit;
@@ -545,6 +549,13 @@ pub struct Tile {
     /// The roads' bridges: the keys made for the ones shown (their files in `wce_vfs::generated`), how many makings there were (each one's
     /// keys are new, so no model of an older one is drawn), and the bases read (`roads::bridge_base`).
     pub(crate) road_generated: Vec<String>,
+
+    /// The roads' terrain and instances being made off the editor's thread (`roads.rs`, `jobs`).
+    pub(crate) road_terrain_job: Option<roads::RoadTerrainJob>,
+
+    /// The roads' terrain is to be made (`refresh_roads` found it stale): their instances wait for it.
+    pub(crate) roads_due: bool,
+    pub(crate) road_items_job: Option<jobs::Job<roads::ItemsMade>>,
     pub(crate) road_making: u64,
     pub(crate) bridge_bases: HashMap<String, Option<std::sync::Arc<wce_walls::bridge::Prepared>>>,
 
@@ -837,7 +848,7 @@ impl TileDocument {
             terrain_stride: 1, instances: vec![], type_ordinal: vec![], markers: Markers::default(), type_counts: BTreeMap::new(), batch_entity: vec![], dirty_type: vec![],
             first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), covers: HashMap::new(), covers_dirty: BTreeSet::new(), cover_spare: HashMap::new(), cover_ground: 0, polygons_published: false, tops: HashMap::new(), tops_wanted: BTreeSet::new(), tops_polls: 0, tops_came: false, models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
             markers_dirty: true, polygons_dirty: false, wall_preview: walls::WallPreview::default(), hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
-            grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false, road_items: vec![], road_entities: vec![], road_items_stale: true, road_items_shown: false, road_prefabs: None, road_generated: vec![], road_making: 0, bridge_bases: HashMap::new(), layers_shown: false, roads_stale: false, roads_seen: 0, history_version: 0, prefab_ground_seen: 0, prefab_ground_stale: false, prefab_tool_ready: false, prefab_open_request: None, stage_outline: (0, None), stage_layer_last: false, stage_snapped: vec![],
+            grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false, road_items: vec![], road_entities: vec![], road_items_stale: true, road_items_shown: false, road_prefabs: None, road_generated: vec![], road_terrain_job: None, roads_due: false, road_items_job: None, road_making: 0, bridge_bases: HashMap::new(), layers_shown: false, roads_stale: false, roads_seen: 0, history_version: 0, prefab_ground_seen: 0, prefab_ground_stale: false, prefab_tool_ready: false, prefab_open_request: None, stage_outline: (0, None), stage_layer_last: false, stage_snapped: vec![],
             stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, saved_blend_depth: 0, blend_on_disk_edited: false, saved_ground_depth: 0, ground_on_disk_edited: false, water_depth: None, auto_nogos: None, nogo_entity: 0, nogo_dirty: true, water_entities: vec![], columns: columns::ColumnState::default(), tech: tech::TechState::default(), collapses: collapse::CollapseState::default(), fire: fire::FirePreview::default(), links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), pack_categories: None, building_db: OnceCell::new(), building_tables: vec![], tile_sets: OnceCell::new(), logic_summaries: RefCell::default(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None, normal_image: None, heights_changed: None, terrain_grid: None,
