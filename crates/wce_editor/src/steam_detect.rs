@@ -88,18 +88,50 @@ fn run_dialog(exe: Option<PathBuf>, args: &[String]) -> Option<PathBuf> {
     (!line.is_empty()).then(|| PathBuf::from(line))
 }
 
-/// An open or save file dialog; `filters` are (name, patterns separated by spaces) pairs. `None` when cancelled.
+/// Where a file dialog starts: `initial` is a folder (nothing pre-filled) or a file's path (its name pre-filled); the folder is the nearest
+/// one of its ancestors that exists, so a folder not made yet starts in its parent. Empty: nowhere in particular.
+pub fn dialog_start(initial: &Path) -> (Option<PathBuf>, String) {
+    if initial.as_os_str().is_empty() {
+        return (None, String::new());
+    }
+
+    if initial.is_dir() {
+        return (Some(initial.to_path_buf()), String::new());
+    }
+
+    let name = initial.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let dir = initial.ancestors().skip(1).find(|d| !d.as_os_str().is_empty() && d.is_dir()).map(Path::to_path_buf);
+    (dir, name)
+}
+
+/// A PowerShell single-quoted string's text.
+fn ps_quote(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// An open or save file dialog; `filters` are (name, patterns separated by spaces) pairs; `initial` as [`dialog_start`] takes it. `None`
+/// when cancelled.
 pub fn file_dialog(save: bool, initial: &Path, filters: &[(String, String)]) -> Option<PathBuf> {
+    let (dir, name) = dialog_start(initial);
     if cfg!(windows) {
         let kind = if save { "SaveFileDialog" } else { "OpenFileDialog" };
         let filter = filters.iter().map(|(n, p)| format!("{n}|{}", p.replace(' ', ";"))).collect::<Vec<_>>().join("|");
+        let dir = dir.map(|d| format!("$d.InitialDirectory = '{}'; ", ps_quote(&d.display().to_string()))).unwrap_or_default();
         let script = format!(
-            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.{kind}; $d.Filter = '{filter}'; $d.FileName = '{}'; if ($d.ShowDialog() -eq 'OK') {{ $d.FileName }}",
-            initial.display()
+            "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.{kind}; $d.Filter = '{}'; {dir}$d.FileName = '{}'; if ($d.ShowDialog() -eq 'OK') {{ $d.FileName }}",
+            ps_quote(&filter),
+            ps_quote(&name)
         );
 
         return run_dialog(Some(PathBuf::from("powershell")), &["-NoProfile".to_owned(), "-Command".to_owned(), script]);
     }
+
+    // zenity and kdialog take one path: the folder (with a trailing separator, so zenity opens it) and the name in it.
+    let start = match (&dir, name.is_empty()) {
+        (Some(d), true) => format!("{}/", d.display()),
+        (Some(d), false) => d.join(&name).display().to_string(),
+        (None, _) => name,
+    };
 
     if let Some(zenity) = find_in_path("zenity") {
         let mut args = vec!["--file-selection".to_owned()];
@@ -107,8 +139,8 @@ pub fn file_dialog(save: bool, initial: &Path, filters: &[(String, String)]) -> 
             args.extend(["--save".to_owned(), "--confirm-overwrite".to_owned()]);
         }
 
-        if !initial.as_os_str().is_empty() {
-            args.push(format!("--filename={}", initial.display()));
+        if !start.is_empty() {
+            args.push(format!("--filename={start}"));
         }
 
         args.extend(filters.iter().map(|(n, p)| format!("--file-filter={n} | {p}")));
@@ -116,7 +148,7 @@ pub fn file_dialog(save: bool, initial: &Path, filters: &[(String, String)]) -> 
     }
 
     let kfilter = filters.iter().map(|(n, p)| format!("{p}|{n}")).collect::<Vec<_>>().join("\n");
-    let start = if initial.as_os_str().is_empty() { ".".to_owned() } else { initial.display().to_string() };
+    let start = if start.is_empty() { ".".to_owned() } else { start };
     run_dialog(find_in_path("kdialog"), &[if save { "--getsavefilename" } else { "--getopenfilename" }.to_owned(), start, kfilter])
 }
 
@@ -129,7 +161,7 @@ pub fn pick_folder(title: &str) -> Option<PathBuf> {
 pub fn pick_folder_at(title: &str, start: &Path) -> Option<PathBuf> {
     let start = if start.is_dir() { start.display().to_string() } else { String::new() };
     if cfg!(windows) {
-        let at = if start.is_empty() { String::new() } else { format!("$d.SelectedPath = '{}'; ", start.replace('\'', "''")) };
+        let at = if start.is_empty() { String::new() } else { format!("$d.SelectedPath = '{}'; ", ps_quote(&start)) };
         let script = format!(
             "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '{title}'; {at}if ($d.ShowDialog() -eq 'OK') {{ $d.SelectedPath }}"
         );
@@ -148,4 +180,22 @@ pub fn pick_folder_at(title: &str, start: &Path) -> Option<PathBuf> {
 
     let at = if start.is_empty() { ".".to_owned() } else { start };
     run_dialog(find_in_path("kdialog"), &["--getexistingdirectory".to_owned(), at, "--title".to_owned(), title.to_owned()])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dialog_start;
+    use std::path::Path;
+
+    #[test]
+    fn a_dialog_starts_in_the_nearest_existing_folder_with_the_name_apart() {
+        let dir = std::env::temp_dir().join(format!("wce_dialog_start_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = dir.as_path();
+        assert_eq!(dialog_start(Path::new("")), (None, String::new()));
+        assert_eq!(dialog_start(d), (Some(d.to_path_buf()), String::new()));
+        assert_eq!(dialog_start(&d.join("Prefab Impaled man 2")), (Some(d.to_path_buf()), "Prefab Impaled man 2".to_owned()));
+        assert_eq!(dialog_start(&d.join("not/made/yet/db.bin")), (Some(d.to_path_buf()), "db.bin".to_owned()));
+        std::fs::remove_dir(&dir).unwrap();
+    }
 }

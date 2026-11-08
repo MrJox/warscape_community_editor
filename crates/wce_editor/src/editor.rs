@@ -1761,7 +1761,7 @@ impl Editor {
             }
 
             if gui::menu_item(&format!("{}  Open file...", icons::FOLDER_OPEN), None, false, true)
-                && let Some(p) = file_dialog(false, &self.projects_dir().join("x"), &self.open_filters())
+                && let Some(p) = file_dialog(false, &self.projects_dir(), &self.open_filters())
             {
                 match self.open_path(&p.display().to_string(), false, true) {
                     Ok(msg) => self.status(&msg, false),

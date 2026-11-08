@@ -83,7 +83,15 @@ impl<H> Default for CommandRegistry<H> {
 impl<H: CommandHost> CommandRegistry<H> {
 
     /// Replaces an earlier registration of the same name.
+    /// Registers a command. A name registered before keeps its first command: a second one is an error in the log (two tools' commands
+    /// of the same name would otherwise silently replace one another).
     pub fn add(&mut self, name: &str, usage: &str, help: &str, run: impl Fn(&mut H, &[String]) -> CommandResult + 'static) {
+        if let Some(first) = self.entries.get(name) {
+            log::error(format!("the command '{name}' is registered twice: '{}' is kept, '{usage}' is dropped", first.usage));
+            debug_assert!(false, "the command '{name}' is registered twice");
+            return;
+        }
+
         self.entries.insert(name.to_owned(), Entry { name: name.to_owned(), usage: usage.to_owned(), help: help.to_owned(), run: Rc::new(run) });
     }
 

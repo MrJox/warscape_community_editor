@@ -15,19 +15,19 @@ edit_attr LIGHTING sun_direction_elevation 40
 frames 3
 assert_env sun_elevation 40
 assert_modified 1
-assert_attr LIGHTING sun_direction_elevation 40
+assert_xml_attr LIGHTING sun_direction_elevation 40
 assert_history 1 1
 edit_attr FOG fog_distance_start 0.8
 assert_history 2 2
 undo
-assert_attr FOG fog_distance_start 0.52
+assert_xml_attr FOG fog_distance_start 0.52
 undo
 frames 2
 assert_env sun_elevation 26
 assert_modified 0
 redo
 redo
-assert_attr FOG fog_distance_start 0.8
+assert_xml_attr FOG fog_distance_start 0.8
 undo
 undo
 
