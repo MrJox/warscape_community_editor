@@ -273,8 +273,9 @@ pub struct Site<'a> {
     pub ground: &'a dyn Fn(f64, f64) -> f64,
 }
 
-/// Where a part goes and which way its x points (world metres, x and z).
-fn place(piece: &Piece, part: &Part, frame: &Frame, st: &Stations, width: f64) -> ([f64; 2], [f64; 2]) {
+/// Where a part goes and which way its x points (world metres, x and z), and where the ground under it is read to tilt it: a rigid part
+/// along a stretch, about the stretch's middle (a fence's pivot is at one end), the rest about where it goes.
+fn place(piece: &Piece, part: &Part, frame: &Frame, st: &Stations, width: f64) -> ([f64; 2], [f64; 2], [f64; 2]) {
     let pw = piece.width.max(1e-6);
     let across = match part.anchor {
         Anchor::Surface | Anchor::Fixed => part.across * width / pw,
@@ -284,11 +285,25 @@ fn place(piece: &Piece, part: &Part, frame: &Frame, st: &Stations, width: f64) -
     let dir = |t: [f64; 2], n: [f64; 2]| [t[0] * part.turn.cos() + n[0] * part.turn.sin(), t[1] * part.turn.cos() + n[1] * part.turn.sin()];
     match frame {
         Frame::Along { from, to } => {
+            if part.anchor == Anchor::Fixed {
+                // Rigid: laid on the chord of its stretch, from the point the stretch starts at to the one it ends at, not on the line's
+                // curve (a fence's ends on its line, user 2026-11-08: each one turned by the line where its pivot stood stuck out of a
+                // bend).
+                let (a, b) = (st.at(*from).0, st.at(*to).0);
+                let chord = [b[0] - a[0], b[1] - a[1]];
+                let u = unit(chord);
+                let n = [u[1], -u[0]];
+                let d = part.along * chord[0].hypot(chord[1]);
+                let mid = [(a[0] + b[0]) * 0.5 + n[0] * across, (a[1] + b[1]) * 0.5 + n[1] * across];
+                return ([a[0] + u[0] * d + n[0] * across, a[1] + u[1] * d + n[1] * across], dir(u, n), mid);
+            }
+
             let s = from + part.along * (to - from);
             let (p, t) = st.at(s);
             let t = if to >= from { t } else { [-t[0], -t[1]] };
             let n = [t[1], -t[0]];
-            ([p[0] + n[0] * across, p[1] + n[1] * across], dir(t, n))
+            let at = [p[0] + n[0] * across, p[1] + n[1] * across];
+            (at, dir(t, n), at)
         }
 
         Frame::Star { at, ways } => {
@@ -302,13 +317,15 @@ fn place(piece: &Piece, part: &Part, frame: &Frame, st: &Stations, width: f64) -
                 let rot = |v: [f64; 2]| [v[0] * c - v[1] * s, v[0] * s + v[1] * c];
                 let q = rot([part.at[0] * scale, part.at[1] * scale]);
                 let x = part.rotation * Double3::new(1.0, 0.0, 0.0);
-                return ([at[0] + q[0], at[1] + q[1]], rot(unit([x.x, x.z])));
+                let p = [at[0] + q[0], at[1] + q[1]];
+                return (p, rot(unit([x.x, x.z])), p);
             }
 
             let t = ways[part.arm.min(ways.len() - 1)];
             let n = [t[1], -t[0]];
             let along = part.along * arm.length * scale;
-            ([at[0] + t[0] * along + n[0] * across, at[1] + t[1] * along + n[1] * across], dir(t, n))
+            let p = [at[0] + t[0] * along + n[0] * across, at[1] + t[1] * along + n[1] * across];
+            (p, dir(t, n), p)
         }
     }
 }
@@ -433,7 +450,7 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
     let n = format_number;
     let mut ovs = vec![];
     for (index, part) in piece.parts.iter().enumerate() {
-        let (at, x) = place(piece, part, &frame, &st, width);
+        let (at, x, tilt_at) = place(piece, part, &frame, &st, width);
         let height = ground(at[0], at[1]);
         let own_x = part.rotation * Double3::new(1.0, 0.0, 0.0);
         let turn = heading(x) - heading([own_x.x, own_x.z]);
@@ -442,7 +459,7 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
         // A building tilted to the ground under it: its slope along it (end to end) and across.
         if dress.tilt && part.solid {
             let c = [-x[1], x[0]];
-            let h = |d: [f64; 2], k: f64| ground(at[0] + d[0] * k, at[1] + d[1] * k);
+            let h = |d: [f64; 2], k: f64| ground(tilt_at[0] + d[0] * k, tilt_at[1] + d[1] * k);
             let a = Double3::new(x[0] * 2.0 * TILT_ALONG, h(x, TILT_ALONG) - h(x, -TILT_ALONG), x[1] * 2.0 * TILT_ALONG);
             let b = Double3::new(c[0] * 2.0 * TILT_ACROSS, h(c, TILT_ACROSS) - h(c, -TILT_ACROSS), c[1] * 2.0 * TILT_ACROSS);
             let cross = Double3::new(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
@@ -1203,5 +1220,37 @@ mod tests {
         assert!(flat.y.abs() < 1e-9 && flat.z.abs() < 1e-9, "{flat:?}");
         let sloped = orientation(&|_, z| z * 0.2);
         assert!(sloped.y.abs() > 0.1 || sloped.z.abs() > 0.1, "{sloped:?}");
+    }
+
+    #[test]
+    fn a_fence_on_a_bend_starts_and_ends_on_its_line() {
+        // A circle of radius 10; a fence from 3 m along it to 8 m: its pivot (the model's end) where it starts, its x towards where it
+        // ends, so that the 5 m model ends there too (user 2026-11-08: turned by the line at its pivot, each one stuck out of the bend).
+        let line = (0..=120).map(|i| {
+            let a = f64::from(i) * 0.05;
+            [10.0 * a.cos(), 10.0 * a.sin()]
+        }).collect::<Vec<_>>();
+        let mut children = crate::road_pieces::base_guides("fence");
+        children.extend(crate::road_dirt::parts("fence"));
+        let text = crate::road_pieces::group_text("road_dirt_fence", &children);
+        let piece = crate::road_pieces::read(&text).unwrap();
+        let scene = TedScene::parse_any(text).unwrap();
+        let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
+        let (from, to) = (3.0, 8.0);
+        let laid = Laid { piece: "fence", frame: Frame::Along { from, to } };
+        let f = fit(&piece, &contents, "f", &laid, &Site { line: &line, width: 1.0, unit: 2.0, ground: &|_, _| 0.0 }).unwrap();
+        let s = TedScene::parse_any(f.text).unwrap();
+        let els = s.doc().elements();
+        let root = (0..els.len()).find(|&e| els[e].parent.is_none()).unwrap();
+        let b = s.find_all("BUILDING_INSTANCE")[0];
+        let (wb, wr) = (crate::world_transform::world_transform(&s, b), crate::world_transform::world_transform(&s, root));
+        let st = Stations::new(&line);
+        let origin = st.at((from + to) * 0.5).0;
+        let pivot = [origin[0] + (wb.position.x - wr.position.x) / 2.0, origin[1] + (wb.position.z - wr.position.z) / 2.0];
+        let (a, e) = (st.at(from).0, st.at(to).0);
+        assert!((pivot[0] - a[0]).hypot(pivot[1] - a[1]) < 1e-3, "{pivot:?} {a:?}");
+        let x = wb.rotation * Double3::new(1.0, 0.0, 0.0);
+        let chord = unit([e[0] - a[0], e[1] - a[1]]);
+        assert!(x.x * chord[0] + x.z * chord[1] > 0.9999, "{x:?} {chord:?}");
     }
 }

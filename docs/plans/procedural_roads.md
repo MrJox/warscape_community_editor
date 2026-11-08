@@ -301,6 +301,12 @@ from Assembly Kit drops that layer and restores the road.
   along them from end to end, 2 m each way, and across, 0.5 m), their up onto its normal, their heading kept.
 - **Destroyed fences**: `road_fence_damage` (0 to 1) is the chance each fence is destroyed: a destroyed one takes a random damaged
   `destruction_level` (1 to its building's last; `lowfence_3` has one), from the road's seed, so it stays as it was. Checked: 48 of 121 at 0.4.
+  The editor draws it so: a generated building's preview takes its `destruction_level`'s piece files, as the scene's buildings do (until
+  2026-11-08 it drew every one intact, and the slider seemed to do nothing).
+- **A fence on a bend** (user, 2026-11-08). `lowfence_3`'s pivot is at its end, the model running 5.25 m along its x from it: the fence
+  piece has it at its back port, and a rigid (`fixed`) part along a stretch is laid on the chord of the stretch, from the point it starts at
+  to the one it ends at, and tilted by the ground about the chord's middle. With the pivot at the middle and turned by the line there,
+  each fence was 2.5 m ahead of its place, which on a bend stuck out of it outside and into the road inside.
 - **Junctions' curves**: the T's branch turns into the through road either way and the X has a turn in each quarter: ruts and the inside
   edges on quarter circles about the inside corners (`road_dirt::quarter`, as the corner's), in place of two pairs of straight ruts crossing
   and L-shaped inside edges. The kit's bent rut (`path_2`) was measured for it (a capture traced from above): it turns about 25 degrees
