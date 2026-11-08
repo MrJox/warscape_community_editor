@@ -422,11 +422,11 @@ pub fn plan(line: &[[f64; 2]], raw: &[f64], water: &[Option<f64>], s: &RoadSetti
 
     // Graded on the ground under an earlier road's bump, as its own is (averaged with that bump, the road stood higher by it near one).
     let under = raw.iter().zip(&on_earlier).map(|(&h, &on)| if on { h - s.bump } else { h }).collect::<Vec<_>>();
-    let grade = |gaps: &[(usize, usize)]| graded_pinned(line, &over_gaps(&under, gaps), &pins, s);
+    let grade = |gaps: &[(usize, usize)], pins: &[Option<f64>]| graded_pinned(line, &over_gaps(&under, gaps), pins, s);
     let mut gaps = union(vec![]);
     if s.bridges {
         for _ in 0..4 {
-            let found = union(find_gaps(line, raw, &grade(&gaps), s));
+            let found = union(find_gaps(line, raw, &grade(&gaps, &pins), s));
             if found == gaps {
                 break;
             }
@@ -435,8 +435,6 @@ pub fn plan(line: &[[f64; 2]], raw: &[f64], water: &[Option<f64>], s: &RoadSetti
         }
     }
 
-    // A deck over water stands at least its clearance up; the road climbs to it at its grade.
-    let mut heights = grade(&gaps);
     let along = {
         let mut a = vec![0.0; line.len()];
         for i in 1..line.len() {
@@ -447,22 +445,61 @@ pub fn plan(line: &[[f64; 2]], raw: &[f64], water: &[Option<f64>], s: &RoadSetti
     };
 
     let slope = s.max_grade.to_radians().tan();
-    for &(a, b, deck) in &decks {
-        for (i, h) in heights.iter_mut().enumerate() {
-            let off = if i < a { along[a] - along[i] } else if i > b { along[i] - along[b] } else { 0.0 };
-            *h = h.max(deck - off * slope);
-        }
-    }
-
     // The bump stays off a ford; it does not come in from an end on another road.
     let on_ford = |x: f64, z: f64| fords.iter().any(|&(a, b)| line[a..=b].iter().any(|p| (p[0] - x).hypot(p[1] - z) < 1.0));
     let ramp_ends = [!on_earlier.first().copied().unwrap_or(false), !on_earlier.last().copied().unwrap_or(false)];
-    let mut heights = with_bump_ends(line, &heights, s, &on_ford, ramp_ends);
-    for &(a, b) in &fords {
-        heights[a..=b].copy_from_slice(&raw[a..=b]);
+    let heights_with = |pins: &[Option<f64>]| {
+        // A deck over water stands at least its clearance up; the road climbs to it at its grade.
+        let mut heights = grade(&gaps, pins);
+        for &(a, b, deck) in &decks {
+            for (i, h) in heights.iter_mut().enumerate() {
+                let off = if i < a { along[a] - along[i] } else if i > b { along[i] - along[b] } else { 0.0 };
+                *h = h.max(deck - off * slope);
+            }
+        }
+
+        let mut heights = with_bump_ends(line, &heights, s, &on_ford, ramp_ends);
+        for &(a, b) in &fords {
+            heights[a..=b].copy_from_slice(&raw[a..=b]);
+        }
+
+        heights
+    };
+
+    let mut heights = heights_with(&pins);
+    // Where the road comes back over itself, it is at the height it was at the first time, as on another road (user 2026-11-08: graded
+    // apart, its two ways crossed at two heights, one cut into the other).
+    let again = over_itself(line, &along, s.width);
+    if !again.is_empty() {
+        for _ in 0..2 {
+            let mut more = pins.clone();
+            for &(i, k) in &again {
+                if more[i].is_none() {
+                    more[i] = Some(heights[k] - s.bump);
+                }
+            }
+
+            heights = heights_with(&more);
+        }
     }
 
     Plan { heights, gaps, fords, decks }
+}
+
+/// The samples where a line comes back over itself, each with the earlier sample it lies on (within half `width`, the earlier one more
+/// than twice the width back along it).
+fn over_itself(line: &[[f64; 2]], along: &[f64], width: f64) -> Vec<(usize, usize)> {
+    let mut out = vec![];
+    for i in 0..line.len() {
+        let p = line[i];
+        let found = (0..i).take_while(|&k| along[i] - along[k] > width * 2.0).map(|k| (k, (line[k][0] - p[0]).hypot(line[k][1] - p[1])))
+            .filter(|&(_, d)| d <= width * 0.5).min_by(|a, b| a.1.total_cmp(&b.1));
+        if let Some((k, _)) = found {
+            out.push((i, k));
+        }
+    }
+
+    out
 }
 
 /// A road laid out: its samples, found by position.
@@ -903,6 +940,29 @@ mod tests {
 
         // Its other end, on the ground, still comes down to it.
         assert!(p.heights[0].abs() < 1e-9, "{}", p.heights[0]);
+    }
+
+    #[test]
+    fn a_road_over_itself_is_at_one_height_where_it_crosses() {
+        // A loop: east 60 m, round, and back across its first stretch at 30 m, over ground rising along the way (graded alone, its second
+        // pass stood higher where it crossed the first).
+        let pts = [[0.0, 0.0], [60.0, 0.0], [60.0, 30.0], [30.0, 30.0], [30.0, -30.0]];
+        let l = centre_line(&pts);
+        let along = (0..l.len()).map(|i| i as f64).collect::<Vec<_>>();
+        let raw = along.iter().map(|a| a * 0.05).collect::<Vec<_>>();
+        let s = settings();
+        let p = plan(&l, &raw, &vec![None; l.len()], &s, &|_, _| false);
+        let mut met = 0;
+        for i in 0..l.len() {
+            for k in 0..i.saturating_sub(20) {
+                if (l[i][0] - l[k][0]).hypot(l[i][1] - l[k][1]) < 1.0 {
+                    met += 1;
+                    assert!((p.heights[i] - p.heights[k]).abs() < 0.1, "at {:?}: {} {}", l[i], p.heights[i], p.heights[k]);
+                }
+            }
+        }
+
+        assert!(met > 0, "it crosses itself");
     }
 
     #[test]
