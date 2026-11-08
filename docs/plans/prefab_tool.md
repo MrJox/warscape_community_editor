@@ -5,7 +5,7 @@ prefabs are the editor's (`<key>.wce` in the projects' `art/prefabs`), and they 
 tile, a prefab's height layer shows in the reference's own settings (the Inspector), not in the tile's Terrain layers list. The goal is
 prefabs that stop needing hand-made meshes that fake the terrain.
 
-State: planned 2026-11-07, decisions taken with the user (the list at the end). Steps 1 to 7 done (2026-11-07/08): the tool works behind the `prefab` feature; step 8 and the follow-ups below are open.
+State: planned 2026-11-07, decisions taken with the user (the list at the end). Steps 1 to 8 done (2026-11-07/08), the tool built by default; what is left is in the follow-ups below.
 
 ## Why
 
@@ -78,8 +78,8 @@ contents into the other copies **of that tile only**, Cancel puts the file's con
 
 ### The tool
 
-- **Crate** `wce_prefab_tool`, Cargo feature `prefab` (off by default until it works, then in the release set with weather, tile, ui).
-  Opens `.wce` / `.xml` prefabs; listed in the switcher after Tile.
+- **Crate** `wce_prefab_tool`, Cargo feature `prefab` (built as `wce_tile_tool::prefab_tool`, see the follow-ups). Listed in the
+  switcher after Weather.
 - **Stage**: a flat tile the tool makes itself (`new_tile`), outside the user's projects (`<projects>/.wce/prefab_stage/<settings>`), never
   saved as a tile. Settings: size (default 2 x 2 cells, 256 m), density (128: 1 m a pixel), base height, climate and tile set (textures,
   weather chips), a grid and an origin marker. A real tile's ground as the base is for later.
@@ -135,14 +135,13 @@ GUI and in game (a prefab with a normalized platform under a building, units wal
   has to name it), behind `wce_app`'s `prefab` feature. The stage is under `<projects>/.prefab_stage`. The footprint is painted with the
   Ground brush (one ground type) and read back from the stage's ground type map; sculpted samples count as covered too. The flag and
   feather are attributes of the stage's group (`wce_stage_normalize`, `wce_stage_feather`): undoable, never saved with the contents.
-- Step 8: stage settings in the UI (size, base height, climate / tile set), a grid and origin marker, the feather's edge on the stage,
-  thumbnails with the ground.
-- The camera frames the stage's corner as a new tile's does: it should frame the prefab on open.
-- Prefabs panel: Save as, Duplicate, Rename, Delete of project prefabs.
-- On the stage, a nested prefab's ground (an owned layer) applies over the prefab's own layer; in a tile it is under it. Only visible where
-  they overlap.
-- The in-tile Edit / Apply / Cancel goes once `prefab` is a default feature (decision 4); until then it shows only in builds without it.
-- A reference's opacity and feather change its ground when the drag ends, not while it moves.
+- Done 2026-11-08: step 8's stage settings (size, ground height, density in the Prefabs panel's Stage section; climate and season in the
+  viewport's ground chip, kept from one stage to the next), the camera close on the prefab and the prefab selected on open, outlines of the
+  ground's cover (orange) and the feather's reach (yellow), Save as / Duplicate / Rename / Delete (projects' prefabs only; a rename leaves
+  tiles' references to the old name as they are), nested prefabs' ground under the prefab's own on a stage, a reference's ground
+  following its opacity and feather while dragged, `prefab` a default feature and the in-tile Edit / Apply / Cancel removed. The tools'
+  order is Weather, Prefab, Tile, Terrain, UI.
+- Still open: thumbnails of prefabs with their ground; smoother outlines (they follow the samples, in steps).
 - The user's checks: the GUI flow, and in game a normalized platform under a building with units on it.
 
 ## Decisions (2026-11-07, with the user)
