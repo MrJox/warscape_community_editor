@@ -399,6 +399,20 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Re
             [x - warp.origin[0], y_at(x, zz, along) - warp.origin[1], zz - warp.origin[2]]
         };
 
+        // The building's footprint (its collision outlines) over the ramp too, as the kit's runs over its ramps and stops at its ground
+        // platforms (bridge_wood_complete's to z +-52: its deck's 50 and its ramps' 2). Its corners at this end of the deck go out by the
+        // ramp's length.
+        for o in d["collision_outlines"].as_array_mut().into_iter().flatten() {
+            for q in o["vertices"]["outline"].as_array_mut().into_iter().flatten() {
+                let (x, z) = (q["x"].as_f64().unwrap_or(0.0) + warp.origin[0], q["z"].as_f64().unwrap_or(0.0) + warp.origin[2]);
+                let along = ((x - c[0]) * t[0] + (z - c[2]) * t[1]) * out;
+                if along > -0.5 {
+                    q["x"] = serde_json::json!((x + t[0] * out * END_RAMP - warp.origin[0]) as f32);
+                    q["z"] = serde_json::json!((z + t[1] * out * END_RAMP - warp.origin[2]) as f32);
+                }
+            }
+        }
+
         for ((from, to), ground) in [((0.0, END_RAMP), false), ((END_RAMP, END_RAMP + GROUND_PLATFORM), true)] {
             let pts = [corner(z0, from), corner(z1, from), corner(z1, to), corner(z0, to)];
             let (a, b) = ([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]], [pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]]);
