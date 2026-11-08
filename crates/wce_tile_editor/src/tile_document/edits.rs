@@ -2673,11 +2673,13 @@ impl TileDocument {
             out = out.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         }
 
-        let height_dirty = t.height_modified() || t.png_on_disk_edited || (elsewhere && t.project.has_height());
+        // Or marked by what wrote to the maps outside the history (the roads' terrain, `take_road_terrain`; user 2026-11-08: recomputed
+        // here from the history alone, the mark was lost and the height map never saved after the roads were made again).
+        let height_dirty = t.project.height_dirty || t.height_modified() || t.png_on_disk_edited || (elsewhere && t.project.has_height());
         // A splice of attribute edits alone is baked into the scene's text without counting as a modification of it: the history says.
         let force_scene = t.save_scene_needed() || elsewhere || self.history.modified();
-        let blend_dirty = t.blend_modified() || t.blend_on_disk_edited;
-        let ground_dirty = t.ground_modified() || t.ground_on_disk_edited;
+        let blend_dirty = t.project.blend_dirty || t.blend_modified() || t.blend_on_disk_edited;
+        let ground_dirty = t.project.ground_dirty || t.ground_modified() || t.ground_on_disk_edited;
         let t = self.tile_mut();
         t.project.height_dirty = height_dirty;
         t.project.blend_dirty = blend_dirty;
