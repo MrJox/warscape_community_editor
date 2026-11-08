@@ -50,10 +50,13 @@ const BURY: f64 = 0.5;
 /// bridge (user 2026-11-08: the far end red-crossed, units went round its sides).
 pub const GROUND_PLATFORM: f64 = 6.0;
 
-/// How far under the ground a ground platform's outer edge is (scene units): just under it, so that the platform lies over the ground
-/// from the deck and meets it at its outer edge, as Rome II's bridges' are seen (user 2026-11-08: 3.5 under, the ground covered it and
-/// met the deck itself). The kit's own start 0.2 units over theirs.
-pub const GROUND_PLATFORM_BURY: f64 = 0.2;
+/// A bridge's ends as the kit's `bridge_wood_complete`'s (scene units): a plain ramp from the deck `END_RAMP` long down to `RAMP_FOOT`
+/// over the ground, then the ground platform ([`GROUND_PLATFORM`] long, `flag_2`) down to `GROUND_PLATFORM_BURY` under it (the kit's:
+/// a 2-unit ramp from 1.2 to 0.2, its ground platforms 6 units to 3.4 and 3.7 under). Ours rises further (the deck 1 m over the road:
+/// `DECK_LIFT` in the editor's roads), so its ramp is longer.
+pub const END_RAMP: f64 = 4.0;
+pub const RAMP_FOOT: f64 = 0.2;
+pub const GROUND_PLATFORM_BURY: f64 = 3.5;
 
 /// The base turned a quarter about y: its +z onto +x, its +x onto -z (a turn, not a mirror).
 pub struct QuarterTurn;
@@ -378,25 +381,39 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Re
     for (s, out) in ends.into_iter().flatten() {
         let (c, t) = warp.deck.at(s);
         let n = [-t[1], t[0]];
-        let corner = |z: f64, along: f64| {
-            let (x, zz) = (c[0] + n[0] * z * warp.across + t[0] * out * along, c[2] + n[1] * z * warp.across + t[1] * out * along);
-            let y = if along > 0.0 { (warp.ground)(x, zz) - GROUND_PLATFORM_BURY } else { c[1] };
-            [x - warp.origin[0], y - warp.origin[1], zz - warp.origin[2]]
+        // As the kit's bridge_wood_complete (Attila's and Rome II's alike): a plain ramp from the deck down to just over the ground, then
+        // the ground platform (`flag_2`) from there into it. A ground platform joined to the deck itself was walked onto and no further
+        // (user 2026-11-08: units stopped at the deck's edge).
+        let y_at = |x: f64, zz: f64, along: f64| {
+            if along <= 0.0 {
+                c[1]
+            } else if along <= END_RAMP + 1e-9 {
+                (warp.ground)(x, zz) + RAMP_FOOT
+            } else {
+                (warp.ground)(x, zz) - GROUND_PLATFORM_BURY
+            }
         };
 
-        let pts = [corner(z0, 0.0), corner(z1, 0.0), corner(z1, GROUND_PLATFORM), corner(z0, GROUND_PLATFORM)];
-        let (a, b) = ([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]], [pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]]);
-        let mut nrm = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-        let l = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt().max(1e-12);
-        let up = if nrm[1] < 0.0 { -1.0 } else { 1.0 };
-        nrm = [nrm[0] * up / l, nrm[1] * up / l, nrm[2] * up / l];
-        let point = |p: [f64; 3]| serde_json::json!({ "x": p[0] as f32, "y": p[1] as f32, "z": p[2] as f32 });
-        let mut platform = serde_json::json!({ "flag_1": false, "flag_2": true, "flag_3": false,
-            "normal": { "x": nrm[0] as f32, "y": nrm[1] as f32, "z": nrm[2] as f32 },
-            "vertices": { "outline": pts.iter().map(|&p| point(p)).collect::<Vec<_>>() } });
-        crate::logic::wind_as_the_game(&mut platform);
-        if let Some(ps) = d["platforms"].as_array_mut() {
-            ps.push(platform);
+        let corner = |z: f64, along: f64| {
+            let (x, zz) = (c[0] + n[0] * z * warp.across + t[0] * out * along, c[2] + n[1] * z * warp.across + t[1] * out * along);
+            [x - warp.origin[0], y_at(x, zz, along) - warp.origin[1], zz - warp.origin[2]]
+        };
+
+        for ((from, to), ground) in [((0.0, END_RAMP), false), ((END_RAMP, END_RAMP + GROUND_PLATFORM), true)] {
+            let pts = [corner(z0, from), corner(z1, from), corner(z1, to), corner(z0, to)];
+            let (a, b) = ([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]], [pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]]);
+            let mut nrm = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+            let l = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt().max(1e-12);
+            let up = if nrm[1] < 0.0 { -1.0 } else { 1.0 };
+            nrm = [nrm[0] * up / l, nrm[1] * up / l, nrm[2] * up / l];
+            let point = |p: [f64; 3]| serde_json::json!({ "x": p[0] as f32, "y": p[1] as f32, "z": p[2] as f32 });
+            let mut platform = serde_json::json!({ "flag_1": false, "flag_2": ground, "flag_3": false,
+                "normal": { "x": nrm[0] as f32, "y": nrm[1] as f32, "z": nrm[2] as f32 },
+                "vertices": { "outline": pts.iter().map(|&p| point(p)).collect::<Vec<_>>() } });
+            crate::logic::wind_as_the_game(&mut platform);
+            if let Some(ps) = d["platforms"].as_array_mut() {
+                ps.push(platform);
+            }
         }
     }
 
