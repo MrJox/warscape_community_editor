@@ -53,6 +53,10 @@ pub enum Ends {
     /// two `bridge_wood_2_end`, the deck 1 unit over the ground and each end's ramp from it down to the ground) is crossed; with a ground
     /// platform added past each end piece, the hulls lowered and the outlines put on the terrain, ours was not (user 2026-11-08).
     Plain,
+
+    /// An end piece with end pieces: as `Plain`, its footprint (collision outlines, `orange_thingies`) made again from its platform's
+    /// corners (`footprint_from_platform`).
+    EndPiece,
 }
 
 /// A piece of a bridge: an end piece or not, the line it is laid along (the deck's, or its own from past the deck's end to it), its
@@ -70,7 +74,8 @@ impl Part {
     pub fn ends(&self, with_end_pieces: bool) -> Ends {
         match (with_end_pieces, self.end) {
             (false, _) => Ends::Ramps,
-            (true, _) => Ends::Plain,
+            (true, true) => Ends::EndPiece,
+            (true, false) => Ends::Plain,
         }
     }
 }
@@ -400,7 +405,8 @@ pub fn make_piece(base: &Prepared, key: &str, warp: &BridgeWarp, ends: Ends) -> 
             *bytes = crate::mesh::warp_mesh(bytes, warp, &cuts)?;
         } else if *name == logic_name {
             let warped = crate::logic::warp_logic(bytes, warp, &cuts)?.0;
-            *bytes = with_ground_platforms(&warped, base, warp, ends)?;
+            let made = with_ground_platforms(&warped, base, warp, ends)?;
+            *bytes = if ends == Ends::EndPiece { footprint_from_platform(&made)? } else { made };
         } else if *name == zones_name {
             *bytes = crate::zones::warp_zones(&String::from_utf8_lossy(bytes), warp, STEP)?.into_bytes();
         } else if !name.ends_with(".meta") {
@@ -422,7 +428,7 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode:
     let len = warp.deck.length();
     let ends = match mode {
         Ends::Ramps => [(warp.s.0 <= 1e-6).then_some((0.0, -1.0)), (warp.s.1 >= len - 1e-6).then_some((len, 1.0))],
-        Ends::Plain => [None, None],
+        Ends::Plain | Ends::EndPiece => [None, None],
     };
     if ends.iter().all(Option::is_none) {
         return Ok(logic.to_vec());
@@ -509,6 +515,33 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode:
             crate::logic::wind_as_the_game(&mut platform);
             if let Some(ps) = d["platforms"].as_array_mut() {
                 ps.push(platform);
+            }
+        }
+    }
+
+    encode(v)
+}
+
+/// An end piece's footprint made from its platform: each collision outline and `orange_thingies` ring becomes the platform's corners in the
+/// other order (at the outline's own height), as the kit's `bridge_wood_2_end` has them. The game links a platform edge to the ground only
+/// where a ground edge has the same two corners, run the other way, and the ground's edges along a building are its outline's
+/// (docs/re/platforms_and_bridges.md). Bent, the end piece's ramp foot got a middle corner its outline did not have, and the foot linked to
+/// no ground (user 2026-11-08: units got on only by its sides).
+fn footprint_from_platform(logic: &[u8]) -> Result<Vec<u8>, String> {
+    let mut v = decode(logic)?;
+    for piece in v["pieces"].as_array_mut().into_iter().flatten() {
+        for d in piece["destructs"].as_array_mut().into_iter().flatten() {
+            let Some(corners) = d["platforms"].as_array().and_then(|p| p.iter().find(|p| p["flag_2"].as_bool() != Some(true)))
+                .and_then(|p| p["vertices"]["outline"].as_array().cloned()) else { continue };
+            let xz = corners.iter().rev().map(|q| (q["x"].as_f64().unwrap_or(0.0), q["z"].as_f64().unwrap_or(0.0))).collect::<Vec<_>>();
+            for o in d["collision_outlines"].as_array_mut().into_iter().flatten() {
+                let y = o["vertices"]["outline"].as_array().and_then(|a| a.first()).and_then(|q| q["y"].as_f64()).unwrap_or(0.0);
+                o["vertices"]["outline"] = serde_json::Value::Array(xz.iter().map(|&(x, z)| serde_json::json!({ "x": x as f32, "y": y as f32, "z": z as f32 })).collect());
+            }
+
+            for ring in d["orange_thingies"].as_array_mut().into_iter().flatten() {
+                let kind = ring.as_array().and_then(|a| a.first()).map_or(serde_json::json!(2), |q| q["vertex_type"].clone());
+                *ring = serde_json::Value::Array(xz.iter().map(|&(x, z)| serde_json::json!({ "vertex": { "x": x as f32, "y": z as f32 }, "vertex_type": kind })).collect());
             }
         }
     }
