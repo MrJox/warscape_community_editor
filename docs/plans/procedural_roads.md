@@ -513,6 +513,12 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   Units then got on and off by one corner of an end (user, 2026-11-08): level only across the road's flat, the ground fell away towards
   one side of a ramp's foot, the 2 m pixels past the edge being on the bank. Under the end pieces the bank is held back as under the
   deck (`under_deck` for `LEVEL_PAST_RIM` past the rims): in a dry launch the ground is at the feet's height 4 m each side of the centre.
+- **The traced cause** (docs/re/platforms_and_bridges.md, 2026-11-08): the game links a platform edge to the ground only where a ground
+  edge has the same two corners, and the ground's edges along a building are its collision outline's. Bent, an end piece's ramp foot
+  got a middle corner its outline did not have (the warp adds points to outlines and platforms at different places), so the foot linked
+  to no ground and only the ramp's sides could. An end piece's collision outlines and `orange_thingies` ring are now made from its
+  platform's corners in the other order (`footprint_from_platform`, `Ends::EndPiece`), as the kit's are; `bridge_check` reports 2 of 2
+  foot edges along the outline for the generated end pieces and for a dry launch's pack (the kit's: 1 of 1).
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,
