@@ -2,6 +2,11 @@
 //! prefab's height layer is a layer of the user's on it (`STAGE_LAYER`), the working one; its footprint is what is painted on its ground
 //! type map (any ground type). What the stage holds becomes the prefab's layer again ([`TileDocument::stage_terrain`]): the layer's heights
 //! and, as coverage, the footprint and wherever the layer holds a height, in the group's frame.
+//!
+//! The group's origin is on the stage's ground, as placing puts a prefab's (`place_text`), and what is on the landscape inside it goes onto
+//! the ground as placing puts it: it kept the height it had where it was saved, and floated or sank by the difference. That is the stage's,
+//! not an edit of the prefab: a save gives back the height in the file to each one still where the stage put it
+//! ([`TileDocument::stage_children_text`]).
 
 use std::collections::BTreeMap;
 
@@ -96,7 +101,45 @@ impl TileDocument {
         }
 
         t.layers_shown = true;
+
+        // What is on the landscape goes onto the ground (the prefab's own too), as placing puts it.
+        let unit = t.unit();
+        let on = t.instances_below(&[group]).into_iter().filter(|&e| e != group && t.on_the_terrain(e)).collect::<Vec<_>>();
+        let mut snapped = vec![];
+        for e in on {
+            let w = world_transform(t.tscene(), e).position;
+            let (x, z) = ((w.x / unit) as f32, (w.z / unit) as f32);
+            let local = t.local_for_world_y(e, f64::from(t.landscape_y(e, x, z)));
+            let before = t.tscene().doc().get(e, "position").unwrap_or_default();
+            t.project.scene.set_position(e, local);
+            let after = t.tscene().doc().get(e, "position").unwrap_or_default();
+            if after != before {
+                t.index_edited(e);
+                snapped.push((e, before, after));
+            }
+        }
+
+        t.stage_snapped = snapped;
         Ok(())
+    }
+
+    /// The stage's group's contents as the prefab's: what the stage put onto the ground and is still where it put it gets the height its
+    /// file has back (it was no edit).
+    #[must_use]
+    pub fn stage_children_text(&self, group: usize) -> Vec<u8> {
+        let t = self.tile();
+        let n = t.tscene().doc().elements().len();
+        let back = t.stage_snapped.iter().filter(|(e, _, now)| *e < n && t.tscene().doc().get(*e, "position").as_deref() == Some(now.as_str())).collect::<Vec<_>>();
+        if back.is_empty() {
+            return t.tscene().children_text(group);
+        }
+
+        let mut sc = t.tscene().clone();
+        for (e, file, _) in back {
+            sc.set_attr(*e, "position", file);
+        }
+
+        sc.children_text(group)
     }
 
     /// What the stage holds as the prefab's height layer (none when it holds nothing): the stage layer's heights in the group's frame, one

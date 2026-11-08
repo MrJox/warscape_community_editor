@@ -151,6 +151,9 @@ impl PrefabTool {
 
         let mut doc = self.tile.make_document(e, project)?;
         doc.begin_stage(terrain.as_ref())?;
+
+        // No grass on a stage: it hides the prefab's foot and its ground (the Tile panel's grass switch is not here; `grass on`).
+        doc.tile_mut().display_mut().show_grass = false;
         let saved = Arc::new(AtomicBool::new(false));
         let projects = Self::projects_prefabs(e);
         let (save_key, flag) = (entry.key.clone(), saved.clone());
@@ -160,7 +163,7 @@ impl PrefabTool {
             let normalize = doc.get(group, NORMALIZE_ATTR).is_some_and(|v| v == "true");
             let feather = doc.get(group, FEATHER_ATTR).and_then(|v| v.parse::<f64>().ok()).unwrap_or(DEFAULT_FEATHER).max(0.0);
             let terrain = d.stage_terrain(normalize, feather);
-            let path = lib.save_with_terrain(&save_key, &projects, &d.children_text(group), terrain.as_ref())?;
+            let path = lib.save_with_terrain(&save_key, &projects, &d.stage_children_text(group), terrain.as_ref())?;
             flag.store(true, Ordering::Relaxed);
             Ok(format!("prefab saved to {}{}", path.display(), if terrain.is_some() { " with its ground" } else { "" }))
         }));
@@ -205,7 +208,7 @@ impl PrefabTool {
         let doc = d.tile().tscene().doc();
         let normalize = doc.get(group, NORMALIZE_ATTR).is_some_and(|v| v == "true");
         let feather = doc.get(group, FEATHER_ATTR).and_then(|v| v.parse::<f64>().ok()).unwrap_or(DEFAULT_FEATHER).max(0.0);
-        lib.save_with_terrain(&new_key, &projects, &d.children_text(group), d.stage_terrain(normalize, feather).as_ref())?;
+        lib.save_with_terrain(&new_key, &projects, &d.stage_children_text(group), d.stage_terrain(normalize, feather).as_ref())?;
         self.close_stage(e, true)?;
         self.rescan(e);
         self.open_prefab(e, &new_key)?;
