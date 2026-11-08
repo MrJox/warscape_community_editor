@@ -497,9 +497,21 @@ impl Tile {
         self.tscene().doc().get(elem, "flags").is_none_or(|f| f.contains(flag))
     }
 
-    /// Visible itself and in every ancestor.
+    /// Visible itself and in every ancestor. A road piece's guide shows in the Prefab tool's stage only (the index has it too).
     pub fn shown(&self, elem: usize) -> bool {
+        let indexed = self.idx.valid && elem < self.idx.state.len();
+        if !indexed && self.elements().get(elem).is_some_and(|e| e.name == wce_tile::new_instances::ROAD_GUIDE) && !self.staged(elem) {
+            return false;
+        }
+
         self.state_bit(elem, 1, "OIF_VISIBLE")
+    }
+
+    /// In the Prefab tool's stage: its prefab's group, or below it.
+    fn staged(&self, elem: usize) -> bool {
+        let els = self.elements();
+        std::iter::successors(Some(elem), |&e| els[e].parent)
+            .any(|e| els[e].name == "UserInstanceGroup" && self.tscene().doc().get(e, wce_tile::prefab_stage::STAGE_ATTR).is_some_and(|v| v == "true"))
     }
 
     /// Active itself and in every ancestor.
@@ -627,6 +639,9 @@ impl Tile {
         ix.scale = local.iter().map(|l| l.scale.unwrap_or([1.0; 3])).collect();
         ix.state = vec![3; n];
 
+        // In the Prefab tool's stage (its prefab's group and what is in it): a road piece's guides show there only (`road_pieces`).
+        let mut staged = vec![false; n];
+
         // Compose the parent chains: elements are in document order, so a parent always comes before its children.
         ix.world = vec![WorldTransform::default()];
         let mut key_ids = HashMap::<String, u32>::new();
@@ -638,6 +653,11 @@ impl Tile {
             let fb = local[i].flagbits;
             ix.state[i] = if fb != 0 { ps & (u8::from(fb & 2 != 0) | if fb & 4 != 0 { 2 } else { 0 }) } else { ps };
             if local[i].not_in_game {
+                ix.state[i] &= !1;
+            }
+
+            staged[i] = p.is_some_and(|p| staged[p]) || (els[i].name == "UserInstanceGroup" && doc.get(i, wce_tile::prefab_stage::STAGE_ATTR).is_some_and(|v| v == "true"));
+            if els[i].name == wce_tile::new_instances::ROAD_GUIDE && !staged[i] {
                 ix.state[i] &= !1;
             }
 

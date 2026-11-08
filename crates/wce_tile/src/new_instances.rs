@@ -16,6 +16,9 @@ pub const WALL_SPLINE: &str = "WceWallSpline";
 /// The element of a procedural road (docs/plans/procedural_roads.md): as [`WALL_SPLINE`], TEd never sees it.
 pub const ROAD_SPLINE: &str = "WceRoadSpline";
 
+/// A guide of a road piece (`road_pieces`): where a piece's road, edges, verges and joins are. In the pieces' prefabs only, never in TEd's.
+pub const ROAD_GUIDE: &str = "WceRoadGuide";
+
 /// A soldier standing in the tile to measure the scale against (docs/plans/units.md). Not TEd's, nor the game's: it is saved in tile.wce and goes no
 /// further.
 pub const REF_HUMAN: &str = "WceRefHuman";
@@ -57,6 +60,16 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
         ("polygon_shape", "PS_POLYGON"), ("area", "0"), ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
         ("road_id", "0"), ("road_width", "6"), ("road_shoulder", "3"), ("road_bump", "0.25"), ("road_max_grade", "10"), ("road_max_side", "30"),
         ("road_group", "0"), ("road_variation", "0"), ("road_ground", "road"), ("road_feather", "2"), ("road_seed", "1"), ("road_detail", "dirt"), ("road_bridges", "true"),
+    ],
+    wrappers: &["points"],
+    point_attrs: &[("position", "0,0,0")],
+    },
+    InstanceTemplate {
+    kind: ROAD_GUIDE,
+    attrs: &[
+        ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("recenter_polygon", "0"), ("lf_offset", "0"), ("line_colour", "argb(1.0,1.0,0.3,0.8)"),
+        ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("name", "Guide"),
+        ("polygon_shape", "PS_POLYGON"), ("area", "0"), ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"), ("guide_role", "centre"),
     ],
     wrappers: &["points"],
     point_attrs: &[("position", "0,0,0")],

@@ -139,15 +139,18 @@ is replaced, and `road_detail` (the setting and the module) with it.
 
 ```
 roads_proc/
-    base/       straight  curve  corner  t_junction  x_junction  end  ford     (guides only: the placeholders)
-    dirt/       the same keys, guides and the kit's decals                       (generated, refined by hand)
-    <type>/     ...
+    base/       road_base_straight  road_base_curve  road_base_corner  road_base_t_junction  road_base_x_junction  road_base_end  road_base_ford
+    dirt/       road_dirt_straight  ...      (guides and the kit's decals: generated, refined by hand)
+    <type>/     road_<type>_<piece>
 ```
+
+A prefab's key is its file's name and the library has one list of keys across every folder, so the type is in the key: `road_<type>_<piece>`
+(`road_pieces::key`); the folder is where it is kept.
 
 - A road type is a folder; `road_type` (in place of `road_detail`) lists the folders but `base`, and `none`. A type missing a piece
   takes `base`'s, which lays nothing but its guides' measures (a warning names the missing piece).
-- The editor writes `base/` and `dirt/` into a game's projects when the Tile tool mounts them and they are missing, and never writes over
-  a file that is there: the user's edits are kept. `dirt/` is written only when the game's kit has its decals; else the log says so.
+- The editor writes `base/` and `dirt/` into a game's projects when the prefab library is first scanned for that game (the Tile and Prefab
+  tools share it; `road_pieces::write_base`), each piece only where its file is missing: the user's edits are kept. `dirt/` is written only when the game's kit has its decals; else the log says so.
 - They are ordinary `.wce` prefabs: the Prefab tool opens, edits and saves them like any other.
 
 ### The measures and the guides
@@ -166,7 +169,9 @@ along +z, its width across x, the ground at y = 0. Metres below; the file's unit
 | `ford` | 8 long, as a straight | z = -4 and +4 | over a ford, the length of the crossing |
 
 The placeholders are **guides**: `WceRoadGuide` elements, open polylines of the editor's own (TEd never sees them, `project_files::to_ted`
-drops them as it drops every `Wce*` element), drawn in the Prefab tool and hidden in a tile. A guide's `guide_role` is one of:
+drops them as it drops every `Wce*` element), drawn on the Prefab tool's stage and hidden anywhere else (the index takes the visible bit off a
+guide outside the stage's group). All guides draw in one colour (the overlay's colour table has no free slot); their names say their role
+(`edge left`, `port front`, ...). A guide's `guide_role` is one of:
 
 - `centre`: the road's centre line, port to port (a junction or corner: one per arm, from the centre out);
 - `edge`: the road's edge each side of each arm, 3 m out;
@@ -291,7 +296,7 @@ bridges' models and rows into the tile's pack and `@wce_proc_data.pack`, and the
 | 2 | Working layer, brushes and undo on it, the panel | done |
 | 4 | `WceRoadSpline`, Create panel, Inspector, height, blend and ground type generation | built; to check in a battle that units take its ground type |
 | 6 | Crossings of roads, tile edge ends | built |
-| R1 | `WceRoadGuide`, `road_pieces::read` (arms, anchors), `roads_proc/base` written on mount, guides drawn in the Prefab tool and hidden in tiles | the base pieces open in the Prefab tool and read back as their measures |
+| R1 | `WceRoadGuide`, `road_pieces::read` (arms, anchors), `roads_proc/base` written on mount, guides drawn in the Prefab tool and hidden in tiles | done (2026-11-08): the base pieces open in the Prefab tool and read back as their measures (`road_pieces` tests, `a_road_pieces_guides_show_on_the_prefab_stage_only`) |
 | R2 | `roads_proc/dirt` generated from the kit's decals | every piece reads, parts at most 4 m, no building on the road |
 | R3 | `road_layout`: features, stretches, fitting by overrides; the pieces as references, preview, lowering; `road_type`; old `road_detail` out | a curved road with a sharp point and a free end lays dirt pieces that join at their ports |
 | R4 | Junctions: T on a snapped end, X on a crossing | two crossing roads and a road ending on one |
