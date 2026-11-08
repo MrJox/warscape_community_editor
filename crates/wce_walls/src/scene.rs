@@ -81,6 +81,15 @@ pub fn wall_points(scene: &TedScene, elem: usize) -> (Vec<[f64; 2]>, Vec<bool>) 
     (points, sharp)
 }
 
+/// A wall's handles where written (`controlIn`, `controlOut`; x, z in the world).
+pub fn wall_handles(scene: &TedScene, elem: usize) -> Vec<[Option<[f64; 2]>; 2]> {
+    let w = world_transform(scene, elem);
+    wce_tile::splines::written(scene, elem).into_iter().map(|h| h.map(|v| v.map(|v| {
+        let p = w.position + w.rotation * v;
+        [p.x, p.z]
+    }))).collect()
+}
+
 /// A wall's layout; `None` for an element that is not a wall or has fewer than 2 points.
 pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn(f64, f64) -> f64) -> Option<WallLayout> {
     if scene.type_of(elem) != WALL_SPLINE {
@@ -116,6 +125,7 @@ pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn
     let input = WallInput {
         points,
         sharp,
+        handles: wall_handles(scene, elem),
         flip,
         tolerance,
         ends: [ends[0].as_ref().map(|a| a.at[1]), ends[1].as_ref().map(|a| a.at[1])],

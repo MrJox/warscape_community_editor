@@ -35,6 +35,10 @@ pub struct WallInput {
     /// Per point, marked sharp (a corner). The ends are always corners.
     pub sharp: Vec<bool>,
 
+    /// Per point, its handles where written (`controlIn`, `controlOut`, x and z): a segment with one is the Bezier through them, the
+    /// other the Catmull-Rom one; a point with one is no corner unless marked. Empty: none.
+    pub handles: Vec<Handles>,
+
     /// The outer face on the other side: the wall is laid from its last point to its first (a rotation of the pieces, not a mirror), so
     /// distances along it start at the last point.
     pub flip: bool,
@@ -161,6 +165,7 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
         let reversed = WallInput {
             points: input.points.iter().rev().copied().collect(),
             sharp: (0..n).rev().map(|i| input.sharp.get(i).copied().unwrap_or(false)).collect(),
+            handles: (0..n).rev().map(|i| input.handles.get(i).map_or([None, None], |h| [h[1], h[0]])).collect(),
             flip: false,
             tolerance: input.tolerance,
             ends: [input.ends[1], input.ends[0]],
@@ -183,19 +188,8 @@ pub fn solve(input: &WallInput, profile: &Profile, ground: &dyn Fn(f64, f64) -> 
         return plan;
     }
 
-    // The centre line: Catmull-Rom between corners, then resampled by distance.
-    let is_corner = corners(&input.points, &input.sharp);
-    let mut line: Vec<([f64; 2], Option<usize>)> = vec![];
-    let breaks = is_corner.iter().enumerate().filter(|(_, c)| **c).map(|(i, _)| i).collect::<Vec<_>>();
-    for w in breaks.windows(2) {
-        let section = &input.points[w[0]..=w[1]];
-        let dense = catmull_rom(section, 16);
-        let skip = usize::from(!line.is_empty());
-        for (k, p) in dense.into_iter().enumerate().skip(skip) {
-            let at = if k == 0 { Some(w[0]) } else if k == (section.len() - 1) * 16 { Some(w[1]) } else { None };
-            line.push((p, at));
-        }
-    }
+    // The centre line: Catmull-Rom between corners (Bezier where handles are written), then resampled by distance.
+    let (line, _) = centre_line_marked(&input.points, &input.sharp, &input.handles);
 
     let (samples, corner_s) = resample(&line);
     plan.length = samples.last().map_or(0.0, |s| s.0);
@@ -338,6 +332,63 @@ fn straighten(plan: &mut Plan, profile: &Profile, ground: &dyn Fn(f64, f64) -> f
         sm.foot = [sm.centre[0] + z_axis[0] * profile.outer_face, sm.centre[1] + z_axis[1] * profile.outer_face];
         sm.ground = ground(sm.foot[0], sm.foot[1]);
     }
+}
+
+/// A point's handles where written: `controlIn`, `controlOut` (x, z).
+pub type Handles = [Option<[f64; 2]>; 2];
+
+/// A dense line, each sample with the point it is at (if one).
+pub type MarkedLine = Vec<([f64; 2], Option<usize>)>;
+
+/// A wall's centre line (x, z), dense: Catmull-Rom between its corners, a segment with a handle written the Bezier through its handles (the
+/// one not written: the Catmull-Rom one), each sample with the point it is at; and which points are corners (the ends, those marked, the
+/// sharp turns without handles).
+#[must_use]
+pub fn centre_line_marked(points: &[[f64; 2]], sharp: &[bool], handles: &[Handles]) -> (MarkedLine, Vec<bool>) {
+    let n = points.len();
+    let written = |i: usize, side: usize| handles.get(i).and_then(|h| h[side]);
+    let mut is_corner = corners(points, sharp);
+    for (i, c) in is_corner.iter_mut().enumerate().take(n.saturating_sub(1)).skip(1) {
+        if *c && !sharp.get(i).copied().unwrap_or(false) && (written(i, 0).is_some() || written(i, 1).is_some()) {
+            *c = false;
+        }
+    }
+
+    let mut line: Vec<([f64; 2], Option<usize>)> = vec![];
+    let breaks = is_corner.iter().enumerate().filter(|(_, c)| **c).map(|(i, _)| i).collect::<Vec<_>>();
+    for w in breaks.windows(2) {
+        let section = &points[w[0]..=w[1]];
+        let mut dense = catmull_rom(section, 16);
+        // Its segments with a handle written: the Bezier (a corner's own are not used).
+        let m = section.len();
+        for j in 0..m - 1 {
+            let (i0, i1) = (w[0] + j, w[0] + j + 1);
+            let h1 = if j == 0 && is_corner[i0] && i0 != 0 && sharp.get(i0).copied().unwrap_or(false) { None } else { written(i0, 1) };
+            let h2 = if j + 2 == m && is_corner[i1] && i1 + 1 != n && sharp.get(i1).copied().unwrap_or(false) { None } else { written(i1, 0) };
+            if h1.is_none() && h2.is_none() {
+                continue;
+            }
+
+            let at = |k: isize| section[k.clamp(0, m as isize - 1) as usize];
+            let (p0, p1, p2, p3) = (at(j as isize - 1), at(j as isize), at(j as isize + 1), at(j as isize + 2));
+            let b1 = h1.unwrap_or([p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0]);
+            let b2 = h2.unwrap_or([p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0]);
+            for k in 1..=16u32 {
+                let t = f64::from(k) / 16.0;
+                let s = 1.0 - t;
+                let c = |a: f64, b: f64, c: f64, d: f64| a * s * s * s + b * 3.0 * s * s * t + c * 3.0 * s * t * t + d * t * t * t;
+                dense[j * 16 + k as usize] = [c(p1[0], b1[0], b2[0], p2[0]), c(p1[1], b1[1], b2[1], p2[1])];
+            }
+        }
+
+        let skip = usize::from(!line.is_empty());
+        for (k, p) in dense.into_iter().enumerate().skip(skip) {
+            let at = if k == 0 { Some(w[0]) } else if k == (section.len() - 1) * 16 { Some(w[1]) } else { None };
+            line.push((p, at));
+        }
+    }
+
+    (line, is_corner)
 }
 
 /// A centripetal Catmull-Rom through the points, `per` samples per segment (the ends extended by reflection).
@@ -847,6 +898,21 @@ mod tests {
         assert!((plan.samples[0].level - 2.0).abs() < 1e-9);
         assert!((plan.samples.last().unwrap().level - 4.0).abs() < 1e-9);
         assert!(!plan.steps.is_empty());
+    }
+
+    #[test]
+    fn a_handle_turns_the_wall_and_makes_a_sharp_turn_a_curve() {
+        // A right angle at (50, 0): a corner without handles; with its handles written across it, a curve through it.
+        let pts = [[0.0, 0.0], [50.0, 0.0], [50.0, 50.0]];
+        let (_, plain) = centre_line_marked(&pts, &[false; 3], &[]);
+        assert!(plain[1], "a corner");
+        let handles = [[None, None], [Some([35.0, -15.0]), Some([65.0, 15.0])], [None, None]];
+        let (line, corners) = centre_line_marked(&pts, &[false; 3], &handles);
+        assert!(!corners[1], "no corner with handles");
+        // Just past the point (sample 16: 16 a segment), the line runs as its handle does (+x and +z together).
+        let (p, q) = (line[16].0, line[17].0);
+        assert!((p[0] - 50.0).abs() < 1e-9 && p[1].abs() < 1e-9, "{p:?}");
+        assert!(q[0] - p[0] > 0.0 && q[1] - p[1] > 0.0, "{p:?} {q:?}");
     }
 
     #[test]

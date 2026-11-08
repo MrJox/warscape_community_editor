@@ -17,6 +17,34 @@ pub fn is_spline(kind: &str) -> bool {
     SPLINE_KINDS.contains(&kind)
 }
 
+/// The editor's own splines (procedural roads and walls): polygons whose points may carry handles as TEd's splines do (user 2026-11-08:
+/// to turn a point, not only move it). A handle not written (missing or empty) is the Catmull-Rom one ([`catmull_handles`]), the curve
+/// they had before handles: the road's exactly, the wall's (centripetal) near it.
+pub const OWN_KINDS: [&str; 2] = [crate::new_instances::ROAD_SPLINE, crate::new_instances::WALL_SPLINE];
+
+/// Whether an element's points have handles: TEd's splines and the editor's own.
+pub fn has_handles(kind: &str) -> bool {
+    is_spline(kind) || OWN_KINDS.contains(&kind)
+}
+
+/// The handles written on a spline's points (local; `controlIn`, `controlOut`), `None` where not.
+pub fn written(scene: &TedScene, elem: usize) -> Vec<[Option<Double3>; 2]> {
+    let doc = scene.doc();
+    scene.polygon_points(elem).into_iter().filter(|&p| doc.get(p, "position").is_some()).map(|p| {
+        let vec = |name: &str| doc.get(p, name).and_then(|v| parse_vec3(&v, ""));
+        [vec("controlIn"), vec("controlOut")]
+    }).collect()
+}
+
+/// The handles of point `i` that make the curve a uniform Catmull-Rom through the points: a sixth of the way from the previous point to
+/// the next on each side (the ends: of their one segment).
+pub fn catmull_handles(positions: &[Double3], i: usize) -> (Double3, Double3) {
+    let last = positions.len().saturating_sub(1);
+    let (prev, next) = (positions[i.saturating_sub(1)], positions[(i + 1).min(last)]);
+    let d = (next - prev) * (1.0 / 6.0);
+    (positions[i] - d, positions[i] + d)
+}
+
 /// A point of a spline, local to it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SplinePoint {
@@ -25,14 +53,26 @@ pub struct SplinePoint {
     pub control_out: Double3,
 }
 
-/// The points of a spline element (a handle that is missing or can't be read is the point itself).
+/// The points of a spline element (a handle that is missing or can't be read is the point itself; on the editor's own splines, the
+/// Catmull-Rom one).
 pub fn read(scene: &TedScene, elem: usize) -> Vec<SplinePoint> {
     let doc = scene.doc();
-    scene.polygon_points(elem).into_iter().filter_map(|p| {
+    let mut pts = scene.polygon_points(elem).into_iter().filter_map(|p| {
         let vec = |name: &str| doc.get(p, name).and_then(|v| parse_vec3(&v, ""));
         let position = vec("position")?;
         Some(SplinePoint { position, control_in: vec("controlIn").unwrap_or(position), control_out: vec("controlOut").unwrap_or(position) })
-    }).collect()
+    }).collect::<Vec<_>>();
+
+    if OWN_KINDS.contains(&scene.type_of(elem)) {
+        let positions = pts.iter().map(|p| p.position).collect::<Vec<_>>();
+        for (i, w) in written(scene, elem).into_iter().enumerate().take(pts.len()) {
+            let (cin, cout) = catmull_handles(&positions, i);
+            pts[i].control_in = w[0].unwrap_or(cin);
+            pts[i].control_out = w[1].unwrap_or(cout);
+        }
+    }
+
+    pts
 }
 
 /// The point of a cubic Bezier at `t`.

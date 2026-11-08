@@ -77,6 +77,14 @@ pub fn centre_line(points: &[[f64; 2]]) -> Vec<[f64; 2]> {
 /// there, so a corner piece's arms lie on it. Also the sample each point is at.
 #[must_use]
 pub fn centre_line_sharp(points: &[[f64; 2]], sharp: &[bool]) -> (Vec<[f64; 2]>, Vec<usize>) {
+    centre_line_handled(points, &[], sharp)
+}
+
+/// As [`centre_line_sharp`], with the handles written on the points (`controlIn`, `controlOut`, x and z): a segment with one at either
+/// end is the Bezier through them, the handle not written the Catmull-Rom one (`splines::catmull_handles`: the curve without handles is
+/// the same). A corner's handles are not used: it is a corner.
+#[must_use]
+pub fn centre_line_handled(points: &[[f64; 2]], handles: &[[Option<[f64; 2]>; 2]], sharp: &[bool]) -> (Vec<[f64; 2]>, Vec<usize>) {
     if points.len() < 2 {
         return (vec![], vec![]);
     }
@@ -93,6 +101,25 @@ pub fn centre_line_sharp(points: &[[f64; 2]], sharp: &[bool]) -> (Vec<[f64; 2]>,
         let len = (p2[0] - p1[0]).hypot(p2[1] - p1[1]);
         let n = ((len / SAMPLE).ceil() as usize).max(1);
         at_point.push(out.len());
+
+        // A segment with a handle written at either end: the Bezier.
+        let written = |k: isize, side: usize| (!is_sharp(k)).then(|| handles.get(k as usize).and_then(|h| h[side])).flatten();
+        let (h1, h2) = (written(i, 1), written(i + 1, 0));
+        if h1.is_some() || h2.is_some() {
+            let b1 = h1.unwrap_or([p1[0] + (p2[0] - p0[0]) / 6.0, p1[1] + (p2[1] - p0[1]) / 6.0]);
+            let b2 = h2.unwrap_or([p2[0] - (p3[0] - p1[0]) / 6.0, p2[1] - (p3[1] - p1[1]) / 6.0]);
+            let d = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+            let n = (((d(p1, b1) + d(b1, b2) + d(b2, p2) + len) * 0.5 / SAMPLE).ceil() as usize).max(1);
+            for k in 0..n {
+                let t = k as f64 / n as f64;
+                let s = 1.0 - t;
+                let c = |a: f64, b: f64, c: f64, d: f64| a * s * s * s + b * 3.0 * s * s * t + c * 3.0 * s * t * t + d * t * t * t;
+                out.push([c(p1[0], b1[0], b2[0], p2[0]), c(p1[1], b1[1], b2[1], p2[1])]);
+            }
+
+            continue;
+        }
+
         for k in 0..n {
             let t = k as f64 / n as f64;
             let (t2, t3) = (t * t, t * t * t);
@@ -963,6 +990,28 @@ mod tests {
         }
 
         assert!(met > 0, "it crosses itself");
+    }
+
+    #[test]
+    fn a_line_with_its_catmull_rom_handles_written_is_the_same_and_a_turned_one_turns_it() {
+        let pts = [[0.0, 0.0], [40.0, 10.0], [80.0, 0.0], [120.0, 30.0]];
+        let (plain, _) = centre_line_sharp(&pts, &[]);
+        // Every handle written as the Catmull-Rom one: the same curve (as many samples a segment, near enough).
+        let h = (0..pts.len()).map(|i| {
+            let (a, b) = (pts[i.saturating_sub(1)], pts[(i + 1).min(pts.len() - 1)]);
+            let d = [(b[0] - a[0]) / 6.0, (b[1] - a[1]) / 6.0];
+            [Some([pts[i][0] - d[0], pts[i][1] - d[1]]), Some([pts[i][0] + d[0], pts[i][1] + d[1]])]
+        }).collect::<Vec<_>>();
+        let (same, _) = centre_line_handled(&pts, &h, &[]);
+        let off = |a: &[[f64; 2]], p: [f64; 2]| a.iter().map(|q| (q[0] - p[0]).hypot(q[1] - p[1])).fold(f64::MAX, f64::min);
+        assert!(plain.iter().all(|&p| off(&same, p) < 0.6), "the curve moved");
+
+        // The second point's handles turned across: the line leaves it that way.
+        let mut turned = vec![[None, None]; pts.len()];
+        turned[1] = [Some([40.0, 0.0]), Some([40.0, 20.0])];
+        let (line, at) = centre_line_handled(&pts, &turned, &[]);
+        let q = line[at[1] + 2];
+        assert!((q[0] - 40.0).abs() < 1.0 && q[1] > 11.0, "{q:?}");
     }
 
     #[test]
