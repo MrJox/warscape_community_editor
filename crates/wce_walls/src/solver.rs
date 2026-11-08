@@ -557,7 +557,16 @@ pub fn turn_between(samples: &[Sample], a: f64, b: f64) -> f64 {
 /// place first, then the nearest to the boundary.
 fn steps(runs: &mut Vec<Run>, samples: &[Sample], corners: &[f64], fixed: [bool; 2], length: f64, profile: &Profile, warnings: &mut Vec<String>) -> Vec<Step> {
     let margin = profile.depth.0.abs().max(profile.depth.1.abs()) + 2.0;
-    let mut blocked = corners.iter().map(|&c| (c - margin, c + margin)).collect::<Vec<_>>();
+    // Around a corner, as far along each arm as it takes to be that far from the other arm: the margin over the sine of the turn (a
+    // right angle: the margin; an acute corner further, up to 5 times: at 25 degrees the stepped bastions 18 m from the tip stood across
+    // the other arm, user 2026-11-08).
+    let dir_at = |s: f64| samples.iter().min_by(|a, b| (a.s - s).abs().total_cmp(&(b.s - s).abs())).map_or([1.0, 0.0], |sm| sm.dir);
+    let mut blocked = corners.iter().map(|&c| {
+        let (u, v) = (dir_at(c - 2.0 * STEP - 1.0), dir_at(c + 2.0 * STEP + 1.0));
+        let turn = (u[0] * v[0] + u[1] * v[1]).clamp(-1.0, 1.0).acos();
+        let reach = margin / turn.sin().max(0.2);
+        (c - reach, c + reach)
+    }).collect::<Vec<_>>();
     if fixed[0] {
         blocked.push((f64::MIN, margin));
     }
@@ -658,6 +667,20 @@ fn steps(runs: &mut Vec<Run>, samples: &[Sample], corners: &[f64], fixed: [bool;
             let mut t = if chain == 0 { a.s.0 } else { a.s.0 + q };
             while t <= hi + 1e-9 {
                 if free(t, t + span) && best.is_none_or(|b| cost(t) < cost(b)) {
+                    best = Some(t);
+                }
+                t += STEP;
+            }
+        }
+
+        // Still none: the nearest free place anywhere along the wall, clear of the steps already laid (a step over a corner leaves the two
+        // arms' inner sides at two heights where they meet, user 2026-11-08; past its runs is fine: between steps the level is the one the
+        // step before left, `level_at`).
+        if best.is_none() {
+            let clear = |t: f64| out.iter().all(|st: &Step| t + span + profile.step_gap <= st.s.0 || t >= st.s.1 + profile.step_gap);
+            let mut t = 0.0;
+            while t + span <= length + 1e-9 {
+                if free(t, t + span) && clear(t) && best.is_none_or(|b: f64| (t + span / 2.0 - boundary).abs() < (b + span / 2.0 - boundary).abs()) {
                     best = Some(t);
                 }
                 t += STEP;
@@ -859,6 +882,23 @@ mod tests {
         for st in &plan.steps {
             assert!(st.s.1 <= 60.0 - margin + 1e-6 || st.s.0 >= 60.0 + margin - 1e-6, "{st:?} over the corner");
         }
+    }
+
+    #[test]
+    fn steps_stay_further_from_an_acute_corner_and_off_it_when_its_runs_leave_no_room() {
+        // An acute corner (a turn of 150 degrees, 30 inside) at 60, the ground rising past it: the steps stay as far along each arm as it
+        // takes to be the margin away from the other arm (the margin over sin 150 = twice it).
+        let mut input = wall(&[[0.0, 0.0], [60.0, 0.0], [60.0 - 120.0 * 150f64.to_radians().cos().abs(), 120.0 * 30f64.to_radians().sin()]]);
+        input.sharp[1] = true;
+        let plan = solve(&input, eight(), &|_, z| if z > 2.0 { 2.0 } else { 0.0 });
+        let margin = eight().depth.1.abs().max(eight().depth.0.abs()) + 2.0;
+        let reach = margin / 30f64.to_radians().sin();
+        assert!(!plan.steps.is_empty());
+        for st in &plan.steps {
+            assert!(st.s.1 <= 60.0 - reach + 1e-6 || st.s.0 >= 60.0 + reach - 1e-6, "{st:?} within {reach:.1} of the corner");
+        }
+
+        assert!(plan.warnings.iter().all(|w| !w.contains("no place")), "{:?}", plan.warnings);
     }
 
     #[test]
