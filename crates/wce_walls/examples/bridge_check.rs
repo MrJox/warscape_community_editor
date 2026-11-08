@@ -1,9 +1,10 @@
 //! A generated bridge checked as `wall_tech_check` checks a wall (docs/plans/procedural_roads.md, "Bridges"): each base of
 //! `bridge::BASES` bent along a curved, sloped deck, then, in the world: the deck walkable from end to end (no stretch of its centre line
 //! off every platform), no platforms over one another, the pieces' platforms meeting at their joints (corners shared within a
-//! centimetre), every platform's corners on the deck's surface, and the files reading back.
+//! centimetre), every platform's corners on the deck's surface, each end piece with a platform edge the ground can link to (along its
+//! collision outline, as the game links them), and the files reading back.
 //!
-//!   cargo run --release -p wce_walls --example bridge_check -- <game folder> [radius] [rise]
+//!   cargo run --release -p wce_walls --example bridge_check -- <game folder> [radius] [rise] [rpfm schema .ron] [exported .pack]
 
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -54,6 +55,78 @@ fn platforms(bytes: &[u8]) -> Vec<(Vec<[f64; 3]>, bool)> {
     }
 
     out
+}
+
+/// The foot of a logic file's ramps (its platforms sloped over 15 degrees: their edges with both corners at the platform's lowest height),
+/// and how many of those edges the ground can link to. As the game links a platform to the ground (docs/re/platforms_and_bridges.md,
+/// "How units get on and off"), an edge of the ground's triangulation must run between the platform edge's two corners, within 0.0141
+/// (`FUN_10354b40`); along a building, the triangulation's corners are its collision outlines' corners (`FUN_1065fc10`), unless other
+/// outlines cross there. So an edge links when its two corners are two consecutive corners of a collision outline, in x and z: the kit's
+/// `bridge_wood_2_end` has one foot edge, along its outline's.
+fn foot_edges(bytes: &[u8]) -> (usize, usize) {
+    let near = |a: &[f64; 3], b: &[f64; 3]| (a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2) <= 2.0e-4;
+    let rings = outlines(bytes).into_iter().filter(|(_, collision)| *collision).map(|(r, _)| r).collect::<Vec<_>>();
+    let (mut feet, mut along) = (0, 0);
+    for (p, _) in platforms(bytes) {
+        // A ramp: sloped more than 15 degrees (the kit's end ramps 26.6; a sloped deck far less).
+        let (lo, hi) = p.iter().fold((f64::MAX, f64::MIN), |(lo, hi), q| (lo.min(q[1]), hi.max(q[1])));
+        if hi - lo < 0.05 || slope(&p) < 15f64.to_radians() {
+            continue;
+        }
+
+        for i in 0..p.len() {
+            let (a, b) = (&p[i], &p[(i + 1) % p.len()]);
+            if (a[1] - lo).abs() > 0.01 || (b[1] - lo).abs() > 0.01 {
+                continue;
+            }
+
+            feet += 1;
+            if rings.iter().any(|r| (0..r.len()).any(|k| {
+                let (c, d) = (&r[k], &r[(k + 1) % r.len()]);
+                (near(a, c) && near(b, d)) || (near(a, d) && near(b, c))
+            })) {
+                along += 1;
+            }
+        }
+    }
+
+    (feet, along)
+}
+
+/// A platform's slope (its plane's angle to the horizontal): of the planes through its first corner and two others, the best spanned.
+fn slope(p: &[[f64; 3]]) -> f64 {
+    let mut best = ([0.0, 1.0, 0.0], 0.0);
+    for i in 1..p.len() {
+        for j in i + 1..p.len() {
+            let (u, v) = ([p[i][0] - p[0][0], p[i][1] - p[0][1], p[i][2] - p[0][2]], [p[j][0] - p[0][0], p[j][1] - p[0][1], p[j][2] - p[0][2]]);
+            let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            if len > best.1 {
+                best = (n, len);
+            }
+        }
+    }
+
+    if best.1 <= 1e-9 { 0.0 } else { (best.0[1].abs() / best.1).acos() }
+}
+
+/// Every ramp's foot (see [`foot_edges`]) along its piece's collision outline, edge for edge. Prints each piece with a ramp; false when
+/// one's foot is not.
+fn ramps_reach_the_ground<'a>(files: impl Iterator<Item = (&'a str, &'a [u8])>) -> bool {
+    let mut ok = true;
+    for (path, bytes) in files.filter(|(p, _)| p.ends_with(".cs2.parsed")) {
+        let (feet, along) = foot_edges(bytes);
+        if feet == 0 {
+            continue;
+        }
+
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        let good = along == feet;
+        println!("  {name}: {along} of its ramps' {feet} foot edge(s) along its collision outline{}", if good { "" } else { ": the ground cannot link to the rest, FAIL" });
+        ok &= good;
+    }
+
+    ok
 }
 
 fn inside(p: [f64; 2], ring: &[[f64; 2]]) -> bool {
@@ -131,6 +204,10 @@ fn main() {
 
         // Its end piece, when the base has one.
         let end = b.end.and_then(|k| BuildingFiles::read(&vfs, k).ok()).map(|f| prepare(&f).expect("the end piece prepared"));
+        if let Some(kit) = b.end.and_then(|k| BuildingFiles::read(&vfs, k).ok()) {
+            println!("  the kit's end piece, as a reference:");
+            ramps_reach_the_ground([(kit.logic_name().as_str(), kit.files.get(&kit.logic_name()).expect("its logic file").as_slice())].into_iter());
+        }
         let parts = wce_walls::bridge::parts(&deck, &base, end.as_ref());
         if let (Some(e), true) = (&end, std::env::var("BRIDGE_CHECK_DEBUG").is_ok()) {
             println!("    end piece: x {:.2?} z {:.2?} deck {:.2} bottom {:.2}; its platforms {:.2?}", e.x, e.z, e.deck, e.bottom, platforms(e.files.files.get(&e.files.logic_name()).unwrap()));
@@ -155,6 +232,10 @@ fn main() {
             }
 
             let logic = made.files.get(&made.logic_name()).expect("a logic file");
+            if part.end {
+                failed |= !ramps_reach_the_ground([(made.logic_name().as_str(), logic.as_slice())].into_iter());
+            }
+
             for (p, ground) in platforms(logic) {
                 let r = p.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect::<Vec<_>>();
                 if ground {
@@ -316,6 +397,18 @@ fn main() {
         if left > 0 || instances.is_empty() || missing_files > 0 || missing_rows > 0 {
             failed = true;
         }
+
+        failed |= !ramps_reach_the_ground(lowered.files.iter().map(|(p, b)| (p.as_str(), b.as_slice())));
+    }
+
+    // An exported pack (a tile's launch or export pack): its bridge pieces' ramps.
+    if let Some(path) = a.iter().find(|x| x.ends_with(".pack")) {
+        let games = rpfm_lib::games::supported_games::SupportedGames::default();
+        let mut pack = rpfm_lib::files::pack::Pack::read_and_merge(&[path.into()], games.game("attila").expect("attila"), true, false, false).expect("the pack");
+        let names = pack.files().keys().filter(|n| n.ends_with(".cs2.parsed")).cloned().collect::<Vec<_>>();
+        let files = names.iter().filter_map(|n| pack.files_mut().get_mut(n).and_then(|f| f.encode(&None, false, false, true).ok().flatten()).map(|b| (n.clone(), b))).collect::<Vec<_>>();
+        println!("== {path}");
+        failed |= !ramps_reach_the_ground(files.iter().map(|(p, b)| (p.as_str(), b.as_slice())));
     }
 
     if failed {
