@@ -364,6 +364,11 @@ impl Tile {
                 continue;
             }
 
+            // Not on a road: a tile's packed list was made before it, and the blend map alone need not rule its trees out (as grass).
+            if self.road_at(f64::from(t.x), f64::from(z)) {
+                continue;
+            }
+
             let y = if t.freeform || !self.project.has_height() { t.y / unit } else { (self.project.height_at(f64::from(t.x), f64::from(z)) / self.unit()) as f32 };
             let at = translation(Float3::new(t.x, y, z));
             let turn = rotation_y(-t.yaw) * scaling(t.scale / unit);

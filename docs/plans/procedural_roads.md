@@ -120,7 +120,7 @@ made the same way (`road_items`) once the terrain is, their bridges' files put a
 for both (`finish_road_jobs`, from `text_for_export`); scripts with `tile_wait_jobs`. A road with a bridge on the kit's river tile: its worst
 frame 176 ms before, 29 ms after (the work, 145 ms, on the threads).
 
-**Grass** is made again with the road: generated grass takes the new blend map and heights, and packed or generated, no patch stands on a road (`Tile::road_at`, the roads' ground type layers), as a tile's packed list was made before it. So does a stack change, as a layer shown or hidden moves the ground under it. With generated grass that costs about 0.6 s on a large tile each time the roads are made.
+**Grass** is made again with the road: generated grass takes the new blend map and heights, and packed or generated, no patch stands on a road (`Tile::road_at`, the roads' ground type layers), as a tile's packed list was made before it. So does a stack change, as a layer shown or hidden moves the ground under it. With generated grass that costs about 0.6 s on a large tile each time the roads are made. **Trees** too (user 2026-11-08: the grass followed the roads, the trees and bushes not): the tree list is made again with the roads (a generated one from the new blend map and heights), and no list tree stands on a road, packed or generated (`add_list_trees`). The VEGETATION_INSTANCEs placed by hand stay where they are.
 
 **The height at a point** comes from the road's samples near it, by distance, further than 12 past the edge: taken from the nearest alone it jumped where
 a point stopped being nearer one stretch than another, in steps across the banks (`the_terrain_a_road_leaves_has_no_steps`).
