@@ -1628,3 +1628,44 @@ fn a_prefabs_layer_goes_onto_the_stage_and_back() {
     empty.begin_stage(None).unwrap();
     assert!(empty.stage_layer().is_some() && empty.stage_terrain(false, 4.0).is_none());
 }
+
+#[test]
+fn on_a_stage_a_nested_prefabs_ground_goes_under_the_prefabs_own() {
+    use wce_tile::prefab_stage::{StageSettings, make};
+
+    let dir = tempfile::tempdir().unwrap();
+    let group = b"<UserInstanceGroup flags=\" OIF_VISIBLE\" position=\"vector(0,0,0)\" name=\"camp\" orientation=\"euler(0,0,0)\">\n    <children>\n        <UserInstanceGroup flags=\" OIF_VISIBLE\" position=\"vector(0,0,0)\" name=\"rocks\" orientation=\"euler(0,0,0)\" wce_prefab=\"rocks\">\n            <children>\n                <BUILDING_INSTANCE position=\"vector(1,0,0)\" key=\"rock\" name=\"rock\"/>\n            </children>\n        </UserInstanceGroup>\n    </children>\n</UserInstanceGroup>\n";
+    let s = StageSettings { cells: 1, density: 32, ..Default::default() };
+    let mut d = TileDocument::new(make(&dir.path().join("stage"), &s, group).unwrap(), None);
+    d.begin_stage(None).unwrap();
+    d.set_prefab_ground(Some(rocks_ground(false, 5, 8.0)));
+    d.refresh_terrain();
+    let names = d.project().layers.as_ref().unwrap().height.as_ref().unwrap().layers.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names, ["Prefab rocks", wce_tile_editor::tile_document::stage::STAGE_LAYER], "{names:?}");
+
+    // Looked at again, the order holds; what the stage saves is the prefab's own layer only.
+    d.refresh_terrain();
+    assert_eq!(prefab_owners(&d).len(), 1);
+    assert!(d.stage_terrain(false, 4.0).is_none(), "the nested prefab's ground is not the prefab's own");
+}
+
+#[test]
+fn a_references_ground_follows_its_opacity_while_it_is_dragged() {
+    let (_dir, mut d) = open();
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let g = d.group_instances(&[b], graph, "rocks").unwrap();
+    assert!(d.make_prefab_reference(g, "rocks"));
+    d.set_prefab_ground(Some(rocks_ground(false, 5, 2.0)));
+    let p = d.tile().world_position(g);
+    let (x, z) = (f64::from(p.x) * d.project().unit_scale, f64::from(p.z) * d.project().unit_scale);
+    let before = ground_at(&d, x, z);
+    d.refresh_terrain();
+
+    // Being dragged (a draft, no edit yet): half the ground.
+    let edited = text(&d);
+    inspect(&mut d, g, Some(("ground_opacity", Edit::Float(0.5))));
+    d.refresh_terrain();
+    assert!((ground_at(&d, x, z) - before - 1.0).abs() < 0.01, "{}", ground_at(&d, x, z) - before);
+    assert_eq!(text(&d), edited, "not an edit while dragged");
+}

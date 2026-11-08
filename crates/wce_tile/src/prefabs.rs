@@ -215,6 +215,65 @@ impl PrefabLibrary {
         Ok(target)
     }
 
+    /// A copy of a prefab (the kit's or the projects') as a new one of the projects: `<projects_root>/<folder>/<new_key>.wce`, its group named
+    /// after it, its height layer and the references in it kept. Returns the file.
+    ///
+    /// # Errors
+    ///
+    /// No such prefab, a bad or taken key, or a file can't be read or written.
+    pub fn copy_to(&self, key: &str, projects_root: &Path, new_key: &str, folder: &str) -> Result<PathBuf, String> {
+        let new_key = check_key(new_key)?;
+        if self.get(&new_key).is_some() {
+            return Err(format!("a prefab '{new_key}' exists"));
+        }
+
+        let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
+        let folder = folder.trim().trim_matches(['/', '\\']);
+        let target = if folder.is_empty() { projects_root.join(format!("{new_key}.wce")) } else { projects_root.join(folder).join(format!("{new_key}.wce")) };
+        let mut scene = TedScene::parse_any(std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?).map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        let group = *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", entry.path.display()))?;
+        scene.set_attr(group, "name", &new_key);
+        if let Some(dir) = target.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+
+        std::fs::write(&target, crate::project_files::mark_wce_text(scene.save())).map_err(|e| format!("{}: {e}", target.display()))?;
+        Ok(target)
+    }
+
+    /// Renames a prefab of the projects (its file and its group; in the same folder). The tiles' references to the old key are not changed.
+    /// Returns the new file.
+    ///
+    /// # Errors
+    ///
+    /// No such prefab, not one of the projects', a bad or taken key, or a file can't be written or removed.
+    pub fn rename(&self, key: &str, projects_root: &Path, new_key: &str) -> Result<PathBuf, String> {
+        let entry = self.project_entry(key, projects_root)?;
+        let target = self.copy_to(key, projects_root, new_key, &entry.folder)?;
+        std::fs::remove_file(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        Ok(target)
+    }
+
+    /// Deletes a prefab of the projects (its `.wce`; a kit's prefab of the same key is the one found again). Returns the file removed.
+    ///
+    /// # Errors
+    ///
+    /// No such prefab, not one of the projects', or the file can't be removed.
+    pub fn delete(&self, key: &str, projects_root: &Path) -> Result<PathBuf, String> {
+        let entry = self.project_entry(key, projects_root)?;
+        std::fs::remove_file(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        Ok(entry.path.clone())
+    }
+
+    fn project_entry(&self, key: &str, projects_root: &Path) -> Result<&PrefabEntry, String> {
+        let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
+        if !entry.wce || !entry.path.starts_with(projects_root) {
+            return Err(format!("{key} is the Assembly Kit's: only the projects' prefabs are renamed or deleted (duplicate it first)"));
+        }
+
+        Ok(entry)
+    }
+
     /// "Save for Assembly Kit" of a prefab: its file as TEd reads it (the prefabs placed in it baked) in the kit's prefab folder `kit_root`,
     /// at the same folder, as `<key>.xml`, its buildings marked Export as prop as their models (`export_as_prop`; `models_in`: the game's
     /// files). A file it replaces with other bytes keeps a `.bak`. Returns the file and the conversion's report.
@@ -244,6 +303,20 @@ impl PrefabLibrary {
         std::fs::write(&target, ted).map_err(|e| format!("{}: {e}", target.display()))?;
         Ok((target, report))
     }
+}
+
+/// A prefab's key as a file name takes it: trimmed, not empty, no slashes, dots or characters files can't have.
+///
+/// # Errors
+///
+/// It is empty or has such a character.
+pub fn check_key(key: &str) -> Result<String, String> {
+    let key = key.trim();
+    if key.is_empty() || key.contains(['/', '\\', '.', ':', '*', '?', '"', '<', '>', '|']) {
+        return Err(format!("'{key}' can't be a prefab's name: no slashes, dots or : * ? \" < > |"));
+    }
+
+    Ok(key.to_owned())
 }
 
 /// A prefab file's text as the editor keeps it: the references' contents left out (what they differ by from `base`, their prefabs'
@@ -404,6 +477,34 @@ mod tests {
         lib.save_with_terrain("rocks", &prefab_root(projects.path()), children, None).unwrap();
         assert_eq!(lib.terrain("rocks").unwrap(), None);
         assert!(!std::fs::read_to_string(saved).unwrap().contains("Wce"));
+    }
+
+    #[test]
+    fn a_prefab_is_duplicated_renamed_and_deleted_in_the_projects_only() {
+        let (kit, projects) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let kit_file = prefab_root(kit.path()).join("rocks.xml");
+        std::fs::create_dir_all(kit_file.parent().unwrap()).unwrap();
+        std::fs::write(&kit_file, FILE).unwrap();
+        let root = prefab_root(projects.path());
+        let scan = || PrefabLibrary::scan(&[projects.path().to_path_buf(), kit.path().to_path_buf()]);
+
+        // A kit's prefab is copied, not renamed or deleted.
+        let lib = scan();
+        assert!(lib.rename("rocks", &root, "stones").is_err() && lib.delete("rocks", &root).is_err());
+        assert!(lib.copy_to("rocks", &root, "a/b", "").is_err() && lib.copy_to("rocks", &root, "ROCKS", "").is_err());
+        let copy = lib.copy_to("rocks", &root, "stones", "global").unwrap();
+        assert_eq!(copy, root.join("global").join("stones.wce"));
+        let text = std::fs::read_to_string(&copy).unwrap();
+        assert!(text.contains("wce_version=\"1\"") && text.contains("name=\"stones\"") && text.contains("key=\"rock\""), "{text}");
+
+        let lib = scan();
+        assert_eq!(lib.contents("stones"), lib.contents("rocks"));
+        let renamed = lib.rename("stones", &root, "pebbles").unwrap();
+        assert!(!copy.exists() && renamed == root.join("global").join("pebbles.wce"));
+        let lib = scan();
+        assert!(lib.get("stones").is_none() && lib.get("pebbles").is_some());
+        lib.delete("pebbles", &root).unwrap();
+        assert!(scan().get("pebbles").is_none() && kit_file.exists());
     }
 
     #[test]

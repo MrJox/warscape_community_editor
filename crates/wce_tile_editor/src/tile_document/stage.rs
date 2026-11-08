@@ -45,6 +45,7 @@ impl TileDocument {
         let w = world_transform(self.tile().tscene(), group);
         let at = Placement::from_transform(w.position, &w.rotation);
         let t = self.tile_mut();
+        t.stage_layer_last = true;
         let grid = Grid::of(&t.project).ok_or("the stage has no height map")?;
         let p = &mut t.project;
         if terrain.is_some() {
@@ -169,6 +170,76 @@ impl TileDocument {
         }
 
         out.cropped()
+    }
+}
+
+/// The outline of where the stage's prefab covers (orange) and, normalized, of how far its feather reaches (yellow).
+const COVER_RGBA: u32 = 0xFF00_80FF;
+const FEATHER_RGBA: u32 = 0xFF00_E0FF;
+
+impl TileDocument {
+    /// Shows on the stage where the prefab's ground covers and, normalized, how far its feather reaches: outlines on the terrain, found again
+    /// when `key` changes (none: no outlines).
+    pub fn show_stage_outline(&mut self, scene: &mut wce_scene::render_scene::RenderScene, normalize: bool, feather: f64, key: Option<u64>) {
+        // Not while a stroke goes on: its edit reaches the layer when it ends.
+        if (key.is_some() && key == self.tile().stage_outline.1) || self.tile().stroke_open {
+            return;
+        }
+
+        let lines = key.and_then(|_| self.stage_outline_lines(normalize, feather));
+        let t = self.tile_mut();
+        if t.stage_outline.0 != 0 {
+            scene.remove(t.stage_outline.0);
+            t.stage_outline.0 = 0;
+        }
+
+        t.stage_outline.1 = key;
+        let Some(lines) = lines.filter(|l| !l.is_empty()) else { return };
+        let o = wce_scene::render_scene::Overlay { lines, depth_test: false, pickable: false, ..Default::default() };
+        let source = t.source(super::TERRAIN);
+        t.stage_outline.0 = scene.add(t.layer, wce_foundation::math::Float4x4::IDENTITY, wce_scene::render_scene::Payload::Overlay(o), source);
+    }
+
+    /// The outlines' lines: the edges between samples in and out of each area, on the terrain.
+    fn stage_outline_lines(&self, normalize: bool, feather: f64) -> Option<Vec<wce_scene::render_scene::OverlayVertex>> {
+        let group = self.stage_group()?;
+        let terrain = self.stage_terrain(true, feather)?;
+        let w = world_transform(self.tile().tscene(), group);
+        let at = Placement::from_transform(w.position, &w.rotation);
+        let unit = self.tile().unit() as f32;
+        let (origin, gw, gh, weights) = terrain.weight_grid(Some(feather));
+        let s = terrain.spacing;
+        let point = |x: f64, z: f64| {
+            let (sx, sz) = at.to_scene(x, z);
+            let (wx, wz) = (sx as f32 / unit, sz as f32 / unit);
+            wce_foundation::math::Float3::new(wx, self.tile().terrain_height(wx, wz) + 0.3, wz)
+        };
+
+        let mut out = wce_scene::render_scene::Overlay::default();
+        let mut outline = |inside: &dyn Fn(f32) -> bool, rgba: u32| {
+            let at_ij = |i: i64, j: i64| if i < 0 || j < 0 || i >= i64::from(gw) || j >= i64::from(gh) { 0.0 } else { weights[(j * i64::from(gw) + i) as usize] };
+            for j in -1..=i64::from(gh) {
+                for i in -1..=i64::from(gw) {
+                    let here = inside(at_ij(i, j));
+                    let (x, z) = (origin[0] + i as f64 * s, origin[1] + j as f64 * s);
+                    // The edge between this sample's cell and the next one across, then down (cells centred on the samples).
+                    if here != inside(at_ij(i + 1, j)) {
+                        out.line(point(x + s * 0.5, z - s * 0.5), point(x + s * 0.5, z + s * 0.5), rgba);
+                    }
+
+                    if here != inside(at_ij(i, j + 1)) {
+                        out.line(point(x - s * 0.5, z + s * 0.5), point(x + s * 0.5, z + s * 0.5), rgba);
+                    }
+                }
+            }
+        };
+
+        outline(&|v| v >= 0.999, COVER_RGBA);
+        if normalize {
+            outline(&|v| v > 0.0, FEATHER_RGBA);
+        }
+
+        Some(out.lines)
     }
 }
 

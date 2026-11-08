@@ -557,6 +557,12 @@ pub struct Tile {
     /// Whether a Prefab tool is there to open a reference's prefab in, and the key the Inspector asked it to open.
     pub(crate) prefab_tool_ready: bool,
     pub(crate) prefab_open_request: Option<String>,
+
+    /// A stage (`stage.rs`): its prefab's layer applies over the nested prefabs' ground, as it does in a tile.
+    pub(crate) stage_layer_last: bool,
+
+    /// The stage's outlines of its prefab's ground (`stage.rs`) and what they were drawn for.
+    pub(crate) stage_outline: (wce_scene::render_scene::EntityId, Option<u64>),
     pub(crate) stroke_id: u64,
 
     /// The history's version after the stroke's last step.
@@ -823,7 +829,7 @@ impl TileDocument {
             terrain_stride: 1, instances: vec![], type_ordinal: vec![], markers: Markers::default(), type_counts: BTreeMap::new(), batch_entity: vec![], dirty_type: vec![],
             first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), covers: HashMap::new(), covers_dirty: BTreeSet::new(), cover_spare: HashMap::new(), cover_ground: 0, polygons_published: false, tops: HashMap::new(), tops_wanted: BTreeSet::new(), tops_polls: 0, tops_came: false, models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
             markers_dirty: true, polygons_dirty: false, wall_preview: walls::WallPreview::default(), hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
-            grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false, road_items: vec![], road_entities: vec![], road_items_stale: true, road_items_shown: false, road_prefabs: None, layers_shown: false, roads_stale: false, roads_seen: 0, history_version: 0, prefab_ground_seen: 0, prefab_ground_stale: false, prefab_tool_ready: false, prefab_open_request: None,
+            grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false, road_items: vec![], road_entities: vec![], road_items_stale: true, road_items_shown: false, road_prefabs: None, layers_shown: false, roads_stale: false, roads_seen: 0, history_version: 0, prefab_ground_seen: 0, prefab_ground_stale: false, prefab_tool_ready: false, prefab_open_request: None, stage_outline: (0, None), stage_layer_last: false,
             stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, saved_blend_depth: 0, blend_on_disk_edited: false, saved_ground_depth: 0, ground_on_disk_edited: false, water_depth: None, auto_nogos: None, nogo_entity: 0, nogo_dirty: true, water_entities: vec![], columns: columns::ColumnState::default(), tech: tech::TechState::default(), collapses: collapse::CollapseState::default(), fire: fire::FirePreview::default(), links_entity: 0,
             links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
             skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), pack_categories: None, building_db: OnceCell::new(), building_tables: vec![], tile_sets: OnceCell::new(), logic_summaries: RefCell::default(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None, normal_image: None, heights_changed: None, terrain_grid: None,
