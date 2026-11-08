@@ -1,5 +1,5 @@
 //! The Prefab tool's stage (docs/plans/prefab_tool.md): a flat tile, made as a new tile is (`new_tile`) in a folder of its own, never a
-//! tile of the user's, holding one group at its middle: the prefab's, marked [`STAGE_ATTR`]. What is edited there is saved as the prefab,
+//! tile of the user's, holding one group at its middle, right under the root: the prefab's, marked [`STAGE_ATTR`]. What is edited there is saved as the prefab,
 //! never as the tile.
 
 use std::path::Path;
@@ -63,8 +63,7 @@ pub fn make(root: &Path, settings: &StageSettings, group_text: &[u8]) -> Result<
     let dir = new_tile::create(&t, root, None)?;
     let mut project = TileProject::open(&dir).map_err(|e| e.to_string())?;
     let graph = project.scene.scene_graph().ok_or("the stage has no scene graph")?;
-    let layer = project.scene.add_layer(Some(graph), "Prefab").map_err(|e| e.to_string())?;
-    let group = project.scene.insert_element_text(layer, group_text).map_err(|e| e.to_string())?;
+    let group = project.scene.insert_element_text(graph, group_text).map_err(|e| e.to_string())?;
     let (x, z) = settings.middle();
     project.scene.set_position(group, Double3::new(x, settings.height, z));
     project.scene.set_euler(group, Double3::default());
@@ -90,6 +89,9 @@ mod tests {
         assert_eq!(p.scene.position(g), Some(Double3::new(128.0, 10.0, 128.0)));
         assert_eq!(p.scene.euler(g), Some(Double3::default()));
         assert_eq!(p.scene.find_all("BUILDING_INSTANCE").len(), 1);
+
+        // Right under the root: no layer between them.
+        assert_eq!(p.scene.children(p.scene.scene_graph().unwrap()), vec![g]);
 
         // Made again, the same.
         let again = make(&root, &s, group).unwrap();

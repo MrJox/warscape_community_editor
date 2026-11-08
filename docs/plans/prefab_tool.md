@@ -143,9 +143,9 @@ GUI and in game (a prefab with a normalized platform under a building, units wal
   order is Weather, Prefab, Tile, Terrain, UI.
 - The stage puts the group's origin on its ground and what is on the landscape inside onto the ground, as placing in a tile does
   (f55cf611); a save gives the file's height back to what is still where the stage put it. A stage starts without grass (`grass on`).
-- UX pass (2026-11-08, with the user): the working layer on a stage is the prefab's group by default and never the root (the root
-  and the stage's `Prefab` layer are not the prefab: nothing is added, dropped, moved or grouped outside the group; a layer inside it can
-  be the working layer); the Prefabs panel lists the library by folder as the Create panel does (folders first, with counts; the
+- UX pass (2026-11-08, with the user): the prefab's group is right under the stage's root (no layer between them); the working layer
+  on a stage is the group by default and never the root (nothing is added, dropped, moved or grouped outside the group; a layer
+  inside it can be the working layer); the Prefabs panel lists the library by folder as the Create panel does (folders first, with counts; the
   projects' prefabs green with the link icon); the stage's settings are in the Inspector under the root, the prefab's ground settings
   (Normalize ground, feather, its size) under the prefab's group, saved in the prefab's `WceTerrain` as before.
 - Still open: thumbnails of prefabs with their ground; smoother outlines (they follow the samples, in steps).
