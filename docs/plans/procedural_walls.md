@@ -49,6 +49,16 @@ Inspector rows, commands, Save for Assembly Kit): [docs/editor.md](../editor.md)
 - **A corner's faces land on the bisector exactly** (`PieceWarp::s_at`, 2026-11-05): the straight shear in the base's frame left a
   curved arm's face off the bisector (a slit along Amon Calen's prow, 7 cm 3 m in); the points within 3 of a face are moved along the
   wall onto it, both pieces taking the same corner and bisector.
+- **A corner on a slope joins at one height** (user, 2026-11-08). A step's ramp could lie across a corner (its runs left no room
+  away from it: "no place for the step(s) away from a corner"); the bisector's points are at another distance along each arm (before
+  the corner on one, after it on the other), so at their own levels the two arms' inner sides stood apart in height. Three changes:
+  - a step with no room between its runs goes to the nearest free place anywhere along the wall, clear of the steps already laid
+    (between steps the level is the one the step before left, so its runs need not be moved);
+  - near a corner's face a point's level goes to the corner's own level (`PieceWarp::level_at_faces`, over `FACE_BLEND`, as `s_at`
+    moves it): both arms meet at one height along the bisector whatever the walkway does there;
+  - steps keep from a corner as far along each arm as it takes to be the margin away from the other arm: the margin over the sine of
+    the turn (at most 5 times). At an acute corner (25 degrees inside, the test tile's wall) the stepped bastions 18 m from the tip
+    stood across the other arm; now 33 m.
 - **Audit of a step against the stepped bastion** (user 2026-11-05: units still did not climb the stairs; every part of the logic file
   checked on Amon Calen, `~/wce_re/scratch/audit`):
   - `bin_data` groups the hull's triangles (as many groups as `action_vfx`; each triangle in one): the remade hull kept the base's
