@@ -467,6 +467,11 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   road and the ground platforms start level with it. And a launch still had the old terrain: the road's layers set the layers' dirty
   flag, which saves `terrain_layers.wcl`, but not the maps', so `height_map_0.png` (what the compile reads) was not written. Applying
   the roads' terrain marks the height, blend and ground maps it changes; a launch and Save to pack finish the road jobs before saving.
+- **A test: the deck 1 m over the road** (user's theory, 2026-11-08, from Rome II's bridge: its deck about 0.6 m over the ground at
+  its ends, the green platform between). With the deck on the road, units may step onto it anywhere along its ends, past the ground
+  platforms. Now the deck runs rim to rim only, `DECK_LIFT` (1 m) over the road profile, the ground under it kept at the road's height,
+  and the ground platforms ramp from its ends down to the road 3 m out. No ramp mesh yet: the deck's ends stand in the air. To be
+  checked in game.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,

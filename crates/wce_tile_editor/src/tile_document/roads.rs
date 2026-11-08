@@ -906,10 +906,10 @@ let mut planned = vec![];
         for &(a, b) in &plan.gaps {
             spans.push((st.of_sample(a), st.of_sample(b)));
 
-            // Past the rims onto the road, whose terrain is the road's there (`road_strip`): its ends lie on the ground.
-            let (from, to) = (st.of_sample(a) - BRIDGE_ON_ROAD, st.of_sample(b) + BRIDGE_ON_ROAD);
-            let (a, b) = ((0..a).rev().find(|&i| st.of_sample(i) <= from).unwrap_or(0), (b..plan.line.len()).find(|&i| st.of_sample(i) >= to).unwrap_or(plan.line.len() - 1));
-            let path = (a..=b).map(|i| [plan.line[i][0] * unit, plan.heights[i] * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
+            // Rim to rim, DECK_LIFT over the road: the deck's platform out of a unit's step from the ground, so that units go on and off by
+            // its ground platforms (`wce_walls::bridge::GROUND_PLATFORM`, from its ends down to the road), as Rome II's bridges have it
+            // (user 2026-11-08: lying on the road, units stepped onto it anywhere and the game would not path across).
+            let path = (a..=b).map(|i| [plan.line[i][0] * unit, (plan.heights[i] + DECK_LIFT) * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
             decks.push((elem, road.id, road.bridge.clone(), road.settings.width * unit, path));
         }
 
@@ -1119,15 +1119,15 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
 /// The version of how roads are made, in every road's signature: a road's layers are saved with the tile and made again only when its
 /// signature changes, so a change to how they are made bumps this, or a tile keeps the old terrain (user 2026-11-08: the bridges' fixes
 /// did not show on a tile saved before them).
-const ROAD_MAKING: u32 = 3;
+const ROAD_MAKING: u32 = 4;
 
-/// How far a bridge runs onto the road at each end, past its gap's rims (metres).
-const BRIDGE_ON_ROAD: f64 = 2.0;
+/// How far a bridge's deck stands over the road under it (metres): more than a unit steps up (Rome II's are about 0.6 over the ground
+/// at their ends; 1 to be sure, user 2026-11-08).
+const DECK_LIFT: f64 = 1.0;
 
-/// Under a bridge's deck the terrain is kept this far past its sides (more than a height-map pixel: 2 m on a 64-density tile) and this
-/// far under it at the rims, less and less to none at its ends (metres).
+/// Under a bridge's deck the bank beside the road is held back this far past its sides (more than a height-map pixel: 2 m on a
+/// 64-density tile; metres).
 const DECK_SIDE: f64 = 2.5;
-const DECK_SINK: f64 = 0.3;
 
 /// The no-go regions beside a bridge over water: from this far past the deck's side to this far (metres).
 const NOGO_NEAR: f64 = 1.0;
@@ -1149,8 +1149,9 @@ fn road_strip(plan: &Plan, settings: &RoadSettings) -> Strip {
         for i in 0..plan.line.len() {
             let s = st.of_sample(i);
             let off = if s < sa { sa - s } else if s > sb { s - sb } else { 0.0 };
-            if off < BRIDGE_ON_ROAD {
-                strip.under_deck(i, DECK_SIDE, DECK_SINK * (1.0 - off / BRIDGE_ON_ROAD));
+            // Under the deck the ground stays at the road's height (the deck DECK_LIFT over it), the bank beside it held back.
+            if off <= 0.0 {
+                strip.under_deck(i, DECK_SIDE, 0.0);
             }
         }
     }

@@ -675,7 +675,7 @@ impl Strip {
         // through it beside the water).
         if open {
             let cap = y - sink;
-            return (sink > 0.0 && d <= s.width * 0.5 + wider && ground > cap).then_some(cap);
+            return (wider > 0.0 && d <= s.width * 0.5 + wider && ground > cap).then_some(cap);
         }
 
         if kept {
