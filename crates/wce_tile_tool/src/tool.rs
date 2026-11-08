@@ -1364,10 +1364,11 @@ impl TileTool {
         }
 
         // The scene as the editor holds it (the prefab references with their contents), as TEd's.
-        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+        let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let project_dir = d.project().dir.clone();
         let text = d.text_for_export(false)?;
-        let walls = if d.tile().has_generated_buildings() { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
+        let generated = d.tile().has_generated_buildings();
+        let walls = if generated { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
         Ok(ExportInputs { files, kit, game, pending, project_dir, text, walls })
     }
@@ -1385,7 +1386,7 @@ impl TileTool {
             e.docs.save_one(id)?;
         }
 
-        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
+        let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let dir = d.project().dir.clone();
         let text = d.text_for_export(false)?;
 

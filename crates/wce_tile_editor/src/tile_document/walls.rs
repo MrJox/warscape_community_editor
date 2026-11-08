@@ -57,8 +57,19 @@ pub(crate) struct WallPreview {
     pending: HashMap<usize, Instant>,
     revision: u64,
 
+    /// The walls whose pieces are being made, off the editor's thread (`jobs`): the newest request of each.
+    jobs: HashMap<usize, WallJob>,
+
     /// How many times walls' pieces were made (not taken again): for the tests.
     made_count: u64,
+}
+
+/// A wall's pieces being made: the job and what applying its result needs.
+struct WallJob {
+    job: super::jobs::Job<Vec<(String, wce_walls::pieces::Piece, BuildingFiles)>>,
+    signature: u64,
+    caps: Vec<(&'static str, wce_walls::pieces::Piece)>,
+    own: HashMap<&'static str, Arc<BuildingFiles>>,
 }
 
 impl WallPreview {
@@ -302,6 +313,7 @@ impl Tile {
         map.keys(&mut self.wall_preview.entities);
         map.keys(&mut self.wall_preview.shown_as);
         map.keys(&mut self.wall_preview.pending);
+        map.keys(&mut self.wall_preview.jobs);
     }
 
     /// Every wall's preview is made again (the layer was cleared, or the ground changed).
@@ -319,6 +331,7 @@ impl Tile {
         self.wall_preview.entities.clear();
         self.wall_preview.shown_as.clear();
         self.wall_preview.pending.clear();
+        self.wall_preview.jobs.clear();
         self.walls_changed();
     }
 
@@ -354,8 +367,10 @@ impl Tile {
         }
     }
 
-    /// Per frame: makes again the previews of the walls left alone long enough.
+    /// Per frame: puts the pieces made off the editor's thread on the scene, and makes again the previews of the walls left alone long
+    /// enough.
     pub(crate) fn update_wall_previews(&mut self, scene: &mut RenderScene) {
+        self.take_wall_jobs(scene);
         if self.wall_preview.pending.is_empty() || self.stroke_open {
             return;
         }
@@ -397,6 +412,8 @@ impl Tile {
     }
 
     fn make_wall_pieces(&mut self, scene: &mut RenderScene, elem: usize) {
+        // What was being made for it is not wanted any more.
+        self.wall_preview.jobs.remove(&elem);
         let before = self.wall_preview.shown_as.remove(&elem);
         let ids = self.wall_preview.entities.remove(&elem).unwrap_or_default();
         let layout = self.wall_layout(elem).filter(|_| self.is_wall(elem) && self.shown(elem));
@@ -412,17 +429,21 @@ impl Tile {
             return;
         }
 
-        for id in ids {
-            scene.remove(id);
-        }
-
         let (Some(layout), Some(signature)) = (layout, signature) else {
+            for id in ids {
+                scene.remove(id);
+            }
+
             self.drop_unused_wall_pieces();
             return;
         };
 
         // Made before (an edit elsewhere, the tile published again, an undo): the same pieces again.
         if let Some(made) = self.wall_preview.made.get(&signature).cloned() {
+            for id in ids {
+                scene.remove(id);
+            }
+
             let source = self.source(super::item_of(elem));
             let ids = made.models.into_iter().map(|(world, model)| scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source)).collect();
             self.wall_preview.entities.insert(elem, ids);
@@ -431,10 +452,15 @@ impl Tile {
             return;
         }
 
+        // The old pieces stay on the scene until the new ones are made.
+        self.wall_preview.entities.insert(elem, ids);
+        if let Some(b) = before {
+            self.wall_preview.shown_as.insert(elem, b);
+        }
+
         let Some(base) = self.wall_base(layout.profile.key) else { return };
         let (up, down) = (self.wall_base(layout.profile.step_up), self.wall_base(layout.profile.step_down));
         let door = (!layout.profile.door.is_empty()).then(|| self.wall_base(layout.profile.door)).flatten();
-        let steps = StepFiles { up: up.as_deref(), down: down.as_deref() };
         let (rigid, ps): (Vec<_>, Vec<_>) = pieces(&layout.plan, layout.profile).into_iter().partition(|p| p.rigid);
 
         // The pieces made from another building (whole steps), and the game's pieces placed as they are (caps, towers, bastions).
@@ -448,26 +474,68 @@ impl Tile {
         }
 
         let u = self.unit();
-        let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
-        let doors = self.wall_doors(&layout, &ps);
+        let ground = super::jobs::Ground::of(&self.project);
+        let doors = self.wall_doors(&layout, &ps).0;
         self.wall_preview.revision += 1;
         let revision = self.wall_preview.revision;
-        let mut made = vec![];
-        for (i, piece) in ps.into_iter().enumerate() {
-            let key = format!("wce_preview_{elem}_{revision}_{i}");
-            let warp = PieceWarp::new(&layout.plan, layout.profile, piece, &ground);
-            let from = match (piece.base.and_then(|k| own.get(k)), &door) {
-                (Some(b), _) => b,
-                (None, Some(d)) if doors.0.contains(&i) => d,
-                _ => &base,
+
+        // The pieces, off the editor's thread: the base's meshes and logic warped for each.
+        let (job_own, job_door) = (own.clone(), door.clone());
+        let job = super::jobs::Job::spawn("wall pieces", move || {
+            wce_foundation::wce_prof!("tile.wall_pieces");
+            let ground = |x: f64, z: f64| ground.height_at(x / u, z / u);
+            let steps = StepFiles { up: up.as_deref(), down: down.as_deref() };
+            let mut made = vec![];
+            for (i, piece) in ps.into_iter().enumerate() {
+                let key = format!("wce_preview_{elem}_{revision}_{i}");
+                let warp = PieceWarp::new(&layout.plan, layout.profile, piece, &ground);
+                let from = match (piece.base.and_then(|k| job_own.get(k)), &job_door) {
+                    (Some(b), _) => b,
+                    (None, Some(d)) if doors.contains(&i) => d,
+                    _ => &base,
+                };
+
+                match make_piece(from, &key, &warp, steps, true, Some(1)) {
+                    Ok(files) => made.push((key, piece, files)),
+                    Err(err) => wce_foundation::log::warn(format!("wall preview: piece {i}: {err}")),
+                }
+            }
+
+            made
+        });
+
+        self.wall_preview.jobs.insert(elem, WallJob { job, signature, caps, own });
+    }
+
+    /// The walls' pieces made off the editor's thread, put on the scene in place of the old ones.
+    fn take_wall_jobs(&mut self, scene: &mut RenderScene) {
+        let done = self.wall_preview.jobs.iter().filter_map(|(&e, j)| match j.job.poll() {
+            super::jobs::Poll::Running => None,
+            super::jobs::Poll::Done(made) => Some((e, Some(made))),
+            super::jobs::Poll::Failed => Some((e, None)),
+        }).collect::<Vec<_>>();
+        for (elem, made) in done {
+            let Some(job) = self.wall_preview.jobs.remove(&elem) else { continue };
+            let Some(made) = made else {
+                wce_foundation::log::warn(format!("wall preview: wall {elem}: its pieces could not be made"));
+                continue;
             };
 
-            match make_piece(from, &key, &warp, steps, true, Some(1)) {
-                Ok(files) => made.push((key, piece, files)),
-                Err(err) => wce_foundation::log::warn(format!("wall preview: piece {i}: {err}")),
+            let before = self.wall_preview.shown_as.get(&elem).copied();
+            for id in self.wall_preview.entities.remove(&elem).unwrap_or_default() {
+                scene.remove(id);
+            }
+
+            self.show_wall_pieces(scene, elem, job.signature, made, &job.caps, &job.own);
+            if Some(job.signature) != before {
+                self.tech_wall_changed(elem);
             }
         }
+    }
 
+    /// A wall's pieces put on the scene, and kept by their signature: those made, and its caps as they are.
+    fn show_wall_pieces(&mut self, scene: &mut RenderScene, elem: usize, signature: u64, made: Vec<(String, wce_walls::pieces::Piece, BuildingFiles)>, caps: &[(&'static str, wce_walls::pieces::Piece)], own: &HashMap<&'static str, Arc<BuildingFiles>>) {
+        let u = self.unit();
         let source = self.source(super::item_of(elem));
         let mut ids = vec![];
         let mut keys = vec![];
@@ -490,7 +558,7 @@ impl Tile {
         }
 
         // The caps as they are: their intact meshes from the game's files.
-        for (key, piece) in caps {
+        for &(key, piece) in caps {
             let Some(files) = own.get(key) else { continue };
             let wt = WorldTransform { position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]), rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)) };
             let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));

@@ -10,7 +10,9 @@ use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit, junctions,
 use wce_tile::road_pieces::{BASE, PIECES, Piece, key, read};
 use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_sharp, sharp_points};
 use wce_tile::ted_scene::TedScene;
-use wce_tile::terrain_layers::{Kind, Stack, TerrainLayers};
+use std::collections::HashMap;
+
+use wce_tile::terrain_layers::{Blend, Ground as TerrainGround, Height, Kind, Stack, TerrainLayers};
 
 use super::Tile;
 pub use wce_tile::new_instances::ROAD_SPLINE;
@@ -19,6 +21,7 @@ pub use wce_tile::new_instances::ROAD_SPLINE;
 pub const KIT_LAYER: &str = "WCE procedural roads";
 
 /// A road as the scene has it.
+#[derive(Clone)]
 struct Road {
     id: u32,
     line: Vec<[f64; 2]>,
@@ -188,9 +191,16 @@ impl Tile {
     /// Makes again the layers of the roads that changed, and takes out those of roads that went. Waits for an open stroke and for a line that
     /// stopped moving: a drag makes its road once, at its end. `sync_terrain_layers` has run.
     pub(super) fn refresh_roads(&mut self) {
+        self.refresh_roads_with(false);
+    }
+
+    /// [`Self::refresh_roads`]; `wait`: what is being made is waited for, and what is to be made is made now (an export).
+    fn refresh_roads_with(&mut self, wait: bool) {
         if self.stroke_open {
             return;
         }
+
+        self.take_road_terrain(wait);
 
         let any = self.idx.valid && self.idx.type_names.iter().any(|t| t == ROAD_SPLINE);
         let owned = |p: &wce_tile::tile_project::TileProject| p.layers.as_ref().and_then(|l| l.height.as_ref()).is_some_and(|s| s.layers.iter().any(|l| l.owner.starts_with("road:")));
@@ -209,26 +219,32 @@ impl Tile {
 
         let stale = self.roads_stale || !on_top || roads.iter().any(|r| made(r.id) != Some(r.signature));
         let gone = stacks.is_some_and(|s| s.layers.iter().filter_map(|l| parse_owner(&l.owner)).any(|o| roads.iter().all(|r| r.id != o.0)));
+        // The instances wait for the terrain: made before it, they were made again right after.
+        self.roads_due = stale || gone;
         if !stale && !gone {
             return;
         }
 
-        // A line still moving waits for the next look.
+        // A line still moving waits for the next look; the roads being made as they are wait for their job.
         let all = roads.iter().fold(0u64, |h, r| h.rotate_left(7) ^ r.signature);
-        if all != self.roads_seen {
+        if all != self.roads_seen && !wait {
             self.roads_seen = all;
             return;
         }
 
-        if let Err(why) = self.make_roads(&roads) {
-            wce_foundation::log::warn(format!("roads: {why}"));
+        if self.road_terrain_job.as_ref().is_some_and(|j| j.all == all) {
+            return;
         }
 
-        self.roads_stale = false;
-        self.layers_shown = true;
+        self.roads_seen = all;
+        if let Err(why) = self.start_road_terrain(&roads, all) {
+            wce_foundation::log::warn(format!("roads: {why}"));
+            return;
+        }
 
-        // Grass stands by the blend map and on the heights, and neither is what it was.
-        self.reload_grass();
+        if wait {
+            self.take_road_terrain(true);
+        }
     }
 
     /// The road over a ground (`sample`, world units) and the water on it (`roads::plan`): fords where it is shallow, bridges where it is
@@ -260,306 +276,168 @@ impl Tile {
         WaterMap { rivers, planes, sea }
     }
 
-    fn make_roads(&mut self, roads: &[Road]) -> Result<(), String> {
-        wce_foundation::wce_prof!("tile.make_roads");
+    /// Starts making the roads' layers off the editor's thread (`road_terrain`): on copies of the stacks (their samples shared, cheap),
+    /// with what the roads need taken now. `all`: what the roads are made from, to know the job when it is asked for again.
+    fn start_road_terrain(&mut self, roads: &[Road], all: u64) -> Result<(), String> {
         let water = self.water_map();
         let p = &mut self.project;
         p.load_blend()?;
         p.load_ground()?;
         let unit = p.unit_scale;
         let (border, ex, ez, mx, mz) = (p.border_m(), p.extent_x(), p.extent_z(), p.mpp_x(), p.mpp_z());
-        let (Some(hf), Some(bf), Some(gf)) = (p.height.as_mut(), p.blend.as_mut(), p.ground.as_mut()) else { return Err("the tile has no height map".to_owned()) };
+        let (Some(hf), Some(bf), Some(gf)) = (p.height.as_ref(), p.blend.as_ref(), p.ground.as_ref()) else { return Err("the tile has no height map".to_owned()) };
+        let dims = [(hf.width(), hf.height()), (bf.width(), bf.height()), (gf.width(), gf.height())];
         let layers = p.layers.get_or_insert_with(TerrainLayers::default);
         let new_ids = roads.iter().map(|_| [layers.new_id(), layers.new_id(), layers.new_id()]).collect::<Vec<_>>();
-        layers.dirty = true;
-        let height = layers.height.get_or_insert_with(|| Stack::new(hf));
-        let blend = layers.blend.get_or_insert_with(|| Stack::new(bf));
-        let ground = layers.ground.get_or_insert_with(|| Stack::new(gf));
-        let alive = |o: &str| parse_owner(o).is_none_or(|(id, _)| roads.iter().any(|r| r.id == id));
-        height.layers.retain(|l| alive(&l.owner));
-        blend.layers.retain(|l| alive(&l.owner));
-        ground.layers.retain(|l| alive(&l.owner));
-        height.put_owned_on_top();
-        blend.put_owned_on_top();
-        ground.put_owned_on_top();
-
-        let (hw, hh) = (hf.width(), hf.height());
-        let (bw, bh) = (bf.width(), bf.height());
-        let (gw, gh) = (gf.width(), gf.height());
-        let (bpx, bpz) = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
-        let (gpx, gpz) = (f64::from(gw) / (ex + 2.0 * border), f64::from(gh) / (ez + 2.0 * border));
-        let mut earlier: Vec<Strip> = vec![];
-        for (road, ids) in roads.iter().zip(&new_ids) {
-            if road.line.len() < 2 {
-                continue;
-            }
-
-            let owner = owner_of(road.id, road.signature);
-            let name = format!("Road {}", road.id);
-            let height_id = road_layer(height, road.id, &owner, &name, ids[0]);
-            let blend_id = road_layer(blend, road.id, &owner, &name, ids[1]);
-            let ground_id = road_layer(ground, road.id, &owner, &name, ids[2]);
-
-            // What lies below the road, in world units.
-            let under = |x: u32, y: u32| {
-                let mut px = [0.0f32];
-                height.below(height_id, x.min(hw - 1), y.min(hh - 1), &mut px);
-                f64::from(px[0]) / unit
-            };
-
-            let sample = |x: f64, z: f64| bilinear(&under, x, z, (border, mx, mz), (hw, hh));
-            let plan = Self::plan_road(road, &sample, &water, &|x, z| earlier.iter().any(|s| s.on_road(x, z)));
-            let strip = road_strip(&plan, &road.settings);
-            let b = strip.bounds();
-            let rect = |pp: (f64, f64), off: f64, w: u32, h: u32| {
-                let lo = |v: f64, n: u32| (v.floor().max(0.0) as u32).min(n);
-                [lo((b[0] + off) * pp.0, w), lo((b[1] + off) * pp.1, h), lo(((b[2] + off) * pp.0).ceil(), w), lo(((b[3] + off) * pp.1).ceil(), h)]
-            };
-
-            let mut writes = vec![];
-            let [x0, y0, x1, y1] = rect((1.0 / mx, 1.0 / mz), border, hw, hh);
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    let (wx, wz) = (f64::from(x) * mx - border, f64::from(y) * mz - border);
-                    let g = under(x, y);
-                    if let Some(h) = strip.height_at(wx, wz, g) {
-                        writes.push((x, y, ((h - g) * unit) as f32));
-                    }
-                }
-            }
-
-            for (x, y, v) in writes {
-                height.put(height_id, x, y, &[v]);
-            }
-
-            let [x0, y0, x1, y1] = rect((bpx, bpz), border, bw, bh);
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    let (wx, wz) = ((f64::from(x) + 0.5) / bpx - border, (f64::from(y) + 0.5) / bpz - border);
-                    let w = strip.texture_at(wx, wz);
-                    if w > 0.0 {
-                        let mut px = [0u16; 16];
-                        px[road.settings.channel] = (w * 65535.0).round() as u16;
-                        blend.put(blend_id, x, y, &px);
-                    }
-                }
-            }
-
-            let [c0, c1, c2] = road.settings.ground;
-            let [x0, y0, x1, y1] = rect((gpx, gpz), border, gw, gh);
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    if strip.on_road((f64::from(x) + 0.5) / gpx - border, (f64::from(y) + 0.5) / gpz - border) {
-                        ground.put(ground_id, x, y, &[c0, c1, c2, 255]);
-                    }
-                }
-            }
-
-            earlier.push(strip);
-        }
-
-        height.apply_all(hf);
-        blend.apply_all(bf);
-        ground.apply_all(gf);
-        height.remember();
-        blend.remember();
-        ground.remember();
-        self.road_items_stale = true;
+        let height = layers.height.get_or_insert_with(|| Stack::new(hf)).clone();
+        let blend = layers.blend.get_or_insert_with(|| Stack::new(bf)).clone();
+        let ground = layers.ground.get_or_insert_with(|| Stack::new(gf)).clone();
+        let before = (height.clone(), blend.clone(), ground.clone());
+        let input = TerrainInput { roads: roads.to_vec(), water, new_ids, height, blend, ground, dims, frame: (unit, border, ex, ez, mx, mz) };
+        let job = super::jobs::Job::spawn("road terrain", move || road_terrain(input));
+        self.road_terrain_job = Some(RoadTerrainJob { job, all, before });
         Ok(())
     }
 
-    /// The instances along the roads: the prefabs, and the bridges over their gaps. Derived as their layers are, so made again, not saved.
-    pub(super) fn make_road_items(&mut self) {
-        wce_foundation::wce_prof!("tile.make_road_items");
+    /// The roads' layers made off the editor's thread, put in place of the stacks they were made from, and the maps composed again over
+    /// what they changed: when the stacks are still as they were taken. Edited meanwhile (a brush, an undo, a prefab's ground), the job is
+    /// let go and the roads are made again.
+    fn take_road_terrain(&mut self, wait: bool) {
+        let Some(j) = &self.road_terrain_job else { return };
+        let made = match if wait { j.job.wait() } else { j.job.poll() } {
+            super::jobs::Poll::Running => return,
+            super::jobs::Poll::Done(m) => Some(m),
+            super::jobs::Poll::Failed => None,
+        };
+
+        let j = self.road_terrain_job.take().expect("a job");
+        let Some((height, blend, ground)) = made else {
+            wce_foundation::log::warn("roads: their terrain could not be made");
+            return;
+        };
+
+        let p = &mut self.project;
+        let (Some(hf), Some(bf), Some(gf), Some(layers)) = (p.height.as_mut(), p.blend.as_mut(), p.ground.as_mut(), p.layers.as_mut()) else { return };
+        let (Some(h0), Some(b0), Some(g0)) = (layers.height.as_ref(), layers.blend.as_ref(), layers.ground.as_ref()) else { return };
+        if !(h0.unchanged_since(&j.before.0) && b0.unchanged_since(&j.before.1) && g0.unchanged_since(&j.before.2)) {
+            self.roads_stale = true;
+            return;
+        }
+
+        // What changed of each map: where the roads' layers were and are.
+        fn roads_rect<K: wce_tile::terrain_layers::Kind>(old: &Stack<K>, new: &Stack<K>) -> Option<[u32; 4]> {
+            old.layers.iter().chain(&new.layers).filter(|l| l.owner.starts_with("road:")).filter_map(|l| l.extent())
+                .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
+        }
+
+        let rects = (roads_rect(h0, &height), roads_rect(b0, &blend), roads_rect(g0, &ground));
+        layers.height = Some(height);
+        layers.blend = Some(blend);
+        layers.ground = Some(ground);
+        layers.dirty = true;
+        if let Some(s) = layers.height.as_mut() {
+            if let Some(r) = rects.0 {
+                s.apply(hf, r);
+            }
+
+            s.remember();
+        }
+
+        if let Some(s) = layers.blend.as_mut() {
+            if let Some(r) = rects.1 {
+                s.apply(bf, r);
+            }
+
+            s.remember();
+        }
+
+        if let Some(s) = layers.ground.as_mut() {
+            if let Some(r) = rects.2 {
+                s.apply(gf, r);
+            }
+
+            s.remember();
+        }
+
+        self.road_items_stale = true;
+        self.roads_stale = false;
+        self.roads_due = false;
+        self.layers_shown = true;
+
+        // Grass stands by the blend map and on the heights, and neither is what it was.
+        self.reload_grass();
+    }
+
+    /// Starts making the instances along the roads off the editor's thread (`road_items`), with what they need taken now: the roads, the
+    /// water, a copy of the height stack and of the heights, each road type's pieces, the bridge bases.
+    fn start_road_items(&mut self) {
         self.road_items_stale = false;
-        let unit = self.project.unit_scale;
-        let roads = self.roads();
-        let mut items = vec![];
-
-        // Each road's line and bridges first: where roads meet is found on all their lines.
+        let roads = self.road_elems().into_iter().zip(self.roads()).collect::<Vec<_>>();
         let water = self.water_map();
-        let mut planned = vec![];
-        let mut decks = vec![];
-        let mut earlier: Vec<Strip> = vec![];
-        for (elem, road) in self.road_elems().into_iter().zip(&roads) {
-            if road.line.len() < 2 {
-                continue;
+        let mut pieces = HashMap::new();
+        let mut bases = HashMap::new();
+        for (_, r) in &roads {
+            if !pieces.contains_key(&r.road_type) {
+                pieces.insert(r.road_type.clone(), self.road_pieces_of(&r.road_type));
             }
 
-            // Laid as the terrain pass lays it (`make_roads`): on what lies below its layer, sampled the same way, the earlier roads taken
-            // for ground with no bump. Laid another way, a bridge's deck and the road it lands on were not at the same height (user
-            // 2026-11-08: its ends stood off the ground).
-            let below = self.project.layers.as_ref().and_then(|l| l.height.as_ref()).and_then(|s| s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|o| o.0 == road.id)).map(|l| (s, l.id)));
-            let (w, h) = self.project.height.as_ref().map_or((1, 1), |f| (f.width(), f.height()));
-            let (border, mx, mz) = (self.project.border_m(), self.project.mpp_x(), self.project.mpp_z());
-            let under = |x: u32, y: u32| match below {
-                Some((s, id)) => {
-                    let mut px = [0.0f32];
-                    s.below(id, x.min(w - 1), y.min(h - 1), &mut px);
-                    f64::from(px[0]) / unit
-                }
-
-                None => self.project.height_at(f64::from(x) * mx - border, f64::from(y) * mz - border) / unit,
-            };
-
-            let sample = |x: f64, z: f64| bilinear(&under, x, z, (border, mx, mz), (w, h));
-            let plan = Self::plan_road(road, &sample, &water, &|x, z| earlier.iter().any(|s: &Strip| s.on_road(x, z)));
-            earlier.push(road_strip(&plan, &road.settings));
-            // Each bridge's deck from rim to rim: the road's line and height over its gap (scene units).
-            let st = Stations::new(&plan.line);
-            let mut spans = vec![];
-            // Each crossing's AI hint, as vanilla's bridges and fords have one (`road_layout::crossing_hint`), for an export.
-            let width = road.settings.width;
-            let crossings = plan.gaps.iter().map(|&g| (g, width * 0.5 + wce_tile::road_layout::HINT_SIDE))
-                .chain(plan.fords.iter().map(|&g| (g, (width * 0.5 + wce_tile::road_layout::HINT_SIDE).max(wce_tile::road_layout::FORD_HINT_HALF))));
-            for ((a, b), half) in crossings {
-                let ends = wce_tile::road_layout::HINT_ENDS;
-                let outline = wce_tile::road_layout::strip_outline(&plan.line, st.of_sample(a) - ends, st.of_sample(b) + ends, half, unit);
-                match wce_tile::road_layout::crossing_hint(&outline) {
-                    Ok(hint) => items.push(RoadItem { road: elem, text: vec![], position: [0.0; 3], meshes: vec![], export: Some(hint), building: None }),
-                    Err(why) => wce_foundation::log::warn(format!("road {}: {why}", road.id)),
-                }
-            }
-
-            for &(a, b) in &plan.gaps {
-                spans.push((st.of_sample(a), st.of_sample(b)));
-
-                // Past the rims onto the road, whose terrain is the road's there (`road_strip`): its ends lie on the ground.
-                let (from, to) = (st.of_sample(a) - BRIDGE_ON_ROAD, st.of_sample(b) + BRIDGE_ON_ROAD);
-                let (a, b) = ((0..a).rev().find(|&i| st.of_sample(i) <= from).unwrap_or(0), (b..plan.line.len()).find(|&i| st.of_sample(i) >= to).unwrap_or(plan.line.len() - 1));
-                let path = (a..=b).map(|i| [plan.line[i][0] * unit, plan.heights[i] * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
-                decks.push((elem, road.id, road.bridge.clone(), road.settings.width * unit, path));
-            }
-
-            planned.push((elem, road, plan, spans));
-        }
-
-        // The pieces of each road's type, its measures, and how far its junctions reach.
-        let kit = planned.iter().map(|(_, road, _, _)| {
-            let pieces = self.road_pieces_of(&road.road_type);
-            let arm = |name: &str| pieces.iter().find(|p| p.0 == name).and_then(|p| p.1.arms.first()).map(|a| a.length);
-            let defaults = Measures::default();
-            let measures = Measures {
-                straight: arm("straight").unwrap_or(defaults.straight),
-                end: arm("end").unwrap_or(defaults.end),
-                corner_arm: arm("corner").unwrap_or(defaults.corner_arm),
-            };
-
-            let width = pieces.iter().find(|p| p.0 == "straight").map_or(wce_tile::road_pieces::WIDTH, |p| p.1.width).max(1e-6);
-            let scale = road.settings.width / width;
-            let half = arm("x_junction").or_else(|| arm("t_junction")).unwrap_or(defaults.corner_arm) * scale;
-            (pieces, measures, scale, half)
-        }).collect::<Vec<_>>();
-
-        let lines = planned.iter().map(|p| p.2.line.clone()).collect::<Vec<_>>();
-        let meet = junctions(&lines, &kit.iter().map(|k| k.3).collect::<Vec<_>>());
-        for note in &meet.notes {
-            wce_foundation::log::warn(format!("roads: {note}"));
-        }
-
-        // Each road's pieces, from end to end, but over its bridges and the junctions of other roads.
-        let (ex, ez) = (self.project.extent_x(), self.project.extent_z());
-        let end_of = |p: [f64; 2], joined: bool| if joined { End::Joined } else if p[0] < 1.0 || p[1] < 1.0 || p[0] > ex - 1.0 || p[1] > ez - 1.0 { End::Edge } else { End::Free };
-        let terrain = |x: f64, z: f64| f64::from(self.terrain_height(x as f32, z as f32));
-        for (r, ((elem, road, plan, spans), (pieces, measures, scale, _))) in planned.iter().zip(&kit).enumerate() {
-            if pieces.is_empty() {
-                continue;
-            }
-
-            let piece = |name: &str| pieces.iter().find(|p| p.0 == name);
-            let corners = plan.at_point.iter().zip(&road.sharp).filter(|(_, s)| **s).map(|(i, _)| *i).collect::<Vec<_>>();
-            let joined = meet.joined[r];
-            let ends = [end_of(road.line[0], joined[0]), end_of(road.line[road.line.len() - 1], joined[1])];
-            let mut holds = spans.iter().map(|&(from, to)| Hold { from, to, laid: None }).collect::<Vec<_>>();
-
-            // A ford: ford pieces from bank to bank, as long as straights.
-            let st = Stations::new(&plan.line);
-            for &(a, b) in &plan.fords {
-                let (from, to) = (st.of_sample(a), st.of_sample(b));
-                let n = (((to - from) / measures.straight).round() as usize).max(1);
-                for k in 0..n {
-                    let (s0, s1) = (from + (to - from) * k as f64 / n as f64, from + (to - from) * (k + 1) as f64 / n as f64);
-                    holds.push(Hold { from: s0, to: s1, laid: Some(wce_tile::road_layout::Laid { piece: "ford", frame: wce_tile::road_layout::Frame::Along { from: s0, to: s1 } }) });
-                }
-            }
-
-            holds.extend(meet.holds[r].iter().cloned());
-            let laid = layout(&plan.line, &corners, ends, &holds, measures, *scale, road.settings.seed);
-            for note in &laid.notes {
-                wce_foundation::log::warn(format!("road {}: {note}", road.id));
-            }
-
-            let width = road.settings.width;
-            for l in &laid.laid {
-                let Some((_, p, key, children)) = piece(l.piece) else { continue };
-                match fit(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }) {
-                    Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
-                    Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
-                }
+            if let Some(b) = wce_walls::bridge::base(&r.bridge).filter(|b| !bases.contains_key(b.key)) {
+                let prepared = self.bridge_base(b.key);
+                bases.insert(b.key, prepared);
             }
         }
 
-        // The bridges, generated: what was made for the last ones goes first.
+        let p = &self.project;
+        let height = p.layers.as_ref().and_then(|l| l.height.clone());
+        let hdims = p.height.as_ref().map_or((1, 1), |f| (f.width(), f.height()));
+        let frame = (p.unit_scale, p.border_m(), p.extent_x(), p.extent_z(), p.mpp_x(), p.mpp_z());
+        let ground = super::jobs::Ground::of(p);
+        self.road_making += 1;
+        let input = ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, making: self.road_making };
+        self.road_items_job = Some(super::jobs::Job::spawn("road items", move || road_items(input)));
+    }
+
+    /// The instances along the roads made off the editor's thread, put in place of the last ones (their bridges' files among the generated
+    /// ones, the last ones' taken out). `wait`: waits for them. Whether there were new ones.
+    fn take_road_items(&mut self, wait: bool) -> bool {
+        let Some(j) = &self.road_items_job else { return false };
+        let made = match if wait { j.wait() } else { j.poll() } {
+            super::jobs::Poll::Running => return false,
+            super::jobs::Poll::Done(m) => Some(m),
+            super::jobs::Poll::Failed => None,
+        };
+
+        self.road_items_job = None;
+        let Some(made) = made else {
+            wce_foundation::log::warn("roads: their pieces could not be made");
+            return false;
+        };
+
         for key in std::mem::take(&mut self.road_generated) {
             wce_vfs::generated::remove_prefix(&wce_walls::building::folder(&key));
         }
 
-        for (elem, id, base, width, path) in decks {
-            items.extend(self.bridge_items(elem, id, &base, width, path));
+        for (path, bytes) in made.files {
+            wce_vfs::generated::put(&path, bytes);
         }
 
-        self.road_items = items;
+        self.road_generated = made.keys;
+        self.road_items = made.items;
         self.road_items_shown = false;
 
         // The technology overlay draws the bridges' pieces made now.
         self.tech.dirty = true;
+        true
     }
 
-    /// A road's bridge over a gap (`path`: its deck from rim to rim, scene units), made from its base as walls are (`wce_walls::bridge`):
-    /// its pieces' files put among the generated ones under keys of this making, drawn as they are; an export writes the bridge's span
-    /// instead, to be made again there (`wce_walls::export::lower_walls`).
-    fn bridge_items(&mut self, elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 3]>) -> Vec<RoadItem> {
-        let Some(key) = wce_walls::bridge::base(base).map(|b| b.key) else { return vec![] };
-        let Some(prepared) = self.bridge_base(key) else {
-            wce_foundation::log::warn(format!("road {road}: the bridge base {key} is in no pack: no bridge"));
-            return vec![];
-        };
-
-        let unit = self.unit();
-        let deck = wce_walls::bridge::Deck::new(path.clone());
-        let across = width / (prepared.z.1 - prepared.z.0).max(1e-6);
-        self.road_making += 1;
-        let making = self.road_making;
-        let ground = |x: f64, z: f64| f64::from(self.terrain_height((x / unit) as f32, (z / unit) as f32)) * unit;
-        let mut out = vec![];
-        let mut keys = vec![];
-        for (k, (s, origin)) in wce_walls::bridge::piece_stretches(&deck, &prepared).into_iter().enumerate() {
-            let key = format!("wce_preview_road{road}_{making}_{k:02}");
-            let warp = wce_walls::bridge::BridgeWarp { deck: &deck, base: &prepared, s, across, origin, ground: &ground };
-            let made = match wce_walls::bridge::make_piece(&prepared, &key, &warp) {
-                Ok(m) => m,
-                Err(err) => {
-                    wce_foundation::log::warn(format!("road {road}: bridge piece {k}: {err}"));
-                    continue;
-                }
-            };
-
-            let mut meshes = vec![];
-            for (path, bytes) in made.into_pack_files() {
-                if path.ends_with(".rigid_model_v2") && path.contains("_destruct01") && !path.contains("_anim") {
-                    meshes.push(path.clone());
-                }
-
-                wce_vfs::generated::put(&path, bytes);
-            }
-
-            let export = Some(if k == 0 { wce_walls::bridge::span_text(base, width, &path) } else { vec![] });
-            out.push(RoadItem { road: elem, text: vec![], position: origin, meshes, export, building: Some(key.clone()) });
-            keys.push(key);
+    /// The roads as an export reads them: their terrain and their instances made, waiting for what is being made off the editor's thread.
+    pub fn finish_road_jobs(&mut self) {
+        self.refresh_roads_with(true);
+        if self.road_items_stale && self.road_prefabs.is_some() {
+            self.start_road_items();
         }
 
-        self.road_generated.extend(keys);
-        out
+        self.take_road_items(true);
     }
 
     /// A bridge base, turned and measured (`wce_walls::bridge::prepare`), read once.
@@ -633,9 +511,11 @@ impl Tile {
 
     /// Puts the instances along the roads on the scene.
     pub(super) fn show_road_items(&mut self, scene: &mut RenderScene) {
-        if self.road_items_stale && self.road_prefabs.is_some() {
-            self.make_road_items();
+        if self.road_items_stale && self.road_prefabs.is_some() && !self.roads_due && self.road_terrain_job.is_none() {
+            self.start_road_items();
         }
+
+        self.take_road_items(false);
 
         if self.road_items_shown {
             return;
@@ -698,6 +578,322 @@ impl Tile {
         Ok(scene.save())
     }
 }
+
+/// The roads' layers being made off the editor's thread, what they are made from, and copies of the stacks as they were taken (to know
+/// whether anything was written to them since).
+pub(crate) struct RoadTerrainJob {
+    job: super::jobs::Job<(Stack<Height>, Stack<Blend>, Stack<TerrainGround>)>,
+    all: u64,
+    before: (Stack<Height>, Stack<Blend>, Stack<TerrainGround>),
+}
+
+/// What making the roads' layers needs: the roads, the water, the layers' new ids, copies of the stacks, the maps' sizes (height, blend,
+/// ground) and how they lie (unit, border, extent x and z, metres a height pixel across and down).
+struct TerrainInput {
+    roads: Vec<Road>,
+    water: WaterMap,
+    new_ids: Vec<[u64; 3]>,
+    height: Stack<Height>,
+    blend: Stack<Blend>,
+    ground: Stack<TerrainGround>,
+    dims: [(u32, u32); 3],
+    frame: (f64, f64, f64, f64, f64, f64),
+}
+
+/// Makes again the layers each road owns (its height, texture and ground type: `roads::Strip`) in copies of the stacks, over what lies
+/// below them (an earlier road is ground to a later one), and takes out those of roads that went. Off the editor's thread.
+fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainGround>) {
+    wce_foundation::wce_prof!("tile.make_roads");
+    let TerrainInput { roads, water, new_ids, mut height, mut blend, mut ground, dims, frame } = i;
+    let (unit, border, ex, ez, mx, mz) = frame;
+    let [(hw, hh), (bw, bh), (gw, gh)] = dims;
+    let alive = |o: &str| parse_owner(o).is_none_or(|(id, _)| roads.iter().any(|r| r.id == id));
+    height.layers.retain(|l| alive(&l.owner));
+    blend.layers.retain(|l| alive(&l.owner));
+    ground.layers.retain(|l| alive(&l.owner));
+    height.put_owned_on_top();
+    blend.put_owned_on_top();
+    ground.put_owned_on_top();
+
+    let (bpx, bpz) = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
+    let (gpx, gpz) = (f64::from(gw) / (ex + 2.0 * border), f64::from(gh) / (ez + 2.0 * border));
+    let mut earlier: Vec<Strip> = vec![];
+    for (road, ids) in roads.iter().zip(&new_ids) {
+        if road.line.len() < 2 {
+            continue;
+        }
+
+        let owner = owner_of(road.id, road.signature);
+        let name = format!("Road {}", road.id);
+        let height_id = road_layer(&mut height, road.id, &owner, &name, ids[0]);
+        let blend_id = road_layer(&mut blend, road.id, &owner, &name, ids[1]);
+        let ground_id = road_layer(&mut ground, road.id, &owner, &name, ids[2]);
+
+        // What lies below the road, in world units.
+        let under = |x: u32, y: u32| {
+            let mut px = [0.0f32];
+            height.below(height_id, x.min(hw - 1), y.min(hh - 1), &mut px);
+            f64::from(px[0]) / unit
+        };
+
+        let sample = |x: f64, z: f64| bilinear(&under, x, z, (border, mx, mz), (hw, hh));
+        let plan = Tile::plan_road(road, &sample, &water, &|x, z| earlier.iter().any(|s| s.on_road(x, z)));
+        let strip = road_strip(&plan, &road.settings);
+        let b = strip.bounds();
+        let rect = |pp: (f64, f64), off: f64, w: u32, h: u32| {
+            let lo = |v: f64, n: u32| (v.floor().max(0.0) as u32).min(n);
+            [lo((b[0] + off) * pp.0, w), lo((b[1] + off) * pp.1, h), lo(((b[2] + off) * pp.0).ceil(), w), lo(((b[3] + off) * pp.1).ceil(), h)]
+        };
+
+        let mut writes = vec![];
+        let [x0, y0, x1, y1] = rect((1.0 / mx, 1.0 / mz), border, hw, hh);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let (wx, wz) = (f64::from(x) * mx - border, f64::from(y) * mz - border);
+                let g = under(x, y);
+                if let Some(h) = strip.height_at(wx, wz, g) {
+                    writes.push((x, y, ((h - g) * unit) as f32));
+                }
+            }
+        }
+
+        for (x, y, v) in writes {
+            height.put(height_id, x, y, &[v]);
+        }
+
+        let [x0, y0, x1, y1] = rect((bpx, bpz), border, bw, bh);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let (wx, wz) = ((f64::from(x) + 0.5) / bpx - border, (f64::from(y) + 0.5) / bpz - border);
+                let w = strip.texture_at(wx, wz);
+                if w > 0.0 {
+                    let mut px = [0u16; 16];
+                    px[road.settings.channel] = (w * 65535.0).round() as u16;
+                    blend.put(blend_id, x, y, &px);
+                }
+            }
+        }
+
+        let [c0, c1, c2] = road.settings.ground;
+        let [x0, y0, x1, y1] = rect((gpx, gpz), border, gw, gh);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                if strip.on_road((f64::from(x) + 0.5) / gpx - border, (f64::from(y) + 0.5) / gpz - border) {
+                    ground.put(ground_id, x, y, &[c0, c1, c2, 255]);
+                }
+            }
+        }
+
+        earlier.push(strip);
+    }
+
+    (height, blend, ground)
+}
+
+/// What making the instances along the roads needs (`road_items`): the roads (with their elements), the water, a copy of the height
+/// stack, the height map's size and how it lies (unit, border, extent x and z, metres a pixel across and down), the heights, each road
+/// type's pieces, the bridge bases (by key), and the making's number (in the generated keys).
+struct ItemsInput {
+    roads: Vec<(usize, Road)>,
+    water: WaterMap,
+    height: Option<Stack<Height>>,
+    hdims: (u32, u32),
+    frame: (f64, f64, f64, f64, f64, f64),
+    ground: super::jobs::Ground,
+    pieces: HashMap<String, Pieces>,
+    bases: HashMap<&'static str, Option<std::sync::Arc<wce_walls::bridge::Prepared>>>,
+    making: u64,
+}
+
+/// The instances made along the roads, the files made for their bridges (by their paths) and those bridges' keys.
+#[derive(Default)]
+pub(crate) struct ItemsMade {
+    items: Vec<RoadItem>,
+    files: Vec<(String, Vec<u8>)>,
+    keys: Vec<String>,
+}
+
+/// The instances along the roads: their type's pieces, bent to them, their crossings' hints, and the bridges over their gaps, made from
+/// their bases (their files given back, to go among the generated ones). Off the editor's thread.
+fn road_items(i: ItemsInput) -> ItemsMade {
+wce_foundation::wce_prof!("tile.make_road_items");
+let ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, making } = i;
+let (unit, border, ex, ez, mx, mz) = frame;
+let mut items = vec![];
+let mut made = ItemsMade::default();
+
+// Each road's line and bridges first: where roads meet is found on all their lines.
+let mut planned = vec![];
+    let mut decks = vec![];
+    let mut earlier: Vec<Strip> = vec![];
+    for &(elem, ref road) in &roads {
+        if road.line.len() < 2 {
+            continue;
+        }
+
+        // Laid as the terrain pass lays it (`make_roads`): on what lies below its layer, sampled the same way, the earlier roads taken
+        // for ground with no bump. Laid another way, a bridge's deck and the road it lands on were not at the same height (user
+        // 2026-11-08: its ends stood off the ground).
+        let below = height.as_ref().and_then(|s| s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|o| o.0 == road.id)).map(|l| (s, l.id)));
+        let (w, h) = hdims;
+        let under = |x: u32, y: u32| match below {
+            Some((s, id)) => {
+                let mut px = [0.0f32];
+                s.below(id, x.min(w - 1), y.min(h - 1), &mut px);
+                f64::from(px[0]) / unit
+            }
+
+            None => ground.height_at(f64::from(x) * mx - border, f64::from(y) * mz - border) / unit,
+        };
+
+        let sample = |x: f64, z: f64| bilinear(&under, x, z, (border, mx, mz), (w, h));
+        let plan = Tile::plan_road(road, &sample, &water, &|x, z| earlier.iter().any(|s: &Strip| s.on_road(x, z)));
+        earlier.push(road_strip(&plan, &road.settings));
+        // Each bridge's deck from rim to rim: the road's line and height over its gap (scene units).
+        let st = Stations::new(&plan.line);
+        let mut spans = vec![];
+        // Each crossing's AI hint, as vanilla's bridges and fords have one (`road_layout::crossing_hint`), for an export.
+        let width = road.settings.width;
+        let crossings = plan.gaps.iter().map(|&g| (g, width * 0.5 + wce_tile::road_layout::HINT_SIDE))
+            .chain(plan.fords.iter().map(|&g| (g, (width * 0.5 + wce_tile::road_layout::HINT_SIDE).max(wce_tile::road_layout::FORD_HINT_HALF))));
+        for ((a, b), half) in crossings {
+            let ends = wce_tile::road_layout::HINT_ENDS;
+            let outline = wce_tile::road_layout::strip_outline(&plan.line, st.of_sample(a) - ends, st.of_sample(b) + ends, half, unit);
+            match wce_tile::road_layout::crossing_hint(&outline) {
+                Ok(hint) => items.push(RoadItem { road: elem, text: vec![], position: [0.0; 3], meshes: vec![], export: Some(hint), building: None }),
+                Err(why) => wce_foundation::log::warn(format!("road {}: {why}", road.id)),
+            }
+        }
+
+        for &(a, b) in &plan.gaps {
+            spans.push((st.of_sample(a), st.of_sample(b)));
+
+            // Past the rims onto the road, whose terrain is the road's there (`road_strip`): its ends lie on the ground.
+            let (from, to) = (st.of_sample(a) - BRIDGE_ON_ROAD, st.of_sample(b) + BRIDGE_ON_ROAD);
+            let (a, b) = ((0..a).rev().find(|&i| st.of_sample(i) <= from).unwrap_or(0), (b..plan.line.len()).find(|&i| st.of_sample(i) >= to).unwrap_or(plan.line.len() - 1));
+            let path = (a..=b).map(|i| [plan.line[i][0] * unit, plan.heights[i] * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
+            decks.push((elem, road.id, road.bridge.clone(), road.settings.width * unit, path));
+        }
+
+        planned.push((elem, road, plan, spans));
+    }
+
+    // The pieces of each road's type, its measures, and how far its junctions reach.
+    let kit = planned.iter().map(|(_, road, _, _)| {
+        let pieces = pieces.get(&road.road_type).map_or(&[][..], Vec::as_slice);
+        let arm = |name: &str| pieces.iter().find(|p| p.0 == name).and_then(|p| p.1.arms.first()).map(|a| a.length);
+        let defaults = Measures::default();
+        let measures = Measures {
+            straight: arm("straight").unwrap_or(defaults.straight),
+            end: arm("end").unwrap_or(defaults.end),
+            corner_arm: arm("corner").unwrap_or(defaults.corner_arm),
+        };
+
+        let width = pieces.iter().find(|p| p.0 == "straight").map_or(wce_tile::road_pieces::WIDTH, |p| p.1.width).max(1e-6);
+        let scale = road.settings.width / width;
+        let half = arm("x_junction").or_else(|| arm("t_junction")).unwrap_or(defaults.corner_arm) * scale;
+        (pieces, measures, scale, half)
+    }).collect::<Vec<_>>();
+
+    let lines = planned.iter().map(|p| p.2.line.clone()).collect::<Vec<_>>();
+    let meet = junctions(&lines, &kit.iter().map(|k| k.3).collect::<Vec<_>>());
+    for note in &meet.notes {
+        wce_foundation::log::warn(format!("roads: {note}"));
+    }
+
+    // Each road's pieces, from end to end, but over its bridges and the junctions of other roads.
+    let end_of = |p: [f64; 2], joined: bool| if joined { End::Joined } else if p[0] < 1.0 || p[1] < 1.0 || p[0] > ex - 1.0 || p[1] > ez - 1.0 { End::Edge } else { End::Free };
+    let terrain = |x: f64, z: f64| ground.height_at(x, z) / unit;
+    for (r, ((elem, road, plan, spans), (pieces, measures, scale, _))) in planned.iter().zip(&kit).enumerate() {
+        if pieces.is_empty() {
+            continue;
+        }
+
+        let piece = |name: &str| pieces.iter().find(|p| p.0 == name);
+        let corners = plan.at_point.iter().zip(&road.sharp).filter(|(_, s)| **s).map(|(i, _)| *i).collect::<Vec<_>>();
+        let joined = meet.joined[r];
+        let ends = [end_of(road.line[0], joined[0]), end_of(road.line[road.line.len() - 1], joined[1])];
+        let mut holds = spans.iter().map(|&(from, to)| Hold { from, to, laid: None }).collect::<Vec<_>>();
+
+        // A ford: ford pieces from bank to bank, as long as straights.
+        let st = Stations::new(&plan.line);
+        for &(a, b) in &plan.fords {
+            let (from, to) = (st.of_sample(a), st.of_sample(b));
+            let n = (((to - from) / measures.straight).round() as usize).max(1);
+            for k in 0..n {
+                let (s0, s1) = (from + (to - from) * k as f64 / n as f64, from + (to - from) * (k + 1) as f64 / n as f64);
+                holds.push(Hold { from: s0, to: s1, laid: Some(wce_tile::road_layout::Laid { piece: "ford", frame: wce_tile::road_layout::Frame::Along { from: s0, to: s1 } }) });
+            }
+        }
+
+        holds.extend(meet.holds[r].iter().cloned());
+        let laid = layout(&plan.line, &corners, ends, &holds, measures, *scale, road.settings.seed);
+        for note in &laid.notes {
+            wce_foundation::log::warn(format!("road {}: {note}", road.id));
+        }
+
+        let width = road.settings.width;
+        for l in &laid.laid {
+            let Some((_, p, key, children)) = piece(l.piece) else { continue };
+            match fit(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }) {
+                Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
+                Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
+            }
+        }
+    }
+
+    // The bridges, generated.
+    for (n, (elem, id, base, width, path)) in decks.into_iter().enumerate() {
+        let prepared = wce_walls::bridge::base(&base).and_then(|b| bases.get(b.key).cloned().flatten());
+        items.extend(bridge_items(elem, id, &base, width, path, prepared, (making, n), &ground, unit, &mut made));
+    }
+
+    made.items = items;
+    made
+}
+
+/// A road's bridge over a gap (`path`: its deck from rim to rim, scene units), made from its base as walls are (`wce_walls::bridge`):
+/// its pieces' files put among the generated ones under keys of this making, drawn as they are; an export writes the bridge's span
+/// instead, to be made again there (`wce_walls::export::lower_walls`).
+#[allow(clippy::too_many_arguments, reason = "what a bridge is made from")]
+fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 3]>, prepared: Option<std::sync::Arc<wce_walls::bridge::Prepared>>, (making, n): (u64, usize), ground: &super::jobs::Ground, unit: f64, made_files: &mut ItemsMade) -> Vec<RoadItem> {
+    let Some(prepared) = prepared else {
+        wce_foundation::log::warn(format!("road {road}: the bridge base {base} is in no pack: no bridge"));
+        return vec![];
+    };
+
+    let deck = wce_walls::bridge::Deck::new(path.clone());
+    let across = width / (prepared.z.1 - prepared.z.0).max(1e-6);
+    let ground = |x: f64, z: f64| ground.height_at(x / unit, z / unit);
+    let mut out = vec![];
+    for (k, (s, origin)) in wce_walls::bridge::piece_stretches(&deck, &prepared).into_iter().enumerate() {
+        let key = format!("wce_preview_road{road}_{making}_{n}_{k:02}");
+        let warp = wce_walls::bridge::BridgeWarp { deck: &deck, base: &prepared, s, across, origin, ground: &ground };
+        let made = match wce_walls::bridge::make_piece(&prepared, &key, &warp) {
+            Ok(m) => m,
+            Err(err) => {
+                wce_foundation::log::warn(format!("road {road}: bridge piece {k}: {err}"));
+                continue;
+            }
+        };
+
+        let mut meshes = vec![];
+        for (path, bytes) in made.into_pack_files() {
+            if path.ends_with(".rigid_model_v2") && path.contains("_destruct01") && !path.contains("_anim") {
+                meshes.push(path.clone());
+            }
+
+            made_files.files.push((path, bytes));
+        }
+
+        let export = Some(if k == 0 { wce_walls::bridge::span_text(base, width, &path) } else { vec![] });
+        out.push(RoadItem { road: elem, text: vec![], position: origin, meshes, export, building: Some(key.clone()) });
+        made_files.keys.push(key);
+    }
+
+    out
+}
+
 
 /// How far a bridge runs onto the road at each end, past its gap's rims (metres).
 const BRIDGE_ON_ROAD: f64 = 2.0;

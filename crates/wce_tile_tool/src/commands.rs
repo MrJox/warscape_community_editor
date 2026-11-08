@@ -968,6 +968,23 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("working {}; {}", working.map_or("base".to_owned(), |w| w.to_string()), if list.is_empty() { "no layers".to_owned() } else { list.join("; ") }))
     });
 
+    c.add("tile_wait_jobs", "tile_wait_jobs", "wait for what the walls and roads are making off the editor's thread (for scripts; the walls' pieces go on the scene at the next frame)", |e, _| {
+        let start = std::time::Instant::now();
+        let wait = || {
+            while wce_tile_editor::tile_document::jobs_running() && start.elapsed() < std::time::Duration::from_secs(120) {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+
+        wait();
+        if let Some(d) = document(e) {
+            d.tile_mut().finish_road_jobs();
+        }
+
+        wait();
+        ok(format!("{:.2} s", start.elapsed().as_secs_f64()))
+    });
+
     c.add("tile_export_text", "tile_export_text <file>", "write the scene as an export reads it (the roads' pieces, bridge spans and crossing hints in their layer) to a file", |e, a| {
         let Some(path) = a.first().cloned() else { return fail("usage: tile_export_text <file>") };
         let Some(d) = document(e) else { return no_tile() };
