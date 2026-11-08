@@ -71,9 +71,11 @@ fn pick<'a>(laid: &[wce_tile::road_layout::Laid], k: usize, pieces: &'a [(&'stat
         matches!(n.piece, "straight" | "curve") && span(n).is_some_and(|(a, b)| (a - at).abs() < 0.5 || (b - at).abs() < 0.5)
     });
     let between = span(l).is_some_and(|(a, b)| runs_on(k.checked_sub(1), a) && runs_on(Some(k + 1), b));
+    // Those with buildings (the banks) three times as often as the rest (user 2026-11-08: more of them).
     let options = std::iter::once(own)
         .chain(pieces.iter().filter(|p| wce_tile::road_pieces::varies(p.0) == Some(l.piece)))
         .filter(|p| between || p.1.parts.iter().all(|q| !q.solid))
+        .flat_map(|p| std::iter::repeat_n(p, if p.1.parts.iter().any(|q| q.solid) { 3 } else { 1 }))
         .collect::<Vec<_>>();
 
     let mut h = u64::from(road.settings.seed).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(road.id).rotate_left(23) ^ (k as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
@@ -981,9 +983,20 @@ let mut planned = vec![];
                 }
             }
 
+            // A fence standing on a road (its own, past a sharp turn or where it crosses itself, or another) is left out (user 2026-11-08:
+            // the inside of a sharp corner's fences ran on across the road).
+            let on_road = |p: [f64; 2]| planned.iter().any(|(_, other, op, _)| {
+                wce_tile::road_layout::nearest(&op.line, p).1 < other.settings.width * 0.5 + wce_tile::road_layout::FENCE_OUT * 0.5
+            });
             let mut k = 0u64;
             for (fence_line, runs) in &lines {
+                let fst = Stations::new(fence_line);
                 for l in runs {
+                    let wce_tile::road_layout::Frame::Along { from, to } = l.frame else { continue };
+                    if [from, (from + to) * 0.5, to].iter().any(|&s| on_road(fst.at(s).0)) {
+                        continue;
+                    }
+
                     k += 1;
                     let n = k;
                     let damage = |_: usize, part: &wce_tile::road_pieces::Part| {

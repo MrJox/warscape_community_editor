@@ -684,6 +684,23 @@ pub fn star_fences(at: [f64; 2], ways: &[[f64; 2]], reach: f64, offset: f64, fen
         let into = [-wi[0], -wi[1]];
         let ccw = (si[0] - c[0]) * into[1] - (si[1] - c[1]) * into[0] > 0.0;
         let sweep = if ccw { (a1 - a0).rem_euclid(tau) } else { -(a0 - a1).rem_euclid(tau) };
+
+        // The outside of a turn: along the first arm's line to the corner, round it on a circle about the corner's middle, and out along the
+        // other's, turning as the road does (sector - pi). The road's ground is its line's, rounded at the corner by its half width: the arc
+        // square to both lines at the ports cut into it, 1.5 m off the corner's middle at a square one, and through the road at a sharper
+        // one (user 2026-11-08: fences crossed in the middle of a sharp corner).
+        if sector > std::f64::consts::PI {
+            let (pi, pj) = ([at[0] + ni[0] * offset, at[1] + ni[1] * offset], [at[0] + nj[0] * offset, at[1] + nj[1] * offset]);
+            let turned = sector - std::f64::consts::PI;
+            let a0 = ni[1].atan2(ni[0]);
+            let n = ((offset * turned) / 0.5).ceil().max(1.0) as usize;
+            let mut path = line(si, pi);
+            path.extend((1..n).map(|k| { let a = a0 + turned * k as f64 / n as f64; [at[0] + offset * a.cos(), at[1] + offset * a.sin()] }));
+            path.extend(line(pj, sj));
+            out.push(path);
+            continue;
+        }
+
         let n = ((r * sweep.abs()) / 0.5).ceil().max(1.0) as usize;
         out.push((0..=n).map(|k| { let a = a0 + sweep * k as f64 / n as f64; [c[0] + r * a.cos(), c[1] + r * a.sin()] }).collect());
     }
@@ -846,6 +863,26 @@ pub fn junctions(lines: &[Vec<[f64; 2]>], halves: &[f64]) -> Junctions {
                 out.holds[a].push(Hold { from: a1, to: a2, laid: Some(Laid { piece: "x_junction", frame: Frame::Star { at: x, ways } }) });
                 out.holds[b].push(Hold { from: b1, to: b2, laid: None });
             }
+        }
+    }
+
+    // A road crossing itself: an X there too, its first pass laying it (user 2026-11-08: each pass laid its own pieces across the other).
+    for a in 0..n {
+        let (la, half) = (st[a].length(), halves[a]);
+        for (d1, d2, x) in crossings(&lines[a], &lines[a]) {
+            if d2 - d1 < half * 4.0 || d1 < ON || d2 > la - ON {
+                continue;
+            }
+
+            let found = (chord(&st[a], x, d1, -half, la), chord(&st[a], x, d1, half, la), chord(&st[a], x, d2, -half, la), chord(&st[a], x, d2, half, la));
+            let (Some(a1), Some(a2), Some(b1), Some(b2)) = found else {
+                out.notes.push(format!("a road crosses itself at {:.0}, {:.0} too near an end for a junction", x[0], x[1]));
+                continue;
+            };
+
+            let ways = vec![way(a, a1, x), way(a, a2, x), way(a, b1, x), way(a, b2, x)];
+            out.holds[a].push(Hold { from: a1, to: a2, laid: Some(Laid { piece: "x_junction", frame: Frame::Star { at: x, ways } }) });
+            out.holds[a].push(Hold { from: b1, to: b2, laid: None });
         }
     }
 
@@ -1177,15 +1214,15 @@ mod tests {
         assert_eq!(lines.len(), 2);
         let ends = |l: &Vec<[f64; 2]>| (l[0], l[l.len() - 1]);
         let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-6;
-        // Each one round its centre (6, -6): radius 10 outside, 2 inside, from one arm's fence line to the other's.
-        for l in &lines {
-            let r = (l[0][0] - 6.0).hypot(l[0][1] + 6.0);
-            assert!(l.iter().all(|p| ((p[0] - 6.0).hypot(p[1] + 6.0) - r).abs() < 1e-6), "not one arc");
-            assert!((r - 10.0).abs() < 1e-6 || (r - 2.0).abs() < 1e-6, "{r}");
-        }
+        // Inside, round its centre (6, -6) at radius 2.
+        let inner = lines.iter().find(|l| l.iter().all(|p| ((p[0] - 6.0).hypot(p[1] + 6.0) - 2.0).abs() < 1e-6));
+        assert!(inner.is_some(), "an inner arc of radius 2");
 
-        let (a, b) = ends(lines.iter().find(|l| (l[0][0] - 6.0).hypot(l[0][1] + 6.0) > 5.0).unwrap());
-        assert!((near(a, [-4.0, -6.0]) && near(b, [6.0, 4.0])) || (near(b, [-4.0, -6.0]) && near(a, [6.0, 4.0])), "{a:?} {b:?}");
+        // Outside, from one arm's fence line to the other's, never nearer the corner's middle than the fence line is to its arm.
+        let outer = lines.iter().find(|l| l.iter().any(|p| p[0] < 0.0 && p[1] > 0.0)).unwrap();
+        let (a, b) = ends(outer);
+        assert!((near(a, [6.0, 4.0]) && near(b, [-4.0, -6.0])) || (near(b, [6.0, 4.0]) && near(a, [-4.0, -6.0])), "{a:?} {b:?}");
+        assert!(outer.iter().all(|p| p[0].hypot(p[1]) > 4.0 - 1e-6), "{outer:?}");
     }
 
     #[test]
@@ -1252,6 +1289,40 @@ mod tests {
         // Up a slope along the road (z), its up leans back down it as the ground's does, the roll kept.
         let sloped = up(&|_, z| z * 0.2);
         assert!(sloped.z < -0.15 && (sloped.x - flat.x).abs() < 0.02, "{sloped:?} {flat:?}");
+    }
+
+    #[test]
+    fn the_outside_of_a_sharp_corner_goes_round_it_off_the_road() {
+        // A turn of 150 degrees: its arms 30 degrees apart. Every point of the outer fence is past the road's edge (half width 3) from both
+        // arms' centre lines.
+        let (a, b) = ([1.0, 0.0], [30f64.to_radians().cos(), 30f64.to_radians().sin()]);
+        let lines = star_fences([0.0, 0.0], &[a, b], 8.0, 4.0, &|_| true);
+        let outer = lines.iter().max_by_key(|l| l.len()).unwrap();
+        let off = |w: [f64; 2], p: [f64; 2]| {
+            let s = (p[0] * w[0] + p[1] * w[1]).max(0.0);
+            (p[0] - w[0] * s).hypot(p[1] - w[1] * s)
+        };
+        for p in outer {
+            assert!(off(a, *p) > 3.0 - 1e-6 && off(b, *p) > 3.0 - 1e-6, "{p:?} on the road");
+        }
+    }
+
+    #[test]
+    fn a_road_crossing_itself_lays_an_x_there() {
+        // East, up, back west and down across the first stretch.
+        let mut pts = vec![];
+        for (p, q) in [([0.0, 0.0], [60.0, 0.0]), ([60.0, 0.0], [60.0, 30.0]), ([60.0, 30.0], [30.0, 30.0]), ([30.0, 30.0], [30.0, -30.0])] {
+            for k in 0..30 {
+                let t = f64::from(k) / 30.0;
+                pts.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
+            }
+        }
+
+        pts.push([30.0, -30.0]);
+        let j = junctions(&[pts], &[6.0]);
+        let xs = j.holds[0].iter().filter(|h| h.laid.as_ref().is_some_and(|l| l.piece == "x_junction")).count();
+        assert_eq!(xs, 1, "{:?}", j.notes);
+        assert_eq!(j.holds[0].len(), 2, "the X, and the second pass held under it");
     }
 
     #[test]

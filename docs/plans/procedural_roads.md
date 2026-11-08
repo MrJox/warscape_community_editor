@@ -330,6 +330,13 @@ from Assembly Kit drops that layer and restores the road.
   The banks are tilted to the ground as the fences are (user, 2026-11-08: upright, they did not follow the slope): the ground read 7 m
   along and 5 m across them each way (`PIECE_TILT`; a fence's `FENCE_TILT` is 2 and 0.5), their own roll kept on top. Rigid and 18.6 m
   long, a bank on the downhill side of a road along a hillside shows its outer edge where the slope steepens past the road's shoulder.
+  A straight with a bank is picked three times as often as one without (user, 2026-11-08: more of them).
+- **Sharp corners and a road over itself** (user, 2026-11-08). The outside of a corner's fences hugs the road: along each arm's fence
+  line to the corner, round its middle at the fence line's distance (the road's ground is its line's, rounded there by its half width;
+  the arc square to both fence lines at the ports cut into it, and at a turn sharper than a square went through the road, its fences
+  crossing in the middle). A fence that would stand on a road (its own past a sharp turn, where it crosses itself, or another) is left
+  out. A road crossing itself lays an X there (`junctions`), and its second pass is held at the first's height (`roads::over_itself`):
+  graded apart, the two passes crossed at two heights, one cut into the other.
 
 ## Crossings (redesign, 2026-11-08)
 
