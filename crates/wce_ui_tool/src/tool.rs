@@ -2219,6 +2219,10 @@ impl Tool for UiTool {
         "ui"
     }
 
+    fn project_folder(&self) -> &'static str {
+        "loose/ui"
+    }
+
     fn game_settings_fields(&self) -> &'static [&'static str] {
         crate::settings::GAME_FIELDS
     }

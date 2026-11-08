@@ -1569,6 +1569,10 @@ impl Tool for TerrainTool {
         "terrain"
     }
 
+    fn project_folder(&self) -> &'static str {
+        "assembly_kit/raw_data/terrain/battles"
+    }
+
     fn export_menu(&mut self, e: &mut Editor) -> bool {
         let can = e.docs.find_as::<MapDocument>(self.shown).is_some_and(|d| d.model().is_some());
         if gui::menu_item("Built files...", None, false, can && self.export.is_none()) {

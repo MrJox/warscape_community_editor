@@ -174,7 +174,11 @@ weather file, the weather database, a UI layout) into `loose/<their path in the 
 what every tool reads from then on, the weather preview and Launch in game included: after each save the mounted files index the path
 again (`Vfs::refresh_loose`, `Editor::loose_changed`, from `DocumentManager::take_saved`), no remount needed. **File > Revert to game's
 version...** (and the Outliner's context menu; `revert_to_game [doc]`) asks, deletes the project's copy (and the folders it leaves empty)
-and opens the packs' file in its place. A file opened from disk saves in place; File > Open file and Save as start in the projects folder.
+and opens the packs' file in its place. A file opened from disk saves in place. Each tool has its folder in the project (`Tool::project_folder`: the Tile tool
+`assembly_kit/raw_data/terrain/tiles/battle`, the Prefab tool `.../art/prefabs`, the Terrain tool `.../terrain/battles`, the Weather tool
+`loose/weather`, the UI tool `loose/ui`), made with `loose/` whenever the game's files are mounted (`Editor::make_project_folders`); File >
+Open file starts in the active tool's, Save as in the document's own file's folder, a file of the packs' place in `loose/`, else its
+tool's folder (`Editor::save_as_start`).
 
 Everything written for the game or for TEd is under **File > Export**, from the active tool (`Tool::export_menu`); each entry asks for its
 destination and remembers the last one per game (`Editor::export_dir`, `pick_export_folder`, `pick_export_file`; `[games.<id>]

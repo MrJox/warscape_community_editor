@@ -829,6 +829,10 @@ impl Tool for PrefabTool {
         PREFAB_TOOL_ID
     }
 
+    fn project_folder(&self) -> &'static str {
+        "assembly_kit/raw_data/art/prefabs"
+    }
+
     fn title(&self) -> &str {
         "Prefab"
     }
