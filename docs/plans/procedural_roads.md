@@ -327,6 +327,9 @@ from Assembly Kit drops that layer and restores the road.
   10 degrees and 0.4 m down, on sloping ground, which shows it; on a generated road's levelled ground that sank it out of sight, so it lies
   2.5 m out on the verge, 0.1 m down. Being long, a variant with a bank is laid only between straights and curves, not by a junction, a
   corner, an end, a bridge or a ford. A part's own height in its piece is now kept when it is fitted (`up`).
+  The banks are tilted to the ground as the fences are (user, 2026-11-08: upright, they did not follow the slope): the ground read 7 m
+  along and 5 m across them each way (`PIECE_TILT`; a fence's `FENCE_TILT` is 2 and 0.5), their own roll kept on top. Rigid and 18.6 m
+  long, a bank on the downhill side of a road along a hillside shows its outer edge where the slope steepens past the road's shoulder.
 
 ## Crossings (redesign, 2026-11-08)
 
