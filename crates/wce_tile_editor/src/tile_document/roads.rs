@@ -364,8 +364,10 @@ impl Tile {
         self.roads_due = false;
         self.layers_shown = true;
 
-        // Grass stands by the blend map and on the heights, and neither is what it was.
+        // Grass and trees stand by the blend map and on the heights, and neither is what it was: a generated list is made again from them,
+        // a packed one leaves out what stands on a road (`add_list_trees`), as grass does (user 2026-11-08: the grass followed, the trees not).
         self.reload_grass();
+        self.reload_tree_list();
     }
 
     /// Starts making the instances along the roads off the editor's thread (`road_items`), with what they need taken now: the roads, the
