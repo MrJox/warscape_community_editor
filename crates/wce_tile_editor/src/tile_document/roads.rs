@@ -9,7 +9,7 @@ use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile::new_instances::{NewInstance, element_text};
 use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit, junctions, layout, placed_text, snap_ends};
 use wce_tile::road_pieces::{BASE, PIECES, Piece, key, read};
-use wce_tile::roads::{RoadSettings, Strip, centre_line_sharp, choose_bridge, find_gaps, graded, lay_bridge, over_gaps, sharp_points, with_bump};
+use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_sharp, choose_bridge, lay_bridge, sharp_points};
 use wce_tile::ted_scene::TedScene;
 use wce_tile::terrain_layers::{Kind, Stack, TerrainLayers};
 
@@ -59,6 +59,9 @@ struct Plan {
     at_point: Vec<usize>,
     heights: Vec<f64>,
     gaps: Vec<(usize, usize)>,
+
+    /// Its fords: the road on the bed, the terrain's heights left as they are.
+    fords: Vec<(usize, usize)>,
 }
 
 /// An instance generated along a road: a prefab's part or a bridge's piece.
@@ -103,7 +106,17 @@ impl Tile {
             ]
         });
 
-        format!("{} instances, road layers {owned:?}, {bridge} of them bridge pieces: {}", self.road_items.len(), list.join("; "))
+        // The road pieces laid, by their prefab (a piece's group is named after its key).
+        let mut pieces = std::collections::BTreeMap::<String, usize>::new();
+        for i in &self.road_items {
+            let t = text(&i.text);
+            if t.starts_with("<UserInstanceGroup") && let Some(name) = t.split("name=\"").nth(1).and_then(|n| n.split('"').next()) {
+                *pieces.entry(name.to_owned()).or_default() += 1;
+            }
+        }
+
+        let pieces = pieces.iter().map(|(k, n)| format!("{k} x{n}")).collect::<Vec<_>>().join(", ");
+        format!("{} instances, road layers {owned:?}, pieces: {pieces}; {bridge} bridge pieces: {}", self.road_items.len(), list.join("; "))
     }
 
     /// Whether a road is at a place (world units), by its ground type layer.
@@ -138,19 +151,24 @@ impl Tile {
         let mut lines = elems.iter().map(|&e| self.polygon_world_points(e).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>()).collect::<Vec<_>>();
         let centres = elems.iter().zip(&lines).map(|(&e, l)| centre_line_sharp(l, &self.road_sharp(e, l)).0).collect::<Vec<_>>();
         snap_ends(&mut lines, &centres);
+
+        // The water a road crosses is in what it is made from: a river or a lake moved makes it again.
+        let sc = self.tscene();
+        let wet = |e: usize| sc.type_of(e) == "SplineRiverInstance" || (sc.type_of(e) == "SIMPLE_MESH_INSTANCE" && sc.doc().get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")));
+        let water = (0..sc.doc().elements().len()).filter(|&e| wet(e)).fold(0u64, |h, e| h.rotate_left(5) ^ hash_text(&String::from_utf8_lossy(&sc.element_text(e))));
         elems.into_iter().zip(lines).map(|(e, line)| {
             let ground = doc.get(e, "road_ground").and_then(|g| GROUND_TYPES.iter().find(|t| t.0 == g.as_str())).map_or([255, 96, 0], |t| t.1);
             let settings = RoadSettings {
                 width: number(e, "road_width", 6.0).max(0.5), shoulder: number(e, "road_shoulder", 3.0).max(0.5), bump: number(e, "road_bump", 0.25),
                 max_grade: number(e, "road_max_grade", 10.0).clamp(0.5, 60.0), max_side: number(e, "road_max_side", 30.0).clamp(1.0, 80.0),
                 channel: (number(e, "road_group", 0.0) as usize).min(3) * 4 + (number(e, "road_variation", 0.0) as usize).min(3), ground,
-                bridges: doc.get(e, "road_bridges").is_none_or(|v| v != "false"),
+                bridges: doc.get(e, "road_bridges").is_none_or(|v| v != "false"), clearance: number(e, "road_bridge_clearance", 2.0).max(0.0),
                 feather: number(e, "road_feather", 2.0).max(0.0), seed: number(e, "road_seed", 1.0) as u32,
             };
 
             let sharp = self.road_sharp(e, &line);
             let road_type = doc.get(e, "road_type").filter(|t| !t.is_empty()).unwrap_or_else(|| wce_tile::road_dirt::TYPE.to_owned());
-            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type}"));
+            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type} {water:x}"));
             Road { id: number(e, "road_id", 0.0) as u32, line, sharp, settings, road_type, signature }
         }).collect()
     }
@@ -201,30 +219,38 @@ impl Tile {
         self.reload_grass();
     }
 
-    /// The road over a ground (`sample`, world units): graded with its gaps taken out, so that it does not dip into them.
-    fn plan_road(road: &Road, sample: &dyn Fn(f64, f64) -> f64, on_other: &dyn Fn(f64, f64) -> bool) -> Plan {
-        let s = &road.settings;
+    /// The road over a ground (`sample`, world units) and the water on it (`roads::plan`): fords where it is shallow, bridges where it is
+    /// deep or the ground drops away, graded with those taken out so that it does not dip into them.
+    fn plan_road(road: &Road, sample: &dyn Fn(f64, f64) -> f64, water: &WaterMap, on_other: &dyn Fn(f64, f64) -> bool) -> Plan {
         let (line, at_point) = centre_line_sharp(&road.line, &road.sharp);
         let raw = line.iter().map(|p| sample(p[0], p[1])).collect::<Vec<_>>();
-        let mut gaps = vec![];
-        if s.bridges {
-            gaps = find_gaps(&line, &raw, &graded(&line, &raw, s), s);
-            for _ in 0..3 {
-                let found = find_gaps(&line, &raw, &graded(&line, &over_gaps(&raw, &gaps), s), s);
-                if found == gaps {
-                    break;
-                }
+        let wet = line.iter().map(|p| water.level(p[0], p[1])).collect::<Vec<_>>();
+        let p = wce_tile::roads::plan(&line, &raw, &wet, &road.settings, on_other);
+        Plan { line, at_point, heights: p.heights, gaps: p.gaps, fords: p.fords }
+    }
 
-                gaps = found;
-            }
-        }
+    /// The tile's water, as a road crossing it finds it (world metres): its rivers' ribbons as they are drawn, its lakes' water planes, and
+    /// the sea at 0 m in a tile of the sea's sets (`sea`, `sea_coast`, `sea_coast_landing`, `river_mouth`: docs/re/water.md).
+    pub(super) fn water_map(&self) -> WaterMap {
+        let rivers = self.river_ribbons().into_iter().map(|(_, samples)| samples.iter().map(|s| [s.x, s.z, s.y, s.width * 0.5]).collect()).collect();
+        let sc = self.tscene();
+        let planes = sc.find_all("SIMPLE_MESH_INSTANCE").into_iter().filter(|&e| sc.doc().get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane"))).filter_map(|e| {
+            let m = self.model_of(e).filter(|m| m.ok && m.resolved)?;
+            let w = self.world_matrix(e);
+            let corner = |x: f32, z: f32| { let p = w.transform_point(Float3::new(x, 0.0, z)); [f64::from(p.x), f64::from(p.z)] };
+            let y = f64::from(w.transform_point(Float3::new(0.0, 0.0, 0.0)).y);
+            Some(([corner(m.bmin.x, m.bmin.z), corner(m.bmax.x, m.bmin.z), corner(m.bmax.x, m.bmax.z), corner(m.bmin.x, m.bmax.z)], y))
+        }).collect();
 
-        let heights = with_bump(&line, &graded(&line, &over_gaps(&raw, &gaps), s), s, on_other);
-        Plan { line, at_point, heights, gaps }
+        let dir = self.project.dir.to_string_lossy().replace('\\', "/").to_lowercase();
+        let set = dir.split("/battle/").nth(1).and_then(|r| r.split('/').next()).unwrap_or_default().to_owned();
+        let sea = matches!(set.as_str(), "sea" | "sea_coast" | "sea_coast_landing" | "river_mouth");
+        WaterMap { rivers, planes, sea }
     }
 
     fn make_roads(&mut self, roads: &[Road]) -> Result<(), String> {
         wce_foundation::wce_prof!("tile.make_roads");
+        let water = self.water_map();
         let p = &mut self.project;
         p.load_blend()?;
         p.load_ground()?;
@@ -278,9 +304,10 @@ impl Tile {
                 top + (bottom - top) * fy
             };
 
-            let plan = Self::plan_road(road, &sample, &|x, z| earlier.iter().any(|s| s.on_road(x, z)));
+            let plan = Self::plan_road(road, &sample, &water, &|x, z| earlier.iter().any(|s| s.on_road(x, z)));
             let mut strip = Strip::new(plan.line, plan.heights, road.settings.clone());
             strip.open_gaps(&plan.gaps);
+            strip.keep_heights(&plan.fords);
             let b = strip.bounds();
             let rect = |pp: (f64, f64), off: f64, w: u32, h: u32| {
                 let lo = |v: f64, n: u32| (v.floor().max(0.0) as u32).min(n);
@@ -348,6 +375,7 @@ impl Tile {
         let mut items = vec![];
 
         // Each road's line and bridges first: where roads meet is found on all their lines.
+        let water = self.water_map();
         let mut planned = vec![];
         for (elem, road) in self.road_elems().into_iter().zip(&roads) {
             if road.line.len() < 2 {
@@ -369,7 +397,7 @@ impl Tile {
                 None => self.project.height_at(x, z) / unit,
             };
 
-            let plan = Self::plan_road(road, &sample, &|_, _| false);
+            let plan = Self::plan_road(road, &sample, &water, &|_, _| false);
             // Each bridge from foot to foot: where its ramps meet the road, as far apart as it is long.
             let stations = Stations::new(&plan.line);
             let along = |i: usize| plan.line[..=i].windows(2).map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1])).sum::<f64>();
@@ -470,6 +498,18 @@ impl Tile {
             let joined = meet.joined[r];
             let ends = [end_of(road.line[0], joined[0]), end_of(road.line[road.line.len() - 1], joined[1])];
             let mut holds = spans.iter().map(|&(from, to)| Hold { from, to, laid: None }).collect::<Vec<_>>();
+
+            // A ford: ford pieces from bank to bank, as long as straights.
+            let st = Stations::new(&plan.line);
+            for &(a, b) in &plan.fords {
+                let (from, to) = (st.of_sample(a), st.of_sample(b));
+                let n = (((to - from) / measures.straight).round() as usize).max(1);
+                for k in 0..n {
+                    let (s0, s1) = (from + (to - from) * k as f64 / n as f64, from + (to - from) * (k + 1) as f64 / n as f64);
+                    holds.push(Hold { from: s0, to: s1, laid: Some(wce_tile::road_layout::Laid { piece: "ford", frame: wce_tile::road_layout::Frame::Along { from: s0, to: s1 } }) });
+                }
+            }
+
             holds.extend(meet.holds[r].iter().cloned());
             let laid = layout(&plan.line, &corners, ends, &holds, measures, *scale, road.settings.seed);
             for note in &laid.notes {

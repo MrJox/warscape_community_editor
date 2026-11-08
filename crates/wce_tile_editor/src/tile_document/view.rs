@@ -23,8 +23,19 @@ use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS
 use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view, ground_types_report, ground_types_set};
 use crate::terrain_material::{MaterialRequest, build_terrain_material, patch_blend_maps, patch_terrain_normal, terrain_normal_image};
 
+/// A river's water at a place along it (world metres): its surface's height, its width, and how it is drawn there.
+pub(super) struct RiverSample {
+    pub(super) x: f64,
+    pub(super) z: f64,
+    pub(super) y: f64,
+    pub(super) width: f64,
+    flow: f64,
+    foam: f64,
+    alpha: f64,
+}
+
 #[derive(Clone, Copy)]
-struct RiverPoint {
+pub(super) struct RiverPoint {
     /// World metres; y = the spline's own height.
     x: f64,
     z: f64,
@@ -599,27 +610,8 @@ impl Tile {
         wce_tile::river_files::Factors::of(sc, elem, file.as_deref()).height
     }
 
-    /// Rivers: every SplineRiverInstance is a chain of Bezier segments (point i's position and controlOut, point i+1's controlIn and position,
-    /// all local to the instance in scene units); the ribbon follows it with the point's width, at the height the game has it, landscape or
-    /// freeform: the exported river_spline*.xml the game reads has the points' stored heights over its factor and no terrain_offset. terrain_offset is the point's height
-    /// over the ground under it when TEd placed it (osgiliath minor: 23 of 26 points to the millimetre; up to 0.8 m off where the ground changed
-    /// since). Adding it to the ground under every sample lifted the water of osgiliath minor's second river over the ford it starts on.
-    /// The sea plane: TEd draws the sea at 0 m over every tile, whatever its tile set, as context (it is not in the file); so does this, over
-    /// the bordered tile, unless the map context is shown (it draws the sea over the whole area, at 0 m relative to the open tile's place).
-    /// The depth test cuts it where the ground is higher.
-    fn rebuild_water(&mut self, scene: &mut RenderScene, layer: LayerId) {
-        for &e in &self.water_entities {
-            scene.remove(e);
-        }
-
-        self.water_entities.clear();
-        self.water_dirty = false;
-        self.water_note.clear();
-        if !self.display.show_water && !self.display.show_sea {
-            self.water_note = "water hidden".to_owned();
-            return;
-        }
-
+    /// Each river's points and its samples along it (world metres), as its water is drawn (`rebuild_water`) and as a road crossing it finds it.
+    pub(super) fn river_ribbons(&self) -> Vec<(Vec<RiverPoint>, Vec<RiverSample>)> {
         let u = self.unit();
         // Across: a campaign tile's scene is in its database's unit (0.2: BOB's river_spline<n>.xml has its x and z / 0.2, a battle tile's
         // / 2); up: the project's unit (a map's view stretches a campaign tile's heights, `tile_project::height_unit`). A campaign river is
@@ -631,13 +623,11 @@ impl Tile {
         let across = wce_tile::tile_project::height_unit(&self.project.dir);
         let campaign = across < u;
         let mut river_index = 0;
-        let rome2 = self.files.as_ref().and_then(|f| f.game()).is_some_and(|g| g.key == "rome_2");
-        let (mut rivers, mut ribbons) = (0, 0);
-        let mut new_water = vec![];
+        let mut out = vec![];
         let sc = self.tscene();
         let els = sc.doc().elements();
         for e in 0..els.len() {
-            if els[e].name != "SplineRiverInstance" || !self.display.show_water {
+            if els[e].name != "SplineRiverInstance" {
                 continue;
             }
 
@@ -674,21 +664,10 @@ impl Tile {
                 continue;
             }
 
-            rivers += 1;
             let bez = |a: f64, b: f64, c: f64, d: f64, t: f64| {
                 let s = 1.0 - t;
                 s * s * s * a + 3.0 * s * s * t * b + 3.0 * s * t * t * c + t * t * t * d
             };
-
-            struct Sample {
-                x: f64,
-                z: f64,
-                y: f64,
-                width: f64,
-                flow: f64,
-                foam: f64,
-                alpha: f64,
-            }
 
             let mut samples = vec![];
             for i in 0..pts.len() - 1 {
@@ -700,13 +679,47 @@ impl Tile {
                     let x = bez(a.x, a.cout[0], b.cin[0], b.x, t);
                     let z = bez(a.z, a.cout[2], b.cin[2], b.z, t);
                     let y = bez(a.y, a.cout[1], b.cin[1], b.y, t);
-                    samples.push(Sample {
+                    samples.push(RiverSample {
                         x, z, y, width: a.width + (b.width - a.width) * t, flow: a.flow + (b.flow - a.flow) * t, foam: a.foam + (b.foam - a.foam) * t,
                         alpha: a.fade + (b.fade - a.fade) * t,
                     });
                 }
             }
 
+            out.push((pts, samples));
+        }
+
+        out
+    }
+
+    /// Rivers: every SplineRiverInstance is a chain of Bezier segments (point i's position and controlOut, point i+1's controlIn and position,
+    /// all local to the instance in scene units); the ribbon follows it with the point's width, at the height the game has it, landscape or
+    /// freeform: the exported river_spline*.xml the game reads has the points' stored heights over its factor and no terrain_offset. terrain_offset is the point's height
+    /// over the ground under it when TEd placed it (osgiliath minor: 23 of 26 points to the millimetre; up to 0.8 m off where the ground changed
+    /// since). Adding it to the ground under every sample lifted the water of osgiliath minor's second river over the ford it starts on.
+    /// The sea plane: TEd draws the sea at 0 m over every tile, whatever its tile set, as context (it is not in the file); so does this, over
+    /// the bordered tile, unless the map context is shown (it draws the sea over the whole area, at 0 m relative to the open tile's place).
+    /// The depth test cuts it where the ground is higher.
+    fn rebuild_water(&mut self, scene: &mut RenderScene, layer: LayerId) {
+        for &e in &self.water_entities {
+            scene.remove(e);
+        }
+
+        self.water_entities.clear();
+        self.water_dirty = false;
+        self.water_note.clear();
+        if !self.display.show_water && !self.display.show_sea {
+            self.water_note = "water hidden".to_owned();
+            return;
+        }
+
+        let u = self.unit();
+        let rome2 = self.files.as_ref().and_then(|f| f.game()).is_some_and(|g| g.key == "rome_2");
+        let (mut rivers, mut ribbons) = (0, 0);
+        let mut new_water = vec![];
+        let drawn = if self.display.show_water { self.river_ribbons() } else { vec![] };
+        for (pts, samples) in drawn {
+            rivers += 1;
             if samples.len() < 2 {
                 continue;
             }

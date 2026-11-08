@@ -59,7 +59,7 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
         ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("name", "Road"),
         ("polygon_shape", "PS_POLYGON"), ("area", "0"), ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
         ("road_id", "0"), ("road_width", "6"), ("road_shoulder", "3"), ("road_bump", "0.25"), ("road_max_grade", "10"), ("road_max_side", "30"),
-        ("road_group", "0"), ("road_variation", "0"), ("road_ground", "road"), ("road_feather", "2"), ("road_seed", "1"), ("road_type", "dirt"), ("road_bridges", "true"),
+        ("road_group", "0"), ("road_variation", "0"), ("road_ground", "road"), ("road_feather", "2"), ("road_seed", "1"), ("road_type", "dirt"), ("road_bridges", "true"), ("road_bridge_clearance", "2"),
     ],
     wrappers: &["points"],
     point_attrs: &[("position", "0,0,0")],
