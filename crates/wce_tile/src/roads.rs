@@ -194,12 +194,25 @@ pub fn over_gaps(raw: &[f64], gaps: &[(usize, usize)]) -> Vec<f64> {
 /// road runs on another (`on_other`): that one's bump is already in the ground.
 #[must_use]
 pub fn with_bump(line: &[[f64; 2]], heights: &[f64], s: &RoadSettings, on_other: &dyn Fn(f64, f64) -> bool) -> Vec<f64> {
+    with_bump_ends(line, heights, s, on_other, [true, true])
+}
+
+/// As [`with_bump`], the bump coming in from the ends `ramp_ends` says (first, last): not from an end on another road, where the road
+/// meets that one's surface with its own bump.
+#[must_use]
+pub fn with_bump_ends(line: &[[f64; 2]], heights: &[f64], s: &RoadSettings, on_other: &dyn Fn(f64, f64) -> bool, ramp_ends: [bool; 2]) -> Vec<f64> {
     let n = heights.len();
     let reach = BUMP_RAMP as usize;
     let off = line.iter().map(|p| on_other(p[0], p[1])).collect::<Vec<_>>();
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
-        let ends = (i.min(n - 1 - i) as f64 / BUMP_RAMP).min(1.0);
+        let from_ends = match ramp_ends {
+            [true, true] => i.min(n - 1 - i),
+            [true, false] => i,
+            [false, true] => n - 1 - i,
+            [false, false] => n,
+        };
+        let ends = (from_ends as f64 / BUMP_RAMP).min(1.0);
         let near = (i.saturating_sub(reach)..(i + reach + 1).min(n)).filter(|&k| off[k]).map(|k| k.abs_diff(i) as f64 / BUMP_RAMP).fold(1.0, f64::min);
         out.push(heights[i] + s.bump * smooth(ends.min(near)));
     }
@@ -380,6 +393,17 @@ pub fn plan(line: &[[f64; 2]], raw: &[f64], water: &[Option<f64>], s: &RoadSetti
         }
     }
 
+    // On an earlier road the road is at that one's surface (in `raw`: the ground has it, bump and all): pinned under it by its own bump,
+    // which it keeps up to it, and the road around comes to it at its grade. Its own ground averaged along it and its bump ramped off near
+    // it, it stood lower there: the end of a T's branch, its flat and its banks written over the through road, sank a hollow in it (user,
+    // 2026-11-08).
+    let on_earlier = line.iter().map(|p| on_other(p[0], p[1])).collect::<Vec<_>>();
+    for (i, &on) in on_earlier.iter().enumerate() {
+        if pins[i].is_none() && on {
+            pins[i] = Some(raw[i] - s.bump);
+        }
+    }
+
     // The deep water's stretches, out to the banks: a bridge spans them.
     let decks = deep.iter().map(|w| (w.from.saturating_sub(1), (w.to + 1).min(raw.len() - 1), w.level + s.clearance)).collect::<Vec<_>>();
     let union = |mut g: Vec<(usize, usize)>| {
@@ -396,7 +420,9 @@ pub fn plan(line: &[[f64; 2]], raw: &[f64], water: &[Option<f64>], s: &RoadSetti
         out
     };
 
-    let grade = |gaps: &[(usize, usize)]| graded_pinned(line, &over_gaps(raw, gaps), &pins, s);
+    // Graded on the ground under an earlier road's bump, as its own is (averaged with that bump, the road stood higher by it near one).
+    let under = raw.iter().zip(&on_earlier).map(|(&h, &on)| if on { h - s.bump } else { h }).collect::<Vec<_>>();
+    let grade = |gaps: &[(usize, usize)]| graded_pinned(line, &over_gaps(&under, gaps), &pins, s);
     let mut gaps = union(vec![]);
     if s.bridges {
         for _ in 0..4 {
@@ -428,9 +454,10 @@ pub fn plan(line: &[[f64; 2]], raw: &[f64], water: &[Option<f64>], s: &RoadSetti
         }
     }
 
-    // The bump stays off a ford, as it does on another road.
+    // The bump stays off a ford; it does not come in from an end on another road.
     let on_ford = |x: f64, z: f64| fords.iter().any(|&(a, b)| line[a..=b].iter().any(|p| (p[0] - x).hypot(p[1] - z) < 1.0));
-    let mut heights = with_bump(line, &heights, s, &|x, z| on_other(x, z) || on_ford(x, z));
+    let ramp_ends = [!on_earlier.first().copied().unwrap_or(false), !on_earlier.last().copied().unwrap_or(false)];
+    let mut heights = with_bump_ends(line, &heights, s, &on_ford, ramp_ends);
     for &(a, b) in &fords {
         heights[a..=b].copy_from_slice(&raw[a..=b]);
     }
@@ -854,6 +881,28 @@ mod tests {
         let p = plan(&l, &raw, &water, &s, &|_, _| false);
         assert!(p.gaps.is_empty() && p.decks.is_empty());
         assert_eq!(p.fords.len(), 1);
+    }
+
+    #[test]
+    fn a_road_ending_on_another_meets_it_at_its_surface() {
+        // A T's branch along x, ending at 100 on a through road (its last 4 m, raised 0.25 by that one's bump) over level ground.
+        let s = settings();
+        let l = straight();
+        let on = |x: f64, _: f64| x > 96.0;
+        let raw = l.iter().map(|p| if on(p[0], p[1]) { 0.25 } else { 0.0 }).collect::<Vec<_>>();
+        let p = plan(&l, &raw, &vec![None; l.len()], &s, &on);
+        for (i, q) in l.iter().enumerate().filter(|(_, q)| on(q[0], q[1])) {
+            assert!((p.heights[i] - 0.25).abs() < 1e-9, "at {q:?}: {}", p.heights[i]);
+        }
+
+        // Its own bump away from it and up to it: no dip beside it (its bump ramped off there, it was one).
+        assert!((p.heights[50] - s.bump).abs() < 1e-9, "{}", p.heights[50]);
+        for (i, q) in l.iter().enumerate().filter(|(_, q)| (80.0..=96.0).contains(&q[0])) {
+            assert!((p.heights[i] - 0.25).abs() < 0.05, "at {q:?}: {}", p.heights[i]);
+        }
+
+        // Its other end, on the ground, still comes down to it.
+        assert!(p.heights[0].abs() < 1e-9, "{}", p.heights[0]);
     }
 
     #[test]

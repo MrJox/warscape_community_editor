@@ -55,6 +55,30 @@ fn parse_owner(owner: &str) -> Option<(u32, u64)> {
     Some((id.parse().ok()?, u64::from_str_radix(signature, 16).ok()?))
 }
 
+/// The roads in the order they are made: a road that ends on another after it (each is laid on the ground with the earlier ones on it, and
+/// meets them at their surface, `roads::plan`): a T's through road first, its bump whole, and the branch coming to it. Made the other way,
+/// the through road met the branch's end (user, 2026-11-08). Otherwise as they are.
+fn made_order<T>(v: Vec<T>, road: impl Fn(&T) -> &Road) -> Vec<T> {
+    let centres = v.iter().map(|t| centre_line_sharp(&road(t).line, &road(t).sharp).0).collect::<Vec<_>>();
+    let off = |line: &[[f64; 2]], p: [f64; 2]| line.windows(2).map(|w| {
+        let (d, e) = ([w[1][0] - w[0][0], w[1][1] - w[0][1]], [p[0] - w[0][0], p[1] - w[0][1]]);
+        let t = ((d[0] * e[0] + d[1] * e[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-12)).clamp(0.0, 1.0);
+        (e[0] - d[0] * t).hypot(e[1] - d[1] * t)
+    }).fold(f64::MAX, f64::min);
+    let ends_on = |i: usize| {
+        let c = &centres[i];
+        [c.first(), c.last()].into_iter().flatten().filter(|&&p| {
+            centres.iter().enumerate().any(|(j, o)| j != i && off(o, p) <= road(&v[j]).settings.width * 0.5)
+        }).count()
+    };
+
+    let keys = (0..v.len()).map(ends_on).collect::<Vec<_>>();
+    let mut order = (0..v.len()).collect::<Vec<_>>();
+    order.sort_by_key(|&i| keys[i]);
+    let mut slots = v.into_iter().map(Some).collect::<Vec<_>>();
+    order.into_iter().filter_map(|i| slots[i].take()).collect()
+}
+
 /// What a text hashes to (the same in every run: it is saved).
 fn hash_text(text: &str) -> u64 {
     text.bytes().fold(0xCBF2_9CE4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
@@ -220,7 +244,7 @@ impl Tile {
             return;
         }
 
-        let roads = self.roads();
+        let roads = made_order(self.roads(), |r| r);
         let stacks = self.project.layers.as_ref().and_then(|l| l.height.as_ref());
 
         // Each road against what its layers were made from.
@@ -229,7 +253,12 @@ impl Tile {
             l.height.as_ref().is_none_or(Stack::owned_on_top) && l.blend.as_ref().is_none_or(Stack::owned_on_top) && l.ground.as_ref().is_none_or(Stack::owned_on_top)
         });
 
-        let stale = self.roads_stale || !on_top || roads.iter().any(|r| made(r.id) != Some(r.signature));
+        // Their layers in the order they are made (each laid on those under it).
+        let in_order = stacks.is_none_or(|s| {
+            let ranks = s.layers.iter().filter_map(|l| parse_owner(&l.owner)).filter_map(|o| roads.iter().position(|r| r.id == o.0)).collect::<Vec<_>>();
+            ranks.windows(2).all(|w| w[0] < w[1])
+        });
+        let stale = self.roads_stale || !on_top || !in_order || roads.iter().any(|r| made(r.id) != Some(r.signature));
         let gone = stacks.is_some_and(|s| s.layers.iter().filter_map(|l| parse_owner(&l.owner)).any(|o| roads.iter().all(|r| r.id != o.0)));
         // The instances wait for the terrain: made before it, they were made again right after.
         self.roads_due = stale || gone;
@@ -386,7 +415,7 @@ impl Tile {
     /// water, a copy of the height stack and of the heights, each road type's pieces, the bridge bases.
     fn start_road_items(&mut self) {
         self.road_items_stale = false;
-        let roads = self.road_elems().into_iter().zip(self.roads()).collect::<Vec<_>>();
+        let roads = made_order(self.road_elems().into_iter().zip(self.roads()).collect::<Vec<_>>(), |p| &p.1);
         let water = self.water_map();
         let mut pieces = HashMap::new();
         let mut bases = HashMap::new();
@@ -642,9 +671,11 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
     height.layers.retain(|l| alive(&l.owner));
     blend.layers.retain(|l| alive(&l.owner));
     ground.layers.retain(|l| alive(&l.owner));
-    height.put_owned_on_top();
-    blend.put_owned_on_top();
-    ground.put_owned_on_top();
+    // The owned layers on top, the roads' in the order they are made.
+    let rank = |o: &str| parse_owner(o).and_then(|(id, _)| roads.iter().position(|r| r.id == id)).unwrap_or(0);
+    height.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
+    blend.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
+    ground.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
 
     let (bpx, bpz) = (f64::from(bw) / (ex + 2.0 * border), f64::from(bh) / (ez + 2.0 * border));
     let (gpx, gpz) = (f64::from(gw) / (ex + 2.0 * border), f64::from(gh) / (ez + 2.0 * border));

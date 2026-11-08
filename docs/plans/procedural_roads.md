@@ -125,9 +125,16 @@ frame 176 ms before, 29 ms after (the work, 145 ms, on the threads).
 **The height at a point** comes from the road's samples near it, by distance, further than 12 past the edge: taken from the nearest alone it jumped where
 a point stopped being nearer one stretch than another, in steps across the banks (`the_terrain_a_road_leaves_has_no_steps`).
 
-**Crossings.** A road reads what lies below its layers, so a later road takes an earlier one for ground and joins it at its height. Its bump stays
-off where it runs on the other (that one's is already in the ground). The bump also comes in over the road's first and last 8 units, so a road
-ending at a tile's edge ends on the ground. Matching a neighbouring tile's road is left for later.
+**Crossings.** A road reads what lies below its layers, so a later road takes an earlier one for ground and joins it at its height: where it
+runs on the other it is pinned to that one's surface (bump and all), is graded on the ground under that bump, and keeps its own bump up to it.
+The bump also comes in over the road's first and last 8 units, so a road ending at a tile's edge ends on the ground; not from an end on another
+road. The roads are made in their elements' order, except that a road ending on another comes after it (`made_order`), its layers ordered to
+match: a T's through road first, the branch coming to it.
+
+Until 2026-11-08 (user: a T's bump spoilt the other road) the later road's bump went off over 8 m next to the other and it was graded on that
+one's raised surface, not pinned to it: a branch made after the through road ended a little under it, and its flat and banks sank a hollow in
+the through road; made before it, the through road's own bump went off round the branch's end. Matching a neighbouring tile's road is left
+for later.
 
 **Existing objects** on the terrain follow as they do under a brush (landscape instances). Trees and props on the road are not removed in the
 first version, but the road reports them; an optional "clear vegetation" comes later.
