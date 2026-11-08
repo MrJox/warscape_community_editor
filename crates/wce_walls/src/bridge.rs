@@ -413,6 +413,21 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp) -> Re
             }
         }
 
+        // And the footprint the game also keeps beside it (`orange_thingies`: the same ring, x and z as `vertex.x` and `vertex.y`; the
+        // kit's has the outline's corners): left as the deck's, the two disagreed and units kept off the ramps' ground too (user
+        // 2026-11-08).
+        for ring in d["orange_thingies"].as_array_mut().into_iter().flatten() {
+            for q in ring.as_array_mut().into_iter().flatten() {
+                let v = &mut q["vertex"];
+                let (x, z) = (v["x"].as_f64().unwrap_or(0.0) + warp.origin[0], v["y"].as_f64().unwrap_or(0.0) + warp.origin[2]);
+                let along = ((x - c[0]) * t[0] + (z - c[2]) * t[1]) * out;
+                if along > -0.5 {
+                    v["x"] = serde_json::json!((x + t[0] * out * END_RAMP - warp.origin[0]) as f32);
+                    v["y"] = serde_json::json!((z + t[1] * out * END_RAMP - warp.origin[2]) as f32);
+                }
+            }
+        }
+
         for ((from, to), ground) in [((0.0, END_RAMP), false), ((END_RAMP, END_RAMP + GROUND_PLATFORM), true)] {
             let pts = [corner(z0, from), corner(z1, from), corner(z1, to), corner(z0, to)];
             let (a, b) = ([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]], [pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]]);
