@@ -59,10 +59,26 @@ const EFFECT_RADIUS: f32 = 1.5;
 const EFFECT_SECONDS: f32 = 2.0;
 const EFFECT_STEP: f32 = 0.05;
 
+/// While its models load, a thumbnail is rendered every this many frames (a render asks for what it misses; one every frame cost the
+/// editor a whole second renderer's frame for as long as a catalogue's thumbnails were made: user 2026-11-08, 40 fps with the Create
+/// panel's grid open). Its ground likewise.
+const LOAD_EVERY: u32 = 8;
+
+/// The final renders a frame makes at most (an effect's run of them, 40, went in one frame).
+const RENDERS_A_FRAME: u32 = 2;
+
+/// Where a thumbnail is: its models loading, then its ground, then its final renders (one frame's work at a time).
+enum Phase {
+    Loading,
+    Ground { camera: Camera, ground: wce_scene::render_scene::Terrain, waited: u32 },
+    Settle { camera: Camera, done: u32, renders: u32, effects: bool },
+}
+
 struct Job {
     id: String,
     scene: RenderScene,
     waited: u32,
+    phase: Phase,
 }
 
 #[derive(Default)]
@@ -220,43 +236,71 @@ impl Thumbnails {
                 scene.add(layer, m, p, SourceRef::default());
             }
 
-            self.job = Some(Job { id, scene, waited: 0 });
+            self.job = Some(Job { id, scene, waited: 0, phase: Phase::Loading });
         }
 
         let (Some(r), Some(job)) = (self.renderer.as_mut(), self.job.as_mut()) else { return };
-        let params = |camera| ViewParams { camera, time_s: 0.0 };
+        match &mut job.phase {
+            // Loading: a render now and then asks for the models.
+            Phase::Loading => {
+                job.waited += 1;
+                if (job.waited - 1) % LOAD_EVERY != 0 {
+                    return;
+                }
 
-        // Loading: a render asks for the models.
-        r.render(&job.scene, &params(Camera::default()), &mut self.target);
-        job.waited += 1;
-        if r.draw_stats().waiting_models > 0 && job.waited < MAX_WAIT_FRAMES {
-            return;
+                r.render(&job.scene, &ViewParams { camera: Camera::default(), time_s: 0.0 }, &mut self.target);
+                if r.draw_stats().waiting_models > 0 && job.waited < MAX_WAIT_FRAMES {
+                    return;
+                }
+
+                let Some((camera, floor, radius)) = frame(r, job) else {
+                    let job = self.job.take().expect("a job");
+                    self.failed.insert(job.id);
+                    return;
+                };
+
+                // The ground's GPU side is made on a loading thread.
+                let ground = add_ground(&mut job.scene, floor, radius);
+                job.phase = Phase::Ground { camera, ground, waited: 0 };
+                return;
+            }
+
+            // Its ground: renders now and then until it is there.
+            Phase::Ground { camera, ground, waited } => {
+                let camera = *camera;
+                if !r.terrain_ready(ground) && *waited < MAX_WAIT_FRAMES {
+                    if *waited % LOAD_EVERY == 0 {
+                        r.render(&job.scene, &ViewParams { camera, time_s: 0.0 }, &mut self.target);
+                    }
+
+                    *waited += 1;
+                    return;
+                }
+
+                r.forget_scene();
+                r.restart_temporal();
+                let effects = job.scene.entities().iter().any(|en| matches!(en.payload, Payload::VfxEmitter(_)));
+                let renders = if effects { (EFFECT_SECONDS / EFFECT_STEP) as u32 } else { SETTLE_RENDERS };
+                job.phase = Phase::Settle { camera, done: 0, renders, effects };
+                return;
+            }
+
+            // The final renders, a few a frame (the exposure settles; an effect's particles run).
+            Phase::Settle { camera, done, renders, effects } => {
+                let end = (*done + RENDERS_A_FRAME).min(*renders);
+                for k in *done..end {
+                    let time_s = if *effects { k as f32 * EFFECT_STEP } else { 0.0 };
+                    r.render(&job.scene, &ViewParams { camera: *camera, time_s }, &mut self.target);
+                }
+
+                *done = end;
+                if *done < *renders {
+                    return;
+                }
+            }
         }
 
-        let mut job = self.job.take().expect("a job");
-        let Some((camera, floor, radius)) = frame(r, &job) else {
-            self.failed.insert(job.id);
-            return;
-        };
-
-        // The ground's GPU side is made on a loading thread: renders until it is there.
-        let ground = add_ground(&mut job.scene, floor, radius);
-        let mut waited = 0;
-        while !r.terrain_ready(&ground) && waited < MAX_WAIT_FRAMES {
-            r.render(&job.scene, &ViewParams { camera, time_s: 0.0 }, &mut self.target);
-            std::thread::sleep(std::time::Duration::from_millis(2));
-            waited += 1;
-        }
-
-        r.forget_scene();
-        r.restart_temporal();
-        let effects = job.scene.entities().iter().any(|en| matches!(en.payload, Payload::VfxEmitter(_)));
-        let renders = if effects { (EFFECT_SECONDS / EFFECT_STEP) as u32 } else { SETTLE_RENDERS };
-        for k in 0..renders {
-            let time_s = if effects { k as f32 * EFFECT_STEP } else { 0.0 };
-            r.render(&job.scene, &ViewParams { camera, time_s }, &mut self.target);
-        }
-
+        let job = self.job.take().expect("a job");
         let Some(rgba) = self.target.read_rgba8(e.device(), e.context()) else {
             self.failed.insert(job.id);
             return;
