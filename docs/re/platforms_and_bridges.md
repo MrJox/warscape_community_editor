@@ -2,8 +2,8 @@
 
 What the game does with a building's platforms (`_tech.cs2.parsed`, per piece and destruct level) and what makes a building a bridge,
 traced in Ghidra (project `attila` in `C:\Users\frodo\ghidra_work`, see the memory notes). Addresses are RVAs (image base 0x10000000;
-`FUN_1xxxxxxx` = RVA `0xxxxxxx`). Everything here was read in the decompiled code unless it is under **Not traced**; nothing in this
-file comes from testing in game.
+`FUN_1xxxxxxx` = RVA `0xxxxxxx`). Everything here was read in the decompiled code unless it is under **Not traced**; the only things from
+testing in game are marked "in game".
 
 Why: a generated road bridge (`wce_walls::bridge`, pieces bent from `bridge_wood_2` / `bridge_wood_2_end`) is not crossable in game,
 the same kit pieces placed by hand are, and hours went into changes tested blind. This file is what is known for sure, and what a
@@ -111,8 +111,8 @@ The building's flags are `*(*(this + 0x78) + 0x38) + 0xfc` (`FUN_10652490`). The
   RVA 0x56350 in `BuildingPlatform.cpp`, default **1.0**;
 - otherwise **0.1** (`DAT_11afbd60`).
 
-The units are presumably metres. The tolerance compares something to the ground, but what it compares and where it is used were not
-traced (see below).
+It is the most the ground's height may differ from the platform's at an edge's two corners for the ground to link to that edge
+(`FUN_10354b40`, in "How units get on and off" below). Units are world units, as the building's matrix leaves them.
 
 ## The pathfinder and bridges
 
@@ -129,81 +129,223 @@ bridge reachable.
 4. keeps the first candidate that passes `FUN_103f25e0(region, …)` and `FUN_1169dfe0(pos, 0)`;
 5. otherwise falls back to a loop over `*(p + 0x3c) + 0x3c`.
 
-Neither test function was decompiled.
+`FUN_103f25e0(region, kind)` only filters by the region's type (+0x18): kind 1 refuses type 1, kind 2 refuses type 0, kind 0
+takes any. `FUN_1169dfe0` (point in the region's polygon) was not decompiled.
 
 Other tweaks: `enable_falling_off_platform` (object 0x12058a78, default false, used in `FUN_10375bc0`).
 
+## How units get on and off (the nav graph)
+
+Traced in the nav graph builder `FUN_10337530` (2026-11-08). The pathfinder works on regions (`param_1[0x10]`, count `param_1[0xf]`).
+Each region has:
+
+- an edge ring at +0x8 (and +0x28 for regions made from a surface);
+- a type at +0x18;
+- an owner surface at +0x24, which is 0 for ground regions;
+- a flag at +0x5c;
+- up to four links at +0x2c..+0x3c, with more in an overflow vector.
+
+Units cross only along links. The builder makes them in five steps.
+
+### 1. The ground triangulation and the buildings' collision outlines
+
+The ground regions come from a constrained triangulation, the world's object at +0x25a8. It is created in `FUN_10136e70` by
+`FUN_11663fc0(bounds, 0.1, 1, 16.0)`; `FUN_10337530` reads it back with `FUN_116641a0`. Segments also go into it from:
+
+- the battle's outlines (`FUN_101369c0`);
+- the wall lines of buildings with the wall flag (building info +0xe0 / +0xe8 / +0xec, filled by `FUN_10653590`).
+
+`FUN_1016d0a0` collects those segments, and `FUN_10337530` inserts them with `FUN_1166fd00`.
+
+**A building's collision outlines become holes in that triangulation**, one obstacle polygon per outline:
+
+1. `FUN_10655c60` goes through every piece and level of the building.
+2. The outline's name decides how it is handled:
+   - the plain path takes outlines whose name contains neither "outline" nor "gate";
+   - "outline" and "gate" (and "gate_ajar") get their own paths.
+3. `FUN_1066f1a0` takes the outline's corners in order, dropping only a last corner that repeats the first. It gives each corner a type
+   from the name: "hard" 0, "soft" 1, neither 2; corners of a "secondary" outline go to a second list.
+4. `FUN_1065fc10` drops a polygon equal to one already there. It then builds the obstacle, `FUN_10632ef0` → `FUN_10333d50`, with the
+   literal type 0 that `FUN_10632ef0` passes.
+5. For any type but 2, `FUN_10333d50` inserts the polygon's corners, as they are, into the ground triangulation: `CALL FUN_11665a20`
+   at RVA 0x333f9e, with ECX = `[world + 0x25a8]` (RVA 0x333f93).
+
+The corners are not simplified: collinear corners stay as corners of the triangulation. Along a building, then, the ground's edges run
+between consecutive corners of its collision outlines, unless another outline or segment crosses there.
+
+`orange_thingies` were not seen read on this path (see "Not traced").
+
+### 2. Platform regions
+
+Next comes one region per walkable surface in the world's list at +0x2fc / +0x300 whose slot 0x30 ("ground") is false: `FUN_1033a4a0`,
+called from `FUN_10337530`.
+
+**A `flag_2` platform, or any platform of a `ground_platform` building, gets no region of its own.** Units walk the ground there.
+
+The surface itself (`FUN_1033c580`, the base of the platform object, called from `FUN_1033e000` / `FUN_10635360`) keeps:
+
+- the plane (a, b, c, d) at +0x34..+0x40;
+- an edge ring of the platform's corners in file order (`FUN_1033c840` / `FUN_1033c8c0`, a linked list with no size limit).
+
+**Each corner's height is recomputed from the plane**: y = −(c·z + a·x + d) / b. The file's y values only count through the plane,
+which goes through vertex 0 with the file's normal.
+
+`FUN_1034d3f0` gives each edge a clearance (+0x60): half the distance to the nearest other edge across the polygon (`DAT_11afbd68`
+= 0.5). This is the width units fit through; nothing in it rejects a shape.
+
+### 3. Candidate neighbours
+
+Every region's corners go into a point grid (`FUN_1168c150`). For each region R:
+
+- if R's type is 2, every ground region is a candidate;
+- otherwise, the candidates are the regions with a corner inside a ±0.5 box (`DAT_11afbd68`) around one of R's corners
+  (`FUN_11699e60`, then sorted by `FUN_1032d3b0`).
+
+### 4. Platform ↔ ground: `FUN_10354b40`
+
+It is called from `FUN_10337530` for a platform region R and each ground candidate C that has C+0x5c == 1. The platform owner's slot
+0x10 is 0 (`FUN_100c46b0`) and slot 8 is non-zero (`FUN_1017ad40`), so building platforms take this path.
+
+The tolerance is R's surface slot 0x3c (`FUN_1065ee50`): **1.0 for bridges and walls, 0.1 otherwise**.
+
+For each edge r0→r1 of R, with heights on R's plane, and each edge c0→c1 of C, with heights on the ground at those points
+(`FUN_1034b8f0` → `FUN_1034b920`), the edges link when **all four** of these hold:
+
+- |c0 − r1| ≤ 0.01414 in x/z (squared ≤ `DAT_11b2b790` = 2.0e-4);
+- |h(c0) − hR(r1)| ≤ tolerance;
+- |c1 − r0| ≤ 0.01414 in x/z;
+- |h(c1) − hR(r0)| ≤ tolerance.
+
+So the ground edge must be the platform edge itself, run the other way, **corner for corner**. An edge that only overlaps the platform
+edge, or that ends at a corner the platform edge doesn't have, does not link.
+
+When the edges match, `FUN_1034f9a0` gates on the two regions' types and +0x84 flags: type 0 never links with type 1. Then
+`FUN_10339b80` makes the link both ways. `FUN_10354e20` also runs, setting +0x64 and clearing +0x44 on an edge; which edge it is
+was not resolved.
+
+**Then the function returns: one link per (platform, ground region) pair, the first matching edge in the platform's ring order.**
+
+### 5. Platform ↔ platform: `FUN_10353950`
+
+This runs for R and each later candidate, both with a surface. For each edge pair:
+
+- **reversed corners within 0.01414 in x/z**;
+- **heights on each one's own plane within 0.1**: `DAT_11afbd60`, fixed, *not* the bridge tolerance.
+
+A match makes a type-3 link both ways. A flag then stops further edge links for the pair, so **one shared edge per pair of platforms**
+is linked. Corners that coincide get `FUN_10354aa0`.
+
+For pairs where one region has no surface (the ground), the function's second branch does the following:
+
+- it matches reversed edges with 0.01 per coordinate (`DAT_11b0ef84`);
+- for anti-parallel, partly overlapping edges, it compares the clipped overlap with the same 0.01;
+- it logs "PATHFINDING: we have 2 lines very close … is it our intention to join them up" for near misses within 0.05
+  (`DAT_11b04044`).
+
+### What a link needs, in short
+
+A platform edge is a way on and off the ground only if the ground's triangulation has an edge with exactly its two corners: an edge of
+the building's collision outline, between two consecutive outline corners. The ground's height at both corners must also be within
+the tolerance (1.0 for a bridge) of the platform's plane there.
+
+The kit's `bridge_wood_2_end` has the following, in local units:
+
+- platform corners (−5, 0, −2), (−5, 1, 0), (5, 1, 0), (5, 0, −2);
+- collision outline `piece01_destruct01_hard01` with corners (5, 0, 0), (−5, 0, 0), (−5, 0, −2), (5, 0, −2).
+
+Its foot edge (5, 0, −2)→(−5, 0, −2) is the outline's edge (−5, −2)→(5, −2), and it is at ground height, so the ground links to it.
+
 ## What a generated bridge must satisfy (traced rules only)
 
-1. **Category `bridge`** in its `battlefield_buildings` row. Without it there is no 1.0 snap tolerance (0.1 instead) and no
-   bridge cost preference.
+1. **Category `bridge`** in its `battlefield_buildings` row. Without it the tolerance is 0.1 instead of 1.0 and there is no bridge
+   cost preference.
 2. **A logic file version above 5**, or `flag_2` / `flag_3` are not read (above 0 for `flag_1`).
 3. **The platforms in the level the building starts at**: only the current level's platform objects are active.
-4. **Each platform's normal agrees with its corners.** The engine keeps a plane through vertex 0 with the stored normal, so a normal
-   that does not fit the other corners describes a different surface from the outline.
-5. `flag_1`, `flag_2` and `flag_3` are **not required**: the kit's `bridge_wood_2` and `bridge_wood_2_end` have all three false, and a
-   bridge's platforms are not "ground" unless `flag_2` is set.
+4. **Each platform's normal agrees with its corners.** Every corner's height is taken from the plane through vertex 0 with that normal.
+5. **Every edge units should step on or off by (the ramp's foot) runs between two consecutive corners of the piece's collision
+   outline** (a plain one, its name without "outline" / "gate"). Two conditions:
+   - each corner within 0.0141 in x/z of the outline's;
+   - the ground's height at both within 1.0 of the platform's plane.
+6. **Joints between platforms are edges with the same two corners**, run in opposite directions: within 0.0141 in x/z, and within
+   0.1 in height on each one's plane. Only one such edge per pair of platforms is linked, so a joint split into several edges is
+   linked along one of them only.
+7. `flag_1`, `flag_2` and `flag_3` are **not required**: the kit's pieces have all three false. A `flag_2` platform has no region of its
+   own, so units walk the ground there.
 
-## Our generated bridge against these rules (dry-run pack `%TEMP%\wce_scratch\lay3\sp`, 2026-11-08)
+## Our generated bridge against these rules (dry-run pack, 2026-11-08)
 
-Pieces `wce_assembly_kit_wce_bridge_test_battlefield_r0_00` (deck, from `bridge_wood_2`), `_r0_01` and `_r0_02` (ends, from
-`bridge_wood_2_end`):
+The pack is `%TEMP%\wce_scratch\lay3\sp\build\launch\dw89pnmx\wce_launch.pack`. It has three pieces:
+`wce_assembly_kit_wce_bridge_test_battlefield_r0_00` (deck, from `bridge_wood_2`), and `_r0_01` and `_r0_02` (ends, from
+`bridge_wood_2_end`). The logic files were read out of the pack itself.
 
 1. The pack's rows for each key carry the category `bridge`, copied from the base's row (`db::copy_rows`). ✓
 2. Version 11, the same as the kit pieces'. ✓
 3. One platform in destruct level 0 of each, like the kit's. ✓
 4. Normals fit the corners within a millimetre: end `r0_01` has n = (0.004, 0.894, −0.447), and n·v is −0.449 / −0.448 at its corners;
    the deck has n = (0, 1, 0) with every corner at y 0. ✓
-5. All three flags false, as the kit's. ✓
+5. **Broken.** End piece `r0_01`:
+   - platform corners: (−5.358, −1, −1.045), (−5.375, 0, 0.954), (−0.008, 0, 1.000), (5.358, 0, 1.045), (5.375, −1, −0.954),
+     (0.008, −1, −1.000);
+   - its foot is two edges: (5.375, −0.954)→(0.008, −1.000) and (0.008, −1.000)→(−5.358, −1.045);
+   - its collision outline `piece01_destruct01_hard01` has, along that side, the corners (5.375, −0.954), (3.228, −0.973),
+     (1.082, −0.991), (−1.065, −1.009), (−3.212, −1.027), (−5.358, −1.045).
 
-**It breaks no traced rule.** What still sets it apart from the hand-placed kit bridge (facts, none of them traced to a rule):
+   The outline has no corner at the foot's middle corner (0.008, −1.000): the nearest are 1.07 away. Its edges along the foot are
+   2.15 long where the platform's are 5.37. **Neither foot edge has a ground edge with its two corners, so the ground cannot link to
+   the ramp's foot.** `r0_02` is the same, mirrored.
 
-- the deck's platform has 24 corners (the kit's 4) and its outline / footprint ring 30 (the kit's 4); the ends have 6 and 12 (the
-  kit's 4 and 4);
-- the deck hull has 280 triangles (the kit's 12);
-- the pieces' origin is at the deck (platform local y 0, outlines −1), where the kit's is on the ground (platform local y +1);
-- the bending is baked into the meshes, with identity rotations.
+   What does match the outline is the two side edges, e.g. (−5.358, −1.045)→(−5.375, 0.954) against the outline's
+   (−5.375, 0.954)→(−5.358, −1.045). Those can link wherever the ground is within 1.0 of the ramp. That fits units getting onto
+   the bridge from its side (2026-11-08, in game). Whether they can is not checked against the ground here.
+6. The deck–end joints: corners shared within a centimetre (`bridge_check`), each joint split in two edges at the middle corner, so
+   one of the two halves is linked.
 
-The cause is in what is not traced yet: how platforms join the terrain and each other.
+`bridge_check` now tests rule 5 (below). It fails the same way on the pieces it makes itself and on those an export lowers, and passes
+the kit's `bridge_wood_2_end` (1 of 1 foot edges along its outline). So the generator's warp itself breaks the rule.
 
 ## Not traced
 
-- **How platform edges join the terrain and each other in the nav graph**: which edges become exits, how heights are compared,
-  whether the slot 0x3c tolerance is that comparison, and any limit on corners, convexity or collinear corners. This is the piece
-  that decides "can units get on and off". To find next: who reads the 0x84-byte platform objects' vertex vector and calls slot
-  0x3c on them. The vertex vector is in the level entries at `building + 0x154`, 0x9c bytes each, with the platform vectors at
-  +0x38 / +0x3c / +0x40. Also the region builder behind `*(p + 0x3c) + 0x3c/+0x40` in `FUN_103f3aa0`.
+- Whether ground regions are single triangles or merged polygons. With step 4's "one link per pair", a merged region beside both a
+  ramp's side and its foot would get only the first matching edge in the platform's ring order.
+- The ground regions' type and +0x5c flag, and `FUN_1034f9a0`'s type rules beyond "0 never with 1".
+- `FUN_1169dfe0` (point in a region), and whether any code assumes a convex platform. Nothing in the paths above limits corner counts
+  or rejects collinear corners.
 - What `flag_1` allows (slot 0x48), and what sets bit 4 (slot 0x34).
 - `flag_3`'s use anywhere (not on the building platform path).
-- How collision outlines and `orange_thingies` (`vertex_type`) take part in movement. The in-game observation in
-  [buildings.md](buildings.md) is that extending one without the other kept units off the difference.
-- `AIH_BRIDGE_CROSSING` (string at file offset 0x1bab290): its users were not followed.
+- **`orange_thingies` (`vertex_type`)**: not seen read on the ground-triangulation path. The in-game observation in
+  [buildings.md](buildings.md) is that extending one without the other kept units off the difference. Also not seen: what the
+  collision outlines' corner types ("hard" 0, "soft" 1, other 2) change, and the "outline" / "gate" / "secondary" paths.
+- `collision_3d`'s part in movement.
+- `AIH_BRIDGE_CROSSING` (string at file offset 0x1bab290): no code references its address directly.
 - Water under bridges.
 
-## Spec: a bridge / platform checker
+## Checker: `bridge_check` (`crates/wce_walls/examples/bridge_check.rs`)
 
-A report, per building of a tile or pack, that tests only traced rules and lists the deviations from the game's own pieces separately,
-labelled as untraced. It could extend `crates/wce_walls/examples/bridge_check.rs`, which already decodes the logic files.
+`cargo run --release -p wce_walls --example bridge_check -- <game folder> [radius] [rise] [rpfm schema .ron] [exported .pack]`
 
-Errors (traced):
+Implemented, from the traced rules (2026-11-08):
 
-- **E1** A building named as a bridge (made by `wce_walls::bridge`, or with "bridge" in its base key) whose `battlefield_buildings`
-  category is not `bridge`.
-- **E2** A logic file version ≤ 5 with any `flag_2` / `flag_3` set (they would not be read).
+- **Rule 5, the ramps' feet.** For every logic file with a platform sloped over 15 degrees, every edge with both corners at that
+  platform's lowest height must have its two corners at two consecutive corners of a collision outline (x/z, squared distance
+  ≤ 2.0e-4).
+
+  It runs on:
+  - the kit's end piece, as a reference;
+  - the end pieces it generates;
+  - the pieces `export::lower_walls` makes, when a schema is given;
+  - every logic file of a pack, when one is given (a tile's launch or export pack).
+
+  It prints "n of m foot edge(s) along its collision outline" and fails on any shortfall.
+
+Still to add (traced, not yet implemented):
+
+- **E1** A bridge piece whose `battlefield_buildings` category is not `bridge`.
+- **E2** A logic file version ≤ 5 with any `flag_2` / `flag_3` set.
 - **E3** A platform whose normal is off its corners: max |n·(vᵢ − v₀)| / |n| above 0.01.
 - **E4** No platform in destruct level 0 of a bridge piece.
-- **E5** A degenerate platform: fewer than 3 corners, or a zero normal.
+- **E6** For a tile: each foot edge's ground height (`hf_height_map`) at both corners against the platform's plane, over 1.0 for a
+  bridge (0.1 otherwise).
+- **E7** Joints between platforms of different pieces: in the world, the same two corners within 0.0141 and heights within 0.1.
 
-Warnings (deviations from the game's pieces, no rule traced):
-
-- **W1** A platform with more than 6 corners, or not convex. In TDD's 2530 fort platforms none had more than 6 corners and all were
-  convex.
-- **W2** Collinear corners on a platform.
-- **W3** A platform not wound clockwise in x/z.
-- **W4** Neighbouring platforms that share an edge only partly (no shared corners).
-- **W5** A collision outline and `orange_thingies` with different corners.
-- **W6** For each platform edge that is not shared with another platform (an exit), the height gap to the compiled ground (`hf_height_map`)
-  along the edge. Show it against 0.1 and against 1.0 (the snap tolerances), without a verdict until the snap comparison is traced.
-
-Output: one line per finding, with building key, piece, level, platform index and the numbers. Example:
-`wce_..._r0_00 piece0 level0 platform0: W1 24 corners`.
+Warnings (deviations from the game's pieces, no rule traced): more than 6 corners or not convex (TDD's 2530 fort platforms: none);
+outline and `orange_thingies` with different corners.
