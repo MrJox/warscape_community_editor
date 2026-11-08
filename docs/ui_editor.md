@@ -37,7 +37,7 @@ Games: the converter has the layout logic of every version etwng reads (Empire t
 * **UI XML**: the XML of the selected component (or the whole file). Typing applies when you pause for a third of a second, if the XML parses and
   converts to a layout; otherwise the message says why and the canvas keeps the last good state. Edits made on the canvas show here at once.
 * **UI Fields**: every primitive of the component (and of its default state) with the name the format gives it; Enter or leaving the field commits.
-* **Outliner** (the tree of components, with the click selecting on the canvas), **Inspector** (name, offsets, size, text, text colour), **History**.
+* **Inspector** (name, offsets, size, text, text colour), **History**.
   The fields carry the names of the Fields panel (`<offset_x>`, `<visible>yes</visible>`, `<component>`, `<picture_use>`); tick *Converter names* for the converter's own tags and guessed comments. Either form can be edited and pasted, and the file saved is the same. Fields the editor has no name for keep their primitive tag (`<i>`) and comment. Values are shown as stored (a dock point is its number); the Fields panel shows them in words.
 
 Everything is one model with one undo stack, so the canvas, the XML and the fields cannot disagree. Menu `UI`: add child, duplicate, delete, paint
@@ -98,7 +98,7 @@ How a layout is drawn (checked against a game screenshot of the Custom Battle sc
 
 ## Changing the structure: the UI Layers panel
 
-The *UI Layers* tab (next to Outliner and Assets) is the layout's tree with the buttons for changing it:
+The *UI Layers* tab (next to Assets) is the layout's tree with the buttons for changing it:
 
 * **Add** makes a new component inside the selected one (inside the root when nothing is selected) and lets you type its name at once.
   **Duplicate** copies the selected component with everything inside it; **Delete** removes it with everything inside it.

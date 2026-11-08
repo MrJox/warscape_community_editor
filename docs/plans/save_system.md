@@ -7,8 +7,8 @@ This plan drops it: **Save** always writes into the project, everything written 
 throw-away build files get a folder of their own.
 
 State: planned 2026-11-08 with the user, steps 1 to 10 done the same day (how it works now: [editor.md, Saving and
-exporting](../editor.md#saving-and-exporting)). The Outliner (the other half of that discussion) is out of scope: it stays as it is until it
-has been discussed further.
+exporting](../editor.md#saving-and-exporting)). The Outliner (the other half of that discussion) was out of scope here; it went later with
+[outliner_removal.md](outliner_removal.md).
 
 ## Why
 
@@ -79,7 +79,7 @@ Each Export entry asks for its destination and remembers the last one per game (
 3. **The weather database saves into `loose/warscape_asset_variation_db/`.** The picker's Open / Save / Save As / Convert dialogs start
    there.
 4. **UI layouts from the packs save into `loose/`** (`UiDocument::default_save_path`).
-5. **Revert to game's version**: a File menu entry and an Outliner context entry for a document whose file is a loose copy of a packs'
+5. **Revert to game's version**: a File menu entry (and an Outliner context entry, until the Outliner went) for a document whose file is a loose copy of a packs'
    file. It asks first, deletes the copy, refreshes the VFS (step 1) and reopens the document from the packs.
 6. **Build output into `<projects>/build/`**: the tile and terrain launch staging and the dry runs. It is throw-away: nothing reads it back
    between runs.

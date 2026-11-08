@@ -19,7 +19,7 @@ Status: **Phases 0, 1 and 2 done (2026-11-02); the user's decisions are in "Deci
 | Paint tile sets (layers, fill), place / move / rotate / remove explicit tiles | cell layer painting (tile set, tile / variation colours, climate, culture, snow per season), explicit tiles with the gizmo and the fit test (`test_final_tile_position`) | 4 |
 | Paint LF heights and sea LF (falloff / image / disk / square brushes, size, aspect, rotation; one add / subtract operation; undo optional) | the tile tool's brushes and operations (raise, lower, smooth, flatten, level, ramp, noise, image brushes, falloff curves) on a paged LF field, always with undo; aspect ratio and rotation added | 3 |
 | Apply (per-tile) LF patches | the custom-mesh and sea tiles' `lf_mask.tif` into the LF (docs/re/terry.md, "Per-tile LF patches") | 3 |
-| Entities: battle catchment areas, deployment zones and regions, rivers, prop meshes, VFX, environment volumes, season masks; spot / circle / rectangle / polyline / spline creation; gizmo, clone, multi-selection, scene tree, properties, undo view | the `.terry` scene as a lossless ECS model; the editor's outliner, inspector (multi-selection), gizmo and creation modes; overlays draped on the ground | 5 |
+| Entities: battle catchment areas, deployment zones and regions, rivers, prop meshes, VFX, environment volumes, season masks; spot / circle / rectangle / polyline / spline creation; gizmo, clone, multi-selection, scene tree, properties, undo view | the `.terry` scene as a lossless ECS model; the editor's selection, inspector (multi-selection), gizmo and creation modes; overlays draped on the ground | 5 |
 | Generate battle catchment areas (`bca_generation_spec.xml`) | the generator ported, Thrones' Terry as the oracle | 6 |
 | BOB_Terrain: `Terry file`, `Tilemap`, `Heights & Normals` | reimplemented, BOB as the oracle (docs/plans/tile.md decisions); pack output; Launch in game at a chosen location | 7 |
 | Campaign projects (`terrain/campaigns/<map>`: props, VFX, season masks, the layout map) | a second document kind on the same model | 8 |
@@ -36,7 +36,7 @@ Status: **Phases 0, 1 and 2 done (2026-11-02); the user's decisions are in "Deci
 | The LF in the game's vertex shader (a 2048 window around the camera, one uv offset), LF normals on a torus, render origin, the sea, custom-mesh tiles, climates, snow regions | `wce_render::renderer::terrain`, `context::Frame`, `LfMap` | the ground; the window and the normals become updatable in parts |
 | Brushes: falloff, falloff curves (LUT), image brushes; raise, noise, smooth, flatten, level, ramp; undo by touched rectangle (heights) or 64 x 64 blocks (`PixelLayer`) | `wce_tile::{height_field, falloff, brush_image, pixel_layer}`, `wce_tile_tool::{falloff_editor, image_brush, veg_brush}` | LF painting, cell painting |
 | Overview map (the LF shaded, the camera, click to go) | `wce_tile_tool::minimap_panel`, the Map context's overview | the Map panel's start |
-| Documents, commands, history, outliner, inspector, gizmo, shortcuts, scripts (`--script`, `--shot`) | `wce_editor_core`, `wce_editor` | the tool's frame; gates and captures |
+| Documents, commands, history, inspector, gizmo, shortcuts, scripts (`--script`, `--shot`) | `wce_editor_core`, `wce_editor` | the tool's frame; gates and captures |
 | Launch in game (pack, loose, Proton) | `wce_tile_tool::{launch, launch_prompt}` | a battle at a location of the edited map |
 | PNG (kit-exact encoder), TIFF, DDS templates, CHMF | `wce_formats` | the map's images and BOB's outputs |
 
@@ -133,7 +133,7 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
 - **After a tile map edit**: the fill runs again on a worker and the chunks whose placements changed are rebuilt (the streamer's `Set` /
   `Remove`); the others stay. The first version matches BOB (decision 3): BOB's fill draws from one random sequence over the whole map in row order, so one painted cell
   changes the variations and turns of every placement after it.
-- **Entities**: the `.terry` scene in the outliner (by type, then the hierarchy), the inspector on the components' fields, the gizmo on
+- **Entities**: the `.terry` scene picked in the viewport (no tree since the Outliner went, `outliner_removal.md`), the inspector on the components' fields, the gizmo on
   transforms (snapped to the cell grid for `ECTileAlignment`), creation modes as Terry's; positions lifted to the LF (`ECLandscapeAbove`).
 - **Validation** (a panel, also a command for scripts): cells whose colour is in no database, tiles that do not fit, missing tile folders,
   painted sizes against `tile_upgrades.xml` (`tilemap_audit`, docs/plans/tile.md item 3), BCAs whose infield holds restricted tiles.
@@ -202,7 +202,7 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
    **Map panel (2026-11-02).** The active map from above, a texel a cell: the LF (shaded), the placements (each in its tile set's colour;
    what a map of the packs has instead of a tile map image) and a kit map's cell layers from the model; wheel zoom, middle-button pan, a
    click moves the camera there; the camera and its view direction; the hovered cell's colour named from the map's tile database (tile
-   set, tile, variation, climate) and the placement over it. The Terrain tool's own default layout (Map and Outliner left, Terrain and
+   set, tile, variation, climate) and the placement over it. The Terrain tool's own default layout (Map left, Terrain and
    Inspector right); `terrain_map_layer` for scripts. `MapDocument` keeps the tile database it was filled with.
    **LF picking (2026-11-02).** `wce_terrain::pyramid::HeightPyramid`: min / max over 8 x 8-cell leaf blocks, merged 2 x 2 to one root;
    a ray descends nearest block first and meets each cell's bilinear surface exactly (a quadratic along the ray; the field is solid below
@@ -286,7 +286,7 @@ tiles at full grid); the next cuts would be a tile's level of detail by distance
    - `wce_terrain::terry`: positions through the transform tree, rectangles, polylines, kinds; attribute edits; entities added
      (`insert_entities`, the kit's layout and line endings, an old header brought to 3 / 10), removed with their descendants and the
      references to them (`remove_entities`), listed under a parent (`add_child`): text splices, exact and small undo records.
-   - The map document: `TerryAttrCommand` (merged per gesture), `TerrySpliceCommand`; the Outliner (by kind, then the entity tree), the
+   - The map document: `TerryAttrCommand` (merged per gesture), `TerrySpliceCommand`; the Outliner (by kind, then the entity tree; removed later with the Outliner), the
      Inspector (every component's attributes; the enumerated ones as choices), the gizmo (`ECTileAlignment` on the cell grid, a root
      `ECLandscapeAbove` on the LF).
    - The Terrain tool: the entities within a radius of the camera as pickable overlays on the LF (editor view; the campaign map's 1 091
