@@ -169,7 +169,25 @@ impl TileTool {
             Err(err) => wce_foundation::log::warn(format!("road pieces: {err}")),
         }
 
-        let lib = Arc::new(PrefabLibrary::scan_folders(&folders));
+        let mut lib = PrefabLibrary::scan_folders(&folders);
+
+        // The first road type, from the kit's road decals, where its pieces are missing and the kit has them.
+        if !wce_tile::road_dirt::all_written(&folders[0]) {
+            if wce_tile::road_dirt::kit_has_decals(&lib) {
+                match wce_tile::road_dirt::write(&folders[0]) {
+                    Ok(written) => {
+                        wce_foundation::log::info(format!("road pieces: {} {} piece(s) written", written.len(), wce_tile::road_dirt::TYPE));
+                        lib = PrefabLibrary::scan_folders(&folders);
+                    }
+
+                    Err(err) => wce_foundation::log::warn(format!("road pieces: {err}")),
+                }
+            } else {
+                wce_foundation::log::info(format!("road pieces: no {} pieces, the kit's {}* prefabs lack their decals", wce_tile::road_dirt::TYPE, wce_tile::road_dirt::KIT_PREFABS));
+            }
+        }
+
+        let lib = Arc::new(lib);
         self.prefabs = Some(lib.clone());
         if let Ok(mut base) = self.prefab_base.lock() {
             *base = PrefabBase { lib: Some(lib.clone()), ..Default::default() };
