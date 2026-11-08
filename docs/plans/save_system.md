@@ -116,5 +116,5 @@ matters for a tile without a weather file.
 
 ## Open points
 
-- **Several tiles drawn at once** (from the Outliner discussion): the user is checking whether that is ever wanted. It doesn't change this
-  plan.
+- **Several tiles drawn at once** (from the Outliner discussion): not wanted. One document per tool, and the Outliner goes:
+  [outliner_removal.md](outliner_removal.md).
