@@ -377,6 +377,41 @@ fn heading(v: [f64; 2]) -> f64 {
 ///
 /// The prefab's contents do not read.
 pub fn fit(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site: &Site) -> Result<Fitted, String> {
+    fit_dressed(piece, children, key, laid, site, &Dress::default())
+}
+
+/// What a piece's parts get besides their place: buildings tilted to the ground (`tilt`: a fence follows the slope it stands on), and
+/// attributes of their own (`attrs`, by the part's index in the piece: a fence's `destruction_level`).
+#[derive(Default)]
+pub struct Dress<'a> {
+    pub tilt: bool,
+    pub attrs: Option<&'a dyn Fn(usize, &Part) -> Vec<(String, String)>>,
+}
+
+/// How far along and across a building the ground is read to tilt it (metres): a fence's ends, its width.
+const TILT_ALONG: f64 = 2.0;
+const TILT_ACROSS: f64 = 0.5;
+
+/// The turn that takes up (0, 1, 0) to `n` (a unit vector, its y over 0) by the shortest way.
+fn up_to(n: Double3) -> Double3x3 {
+    let (x, z) = (n.z, -n.x);
+    let s = x.hypot(z);
+    if s < 1e-9 {
+        return Double3x3::default();
+    }
+
+    let (kx, kz) = (x / s, z / s);
+    let (c, sn) = (n.y.clamp(-1.0, 1.0), s);
+    let t = 1.0 - c;
+    Double3x3 { m: [[c + t * kx * kx, -sn * kz, t * kx * kz], [sn * kz, c, -sn * kx], [t * kx * kz, sn * kx, c + t * kz * kz]] }
+}
+
+/// [`fit`], its parts dressed as `dress` says.
+///
+/// # Errors
+///
+/// The prefab's contents do not read.
+pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site: &Site, dress: &Dress) -> Result<Fitted, String> {
     let Site { line, width, unit, ground } = *site;
     let st = Stations::new(line);
     let frame = arranged(piece, &laid.frame);
@@ -394,12 +429,25 @@ pub fn fit(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site: &Site) 
 
     let n = format_number;
     let mut ovs = vec![];
-    for part in &piece.parts {
+    for (index, part) in piece.parts.iter().enumerate() {
         let (at, x) = place(piece, part, &frame, &st, width);
         let height = ground(at[0], at[1]);
         let own_x = part.rotation * Double3::new(1.0, 0.0, 0.0);
         let turn = heading(x) - heading([own_x.x, own_x.z]);
-        let world_rot = euler_matrix(Double3::new(turn, 0.0, 0.0)) * part.rotation;
+        let mut world_rot = euler_matrix(Double3::new(turn, 0.0, 0.0)) * part.rotation;
+
+        // A building tilted to the ground under it: its slope along it (end to end) and across.
+        if dress.tilt && part.solid {
+            let c = [-x[1], x[0]];
+            let h = |d: [f64; 2], k: f64| ground(at[0] + d[0] * k, at[1] + d[1] * k);
+            let a = Double3::new(x[0] * 2.0 * TILT_ALONG, h(x, TILT_ALONG) - h(x, -TILT_ALONG), x[1] * 2.0 * TILT_ALONG);
+            let b = Double3::new(c[0] * 2.0 * TILT_ACROSS, h(c, TILT_ACROSS) - h(c, -TILT_ACROSS), c[1] * 2.0 * TILT_ACROSS);
+            let cross = Double3::new(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+            let len = (cross.x * cross.x + cross.y * cross.y + cross.z * cross.z).sqrt().max(1e-12);
+            let up = if cross.y < 0.0 { cross * (-1.0 / len) } else { cross * (1.0 / len) };
+            world_rot = up_to(up) * world_rot;
+        }
+
         let world_pos = Double3::new((at[0] - origin[0]) * unit, height * unit, (at[1] - origin[1]) * unit);
         let (pos, rot) = match part.parent {
             Some((pp, pr)) => (pr.transpose() * (world_pos - pp * unit), pr.transpose() * world_rot),
@@ -412,6 +460,12 @@ pub fn fit(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site: &Site) 
         set("orientation", format!("euler({},{},{})", n(e.x), n(e.y), n(e.z)));
         set("surface_mode", "MSM_FREEFORM".to_owned());
         set("lf_offset", n(height * unit));
+        if let Some(attrs) = dress.attrs {
+            for (a, v) in attrs(index, part) {
+                set(&a, v);
+            }
+        }
+
         if let Some(s) = part.scale.filter(|_| part.kind == "ProjectedDecalInstance") {
             // Its x runs along the road, or its z does.
             let x_along = part.turn.cos().abs() >= part.turn.sin().abs();
@@ -485,7 +539,7 @@ pub fn ports_at(piece: &Piece, laid: &Laid, line: &[[f64; 2]], width: f64) -> Ve
 /// How far a fence stands past a road's edge (metres), and how far its runs stop short of what the road holds (a corner, a junction, a
 /// bridge, a ford, an end).
 pub const FENCE_OUT: f64 = 1.0;
-pub const FENCE_GAP: f64 = 0.5;
+pub const FENCE_GAP: f64 = 0.0;
 
 /// A road's fences along one side (`side`: +1 its right, -1 its left, as it runs): the line they stand on (`offset` from the centre line,
 /// metres) and the fence pieces on it, `length` each, end to end in the stretches the road holds nothing on (`held`: `Layout::held`),
@@ -527,22 +581,89 @@ pub fn fence_runs(line: &[[f64; 2]], held: &[(f64, f64)], side: f64, offset: f64
         free.push((from + if from > 0.0 { FENCE_GAP } else { 0.0 }, total));
     }
 
-    let mut laid = vec![];
-    for (a, b) in free {
-        let (a, b) = (onto(a), onto(b));
-        let count = ((b - a) / length).floor();
-        if count < 1.0 {
+    let laid = free.into_iter().flat_map(|(a, b)| fences_between(onto(a), onto(b), length)).collect();
+    (fence_line, laid)
+}
+
+/// Fences from one distance along a line to another, `length` each, as many as cover it: the first starting at `a`, the last ending at
+/// `b`, those between spread evenly (they overlap a little rather than leave a gap). Shorter than one fence: one in its middle, past its
+/// ends by as much; shorter than half a fence: none.
+#[must_use]
+pub fn fences_between(a: f64, b: f64, length: f64) -> Vec<Laid> {
+    let span = b - a;
+    if span < length * 0.5 || length <= 0.0 {
+        return vec![];
+    }
+
+    let count = (span / length).ceil().max(1.0) as usize;
+    let first = a + length * 0.5;
+    let last = (b - length * 0.5).max(first);
+    (0..count).map(|k| {
+        let c = if count == 1 { (a + b) * 0.5 } else { first + (last - first) * k as f64 / (count - 1) as f64 };
+        Laid { piece: "fence", frame: Frame::Along { from: c - length * 0.5, to: c + length * 0.5 } }
+    }).collect()
+}
+
+/// The fences' lines round a corner or a junction (`at`, its arms' `ways`, each `reach` long to its port): between each two arms next to
+/// each other, from one arm's fence line (`offset` from its centre line, on the side facing the other) to the other's, on the arc that
+/// meets both of them square at the ports (a straight line where they are in line: a junction's through side). `fenced`: whether the
+/// sector between two arms, by the way through its middle, has a fence. Each as a line (metres), about every half metre.
+#[must_use]
+pub fn star_fences(at: [f64; 2], ways: &[[f64; 2]], reach: f64, offset: f64, fenced: &dyn Fn([f64; 2]) -> bool) -> Vec<Vec<[f64; 2]>> {
+    let tau = std::f64::consts::TAU;
+    let angle = |w: [f64; 2]| w[1].atan2(w[0]).rem_euclid(tau);
+    let mut sorted = ways.to_vec();
+    sorted.sort_by(|a, b| angle(*a).total_cmp(&angle(*b)));
+    let turn = |w: [f64; 2], a: f64| [w[0] * a.cos() - w[1] * a.sin(), w[0] * a.sin() + w[1] * a.cos()];
+    let mut out = vec![];
+    for i in 0..sorted.len() {
+        let (wi, wj) = (sorted[i], sorted[(i + 1) % sorted.len()]);
+        let sector = if sorted.len() == 1 { tau } else { (angle(wj) - angle(wi)).rem_euclid(tau) };
+        if sector < 1e-6 || !fenced(turn(wi, sector * 0.5)) {
             continue;
         }
 
-        let start = a + ((b - a) - count * length) * 0.5;
-        for k in 0..count as usize {
-            let s = start + length * k as f64;
-            laid.push(Laid { piece: "fence", frame: Frame::Along { from: s, to: s + length } });
+        // Each arm's fence line on the side facing the sector, at its port.
+        let (ni, nj) = (turn(wi, std::f64::consts::FRAC_PI_2), turn(wj, -std::f64::consts::FRAC_PI_2));
+        let si = [at[0] + wi[0] * reach + ni[0] * offset, at[1] + wi[1] * reach + ni[1] * offset];
+        let sj = [at[0] + wj[0] * reach + nj[0] * offset, at[1] + wj[1] * reach + nj[1] * offset];
+        let line = |a: [f64; 2], b: [f64; 2]| {
+            let n = ((a[0] - b[0]).hypot(a[1] - b[1]) / 0.5).ceil().max(1.0) as usize;
+            (0..=n).map(|k| { let t = k as f64 / n as f64; [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t] }).collect::<Vec<_>>()
+        };
+
+        if (sector - std::f64::consts::PI).abs() < 1e-3 {
+            out.push(line(si, sj));
+            continue;
         }
+
+        // The arc square to both: its middle where the lines square to them at the ports cross.
+        let den = ni[0] * nj[1] - ni[1] * nj[0];
+        if den.abs() < 1e-9 {
+            continue;
+        }
+
+        let d = [sj[0] - si[0], sj[1] - si[1]];
+        let t = (d[0] * nj[1] - d[1] * nj[0]) / den;
+        let c = [si[0] + ni[0] * t, si[1] + ni[1] * t];
+
+        // An inside arc the fence line passes beyond (a sharp turn): a straight fence across it.
+        if sector < std::f64::consts::PI && t <= 0.0 {
+            out.push(line(si, sj));
+            continue;
+        }
+
+        let r = (si[0] - c[0]).hypot(si[1] - c[1]);
+        let (a0, a1) = ((si[1] - c[1]).atan2(si[0] - c[0]), (sj[1] - c[1]).atan2(sj[0] - c[0]));
+        // The way round: as the fence goes on from arm i (back along it, into the star) and on out along arm j.
+        let into = [-wi[0], -wi[1]];
+        let ccw = (si[0] - c[0]) * into[1] - (si[1] - c[1]) * into[0] > 0.0;
+        let sweep = if ccw { (a1 - a0).rem_euclid(tau) } else { -(a0 - a1).rem_euclid(tau) };
+        let n = ((r * sweep.abs()) / 0.5).ceil().max(1.0) as usize;
+        out.push((0..=n).map(|k| { let a = a0 + sweep * k as f64 / n as f64; [c[0] + r * a.cos(), c[1] + r * a.sin()] }).collect());
     }
 
-    (fence_line, laid)
+    out
 }
 
 /// How near another road a road's end is to be taken onto it (metres), and how near it is once taken.
@@ -1002,15 +1123,82 @@ mod tests {
         let (fence_line, laid) = fence_runs(&line, &[(40.0, 60.0)], 1.0, 4.0, 5.0);
         // On the right (+x ahead: -z), 4 m out.
         assert!(fence_line.iter().all(|p| (p[1] + 4.0).abs() < 1e-9), "{:?}", &fence_line[..3]);
-        assert_eq!(laid.len(), 14, "7 a side of the held stretch (39.5 m each): {laid:?}");
+        assert_eq!(laid.len(), 16, "8 a side of the held stretch, end to end: {laid:?}");
         for l in &laid {
             let Frame::Along { from, to } = l.frame else { panic!("along") };
             assert!((to - from - 5.0).abs() < 1e-9);
-            assert!(to <= 39.5 + 1e-9 || from >= 60.5 - 1e-9, "{from}..{to} in the held stretch");
+            assert!(to <= 40.0 + 1e-9 || from >= 60.0 - 1e-9, "{from}..{to} in the held stretch");
         }
 
         // The left side is the other way across.
         let (left, _) = fence_runs(&line, &[], -1.0, 4.0, 5.0);
         assert!(left.iter().all(|p| (p[1] - 4.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn fences_cover_a_stretch_end_to_end() {
+        let f = fences_between(0.0, 12.0, 5.0);
+        assert_eq!(f.len(), 3);
+        let spans = f.iter().map(|l| match l.frame { Frame::Along { from, to } => (from, to), _ => unreachable!() }).collect::<Vec<_>>();
+        assert!((spans[0].0).abs() < 1e-9 && (spans[2].1 - 12.0).abs() < 1e-9, "{spans:?}");
+        assert!(fences_between(0.0, 2.0, 5.0).is_empty());
+        assert_eq!(fences_between(0.0, 3.0, 5.0).len(), 1);
+    }
+
+    #[test]
+    fn a_corners_fences_go_round_it_outside_and_in() {
+        // Back along -z, out along +x: ports 6 from the middle, fences 4 out.
+        let lines = star_fences([0.0, 0.0], &[[0.0, -1.0], [1.0, 0.0]], 6.0, 4.0, &|_| true);
+        assert_eq!(lines.len(), 2);
+        let ends = |l: &Vec<[f64; 2]>| (l[0], l[l.len() - 1]);
+        let near = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-6;
+        // Each one round its centre (6, -6): radius 10 outside, 2 inside, from one arm's fence line to the other's.
+        for l in &lines {
+            let r = (l[0][0] - 6.0).hypot(l[0][1] + 6.0);
+            assert!(l.iter().all(|p| ((p[0] - 6.0).hypot(p[1] + 6.0) - r).abs() < 1e-6), "not one arc");
+            assert!((r - 10.0).abs() < 1e-6 || (r - 2.0).abs() < 1e-6, "{r}");
+        }
+
+        let (a, b) = ends(lines.iter().find(|l| (l[0][0] - 6.0).hypot(l[0][1] + 6.0) > 5.0).unwrap());
+        assert!((near(a, [-4.0, -6.0]) && near(b, [6.0, 4.0])) || (near(b, [-4.0, -6.0]) && near(a, [6.0, 4.0])), "{a:?} {b:?}");
+    }
+
+    #[test]
+    fn a_ts_through_side_is_straight_and_its_other_sides_bend_in() {
+        let lines = star_fences([0.0, 0.0], &[[0.0, -1.0], [0.0, 1.0], [1.0, 0.0]], 6.0, 4.0, &|_| true);
+        assert_eq!(lines.len(), 3);
+        let straight = lines.iter().filter(|l| l.iter().all(|p| (p[0] + 4.0).abs() < 1e-6)).count();
+        assert_eq!(straight, 1, "the through side, opposite the branch");
+    }
+
+    #[test]
+    fn a_tilt_takes_up_onto_the_grounds_normal_and_keeps_level_ground_level() {
+        for n in [Double3::new(0.3, 0.9, -0.2), Double3::new(-0.5, 0.8, 0.4), Double3::new(0.0, 1.0, 0.0)] {
+            let l = (n.x * n.x + n.y * n.y + n.z * n.z).sqrt();
+            let n = n * (1.0 / l);
+            let up = up_to(n) * Double3::new(0.0, 1.0, 0.0);
+            assert!((up.x - n.x).abs() < 1e-9 && (up.y - n.y).abs() < 1e-9 && (up.z - n.z).abs() < 1e-9, "{up:?} {n:?}");
+        }
+
+        // A fence on a slope along it: tilted; on level ground: as it was.
+        let line = (0..=20).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
+        let mut children = crate::road_pieces::base_guides("fence");
+        children.extend(crate::road_dirt::parts("fence"));
+        let text = crate::road_pieces::group_text("road_dirt_fence", &children);
+        let piece = crate::road_pieces::read(&text).unwrap();
+        let scene = TedScene::parse_any(text).unwrap();
+        let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
+        let laid = Laid { piece: "fence", frame: Frame::Along { from: 5.0, to: 10.0 } };
+        let dress = Dress { tilt: true, attrs: None };
+        let orientation = |ground: &dyn Fn(f64, f64) -> f64| {
+            let f = fit_dressed(&piece, &contents, "f", &laid, &Site { line: &line, width: 1.0, unit: 2.0, ground }, &dress).unwrap();
+            let s = TedScene::parse_any(f.text).unwrap();
+            s.euler(s.find_all("BUILDING_INSTANCE")[0]).unwrap()
+        };
+
+        let flat = orientation(&|_, _| 0.0);
+        assert!(flat.y.abs() < 1e-9 && flat.z.abs() < 1e-9, "{flat:?}");
+        let sloped = orientation(&|_, z| z * 0.2);
+        assert!(sloped.y.abs() > 0.1 || sloped.z.abs() > 0.1, "{sloped:?}");
     }
 }

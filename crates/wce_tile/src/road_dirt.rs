@@ -125,11 +125,35 @@ fn worn_middle(way: [f64; 2]) -> Vec<u8> {
     decal("path_1", [0.0, 0.0], [way[0] / l, way[1] / l], 5.5, 3.2, Some("fixed"))
 }
 
+/// Decals along a quarter circle about `c` (a corner of the piece's middle square, its arms 6 out), radius `r`, from one arm's port to
+/// the other's, in `n` chords running a little past each other: as a road (`surface`), so that a wider road widens them and each goes with
+/// the arm it is nearer. `lip_to_c`: an edge's lip towards `c` (an inside edge: the grass is there) or away from it (an outside edge);
+/// none: ruts, no lip.
+fn quarter(out: &mut Vec<Vec<u8>>, c: [f64; 2], r: f64, n: u32, name: &str, width: f64, lip_to_c: Option<bool>) {
+    // The quarter faces the piece's middle from `c`: (qx, qz) its signs.
+    let (qx, qz) = (-c[0].signum(), -c[1].signum());
+    let step = std::f64::consts::FRAC_PI_2 / f64::from(n);
+    for k in 0..n {
+        let t = (f64::from(k) + 0.5) * step;
+        let at = [c[0] + qx * r * t.cos(), c[1] + qz * r * t.sin()];
+        let way = [-qx * t.sin(), qz * t.cos()];
+        // A border's lip is on the right of the way its x runs: towards c when qz = -qx going this way.
+        let right_to_c = qz == -qx;
+        let way = match lip_to_c {
+            Some(to_c) if to_c != right_to_c => [-way[0], -way[1]],
+            _ => way,
+        };
+
+        out.push(decal(name, at, way, r * step + 2.0 * OVERLAP, width, Some("surface")));
+    }
+}
+
 /// The decals of a piece of the dirt road.
 #[must_use]
 pub fn parts(piece: &str) -> Vec<Vec<u8>> {
     let h = WIDTH * 0.5;
     let (s, e, j) = (road_pieces::STRAIGHT * 0.5 + OVERLAP, road_pieces::END * 0.5, road_pieces::JUNCTION * 0.5 + OVERLAP);
+    let j0 = road_pieces::JUNCTION * 0.5;
     let mut out = vec![];
     match piece {
         "straight" | "ford" => {
@@ -182,26 +206,13 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
 
         "corner" => {
             // From the back (-z) turning right (+x), as a quarter circle from port to port about the inside of the turn (user 2026-11-08:
-            // the L of two arms' ruts and edges was too abrupt): the ruts and the edges along it in chords, the outer edge's lip out
-            // of the road, the inner's too (towards the turn's middle). Each part goes with the arm it is nearer; as a road (`surface`), so
-            // that a wider road widens it.
-            let (c, r) = ([road_pieces::JUNCTION * 0.5, -road_pieces::JUNCTION * 0.5], road_pieces::JUNCTION * 0.5);
-            let arc = |rr: f64, n: u32, name: &str, width: f64, out_side: bool, out: &mut Vec<Vec<u8>>| {
-                let step = std::f64::consts::FRAC_PI_2 / f64::from(n);
-                for k in 0..n {
-                    let t = (f64::from(k) + 0.5) * step;
-                    let at = [c[0] - rr * t.cos(), c[1] + rr * t.sin()];
-                    let way = [t.sin(), t.cos()];
-                    // The lip is on the right of the way the decal's x runs: the outer edge's runs back.
-                    let way = if out_side { [-way[0], -way[1]] } else { way };
-                    out.push(decal(name, at, way, rr * step + 2.0 * OVERLAP, width, Some("surface")));
-                }
-            };
-
-            arc(r + h, 4, "border_1", BORDER, true, &mut out);
-            arc(r - h, 2, "border_2", BORDER, false, &mut out);
-            arc(r + 1.3, 3, "path_1", RUT, false, &mut out);
-            arc(r - 1.3, 2, "path_1", RUT, true, &mut out);
+            // the L of two arms' ruts and edges was too abrupt): the ruts and the edges along it in chords, the outer edge's lip out of
+            // the road, the inner's towards the turn's middle.
+            let c = [j0, -j0];
+            quarter(&mut out, c, j0 + h, 4, "border_1", BORDER, Some(false));
+            quarter(&mut out, c, j0 - h, 2, "border_2", BORDER, Some(true));
+            quarter(&mut out, c, j0 + 1.3, 3, "path_1", RUT, None);
+            quarter(&mut out, c, j0 - 1.3, 2, "path_1", RUT, None);
             out.push(decal("global_terrain_rocks_04", [-h - 1.2, h + 1.2], UP, 2.5, 2.5, None));
             out.push(decal("global_terrain_rocks_01", [h + 0.6, -h - 0.6], UP, 2.5, 2.5, None));
         }
@@ -215,35 +226,38 @@ pub fn parts(piece: &str) -> Vec<Vec<u8>> {
         }
 
         "t_junction" => {
-            // The through road along z, the branch to the right (+x).
+            // The through road along z, straight, its far side's edge unbroken; the branch to the right (+x) turns into it either way
+            // (user 2026-11-08: the curves of the road, not two pairs of ruts crossing): its ruts and its inside edges on quarter circles
+            // about the two inside corners, as the corner's.
             out.extend(ruts(-j, 0.25));
             out.extend(ruts(-0.25, j));
-            out.extend(ruts_x(-1.5, j));
-            out.push(worn_middle([1.0, 1.0]));
             out.push(border_z("border_1", -h, -j, 0.25));
             out.push(border_z("border_1", -h, -0.25, j));
-            out.push(border_z("border_2", h, -j, -h + 0.5));
-            out.push(border_z("border_2", h, h - 0.5, j));
-            out.push(border_x("border_2", -h, h - 0.5, j));
-            out.push(border_x("border_2", h, h - 0.5, j));
+            for c in [[j0, -j0], [j0, j0]] {
+                quarter(&mut out, c, j0 - h, 2, "border_2", BORDER, Some(true));
+                quarter(&mut out, c, j0 - 1.3, 2, "path_1", RUT, None);
+                quarter(&mut out, c, j0 + 1.3, 3, "path_1", RUT, None);
+            }
+
+            out.push(worn_middle([1.0, 1.0]));
             out.push(decal("global_terrain_rocks_04", [-h - 0.5, -0.8], UP, 2.5, 2.5, None));
         }
 
         "x_junction" => {
+            // Both roads straight through, and in each quarter a turn from one into the other: its inside edge and a rut on quarter
+            // circles about the inside corner, as the corner's.
             out.extend(ruts(-j, 0.25));
             out.extend(ruts(-0.25, j));
             out.extend(ruts_x(-j, 0.25));
             out.extend(ruts_x(-0.25, j));
-            out.push(worn_middle([1.0, 1.0]));
-            out.push(worn_middle([1.0, -1.0]));
-            for side in [-h, h] {
-                out.push(border_z("border_2", side, -j, -h + 0.5));
-                out.push(border_z("border_2", side, h - 0.5, j));
-                out.push(border_x("border_2", side, -j, -h + 0.5));
-                out.push(border_x("border_2", side, h - 0.5, j));
+            for c in [[j0, -j0], [j0, j0], [-j0, j0], [-j0, -j0]] {
+                quarter(&mut out, c, j0 - h, 2, "border_2", BORDER, Some(true));
+                quarter(&mut out, c, j0 - 1.3, 2, "path_1", RUT, None);
             }
 
-            out.push(decal("global_terrain_rocks_01", [h + 0.3, h + 0.3], UP, 2.5, 2.5, None));
+            out.push(worn_middle([1.0, 1.0]));
+            out.push(worn_middle([1.0, -1.0]));
+            out.push(decal("global_terrain_rocks_01", [h + 0.9, h + 0.9], UP, 2.5, 2.5, None));
         }
 
         _ => {}
