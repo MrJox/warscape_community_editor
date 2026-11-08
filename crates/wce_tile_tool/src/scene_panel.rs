@@ -598,9 +598,6 @@ fn export_menu(sc: &TedScene, layer: usize, escalation: bool, actions: &mut Vec<
 /// A prefab action asked from a row's menu.
 enum PrefabAction {
     OpenInTool(usize),
-    Edit(usize),
-    Apply,
-    Cancel,
     Unpack(usize),
     SaveForKit(usize),
     Save(usize),
@@ -642,7 +639,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
         }
     }
 
-    // A prefab is edited in the Prefab tool when the build has it (else in the tile, as a copy).
+    // A prefab is edited in the Prefab tool (not from its own stage).
     let prefab_tool = tool.profile == crate::tool::Profile::Tile && e.with_tool::<crate::prefab_tool::PrefabTool, _>(|_, _| ()).is_some();
 
     {
@@ -655,7 +652,6 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
         }
 
         let working = tool.working_layer_of(d);
-        let edited_copy = tool.edited_copy(d);
         let lib = tool.prefabs.clone();
         let prefab_of = |el: usize| -> Option<String> {
             d.prefab_key(el).and_then(|k| lib.as_ref().and_then(|l| l.get(&k).map(|p| p.key.clone())))
@@ -787,23 +783,9 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
                 // Prefabs: a copy is edited, unpacked; a plain instance group is saved as one.
                 match prefab_of(el) {
-                    Some(_) if Some(el) == edited_copy => {
-                        if gui::menu_item("Apply the prefab edit", None, false, true) {
-                            actions.push(RowAction::Prefab(PrefabAction::Apply));
-                        }
-
-                        if gui::menu_item("Cancel the prefab edit", None, false, true) {
-                            actions.push(RowAction::Prefab(PrefabAction::Cancel));
-                        }
-                    }
-
                     Some(_) => {
-                        if prefab_tool {
-                            if gui::menu_item("Open in Prefab tool", None, false, true) {
-                                actions.push(RowAction::Prefab(PrefabAction::OpenInTool(el)));
-                            }
-                        } else if gui::menu_item("Edit prefab", None, false, edited_copy.is_none()) {
-                            actions.push(RowAction::Prefab(PrefabAction::Edit(el)));
+                        if prefab_tool && gui::menu_item("Open in Prefab tool", None, false, true) {
+                            actions.push(RowAction::Prefab(PrefabAction::OpenInTool(el)));
                         }
 
                         if gui::menu_item("Unpack prefab", None, false, true) {
@@ -964,19 +946,16 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             // The type (a prefab copy's is Prefab) and where it is exported.
             let ty = sc.type_of(el);
             let prefab = prefab_of(el);
-            let edited = prefab.is_some() && Some(el) == edited_copy;
             gui::set_cursor_screen_pos(v2(p0.x + avail - 4.0 * ICON_WIDTH, p0.y));
             gui::invisible_button("##type", v2(ICON_WIDTH, row_h), gui::BUTTON_LEFT);
             if gui::is_item_hovered() {
                 match &prefab {
-                    Some(k) if edited => gui::set_tooltip(&format!("Prefab {k}, being edited: right click to apply or cancel")),
                     Some(k) => gui::set_tooltip(&format!("Prefab {k}")),
                     None => gui::set_tooltip(ty),
                 }
             }
 
             let (icon, icol) = match prefab {
-                Some(_) if edited => (crate::prefab_panel::PREFAB_ICON, theme::u32(crate::prefab_panel::edited_colour())),
                 Some(_) => (crate::prefab_panel::PREFAB_ICON, text_col),
                 None => (type_icon(ty), text_col),
             };
@@ -1144,9 +1123,6 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
     for p in prefab_actions {
         let result = match p {
             PrefabAction::OpenInTool(el) => tool.open_in_prefab_tool(e, el),
-            PrefabAction::Edit(el) => tool.edit_prefab(e, el),
-            PrefabAction::Apply => tool.apply_prefab_edit(e),
-            PrefabAction::Cancel => tool.cancel_prefab_edit(e),
             PrefabAction::Unpack(el) => tool.unpack_prefab(e, el),
             PrefabAction::SaveForKit(el) => {
                 let key = e.docs.find_as::<TileDocument>(id).and_then(|d| tool.prefab_of(d, el));
