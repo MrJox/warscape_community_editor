@@ -11,7 +11,7 @@ use wce_vfs::normalize;
 use wce_weather::sample_map_document::SampleMapDocument;
 use wce_weather::xml_file_document::Op;
 
-use crate::tool::{WeatherTool, active_xml, find_xml, view_of, with_weather};
+use crate::tool::{WeatherTool, active_xml, view_of, with_weather};
 
 fn ok(m: impl Into<String>) -> CommandResult {
     CommandResult::success(m)
@@ -149,19 +149,6 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             ok("")
         },
     );
-
-    c.add("blend", "blend <t>", "cross-fade the active environment with the first other open environment, t from 0 to 1", |e, a| {
-        let Some(t) = a.first() else { return fail("usage: blend <t>") };
-        with_weather(e, |tool, e| {
-            tool.blend_t = (num(t) as f32).clamp(0.0, 1.0);
-
-            // The partner is the first environment document that is not the one that lights the scene.
-            let active = active_xml(e).filter(|x| x.is_environment()).map(|x| x.id());
-            let lit = active.unwrap_or(tool.env_doc);
-            tool.blend_doc = e.docs.order().to_vec().into_iter().find(|&id| id != lit && find_xml(e, id).is_some_and(|x| x.is_environment())).unwrap_or(0);
-            if tool.blend_doc != 0 { ok("") } else { fail("no second environment is open") }
-        })
-    });
 
     c.add("pick", "pick <category>=<value>", "weather picker condition (opens the picker; repeatable)", |e, a| {
         let Some((category, value)) = a.first().and_then(|x| x.split_once('=')) else { return fail("usage: pick <category>=<value>") };

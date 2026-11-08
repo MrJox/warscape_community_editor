@@ -1,4 +1,4 @@
-//! The selection: a set of `SourceRef`s (document + item), shared by the viewport, outliner, inspector and gizmo. It names document elements,
+//! The selection: a set of `SourceRef`s (document + item), shared by the viewport, the tools' panels, inspector and gizmo. It names document elements,
 //! not scene entities; the scene entities that show them come from `RenderScene::entities_of`.
 
 use wce_scene::render_scene::{DocumentId, EntityId, RenderScene, SourceRef};

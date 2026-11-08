@@ -378,6 +378,7 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
     // When the frame under the cap ends: a fixed schedule, each end a budget after the last one. Waiting out the budget less each frame's own
     // time lost the sleep's overshoot (a fraction of a millisecond) every frame: 117 fps at a cap of 120, 140 at 144.
     let mut frame_due: Option<Instant> = None;
+    let mut window_title = String::new();
     // SAFETY: D3D calls on live objects; SDL calls on the live window.
     unsafe {
         let mut rtv = back_buffer_view(swap, dev);
@@ -412,6 +413,17 @@ unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapCha
             editor.inject_input();
             let _ui = imgui.frame();
             editor.frame(&mut renderer);
+
+            // The window's title names the active tool's document.
+            let title = editor.window_title();
+            if title != window_title {
+                if let Ok(c) = std::ffi::CString::new(title.as_str()) {
+                    SDL_SetWindowTitle(window, c.as_ptr());
+                }
+
+                window_title = title;
+            }
+
             let pending = imgui.render(renderer.consumer());
             ctx.OMSetRenderTargets(Some(&[rtv.clone()]), None);
             if let Some(rtv) = &rtv {

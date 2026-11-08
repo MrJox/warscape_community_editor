@@ -46,7 +46,13 @@ pub enum PromptKind {
     None,
     Close,
     Quit,
+
+    /// Opening a file in a tool whose document has unsaved changes: Save or Discard, then the open goes on.
+    Replace,
 }
+
+/// An open that waits for the answer to the replace prompt (`Editor::clear_to_replace`).
+type PendingOpen = Box<dyn FnOnce(&mut Editor) -> Result<String, String>>;
 
 /// The scripted mouse: positions are pixels of the viewport image.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -61,7 +67,6 @@ pub struct MouseState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Panels {
     pub viewport: bool,
-    pub outliner: bool,
     pub inspector: bool,
     pub assets: bool,
     pub log: bool,
@@ -71,7 +76,7 @@ pub struct Panels {
 
 impl Default for Panels {
     fn default() -> Self {
-        Self { viewport: true, outliner: true, inspector: true, assets: true, log: true, history: true, commands: false }
+        Self { viewport: true, inspector: true, assets: true, log: true, history: true, commands: false }
     }
 }
 
@@ -145,6 +150,19 @@ pub struct Editor {
 
     /// The game the close prompt switches to once the documents are closed.
     prompt_game: Option<&'static GameProfile>,
+
+    /// The open the replace prompt runs after Save or Discard.
+    prompt_open: Option<PendingOpen>,
+
+    /// A script's answer for the next replace (`open <path> save|discard`), taken by `clear_to_replace`.
+    pub(crate) replace_answer: Option<Answer>,
+
+    /// The document whose unsaved changes the user (or a script) discarded to open another file in its tool: it is closed without asking
+    /// once the new one is open. Cleared every frame.
+    replace_granted: Option<DocumentId>,
+
+    /// A script line is running (`ScriptRunner::step`): what would ask fails instead.
+    pub(crate) in_script: bool,
     mouse_queue: VecDeque<MouseState>,
     pub(crate) mouse_cur: MouseState,
     mouse_active: bool,
@@ -222,7 +240,7 @@ impl Editor {
             docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
             viewport: Viewport::default(), pending_focus: None, clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
-            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(), prompt_game: None,
+            cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(), prompt_game: None, prompt_open: None, replace_answer: None, replace_granted: None, in_script: false,
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
             first_run_message: String::new(), mod_checks: vec![], mod_filter: String::new(), mod_removed: vec![], fixes: Default::default(), game_before: None, mod_checks_for: String::new(), mods_popup: false, project_prompts: Default::default(), perf: PerfStats::default(), wait_loaded_start: None, vsync: true, frame_cap: DEFAULT_FRAME_CAP, panels: Panels::default(),
             panel_data: PanelData::default(), settings_window: Default::default(), updates: Default::default(), remember_tool: false, display_scale: 1.0, applied_appearance: None, images: Default::default(), input_origin: None, pending_shot: None,
@@ -1019,7 +1037,9 @@ impl Editor {
     pub fn set_tool(&mut self, id: &str) -> bool {
         match self.tool_info.iter().position(|t| t.id == id) {
             Some(i) if self.tool_supported(i) => {
+                // The active document is the tool's from now on (the layout switches on the next frame).
                 self.pending_tool = Some(i);
+                self.docs.set_active_tool(id);
                 true
             }
 
@@ -1059,6 +1079,10 @@ impl Editor {
             }
 
             _ => {}
+        }
+
+        if let Some(t) = self.tool_info.get(self.active_tool) {
+            self.docs.set_active_tool(&t.id);
         }
     }
 
@@ -1194,38 +1218,101 @@ impl Editor {
         let tool = if claims(self.active_tool) { Some(self.active_tool) } else { (0..self.tool_info.len()).find(|&i| claims(i)) };
         let Some(tool) = tool else { return Err(format!("no tool opens '{ext}' files")) };
 
-        // Already open: just show it.
-        if from_packs {
-            let key = normalize(path);
-            if let Some(&id) = self.docs.order().iter().find(|&&id| self.docs.find(id).is_some_and(|d| d.source_key() == key)) {
-                self.docs.set_active(id);
-                return Ok(format!("already open: {path}"));
-            }
-        } else if let Some(&id) = self.docs.order().iter().find(|&&id| self.docs.find(id).is_some_and(|d| d.opened_from(path))) {
-            // A file on disk: the document it is (another of its files, another path to it) is shown, not opened again.
-            self.docs.set_active(id);
-            if switch_tool && tool != self.active_tool {
-                let tid = self.tool_info[tool].id.clone();
-                self.set_tool(&tid);
+        // Already open: just show it (in its tool).
+        let key = normalize(path);
+        let open = self.docs.order().iter().copied().find(|&id| {
+            self.docs.find(id).is_some_and(|d| !d.stand_in() && if from_packs { d.source_key() == key } else { d.opened_from(path) })
+        });
+
+        let title = self.tool_info[tool].title.clone();
+        let tid = self.tool_info[tool].id.clone();
+        if let Some(id) = open {
+            let owner = self.docs.tool_of(id);
+            if switch_tool && owner != self.active_tool_id() {
+                self.set_tool(&owner);
             }
 
             return Ok(format!("already open: {path}"));
         }
 
-        let title = self.tool_info[tool].title.clone();
-        let tid = self.tool_info[tool].id.clone();
+        // The tool's document gives way to the new one (asked about first when it has unsaved changes).
+        let old = self.docs.of_tool(&tid);
+        if old.is_some() {
+            let again = path.to_owned();
+            if !self.clear_to_replace(&tid, Box::new(move |e| e.open_path_with(None, &again, from_packs, switch_tool)))? {
+                return Ok(format!("{title}: asking about the unsaved changes before opening {path}"));
+            }
+        }
+
         let opened = match me {
             Some(me) if self.tools[tool].is_none() && me.id() == tid => Some(me.open(self, path, from_packs)),
             _ => self.with_tool_at(tool, |t, e| t.open(e, path, from_packs)),
         };
 
         let doc = opened.unwrap_or_else(|| Err(format!("{title} is busy"))).map_err(|e| format!("cannot open {path}: {e}"))?;
-        self.docs.add(&mut self.scene, doc, &tid);
+        self.replace_document(&tid, doc)?;
         if switch_tool && tool != self.active_tool {
             self.set_tool(&tid);
         }
 
         Ok(format!("opened {path}"))
+    }
+
+    /// Adds `doc` as the tool's document, closing the one it had (the caller cleared that with `clear_to_replace`).
+    ///
+    /// # Errors
+    ///
+    /// The document manager refused it (it should not: the old one is closed first).
+    pub fn replace_document(&mut self, tool: &str, doc: Box<dyn Document>) -> Result<DocumentId, String> {
+        if !doc.stand_in()
+            && let Some(old) = self.docs.of_tool(tool)
+        {
+            self.close_document(old);
+        }
+
+        self.replace_granted = None;
+        self.docs.add(&mut self.scene, doc, tool)
+    }
+
+    /// Before a tool's document gives way to another file: true when the open can go on now (no document, nothing unsaved, or the answer is
+    /// known: a script's `save` / `discard`, the prompt's). With unsaved changes and no answer the replace prompt opens and false comes back:
+    /// `retry` runs after its Save or Discard. A script without an answer fails instead.
+    ///
+    /// # Errors
+    ///
+    /// The save failed, a script gave no answer, or another prompt is open.
+    pub fn clear_to_replace(&mut self, tool: &str, retry: PendingOpen) -> Result<bool, String> {
+        let Some(old) = self.docs.of_tool(tool) else { return Ok(true) };
+        let Some(d) = self.docs.find(old) else { return Ok(true) };
+        if !d.modified() || self.replace_granted == Some(old) {
+            return Ok(true);
+        }
+
+        let title = d.title();
+        match self.replace_answer.take() {
+            Some(Answer::Save) => {
+                let msg = self.docs.save_one(old)?;
+                self.status(&msg, false);
+                Ok(true)
+            }
+
+            Some(Answer::Discard) => {
+                self.replace_granted = Some(old);
+                Ok(true)
+            }
+
+            Some(Answer::Cancel) => Err("cancelled".to_owned()),
+            None if self.in_script => Err(format!("{title} has unsaved changes: open <path> save|discard, or close it first (close <document> save|discard)")),
+            None if self.prompt != PromptKind::None => Err("another unsaved-changes prompt is open".to_owned()),
+            None => {
+                self.prompt = PromptKind::Replace;
+                self.prompt_error.clear();
+                self.prompt_close.clear();
+                self.prompt_docs = vec![old];
+                self.prompt_open = Some(retry);
+                Ok(false)
+            }
+        }
     }
 
     // ---- cross-tool composition
@@ -1386,6 +1473,7 @@ impl Editor {
                 self.cancel_restart();
                 self.prompt = PromptKind::None;
                 self.prompt_game = None;
+                self.prompt_open = None;
                 return Ok("cancelled".to_owned());
             }
 
@@ -1411,6 +1499,28 @@ impl Editor {
         };
 
         self.prompt = PromptKind::None;
+        if kind == PromptKind::Replace {
+            // Saved, or discarded: the old document closes once the new one is open (it stays when the open fails).
+            if a == Answer::Discard {
+                self.replace_granted = self.prompt_docs.first().copied();
+            }
+
+            self.prompt_docs.clear();
+            let opened = self.prompt_open.take().map_or_else(|| Ok(message.clone()), |open| open(self));
+            self.replace_granted = None;
+            return match opened {
+                Ok(m) => {
+                    self.status(&m, false);
+                    Ok(if message.is_empty() { m } else { format!("{message}; {m}") })
+                }
+
+                Err(m) => {
+                    self.status(&format!("open failed: {m}"), true);
+                    Err(m)
+                }
+            };
+        }
+
         if kind == PromptKind::Close {
             for id in std::mem::take(&mut self.prompt_close) {
                 self.close_document(id);
@@ -1435,6 +1545,7 @@ impl Editor {
         }
 
         let quit = self.prompt == PromptKind::Quit;
+        let replace = self.prompt == PromptKind::Replace;
         gui::open_popup("Unsaved changes");
         let vp = gui::main_viewport();
         gui::set_next_window_pos(gui::v2(vp.Pos.x + vp.Size.x * 0.5, vp.Pos.y + vp.Size.y * 0.5), gui::COND_ALWAYS, gui::v2(0.5, 0.5));
@@ -1445,7 +1556,13 @@ impl Editor {
 
         let docs = !self.prompt_docs.is_empty();
         if docs {
-            gui::text(if quit { "These documents have unsaved changes:" } else { "This document has unsaved changes:" });
+            gui::text(if quit {
+                "These documents have unsaved changes:"
+            } else if replace {
+                "Opening another file closes this document, which has unsaved changes:"
+            } else {
+                "This document has unsaved changes:"
+            });
         }
 
         for &id in &self.prompt_docs {
@@ -1468,14 +1585,14 @@ impl Editor {
 
         gui::spacing();
         if docs {
-            if gui::button(if quit { "Save all and quit" } else { "Save and close" }) {
+            if gui::button(if quit { "Save all and quit" } else if replace { "Save and open" } else { "Save and close" }) {
                 let _ = self.answer_prompt(Answer::Save);
             }
 
             gui::same_line();
         }
 
-        if gui::button(if !docs { "Quit anyway" } else if quit { "Quit without saving" } else { "Discard changes" }) {
+        if gui::button(if !docs { "Quit anyway" } else if quit { "Quit without saving" } else if replace { "Discard changes and open" } else { "Discard changes" }) {
             let _ = self.answer_prompt(Answer::Discard);
         }
 
@@ -1498,6 +1615,9 @@ impl Editor {
     /// shows the viewport's image.
     pub fn frame(&mut self, textures: &mut D3D11Renderer) {
         wce_prof!("editor.frame");
+        // A discard answer is for the open it was given to: it never carries over to a later one.
+        self.replace_granted = None;
+        self.replace_answer = None;
         self.frame += 1;
         self.images.flush(&self.dev, &self.ctx, textures);
         self.input_origin = None;
@@ -1510,7 +1630,9 @@ impl Editor {
 
         if !self.script.done() && !self.script.failed() {
             let mut script = std::mem::take(&mut self.script);
+            self.in_script = true;
             let ok = script.step(self);
+            self.in_script = false;
             self.script = script;
             if !ok {
                 self.request_quit(1);
@@ -1643,11 +1765,6 @@ impl Editor {
         if self.panels.viewport && shows_viewport {
             wce_prof!("panel.viewport");
             crate::viewport::draw(self, textures);
-        }
-
-        if self.panels.outliner {
-            wce_prof!("panel.outliner");
-            crate::panels::outliner(self);
         }
 
         if self.panels.inspector {
@@ -1934,7 +2051,6 @@ impl Editor {
 
         if gui::begin_menu("View") {
             gui::menu_item_toggle("Viewport", &mut self.panels.viewport);
-            gui::menu_item_toggle("Outliner", &mut self.panels.outliner);
             gui::menu_item_toggle("Inspector", &mut self.panels.inspector);
             gui::menu_item_toggle("Assets", &mut self.panels.assets);
             gui::menu_item_toggle("Log", &mut self.panels.log);
@@ -1991,12 +2107,29 @@ impl Editor {
             gui::end_menu();
         }
 
-        // Frame rate readout, right aligned (not in scripted runs: their shots must not depend on the machine's speed).
-        if self.perf.count() > 10 && !self.clock.fixed_step() {
+        // Frame rate readout, right aligned (not in scripted runs: their shots must not depend on the machine's speed); the active tool's
+        // document left of it (amber while it has unsaved changes).
+        let fps = if self.perf.count() > 10 && !self.clock.fixed_step() {
             let ms = self.perf.mean_frame_ms(60);
-            let b = format!("{:.0} fps  {ms:.1} ms", if ms > 0.0 { 1000.0 / ms } else { 0.0 });
-            gui::same_line_at(gui::window_width() - gui::calc_text_width(&b) - 16.0);
-            gui::text_disabled(&b);
+            format!("{:.0} fps  {ms:.1} ms", if ms > 0.0 { 1000.0 / ms } else { 0.0 })
+        } else {
+            String::new()
+        };
+
+        let fps_w = if fps.is_empty() { 0.0 } else { gui::calc_text_width(&fps) + 24.0 };
+        let label = self.document_label();
+        if !label.is_empty() {
+            gui::same_line_at(gui::window_width() - fps_w - gui::calc_text_width(&label) - 16.0);
+            if self.docs.active().is_some_and(|d| d.modified()) {
+                gui::text_colored(crate::theme::modified(), &label);
+            } else {
+                gui::text(&label);
+            }
+        }
+
+        if !fps.is_empty() {
+            gui::same_line_at(gui::window_width() - gui::calc_text_width(&fps) - 16.0);
+            gui::text_disabled(&fps);
         }
 
         gui::end_menu_bar();
@@ -2146,8 +2279,17 @@ impl Editor {
         }
     }
 
-    pub(crate) fn tool_titles(&self) -> Vec<(String, String)> {
-        self.tool_info.iter().map(|t| (t.id.clone(), t.title.clone())).collect()
+    /// The active tool's document as the menu bar and the window title name it: `[Tool] title *` (`*`: unsaved changes); empty without one.
+    pub fn document_label(&self) -> String {
+        let Some(d) = self.docs.active() else { return String::new() };
+        let tool = self.tool_info.get(self.active_tool).map_or("", |t| t.title.as_str());
+        format!("[{tool}] {}{}", d.title(), if d.modified() { " *" } else { "" })
+    }
+
+    /// The OS window's title: the editor's name, then the active tool's document.
+    pub fn window_title(&self) -> String {
+        let label = self.document_label();
+        if label.is_empty() { "Warscape Community Editor".to_owned() } else { format!("{label} - Warscape Community Editor") }
     }
 
     pub(crate) fn viewport_and_tool_claims(&mut self) -> bool {

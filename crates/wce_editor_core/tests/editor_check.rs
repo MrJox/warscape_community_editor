@@ -338,9 +338,16 @@ fn number_doc_mut(docs: &mut DocumentManager, id: u32) -> &mut NumberDoc {
 fn documents_and_the_scene() {
     let mut scene = RenderScene::default();
     let mut docs = DocumentManager::default();
-    let ia = docs.add(&mut scene, Box::new(NumberDoc::new(3)), "t");
-    let ib = docs.add(&mut scene, Box::new(NumberDoc::new(2)), "t");
-    assert!(docs.order().len() == 2 && docs.active_id() == ib, "two documents, the last one active");
+    docs.set_active_tool("u");
+    let ia = docs.add(&mut scene, Box::new(NumberDoc::new(3)), "t").unwrap();
+    assert!(docs.add(&mut scene, Box::new(NumberDoc::new(1)), "t").is_err_and(|m| m.contains("one document")), "a tool has one document at a time");
+    let ib = docs.add(&mut scene, Box::new(NumberDoc::new(2)), "u").unwrap();
+    assert!(docs.order().len() == 2 && docs.active_id() == ib && docs.of_tool("t") == Some(ia), "two tools' documents, the active tool's is active");
+    docs.set_active_tool("t");
+    assert!(docs.active_id() == ia, "the active document follows the active tool");
+    docs.set_active_tool("none");
+    assert!(docs.active_id() == 0 && docs.active().is_none(), "a tool without a document: none active");
+    docs.set_active_tool("u");
     assert!(scene.entities().len() == 5 && scene.layers().len() == 2, "each document has a layer with its entities");
     assert!(scene.entities_of(SourceRef { doc: ia, item: 1 }).len() == 1, "entities_of finds the entity of an item");
     let before = number_doc(&docs, ia).publishes;
@@ -362,18 +369,21 @@ fn documents_and_the_scene() {
 fn cross_tool_composition() {
     let mut scene = RenderScene::default();
     let mut docs = DocumentManager::default();
-    let is = docs.add(&mut scene, Box::new(NumberDoc::with_role(2, Role::StandIn)), "weather");
+    docs.set_active_tool("weather");
+    let is = docs.add(&mut scene, Box::new(NumberDoc::with_role(2, Role::StandIn)), "weather").unwrap();
+    assert!(docs.of_tool("weather").is_none() && docs.active_id() == is, "a tool's stand-in is active while it has no document of its own");
     assert!(docs.visible(&scene, is) && !docs.shows_scene(), "a stand-in scene is shown while no document brings its own ground");
-    let ig = docs.add(&mut scene, Box::new(NumberDoc::with_role(3, Role::Ground)), "tile");
+    let ig = docs.add(&mut scene, Box::new(NumberDoc::with_role(3, Role::Ground)), "tile").unwrap();
     assert!(docs.shows_scene() && !docs.visible(&scene, is) && docs.visible(&scene, ig), "opening a tile hides the stand-in scene");
-    let io = docs.add(&mut scene, Box::new(NumberDoc::new(1)), "weather");
+    let io = docs.add(&mut scene, Box::new(NumberDoc::new(1)), "weather").unwrap();
     assert!(docs.unsaved().is_empty(), "nothing is unsaved after opening");
+    assert!(docs.of_tool("weather") == Some(io) && docs.active_id() == io, "a stand-in is not its tool's document: the document is active");
 
     // The user shows it again: it stays shown until the last tile closes and opens again.
     docs.set_visible(&mut scene, is, true);
     docs.update(&mut scene);
     assert!(docs.visible(&scene, is), "a toggle of the user's stays");
-    let is2 = docs.add(&mut scene, Box::new(NumberDoc::with_role(1, Role::StandIn)), "weather");
+    let is2 = docs.add(&mut scene, Box::new(NumberDoc::with_role(1, Role::StandIn)), "weather").unwrap();
     assert!(!docs.visible(&scene, is2), "a stand-in scene added while a tile is open starts hidden");
     number_doc_mut(&mut docs, ig).set(0, 1.0, 0);
     number_doc_mut(&mut docs, io).set(0, 2.0, 0);
@@ -389,7 +399,7 @@ fn cross_tool_composition() {
 fn selection() {
     let mut scene = RenderScene::default();
     let mut docs = DocumentManager::default();
-    let id = docs.add(&mut scene, Box::new(NumberDoc::new(4)), "t");
+    let id = docs.add(&mut scene, Box::new(NumberDoc::new(4)), "t").unwrap();
     let r = |item| SourceRef { doc: id, item };
     let mut sel = Selection::default();
     sel.set(r(1));

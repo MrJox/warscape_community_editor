@@ -1,5 +1,7 @@
 //! Owns the open documents, gives each a layer in the shared `RenderScene`, keeps the scene in step with the documents' edits, and routes save
-//! and close. Many documents are open at once; one is active (what the history panel and the default inspector target follow).
+//! and close. Each tool has at most one document (a tool's stand-in scene aside, `Document::stand_in`); documents of different tools live side
+//! by side. The active document is the active tool's, else its stand-in (what the menus, the history panel and the default inspector target
+//! follow).
 
 use wce_scene::render_scene::{DocumentId, LayerId, RenderScene};
 
@@ -16,7 +18,9 @@ struct Entry {
 pub struct DocumentManager {
     entries: Vec<Entry>,
     order: Vec<DocumentId>,
-    active: DocumentId,
+
+    /// The active tool's id (`set_active_tool`): its document is the active one.
+    active_tool: String,
 
     /// `shows_scene` as of the last `apply_stand_ins`.
     real_scene: bool,
@@ -27,15 +31,24 @@ pub struct DocumentManager {
 
 impl DocumentManager {
 
-    /// Takes the document, creates its layer, publishes it, makes it active.
-    pub fn add(&mut self, scene: &mut RenderScene, mut doc: Box<dyn Document>, tool_id: &str) -> DocumentId {
+    /// Takes the document, creates its layer and publishes it (the active one when it is the active tool's).
+    ///
+    /// # Errors
+    ///
+    /// The tool has a document already (a stand-in aside): the caller closes it first (`Editor` replaces it, asking about unsaved changes).
+    pub fn add(&mut self, scene: &mut RenderScene, mut doc: Box<dyn Document>, tool_id: &str) -> Result<DocumentId, String> {
+        if !doc.stand_in()
+            && let Some(old) = self.of_tool(tool_id).and_then(|id| self.find(id))
+        {
+            return Err(format!("{} is open already: close it first ({tool_id} has one document at a time)", old.title()));
+        }
+
         let layer = scene.add_layer(doc.id(), &doc.title());
         doc.publish(scene, layer);
         let id = doc.id();
         let stand_in = doc.stand_in();
         self.entries.push(Entry { published_version: doc.history().version(), doc, tool: tool_id.to_owned(), layer });
         self.order.push(id);
-        self.active = id;
 
         // Added while a tile is open.
         if stand_in && self.real_scene {
@@ -43,7 +56,7 @@ impl DocumentManager {
         }
 
         self.apply_stand_ins(scene);
-        id
+        Ok(id)
     }
 
     /// Drops the document and its layer (the caller asked about unsaved changes).
@@ -52,10 +65,6 @@ impl DocumentManager {
         scene.remove_layer(self.entries[i].layer);
         self.entries.remove(i);
         self.order.retain(|&d| d != id);
-        if self.active == id {
-            self.active = self.order.last().copied().unwrap_or(0);
-        }
-
         self.apply_stand_ins(scene);
         true
     }
@@ -85,22 +94,35 @@ impl DocumentManager {
         self.find_mut(id)?.as_any_mut().downcast_mut()
     }
 
+    /// The tool's document (not its stand-in), if it has one open.
+    pub fn of_tool(&self, tool_id: &str) -> Option<DocumentId> {
+        self.entries.iter().find(|e| e.tool == tool_id && !e.doc.stand_in()).map(|e| e.doc.id())
+    }
+
+    /// The active tool changed (the editor calls it): its document is the active one from now on.
+    pub fn set_active_tool(&mut self, tool_id: &str) {
+        if self.active_tool != tool_id {
+            tool_id.clone_into(&mut self.active_tool);
+        }
+    }
+
+    pub fn active_tool(&self) -> &str {
+        &self.active_tool
+    }
+
+    /// The active tool's document.
     pub fn active(&self) -> Option<&dyn Document> {
-        self.find(self.active)
+        self.find(self.active_id())
     }
 
     pub fn active_mut(&mut self) -> Option<&mut dyn Document> {
-        self.find_mut(self.active)
+        self.find_mut(self.active_id())
     }
 
+    /// The active tool's document, else its stand-in (the Weather tool's sample map: its edits, History), 0 when it has neither.
     pub fn active_id(&self) -> DocumentId {
-        self.active
-    }
-
-    pub fn set_active(&mut self, id: DocumentId) {
-        if self.entry(id).is_some() {
-            self.active = id;
-        }
+        let tool = self.active_tool.as_str();
+        self.of_tool(tool).or_else(|| self.entries.iter().find(|e| e.tool == tool && e.doc.stand_in()).map(|e| e.doc.id())).unwrap_or(0)
     }
 
     pub fn layer_of(&self, id: DocumentId) -> LayerId {
@@ -202,7 +224,7 @@ impl DocumentManager {
         ok
     }
 
-    /// Layer visibility per document (the outliner's eye icon).
+    /// Layer visibility per document (the tools' rules: the Prefab tool hides the tiles while its stage shows).
     pub fn set_visible(&self, scene: &mut RenderScene, id: DocumentId, visible: bool) {
         if let Some(e) = self.entry(id) {
             scene.set_layer_visible(e.layer, visible);

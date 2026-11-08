@@ -151,14 +151,9 @@ fn rgba(c: [u8; 4]) -> u32 {
     col32(c[0], c[1], c[2], c[3])
 }
 
-/// The editor's active UI document, else the first one.
+/// The UI tool's document (the layout it edits).
 fn active_doc(e: &Editor) -> Option<DocumentId> {
-    let a = e.docs.active_id();
-    if e.docs.find_as::<UiDocument>(a).is_some() {
-        return Some(a);
-    }
-
-    e.docs.order().iter().copied().find(|&i| e.docs.find_as::<UiDocument>(i).is_some())
+    e.docs.of_tool("ui").filter(|&i| e.docs.find_as::<UiDocument>(i).is_some())
 }
 
 fn selected(e: &Editor, doc: DocumentId) -> Option<usize> {
@@ -2253,7 +2248,6 @@ impl Tool for UiTool {
         let (right, center) = gui::dock_builder_split(center, gui::DIR_RIGHT, 0.28);
         let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.30);
         gui::dock_builder_dock_window("UI Canvas", center);
-        gui::dock_builder_dock_window("Outliner", left);
         gui::dock_builder_dock_window("Assets", left);
         gui::dock_builder_dock_window("UI Layers", left);
         gui::dock_builder_dock_window("UI Fields", right);

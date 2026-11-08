@@ -82,7 +82,7 @@ layout save
 layout reset
 frames 3
 
-# two documents, closing one
+# a weather file next to the sample map, closing it
 open "weather/charlemagne/med_sp_land_day_dry.environment"
 frames 3
 assert_documents 2

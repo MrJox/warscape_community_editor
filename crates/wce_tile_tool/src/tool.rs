@@ -678,17 +678,11 @@ impl Default for TileTool {
     }
 }
 
-/// The tile the tool works on: the active document when it is a tile, else the first open one.
+/// The tile the tool works on: the Tile tool's document (the Prefab tool's stage while that tool is active).
 pub fn document_id(e: &Editor) -> Option<DocumentId> {
-    // The Prefab tool's stages are tiles too: each tool sees its own (another tool, as the Weather tool, sees the tiles).
+    // The Prefab tool's stage is a tile too: each tool sees its own (another tool, as the Weather tool, sees the tile).
     let owner = if e.active_tool_id() == crate::prefab_tool::PREFAB_TOOL_ID { crate::prefab_tool::PREFAB_TOOL_ID } else { TILE_TOOL_ID };
-    let ours = |id: DocumentId| e.docs.find_as::<TileDocument>(id).is_some() && e.docs.tool_of(id) == owner;
-    let active = e.docs.active_id();
-    if ours(active) {
-        return Some(active);
-    }
-
-    e.docs.order().iter().copied().find(|&id| ours(id))
+    e.docs.of_tool(owner).filter(|&id| e.docs.find_as::<TileDocument>(id).is_some())
 }
 
 /// How far the camera stands from a prefab on its stage when it opens (world units).
@@ -751,8 +745,6 @@ pub fn select_elem(e: &mut Editor, elem: Option<usize>, add: bool) {
     } else {
         e.selection.set(r);
     }
-
-    e.docs.set_active(id);
 }
 
 fn tile_dir_of(path: &str) -> PathBuf {
@@ -1085,6 +1077,18 @@ impl TileTool {
         let wce = ted.with_file_name(wce_tile::project_files::WCE_FILE);
         if !ted.exists() && wce.exists() {
             ted = wce;
+        }
+
+        // The open tile gives way to another (asked about first when it has unsaved changes: the open goes on after the prompt's Save or
+        // Discard). Asked here: the entry the open reads is the tool's state only during this call.
+        let ted_path = ted.display().to_string();
+        let same = e.docs.of_tool(TILE_TOOL_ID).and_then(|id| e.docs.find(id)).is_some_and(|d| d.opened_from(&ted_path));
+        if !same {
+            let (again, again_variation) = (target.to_owned(), variation.to_owned());
+            let retry = Box::new(move |e: &mut Editor| e.with_tool::<Self, _>(|t, e| t.open_tile(e, &again, &again_variation)).unwrap_or_else(|| Err("the Tile tool is busy".to_owned())));
+            if !e.clear_to_replace(TILE_TOOL_ID, retry)? {
+                return Ok(format!("asking about the tile's unsaved changes before opening {target}"));
+            }
         }
 
         self.pending_entry = Some(entry_xml.clone());
@@ -3261,7 +3265,6 @@ impl Tool for TileTool {
         gui::dock_builder_dock_window("Tiles", left);
         gui::dock_builder_dock_window("Create", left);
         gui::dock_builder_dock_window("Scene", left);
-        gui::dock_builder_dock_window("Outliner", left);
         gui::dock_builder_dock_window("Tile", right);
         gui::dock_builder_dock_window("Inspector", right);
         gui::dock_builder_dock_window("Weather", right);
@@ -4030,7 +4033,6 @@ impl Tool for TileTool {
                     e.selection.set(r);
                 }
 
-                e.docs.set_active(id);
                 self.poly_point = None;
                 true
             }

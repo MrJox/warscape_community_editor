@@ -6,7 +6,7 @@ use std::any::Any;
 use std::collections::BTreeMap;
 
 use wce_editor_core::command::{Command, CommandStack, History};
-use wce_editor_core::document::{Document, DocumentCore, OutlinerNode};
+use wce_editor_core::document::{Document, DocumentCore};
 use wce_editor_core::inspector::Inspector;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
 use wce_scene::render_scene::{LayerId, Payload, RenderScene, SourceRef};
@@ -173,16 +173,6 @@ impl Document for SampleMapDocument {
         for b in &self.base {
             scene.add(layer, self.placement_matrix(b.item) * b.world, b.payload.clone(), SourceRef { doc: self.id(), item: b.item });
         }
-    }
-
-    fn outline(&self) -> OutlinerNode {
-        let node = |label: String, item: u64| OutlinerNode { label, source: SourceRef { doc: self.id(), item }, selectable: true, children: vec![] };
-        let mut root = OutlinerNode { label: self.title(), source: SourceRef { doc: self.id(), item: 0 }, selectable: false, children: vec![node("Ground".to_owned(), 0)] };
-        for i in 1..=self.info.centres.len() as u64 {
-            root.children.push(node(self.describe(SourceRef { doc: self.id(), item: i }), i));
-        }
-
-        root
     }
 
     fn describe(&self, item: SourceRef) -> String {

@@ -50,7 +50,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wce_editor_core::command::{CommandStack, Dirty, History};
-use wce_editor_core::document::{Document, DocumentCore, OutlinerNode, SaveTarget};
+use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
 use wce_editor_core::inspector::Inspector;
 use wce_formats::tile_climate::ClimateList;
 use wce_foundation::math::{Double3, Float3, Float4x4};
@@ -1050,14 +1050,6 @@ impl Document for TileDocument {
                 Some(e) => t.refresh_item(scene, e),
             }
         }
-    }
-
-    fn outline(&self) -> OutlinerNode {
-        self.tile().outline()
-    }
-
-    fn outline_stamp(&self) -> u64 {
-        self.tile().structure_version
     }
 
     /// The freeform instances while the Freeform tint filter is on; the key follows every edit (a placement change is an edit).

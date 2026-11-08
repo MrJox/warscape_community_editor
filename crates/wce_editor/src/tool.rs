@@ -1,5 +1,5 @@
 //! A tool is a mode of the editor (Weather, Tile, and the future Unit, VFX, Terrain and Cinematic editors). It decides which documents it opens,
-//! which panels and menus it adds, what the viewport does with clicks, and the default dock layout. The shell (docking, outliner, inspector,
+//! which panels and menus it adds, what the viewport does with clicks, and the default dock layout. The shell (docking, inspector,
 //! asset browser, log, history, viewport, gizmos, commands, layouts) is shared.
 //!
 //! The editor owns its tools; while it calls one, the tool is lent out of the editor, so the tool and the editor can both be changed.
@@ -54,15 +54,13 @@ pub struct ViewportEvent {
     pub button: i32,
 }
 
-/// The standard layout every tool starts from: outliner left, inspector right, assets / log / history below, the viewport in the middle; a
-/// tool's main panel, when it has one named like the tool, tabs with the inspector.
+/// The standard layout every tool starts from: inspector right, assets / log / history below, the viewport in the middle; a tool's main
+/// panel, when it has one named like the tool, tabs with the inspector.
 pub fn default_layout(dockspace: gui::ImGuiID, title: &str) {
     let center = dockspace;
-    let (left, center) = gui::dock_builder_split(center, gui::DIR_LEFT, 0.20);
     let (right, center) = gui::dock_builder_split(center, gui::DIR_RIGHT, 0.25);
     let (bottom, center) = gui::dock_builder_split(center, gui::DIR_DOWN, 0.25);
     gui::dock_builder_dock_window("Viewport", center);
-    gui::dock_builder_dock_window("Outliner", left);
     gui::dock_builder_dock_window("Inspector", right);
     gui::dock_builder_dock_window("Assets", bottom);
     gui::dock_builder_dock_window("Log", bottom);
