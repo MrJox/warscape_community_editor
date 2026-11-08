@@ -421,6 +421,11 @@ impl Tile {
         }
 
         let rects = (roads_rect(h0, &height), roads_rect(b0, &blend), roads_rect(g0, &ground));
+        // The maps the roads changed are saved with the tile: the compile and the game read them, not the layers (user 2026-11-08: a
+        // launch after the roads were made again had the old terrain, its height map not written).
+        p.height_dirty |= rects.0.is_some();
+        p.blend_dirty |= rects.1.is_some();
+        p.ground_dirty |= rects.2.is_some();
         layers.height = Some(height);
         layers.blend = Some(blend);
         layers.ground = Some(ground);
@@ -1114,16 +1119,15 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
 /// The version of how roads are made, in every road's signature: a road's layers are saved with the tile and made again only when its
 /// signature changes, so a change to how they are made bumps this, or a tile keeps the old terrain (user 2026-11-08: the bridges' fixes
 /// did not show on a tile saved before them).
-const ROAD_MAKING: u32 = 2;
+const ROAD_MAKING: u32 = 3;
 
 /// How far a bridge runs onto the road at each end, past its gap's rims (metres).
 const BRIDGE_ON_ROAD: f64 = 2.0;
 
-/// Under a bridge's deck the terrain is kept this far past its sides (more than a height-map pixel: 2 m on a 64-density tile), this far
-/// under it at the rims, and this far at its ends (metres).
+/// Under a bridge's deck the terrain is kept this far past its sides (more than a height-map pixel: 2 m on a 64-density tile) and this
+/// far under it at the rims, less and less to none at its ends (metres).
 const DECK_SIDE: f64 = 2.5;
 const DECK_SINK: f64 = 0.3;
-const DECK_END_SINK: f64 = 0.15;
 
 /// The no-go regions beside a bridge over water: from this far past the deck's side to this far (metres).
 const NOGO_NEAR: f64 = 1.0;
@@ -1136,20 +1140,17 @@ fn road_strip(plan: &Plan, settings: &RoadSettings) -> Strip {
     let inner = plan.gaps.iter().filter(|&&(a, b)| b > a + 1).map(|&(a, b)| (a + 1, b - 1)).collect::<Vec<_>>();
     strip.open_gaps(&inner);
 
-    // Under each deck, from end to end: the terrain under it and past its sides (`Strip::under_deck`), the most at its rims, less at its
-    // ends, which lie on the road; past them, under its ground platforms, less and less to none at their outer edges, where they meet
-    // the ground (`wce_walls::bridge::GROUND_PLATFORM`).
+    // Under each deck, from end to end: the terrain under it and past its sides (`Strip::under_deck`), the most at its rims, none at its
+    // ends, where its planks lie on the road (user 2026-11-08: 0.15 m under them there, the bridge did not touch the ground). Past them
+    // the road as it is: the ground platforms (`wce_walls::bridge::GROUND_PLATFORM`) start level with it at the deck's edge.
     let st = Stations::new(&plan.line);
-    let ramp = wce_walls::bridge::GROUND_PLATFORM / 2.0;
     for &(a, b) in &plan.gaps {
         let (sa, sb) = (st.of_sample(a), st.of_sample(b));
         for i in 0..plan.line.len() {
             let s = st.of_sample(i);
             let off = if s < sa { sa - s } else if s > sb { s - sb } else { 0.0 };
-            if off <= BRIDGE_ON_ROAD {
-                strip.under_deck(i, DECK_SIDE, DECK_SINK - (DECK_SINK - DECK_END_SINK) * off / BRIDGE_ON_ROAD);
-            } else if off < BRIDGE_ON_ROAD + ramp {
-                strip.under_deck(i, DECK_SIDE, DECK_END_SINK * (1.0 - (off - BRIDGE_ON_ROAD) / ramp));
+            if off < BRIDGE_ON_ROAD {
+                strip.under_deck(i, DECK_SIDE, DECK_SINK * (1.0 - off / BRIDGE_ON_ROAD));
             }
         }
     }

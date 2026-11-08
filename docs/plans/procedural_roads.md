@@ -462,6 +462,11 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   type go on under the span. None of the bridge fixes had shown on the test tile: a road's layers are saved with the tile and made again
   only when its signature changes, which code changes did not. The signature has the making's version now (`ROAD_MAKING`): bump it
   when roads are made differently.
+  Then (user, 2026-11-08) the ends floated: the terrain was 0.15 m under the planks there and sank on past them. Now it is kept under
+  the deck only towards the rims (0.3 m) and meets the planks at the deck's ends, the road past them as it is: the planks lie on the
+  road and the ground platforms start level with it. And a launch still had the old terrain: the road's layers set the layers' dirty
+  flag, which saves `terrain_layers.wcl`, but not the maps', so `height_map_0.png` (what the compile reads) was not written. Applying
+  the roads' terrain marks the height, blend and ground maps it changes; a launch and Save to pack finish the road jobs before saving.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,
