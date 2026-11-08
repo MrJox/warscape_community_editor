@@ -6,7 +6,8 @@ weather file closes the open weather file, and so on. Documents of *different* t
 a tile and the Prefab tool's stage). The Outliner goes with it: what it did for documents moves to the File menu and the menu bar, and
 its trees are dropped.
 
-State: planned 2026-11-08 with the user, nothing done yet. It closes the save system plan's open point ("several tiles drawn at once":
+State: planned 2026-11-08 with the user, steps 1 to 9 done the same day (how it works now: [editor.md, Cross-tool
+composition](../editor.md#cross-tool-composition-phase-7)). It closes the save system plan's open point ("several tiles drawn at once":
 not wanted).
 
 ## Why
@@ -99,6 +100,23 @@ not wanted).
    `cross_tool.txt` opens a tile and an environment, which is fine; `tile_extracted.txt` reopens the same tile, which switches to it) and
    the ones using `activate`, `layer_visible`, `blend` or counting documents (`assert_documents`). Run the gates and the scripts touched
    (`--filter` sized, per the usual rule) once all steps are in.
+
+## Found on the way
+
+- **The active document falls back to the tool's stand-in.** In the Weather tool with no file open, the sample map is what History,
+  undo and the gizmo's edits work on (`app_smoke.txt` edits it): `DocumentManager::active_id` is the tool's document, else its stand-in.
+- **The Weather tool lit VFX files with the environment open next to them** (the particle overlay reads the open `vfx/` and
+  `weather_definitions.xml` documents). With one file, opening a VFX closes the environment: the last environment goes on lighting the
+  scene, as the packs (or the project) have it, while the tool's file is not an environment; closing the file goes back to the default
+  light (`WeatherTool::last_env`).
+- **The replace prompt runs the open again** after its Save or Discard (`Editor::clear_to_replace` takes the open as a closure). The
+  tools whose open is more than `open_path` ask themselves before they start: the Tile tool's `open_tile` (the entry it reads is its
+  state during the call only), the Prefab tool's `open_prefab`, the Terrain tool's `start_open` and `open_now` (the map is read on a
+  worker: asked before the read; `adopt` asks again if the open map was edited during the read).
+- **The Prefab tool's stage is made again in its folder**, so the old stage closes once the prefab is loaded, just before the new stage
+  is made, not after it is open.
+- `assert_modified` and `assert_history` take an optional document (`cross_tool.txt` checked each document through `activate`).
+- `tile_copy_paste.txt` and `tile_roundtrip.txt` open another tile with unsaved changes: they `close tile discard` first.
 
 ## Open points
 

@@ -13,7 +13,7 @@ and things to confirm in game, listed there. The editor itself is described in
 |---|---|---|
 | 0 Repros, oracle, TEd probes | done: repro scripts, `placement_check` (`crates/wce_tile_editor/examples/placement_check.rs`, TEd's `building_list.xml` as the oracle), the flag / placement probes in TEd, the link-semantics spike | `docs/formats/tile_ted.md` |
 | 0b Tile entry as the root | done: `TileEntry`, `TileIndex`, Tiles panel, open by entry / folder / `tile.ted` | `docs/formats/tile_database.md`, `docs/editor.md` |
-| 1 Layers and scene graph | done: Scene panel (eye = `OIF_VISIBLE`, cursor arrow = `OIF_ACTIVE`), structure commands, export type, gizmo fix, W / E / R, snap toggle. The shared Outliner shows the tile tree read-only (accepted) | `docs/editor.md` ("Scene panel") |
+| 1 Layers and scene graph | done: Scene panel (eye = `OIF_VISIBLE`, cursor arrow = `OIF_ACTIVE`), structure commands, export type, gizmo fix, W / E / R, snap toggle. The shared Outliner showed the tile tree read-only (accepted; the Outliner went later, `outliner_removal.md`) | `docs/editor.md` ("Scene panel") |
 | 2 Placement and heights | done: landscape / freeform rules, strokes carry landscape instances, oracle exact; stale entries fixed by `TileProject::calibrate_from_final_heights` | `docs/formats/tile_ted.md`, `docs/editor.md` ("Placement") |
 | 3 Terrain | done with the game's shaders (3a-3e; 3e settled in game: one season's ground, the battle map's cell climate) | `docs/re/terrain.md`; map-level terrain: `map_context_todo.md` |
 | 4 Water | done: 4a-4d (river editing, river ends against the links, water depth view); the battle sea from a RenderDoc capture | `docs/re/water.md`; rendering leftovers: `rendering_remaining.md` |
@@ -340,4 +340,4 @@ coastal battle at low settings (`D:\renderdoc\coast.rdc`; RenderDoc runs out of 
 - Edits are text splices on the lossless XML; undo restores the bytes.
 - Reverse engineering: black box first (TEd / BOB on scratch copies, diffs, `building_list.xml` and BOB outputs as oracles), then
   short targeted spikes only when that does not settle a question. No full decompile; notes record formats and behaviour, never code.
-- Layer editing lives in the Scene panel; the shared Outliner keeps the tile tree read-only.
+- Layer editing lives in the Scene panel (the only tile tree since the Outliner went).
