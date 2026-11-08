@@ -400,17 +400,21 @@ pub fn fit(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site: &Site) 
 /// A part's own attributes, by its index in the piece: (name, value) pairs.
 pub type PartAttrs<'a> = &'a dyn Fn(usize, &Part) -> Vec<(String, String)>;
 
-/// What a piece's parts get besides their place: buildings tilted to the ground (`tilt`: a fence follows the slope it stands on), and
-/// attributes of their own (`attrs`, by the part's index in the piece: a fence's `destruction_level`).
+/// What a piece's parts get besides their place: buildings tilted to the ground (`tilt`: how far along and across them the ground is read,
+/// each way, metres: a fence follows the slope it stands on), and attributes of their own (`attrs`, by the part's index in the piece: a
+/// fence's `destruction_level`).
 #[derive(Default)]
 pub struct Dress<'a> {
-    pub tilt: bool,
+    pub tilt: Option<[f64; 2]>,
     pub attrs: Option<PartAttrs<'a>>,
 }
 
-/// How far along and across a building the ground is read to tilt it (metres): a fence's ends, its width.
-const TILT_ALONG: f64 = 2.0;
-const TILT_ACROSS: f64 = 0.5;
+/// How far along and across a fence the ground is read to tilt it (metres): its ends, its width.
+pub const FENCE_TILT: [f64; 2] = [2.0, 0.5];
+
+/// The same for the buildings of the pieces laid on a road: the dirt road's banks of ground, 18.6 m long and about 10 m across (user
+/// 2026-11-08: laid upright, they did not follow the slope).
+pub const PIECE_TILT: [f64; 2] = [7.0, 5.0];
 
 /// The turn that takes up (0, 1, 0) to `n` (a unit vector, its y over 0) by the shortest way.
 fn up_to(n: Double3) -> Double3x3 {
@@ -457,11 +461,11 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
         let mut world_rot = euler_matrix(Double3::new(turn, 0.0, 0.0)) * part.rotation;
 
         // A building tilted to the ground under it: its slope along it (end to end) and across.
-        if dress.tilt && part.solid {
+        if let Some([along, across]) = dress.tilt.filter(|_| part.solid) {
             let c = [-x[1], x[0]];
             let h = |d: [f64; 2], k: f64| ground(tilt_at[0] + d[0] * k, tilt_at[1] + d[1] * k);
-            let a = Double3::new(x[0] * 2.0 * TILT_ALONG, h(x, TILT_ALONG) - h(x, -TILT_ALONG), x[1] * 2.0 * TILT_ALONG);
-            let b = Double3::new(c[0] * 2.0 * TILT_ACROSS, h(c, TILT_ACROSS) - h(c, -TILT_ACROSS), c[1] * 2.0 * TILT_ACROSS);
+            let a = Double3::new(x[0] * 2.0 * along, h(x, along) - h(x, -along), x[1] * 2.0 * along);
+            let b = Double3::new(c[0] * 2.0 * across, h(c, across) - h(c, -across), c[1] * 2.0 * across);
             let cross = Double3::new(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
             let len = (cross.x * cross.x + cross.y * cross.y + cross.z * cross.z).sqrt().max(1e-12);
             let up = if cross.y < 0.0 { cross * (-1.0 / len) } else { cross * (1.0 / len) };
@@ -1210,7 +1214,7 @@ mod tests {
         let scene = TedScene::parse_any(text).unwrap();
         let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
         let laid = Laid { piece: "fence", frame: Frame::Along { from: 5.0, to: 10.0 } };
-        let dress = Dress { tilt: true, attrs: None };
+        let dress = Dress { tilt: Some(FENCE_TILT), attrs: None };
         let orientation = |ground: &dyn Fn(f64, f64) -> f64| {
             let f = fit_dressed(&piece, &contents, "f", &laid, &Site { line: &line, width: 1.0, unit: 2.0, ground }, &dress).unwrap();
             let s = TedScene::parse_any(f.text).unwrap();
@@ -1221,6 +1225,33 @@ mod tests {
         assert!(flat.y.abs() < 1e-9 && flat.z.abs() < 1e-9, "{flat:?}");
         let sloped = orientation(&|_, z| z * 0.2);
         assert!(sloped.y.abs() > 0.1 || sloped.z.abs() > 0.1, "{sloped:?}");
+    }
+
+    #[test]
+    fn a_bank_follows_the_slope_under_it_and_keeps_its_roll() {
+        let line = (0..=20).map(|i| [0.0, f64::from(i)]).collect::<Vec<_>>();
+        let mut children = crate::road_pieces::base_guides("straight_2");
+        children.extend(crate::road_dirt::parts("straight_2"));
+        let text = crate::road_pieces::group_text("road_dirt_straight_2", &children);
+        let piece = crate::road_pieces::read(&text).unwrap();
+        let scene = TedScene::parse_any(text).unwrap();
+        let contents = scene.children_text(scene.find_all("UserInstanceGroup")[0]);
+        let laid = Laid { piece: "straight", frame: Frame::Along { from: 6.0, to: 14.0 } };
+        let dress = Dress { tilt: Some(PIECE_TILT), attrs: None };
+        let up = |ground: &dyn Fn(f64, f64) -> f64| {
+            let f = fit_dressed(&piece, &contents, "b", &laid, &Site { line: &line, width: 6.0, unit: 2.0, ground }, &dress).unwrap();
+            let s = TedScene::parse_any(f.text).unwrap();
+            let b = s.find_all("BUILDING_INSTANCE")[0];
+            crate::world_transform::world_transform(&s, b).rotation * Double3::new(0.0, 1.0, 0.0)
+        };
+
+        // On level ground as the kit rolls it (10 degrees about its length, so its up leans across the road).
+        let flat = up(&|_, _| 0.0);
+        assert!((flat.y - 0.174_533f64.cos()).abs() < 1e-6 && flat.z.abs() < 1e-6, "{flat:?}");
+
+        // Up a slope along the road (z), its up leans back down it as the ground's does, the roll kept.
+        let sloped = up(&|_, z| z * 0.2);
+        assert!(sloped.z < -0.15 && (sloped.x - flat.x).abs() < 0.02, "{sloped:?} {flat:?}");
     }
 
     #[test]

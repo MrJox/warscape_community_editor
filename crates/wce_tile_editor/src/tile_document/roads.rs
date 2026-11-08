@@ -6,7 +6,7 @@
 use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::RenderScene;
 use wce_tile::ground_types::GROUND_TYPES;
-use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit, junctions, layout, snap_ends};
+use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit_dressed, junctions, layout, snap_ends};
 use wce_tile::road_pieces::{BASE, PIECES, Piece, VARIANTS, key, read};
 use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_sharp, sharp_points};
 use wce_tile::ted_scene::TedScene;
@@ -935,7 +935,9 @@ let mut planned = vec![];
         let width = road.settings.width;
         for (k, l) in laid.laid.iter().enumerate() {
             let Some((_, p, key, children)) = pick(&laid.laid, k, &pieces[..], road) else { continue };
-            match fit(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }) {
+            // Their buildings (the banks) tilted to the ground under them.
+            let dress = wce_tile::road_layout::Dress { tilt: Some(wce_tile::road_layout::PIECE_TILT), attrs: None };
+            match fit_dressed(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
                 Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
                 Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
             }
@@ -1002,7 +1004,7 @@ let mut planned = vec![];
                         vec![("destruction_level".to_owned(), level.to_string())]
                     };
 
-                    let dress = wce_tile::road_layout::Dress { tilt: true, attrs: Some(&damage) };
+                    let dress = wce_tile::road_layout::Dress { tilt: Some(wce_tile::road_layout::FENCE_TILT), attrs: Some(&damage) };
                     match wce_tile::road_layout::fit_dressed(p, children, key, l, &Site { line: fence_line, width: p.width, unit, ground: &terrain }, &dress) {
                         Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
                         Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
