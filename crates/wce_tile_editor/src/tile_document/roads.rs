@@ -344,7 +344,8 @@ impl Tile {
         let raw = line.iter().map(|p| sample(p[0], p[1])).collect::<Vec<_>>();
         let wet = line.iter().map(|p| water.level(p[0], p[1])).collect::<Vec<_>>();
         let p = wce_tile::roads::plan(&line, &raw, &wet, &road.settings, on_other);
-        Plan { line, at_point, heights: p.heights, gaps: p.gaps, fords: p.fords, decks: p.decks }
+        let heights = level_past_rims(&line, p.heights, &p.gaps, &road.settings);
+        Plan { line, at_point, heights, gaps: p.gaps, fords: p.fords, decks: p.decks }
     }
 
     /// The tile's water, as a road crossing it finds it (world metres): its rivers' ribbons as they are drawn, its lakes' water planes, and
@@ -1132,7 +1133,32 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
 /// The version of how roads are made, in every road's signature: a road's layers are saved with the tile and made again only when its
 /// signature changes, so a change to how they are made bumps this, or a tile keeps the old terrain (user 2026-11-08: the bridges' fixes
 /// did not show on a tile saved before them).
-const ROAD_MAKING: u32 = 6;
+const ROAD_MAKING: u32 = 8;
+
+/// How far past each rim of a bridge the road stays level with it (metres): its end piece's length (`bridge_wood_2_end`, 2 units: 1 m)
+/// and a height-map pixel more (2 m on a 64-density tile: the ground the game reads is interpolated between pixels, and at 1.5 the ramps'
+/// feet still ended 0.1 to 0.3 over it). The end piece's ramp comes down from the deck (DECK_LIFT over the rim) by its own drop, onto the road only if the road is
+/// at the rim's height under it (user 2026-11-08: the road climbing to the rim, the ramps ended 0.4 to 0.9 over it and units could not
+/// get onto the bridge from its ends).
+const LEVEL_PAST_RIM: f64 = 3.0;
+
+/// A road's heights with each bridge's rims held level for [`LEVEL_PAST_RIM`] past them, the road graded down from there at its grade
+/// (raised only: what was over it stays).
+fn level_past_rims(line: &[[f64; 2]], mut heights: Vec<f64>, gaps: &[(usize, usize)], settings: &RoadSettings) -> Vec<f64> {
+    let st = Stations::new(line);
+    let slope = settings.max_grade.to_radians().tan();
+    for &(a, b) in gaps {
+        let (sa, sb, ha, hb) = (st.of_sample(a), st.of_sample(b), heights[a], heights[b]);
+        for (i, h) in heights.iter_mut().enumerate() {
+            let s = st.of_sample(i);
+            let (off, rim) = if s < sa { (sa - s, ha) } else if s > sb { (s - sb, hb) } else { continue };
+            let want = rim - (off - LEVEL_PAST_RIM).max(0.0) * slope;
+            *h = h.max(want);
+        }
+    }
+
+    heights
+}
 
 /// How far a bridge's deck stands over the road under it (the road's heights are half scene units: 0.5 is 1 unit): the kit's split bridge
 /// as laid by hand and crossed, `bridge_wood_2`'s walkway 1 unit over the ground and its end pieces' ramps from it down to the ground

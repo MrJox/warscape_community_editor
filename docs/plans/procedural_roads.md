@@ -504,6 +504,12 @@ A bridge is made as a wall is (docs/plans/procedural_walls.md, `wce_walls`), wit
   outlines as the kit's (the hull lowering, `hull_under_platforms`, and the outlines put on the terrain, `outlines_on_ground`, are gone),
   and the deck 1 unit over the road (`DECK_LIFT` 0.5 m; the roads' heights are half units), the end pieces' ramps from it down to the
   road. `bridge_check` checks each end piece's ramp joins the deck and drops 1 unit, and that no ground platform is made.
+  Still not crossed (units got on from a side). The pieces' logic files matched the kit's field for field (bar the warp's extra points);
+  the compiled ground did not: the deck is level with the rims' crest plus 1 unit, but the road climbs to the crest over its last
+  metres, so 1 m past each rim, where the end pieces' ramps land, it was 0.4 to 0.9 lower and the ramps ended in the air. The road is
+  held level with each rim for `LEVEL_PAST_RIM` (3 m: the end piece's 1 m and a height-map pixel, the game's ground being interpolated
+  between pixels) and graded down from there (`level_past_rims`); in a dry launch the ground under both ramps' feet is now the feet's
+  height.
 - **The wooden bridge alone** (user, 2026-11-08). `bridge_stone_1` is a humped stone bridge of its own: cut into pieces, each repeated its
   hump and its arch, its deck in steps from piece to piece and its arches pulled down to the ground unevenly. It is no longer offered;
   a road set to it gets the wooden one. Other bases wait for a standard a base is made to (its deck level along it, a span that repeats,
