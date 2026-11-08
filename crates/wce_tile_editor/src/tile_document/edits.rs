@@ -933,7 +933,7 @@ impl TileDocument {
     /// Not a polygon, no such point, or an unknown operation.
     pub fn polygon_point(&mut self, elem: usize, op: &str, index: usize, world: Float3, gesture: u64) -> Result<(), String> {
         let t = self.tile();
-        if self.is_spline(elem) {
+        if self.is_spline(elem) || (matches!(op, "in" | "out") && self.has_handles(elem)) {
             return self.spline_point(elem, op, index, world, gesture);
         }
 
@@ -947,6 +947,12 @@ impl TileDocument {
 
             // A wall's end goes onto a fort building's end near it.
             let world = if t.is_wall(elem) && (index == 0 || index + 1 == pts.len()) { t.snap_wall_end(world) } else { world };
+
+            // A procedural spline's point with handles written: they go with it.
+            if self.has_handles(elem) && wce_tile::splines::written(t.tscene(), elem).get(index).is_some_and(|h| h.iter().any(Option::is_some)) {
+                return self.spline_point(elem, "move", index, world, gesture);
+            }
+
             let before = t.tscene().point_position(p).unwrap_or_default();
             let after = t.to_local(elem, world);
             let (before_text, area_text) = (t.tscene().doc().get(p, "position"), t.tscene().doc().get(elem, "area"));
@@ -962,7 +968,19 @@ impl TileDocument {
                 }
 
                 let local = self.tile().to_local(elem, world);
-                self.tscene_mut().insert_polygon_point(elem, index, local)?;
+                let own = self.has_handles(elem);
+                let sc = self.tscene_mut();
+                sc.insert_polygon_point(elem, index, local)?;
+
+                // The new point is a copy of the one before it: not its handles (made from its neighbours) nor its corner mark.
+                if own && let Some(&p) = sc.polygon_points(elem).get(index + 1) {
+                    for attr in ["controlIn", "controlOut", "sharp"] {
+                        if sc.doc().get(p, attr).is_some_and(|v| !v.is_empty()) {
+                            sc.set_attr(p, attr, "");
+                        }
+                    }
+                }
+
                 self.push_splice_point("Insert polygon point".to_owned(), mark, elem, &pts);
                 Ok(())
             }
@@ -987,6 +1005,12 @@ impl TileDocument {
         elem < sc.doc().elements().len() && wce_tile::splines::is_spline(sc.type_of(elem))
     }
 
+    /// Whether its points have handles: TEd's splines and the editor's own (procedural roads and walls, `splines::OWN_KINDS`).
+    pub fn has_handles(&self, elem: usize) -> bool {
+        let sc = self.tile().tscene();
+        elem < sc.doc().elements().len() && wce_tile::splines::has_handles(sc.type_of(elem))
+    }
+
     /// A spline point edit, `world` the cursor:
     /// - `move`: the point, its handles with it;
     /// - `in` / `out`: its `controlIn` / `controlOut`, at the point's height, the other handle mirrored;
@@ -1003,13 +1027,18 @@ impl TileDocument {
         use wce_tile::new_instances::point_text;
         use wce_tile::splines::{auto_handles, mirror, read};
 
-        if !self.is_spline(elem) {
+        if !self.has_handles(elem) {
             return Err("not a spline".to_owned());
         }
 
         let t = self.tile();
         let sc = t.tscene();
         let pts = read(sc, elem);
+        // The editor's own splines: their handles not written are made from the points (and go on being): a point moved takes along only
+        // those written.
+        let own = !wce_tile::splines::is_spline(sc.type_of(elem));
+        let written = wce_tile::splines::written(sc, elem);
+        let keeps = |i: usize, side: usize| !own || written.get(i).is_some_and(|h| h[side].is_some());
         let n = pts.len();
         let elems = sc.polygon_points(elem);
         if index >= n.max(1) {
@@ -1017,7 +1046,12 @@ impl TileDocument {
         }
 
         let local = t.to_local(elem, world);
-        let text = |i: usize, attr: &str| sc.doc().get(elems[i], attr).unwrap_or_default();
+        // An attribute not written (a procedural spline's handle made from the points) is as it is drawn now.
+        let text = |i: usize, attr: &str| sc.doc().get(elems[i], attr).filter(|v| !v.is_empty()).unwrap_or_else(|| match attr {
+            "controlIn" => point_text(pts[i].control_in),
+            "controlOut" => point_text(pts[i].control_out),
+            _ => String::new(),
+        });
         let step = |i: usize, attr: &str, v: Double3| (i, attr.to_owned(), text(i, attr), point_text(v));
         let (first, last) = (index == 0, index + 1 == n);
         let attrs = match op {
@@ -1025,11 +1059,11 @@ impl TileDocument {
                 let p = pts[index];
                 let d = local - p.position;
                 let mut steps = vec![step(index, "position", local)];
-                if !first {
+                if !first && keeps(index, 0) {
                     steps.push(step(index, "controlIn", p.control_in + d));
                 }
 
-                if !last {
+                if !last && keeps(index, 1) {
                     steps.push(step(index, "controlOut", p.control_out + d));
                 }
 
@@ -1057,10 +1091,25 @@ impl TileDocument {
 
         if let Some((name, steps)) = attrs {
             let steps = steps.into_iter().filter(|s| s.2 != s.3).collect::<Vec<_>>();
-            if !steps.is_empty() {
-                self.history.push(Box::new(TedPointAttrsCommand { name: name.to_owned(), elem, steps, gesture }));
+            if steps.is_empty() {
+                return Ok(());
             }
 
+            // A handle the point has not written yet: written first as it is, in a text splice (its undo takes the attribute away
+            // again, which setting it back cannot), then edited as the others.
+            let missing = steps.iter().filter(|s| self.tile().tscene().doc().get(elems[s.0], &s.1).is_none_or(|v| v.is_empty())).cloned().collect::<Vec<_>>();
+            if !missing.is_empty() {
+                let mark = self.begin()?;
+                let before = self.tile().tscene().polygon_points(elem);
+                let sc = self.tscene_mut();
+                for (i, attr, was, _) in &missing {
+                    sc.set_attr(elems[*i], attr, was);
+                }
+
+                self.push_splice_point("Write spline handles".to_owned(), mark, elem, &before);
+            }
+
+            self.history.push(Box::new(TedPointAttrsCommand { name: name.to_owned(), elem, steps, gesture }));
             return Ok(());
         }
 

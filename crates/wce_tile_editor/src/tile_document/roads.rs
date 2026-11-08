@@ -8,7 +8,7 @@ use wce_scene::render_scene::RenderScene;
 use wce_tile::ground_types::GROUND_TYPES;
 use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit_dressed, junctions, layout, snap_ends};
 use wce_tile::road_pieces::{BASE, PIECES, Piece, VARIANTS, key, read};
-use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_sharp, sharp_points};
+use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_handled, sharp_points};
 use wce_tile::ted_scene::TedScene;
 use std::collections::HashMap;
 
@@ -28,6 +28,9 @@ struct Road {
 
     /// Which of its points are corners (`roads::sharp_points`).
     sharp: Vec<bool>,
+
+    /// Its points' handles where written (world x, z; `roads::centre_line_handled`).
+    handles: Vec<[Option<[f64; 2]>; 2]>,
     settings: RoadSettings,
 
     /// Its road type: the folder of `roads_proc` its pieces come from (`none`: no pieces).
@@ -89,7 +92,7 @@ fn pick<'a>(laid: &[wce_tile::road_layout::Laid], k: usize, pieces: &'a [(&'stat
 /// meets them at their surface, `roads::plan`): a T's through road first, its bump whole, and the branch coming to it. Made the other way,
 /// the through road met the branch's end (user, 2026-11-08). Otherwise as they are.
 fn made_order<T>(v: Vec<T>, road: impl Fn(&T) -> &Road) -> Vec<T> {
-    let centres = v.iter().map(|t| centre_line_sharp(&road(t).line, &road(t).sharp).0).collect::<Vec<_>>();
+    let centres = v.iter().map(|t| centre_line_handled(&road(t).line, &road(t).handles, &road(t).sharp).0).collect::<Vec<_>>();
     let off = |line: &[[f64; 2]], p: [f64; 2]| line.windows(2).map(|w| {
         let (d, e) = ([w[1][0] - w[0][0], w[1][1] - w[0][1]], [p[0] - w[0][0], p[1] - w[0][1]]);
         let t = ((d[0] * e[0] + d[1] * e[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-12)).clamp(0.0, 1.0);
@@ -151,7 +154,7 @@ impl Tile {
     /// The curve a road follows, on the terrain: what its outline draws, so that the line is where the road is.
     pub(super) fn road_world_curve(&self, elem: usize) -> Vec<Float3> {
         let points = self.polygon_world_points(elem).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>();
-        let line = centre_line_sharp(&points, &self.road_sharp(elem, &points)).0;
+        let line = centre_line_handled(&points, &self.road_handles(elem), &self.road_sharp(elem, &points)).0;
         let every = (line.len() / 400).max(2);
         let mut curve: Vec<_> = line.iter().step_by(every).chain(line.last()).map(|p| Float3::new(p[0] as f32, self.terrain_height(p[0] as f32, p[1] as f32), p[1] as f32)).collect();
         curve.dedup();
@@ -211,7 +214,19 @@ impl Tile {
     fn road_sharp(&self, elem: usize, points: &[[f64; 2]]) -> Vec<bool> {
         let sc = self.tscene();
         let marked = sc.polygon_points(elem).iter().map(|&p| sc.doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v))).collect::<Vec<_>>();
-        sharp_points(points, &marked)
+        // A point turned by its handles is no corner unless marked one, however sharp the turn between its neighbours.
+        let handles = self.road_handles(elem);
+        let auto = sharp_points(points, &[]);
+        (0..points.len()).map(|i| {
+            let turned = handles.get(i).is_some_and(|h| h.iter().any(Option::is_some));
+            marked.get(i).copied().unwrap_or(false) || (auto[i] && !turned)
+        }).collect()
+    }
+
+    /// A road's handles where written (world x, z).
+    fn road_handles(&self, elem: usize) -> Vec<[Option<[f64; 2]>; 2]> {
+        let u = self.unit();
+        wce_walls::scene::wall_handles(self.tscene(), elem).into_iter().map(|h| h.map(|v| v.map(|p| [p[0] / u, p[1] / u]))).collect()
     }
 
     /// The roads, their ends taken onto the roads they stop near (`road_layout::snap_ends`): what their terrain and their pieces are made
@@ -221,7 +236,7 @@ impl Tile {
         let number = |e: usize, name: &str, or: f64| doc.get(e, name).and_then(|v| wce_formats::c_num::strtod(&v)).unwrap_or(or);
         let elems = self.road_elems();
         let mut lines = elems.iter().map(|&e| self.polygon_world_points(e).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>()).collect::<Vec<_>>();
-        let centres = elems.iter().zip(&lines).map(|(&e, l)| centre_line_sharp(l, &self.road_sharp(e, l)).0).collect::<Vec<_>>();
+        let centres = elems.iter().zip(&lines).map(|(&e, l)| centre_line_handled(l, &self.road_handles(e), &self.road_sharp(e, l)).0).collect::<Vec<_>>();
         snap_ends(&mut lines, &centres);
 
         // The water a road crosses is in what it is made from: a river or a lake moved makes it again.
@@ -239,6 +254,7 @@ impl Tile {
             };
 
             let sharp = self.road_sharp(e, &line);
+            let handles = self.road_handles(e);
             let road_type = doc.get(e, "road_type").filter(|t| !t.is_empty()).unwrap_or_else(|| wce_tile::road_dirt::TYPE.to_owned());
             let bridge = doc.get(e, "road_bridge").filter(|b| wce_walls::bridge::base(b).is_some()).unwrap_or_else(|| wce_walls::bridge::BASES[0].name.to_owned());
             let fences = match doc.get(e, "road_fences").as_deref() {
@@ -249,8 +265,8 @@ impl Tile {
             };
 
             let fence_damage = number(e, "road_fence_damage", 0.0).clamp(0.0, 1.0);
-            let signature = hash_text(&format!("{line:?} {sharp:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {water:x}"));
-            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, settings, road_type, bridge, fences, fence_damage, signature }
+            let signature = hash_text(&format!("{line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {water:x}"));
+            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, handles, settings, road_type, bridge, fences, fence_damage, signature }
         }).collect()
     }
 
@@ -321,7 +337,7 @@ impl Tile {
     /// The road over a ground (`sample`, world units) and the water on it (`roads::plan`): fords where it is shallow, bridges where it is
     /// deep or the ground drops away, graded with those taken out so that it does not dip into them.
     fn plan_road(road: &Road, sample: &dyn Fn(f64, f64) -> f64, water: &WaterMap, on_other: &dyn Fn(f64, f64) -> bool) -> Plan {
-        let (line, at_point) = centre_line_sharp(&road.line, &road.sharp);
+        let (line, at_point) = centre_line_handled(&road.line, &road.handles, &road.sharp);
         let raw = line.iter().map(|p| sample(p[0], p[1])).collect::<Vec<_>>();
         let wet = line.iter().map(|p| water.level(p[0], p[1])).collect::<Vec<_>>();
         let p = wce_tile::roads::plan(&line, &raw, &wet, &road.settings, on_other);

@@ -1935,6 +1935,72 @@ impl TileTool {
         Ok(layout)
     }
 
+    /// Alt + a click on the selected polygon or spline (user 2026-11-08): on one of its points, removes it; within 4 m of an edge (along its
+    /// curve), inserts a point there. Neither: false (Alt + a drag turns the selection then).
+    fn alt_point_edit(&mut self, e: &mut Editor, ray: Option<(Float3, Float3)>) -> bool {
+        const EDGE: f32 = 4.0;
+        let Some(id) = document_id(e) else { return false };
+        let sel = primary(e);
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
+        let pts = d.tile().polygon_display_points(sel);
+        let mut best = None;
+        let mut best_t = 1e30f32;
+        for (i, &c) in pts.iter().enumerate() {
+            let t = dot(c - o, dir);
+            if t > 0.0 && length(c - (o + dir * t)) < 1.2f32.max(t * 0.015) && t < best_t {
+                best_t = t;
+                best = Some(i);
+            }
+        }
+
+        if let Some(i) = best {
+            self.status = match d.polygon_point(sel, "remove", i, self.cursor, 0) {
+                Ok(()) => {
+                    self.poly_point = None;
+                    "point removed".to_owned()
+                }
+
+                Err(err) => err,
+            };
+
+            return true;
+        }
+
+        if !self.terrain_hit {
+            return false;
+        }
+
+        let cur = self.cursor;
+        let mut at = None;
+        let mut bd = EDGE;
+        for (i, seg) in d.tile().spline_world_segments(sel).iter().enumerate() {
+            for w in seg.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let (abx, abz) = (b.x - a.x, b.z - a.z);
+                let l2 = abx * abx + abz * abz;
+                let t = if l2 > 1e-6 { (((cur.x - a.x) * abx + (cur.z - a.z) * abz) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                let dd = (a.x + abx * t - cur.x).hypot(a.z + abz * t - cur.z);
+                if dd < bd {
+                    bd = dd;
+                    at = Some(i);
+                }
+            }
+        }
+
+        let Some(i) = at else { return false };
+        self.status = match d.polygon_point(sel, "insert", i, cur, 0) {
+            Ok(()) => {
+                self.poly_point = Some(i + 1);
+                "point inserted".to_owned()
+            }
+
+            Err(err) => err,
+        };
+
+        true
+    }
+
     fn handle_keys(&mut self, e: &mut Editor) {
         use wce_editor::shortcuts::pressed;
         let io = gui::io();
@@ -2893,8 +2959,9 @@ impl TileTool {
             let sc = d.tile().tscene();
             gui::text(&format!("selected: {} points, area {:.1}", sc.polygon_points(s).len(), sc.polygon_area(s)));
             match self.poly_point {
-                Some(pt) => gui::text(&format!("point {pt}: drag to move, Delete removes, shift+click edge inserts")),
-                None => gui::text_disabled("click a point handle to edit; shift+click near an edge inserts a point"),
+                Some(pt) if d.has_handles(s) => gui::text(&format!("point {pt}: drag it or its blue handles; Alt+click a point removes it, Alt+click an edge inserts one")),
+                Some(pt) => gui::text(&format!("point {pt}: drag to move; Alt+click (or Delete) removes, Alt+click an edge inserts")),
+                None => gui::text_disabled("click a point to edit it; Alt+click a point removes it, Alt+click near an edge inserts one"),
             }
 
             if d.tile().is_wall(s) {
@@ -2963,8 +3030,8 @@ impl TileTool {
         }
 
         match self.poly_point.filter(|&p| p < points.len()) {
-            Some(pt) => gui::text(&format!("point {pt}: drag it or its blue handles, Delete removes, shift+click inserts (beyond an end: grows)")),
-            None => gui::text_disabled("click a point to edit it; drag the blue handles to bend; shift+click inserts a point"),
+            Some(pt) => gui::text(&format!("point {pt}: drag it or its blue handles; Alt+click a point removes it, Alt+click an edge inserts one (shift+click beyond an end: grows)")),
+            None => gui::text_disabled("click a point to edit it; drag the blue handles to bend; Alt+click a point removes it, Alt+click an edge inserts one"),
         }
 
         gui::checkbox("all points", &mut self.spline_all);
@@ -3767,6 +3834,11 @@ impl Tool for TileTool {
                     return true;
                 }
 
+                // Alt + a click on the selected polygon or spline: on a point removes it, near an edge inserts one.
+                if ev.alt && self.mode == TileMode::Select && self.alt_point_edit(e, ray) {
+                    return true;
+                }
+
                 // Alt + a left drag on a selection turns it in place (around its centre).
                 if ev.alt && self.mode == TileMode::Select && self.alt_rotate_begin(e, ev.x) {
                     return true;
@@ -3830,8 +3902,8 @@ impl Tool for TileTool {
                     (t > 0.0 && length(c - (o + dir * t)) < 1.2f32.max(t * 0.015)).then_some(t)
                 };
 
-                // A spline's handles (drawn at their point's height) before its points.
-                if spline {
+                // A spline's handles (drawn at their point's height) before its points; the procedural roads' and walls' too.
+                if d.has_handles(sel) {
                     let mut best = None;
                     let mut best_t = 1e30f32;
                     for (i, (hin, hout)) in d.tile().spline_world_handles(sel).into_iter().enumerate() {

@@ -1708,3 +1708,55 @@ fn on_a_stage_what_is_on_the_landscape_stands_on_the_ground_and_saves_as_it_was(
     let saved = String::from_utf8(d.stage_children_text(g)).unwrap();
     assert!(!saved.contains("vector(4,2.08,0)") && saved.contains("vector(-4,2,0)"), "{saved}");
 }
+
+#[test]
+fn a_procedural_roads_points_have_handles_that_turn_it_and_go_with_them() {
+    use wce_tile::splines::{read, written};
+
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let road = d.add_polygon(None, wce_tile::new_instances::ROAD_SPLINE, "", &[Float3::new(10.0, 0.0, 10.0), Float3::new(30.0, 0.0, 10.0), Float3::new(50.0, 0.0, 20.0)]).unwrap();
+    let new = text(&d);
+    assert!(d.has_handles(road) && !d.is_spline(road), "handles, not TEd's spline panel");
+
+    // None written: the Catmull-Rom ones, a sixth of the way from the point before to the one after.
+    assert!(written(d.tile().tscene(), road).iter().all(|h| h.iter().all(Option::is_none)));
+    let h = d.tile().spline_world_handles(road);
+    let out = h[1].1.unwrap();
+    assert!((out.x - (30.0 + 40.0 / 6.0)).abs() < 1e-3 && (out.z - (10.0 + 10.0 / 6.0)).abs() < 1e-3, "{out:?}");
+
+    // A handle dragged: written, the other mirrored.
+    let mut texts = vec![new.clone()];
+    d.spline_point(road, "out", 1, Float3::new(30.0, 0.0, 20.0), 1).unwrap();
+    texts.push(text(&d));
+    let w = written(d.tile().tscene(), road);
+    assert!(w[1][0].is_some() && w[1][1].is_some() && w[0][1].is_none(), "{w:?}");
+    let turned = d.tile().spline_world_handles(road)[1];
+    assert!((turned.0.unwrap().z - 0.0).abs() < 1e-3, "mirrored: {turned:?}");
+
+    // The point moved: its handles go with it; a point inserted before it gets none written.
+    let before = read(d.tile().tscene(), road)[1];
+    d.polygon_point(road, "move", 1, Float3::new(32.0, 0.0, 12.0), 2).unwrap();
+    texts.push(text(&d));
+    let after = read(d.tile().tscene(), road)[1];
+    let moved = after.control_out - before.control_out;
+    assert!((moved - (after.position - before.position)).x.abs() < 1e-6 && (moved - (after.position - before.position)).z.abs() < 1e-6);
+    d.polygon_point(road, "insert", 0, Float3::new(20.0, 0.0, 9.0), 3).unwrap();
+    let w = written(d.tile().tscene(), road);
+    assert_eq!(w.len(), 4);
+    assert!(w[1].iter().all(Option::is_none) && w[2].iter().all(Option::is_some), "{w:?}");
+
+    // Each undone in turn: the road as it was before it (the handle's first writing, its own undo step), then nothing.
+    let names = ["the handle", "the move", "the insert"];
+    for k in (0..texts.len()).rev() {
+        d.history_mut().undo();
+        if k == 0 {
+            d.history_mut().undo();
+        }
+
+        assert!(text(&d) == texts[k], "undoing {}: {}", names[k], String::from_utf8_lossy(&text(&d)));
+    }
+
+    d.history_mut().undo();
+    assert!(text(&d) == original, "undoing the road");
+}

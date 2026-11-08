@@ -1219,7 +1219,7 @@ impl Tile {
             if self.is_polygon(e) {
                 let spline = wce_tile::splines::is_spline(ty);
                 let closed = !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
-                let points = if spline { self.spline_world_curve(e) } else if self.is_road(e) { self.road_world_curve(e) } else { self.polygon_world_points(e) };
+                let points = if spline { self.spline_world_curve(e) } else if self.is_road(e) { self.road_world_curve(e) } else if self.is_wall(e) { self.wall_world_curve(e) } else { self.polygon_world_points(e) };
                 if points.len() > 1 {
                     out.push((points, closed));
                 }
@@ -1259,7 +1259,7 @@ impl Tile {
         let ty = self.tscene().type_of(elem).to_owned();
         let spline = wce_tile::splines::is_spline(&ty);
         let closed = !spline && self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
-        let points = if spline { self.spline_world_curve(elem) } else if self.is_road(elem) { self.road_world_curve(elem) } else { self.polygon_world_points(elem) };
+        let points = if spline { self.spline_world_curve(elem) } else if self.is_road(elem) { self.road_world_curve(elem) } else if self.is_wall(elem) { self.wall_world_curve(elem) } else { self.polygon_world_points(elem) };
         self.covers_dirty.remove(&elem);
         if points.is_empty() {
             self.covers.remove(&elem);
@@ -2058,7 +2058,7 @@ impl Tile {
                 }
 
                 // A spline's handles: a line from the point, a small diamond at the end.
-                if wce_tile::splines::is_spline(self.tscene().type_of(e)) {
+                if wce_tile::splines::has_handles(self.tscene().type_of(e)) {
                     let points = self.polygon_display_points(e);
                     let handle = overlay_colour(0.4, 0.8, 1.0, 1.0);
                     for (q, (hin, hout)) in points.into_iter().zip(self.spline_world_handles(e)) {
@@ -2142,6 +2142,41 @@ impl Tile {
         let pts = wce_tile::splines::read(self.tscene(), elem);
         let closed = self.tscene().doc().get(elem, "closed").is_some_and(|v| v == "1");
         self.local_to_world(elem, &wce_tile::splines::curve(&pts, closed, 16))
+    }
+
+    /// The segments of a polygon or a spline in the world (metres), each from its point to the next, sampled along its curve (a polygon's
+    /// straight; a spline's Bezier, by its handles).
+    pub fn spline_world_segments(&self, elem: usize) -> Vec<Vec<Float3>> {
+        let sc = self.tscene();
+        if wce_tile::splines::has_handles(sc.type_of(elem)) {
+            let pts = wce_tile::splines::read(sc, elem);
+            let closed = wce_tile::splines::is_spline(sc.type_of(elem)) && sc.doc().get(elem, "closed").is_some_and(|v| v == "1");
+            let n = pts.len();
+            let count = if closed && n > 2 { n } else { n.saturating_sub(1) };
+            return (0..count).map(|i| {
+                let (a, b) = (&pts[i], &pts[(i + 1) % n]);
+                let local = (0..=16).map(|k| wce_tile::splines::bezier(a.position, a.control_out, b.control_in, b.position, f64::from(k) / 16.0)).collect::<Vec<_>>();
+                self.local_to_world(elem, &local)
+            }).collect();
+        }
+
+        let pts = self.polygon_world_points(elem);
+        let closed = sc.doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
+        let n = pts.len();
+        let count = if closed && n > 2 { n } else { n.saturating_sub(1) };
+        (0..count).map(|i| vec![pts[i], pts[(i + 1) % n]]).collect()
+    }
+
+    /// A wall's centre line in the world (metres), as the wall is laid (`wce_walls::solver::centre_line_marked`), on the ground.
+    pub(super) fn wall_world_curve(&self, elem: usize) -> Vec<Float3> {
+        let (points, sharp) = wce_walls::scene::wall_points(self.tscene(), elem);
+        let handles = wce_walls::scene::wall_handles(self.tscene(), elem);
+        let u = self.unit();
+        let (line, _) = wce_walls::solver::centre_line_marked(&points, &sharp, &handles);
+        line.iter().step_by(4).chain(line.last()).map(|(p, _)| {
+            let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
+            Float3::new(x, self.terrain_height(x, z), z)
+        }).collect()
     }
 
     /// A spline's handles in the world (metres): each point's `controlIn` and `controlOut`, `None` where no segment uses it.
