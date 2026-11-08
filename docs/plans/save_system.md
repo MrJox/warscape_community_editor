@@ -108,9 +108,10 @@ matters for a tile without a weather file.
 
 - `scripts/weather_smoke.txt` fails at its first `assert_attr` on master too: the Tile tool's `assert_attr` (2026-11, `a5e89232`) is
   registered after the Weather tool's and replaces it. The rest of the script passes with those lines left out.
-- `scripts/cross_tool_check.sh` copies `assembly_kit_battle_tilemap/.../khazad_wall_test`, which this machine's kit doesn't have, and
-  expects `tile.ted` saved in place with a `.bak` (`cross_tool.txt`'s `assert_file_exists %TILE%/tile.ted.bak`, the tile.ted span
-  check): tiles save as `tile.wce` in the project now. Its weather half passes on a copy of another kit tile with that line left out.
+- `scripts/cross_tool_check.sh` used a tile not every kit has (`khazad_wall_test`) and expected Save to write `tile.ted` in place: it
+  uses the vanilla `dense_forest_rugged/1x1/aa` now (five of the game's rock buildings, no rivers; the kit found under `WCE_GAME`, or
+  `WCE_KIT_TILES`), checks that Save All writes the project (`tile.wce`) and not the kit, and makes the `tile.ted` it compares with
+  File > Export > For Assembly Kit into its scratch kit (`save_for_kit`). Passes, both runs identical (2026-11-08).
 
 ## Open points
 
