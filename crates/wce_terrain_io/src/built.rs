@@ -66,7 +66,7 @@ pub fn read(name: &str, files: &MapFiles) -> Result<MapModel> {
         } else if path.eq_ignore_ascii_case(LIST)
             && let Ok(t) = wce_tile::battle_map::tile_list::TileList::parse(&blob.bytes()?)
         {
-            m.tile_list = Some(Item::new(path.clone(), t, blob.clone()));
+            m.tile_list = Some(Item::new_native_tile_list(path.clone(), t, blob.clone()));
         } else {
             m.carried.insert(path.clone(), blob.clone());
         }
@@ -143,7 +143,7 @@ pub fn chmf(field: &PagedU16, cells: (u32, u32), shipped: Option<&[u8]>) -> Opti
 ///
 /// # Errors
 ///
-/// The LF's original file can't be read.
+/// An original file can't be read, or edited v9 placements fail the metadata-integrity guard.
 pub fn write(m: &MapModel, db: Option<&wce_tile::battle_map::tile_db::TileDatabase>) -> Result<MapFiles> {
     let mut folder: BTreeMap<String, Blob> = m.carried.clone();
     if let Some(p) = m.project.as_ref().filter(|p| p.edited())
@@ -169,7 +169,20 @@ pub fn write(m: &MapModel, db: Option<&wce_tile::battle_map::tile_db::TileDataba
                 }
             }
         } else {
-            let blob = if t.edited() { Blob::Bytes(Arc::from(t.get().write())) } else { t.origin.clone() };
+            let mut unchanged = None;
+            if t.edited() && (t.original_version().is_none_or(|v| v == 9) || t.get().version == 9) {
+                let bytes = t.origin.bytes()?;
+                let original = wce_tile::battle_map::tile_list::TileList::parse(&bytes).map_err(|err| file_error(&t.path, err))?;
+                if t.original_version().is_some_and(|v| v != original.version) {
+                    return Err(file_error(&t.path, "original tile-list version differs from its loaded provenance"));
+                }
+                t.get().validate_placement_edit(&original).map_err(|err| file_error(&t.path, err))?;
+                if t.get().same_bits(&original) {
+                    unchanged = Some(Blob::Bytes(bytes));
+                }
+            }
+
+            let blob = unchanged.unwrap_or_else(|| if t.edited() { Blob::Bytes(Arc::from(t.get().write())) } else { t.origin.clone() });
             folder.insert(t.path.clone(), blob);
         }
     }
@@ -210,6 +223,10 @@ pub fn write(m: &MapModel, db: Option<&wce_tile::battle_map::tile_db::TileDataba
 
     Ok(MapFiles { folder })
 }
+
+#[cfg(test)]
+#[path = "built_integrity_test.rs"]
+mod integrity_tests;
 
 /// The files of `written` that differ from `read` (or are new): what an export of an edited built map needs.
 pub fn changed(read: &MapFiles, written: &MapFiles) -> Vec<(String, Vec<u8>)> {

@@ -134,8 +134,13 @@ impl PlacementsPanel {
     }
 
     /// An edit of the document's battle field onto its history: `f` changes a copy (an error leaves it), the bounds made again.
-    fn edit(e: &mut Editor, doc: DocumentId, name: &str, f: impl FnOnce(&mut TileList, &TileDatabase) -> Result<String, String>) -> Result<String, String> {
+    fn edit(e: &mut Editor, doc: DocumentId, name: &str, changes_count: bool, f: impl FnOnce(&mut TileList, &TileDatabase) -> Result<String, String>) -> Result<String, String> {
         let d = e.docs.find_as_mut::<MapDocument>(doc).ok_or("no map shown")?;
+        Self::edit_document(d, name, changes_count, f)
+    }
+
+    fn edit_document(d: &mut MapDocument, name: &str, changes_count: bool, f: impl FnOnce(&mut TileList, &TileDatabase) -> Result<String, String>) -> Result<String, String> {
+        Self::list(d).ok_or("no placements to edit")?.check_placement_edit(name, changes_count)?;
         let before = Self::list(d).ok_or("a built map with a terrain.tile_list (Rome 2's pack maps) has placements to edit")?.clone();
         if before.version >= 11 {
             return Err("placements are edited on Rome 2's tile lists (versions 7 to 9)".to_owned());
@@ -144,6 +149,7 @@ impl PlacementsPanel {
         let db = d.db.clone();
         let mut after = before.clone();
         let said = f(&mut after, &db)?;
+        after.validate_placement_edit(&before)?;
         rebound(&mut after, &db);
         let watch = d.cells.clone();
         d.push_tile_list(TileListCommand { name: name.to_owned(), before, after, watch });
@@ -167,7 +173,7 @@ impl PlacementsPanel {
 
             Mode::Move => {
                 let i = self.selected.ok_or("select a placement first")?;
-                Self::edit(e, doc, "move a placement", |l, db| {
+                Self::edit(e, doc, "move a placement", false, |l, db| {
                     let p = l.placements.get(i).cloned().ok_or("no such placement")?;
                     let r = rect(l, db, &p);
                     let to = [at.0, at.1, at.0 + r[2] - r[0], at.1 + r[3] - r[1]];
@@ -182,7 +188,7 @@ impl PlacementsPanel {
 
             Mode::Place => {
                 let (choice, variation, rotation) = (self.choice.clone(), self.variation, self.rotation);
-                let r = Self::edit(e, doc, "place a tile", |l, db| place(l, db, &choice, variation, rotation, at));
+                let r = Self::edit(e, doc, "place a tile", true, |l, db| place(l, db, &choice, variation, rotation, at));
                 if r.is_ok() {
                     self.selected = e.docs.find_as::<MapDocument>(doc).and_then(Self::list).map(|l| l.placements.len() - 1);
                 }
@@ -199,7 +205,7 @@ impl PlacementsPanel {
 
     /// The selected placement turned a quarter, removed, or given another variation.
     pub fn turn(e: &mut Editor, doc: DocumentId, i: usize) -> Result<String, String> {
-        Self::edit(e, doc, "turn a placement", |l, db| {
+        Self::edit(e, doc, "turn a placement", false, |l, db| {
             let p = l.placements.get(i).cloned().ok_or("no such placement")?;
             let k = ROTATIONS.iter().position(|&r| r == p.flags & 0xf0).unwrap_or(0);
             let mut q = p.clone();
@@ -214,7 +220,7 @@ impl PlacementsPanel {
     }
 
     pub fn remove(e: &mut Editor, doc: DocumentId, i: usize) -> Result<String, String> {
-        Self::edit(e, doc, "remove a placement", |l, _| {
+        Self::edit(e, doc, "remove a placement", true, |l, _| {
             if i >= l.placements.len() {
                 return Err("no such placement".to_owned());
             }
@@ -225,7 +231,7 @@ impl PlacementsPanel {
     }
 
     pub fn set_variation(e: &mut Editor, doc: DocumentId, i: usize, v: u8) -> Result<String, String> {
-        Self::edit(e, doc, "change a placement's variation", |l, db| {
+        Self::edit(e, doc, "change a placement's variation", false, |l, db| {
             let p = l.placements.get(i).ok_or("no such placement")?;
             let t = l.names.get(p.name).and_then(|n| tile_of(db, n)).ok_or("its tile is not in the database")?;
             let name = db.tiles[t].variations.get(usize::from(v)).map(|x| x.location.clone()).ok_or("no such variation")?;
@@ -272,7 +278,9 @@ impl PlacementsPanel {
                 gui::same_line();
                 if gui::button("remove##placements") {
                     action = Some(Self::remove(e, doc, i));
-                    self.selected = None;
+                    if action.as_ref().is_some_and(Result::is_ok) {
+                        self.selected = None;
+                    }
                 }
             }
         }
@@ -321,6 +329,10 @@ impl PlacementsPanel {
         gui::end_child();
     }
 }
+
+#[cfg(test)]
+#[path = "placement_integrity_test.rs"]
+mod integrity_tests;
 
 /// A placement in words: its tile, variation, origin and turn.
 fn describe(l: &TileList, db: &TileDatabase, i: usize) -> String {
