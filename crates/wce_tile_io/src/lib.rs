@@ -47,6 +47,7 @@ fn collect(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Blob>) -> std::i
     for e in std::fs::read_dir(dir)? {
         let e = e?;
         let name = e.file_name().to_string_lossy().into_owned();
+        if wce_foundation::publication::reserved(&name) { continue; }
         let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
         if e.file_type()?.is_dir() {
             collect(&e.path(), &rel, out)?;
@@ -105,26 +106,12 @@ impl TileFiles {
     ///
     /// A file could not be read or written.
     pub fn write_to(&self, dir: &Path, entry_dir: Option<&Path>) -> Result<()> {
-        for (rel, blob) in &self.folder {
-            let target = dir.join(rel);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            match blob {
-                Blob::File(src) if src == &target => {}
-                Blob::File(src) => {
-                    std::fs::copy(src, &target)?;
-                }
-
-                Blob::Bytes(b) => std::fs::write(&target, b)?,
-            }
-        }
-
-        if let (Some((name, blob)), Some(entry_dir)) = (&self.entry, entry_dir) {
-            std::fs::create_dir_all(entry_dir)?;
-            std::fs::write(entry_dir.join(name), blob.bytes()?)?;
-        }
+        use wce_foundation::publication::{Output,Source,Staged,resource_path};
+        let source=|blob:&Blob|match blob{Blob::File(p)=>Source::File(p.clone()),Blob::Bytes(b)=>Source::Bytes(b.clone())};
+        let mut outputs=vec![];
+        for (rel,blob) in &self.folder {outputs.push(Output::new(resource_path(dir,rel).map_err(std::io::Error::other)?,source(blob)));}
+        if let (Some((name,blob)),Some(entry_dir))=(&self.entry,entry_dir){let mut entry=Output::new(resource_path(entry_dir,name).map_err(std::io::Error::other)?,source(blob));entry.priority=4;outputs.push(entry);}
+        Staged::prepare(outputs).and_then(Staged::publish).map_err(|e|std::io::Error::other(e.to_string()))?;
 
         Ok(())
     }
