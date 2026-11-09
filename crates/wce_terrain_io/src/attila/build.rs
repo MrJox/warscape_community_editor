@@ -62,7 +62,7 @@ fn dds32(b: &[u8]) -> Option<(u32, u32, Vec<[u8; 4]>)> {
 ///
 /// # Errors
 ///
-/// The model has no tile map, or a carried file can't be read.
+/// The model has no tile map, a carried file can't be read, or a BLM name/count cannot be encoded.
 pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
     let tiles = m.layer(&LayerRole::TileMap).map(|l| l.get()).ok_or_else(|| crate::file_error("tile_map.png", "no tile map"))?;
     let (w, h) = (tiles.width(), tiles.height());
@@ -137,7 +137,8 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
         }
     } else if let Some(p) = m.project.as_ref().map(|p| p.get()) {
         let climates = wce_terrain::locations::climate_environments(inputs.db, inputs.environment_map);
-        files.push(("locations.blm".to_owned(), wce_terrain::locations::build(p, w, h, &climates).write()));
+        let locations = wce_terrain::locations::build(p, w, h, &climates).write().map_err(|e| crate::file_error("locations.blm", e))?;
+        files.push(("locations.blm".to_owned(), locations));
 
         let layer = |r: LayerRole| m.layer(&r).map(|l| rgba(l.get()));
         let snow = layer(LayerRole::Snow(String::new()));

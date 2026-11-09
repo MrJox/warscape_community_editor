@@ -149,7 +149,7 @@ pub fn write(m: &MapModel, db: Option<&wce_tile::battle_map::tile_db::TileDataba
     if let Some(p) = m.project.as_ref().filter(|p| p.edited())
         && let Some(original) = locations(m)
     {
-        let (blm, deployments) = scene::write(p.get(), &original);
+        let (blm, deployments) = scene::write(p.get(), &original)?;
         let key = folder.keys().find(|k| k.eq_ignore_ascii_case(BLM)).cloned().unwrap_or_else(|| BLM.to_owned());
         folder.insert(key, Blob::Bytes(Arc::from(blm)));
         for (name, bytes) in deployments {

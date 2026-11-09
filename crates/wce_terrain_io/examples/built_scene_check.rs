@@ -45,7 +45,7 @@ fn main() {
             }
         };
 
-        let (blm2, deps) = scene::write(&p, &blm);
+        let (blm2, deps) = scene::write(&p, &blm).expect("representable locations.blm candidate");
         let blm_same = blm2 == bytes;
         let made: BTreeMap<String, Vec<u8>> = deps.into_iter().collect();
         // The files no location names (numbers past the made ones) stay as they are: orphans.

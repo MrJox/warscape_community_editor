@@ -274,10 +274,15 @@ fn deployments(p: &TerryProject) -> Vec<(String, Vec<u8>)> {
 }
 
 /// The locations and deployment files of a scene: (`locations.blm`, `deployment/deployment_NNNN.xml` files).
-pub fn write(p: &TerryProject, original: &BattleLocations) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
+///
+/// # Errors
+///
+/// A candidate BLM name or count cannot be represented in the native format.
+pub fn write(p: &TerryProject, original: &BattleLocations) -> crate::Result<(Vec<u8>, Vec<(String, Vec<u8>)>)> {
     let records = records(p, original.width, original.height);
     let mut types: Vec<(String, Vec<Location>)> = original.types.iter().filter_map(|(t, _)| records.iter().find(|r| &r.0 == t).cloned()).collect();
     types.extend(records.iter().filter(|r| !original.types.iter().any(|(t, _)| t == &r.0)).cloned());
     let blm = BattleLocations { version: original.version, width: original.width, height: original.height, types, tail: original.tail.clone() };
-    (blm.write(), deployments(p))
+    let bytes = blm.write().map_err(|e| crate::file_error("locations.blm", e))?;
+    Ok((bytes, deployments(p)))
 }
