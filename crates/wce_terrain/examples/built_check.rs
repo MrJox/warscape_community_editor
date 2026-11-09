@@ -58,7 +58,7 @@ fn main() {
     let tm = TileMap::parse(&std::fs::read(out.join("tile_map.index")).expect("index"), &std::fs::read(out.join("tile_map.tiles")).expect("tiles")).expect("tile map");
     let want = std::fs::read(out.join("locations.blm")).expect("locations.blm");
     let blm = wce_terrain::locations::build(&p, tm.width, tm.height, &climates);
-    if blm.write() == want {
+    if blm.write().expect("representable locations.blm") == want {
         println!("locations.blm: the same ({} bytes)", want.len());
     } else {
         failed = true;

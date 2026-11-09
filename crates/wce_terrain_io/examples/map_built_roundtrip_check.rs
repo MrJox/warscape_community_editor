@@ -52,7 +52,7 @@ fn check(label: &str, files: &BTreeMap<String, Vec<u8>>, t: &mut Totals) {
         if lower == "terrain.tile_list" {
             t.add("tile_list", &path, TileList::parse(b).map(|l| l.write() == *b));
         } else if lower == "locations.blm" {
-            t.add("locations.blm", &path, BattleLocations::parse(b).map(|l| l.write() == *b));
+            t.add("locations.blm", &path, BattleLocations::parse(b).and_then(|l| l.write().map(|out| out == *b)));
         } else if lower.ends_with(".data") && b.starts_with(b"CHMF") {
             t.add("chmf", &path, ChmfFile::parse(b).map(|c| c.write() == *b).map_err(|e| e.0));
         } else if lower.starts_with("deployment/") && lower.ends_with(".xml") {
