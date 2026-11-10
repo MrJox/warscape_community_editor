@@ -93,6 +93,7 @@ pub fn read(name: &str, files: &MapFiles) -> Result<MapModel> {
         m.project = Some(Item::new(SCENE, p, Blob::Bytes(Arc::from(&[][..]))));
     }
 
+    crate::campaign_props::load(&mut m)?;
     Ok(m)
 }
 
@@ -146,6 +147,7 @@ pub fn chmf(field: &PagedU16, cells: (u32, u32), shipped: Option<&[u8]>) -> Opti
 /// The LF's original file can't be read.
 pub fn write(m: &MapModel, db: Option<&wce_tile::battle_map::tile_db::TileDatabase>) -> Result<MapFiles> {
     let mut folder: BTreeMap<String, Blob> = m.carried.clone();
+    crate::campaign_props::write(m, &mut folder)?;
     if let Some(p) = m.project.as_ref().filter(|p| p.edited())
         && let Some(original) = locations(m)
     {
