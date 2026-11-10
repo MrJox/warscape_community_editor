@@ -1479,14 +1479,15 @@ fn blocked_ground(input: &Input, g: &Grid) -> (Mask, Mask) {
     (blocked, nogo)
 }
 
-/// How far a fitted street's side goes from its line where nothing stops it sooner (units): CA's streets are about 32 wide (median).
-pub const STREET_SIDE_MAX: f64 = 20.0;
+/// How far a fitted street's side goes from its line to the nearest face (units): as far as the generator's (all the free ground between
+/// the nodes is the street's, user 2026-11-10; in open ground it gets wide).
+pub const STREET_SIDE_MAX: f64 = 80.0;
 
 /// The two sides of a street (the editor's *Fit the street boundaries*), much as `generate` makes each street's: along its line (`line`,
 /// its Street: from inside `a`'s rectangle to inside `b`'s) where it is in neither node's Boundary (their rectangles for one without),
 /// each side at the corridor's face (the no-go regions, buildings, fort pieces, steep ground, sea and the nodes' Boundaries, the two it
-/// joins too; at most [`STREET_SIDE_MAX`] out, where nothing is nearer), smoothed, each end ticked into the node's Boundary. `None`
-/// without a corridor.
+/// joins too; the nearest, at most [`STREET_SIDE_MAX`] out), smoothed, each end ticked into the node's Boundary. `None` without a
+/// corridor.
 pub fn street_sides(input: &Input, line: &[P], a: &Node, b: &Node, others: &[Node]) -> Option<[Vec<P>; 2]> {
     if line.len() < 2 {
         return None;

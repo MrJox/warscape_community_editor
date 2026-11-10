@@ -6,6 +6,65 @@ use wce_foundation::wce_prof;
 use super::{PickGrid, Tile};
 
 impl Tile {
+    /// The polygon or line a click on the ground at `at` (x, z) picks, the last resort of a click (after the models and the markers): the
+    /// one whose drawn outline (`polygon_outline`) is nearest within `reach` metres, else the smallest closed one it is inside. Shown and
+    /// selectable ones only, as the polygons are drawn (the display's Polygons on, their type not hidden). So a holder's shapes (a siege
+    /// AI node's Bounding Box and Boundary, a deployment zone's regions) are picked by a click on them.
+    pub fn pick_polygon(&self, at: Float3, reach: f32) -> Option<usize> {
+        wce_prof!("tile.pick_polygon");
+        if !self.display.show_polygons {
+            return None;
+        }
+
+        let (x, z) = (at.x, at.z);
+        let mut near: Option<(f32, usize)> = None;
+        let mut inside: Option<(f32, usize)> = None;
+        for &e in self.instances.iter().filter(|&&e| self.is_polygon(e) && self.shown(e) && self.selectable(e)) {
+            if self.display.hidden_types.contains(self.tscene().type_of(e)) {
+                continue;
+            }
+
+            let (pts, closed) = self.polygon_outline(e);
+            let n = pts.len();
+            if n < 2 {
+                continue;
+            }
+
+            // The outline's bounding box, grown by the reach: most polygons are far from the click.
+            let (lo, hi) = pts.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(lo, hi), p| ([lo[0].min(p.x), lo[1].min(p.z)], [hi[0].max(p.x), hi[1].max(p.z)]));
+            if x < lo[0] - reach || x > hi[0] + reach || z < lo[1] - reach || z > hi[1] + reach {
+                continue;
+            }
+
+            let segments = if closed && n > 2 { n } else { n - 1 };
+            let mut d = f32::MAX;
+            let mut crossings = false;
+            for s in 0..segments {
+                let (a, b) = (pts[s], pts[(s + 1) % n]);
+                let (dx, dz) = (b.x - a.x, b.z - a.z);
+                let l2 = dx * dx + dz * dz;
+                let t = if l2 > 1e-12 { (((x - a.x) * dx + (z - a.z) * dz) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                d = d.min((x - a.x - dx * t).hypot(z - a.z - dz * t));
+                if closed && (a.z > z) != (b.z > z) && x < a.x + (z - a.z) / (b.z - a.z) * dx {
+                    crossings = !crossings;
+                }
+            }
+
+            if d <= reach && near.is_none_or(|(nd, _)| d < nd) {
+                near = Some((d, e));
+            }
+
+            if crossings {
+                let area = (0..n).map(|i| pts[i].x * pts[(i + 1) % n].z - pts[(i + 1) % n].x * pts[i].z).sum::<f32>().abs() * 0.5;
+                if inside.is_none_or(|(a, _)| area < a) {
+                    inside = Some((area, e));
+                }
+            }
+        }
+
+        near.or(inside).map(|(_, e)| e)
+    }
+
     fn build_pick_grid(&self) {
         wce_prof!("tile.pick_grid");
         let mut g = PickGrid { valid: true, ..Default::default() };
