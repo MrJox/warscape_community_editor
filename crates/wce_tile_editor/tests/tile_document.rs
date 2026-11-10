@@ -1266,7 +1266,9 @@ fn shapes_go_only_into_their_holders() {
     let node = d.tile().tscene().find_all("SiegeAINodeInstance")[0];
     let boundary = BTreeMap::from([("name".to_owned(), "Boundary".to_owned())]);
     let tri = Create::Line(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(9.0, 0.0, 0.0), Float3::new(4.0, 0.0, 7.0)]);
+    let _ = d.take_selection_hint();
     let b = d.create_with("SIEGE_AI_POLYGON_INSTANCE", node, &tri, "", &boundary).unwrap();
+    assert_eq!(d.take_selection_hint(), Some(vec![item_of(node)]), "a drawn shape leaves its node selected");
     let node = d.tile().tscene().find_all("SiegeAINodeInstance")[0];
     assert_eq!(names(&d, node), ["Bounding Box", "Boundary"]);
     assert_eq!(d.tile().tscene().children(node)[1], b);
@@ -1341,7 +1343,9 @@ fn a_bounding_box_is_a_rectangle_and_a_boundary_fits_the_ground() {
     // raster's 2 units), and reaches further the other ways.
     let nogo = [(cx + 10.0, cz - 30.0), (cx + 40.0, cz - 30.0), (cx + 40.0, cz + 30.0), (cx + 10.0, cz + 30.0)].map(|(x, z)| Float3::new(x, 0.0, z));
     d.add_polygon(Some(graph), "NOGO_REGION_POLYGON_INSTANCE", "", &nogo).unwrap();
+    let _ = d.take_selection_hint();
     let b = d.adjust_node_boundary(find(&d), None).unwrap();
+    assert_eq!(d.take_selection_hint(), Some(vec![item_of(find(&d))]), "the node stays selected, not its new Boundary");
     let sc = d.tile().tscene();
     assert_eq!(sc.children(find(&d)).into_iter().map(|c| sc.name(c)).collect::<Vec<_>>(), ["Bounding Box", "Boundary"], "replaced in place");
     assert_eq!(shape(&d, "Boundary"), b);
