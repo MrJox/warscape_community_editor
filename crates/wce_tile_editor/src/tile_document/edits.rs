@@ -736,6 +736,7 @@ impl TileDocument {
         }
 
         self.check_structure(&[], Some(into))?;
+        self.check_fits(items.iter().map(|it| text_kind(&it.text)), into)?;
         let mark = self.begin()?;
         let result = self.paste_elements(items, into, offset);
         match result {
@@ -876,6 +877,8 @@ impl TileDocument {
 
         let t = self.tile();
         let layer = layer.or(t.tscene().scene_graph()).ok_or("this tile has no SCENE_GRAPH, so there is no layer to add a polygon to")?;
+        self.check_fits([kind], layer)?;
+        let t = self.tile();
 
         // A wall's ends go onto the fort buildings' ends near them.
         let mut pts = pts.to_vec();
@@ -1280,6 +1283,7 @@ impl TileDocument {
         }
 
         self.check_structure(&[elem], Some(layer))?;
+        self.check_fits([self.tile().tscene().type_of(elem)], layer)?;
 
         if self.tile().tscene().is_descendant(layer, elem) {
             return Err("cannot move a layer into itself".to_owned());
@@ -1422,9 +1426,13 @@ impl TileDocument {
     pub fn move_items(&mut self, elems: &[usize], layer: usize, before: Option<usize>) -> Result<(), String> {
         self.check_structure(elems, Some(layer))?;
         let sc = self.tile().tscene();
-        if elems.is_empty() || layer >= sc.doc().elements().len() || !sc.is_layer(layer) {
+        let holder = layer < sc.doc().elements().len() && wce_tile::parents::child_kind(sc.type_of(layer)).is_some();
+        if elems.is_empty() || layer >= sc.doc().elements().len() || !(sc.is_layer(layer) || holder) {
             return Err("nothing to move, or the target is not a layer".to_owned());
         }
+
+        let n = sc.doc().elements().len();
+        self.check_fits(top_level(sc, elems.iter().copied().filter(|&e| e < n).collect()).into_iter().map(|e| sc.type_of(e)), layer)?;
 
         if elems.iter().any(|&e| e >= sc.doc().elements().len() || sc.type_of(e) == "SCENE_GRAPH") {
             return Err("cannot move this element".to_owned());
@@ -1472,6 +1480,7 @@ impl TileDocument {
         }
 
         let top = top_level(sc, elems.to_vec());
+        top.iter().try_for_each(|&e| wce_tile::parents::fits(sc.type_of(e), "UserInstanceGroup"))?;
         let els = sc.doc().elements();
         let mut parent = None;
         let mut p = els[top[0]].parent;
@@ -1656,9 +1665,11 @@ impl TileDocument {
 
     /// Makes a new instance of `kind` in the layer `into`: a point type (`Create::Point`, on the ground at a world point) or a drawn type
     /// (`Create::Line`, world points on the ground). `key` is the model, decal, tree or effect where the type has one. The types made of
-    /// several elements are made whole: a capture location with its 20 m boundary circle, a siege AI node with a 20 m square area, a
-    /// deployment zone group with a 64 m square polygon (a drawn deployment polygon goes into the selected group, `into`, or into a new
-    /// group), a siege AI edge with its drawn boundary and a second one 10 m to its right. One undo entry; the selection afterwards is it.
+    /// several elements are made whole: a capture location with its 20 m boundary circle, a siege AI node with its 20 m square Bounding Box
+    /// and a 24 m Boundary, a deployment zone group with a 64 m square polygon (a drawn deployment polygon goes into the selected group,
+    /// `into`, or into a new group), a siege AI edge with its drawn Street and, a street edge, a Street boundary 8 m to each side. A siege AI
+    /// shape or a capture location boundary goes only into its holder (`into`), in a role of it (`shape_role`). One undo entry; the
+    /// selection afterwards is it.
     ///
     /// # Errors
     ///
@@ -1696,11 +1707,32 @@ impl TileDocument {
             (_, Create::Point(p)) => point_instance(kind, local(*p), key, unit)?,
             (
                 "ZONE_POLYGON_INSTANCE" | "CivilianDeploymentZone" | "LiteBuildingZone" | "AI_HINT_POLYGON_INSTANCE" | "NOGO_REGION_POLYGON_INSTANCE"
-                | "GO_REGION_POLYGON_INSTANCE" | "VegetationExclusionPolygonInstance" | "SIEGE_AI_POLYGON_INSTANCE",
+                | "GO_REGION_POLYGON_INSTANCE" | "VegetationExclusionPolygonInstance",
                 Create::Line(pts),
             ) => {
                 let (c, points) = line(pts)?;
                 new_polygon(kind, points, true).position(c)
+            }
+
+            // A shape of a siege AI node or edge or of a capture location: in the role named (a draft's `name`), else the first one the
+            // holder lacks; it replaces the holder's one of that role when it has only one.
+            ("SIEGE_AI_POLYGON_INSTANCE" | "CaptureLocationPolygonInstance", Create::Line(pts)) => {
+                let role = self.shape_role(into, attrs.get("name").map(String::as_str))?;
+                let (c, mut points) = line(pts)?;
+                if role.name == "Bounding Box" {
+                    points = bounding_rectangle(points);
+                }
+
+                let mut n = new_polygon(kind, points, role.closed).position(c).attr("name", role.name);
+                if role.closed {
+                    n = n.attr("polygon_closed", "1");
+                }
+
+                if kind == "CaptureLocationPolygonInstance" {
+                    n = n.attr("polygon_shape", "PS_POLYGON");
+                }
+
+                n
             }
 
             (super::WALL_SPLINE, Create::Line(pts)) => {
@@ -1730,9 +1762,12 @@ impl TileDocument {
                 if into_type == "DeploymentZonePolygonInstanceGroup" {
                     new_polygon(kind, points, true).position(c)
                 } else {
-                    // A new group around it.
+                    // A new group around it (scripts: `add_polygon`; the editor draws regions in a zone), the polygon with the values asked
+                    // for it (they were left out here before).
                     let mut g = NewInstance::new("DeploymentZonePolygonInstanceGroup").position(c);
-                    g.children.push(element_text(&new_polygon(kind, points, true))?);
+                    let mut p = new_polygon(kind, points, true);
+                    p.attrs.extend(attrs.iter().map(|(k, v)| (k.clone(), v.clone())));
+                    g.children.push(element_text(&p)?);
                     g
                 }
             }
@@ -1740,15 +1775,14 @@ impl TileDocument {
             ("SiegeAIEdgeInstance", Create::Line(pts)) => {
                 let (c, points) = line(pts)?;
 
-                // The second boundary: the first moved 10 m to the right of its direction.
-                let (a, b) = (points[0], points[points.len() - 1]);
-                let d = b - a;
-                let len = (d.x * d.x + d.z * d.z).sqrt().max(1e-9);
-                let off = Double3::new(-d.z / len, 0.0, d.x / len) * (10.0 * unit);
-                let other = points.iter().map(|&p| p + off).collect::<Vec<_>>();
+                // TEd's shapes: the drawn line is the Street; a street edge has a Street boundary to each side of it, 8 m away (CA's
+                // corridors are about 16 m wide).
                 let mut n = NewInstance::new(kind).position(c);
-                for b in [points, other] {
-                    n.children.push(element_text(&new_polygon("SIEGE_AI_POLYGON_INSTANCE", b, false))?);
+                let ty = attrs.get("type").map_or("SAET_STREET", String::as_str);
+                let sides = if ty == "SAET_STREET" { side_lines(&points, 8.0 * unit) } else { vec![] };
+                n.children.push(element_text(&new_polygon("SIEGE_AI_POLYGON_INSTANCE", points, false).attr("name", "Street"))?);
+                for side in sides {
+                    n.children.push(element_text(&new_polygon("SIEGE_AI_POLYGON_INSTANCE", side, false).attr("name", "Street boundary"))?);
                 }
 
                 n
@@ -1784,9 +1818,23 @@ impl TileDocument {
             element.attrs.extend(attrs.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
 
+        self.check_fits([element.kind.as_str()], into)?;
+
+        // A holder's shape: in its role's place among the holder's shapes (TEd's order), in place of the one it replaces.
+        let placed = if wce_tile::parents::holders(&element.kind).is_empty() { None } else { Some(self.shape_place(into, &element)) };
         let text = element_text(&element)?;
         let mark = self.begin()?;
-        match self.tscene_mut().insert_element_text(into, &text) {
+        let inserted = self.tscene_mut().insert_element_text(into, &text).and_then(|e| match placed {
+            Some((before, replaced)) => self.put_shape(e, into, before, replaced),
+            None => Ok(e),
+        });
+
+        match inserted {
+            Ok(e) if placed.is_some_and(|p| p != (None, None)) => {
+                self.push_splice(format!("Add {kind}"), mark, vec![], vec![item_of(e)]);
+                Ok(e)
+            }
+
             Ok(e) => {
                 self.push_splice_added(format!("Add {kind}"), mark, vec![], vec![item_of(e)], &[e]);
                 Ok(e)
@@ -1855,6 +1903,101 @@ impl TileDocument {
     /// # Errors
     ///
     /// An item (or `into`) is inside a reference: says which.
+    /// Whether elements of these types may go into `into`: a deployment region only into a deployment zone, a siege AI shape only into a
+    /// node or an edge, a capture location's boundary only into one, and those holders hold nothing else (`wce_tile::parents`).
+    ///
+    /// # Errors
+    ///
+    /// One may not: says where it goes.
+    pub fn check_fits<'a>(&self, kinds: impl IntoIterator<Item = &'a str>, into: usize) -> Result<(), String> {
+        let sc = self.tile().tscene();
+        if into >= sc.doc().elements().len() {
+            return Ok(());
+        }
+
+        let into_kind = sc.type_of(into);
+        kinds.into_iter().try_for_each(|k| wce_tile::parents::fits(k, into_kind))
+    }
+
+    /// The nearest of `elem` and the elements above it that can hold a `kind` (`wce_tile::parents::holders`).
+    pub fn holder_for(&self, kind: &str, elem: usize) -> Option<usize> {
+        let sc = self.tile().tscene();
+        let els = sc.doc().elements();
+        let holders = wce_tile::parents::holders(kind);
+        std::iter::successors(Some(elem).filter(|&e| e < els.len()), |&x| els[x].parent).find(|&x| holders.contains(&sc.type_of(x)))
+    }
+
+    /// The shapes a holder has (`wce_tile::parents::roles`), by its type.
+    pub fn holder_roles(&self, holder: usize) -> &'static [wce_tile::parents::Role] {
+        let sc = self.tile().tscene();
+        if holder >= sc.doc().elements().len() {
+            return &[];
+        }
+
+        wce_tile::parents::roles(sc.type_of(holder), &sc.doc().get(holder, "type").unwrap_or_default())
+    }
+
+    /// A holder's shapes of each of its roles.
+    fn role_shapes(&self, holder: usize) -> Vec<(wce_tile::parents::Role, Vec<usize>)> {
+        let sc = self.tile().tscene();
+        let kids = sc.children(holder);
+        self.holder_roles(holder).iter().map(|&r| (r, kids.iter().copied().filter(|&c| sc.name(c) == r.name).collect())).collect()
+    }
+
+    /// The role a new shape takes in a holder: `named` (one of its roles), else the first one it has fewer of than it may have, else the
+    /// first (which it replaces).
+    ///
+    /// # Errors
+    ///
+    /// Not a holder, a name that is not one of its roles, or a role it has all of that it may have more than one of (a street edge's two
+    /// boundaries).
+    pub fn shape_role(&self, holder: usize, named: Option<&str>) -> Result<wce_tile::parents::Role, String> {
+        let shapes = self.role_shapes(holder);
+        let Some(first) = shapes.first().map(|c| c.0) else {
+            return Err("draw it inside a siege AI node or edge, a deployment zone or a capture location".to_owned());
+        };
+
+        let role = match named.filter(|n| !n.is_empty()) {
+            Some(n) => shapes.iter().find(|c| c.0.name == n).map(|c| c.0).ok_or_else(|| {
+                format!("a {} has no shape named {n}", wce_tile::parents::label(self.tile().tscene().type_of(holder)))
+            })?,
+
+            None => shapes.iter().find(|c| c.0.most == 0 || c.1.len() < c.0.most).map_or(first, |c| c.0),
+        };
+
+        let have = shapes.iter().find(|c| c.0 == role).map_or(0, |c| c.1.len());
+        if role.most > 1 && have >= role.most {
+            return Err(format!("it has its {} {}s already: delete one first", role.most, role.name.to_lowercase()));
+        }
+
+        Ok(role)
+    }
+
+    /// Where a new shape (its role from its `name`) goes among its holder's: in place of the one it replaces (its role's, when the holder
+    /// has only one), else in front of the first shape of a later role; and the one it replaces.
+    fn shape_place(&self, holder: usize, shape: &wce_tile::new_instances::NewInstance) -> (Option<usize>, Option<usize>) {
+        let name = shape.attrs.get("name").map(String::as_str).unwrap_or_default();
+        let shapes = self.role_shapes(holder);
+        let Some(at) = shapes.iter().position(|c| c.0.name == name) else { return (None, None) };
+        let replaced = if shapes[at].0.most == 1 { shapes[at].1.first().copied() } else { None };
+        let later = shapes[at + 1..].iter().flat_map(|c| c.1.iter().copied()).min();
+        (replaced.or(later), replaced)
+    }
+
+    /// A shape just put at the end of its holder moved in front of `before`, and `replaced` (which is before it) taken away; returns where
+    /// the shape is then. Inside an edit.
+    fn put_shape(&mut self, shape: usize, holder: usize, before: Option<usize>, replaced: Option<usize>) -> Result<usize, String> {
+        let Some(before) = before else { return Ok(shape) };
+        let moved = self.tscene_mut().move_elements(vec![shape], holder, Some(before))?;
+        let at = moved.first().copied().unwrap_or(shape);
+        let Some(r) = replaced else { return Ok(at) };
+
+        // In front of the one it replaces: that one comes after it now.
+        let r = if r >= at { r + self.tile().tscene().doc().subtree_size(at) } else { r };
+        self.tscene_mut().remove(r)?;
+        Ok(at)
+    }
+
     pub fn check_structure(&self, elems: &[usize], into: Option<usize>) -> Result<(), String> {
         let doc = self.tile().tscene().doc();
         let els = doc.elements();
@@ -3587,6 +3730,59 @@ impl Tile {
 }
 
 /// A polygon of TEd's shape: its area, open or closed, its points.
+/// A rectangle from drawn points (a siege AI node's Bounding Box is read as one, its 4 points in order): 4 points as drawn, else the box
+/// around them on the ground.
+fn bounding_rectangle(points: Vec<Double3>) -> Vec<Double3> {
+    if points.len() == 4 {
+        return points;
+    }
+
+    let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+    for p in &points {
+        lo = (lo.0.min(p.x), lo.1.min(p.z));
+        hi = (hi.0.max(p.x), hi.1.max(p.z));
+    }
+
+    let y = points.iter().map(|p| p.y).sum::<f64>() / points.len().max(1) as f64;
+    vec![Double3::new(lo.0, y, lo.1), Double3::new(hi.0, y, lo.1), Double3::new(hi.0, y, hi.1), Double3::new(lo.0, y, hi.1)]
+}
+
+/// The two lines `off` to each side of a line: each point moved along the mean of its segments' normals, on the ground.
+fn side_lines(points: &[Double3], off: f64) -> Vec<Vec<Double3>> {
+    let n = points.len();
+    if n < 2 {
+        return vec![];
+    }
+
+    // The normal of segment s (s in 0..n - 1).
+    let normal = |s: usize| {
+        let (a, b) = (points[s], points[s + 1]);
+        let (dx, dz) = (b.x - a.x, b.z - a.z);
+        let len = (dx * dx + dz * dz).sqrt().max(1e-9);
+        (-dz / len, dx / len)
+    };
+
+    let at = |i: usize| {
+        let (a, b) = (normal(i.saturating_sub(1)), normal(i.min(n - 2)));
+        let (sx, sz) = (a.0 + b.0, a.1 + b.1);
+        let len = (sx * sx + sz * sz).sqrt();
+        if len > 1e-6 { (sx / len, sz / len) } else { b }
+    };
+
+    [1.0, -1.0].iter().map(|&s| (0..n).map(|i| {
+        let (nx, nz) = at(i);
+        points[i] + Double3::new(nx * off * s, 0.0, nz * off * s)
+    }).collect()).collect()
+}
+
+/// The type of an element's text: its start tag's name.
+pub fn text_kind(text: &[u8]) -> &str {
+    let start = text.iter().position(|&c| c == b'<').map_or(text.len(), |i| i + 1);
+    let rest = &text[start..];
+    let end = rest.iter().position(|&c| c.is_ascii_whitespace() || c == b'/' || c == b'>').unwrap_or(rest.len());
+    std::str::from_utf8(&rest[..end]).unwrap_or_default()
+}
+
 fn new_polygon(kind: &str, points: Vec<Double3>, closed: bool) -> wce_tile::new_instances::NewInstance {
     use wce_tile::new_instances::{NewInstance, NewPoint, polygon_area};
 
@@ -3630,8 +3826,12 @@ pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> R
         }
 
         "SiegeAINodeInstance" => {
+            // TEd's shapes, by name: the Bounding Box (the occupiable rectangle) and the Boundary (the walkable outline) around it.
             let mut n = NewInstance::new(kind).position(at);
-            n.children.push(element_text(&new_polygon("SIEGE_AI_POLYGON_INSTANCE", square(10.0), true).attr("polygon_closed", "1"))?);
+            for (name, half) in [("Bounding Box", 10.0), ("Boundary", 12.0)] {
+                n.children.push(element_text(&new_polygon("SIEGE_AI_POLYGON_INSTANCE", square(half), true).attr("polygon_closed", "1").attr("name", name))?);
+            }
+
             n
         }
 

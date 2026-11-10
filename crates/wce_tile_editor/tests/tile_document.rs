@@ -1,5 +1,6 @@
 //! Undo of tile document edits gives the exact bytes back: the cases the differential dump found broken in the C++ code (and fixed in both).
 
+use std::collections::BTreeMap;
 use std::io::Write;
 
 use wce_editor_core::document::Document;
@@ -1203,12 +1204,12 @@ fn every_kind_is_created_with_its_parts() {
         ("VFXInstance", &at, "enviro_vfx_smoke", &[]),
         ("CivilianShelter", &at, "", &[]),
         ("CaptureLocationInstance", &at, "", &["CaptureLocationPolygonInstance"]),
-        ("SiegeAINodeInstance", &at, "", &["SIEGE_AI_POLYGON_INSTANCE"]),
+        ("SiegeAINodeInstance", &at, "", &["SIEGE_AI_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE"]),
         ("DeploymentZonePolygonInstanceGroup", &at, "", &["DEPLOYMENT_ZONE_POLYGON_INSTANCE"]),
         ("ZONE_POLYGON_INSTANCE", &drawn, "", &[]),
         ("LiteBuildingZone", &drawn, "", &[]),
         ("AISeparatorInstance", &drawn, "", &[]),
-        ("SiegeAIEdgeInstance", &drawn, "", &["SIEGE_AI_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE"]),
+        ("SiegeAIEdgeInstance", &drawn, "", &["SIEGE_AI_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE"]),
         ("DEPLOYMENT_ZONE_POLYGON_INSTANCE", &drawn, "", &[]),
     ];
 
@@ -1235,6 +1236,75 @@ fn every_kind_is_created_with_its_parts() {
         d.history_mut().undo();
     }
 
+    assert_eq!(text(&d), original);
+}
+
+#[test]
+fn shapes_go_only_into_their_holders() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let at = Create::Point(Float3::new(10.0, 0.0, 10.0));
+    let square = Create::Line(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(8.0, 0.0, 0.0), Float3::new(8.0, 0.0, 8.0), Float3::new(0.0, 0.0, 8.0)]);
+    let names = |d: &TileDocument, h: usize| {
+        let sc = d.tile().tscene();
+        sc.children(h).into_iter().map(|c| sc.name(c)).collect::<Vec<_>>()
+    };
+
+    // TEd's shapes, by name, in TEd's order.
+    let node = d.create("SiegeAINodeInstance", graph, &at, "").unwrap();
+    assert_eq!(names(&d, node), ["Bounding Box", "Boundary"]);
+    let line = Create::Line(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(30.0, 0.0, 0.0)]);
+    let edge = d.create("SiegeAIEdgeInstance", graph, &line, "").unwrap();
+    assert_eq!(names(&d, edge), ["Street", "Street boundary", "Street boundary"]);
+
+    // A shape alone goes nowhere but into a holder.
+    assert!(d.create("SIEGE_AI_POLYGON_INSTANCE", graph, &square, "").is_err());
+    assert!(d.create("CaptureLocationPolygonInstance", graph, &square, "").is_err());
+
+    // Drawn into a node: the role asked for replaces the one it has, in its place; a Bounding Box is a rectangle.
+    let node = d.tile().tscene().find_all("SiegeAINodeInstance")[0];
+    let boundary = BTreeMap::from([("name".to_owned(), "Boundary".to_owned())]);
+    let tri = Create::Line(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(9.0, 0.0, 0.0), Float3::new(4.0, 0.0, 7.0)]);
+    let b = d.create_with("SIEGE_AI_POLYGON_INSTANCE", node, &tri, "", &boundary).unwrap();
+    let node = d.tile().tscene().find_all("SiegeAINodeInstance")[0];
+    assert_eq!(names(&d, node), ["Bounding Box", "Boundary"]);
+    assert_eq!(d.tile().tscene().children(node)[1], b);
+    let bbox = BTreeMap::from([("name".to_owned(), "Bounding Box".to_owned())]);
+    let bb = d.create_with("SIEGE_AI_POLYGON_INSTANCE", node, &tri, "", &bbox).unwrap();
+    let node = d.tile().tscene().find_all("SiegeAINodeInstance")[0];
+    assert_eq!(names(&d, node), ["Bounding Box", "Boundary"]);
+    assert_eq!(d.tile().tscene().polygon_points(bb).len(), 4, "the box around the drawn points");
+
+    // A street edge has two boundaries at most.
+    let edge = d.tile().tscene().find_all("SiegeAIEdgeInstance")[0];
+    let side = BTreeMap::from([("name".to_owned(), "Street boundary".to_owned())]);
+    assert!(d.create_with("SIEGE_AI_POLYGON_INSTANCE", edge, &line, "", &side).unwrap_err().contains("delete one first"));
+
+    // Holders hold nothing else, and their shapes stay in them.
+    let layer = d.add_layer(Some(graph), "L").unwrap();
+    let node = d.tile().tscene().find_all("SiegeAINodeInstance")[0];
+    assert!(d.create("POINT_LIGHT_INSTANCE", node, &at, "").is_err());
+    let shape = d.tile().tscene().children(node)[0];
+    assert!(d.move_items(&[shape], layer, None).is_err());
+    assert!(d.group_items(&[shape], "G").is_err());
+
+    // A shape moves from a holder to another of its kind.
+    let other = d.create("SiegeAINodeInstance", graph, &at, "").unwrap();
+    let node = d.tile().tscene().find_all("SiegeAINodeInstance")[0];
+    let shape = d.tile().tscene().children(node)[0];
+    d.move_items(&[shape], other, None).unwrap();
+    let nodes = d.tile().tscene().find_all("SiegeAINodeInstance");
+    assert_eq!((names(&d, nodes[0]).len(), names(&d, nodes[1]).len()), (1, 3));
+
+    // A deployment polygon outside a zone (scripts): a new zone around it, the polygon with the values asked for it.
+    let poly = BTreeMap::from([("deployment_polygon_type".to_owned(), "DZPT_SUBSTRACTIVE".to_owned())]);
+    let g = d.create_with("DEPLOYMENT_ZONE_POLYGON_INSTANCE", graph, &square, "", &poly).unwrap();
+    let sc = d.tile().tscene();
+    assert_eq!(sc.type_of(g), "DeploymentZonePolygonInstanceGroup");
+    assert_eq!(sc.doc().get(sc.children(g)[0], "deployment_polygon_type").as_deref(), Some("DZPT_SUBSTRACTIVE"));
+
+    while d.history_mut().undo() {}
     assert_eq!(text(&d), original);
 }
 

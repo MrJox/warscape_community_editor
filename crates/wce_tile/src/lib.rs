@@ -22,6 +22,7 @@ pub mod height_field;
 pub mod instance_templates;
 pub mod new_instances;
 pub mod new_tile;
+pub mod parents;
 pub mod pixel_layer;
 pub mod prefab_refs;
 pub mod prefab_stage;

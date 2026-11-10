@@ -150,6 +150,10 @@ pub(crate) struct TreeRow {
     pub depth: usize,
     pub key: String,
     pub layer: bool,
+
+    /// It opens to show what it holds: a layer or a group, or a holder (`wce_tile::parents`: a deployment zone's regions, a siege AI node's
+    /// or edge's shapes, a capture location's boundary).
+    pub branch: bool,
     pub open: bool,
     pub kids: usize,
 }
@@ -1845,8 +1849,24 @@ impl TileTool {
         };
 
         let offset = if at_mouse && self.terrain_hit { self.snapped_cursor - first } else { Float3::default() };
+
+        // What goes only inside a holder (a deployment zone's region, a siege AI shape) goes into the selected one (or the one the selected
+        // item is in: the one it was copied from).
+        let needs = self.clipboard.iter().map(|c| wce_tile_editor::tile_document::text_kind(&c.text)).find(|k| !wce_tile::parents::holders(k).is_empty()).map(str::to_owned);
+        let holder = match needs.as_deref() {
+            Some(kind) => match Self::selected_holder(e, kind) {
+                Some(h) => Some(h),
+                None => {
+                    self.status = format!("select {} to paste the {} into", wce_tile::parents::holders_label(kind), wce_tile::parents::label(kind));
+                    return false;
+                }
+            },
+
+            None => None,
+        };
+
         let Some(d) = document(e) else { return false };
-        let Some(into) = self.new_items_layer(d) else { return false };
+        let Some(into) = holder.or_else(|| self.new_items_layer(d)) else { return false };
         let items = self.clipboard.clone();
         match d.paste(&items, into, offset) {
             Ok(new) => {
@@ -4227,6 +4247,8 @@ impl Tool for TileTool {
     }
 
     fn inspect_below(&mut self, e: &mut Editor) {
+        // A holder alone selected: the buttons that draw its shapes (made only there).
+        self.inspect_holder(e);
         if let Some(id) = document_id(e) {
             self.ref_units.draw(e, id);
         }

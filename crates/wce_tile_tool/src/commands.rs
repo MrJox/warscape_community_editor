@@ -1977,6 +1977,42 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("draw_finish", "draw_finish", "finish the line being drawn, as Enter does (it goes where the drawing goes: its holder, the working layer)", |e, _| {
+        with_tile(e, |t, e| {
+            if !t.drawing {
+                return fail("nothing is being drawn");
+            }
+
+            t.finish_drawing(e);
+            ok(t.status.clone())
+        })
+    });
+
+    c.add("draft_set", "draft_set <attribute> <value>", "set a value of what is being placed or drawn, as its Inspector does", |e, a| {
+        with_tile(e, |t, _| {
+            let ([attr, value], Some(d)) = (a, &mut t.draft) else { return fail("usage: draft_set <attribute> <value>, while placing or drawing") };
+            d.attrs.insert(attr.clone(), value.clone());
+            t.create.drafts.insert(d.kind.clone(), d.clone());
+            ok("")
+        })
+    });
+
+    c.add("holder_draw", "holder_draw [shape name]", "start drawing a shape of the selected holder (a deployment zone's region, a siege AI node's or edge's shape, a capture location's boundary), as its Inspector's buttons do", |e, a| {
+        with_tile(e, |t, e| {
+            let sel = selected(e);
+            let ([holder], Some(d)) = (sel.as_slice(), document(e)) else { return fail("select one holder") };
+            let holder = *holder;
+            let items = crate::create_panel::shape_items(d, holder).into_iter().filter(|it| it.holder == holder).collect::<Vec<_>>();
+            let name = a.join(" ");
+            let Some(it) = items.iter().find(|it| name.is_empty() || it.role == Some(name.as_str())).or_else(|| items.first().filter(|_| name.is_empty())) else {
+                return fail("not a holder, or no such shape");
+            };
+
+            t.start_shape(e, it.holder, it.kind, it.role);
+            if t.drawing { ok("") } else { fail(t.status.clone()) }
+        })
+    });
+
     c.add("tree_pick", "tree_pick <element>", "select an element as a click on its Scene panel row does: what was placed or painted stops, a line being drawn is finished, the Inspector shows it", |e, a| {
         let Some(el) = a.first().and_then(|x| x.parse::<u64>().ok()) else { return fail("usage: tree_pick <element>") };
         with_tile(e, |t, e| {
