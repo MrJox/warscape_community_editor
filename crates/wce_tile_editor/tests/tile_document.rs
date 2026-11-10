@@ -1469,6 +1469,57 @@ fn a_click_picks_a_holders_shapes() {
 }
 
 #[test]
+fn a_capture_boundary_takes_preset_shapes() {
+    use wce_tile_editor::tile_document::{BoundaryKind, BoundaryShape};
+
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (cx, cz) = (d.tile().extent_x() as f32 / 2.0, d.tile().extent_z() as f32 / 2.0);
+    let loc = d.create("CaptureLocationInstance", graph, &Create::Point(Float3::new(cx, 0.0, cz)), "").unwrap();
+    let b = d.capture_boundary(loc).unwrap();
+
+    // TEd's 20 m circle reads back as one.
+    let s = d.boundary_shape(b).unwrap();
+    assert_eq!(s.kind, BoundaryKind::Circle);
+    assert!((s.size - 20.0).abs() < 0.01 && (s.centre.x - cx).abs() < 0.01, "{s:?}");
+
+    let near = |a: f32, b: f32, tol: f32| (a - b).abs() < tol;
+    let cases = [(BoundaryKind::Semicircle, 15.0, 90.0, 21, Some("PS_SEMICIRCLE")), (BoundaryKind::Square, 10.0, 30.0, 4, Some("PS_RECTANGLE")), (BoundaryKind::Circle, 12.0, 0.0, 20, Some("PS_CIRCLE"))];
+    for (kind, size, turn, points, ted) in cases {
+        let b = d.capture_boundary(loc).unwrap();
+        let _ = d.take_selection_hint();
+        let new = d.set_boundary_shape(b, BoundaryShape { kind, centre: Float3::new(cx, 0.0, cz), size, turn }, Some(loc)).unwrap();
+        assert_eq!(d.take_selection_hint(), Some(vec![item_of(loc)]), "the capture location stays selected");
+        assert_eq!(d.capture_boundary(loc), Some(new), "in the old one's place");
+        let sc = d.tile().tscene();
+        assert_eq!(sc.doc().get(new, "polygon_shape").as_deref(), ted);
+        assert_eq!(sc.name(new), "Boundary", "its own attributes kept");
+        assert_eq!(d.tile().polygon_world_points(new).len(), points);
+        let back = d.boundary_shape(new).unwrap();
+        assert_eq!(back.kind, kind);
+        assert!(near(back.size, size, 0.01), "{back:?}");
+        if kind.turns() {
+            assert!(near(back.turn, turn, 0.05), "{back:?}");
+        }
+    }
+
+    // A semicircle turned 90: its round side towards +x.
+    let b = d.capture_boundary(loc).unwrap();
+    let semi = d.set_boundary_shape(b, BoundaryShape { kind: BoundaryKind::Semicircle, centre: Float3::new(cx, 0.0, cz), size: 10.0, turn: 90.0 }, None).unwrap();
+    let pts = d.tile().polygon_world_points(semi);
+    assert!(pts.iter().all(|p| p.x >= cx - 0.01) && near(pts[10].x, cx + 10.0, 0.01), "{pts:?}");
+
+    // A polygon keeps its points, freely edited.
+    let poly = d.set_boundary_shape(semi, BoundaryShape { kind: BoundaryKind::Polygon, centre: Float3::default(), size: 0.0, turn: 0.0 }, None).unwrap();
+    assert_eq!(d.tile().tscene().doc().get(poly, "polygon_shape").as_deref(), Some("PS_POLYGON"));
+    assert_eq!(d.tile().polygon_world_points(poly).len(), 21);
+
+    while d.history_mut().undo() {}
+    assert_eq!(text(&d), original);
+}
+
+#[test]
 fn a_spline_is_drawn_and_edited_with_its_handles() {
     let (_dir, mut d) = open();
     let original = text(&d);

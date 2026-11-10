@@ -18,7 +18,7 @@ use wce_editor_core::document::Document;
 use wce_editor_core::inspector::Inspector;
 use wce_foundation::math::{Float3, rotation_y, translation};
 use wce_scene::render_scene::DocumentId;
-use wce_tile_editor::tile_document::{Create, Draft, turned};
+use wce_tile_editor::tile_document::{BoundaryKind, Create, Draft, turned};
 
 use crate::settings::{RECENT_KEEP, SETTINGS_ID, TileSettings};
 use crate::tool::{SetInUse, TileTool, document, primary};
@@ -497,6 +497,19 @@ impl TileTool {
         }
 
         // A node: its Boundary made for the ground around it, and how its Bounding Box is read.
+        // A capture location: its boundary as a preset shape (TEd's), keeping its size (the boundary's Inspector edits size and turn).
+        let mut preset = None;
+        if d.tile().tscene().type_of(holder) == "CaptureLocationInstance" && let Some(b) = d.capture_boundary(holder) {
+            let now = d.boundary_shape(b).map(|s| s.kind);
+            gui::text_disabled("Boundary preset:");
+            for kind in [BoundaryKind::Circle, BoundaryKind::Semicircle, BoundaryKind::Square] {
+                gui::same_line();
+                if gui::selectable_sized(&format!("{}##preset", kind.label()), now == Some(kind), 0, gui::v2(0.0, 0.0)) {
+                    preset = Some((b, kind));
+                }
+            }
+        }
+
         // A street edge: its two Street boundaries fitted between the nodes it joins.
         let mut fit = false;
         let sc = d.tile().tscene();
@@ -543,6 +556,15 @@ impl TileTool {
         }
 
         let reach = e.tool_settings::<TileSettings>(SETTINGS_ID).boundary_reach;
+        if let (Some((b, kind)), Some(d)) = (preset, document(e))
+            && let Some(shape) = d.boundary_preset(b, kind)
+        {
+            self.status = match d.set_boundary_shape(b, shape, Some(holder)) {
+                Ok(_) => format!("the boundary is a {} now", kind.label().to_lowercase()),
+                Err(err) => err,
+            };
+        }
+
         if fit && let Some(d) = document(e) {
             self.status = match d.fit_street_sides(holder) {
                 Ok(()) => "the street boundaries fitted between its nodes".to_owned(),

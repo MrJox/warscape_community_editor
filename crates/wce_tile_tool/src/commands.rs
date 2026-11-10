@@ -2010,6 +2010,32 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.fit_street_sides(el).map_or_else(fail, |()| ok(""))
     });
 
+    c.add("boundary_preset", "boundary_preset circle|semicircle|square|polygon [size m] [turn deg]", "the selected capture location's (or the selected boundary's) boundary as a preset shape, as its Inspector does: its size and turn kept unless given (one undo entry)", |e, a| {
+        use wce_tile_editor::tile_document::BoundaryKind;
+        let Some(sel) = primary(e) else { return fail("select a capture location or its boundary") };
+        let Some(d) = document(e) else { return no_tile() };
+        let kind = match a.first().map(|k| k.to_lowercase()).as_deref() {
+            Some("circle") => BoundaryKind::Circle,
+            Some("semicircle") => BoundaryKind::Semicircle,
+            Some("square") => BoundaryKind::Square,
+            Some("polygon") => BoundaryKind::Polygon,
+            _ => return fail("usage: boundary_preset circle|semicircle|square|polygon [size m] [turn deg]"),
+        };
+
+        let location = d.tile().tscene().type_of(sel) == "CaptureLocationInstance";
+        let Some(b) = (if location { d.capture_boundary(sel) } else { Some(sel) }) else { return fail("no boundary") };
+        let Some(mut shape) = d.boundary_preset(b, kind) else { return fail("not a capture location's boundary") };
+        if let Some(size) = a.get(1).and_then(|v| number(v)) {
+            shape.size = size;
+        }
+
+        if let Some(turn) = a.get(2).and_then(|v| number(v)) {
+            shape.turn = turn;
+        }
+
+        d.set_boundary_shape(b, shape, location.then_some(sel)).map_or_else(fail, |n| ok(format!("boundary {n}")))
+    });
+
     c.add("holder_draw", "holder_draw [shape name]", "start drawing a shape of the selected holder (a deployment zone's region, a siege AI node's or edge's shape, a capture location's boundary), as its Inspector's buttons do", |e, a| {
         with_tile(e, |t, e| {
             let sel = selected(e);

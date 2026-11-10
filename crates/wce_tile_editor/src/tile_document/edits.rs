@@ -2005,6 +2005,177 @@ impl TileDocument {
         Ok(at)
     }
 
+    /// A capture location's boundary as a preset shape (`BoundaryShape`): its kind, its size (metres: a circle's or a semicircle's
+    /// radius, a square's half side; a polygon's: its farthest point from its centre) and its turn (degrees: which way a semicircle's
+    /// round side, a square's sides face; 0: +z), read back from what it is (TEd keeps no more: a semicircle's turn is in its points).
+    pub fn boundary_shape(&self, boundary: usize) -> Option<BoundaryShape> {
+        let t = self.tile();
+        let sc = t.tscene();
+        if boundary >= sc.doc().elements().len() || sc.type_of(boundary) != "CaptureLocationPolygonInstance" {
+            return None;
+        }
+
+        let u = t.unit() as f32;
+        let pts = t.polygon_world_points(boundary);
+        let at = world_transform(sc, boundary).position;
+        let position = Float3::new((at.x / f64::from(u)) as f32, (at.y / f64::from(u)) as f32, (at.z / f64::from(u)) as f32);
+        let radius = || sc.doc().get(boundary, "radius").and_then(|r| r.trim().parse::<f32>().ok()).map(|r| r / u);
+        let mean = || {
+            let n = pts.len().max(1) as f32;
+            pts.iter().fold(Float3::default(), |a, &p| a + p) * (1.0 / n)
+        };
+
+        // The angle of a direction on the ground (x = sin, z = cos: 0 is +z, 90 is +x).
+        let angle = |dx: f32, dz: f32| dx.atan2(dz).to_degrees();
+        Some(match sc.doc().get(boundary, "polygon_shape").as_deref() {
+            Some("PS_CIRCLE") => BoundaryShape { kind: BoundaryKind::Circle, centre: position, size: radius().unwrap_or(20.0), turn: 0.0 },
+            Some("PS_SEMICIRCLE") => {
+                let mid = pts.get(pts.len() / 2).copied().unwrap_or(position);
+                BoundaryShape { kind: BoundaryKind::Semicircle, centre: position, size: radius().unwrap_or(20.0), turn: angle(mid.x - position.x, mid.z - position.z) }
+            }
+
+            Some("PS_RECTANGLE") if pts.len() >= 2 => {
+                let (a, b) = (pts[0], pts[1]);
+                let turn = (-(b.z - a.z)).atan2(b.x - a.x).to_degrees();
+                BoundaryShape { kind: BoundaryKind::Square, centre: mean(), size: (b.x - a.x).hypot(b.z - a.z) * 0.5, turn }
+            }
+
+            _ => {
+                let c = mean();
+                let size = pts.iter().map(|p| (p.x - c.x).hypot(p.z - c.z)).fold(0.0, f32::max);
+                BoundaryShape { kind: BoundaryKind::Polygon, centre: c, size, turn: 0.0 }
+            }
+        })
+    }
+
+    /// A capture location's boundary made a preset shape (TEd's own: `PS_CIRCLE` with its 20 points, `PS_SEMICIRCLE` with 21 over half a
+    /// turn, `PS_RECTANGLE` with 4 corners), at `shape.centre`, `shape.size` and `shape.turn`; it keeps its own attributes (name, flags,
+    /// colours...) and its place among its capture location's children. A polygon: its points as they are, its shape `PS_POLYGON`
+    /// (freely edited). One undo entry; the selection afterwards is `select` (the capture location, or the new boundary: `None`).
+    ///
+    /// # Errors
+    ///
+    /// Not a capture location's boundary.
+    pub fn set_boundary_shape(&mut self, boundary: usize, shape: BoundaryShape, select: Option<usize>) -> Result<usize, String> {
+        let t = self.tile();
+        let sc = t.tscene();
+        if boundary >= sc.doc().elements().len() || sc.type_of(boundary) != "CaptureLocationPolygonInstance" {
+            return Err("not a capture location's boundary".to_owned());
+        }
+
+        let holder = self.holder_for("CaptureLocationPolygonInstance", sc.doc().elements()[boundary].parent.unwrap_or(boundary)).ok_or("the boundary is not in a capture location")?;
+        let (r, turn) = (shape.size.max(0.5), shape.turn.to_radians());
+
+        // On the ground, around the centre (metres): the canonical shape (a semicircle's round side and a square's top on +z) turned.
+        let c = shape.centre;
+        let around = |x: f32, z: f32| {
+            let (sn, cs) = turn.sin_cos();
+            Float3::new(c.x + x * cs + z * sn, c.y, c.z - x * sn + z * cs)
+        };
+        let ring = |a_deg: f32| {
+            let a = a_deg.to_radians();
+            around(r * a.sin(), r * a.cos())
+        };
+        let (kind, world): (&str, Vec<Float3>) = match shape.kind {
+            BoundaryKind::Circle => ("PS_CIRCLE", (0..20).map(|i| ring(i as f32 * 18.0)).collect()),
+            BoundaryKind::Semicircle => ("PS_SEMICIRCLE", (0..21).map(|i| ring(-90.0 + i as f32 * 9.0)).collect()),
+            BoundaryKind::Square => ("PS_RECTANGLE", [(-r, r), (r, r), (r, -r), (-r, -r)].into_iter().map(|(x, z)| around(x, z)).collect()),
+            BoundaryKind::Polygon => ("PS_POLYGON", t.polygon_world_points(boundary)),
+        };
+
+        // Local to the capture location; the boundary at the centre (a circle's and a semicircle's points are around it, as TEd's).
+        let centre = t.to_local(holder, c);
+        let local = world.iter().map(|&p| t.to_local(holder, p) - centre).collect::<Vec<_>>();
+        let mut n = new_polygon("CaptureLocationPolygonInstance", local, true).position(centre).attr("polygon_shape", kind).attr("polygon_closed", "1");
+        if matches!(shape.kind, BoundaryKind::Circle | BoundaryKind::Semicircle) {
+            n = n.attr("radius", wce_tile::ted_scene::format_number(f64::from(r) * t.unit()));
+        }
+
+        // Its own attributes kept (not what the shape decides).
+        const SHAPED: [&str; 7] = ["position", "orientation", "polygon_shape", "radius", "area", "polygon_closed", "points"];
+        for a in &sc.doc().elements()[boundary].attrs {
+            if !SHAPED.contains(&a.name.as_str()) && !n.attrs.contains_key(&a.name) && let Some(v) = sc.doc().get(boundary, &a.name) {
+                n.attrs.insert(a.name.clone(), v);
+            }
+        }
+
+        let text = wce_tile::new_instances::element_text(&n)?;
+        let mark = self.begin()?;
+        let result = self.tscene_mut().insert_element_text(holder, &text).and_then(|e| self.put_shape(e, holder, Some(boundary), Some(boundary)));
+        match result {
+            Ok(e) => {
+                let after = select.unwrap_or(e);
+                self.push_splice(format!("Boundary: {}", shape.kind.label()), mark, vec![item_of(after)], vec![item_of(after)]);
+                Ok(e)
+            }
+
+            Err(err) => {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                Err(err)
+            }
+        }
+    }
+
+    /// A boundary as another preset (`kind`), keeping its centre and size; a semicircle or a square made from what had no turn (a circle, a
+    /// polygon) faces the way its capture location's flag does (`flag_facing`).
+    pub fn boundary_preset(&self, boundary: usize, kind: BoundaryKind) -> Option<BoundaryShape> {
+        let mut shape = self.boundary_shape(boundary)?;
+        if kind.turns() && !shape.kind.turns() {
+            let sc = self.tile().tscene();
+            let location = self.holder_for("CaptureLocationPolygonInstance", boundary);
+            let facing = location.and_then(|l| sc.doc().get(l, "flag_facing")).and_then(|f| f.trim().parse::<f32>().ok());
+            shape.turn = facing.map_or(0.0, f32::to_degrees);
+        }
+
+        shape.kind = kind;
+        Some(shape)
+    }
+
+    /// The boundary of a capture location (its first `CaptureLocationPolygonInstance`).
+    pub fn capture_boundary(&self, location: usize) -> Option<usize> {
+        let sc = self.tile().tscene();
+        (location < sc.doc().elements().len()).then(|| sc.children(location).into_iter().find(|&c| sc.type_of(c) == "CaptureLocationPolygonInstance")).flatten()
+    }
+
+    /// The Inspector's rows of a capture location's boundary in place of TEd's shape and radius: its shape (Circle, Semicircle, Square,
+    /// Polygon) and, for the presets, its size and turn, any change making its points again (`set_boundary_shape`; a drag at its end).
+    fn boundary_shape_rows(&mut self, e: usize, ins: &mut dyn Inspector) {
+        let Some(shape) = self.boundary_shape(e) else { return };
+        let kinds = BoundaryKind::ALL.map(|k| k.label().to_owned());
+        let mut idx = BoundaryKind::ALL.iter().position(|&k| k == shape.kind).unwrap_or(0) as i32;
+        let mut apply = None;
+        if ins.edit_choice("wce_boundary_shape", "shape", &mut idx, &kinds) {
+            apply = self.boundary_preset(e, BoundaryKind::ALL[idx.clamp(0, 3) as usize]);
+        }
+
+        if shape.kind != BoundaryKind::Polygon {
+            for (field, label, value, speed) in [("wce_boundary_size", "size (m: radius or half side)", shape.size, 0.1), ("wce_boundary_turn", "turn (deg; 0: +z)", shape.turn, 1.0)] {
+                if field == "wce_boundary_turn" && !shape.kind.turns() {
+                    continue;
+                }
+
+                let key = (e, field.to_owned());
+                let mut v = self.tile().drafts.get(&key).and_then(|d| d.parse::<f32>().ok()).unwrap_or(value);
+                if ins.edit_float(field, label, &mut v, speed, if field == "wce_boundary_size" { 0.5 } else { -360.0 }, if field == "wce_boundary_size" { 500.0 } else { 360.0 }) {
+                    self.tile_mut().drafts.insert(key.clone(), v.to_string());
+                }
+
+                if ins.gesture_ended() && let Some(d) = self.tile_mut().drafts.remove(&key).and_then(|d| d.parse::<f32>().ok()) && (d - value).abs() > 1e-4 {
+                    let mut s = shape;
+                    if field == "wce_boundary_size" { s.size = d } else { s.turn = d }
+                    apply = Some(s);
+                }
+            }
+        }
+
+        if let Some(s) = apply
+            && let Err(err) = self.set_boundary_shape(e, s, None)
+        {
+            wce_foundation::log::warn(err);
+        }
+    }
+
     pub fn check_structure(&self, elems: &[usize], into: Option<usize>) -> Result<(), String> {
         let doc = self.tile().tscene().doc();
         let els = doc.elements();
@@ -2955,6 +3126,15 @@ impl TileDocument {
                 shown.push(twin);
             }
 
+            // A capture location's boundary: its preset shape, size and turn in place of TEd's shape and radius rows.
+            if tag == "CaptureLocationPolygonInstance" && matches!(prop.attr, "polygon_shape" | "radius") {
+                if prop.attr == "polygon_shape" {
+                    self.boundary_shape_rows(e, ins);
+                }
+
+                continue;
+            }
+
             self.property_row(e, prop, ins);
             if prop.attr == "burn" && self.tile().tscene().type_of(e) == "BUILDING_INSTANCE" {
                 self.fire_controls(e, ins);
@@ -3737,6 +3917,43 @@ impl Tile {
 }
 
 /// A polygon of TEd's shape: its area, open or closed, its points.
+/// The preset shapes of a capture location's boundary (`TileDocument::set_boundary_shape`), TEd's, and a free polygon.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoundaryKind {
+    Circle,
+    Semicircle,
+    Square,
+    Polygon,
+}
+
+impl BoundaryKind {
+    pub const ALL: [BoundaryKind; 4] = [BoundaryKind::Circle, BoundaryKind::Semicircle, BoundaryKind::Square, BoundaryKind::Polygon];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BoundaryKind::Circle => "Circle",
+            BoundaryKind::Semicircle => "Semicircle",
+            BoundaryKind::Square => "Square",
+            BoundaryKind::Polygon => "Polygon",
+        }
+    }
+
+    /// Whether the shape faces a way (its turn matters).
+    pub fn turns(self) -> bool {
+        matches!(self, BoundaryKind::Semicircle | BoundaryKind::Square)
+    }
+}
+
+/// A capture location's boundary as a preset (`TileDocument::boundary_shape`): its kind, its centre on the ground (world metres), its
+/// size (metres: a radius, a square's half side) and its turn (degrees; 0: a semicircle's round side and a square's top towards +z).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoundaryShape {
+    pub kind: BoundaryKind,
+    pub centre: Float3,
+    pub size: f32,
+    pub turn: f32,
+}
+
 /// A rectangle from drawn points (a siege AI node's Bounding Box: the game reads its first 4 points as one, its centre their mean, its
 /// width |p1 - p0|, its height |p2 - p1|, docs/re/siege_ai.md). From 3 or 4 points: the first side as drawn (its direction and width),
 /// the depth the third point's distance from it, on its side; from 2 or more than 4: the box around them on the ground.
