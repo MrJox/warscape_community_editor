@@ -1,5 +1,115 @@
 use super::*;
 
+fn with_metadata(names: &[&[u8]], rows: u32) -> TileList {
+    let mut t = paired();
+    let mut tail = 4u32.to_le_bytes().to_vec();
+    tail.extend((names.len() as u32).to_le_bytes());
+    for name in names {
+        tail.extend((name.len() as u16).to_le_bytes());
+        tail.extend_from_slice(name);
+    }
+    tail.extend(rows.to_le_bytes());
+    for row in 0..rows {
+        tail.extend([row as u8; 32]);
+    }
+    t.tail = tail;
+    t
+}
+
+#[test]
+fn general_name_counts_and_zero_or_paired_rows_preserve_exact_trailers() {
+    let names: &[&[u8]] = &[b"first", b"", &[0xff, 0x80, b'x']];
+    for k in 0..=3 {
+        for rows in [0, 3] {
+            let original = with_metadata(&names[..k], rows);
+            let bytes = original.write();
+            let loaded = TileList::parse(&bytes).unwrap();
+            assert_eq!(loaded.write(), bytes);
+            assert_eq!(loaded.tail, original.tail);
+            assert_eq!(loaded.v9_paired_metadata_count().unwrap(), Some(rows));
+            let mut moved = loaded.clone();
+            moved.placements[0].x += 1;
+            assert!(moved.validate_placement_edit(&loaded).is_ok());
+            for insert in [false, true] {
+                let mut edited = loaded.clone();
+                if insert {
+                    edited.placements.push(edited.placements[0].clone());
+                } else {
+                    edited.placements.remove(1);
+                }
+                assert_eq!(
+                    loaded.check_placement_edit("change count", true).is_ok(),
+                    rows == 0
+                );
+                assert_eq!(edited.validate_placement_edit(&loaded).is_ok(), rows == 0);
+                assert_eq!(edited.tail, loaded.tail);
+                assert_eq!(TileList::parse(&edited.write()).unwrap().tail, loaded.tail);
+            }
+        }
+    }
+}
+
+#[test]
+fn general_names_reject_truncation_overflow_extra_bytes_and_inconsistent_rows() {
+    for k in 0..=3 {
+        let names: &[&[u8]] = &[b"a", b"bc", b"def"];
+        let t = with_metadata(&names[..k], 3);
+        for size in 4..t.tail.len() {
+            let mut bad = t.clone();
+            bad.tail.truncate(size);
+            assert!(
+                bad.v9_paired_metadata_count().is_err(),
+                "K={k}, size={size}"
+            );
+            assert_eq!(TileList::parse(&bad.write()).unwrap().tail, bad.tail);
+            assert!(bad.validate_placement_edit(&bad).is_ok());
+        }
+        let mut bad = t.clone();
+        bad.tail.push(0);
+        assert!(bad.check_placement_edit("move", false).is_err());
+        let mut bad = t.clone();
+        bad.tail[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(bad.v9_paired_metadata_count().is_err());
+        let bad = with_metadata(&names[..k], 2);
+        assert!(bad.check_placement_edit("move", false).is_err());
+        let original = with_metadata(&names[..k], 0);
+        let mut forged = original.clone();
+        forged.tail = t.tail;
+        assert!(forged.validate_placement_edit(&original).is_err());
+    }
+}
+
+#[test]
+#[ignore = "requires existing Rome II native witnesses via WCE_V9_WITNESSES"]
+fn representative_native_v9_witnesses_preserve_bytes_and_apply_row_rules() {
+    let paths = std::env::var_os("WCE_V9_WITNESSES").expect("set existing native witness paths");
+    let mut seen = 0;
+    for path in std::env::split_paths(&paths) {
+        let bytes = std::fs::read(&path).unwrap();
+        let t = TileList::parse(&bytes).unwrap();
+        assert_eq!(t.version, 9);
+        assert_eq!(t.write(), bytes);
+        let rows = t
+            .v9_paired_metadata_count()
+            .unwrap()
+            .expect("recognized native trailer");
+        let mut edited = t.clone();
+        edited.placements[0].x = edited.placements[0].x.wrapping_add(1);
+        assert!(edited.validate_placement_edit(&t).is_ok());
+        edited.placements.pop();
+        assert_eq!(edited.validate_placement_edit(&t).is_ok(), rows == 0);
+        assert_eq!(edited.tail, t.tail);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        println!(
+            "{}: {} placements, {rows} rows; byte-exact and guard checks passed",
+            path.display(),
+            t.placements.len()
+        );
+        seen += 1;
+    }
+    assert!(seen > 0);
+}
+
 fn paired() -> TileList {
     let mut tail = vec![4, 0, 0, 0, 1, 0, 0, 0, 1, 0, b'x'];
     tail.extend(3u32.to_le_bytes());
@@ -7,7 +117,18 @@ fn paired() -> TileList {
         tail.extend([value; 32]);
     }
 
-    TileList { version: 9, names: vec!["tile".to_owned()], placements: (0..3).map(|x| TileListPlacement { x, ..Default::default() }).collect(), tail, ..Default::default() }
+    TileList {
+        version: 9,
+        names: vec!["tile".to_owned()],
+        placements: (0..3)
+            .map(|x| TileListPlacement {
+                x,
+                ..Default::default()
+            })
+            .collect(),
+        tail,
+        ..Default::default()
+    }
 }
 
 #[test]
@@ -80,7 +201,11 @@ fn unknown_original_layout_is_lossless_but_placement_edits_are_not_assumed_safe(
     let b = t.write();
     assert_eq!(TileList::parse(&b).unwrap().write(), b);
     assert!(t.validate_placement_edit(&t).is_ok());
-    assert!(t.check_placement_edit("remove a placement", true).unwrap_err().contains("unknown v9 metadata"));
+    assert!(
+        t.check_placement_edit("remove a placement", true)
+            .unwrap_err()
+            .contains("unknown v9 metadata")
+    );
     let mut moved = t.clone();
     moved.placements[0].x += 1;
     assert!(moved.validate_placement_edit(&t).is_err());
@@ -103,7 +228,11 @@ fn recognized_same_count_edits_keep_rows_and_other_versions_keep_their_behavior(
         original.version = version;
         let mut edited = original.clone();
         edited.placements.pop();
-        assert!(original.check_placement_edit("remove a placement", true).is_ok());
+        assert!(
+            original
+                .check_placement_edit("remove a placement", true)
+                .is_ok()
+        );
         assert!(edited.validate_placement_edit(&original).is_ok());
         let b = edited.write();
         assert_eq!(TileList::parse(&b).unwrap().write(), b);
@@ -173,7 +302,9 @@ fn review_nan_payload_changes_and_other_edits_cannot_hide_in_an_unchanged_nan() 
             0 => edited.unknown[0] = f32::from_bits(0x7fc01235),
             1 => edited.placements[0].old[0] ^= 1,
             2 => edited.tail.push(1),
-            3 => { edited.placements.pop(); }
+            3 => {
+                edited.placements.pop();
+            }
             4 => edited.names[0].push('x'),
             _ => edited.bounds[0] += 1,
         }
