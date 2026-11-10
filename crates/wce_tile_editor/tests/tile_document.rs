@@ -1224,6 +1224,10 @@ fn every_kind_is_created_with_its_parts() {
             assert_eq!(sc.doc().get(made, attr).as_deref(), Some(key));
         }
 
+        if kind == "DeploymentZonePolygonInstanceGroup" {
+            assert_eq!(sc.doc().get(made, "deployment_category").as_deref(), Some("DAC_DEFAULT"), "a new zone is Default, not TEd's Ambush");
+        }
+
         if let Create::Point(p) = shape {
             let w = d.tile().world_position(made);
             assert!((w.x - p.x).abs() < 1e-3 && (w.z - p.z).abs() < 1e-3, "{kind} at {w:?}");
