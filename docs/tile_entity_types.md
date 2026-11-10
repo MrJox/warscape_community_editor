@@ -23,7 +23,7 @@ nearest layer above it with an export type says (`LayerExportType_Normal`: the t
 | `SIEGE_AI_POLYGON_INSTANCE` | 9,085 | yes (drawn from its node's or edge's Inspector, in a role: Bounding Box, Boundary, Street, Street boundary) | properties, points | outline | siege AI |
 | `VegetationExclusionPolygonInstance` | 12,653 | yes (Create panel: draw) | properties, points | outline | through the vegetation generator |
 | `ZONE_POLYGON_INSTANCE` | 575 | yes (Create: draw) | properties, points | outline | zones |
-| `DeploymentZonePolygonInstanceGroup` | 403 | yes (Create: click; with a 64 m square polygon) | properties | box marker | deployment zones |
+| `DeploymentZonePolygonInstanceGroup` | 403 | yes (Create: click; with a 64 m square polygon; category Default, not TEd's template's Ambush) | properties | box marker | deployment zones |
 | `DEPLOYMENT_ZONE_POLYGON_INSTANCE` | 800 | yes (drawn from its zone's Inspector) | properties, points | outline | deployment zones (in their group) |
 | `CaptureLocationInstance` | 1,006 | yes (Create: click; with a 20 m boundary circle) | properties | box marker | capture locations |
 | `CaptureLocationPolygonInstance` | 1,006 | with its capture location; drawn again from its Inspector (replaces its boundary) | points (a circle's are read-only) | outline | the capture location's boundary |

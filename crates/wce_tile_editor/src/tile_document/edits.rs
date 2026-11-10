@@ -1767,7 +1767,7 @@ impl TileDocument {
                 } else {
                     // A new group around it (scripts: `add_polygon`; the editor draws regions in a zone), the polygon with the values asked
                     // for it (they were left out here before).
-                    let mut g = NewInstance::new("DeploymentZonePolygonInstanceGroup").position(c);
+                    let mut g = NewInstance::new("DeploymentZonePolygonInstanceGroup").position(c).attr("deployment_category", NEW_ZONE_CATEGORY);
                     let mut p = new_polygon(kind, points, true);
                     p.attrs.extend(attrs.iter().map(|(k, v)| (k.clone(), v.clone())));
                     g.children.push(element_text(&p)?);
@@ -3813,6 +3813,9 @@ fn new_polygon(kind: &str, points: Vec<Double3>, closed: bool) -> wce_tile::new_
     n
 }
 
+/// A new deployment zone's category: Default (TEd's template has Ambush, which a new zone is rarely meant to be).
+const NEW_ZONE_CATEGORY: &str = "DAC_DEFAULT";
+
 /// A type placed by a click (`TileDocument::create`), at `at` (local to where it goes), with its parts.
 pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> Result<wce_tile::new_instances::NewInstance, String> {
     use wce_tile::new_instances::{NewInstance, circle_points, element_text, vector};
@@ -3854,7 +3857,7 @@ pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> R
         }
 
         "DeploymentZonePolygonInstanceGroup" => {
-            let mut n = NewInstance::new(kind).position(at);
+            let mut n = NewInstance::new(kind).position(at).attr("deployment_category", NEW_ZONE_CATEGORY);
             n.children.push(element_text(&new_polygon("DEPLOYMENT_ZONE_POLYGON_INSTANCE", square(32.0), true))?);
             n
         }
