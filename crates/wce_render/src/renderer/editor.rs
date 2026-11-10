@@ -317,6 +317,11 @@ pub(crate) struct EditorGpu {
     /// every entity a frame: a map view's 300 000, 0.8 ms).
     outline_overlays: ((usize, u64), Vec<wce_scene::render_scene::EntityId>),
 
+    /// The selected overlays' triangles and lines in the mask's vertex buffer (`mask_vb`), as of a key (the scene, its overlay revision
+    /// and the selection), and how many there are: made again only when that changes (copied every frame, a selected layer of a few
+    /// hundred polygons cost 60 ms a frame).
+    outline_geometry: Option<(u64, u32, u32)>,
+
     /// The scene and its overlay revision the overlay cache (`ovl_gpu_cache`) is of.
     ovl_cache_scene: usize,
     ovl_cache_rev: u64,
@@ -927,22 +932,43 @@ impl Renderer {
         // What goes into the mask: the selected entities (meshes and terrain through their draw sets, overlays as triangles and lines) and the
         // overlays that stand for selected items.
         let selected = self.settings.selection.iter().copied().filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e))).collect::<std::collections::HashSet<_>>();
-        let (mut tris, mut lines) = (vec![], vec![]);
         let key = (std::ptr::from_ref(scene) as usize, scene.overlay_revision());
         if self.editor.outline_overlays.0 != key {
             self.editor.outline_overlays = (key, scene.entities().iter().filter(|e| matches!(e.payload, Payload::Overlay(_))).map(|e| e.id).collect());
         }
 
-        for e in self.editor.outline_overlays.1.iter().filter_map(|&id| scene.find(id)) {
-            let Payload::Overlay(o) = &e.payload else { continue };
-            if (o.selection_mask || selected.contains(&e.id)) && scene.drawable(e) {
-                tris.extend(o.triangles.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
-                lines.extend(o.lines.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
+        // The overlays' part of the mask, made again only when the scene's overlays or the selection changed.
+        let geometry_key = {
+            use std::hash::{Hash, Hasher};
+            let mut ids = selected.iter().copied().collect::<Vec<_>>();
+            ids.sort_unstable();
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (key, ids).hash(&mut h);
+            h.finish()
+        };
+
+        let cached = self.editor.outline_geometry.filter(|g| g.0 == geometry_key && self.editor.mask_vb.is_some());
+        let mut ovl_bytes = vec![];
+        let (n_tris, n_lines) = match cached {
+            Some((_, t, l)) => (t, l),
+            None => {
+                let (mut tris, mut lines) = (vec![], vec![]);
+                for e in self.editor.outline_overlays.1.iter().filter_map(|&id| scene.find(id)) {
+                    let Payload::Overlay(o) = &e.payload else { continue };
+                    if (o.selection_mask || selected.contains(&e.id)) && scene.drawable(e) {
+                        tris.extend(o.triangles.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
+                        lines.extend(o.lines.iter().map(|v| OverlayVertex { p: e.world.transform_point(v.p), rgba: v.rgba }));
+                    }
+                }
+
+                ovl_bytes = [overlay_bytes(&tris), overlay_bytes(&lines)].concat();
+                (tris.len() as u32, lines.len() as u32)
             }
-        }
+        };
 
         let meshes = selected.iter().any(|&id| scene.find(id).is_some_and(|e| matches!(e.payload, Payload::MeshInstance(_) | Payload::Terrain(_))));
-        if !meshes && tris.is_empty() && lines.is_empty() {
+        if !meshes && n_tris == 0 && n_lines == 0 {
+            self.editor.outline_geometry = Some((geometry_key, 0, 0));
             return;
         }
 
@@ -984,10 +1010,7 @@ impl Renderer {
             }
         }
 
-        // Uploads: the gathered instances, the overlays' triangles then lines.
-        let n_tris = tris.len() as u32;
-        let n_lines = lines.len() as u32;
-        let ovl_bytes = [overlay_bytes(&tris), overlay_bytes(&lines)].concat();
+        // Uploads: the gathered instances, the overlays' triangles then lines (when they were made again).
         if self.editor.mask_inst_capacity < instances.len() {
             self.editor.mask_inst_capacity = (instances.len() * 2).max(1024);
             self.editor.mask_inst_vb = dynamic_buffer(&self.dev, self.editor.mask_inst_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
@@ -999,7 +1022,11 @@ impl Renderer {
         }
 
         let inst_vb = self.editor.mask_inst_vb.clone().filter(|vb| instances.is_empty() || write_dynamic(&self.ctx, vb, &instances));
-        let ovl_vb = self.editor.mask_vb.clone().filter(|vb| ovl_bytes.is_empty() || write_dynamic(&self.ctx, vb, &ovl_bytes));
+        let ovl_vb = self.editor.mask_vb.clone().filter(|vb| cached.is_some() || ovl_bytes.is_empty() || write_dynamic(&self.ctx, vb, &ovl_bytes));
+        if cached.is_none() {
+            self.editor.outline_geometry = ovl_vb.as_ref().map(|_| (geometry_key, n_tris, n_lines));
+        }
+
         write_dynamic(&self.ctx, &cb, &frame_cb(&vp_m));
 
         // The mask: everything in red without the depth test, then the parts in front of the scene in green.
