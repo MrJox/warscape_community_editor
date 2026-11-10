@@ -1384,8 +1384,8 @@ pub fn node_boundary(input: &Input, node: &Node, others: &[Node], reach: Option<
     // A grid around it: its reach and the nodes near enough to share its ground.
     let most = reach.unwrap_or(60.0).max(half_diagonal(node) + CELL);
     let span = most * 2.0 + 20.0;
-    let (lo, hi) = input.bounds;
-    let g = Grid::new([(c[0] - span).max(lo[0]), (c[1] - span).max(lo[1])], [(c[0] + span).min(hi[0]), (c[1] + span).min(hi[1])], CELL);
+    // Not clamped to the map's bounds (a tile without its database entry has none worth the name).
+    let g = Grid::new([c[0] - span, c[1] - span], [c[0] + span, c[1] + span], CELL);
     if g.is_empty() {
         return vec![];
     }
@@ -1501,8 +1501,8 @@ pub fn street_sides(input: &Input, line: &[P], a: &Node, b: &Node, others: &[Nod
         hi = [hi[0].max(p[0]), hi[1].max(p[1])];
     }
 
-    let (blo, bhi) = input.bounds;
-    let g = Grid::new([(lo[0] - 100.0).max(blo[0]), (lo[1] - 100.0).max(blo[1])], [(hi[0] + 100.0).min(bhi[0]), (hi[1] + 100.0).min(bhi[1])], CELL);
+    // Not clamped to the map's bounds (a tile without its database entry has none worth the name: the grid was a cell).
+    let g = Grid::new([lo[0] - 100.0, lo[1] - 100.0], [hi[0] + 100.0, hi[1] + 100.0], CELL);
     if g.is_empty() {
         return None;
     }
@@ -1522,6 +1522,11 @@ pub fn street_sides(input: &Input, line: &[P], a: &Node, b: &Node, others: &[Nod
     let ib = path.iter().position(|&p| within(b, p)).map_or(path.len() - 1, |i| i.saturating_sub(1));
     if ib <= ia + 1 {
         return None;
+    }
+
+    // The street's walkable ground, outlined; else (no outline that runs from one node to the other) the sides marched out from the line.
+    if let Some(sides) = corridor_outline_sides(&g, &free, &path, (ia, ib), a, b) {
+        return Some(sides);
     }
 
     let corridor = &path[ia..=ib];
@@ -1555,6 +1560,99 @@ pub fn street_sides(input: &Input, line: &[P], a: &Node, b: &Node, others: &[Nod
         let (start, end) = (seal(s[0], a), seal(s[s.len() - 1], b));
         s.splice(0..0, start.into_iter().rev());
         s.extend(end);
+        *o = s;
+    }
+
+    Some(out)
+}
+
+/// A street's two sides from its walkable ground (`street_sides`): the free ground reachable from its line between the two nodes'
+/// Boundaries (within [`STREET_SIDE_MAX`] of that stretch of it, `ia..=ib`; the nodes' Boundaries are not free), its outline split
+/// where it runs along each node's Boundary: the two stretches between are the sides, each run from `a` to `b` and its ends joined to
+/// the Boundaries (`seal`). So all the walkable ground between the nodes is the street's: marched out every few units from the line, a
+/// side left gaps where a march was cut short (by a Boundary's cell next to the line), and the ground beside them was walkable but in
+/// nothing. `None` when the outline does not touch both Boundaries once each.
+fn corridor_outline_sides(g: &Grid, free: &Mask, path: &[P], (ia, ib): (usize, usize), a: &Node, b: &Node) -> Option<[Vec<P>; 2]> {
+    if a.boundary.len() < 3 || b.boundary.len() < 3 {
+        return None;
+    }
+
+    // The free ground within reach of the line between the Boundaries (the corridor: not of the line inside the nodes, but whatever
+    // part of it is nearest; ground past a Boundary's crossing beside the node is the street's too, up to where a face meets it).
+    let corridor = &path[ia..=ib];
+    let pass: Mask = (0..g.len()).map(|k| {
+        let c = g.centre(k);
+        free[k] && corridor.iter().step_by(2).any(|&q| dist(c, q) <= STREET_SIDE_MAX)
+    }).collect();
+    let seeds = path[ia..=ib].iter().filter_map(|&p| g.at(p)).filter(|&k| pass[k]).collect::<Vec<_>>();
+    if seeds.is_empty() {
+        return None;
+    }
+
+    let region = g.flood(&pass, seeds);
+    let outline = outer_loop(g, &region, 1.0);
+    let n = outline.len();
+    if n < 4 {
+        return None;
+    }
+
+    // Which node's Boundary each outline point runs along (within a cell and a half of it), if any.
+    let edge_dist = |p: P, poly: &[P]| (0..poly.len()).map(|i| crate::raster::seg_dist(p, poly[i], poly[(i + 1) % poly.len()])).fold(f64::MAX, f64::min);
+    let reach = CELL * 1.75;
+    let mut label = outline.iter().map(|&p| if edge_dist(p, &a.boundary) <= reach { 1u8 } else if edge_dist(p, &b.boundary) <= reach { 2 } else { 0 }).collect::<Vec<_>>();
+
+    // A point or two off a Boundary between two stretches along it (a notch of it) are along it too.
+    for gap in [1usize, 2] {
+        for i in 0..n {
+            let (before, after) = (label[(i + n - 1) % n], label[(i + gap) % n]);
+            if before != 0 && before == after && (0..gap).all(|k| label[(i + k) % n] == 0) {
+                for k in 0..gap {
+                    label[(i + k) % n] = before;
+                }
+            }
+        }
+    }
+
+    // The loop from the first point after a's run: a's run, a side, b's run, the other side; once each.
+    let start = (0..n).find(|&i| label[i] == 1 && label[(i + 1) % n] != 1)?;
+    let mut runs: Vec<(u8, Vec<P>)> = vec![];
+    for k in 1..=n {
+        let i = (start + k) % n;
+        match runs.last_mut() {
+            Some((l, pts)) if *l == label[i] => pts.push(outline[i]),
+            _ => runs.push((label[i], vec![outline[i]])),
+        }
+    }
+
+    let kinds = runs.iter().map(|r| r.0).collect::<Vec<_>>();
+    if kinds != [0, 2, 0, 1] {
+        return None;
+    }
+
+    // Each side with the run ends it joins (the last of a's run before it, the first of b's after), from a to b.
+    let a_end = *runs[3].1.last()?;
+    let b_first = *runs[1].1.first()?;
+    let b_end = *runs[1].1.last()?;
+    let a_first = *runs[3].1.first()?;
+    let mut one = vec![a_end];
+    one.extend(&runs[0].1);
+    one.push(b_first);
+    let mut two = vec![b_end];
+    two.extend(&runs[2].1);
+    two.push(a_first);
+    two.reverse();
+
+    let mut out = [vec![], vec![]];
+    for (side, o) in [one, two].into_iter().zip(out.iter_mut()) {
+        // The cells' stairs taken out (a cell's size: the faces are followed within it).
+        let mut s = simplify(&side, CELL);
+        if s.len() < 2 {
+            return None;
+        }
+
+        let (first, last) = (seal(s[0], a), seal(s[s.len() - 1], b));
+        s.splice(0..0, first.into_iter().rev());
+        s.extend(last);
         *o = s;
     }
 
