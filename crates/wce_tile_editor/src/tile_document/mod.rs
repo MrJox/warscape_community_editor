@@ -20,6 +20,7 @@ mod columns;
 pub mod brush;
 mod commands;
 mod cover;
+pub use self::cover::{EdgeColours, edge_strip};
 mod draft;
 pub mod context;
 mod edits;
