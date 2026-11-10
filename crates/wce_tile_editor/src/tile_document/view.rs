@@ -1205,6 +1205,16 @@ impl Tile {
         }
     }
 
+    /// A polygon's or line's outline as it is drawn (scene metres, x z): a spline's curve, a road's or a wall's curve, else its points;
+    /// and whether it is closed (not a spline; `polygon_closed` not 0).
+    pub fn polygon_outline(&self, e: usize) -> (Vec<Float3>, bool) {
+        let ty = self.tscene().type_of(e);
+        let spline = wce_tile::splines::is_spline(ty);
+        let closed = !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
+        let points = if spline { self.spline_world_curve(e) } else if self.is_road(e) { self.road_world_curve(e) } else if self.is_wall(e) { self.wall_world_curve(e) } else { self.polygon_world_points(e) };
+        (points, closed)
+    }
+
     /// What the snapping's edges and corners are (scene units, as `polygon_world_points`): each shown polygon's or line's points (a spline:
     /// its curve; closed unless `polygon_closed` is 0) and each shown building's footprint, the box of its model's bounds on the ground
     /// (closed). `skip`'s own are left out.

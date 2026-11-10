@@ -4174,6 +4174,15 @@ impl Tool for TileTool {
                     hit = d.tile().pick_instance(o, dir, true);
                 }
 
+                // Last: a polygon or line on the ground there (its outline, else the smallest it is inside), so that a holder's shapes are
+                // picked by a click (a building or a marker there wins).
+                if hit.is_none()
+                    && let Some((o, dir)) = ray
+                    && let Some(at) = d.tile().pick_terrain(o, dir)
+                {
+                    hit = d.tile().pick_polygon(at, Self::handle_size(e));
+                }
+
                 let Some(hit) = hit else {
                     if !ev.ctrl {
                         e.selection.clear();

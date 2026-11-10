@@ -1447,6 +1447,28 @@ fn a_street_fits_its_boundaries_between_its_nodes() {
 }
 
 #[test]
+fn a_click_picks_a_holders_shapes() {
+    let (_dir, mut d) = open();
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (cx, cz) = (d.tile().extent_x() as f32 / 2.0, d.tile().extent_z() as f32 / 2.0);
+    d.create("SiegeAINodeInstance", graph, &Create::Point(Float3::new(cx, 0.0, cz)), "").unwrap();
+    let mut scene = wce_scene::render_scene::RenderScene::default();
+    let scene_layer = scene.add_layer(1, "tile");
+    wce_editor_core::document::Document::republish(&mut d, &mut scene, scene_layer, &wce_editor_core::command::Dirty::default());
+    let sc = d.tile().tscene();
+    let node = sc.find_all("SiegeAINodeInstance")[0];
+    let (bbox, boundary) = (sc.children(node)[0], sc.children(node)[1]);
+    let at = |x: f32, z: f32| Float3::new(cx + x, 0.0, cz + z);
+
+    // Near an outline: that shape (the Bounding Box is 20 m square, the Boundary 24 m); inside both, away from them: the smaller.
+    assert_eq!(d.tile().pick_polygon(at(11.8, 0.0), 0.5), Some(boundary));
+    assert_eq!(d.tile().pick_polygon(at(10.2, 3.0), 0.5), Some(bbox));
+    assert_eq!(d.tile().pick_polygon(at(2.0, 3.0), 0.5), Some(bbox));
+    assert_eq!(d.tile().pick_polygon(at(11.0, 0.0), 0.5), Some(boundary));
+    assert_eq!(d.tile().pick_polygon(at(30.0, 0.0), 0.5), None);
+}
+
+#[test]
 fn a_spline_is_drawn_and_edited_with_its_handles() {
     let (_dir, mut d) = open();
     let original = text(&d);
