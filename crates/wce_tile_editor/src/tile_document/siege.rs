@@ -562,19 +562,7 @@ impl Tile {
         let polys = |e: usize| polys(sc, e);
 
         let mut l = Layout::default();
-        for e in sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| exported(sc, e)) {
-            let kind = match sc.doc().get(e, "type").as_deref() {
-                Some("SANT_INTERSECTION") => wce_siege::NodeKind::Intersection,
-                Some("SANT_ENTRY") => wce_siege::NodeKind::Entry,
-                _ => wce_siege::NodeKind::Area,
-            };
-            let ps = polys(e);
-            let find = |name: &str| ps.iter().find(|p| p.0 == name).map(|p| p.1.clone()).unwrap_or_default();
-            let (bbox, boundary) = (find("Bounding Box"), find("Boundary"));
-            let Ok(bbox) = <[P; 4]>::try_from(bbox.get(..4).unwrap_or_default()) else { continue };
-            let centre = [(bbox[0][0] + bbox[2][0]) / 2.0, (bbox[0][1] + bbox[2][1]) / 2.0];
-            l.nodes.push(wce_siege::Node { kind, centre, bbox, boundary });
-        }
+        l.nodes.extend(sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| exported(sc, e)).filter_map(|e| node_of(sc, e)));
 
         for e in sc.find_all("SiegeAIEdgeInstance").into_iter().filter(|&e| exported(sc, e)) {
             let kind = match sc.doc().get(e, "type").as_deref() {
@@ -644,6 +632,22 @@ fn world_points(sc: &TedScene, e: usize) -> Vec<P> {
     }).collect()
 }
 
+/// A siege AI node as the generator reads it: its type, its Bounding Box (its first 4 points) and its Boundary. None without a Bounding
+/// Box of 4 points.
+fn node_of(sc: &TedScene, e: usize) -> Option<wce_siege::Node> {
+    let kind = match sc.doc().get(e, "type").as_deref() {
+        Some("SANT_INTERSECTION") => wce_siege::NodeKind::Intersection,
+        Some("SANT_ENTRY") => wce_siege::NodeKind::Entry,
+        _ => wce_siege::NodeKind::Area,
+    };
+    let ps = polys(sc, e);
+    let find = |name: &str| ps.iter().find(|p| p.0 == name).map(|p| p.1.clone()).unwrap_or_default();
+    let (bbox, boundary) = (find("Bounding Box"), find("Boundary"));
+    let bbox = <[P; 4]>::try_from(bbox.get(..4)?).ok()?;
+    let centre = [(bbox[0][0] + bbox[2][0]) / 2.0, (bbox[0][1] + bbox[2][1]) / 2.0];
+    Some(wce_siege::Node { kind, centre, bbox, boundary })
+}
+
 /// The polygons under an instance: their name (a siege polygon's) or deployment type, and their points.
 fn polys(sc: &TedScene, e: usize) -> Vec<(String, Vec<P>)> {
     // Its subtree only (a search of the whole document per instance was most of the time on a big tile).
@@ -665,6 +669,37 @@ fn polys(sc: &TedScene, e: usize) -> Vec<(String, Vec<P>)> {
 }
 
 impl TileDocument {
+    /// A siege AI node's Boundary made again for the ground around it as it is (its Inspector's *Adjust the Boundary*): the free ground
+    /// nearest to it, out to the no-go regions, buildings, fort pieces, steep ground and sea around it and halfway to the other nodes
+    /// (`wce_siege::generate::node_boundary`, as the generator makes them), grown onto the faces of what is around it. It replaces the
+    /// Boundary it has, in its place (one undo entry); returns the new one.
+    ///
+    /// # Errors
+    ///
+    /// Not a siege AI node, a node without a Bounding Box of 4 points, or no free ground around it.
+    pub fn adjust_node_boundary(&mut self, node: usize) -> Result<usize, String> {
+        let t = self.tile();
+        let sc = t.tscene();
+        if node >= sc.doc().elements().len() || sc.type_of(node) != "SiegeAINodeInstance" {
+            return Err("not a siege AI node".to_owned());
+        }
+
+        let me = node_of(sc, node).ok_or("the node has no Bounding Box of 4 points")?;
+        let others = sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| e != node && exported(sc, e)).filter_map(|e| node_of(sc, e)).collect::<Vec<_>>();
+        let pts = wce_siege::generate::node_boundary(&t.siege_input(), &me, &others);
+        if pts.len() < 3 {
+            return Err("no free ground around the node".to_owned());
+        }
+
+        let u = t.unit();
+        let world = pts.iter().map(|p| {
+            let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
+            wce_foundation::math::Float3::new(x, t.terrain_height(x, z), z)
+        }).collect();
+        let attrs = BTreeMap::from([("name".to_owned(), "Boundary".to_owned())]);
+        self.create_with("SIEGE_AI_POLYGON_INSTANCE", node, &super::Create::Line(world), "", &attrs)
+    }
+
     /// Generate SiegeAI: the layout into its layer, the old one out of the export. One undo entry; returns the layout (its summary and
     /// warnings).
     ///

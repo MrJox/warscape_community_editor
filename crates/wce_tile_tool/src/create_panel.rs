@@ -96,6 +96,9 @@ const FIXED: [(usize, &str, bool); 17] = [
 /// the Create panel.
 const SHAPES: [&str; 3] = ["DEPLOYMENT_ZONE_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "CaptureLocationPolygonInstance"];
 
+/// How a drawn Bounding Box becomes the rectangle the game reads (`bounding_rectangle`, docs/re/siege_ai.md).
+const BOUNDING_BOX_NOTE: &str = "The game reads the Bounding Box as a rectangle (any size, turned any way): click its first side's two corners, then a     point at its depth (a 4th click is not needed). With 2 points, or more than 4, it is the box around them. Its area is how many units the node holds.";
+
 /// The roads, drawn like the rivers.
 const ROAD: (usize, &str, bool) = (10, "SEGMENTED_SPLINE_INSTANCE", true);
 
@@ -493,8 +496,26 @@ impl TileTool {
             }
         }
 
+        // A node: its Boundary made for the ground around it, and how its Bounding Box is read.
+        let mut adjust = false;
+        if d.tile().tscene().type_of(holder) == "SiegeAINodeInstance" {
+            adjust = gui::button(&format!("{}  Adjust the Boundary to what is around it", icons::SQUARE_DASHED));
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The Boundary made again as the generator makes it: the free ground nearest to the node, out to the no-go regions, buildings, fort pieces, steep ground and sea around it and halfway to the other nodes, onto their faces. One undo entry.");
+            }
+
+            gui::text_wrapped(BOUNDING_BOX_NOTE);
+        }
+
         if let Some(it) = pick.map(|i| &items[i]) {
             self.start_shape(e, it.holder, it.kind, it.role);
+        }
+
+        if adjust && let Some(d) = document(e) {
+            self.status = match d.adjust_node_boundary(holder) {
+                Ok(_) => "the Boundary adjusted to what is around the node".to_owned(),
+                Err(err) => err,
+            };
         }
     }
 
@@ -971,6 +992,10 @@ impl TileTool {
             if ins.edit_choice_tips("wce_role", "shape", &mut idx, &names, &tips) {
                 draft.attrs.insert("name".to_owned(), names[idx.max(0) as usize].clone());
                 role_changed = true;
+            }
+
+            if draft.attrs.get("name").is_some_and(|n| n == "Bounding Box") {
+                gui::text_wrapped(BOUNDING_BOX_NOTE);
             }
         }
 

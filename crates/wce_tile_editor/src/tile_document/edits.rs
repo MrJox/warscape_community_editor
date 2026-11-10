@@ -3730,11 +3730,22 @@ impl Tile {
 }
 
 /// A polygon of TEd's shape: its area, open or closed, its points.
-/// A rectangle from drawn points (a siege AI node's Bounding Box is read as one, its 4 points in order): 4 points as drawn, else the box
-/// around them on the ground.
+/// A rectangle from drawn points (a siege AI node's Bounding Box: the game reads its first 4 points as one, its centre their mean, its
+/// width |p1 - p0|, its height |p2 - p1|, docs/re/siege_ai.md). From 3 or 4 points: the first side as drawn (its direction and width),
+/// the depth the third point's distance from it, on its side; from 2 or more than 4: the box around them on the ground.
 fn bounding_rectangle(points: Vec<Double3>) -> Vec<Double3> {
-    if points.len() == 4 {
-        return points;
+    if let [a, b, c, ..] = points[..]
+        && (3..=4).contains(&points.len())
+    {
+        let (dx, dz) = (b.x - a.x, b.z - a.z);
+        let len = (dx * dx + dz * dz).sqrt();
+        let (nx, nz) = (-dz / len.max(1e-9), dx / len.max(1e-9));
+        let depth = (c.x - b.x) * nx + (c.z - b.z) * nz;
+        if len > 1e-6 && depth.abs() > 1e-6 {
+            let off = Double3::new(nx * depth, 0.0, nz * depth);
+            let (c, d) = (b + off, a + off);
+            return vec![a, b, Double3::new(c.x, (b.y + points[2].y) / 2.0, c.z), Double3::new(d.x, (a.y + points[points.len() - 1].y) / 2.0, d.z)];
+        }
     }
 
     let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
