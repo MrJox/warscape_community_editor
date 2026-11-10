@@ -1337,7 +1337,8 @@ fn a_bounding_box_is_a_rectangle_and_a_boundary_fits_the_ground() {
         assert!((len(p[2], p[3]) - 12.0).abs() < 0.05);
     }
 
-    // A no-go region 4 m east of the box: the Boundary stops at it (grown onto its face), and reaches further the other ways.
+    // A no-go region 4 m east of the box: the Boundary stops at its edge (not grown onto it, as onto a building's face; within the
+    // raster's 2 units), and reaches further the other ways.
     let nogo = [(cx + 10.0, cz - 30.0), (cx + 40.0, cz - 30.0), (cx + 40.0, cz + 30.0), (cx + 10.0, cz + 30.0)].map(|(x, z)| Float3::new(x, 0.0, z));
     d.add_polygon(Some(graph), "NOGO_REGION_POLYGON_INSTANCE", "", &nogo).unwrap();
     let b = d.adjust_node_boundary(find(&d)).unwrap();
@@ -1348,7 +1349,7 @@ fn a_bounding_box_is_a_rectangle_and_a_boundary_fits_the_ground() {
     let u = d.tile().unit() as f32;
     let east = p.iter().map(|q| q.x).fold(f32::MIN, f32::max);
     let west = p.iter().map(|q| q.x).fold(f32::MAX, f32::min);
-    assert!(east <= cx + 10.0 + 6.0 / u, "stops at the no-go region: {east} (centre {cx})");
+    assert!(east <= cx + 10.0 + 2.0 / u, "stops at the no-go region's edge: {east} (centre {cx}, {u} units a metre)");
     assert!(west < cx - 10.0, "reaches out where the ground is free: {west}");
 
     while d.history_mut().undo() {}

@@ -1324,6 +1324,11 @@ fn overlap(a: &Rect, b: &Rect) -> bool {
 
 /// The outline of a set of cells grown by `grow`: its largest outer loop, simplified. Worked on a window around the cells.
 fn local_outline(g: &Grid, cells: &[usize], grow: f64) -> Vec<P> {
+    local_outline_clear(g, cells, grow, None)
+}
+
+/// [`local_outline`], the growth kept off the cells of `keep_out` (the no-go regions: a Boundary stops at their edge).
+fn local_outline_clear(g: &Grid, cells: &[usize], grow: f64, keep_out: Option<&Mask>) -> Vec<P> {
     if cells.is_empty() {
         return vec![];
     }
@@ -1346,14 +1351,22 @@ fn local_outline(g: &Grid, cells: &[usize], grow: f64) -> Vec<P> {
         }
     }
 
-    let grown = lg.dilate(&lm, grow);
+    let mut grown = lg.dilate(&lm, grow);
+    if let Some(out) = keep_out {
+        for (l, cell) in grown.iter_mut().enumerate() {
+            let k = (j0 + l / lg.w) * g.w + i0 + l % lg.w;
+            *cell &= lm[l] || !out[k];
+        }
+    }
+
     outer_loop(&lg, &grown, 1.5)
 }
 
 /// One node's Boundary for the ground as it is (the editor's *Adjust the Boundary*), as `generate` makes each node's: the free ground
 /// (no no-go region, steep ground, building, fort piece or sea) nearest to it along the ground, within its reach (`reach`, from the room
 /// around its centre; at least its rectangle's half diagonal), the free ground nearer to another node (`others`) left to that one, with its
-/// rectangle, grown 3 units onto the faces of what is around it. Empty when its rectangle is not one.
+/// rectangle, grown 3 units onto the faces of what is around it but the no-go regions (it stops at their edge). Empty when its rectangle is
+/// not one.
 pub fn node_boundary(input: &Input, node: &Node, others: &[Node]) -> Vec<P> {
     let c = [node.bbox.iter().map(|p| p[0]).sum::<f64>() / 4.0, node.bbox.iter().map(|p| p[1]).sum::<f64>() / 4.0];
     let half_diagonal = node.bbox.iter().map(|&p| dist(p, c)).fold(0.0, f64::max);
@@ -1369,8 +1382,13 @@ pub fn node_boundary(input: &Input, node: &Node, others: &[Node]) -> Vec<P> {
         return vec![];
     }
 
-    let mut blocked = g.mask();
-    for p in input.nogo.iter().chain(&input.obstacles) {
+    let mut nogo = g.mask();
+    for p in &input.nogo {
+        g.fill_polygon(&mut nogo, p);
+    }
+
+    let mut blocked = nogo.clone();
+    for p in &input.obstacles {
         g.fill_polygon(&mut blocked, p);
     }
 
@@ -1421,7 +1439,9 @@ pub fn node_boundary(input: &Input, node: &Node, others: &[Node]) -> Vec<P> {
     let (owner, _) = g.geodesic_split(&free, &sources.iter().map(|s| (s.0, s.1)).collect::<Vec<_>>());
     let mut cells: Vec<usize> = (0..g.len()).filter(|&k| owner[k] == 0).collect();
     cells.extend(mine);
-    simplify_loop(&local_outline(&g, &cells, 3.0), 0.5)
+    // Grown onto the buildings' faces, not into the no-go regions: a map's no-go regions are often drawn to ease the buildings' line
+    // for the pathfinder, and the Boundary stops at their edge.
+    simplify_loop(&local_outline_clear(&g, &cells, 3.0, Some(&nogo)), 0.5)
 }
 
 /// A street from node a to node b along `path` (cells from a's seed to b's).
