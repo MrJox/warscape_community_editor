@@ -3801,7 +3801,7 @@ pub fn text_kind(text: &[u8]) -> &str {
     std::str::from_utf8(&rest[..end]).unwrap_or_default()
 }
 
-fn new_polygon(kind: &str, points: Vec<Double3>, closed: bool) -> wce_tile::new_instances::NewInstance {
+pub(crate) fn new_polygon(kind: &str, points: Vec<Double3>, closed: bool) -> wce_tile::new_instances::NewInstance {
     use wce_tile::new_instances::{NewInstance, NewPoint, polygon_area};
 
     let mut n = NewInstance::new(kind).attr("area", wce_tile::ted_scene::format_number(polygon_area(&points)));

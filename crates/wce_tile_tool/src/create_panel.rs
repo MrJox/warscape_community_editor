@@ -497,6 +497,22 @@ impl TileTool {
         }
 
         // A node: its Boundary made for the ground around it, and how its Bounding Box is read.
+        // A street edge: its two Street boundaries fitted between the nodes it joins.
+        let mut fit = false;
+        let sc = d.tile().tscene();
+        if sc.type_of(holder) == "SiegeAIEdgeInstance" && sc.doc().get(holder, "type").is_none_or(|ty| ty == "SAET_STREET") {
+            let joins = d.street_nodes(holder);
+            gui::begin_disabled(joins.is_none());
+            fit = gui::button(&format!("{}  Fit the street boundaries to the nodes it joins", icons::SQUARE_DASHED));
+            gui::end_disabled();
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(match joins {
+                    Some(_) => "Its two Street boundaries made again as the generator makes them: along its Street between the two nodes it joins, at the corridor's faces (the no-go regions, buildings, fort pieces, steep ground, sea and the other nodes' Boundaries), each end ticked into the node's Boundary. One undo entry.",
+                    None => "It joins no two nodes: its Street's first and last points must be in two nodes' Bounding Boxes (as the game finds them).",
+                });
+            }
+        }
+
         let mut adjust = None;
         if d.tile().tscene().type_of(holder) == "SiegeAINodeInstance" {
             if gui::button(&format!("{}  Adjust the Boundary to what is around it", icons::SQUARE_DASHED)) {
@@ -527,6 +543,13 @@ impl TileTool {
         }
 
         let reach = e.tool_settings::<TileSettings>(SETTINGS_ID).boundary_reach;
+        if fit && let Some(d) = document(e) {
+            self.status = match d.fit_street_sides(holder) {
+                Ok(()) => "the street boundaries fitted between its nodes".to_owned(),
+                Err(err) => err,
+            };
+        }
+
         if adjust.is_some() && let Some(d) = document(e) {
             self.status = match d.adjust_node_boundary(holder, Some(reach).filter(|&r| r > 0.0)) {
                 Ok(_) => "the Boundary adjusted to what is around the node".to_owned(),

@@ -1398,6 +1398,55 @@ fn a_bounding_box_is_a_rectangle_and_a_boundary_fits_the_ground() {
 }
 
 #[test]
+fn a_street_fits_its_boundaries_between_its_nodes() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (cx, cz) = (d.tile().extent_x() as f32 / 2.0, d.tile().extent_z() as f32 / 2.0);
+    let u = d.tile().unit() as f32;
+    for x in [cx - 30.0, cx + 30.0] {
+        d.create("SiegeAINodeInstance", graph, &Create::Point(Float3::new(x, 0.0, cz)), "").unwrap();
+    }
+
+    // No-go strips 8 m to either side of the corridor between the nodes' Boundaries (12 m from their centres).
+    for z in [cz + 8.0, cz - 8.0] {
+        let far = if z > cz { z + 10.0 } else { z - 10.0 };
+        let strip = [(cx - 18.0, z), (cx + 18.0, z), (cx + 18.0, far), (cx - 18.0, far)].map(|(x, z)| Float3::new(x, 0.0, z));
+        d.add_polygon(Some(graph), "NOGO_REGION_POLYGON_INSTANCE", "", &strip).unwrap();
+    }
+
+    let line = Create::Line(vec![Float3::new(cx - 30.0, 0.0, cz), Float3::new(cx + 30.0, 0.0, cz)]);
+    d.create("SiegeAIEdgeInstance", graph, &line, "").unwrap();
+    let edge = d.tile().tscene().find_all("SiegeAIEdgeInstance")[0];
+    assert!(d.street_nodes(edge).is_some(), "its ends are in the two nodes' rectangles");
+
+    let _ = d.take_selection_hint();
+    d.fit_street_sides(edge).unwrap();
+    assert_eq!(d.take_selection_hint(), Some(vec![item_of(edge)]), "the edge stays selected");
+    let sc = d.tile().tscene();
+    let names = sc.children(edge).into_iter().map(|c| sc.name(c)).collect::<Vec<_>>();
+    assert_eq!(names, ["Street", "Street boundary", "Street boundary"]);
+    let sides = sc.children(edge)[1..].iter().map(|&c| d.tile().polygon_world_points(c)).collect::<Vec<_>>();
+    for side in &sides {
+        // Between the nodes' Boundaries, at the strips' faces; the ends inside the Boundaries.
+        let mid = side.iter().filter(|p| (p.x - cx).abs() < 18.0).collect::<Vec<_>>();
+        assert!(!mid.is_empty(), "{side:?}");
+        assert!(mid.iter().all(|p| ((p.z - cz).abs() - 8.0).abs() < 2.5 / u + 0.5), "at the faces: {mid:?}");
+        let (first, last) = (side[0], side[side.len() - 1]);
+        assert!((first.x - (cx - 30.0)).abs() < 12.0 && (last.x - (cx + 30.0)).abs() < 12.0, "ends in the nodes: {first:?} {last:?}");
+    }
+
+    assert!((sides[0][sides[0].len() / 2].z - cz) * (sides[1][sides[1].len() / 2].z - cz) < 0.0, "one to each side");
+
+    // An area connection has none.
+    d.set_attribute(edge, "type", "SAET_AREA_CONNECTION");
+    assert!(d.fit_street_sides(edge).is_err());
+
+    while d.history_mut().undo() {}
+    assert_eq!(text(&d), original);
+}
+
+#[test]
 fn a_spline_is_drawn_and_edited_with_its_handles() {
     let (_dir, mut d) = open();
     let original = text(&d);

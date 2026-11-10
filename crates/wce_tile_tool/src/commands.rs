@@ -2004,6 +2004,12 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.adjust_node_boundary(el, reach).map_or_else(fail, |b| ok(format!("Boundary {b}: {} points", d.tile().tscene().polygon_points(b).len())))
     });
 
+    c.add("street_fit", "street_fit", "fit the selected street edge's two Street boundaries between the nodes it joins, as its Inspector's button does (one undo entry)", |e, _| {
+        let Some(el) = primary(e) else { return fail("no edge selected") };
+        let Some(d) = document(e) else { return no_tile() };
+        d.fit_street_sides(el).map_or_else(fail, |()| ok(""))
+    });
+
     c.add("holder_draw", "holder_draw [shape name]", "start drawing a shape of the selected holder (a deployment zone's region, a siege AI node's or edge's shape, a capture location's boundary), as its Inspector's buttons do", |e, a| {
         with_tile(e, |t, e| {
             let sel = selected(e);
