@@ -704,8 +704,12 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             let is_graph = sc.type_of(el) == "SCENE_GRAPH";
 
             // The row: selection, double-click to rename, context menu, drag source and drop target.
+            // A selectable's highlight reaches half the item spacing past it at the top and the bottom (to meet the next one in a
+            // list): made that much shorter and moved down by half of it, it fills its own row exactly (it overlapped the rows around).
+            let spacing = gui::item_spacing().y;
+            gui::set_cursor_screen_pos(v2(p0.x, p0.y + spacing * 0.5));
             gui::set_next_item_allow_overlap();
-            let clicked = gui::selectable_sized("##row", is_sel, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, v2(avail - ICON_COLUMNS * ICON_WIDTH, row_h));
+            let clicked = gui::selectable_sized("##row", is_sel, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, v2(avail - ICON_COLUMNS * ICON_WIDTH, (row_h - spacing).max(1.0)));
             let row_hovered = gui::is_item_hovered();
             let (rmin, rmax) = (p0, v2(p0.x + avail - ICON_COLUMNS * ICON_WIDTH, p0.y + row_h));
             if clicked && tool_ref.rename_elem != Some(el) {
