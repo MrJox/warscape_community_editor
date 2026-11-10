@@ -3917,6 +3917,30 @@ impl Tile {
 }
 
 /// A polygon of TEd's shape: its area, open or closed, its points.
+/// A capture location's new boundary as a preset, around its capture location's origin (scene units `r`: a radius or a square's half
+/// side; `turn` degrees, 0: a semicircle's round side and a square's top towards +z), as TEd writes the shape (`set_boundary_shape`).
+pub(crate) fn preset_boundary(kind: BoundaryKind, r: f64, turn: f64) -> wce_tile::new_instances::NewInstance {
+    let (sn, cs) = turn.to_radians().sin_cos();
+    let around = |x: f64, z: f64| Double3::new(x * cs + z * sn, 0.0, -x * sn + z * cs);
+    let ring = |a: f64| around(r * a.to_radians().sin(), r * a.to_radians().cos());
+    let (shape, points): (&str, Vec<Double3>) = match kind {
+        BoundaryKind::Circle | BoundaryKind::Polygon => ("PS_CIRCLE", wce_tile::new_instances::circle_points(r)),
+        BoundaryKind::Semicircle => ("PS_SEMICIRCLE", (0..21).map(|i| ring(-90.0 + f64::from(i) * 9.0)).collect()),
+        BoundaryKind::Square => ("PS_RECTANGLE", [(-r, r), (r, r), (r, -r), (-r, -r)].into_iter().map(|(x, z)| around(x, z)).collect()),
+    };
+
+    let mut n = new_polygon("CaptureLocationPolygonInstance", points, true).attr("polygon_shape", shape).attr("polygon_closed", "1");
+    if shape != "PS_RECTANGLE" {
+        n = n.attr("radius", wce_tile::ted_scene::format_number(r));
+    }
+
+    n
+}
+
+/// A capture location draft's boundary preset (`Draft::attrs`, not the element's): its shape (`Circle`, `Semicircle`, `Square`), its
+/// size (metres) and its turn (degrees).
+pub const DRAFT_BOUNDARY: [&str; 3] = ["wce_boundary_shape", "wce_boundary_size", "wce_boundary_turn"];
+
 /// The preset shapes of a capture location's boundary (`TileDocument::set_boundary_shape`), TEd's, and a free polygon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoundaryKind {

@@ -1520,6 +1520,33 @@ fn a_capture_boundary_takes_preset_shapes() {
 }
 
 #[test]
+fn a_new_capture_location_takes_its_boundary_preset() {
+    use wce_tile_editor::tile_document::{BoundaryKind, Draft};
+
+    let (_dir, mut d) = open();
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (cx, cz) = (d.tile().extent_x() as f32 / 2.0, d.tile().extent_z() as f32 / 2.0);
+    let mut draft = Draft::new("CaptureLocationInstance", "");
+    for (k, v) in [("wce_boundary_shape", "Semicircle"), ("wce_boundary_size", "10"), ("wce_boundary_turn", "90")] {
+        draft.attrs.insert(k.to_owned(), v.to_owned());
+    }
+
+    let text = d.draft_text(&draft).unwrap();
+    assert!(!String::from_utf8_lossy(&text).contains("wce_boundary"), "the preset is the draft's, not the element's");
+    let loc = d.place_text("Add capture location", &text, graph, Float3::new(cx, 0.0, cz), None, true).unwrap();
+    let b = d.capture_boundary(loc).unwrap();
+    let s = d.boundary_shape(b).unwrap();
+    assert_eq!(s.kind, BoundaryKind::Semicircle);
+    assert!((s.size - 10.0).abs() < 0.01 && (s.turn - 90.0).abs() < 0.05, "{s:?}");
+
+    // Without a preset: TEd's 20 m circle, as before.
+    let plain = d.draft_text(&Draft::new("CaptureLocationInstance", "")).unwrap();
+    let loc = d.place_text("Add capture location", &plain, graph, Float3::new(cx + 50.0, 0.0, cz), None, true).unwrap();
+    let s = d.boundary_shape(d.capture_boundary(loc).unwrap()).unwrap();
+    assert!(s.kind == BoundaryKind::Circle && (s.size - 20.0).abs() < 0.01, "{s:?}");
+}
+
+#[test]
 fn a_spline_is_drawn_and_edited_with_its_handles() {
     let (_dir, mut d) = open();
     let original = text(&d);

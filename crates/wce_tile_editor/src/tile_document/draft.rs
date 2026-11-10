@@ -10,7 +10,7 @@ use wce_foundation::math::{Double3, Double3x3};
 use wce_tile::world_transform::{rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
 use super::edits::{edit_value, point_instance, scene_point};
-use super::{TileDocument, item_of};
+use super::{BoundaryKind, TileDocument, item_of};
 
 /// A thing to place: an instance of `kind` (`key`: its building, tree, decal, model or effect), these attributes over the type's defaults
 /// (raw values), turned `yaw` degrees about the vertical.
@@ -26,6 +26,17 @@ impl Draft {
     pub fn new(kind: &str, key: &str) -> Self {
         Self { kind: kind.to_owned(), key: key.to_owned(), ..Default::default() }
     }
+}
+
+/// A boundary preset by its label (`BoundaryKind::label`).
+fn boundary_kind(label: &str) -> Option<BoundaryKind> {
+    BoundaryKind::ALL.into_iter().find(|k| k.label() == label)
+}
+
+/// The facing of a capture location draft's flag in degrees (`flag_facing`, radians; 0 without one): a semicircle's or square's turn
+/// when none is given.
+fn draft_flag_degrees(attrs: &BTreeMap<String, String>) -> f64 {
+    attrs.get("flag_facing").and_then(|v| v.trim().parse::<f64>().ok()).map_or(0.0, f64::to_degrees)
 }
 
 /// `text` (an element) turned `yaw` degrees about the vertical through its position.
@@ -107,8 +118,52 @@ impl TileDocument {
         };
 
         n.attrs.extend(d.attrs.clone());
+
+        // A capture location's boundary preset (the draft's, not the element's attributes).
+        let preset = super::edits::DRAFT_BOUNDARY.map(|k| n.attrs.remove(k));
+        if d.kind == "CaptureLocationInstance" && let Some(kind) = preset[0].as_deref().and_then(boundary_kind) {
+            let u = self.tile().unit();
+            let size = preset[1].as_deref().and_then(|v| v.parse::<f64>().ok()).unwrap_or(20.0).max(0.5);
+            let turn = preset[2].as_deref().and_then(|v| v.parse::<f64>().ok()).unwrap_or_else(|| draft_flag_degrees(&n.attrs));
+            n.children = vec![wce_tile::new_instances::element_text(&super::edits::preset_boundary(kind, size * u, turn)).ok()?];
+        }
+
         let text = wce_tile::new_instances::element_text(&n).ok()?;
         Some(turned(&text, d.yaw))
+    }
+
+    /// A capture location draft's Inspector rows of its boundary (`DRAFT_BOUNDARY`): its preset shape, size and turn. Returns whether
+    /// they changed.
+    fn inspect_draft_boundary(d: &mut Draft, ins: &mut dyn Inspector) -> bool {
+        let [shape_key, size_key, turn_key] = super::edits::DRAFT_BOUNDARY;
+        ins.section("Boundary");
+        let kinds = [BoundaryKind::Circle, BoundaryKind::Semicircle, BoundaryKind::Square];
+        let names = kinds.map(|k| k.label().to_owned());
+        let now = d.attrs.get(shape_key).and_then(|v| boundary_kind(v)).unwrap_or(BoundaryKind::Circle);
+        let mut idx = kinds.iter().position(|&k| k == now).unwrap_or(0) as i32;
+        let mut changed = false;
+        if ins.edit_choice(shape_key, "shape", &mut idx, &names) {
+            d.attrs.insert(shape_key.to_owned(), kinds[idx.clamp(0, 2) as usize].label().to_owned());
+            changed = true;
+        }
+
+        let mut size = d.attrs.get(size_key).and_then(|v| v.parse::<f32>().ok()).unwrap_or(20.0);
+        if ins.edit_float(size_key, "size (m: radius or half side)", &mut size, 0.1, 0.5, 500.0) {
+            d.attrs.insert(size_key.to_owned(), size.max(0.5).to_string());
+            d.attrs.entry(shape_key.to_owned()).or_insert_with(|| now.label().to_owned());
+            changed = true;
+        }
+
+        let kind = d.attrs.get(shape_key).and_then(|v| boundary_kind(v)).unwrap_or(now);
+        if kind.turns() {
+            let mut turn = d.attrs.get(turn_key).and_then(|v| v.parse::<f32>().ok()).unwrap_or_else(|| draft_flag_degrees(&d.attrs) as f32);
+            if ins.edit_float(turn_key, "turn (deg; 0: +z; default: the flag's facing)", &mut turn, 1.0, -360.0, 360.0) {
+                d.attrs.insert(turn_key.to_owned(), turn.to_string());
+                changed = true;
+            }
+        }
+
+        changed
     }
 
     /// The Inspector of a draft: the type's properties (TEd's Property Editor rows) with the draft's values, else the kit's defaults; an edit
@@ -175,6 +230,10 @@ impl TileDocument {
                 d.attrs.insert(prop.attr.to_owned(), v);
                 changed = true;
             }
+        }
+
+        if d.kind == "CaptureLocationInstance" {
+            changed |= Self::inspect_draft_boundary(d, ins);
         }
 
         changed
