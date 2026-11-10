@@ -500,12 +500,23 @@ impl TileTool {
         // A capture location: its boundary as a preset shape (TEd's), keeping its size (the boundary's Inspector edits size and turn).
         let mut preset = None;
         if d.tile().tscene().type_of(holder) == "CaptureLocationInstance" && let Some(b) = d.capture_boundary(holder) {
+            // Buttons sized to their names, the boundary's own shape lit (selectables of no width took the whole line: the others were
+            // past the panel's edge).
             let now = d.boundary_shape(b).map(|s| s.kind);
             gui::text_disabled("Boundary preset:");
             for kind in [BoundaryKind::Circle, BoundaryKind::Semicircle, BoundaryKind::Square] {
                 gui::same_line();
-                if gui::selectable_sized(&format!("{}##preset", kind.label()), now == Some(kind), 0, gui::v2(0.0, 0.0)) {
+                let on = now == Some(kind);
+                if on {
+                    gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+                }
+
+                if gui::small_button(&format!("{}##preset", kind.label())) {
                     preset = Some((b, kind));
+                }
+
+                if on {
+                    gui::pop_style_color(1);
                 }
             }
         }
