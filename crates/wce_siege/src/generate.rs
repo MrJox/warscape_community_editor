@@ -1552,12 +1552,49 @@ pub fn street_sides(input: &Input, line: &[P], a: &Node, b: &Node, others: &[Nod
         }
 
         let mut s = simplify(&smooth(&side), 2.0);
-        s.insert(0, tick(s[0], a));
-        s.push(tick(s[s.len() - 1], b));
+        let (start, end) = (seal(s[0], a), seal(s[s.len() - 1], b));
+        s.splice(0..0, start.into_iter().rev());
+        s.extend(end);
         *o = s;
     }
 
     Some(out)
+}
+
+/// A fitted street side's end joined to a node (`street_sides`): to the nearest point of its Boundary, then a short way inside it across
+/// that edge, so that the side meets the Boundary where it reaches it and nothing walkable is left between them (ticked towards the
+/// node's centre, as the generator's, both sides met near the line and left a wedge on each side). Without a Boundary: `tick`.
+fn seal(end: P, node: &Node) -> Vec<P> {
+    let b = &node.boundary;
+    if b.len() < 3 {
+        return vec![tick(end, node)];
+    }
+
+    // The nearest point of the Boundary's outline, and its edge.
+    let mut best = (f64::MAX, end, [0.0, 0.0]);
+    for i in 0..b.len() {
+        let (p, q) = (b[i], b[(i + 1) % b.len()]);
+        let d = [q[0] - p[0], q[1] - p[1]];
+        let l2 = d[0] * d[0] + d[1] * d[1];
+        let t = if l2 > 1e-12 { (((end[0] - p[0]) * d[0] + (end[1] - p[1]) * d[1]) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let c = [p[0] + d[0] * t, p[1] + d[1] * t];
+        let dist = (end[0] - c[0]).hypot(end[1] - c[1]);
+        if dist < best.0 {
+            best = (dist, c, d);
+        }
+    }
+
+    // A step inside across that edge (its normal towards the inside), else towards the centre.
+    let (_, on, d) = best;
+    let l = d[0].hypot(d[1]).max(1e-9);
+    for n in [[-d[1] / l, d[0] / l], [d[1] / l, -d[0] / l]] {
+        let q = [on[0] + n[0] * 2.0, on[1] + n[1] * 2.0];
+        if inside(q, b) {
+            return vec![on, q];
+        }
+    }
+
+    vec![on, tick(on, node)]
 }
 
 /// [`reach`], a clearance that is not one (no obstacle near) taken as a large one.

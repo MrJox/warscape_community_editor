@@ -1434,6 +1434,9 @@ fn a_street_fits_its_boundaries_between_its_nodes() {
         assert!(mid.iter().all(|p| ((p.z - cz).abs() - 8.0).abs() < 2.5 / u + 0.5), "at the faces: {mid:?}");
         let (first, last) = (side[0], side[side.len() - 1]);
         assert!((first.x - (cx - 30.0)).abs() < 12.0 && (last.x - (cx + 30.0)).abs() < 12.0, "ends in the nodes: {first:?} {last:?}");
+
+        // Each end joins the Boundary where the side reaches it (out at the side, not turned in to the line: no wedge left between).
+        assert!((first.z - cz).abs() > 5.0 && (last.z - cz).abs() > 5.0, "sealed at the side: {first:?} {last:?}");
     }
 
     assert!((sides[0][sides[0].len() / 2].z - cz) * (sides[1][sides[1].len() / 2].z - cz) < 0.0, "one to each side");
