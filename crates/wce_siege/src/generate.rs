@@ -1391,38 +1391,10 @@ pub fn node_boundary(input: &Input, node: &Node, others: &[Node], reach: Option<
     }
 
     // What it may not go into, nor grow onto: the no-go regions and the other nodes' Boundaries.
-    let mut keep_out = g.mask();
-    for p in &input.nogo {
-        g.fill_polygon(&mut keep_out, p);
-    }
-
+    let (mut blocked, mut keep_out) = blocked_ground(input, &g);
     for o in others.iter().filter(|o| o.boundary.len() >= 3) {
         g.fill_polygon(&mut keep_out, &o.boundary);
-    }
-
-    let mut blocked = keep_out.clone();
-    for p in &input.obstacles {
-        g.fill_polygon(&mut blocked, p);
-    }
-
-    for (b, s) in blocked.iter_mut().zip(even_odd(&g, &input.steep)) {
-        *b |= s;
-    }
-
-    for w in &input.walls {
-        for r in w.footprint.iter().chain(&w.platforms) {
-            g.fill_polygon(&mut blocked, r);
-        }
-
-        for k in line_cells(&g, &w.walkway, 3.0) {
-            blocked[k] = true;
-        }
-    }
-
-    if let Some(sea) = &input.sea {
-        for (k, b) in blocked.iter_mut().enumerate() {
-            *b |= sea.at(g.centre(k));
-        }
+        g.fill_polygon(&mut blocked, &o.boundary);
     }
 
     // Its own rectangle is its own, whatever is under it; the other nodes without a Boundary take the ground nearer to them.
@@ -1469,6 +1441,122 @@ fn segments_cross(a: P, b: P, p: P, q: P) -> bool {
     let side = |o: P, x: P, y: P| (x[0] - o[0]) * (y[1] - o[1]) - (x[1] - o[1]) * (y[0] - o[0]);
     let (d1, d2, d3, d4) = (side(p, q, a), side(p, q, b), side(a, b, p), side(a, b, q));
     ((d1 > 0.0) != (d2 > 0.0) || d1 == 0.0 || d2 == 0.0) && ((d3 > 0.0) != (d4 > 0.0) || d3 == 0.0 || d4 == 0.0)
+}
+
+/// The blocked ground around a place, as a node's Boundary and a street's sides see it: the no-go regions, the buildings, the steep
+/// ground, the fort pieces and the sea; and the no-go regions alone (what a Boundary is not grown onto).
+fn blocked_ground(input: &Input, g: &Grid) -> (Mask, Mask) {
+    let mut nogo = g.mask();
+    for p in &input.nogo {
+        g.fill_polygon(&mut nogo, p);
+    }
+
+    let mut blocked = nogo.clone();
+    for p in &input.obstacles {
+        g.fill_polygon(&mut blocked, p);
+    }
+
+    for (b, s) in blocked.iter_mut().zip(even_odd(g, &input.steep)) {
+        *b |= s;
+    }
+
+    for w in &input.walls {
+        for r in w.footprint.iter().chain(&w.platforms) {
+            g.fill_polygon(&mut blocked, r);
+        }
+
+        for k in line_cells(g, &w.walkway, 3.0) {
+            blocked[k] = true;
+        }
+    }
+
+    if let Some(sea) = &input.sea {
+        for (k, b) in blocked.iter_mut().enumerate() {
+            *b |= sea.at(g.centre(k));
+        }
+    }
+
+    (blocked, nogo)
+}
+
+/// How far a fitted street's side goes from its line where nothing stops it sooner (units): CA's streets are about 32 wide (median).
+pub const STREET_SIDE_MAX: f64 = 20.0;
+
+/// The two sides of a street (the editor's *Fit the street boundaries*), much as `generate` makes each street's: along its line (`line`,
+/// its Street: from inside `a`'s rectangle to inside `b`'s) where it is in neither node's Boundary (their rectangles for one without),
+/// each side at the corridor's face (the no-go regions, buildings, fort pieces, steep ground, sea and the nodes' Boundaries, the two it
+/// joins too; at most [`STREET_SIDE_MAX`] out, where nothing is nearer), smoothed, each end ticked into the node's Boundary. `None`
+/// without a corridor.
+pub fn street_sides(input: &Input, line: &[P], a: &Node, b: &Node, others: &[Node]) -> Option<[Vec<P>; 2]> {
+    if line.len() < 2 {
+        return None;
+    }
+
+    // A grid around the line and its nodes, 80 units out.
+    let pts = line.iter().chain(&a.bbox).chain(&b.bbox);
+    let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+    for p in pts {
+        lo = [lo[0].min(p[0]), lo[1].min(p[1])];
+        hi = [hi[0].max(p[0]), hi[1].max(p[1])];
+    }
+
+    let (blo, bhi) = input.bounds;
+    let g = Grid::new([(lo[0] - 100.0).max(blo[0]), (lo[1] - 100.0).max(blo[1])], [(hi[0] + 100.0).min(bhi[0]), (hi[1] + 100.0).min(bhi[1])], CELL);
+    if g.is_empty() {
+        return None;
+    }
+
+    // The sides stop at the other nodes' Boundaries and at the two it joins (not across their open ground).
+    let (mut blocked, _) = blocked_ground(input, &g);
+    for o in others.iter().chain([a, b]).filter(|o| o.boundary.len() >= 3) {
+        g.fill_polygon(&mut blocked, &o.boundary);
+    }
+
+    let free: Mask = blocked.iter().map(|&b| !b).collect();
+
+    // The corridor: the line, every unit, where it is in neither node (their Boundary, or rectangle).
+    let path = resample(line, 1.0);
+    let within = |n: &Node, p: P| if n.boundary.len() >= 3 { inside(p, &n.boundary) } else { inside(p, &n.bbox) };
+    let ia = path.iter().rposition(|&p| within(a, p)).map_or(0, |i| i + 1);
+    let ib = path.iter().position(|&p| within(b, p)).map_or(path.len() - 1, |i| i.saturating_sub(1));
+    if ib <= ia + 1 {
+        return None;
+    }
+
+    let corridor = &path[ia..=ib];
+    let mut sides = [vec![], vec![]];
+    let mut i = 0usize;
+    loop {
+        let (p0, p1) = (corridor[i.saturating_sub(3)], corridor[(i + 3).min(corridor.len() - 1)]);
+        let t = [p1[0] - p0[0], p1[1] - p0[1]];
+        let l = t[0].hypot(t[1]);
+        if l > 1e-9 {
+            let n = [-t[1] / l, t[0] / l];
+            for (s, side) in [1.0, -1.0].into_iter().zip(sides.iter_mut()) {
+                side.push(march(&g, &free, corridor[i], [n[0] * s, n[1] * s], STREET_SIDE_MAX));
+            }
+        }
+
+        if i + 1 == corridor.len() {
+            break;
+        }
+
+        i = (i + 3).min(corridor.len() - 1);
+    }
+
+    let mut out = [vec![], vec![]];
+    for (side, o) in sides.into_iter().zip(out.iter_mut()) {
+        if side.len() < 2 {
+            return None;
+        }
+
+        let mut s = simplify(&smooth(&side), 2.0);
+        s.insert(0, tick(s[0], a));
+        s.push(tick(s[s.len() - 1], b));
+        *o = s;
+    }
+
+    Some(out)
 }
 
 /// [`reach`], a clearance that is not one (no obstacle near) taken as a large one.

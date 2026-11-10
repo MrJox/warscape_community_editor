@@ -683,6 +683,88 @@ fn polys(sc: &TedScene, e: usize) -> Vec<(String, Vec<P>)> {
 }
 
 impl TileDocument {
+    /// The two nodes a siege AI edge joins, as the game finds them (docs/re/siege_ai.md): the node whose rectangle (its Bounding Box's
+    /// first 4 points) holds its Street's first point, and the one holding its last (the last such node in the file, each). `None`
+    /// without a Street, or when an end is in no node.
+    pub fn street_nodes(&self, edge: usize) -> Option<(usize, usize)> {
+        let sc = self.tile().tscene();
+        if edge >= sc.doc().elements().len() || sc.type_of(edge) != "SiegeAIEdgeInstance" {
+            return None;
+        }
+
+        let line = polys(sc, edge).into_iter().find(|p| p.0 == "Street").map(|p| p.1)?;
+        let (first, last) = (*line.first()?, *line.last()?);
+        let nodes = sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| exported(sc, e)).filter_map(|e| node_of(sc, e).map(|n| (e, n))).collect::<Vec<_>>();
+        let holding = |p: P| nodes.iter().rev().find(|(_, n)| wce_siege::raster::inside(p, &n.bbox)).map(|(e, _)| *e);
+        let (a, b) = (holding(first)?, holding(last)?);
+        (a != b).then_some((a, b))
+    }
+
+    /// A street edge's two Street boundaries made again (its Inspector's *Fit the street boundaries*), as the generator makes them
+    /// (`wce_siege::generate::street_sides`): along its Street between the two nodes it joins (`street_nodes`), at the corridor's faces
+    /// (the no-go regions, buildings, fort pieces, steep ground, sea and the other nodes' Boundaries), each end ticked into the node's
+    /// Boundary. They replace the ones it has, after its Street (one undo entry; the edge stays selected).
+    ///
+    /// # Errors
+    ///
+    /// Not a street edge, one that joins no two nodes, or no corridor between them.
+    pub fn fit_street_sides(&mut self, edge: usize) -> Result<(), String> {
+        let t = self.tile();
+        let sc = t.tscene();
+        if edge >= sc.doc().elements().len() || sc.type_of(edge) != "SiegeAIEdgeInstance" {
+            return Err("not a siege AI edge".to_owned());
+        }
+
+        if sc.doc().get(edge, "type").is_some_and(|ty| ty != "SAET_STREET") {
+            return Err("only a street edge has boundaries (an area connection, a wall or a palisade edge has none)".to_owned());
+        }
+
+        let (a, b) = self.street_nodes(edge).ok_or("the street joins no two nodes: its Street's ends must be in two nodes' Bounding Boxes")?;
+        let line = polys(sc, edge).into_iter().find(|p| p.0 == "Street").map(|p| p.1).unwrap_or_default();
+        let (na, nb) = (node_of(sc, a).ok_or("a node without a Bounding Box")?, node_of(sc, b).ok_or("a node without a Bounding Box")?);
+        let others = sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| e != a && e != b && exported(sc, e)).filter_map(|e| node_of(sc, e)).collect::<Vec<_>>();
+        let sides = wce_siege::generate::street_sides(&t.siege_input(), &line, &na, &nb, &others).ok_or("no corridor between the two nodes")?;
+
+        // The new sides, local to the edge (each at the centre of its points, as a drawn one).
+        let u = t.unit();
+        let texts = sides.iter().map(|side| {
+            let local = side.iter().map(|p| {
+                let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
+                t.to_local(edge, wce_foundation::math::Float3::new(x, t.terrain_height(x, z), z))
+            }).collect::<Vec<_>>();
+            let c = local.iter().fold(Double3::default(), |s, &p| s + p) * (1.0 / local.len().max(1) as f64);
+            let n = super::edits::new_polygon("SIEGE_AI_POLYGON_INSTANCE", local.into_iter().map(|p| p - c).collect(), false).position(c).attr("name", "Street boundary");
+            wce_tile::new_instances::element_text(&n)
+        }).collect::<Result<Vec<_>, _>>()?;
+        let old = sc.children(edge).into_iter().filter(|&c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == "Street boundary").collect::<Vec<_>>();
+
+        let mark = self.begin()?;
+        let result = (|| -> Result<(), String> {
+            for &c in old.iter().rev() {
+                self.tscene_mut().remove(c)?;
+            }
+
+            for text in &texts {
+                self.tscene_mut().insert_element_text(edge, text)?;
+            }
+
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                self.push_splice("Fit the street boundaries".to_owned(), mark, vec![item_of(edge)], vec![item_of(edge)]);
+                Ok(())
+            }
+
+            Err(e) => {
+                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+                let _ = self.tscene_mut().unapply(&record);
+                Err(e)
+            }
+        }
+    }
+
     /// A siege AI node's Boundary made again for the ground around it as it is (its Inspector's *Adjust the Boundary*): the free ground
     /// nearest to it, within `reach` metres of its centre (`None`: the generator's reach, from the room around it), out to the no-go
     /// regions, buildings, fort pieces, steep ground and sea around it, the other nodes' Boundaries, and halfway to the nodes without one
