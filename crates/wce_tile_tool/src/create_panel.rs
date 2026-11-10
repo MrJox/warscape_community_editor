@@ -435,6 +435,32 @@ impl TileTool {
         });
     }
 
+    /// What is being drawn looks like once made: its colour (a deployment polygon's by its type and the alliance of the zone it goes into,
+    /// the selected one's, else a new zone's default) and whether it is closed.
+    pub(crate) fn drawing_look(&self, e: &Editor, d: &wce_tile_editor::tile_document::TileDocument) -> ([f32; 3], bool) {
+        use wce_tile_editor::tile_document::{FILLED_TYPES, deployment_colour, deployment_variant, polygon_colour};
+
+        const ZONE: &str = "DeploymentZonePolygonInstanceGroup";
+        let Some(draft) = &self.draft else { return ([1.0, 0.9, 0.1], false) };
+        let kind = draft.kind.as_str();
+        let colour = match kind {
+            "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => {
+                let sc = d.tile().tscene();
+                let els = sc.doc().elements();
+                let zone = primary(e).filter(|&s| s < els.len()).and_then(|s| std::iter::successors(Some(s), |&x| els[x].parent).find(|&x| sc.type_of(x) == ZONE));
+                let default = || wce_tile::new_instances::template(ZONE).and_then(|t| t.attrs.iter().find(|(k, _)| *k == "alliance_id")).map(|(_, v)| (*v).to_owned());
+                let alliance = zone.and_then(|z| sc.doc().get(z, "alliance_id")).or_else(default).unwrap_or_default();
+                let ty = draft.attrs.get("deployment_polygon_type").map_or("DZPT_ADDITIVE", String::as_str);
+                deployment_colour(deployment_variant(&alliance, ty))
+            }
+
+            "SiegeAIEdgeInstance" => polygon_colour("SIEGE_AI_POLYGON_INSTANCE"),
+            k => polygon_colour(k),
+        };
+
+        (colour, FILLED_TYPES.contains(&kind))
+    }
+
     /// Starts making an entry: placing it, or drawing it.
     pub fn start_making(&mut self, e: &mut Editor, en: &Entry) {
         // The new set (not saved) is not one to come back to.
