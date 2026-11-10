@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use wce_editor::editor::Editor;
 use wce_editor::gui;
 use wce_foundation::math::{Float3, Float4x4};
-use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, OverlayVertex, Payload, SourceRef, overlay_colour};
+use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, OverlayVertex, Payload, RenderScene, SourceRef, overlay_colour};
 use wce_terrain::terry::{EntityKind, TerryProject};
 use wce_terrain_editor::MapDocument;
 use wce_terrain_editor::document::{TERRY_CELL, TerryFrame};
@@ -19,6 +19,80 @@ use wce_tile_editor::tile_document::context::Frame;
 
 /// What the drawn set is of: document, `.terry` revision, filters (kinds, season), radius, the point it is centred on.
 type Built = (DocumentId, u64, ([bool; 4], usize), f32, [f64; 2]);
+
+#[cfg(test)]
+mod removal_tests {
+    use super::*;
+    use wce_editor_core::selection::Selection;
+    use wce_scene::render_scene::StructureChange;
+
+    #[test]
+    fn batch_removes_only_shown_overlays_and_keeps_source_selection() {
+        let mut scene = RenderScene::default();
+        let mut view = TerryView::default();
+        view.layer = scene.add_layer(7, "terry entities");
+        let other_layer = scene.add_layer(8, "unrelated");
+        let source = SourceRef { doc: 7, item: 101 };
+        let mut keep = vec![];
+        for i in 0..6 {
+            let id = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()),
+                SourceRef { item: source.item + i, ..source });
+            view.shown.insert(source.item + i, id);
+            // Interleaving unrelated ids catches accidental removal of a whole layer or a contiguous enclosing range.
+            keep.push(scene.add(other_layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 8, item: i }));
+        }
+        view.draft = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 7, item: u64::MAX });
+        keep.push(view.draft);
+        let retained: Vec<_> = keep.iter().map(|&id| scene.find(id).unwrap().clone()).collect();
+        let layers = scene.layers().to_vec();
+        let terrain_revision = scene.terrain_revision();
+        let mut cursor = 0;
+        scene.structure_since(&mut cursor);
+        let mut selection = Selection::default();
+        selection.set(source);
+        view.remove_shown(&mut scene);
+        assert!(view.shown.is_empty());
+        assert_eq!(scene.entities(), retained);
+        assert_eq!(scene.layers(), layers);
+        assert_eq!(scene.terrain_revision(), terrain_revision);
+        assert!(scene.structure_since(&mut cursor).unwrap().iter().all(|c| matches!(c, StructureChange::Removed(_))));
+        let rebuilt = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), source);
+        assert_eq!(selection.items(), &[source]);
+        assert_eq!(selection.entities(&scene), vec![rebuilt]);
+        assert!(scene.pickable(scene.find(rebuilt).unwrap()));
+        assert_eq!(scene.find(rebuilt).unwrap().source, source);
+    }
+
+    #[test]
+    #[ignore = "explicit campaign-scale performance comparison"]
+    fn campaign_overlay_removal_timing() {
+        let count = 14_644;
+        for filler in [0, 60_000] {
+            for batch in [false, true] {
+                let mut times = vec![];
+                for _ in 0..3 {
+                    let mut scene = RenderScene::default();
+                    let mut view = TerryView::default();
+                    view.layer = scene.add_layer(1, "benchmark");
+                    for i in 0..filler {
+                        scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 2, item: i });
+                    }
+                    for i in 0..count {
+                        let id = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 1, item: i });
+                        view.shown.insert(i, id);
+                    }
+                    let start = std::time::Instant::now();
+                    if batch { view.remove_shown(&mut scene); }
+                    else { for (_, id) in view.shown.drain() { scene.remove(id); } }
+                    times.push(start.elapsed().as_secs_f64() * 1000.);
+                    assert_eq!(scene.entities().len(), filler as usize);
+                }
+                times.sort_by(f64::total_cmp);
+                println!("overlays={count} unrelated={filler} batch={batch} median_ms={:.3} samples_ms={times:?}", times[1]);
+            }
+        }
+    }
+}
 
 /// The seasons of the season filter (`ECSeasonMask`'s attributes), after "every season".
 pub const SEASONS: [&str; 4] = ["spring", "summer", "autumn", "winter"];
@@ -192,6 +266,11 @@ fn overlay(d: &MapDocument, frame: &Frame, id: u64, show: [bool; 4], season: usi
 }
 
 impl TerryView {
+    fn remove_shown(&mut self, scene: &mut RenderScene) {
+        let ids: Vec<_> = self.shown.drain().map(|(_, ent)| ent).collect();
+        scene.remove_ids(&ids);
+    }
+
     /// The entities near the camera drawn again when the scene, the filters or the camera's place changed enough.
     pub fn update(&mut self, e: &mut Editor, doc: DocumentId, frame: Option<std::sync::Arc<Frame>>) {
         let Some(frame) = frame else { return self.clear(e) };
@@ -217,9 +296,7 @@ impl TerryView {
                 self.shown.clear();
                 self.draft = 0;
             } else {
-                for (_, ent) in self.shown.drain() {
-                    e.scene.remove(ent);
-                }
+                self.remove_shown(&mut e.scene);
             }
 
             for (id, o) in overlays {
