@@ -1672,7 +1672,7 @@ impl TileDocument {
     /// and a 24 m Boundary, a deployment zone group with a 64 m square polygon (a drawn deployment polygon goes into the selected group,
     /// `into`, or into a new group), a siege AI edge with its drawn Street and, a street edge, a Street boundary 8 m to each side. A siege AI
     /// shape or a capture location boundary goes only into its holder (`into`), in a role of it (`shape_role`). One undo entry; the
-    /// selection afterwards is it.
+    /// selection afterwards is it (a holder's shape: the holder).
     ///
     /// # Errors
     ///
@@ -1832,14 +1832,18 @@ impl TileDocument {
             None => Ok(e),
         });
 
+        // A holder's new shape leaves the holder selected (its shapes are picked only to be edited by hand); it is before the shape,
+        // so the insert did not move it.
+        let holder = placed.is_some() && wce_tile::parents::child_kind(self.tile().tscene().type_of(into)).is_some();
+        let selected = |e: usize| vec![item_of(if holder { into } else { e })];
         match inserted {
             Ok(e) if placed.is_some_and(|p| p != (None, None)) => {
-                self.push_splice(format!("Add {kind}"), mark, vec![], vec![item_of(e)]);
+                self.push_splice(format!("Add {kind}"), mark, vec![], selected(e));
                 Ok(e)
             }
 
             Ok(e) => {
-                self.push_splice_added(format!("Add {kind}"), mark, vec![], vec![item_of(e)], &[e]);
+                self.push_splice_added(format!("Add {kind}"), mark, vec![], selected(e), &[e]);
                 Ok(e)
             }
 
