@@ -211,38 +211,168 @@ impl Cover {
         }
     }
 
-    /// The edges of a polyline (closing it when `closed`) as ribbons on the cover in `rgba`, with a 1 px line along their middle in `line`
-    /// (it stays visible from afar), and a square on each point when `corners` (not on a spline's curve samples).
-    pub fn edges(&self, points: &[Float3], closed: bool, corners: bool, rgba: u32, line: u32, o: &mut Overlay) {
-        let n = points.len();
-        let segments = if closed && n > 2 { n } else { n.saturating_sub(1) };
-        let half = RIBBON_M * 0.5;
-        let on = |x: f32, z: f32| Float3::new(x, self.at(x, z) + EDGE_LIFT, z);
+    /// The edges of a polyline (closing it when `closed`) on the cover (`edge_strip`): `colours.middle` along their middle fading to
+    /// `colours.side` (the same colour, transparent) at their sides, with a 1 px line along their middle in `colours.line` (it stays
+    /// visible from afar), and a disc on each point in `colours.line` when `corners` (not on a spline's curve samples).
+    pub fn edges(&self, points: &[Float3], closed: bool, corners: bool, colours: EdgeColours, o: &mut Overlay) {
+        let height = |x: f32, z: f32| self.at(x, z) + EDGE_LIFT;
+        edge_strip(points, closed, corners, RIBBON_M * 0.5, self.cell.min(2.0), &height, colours, o);
+    }
+}
+
+/// The colours of `edge_strip`: the ribbon's middle, its sides (the same colour, transparent: it fades to them), and the line along the
+/// middle and the corners.
+#[derive(Clone, Copy, Debug)]
+pub struct EdgeColours {
+    pub middle: u32,
+    pub side: u32,
+    pub line: u32,
+}
+
+impl EdgeColours {
+    /// `middle` and `line` (overlay colours or table entries) over a ribbon of colour `rgb`.
+    pub fn new(middle: u32, line: u32, [r, g, b]: [f32; 3]) -> Self {
+        let mut side = wce_scene::render_scene::overlay_colour(r, g, b, 0.0);
+
+        // A transparent colour with the table's green and blue bytes would read as a table entry.
+        if (side >> 8) & 0xFF == 0xAB && (side >> 16) & 0xFF == 0xCD {
+            side ^= 1 << 8;
+        }
+
+        Self { middle, side, line }
+    }
+}
+
+/// How much wider a corner's disc is than the ribbon (its radius over the ribbon's half width).
+const CORNER_SCALE: f32 = 1.5;
+
+/// A polyline's edges as a soft ribbon `half` metres to each side on the ground `height` gives (cut every `step` metres so that it
+/// follows it): the middle in `colours.middle`, fading to `colours.side` at its sides, and a 1 px line along its middle.
+///
+/// Nothing in it is drawn twice (overlapping, the overlay's blending made joins and corners darker): with `corners`, each point is a disc
+/// in `colours.line` (a little wider than the ribbon, as large as its shorter edge leaves room for) and each edge's ribbon runs from disc
+/// to disc; without (a curve's samples), the ribbon is one strip, mitred at its points.
+#[allow(clippy::too_many_arguments)]
+pub fn edge_strip(points: &[Float3], closed: bool, corners: bool, half: f32, step: f32, height: &dyn Fn(f32, f32) -> f32, colours: EdgeColours, o: &mut Overlay) {
+    let mut pts = points.iter().map(|p| [p.x, p.z]).collect::<Vec<_>>();
+    pts.dedup_by(|a, b| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-4);
+    let n = pts.len();
+    if n < 2 {
+        return;
+    }
+
+    let closed = closed && n > 2;
+    let segments = if closed { n } else { n - 1 };
+    let on = |x: f32, z: f32| Float3::new(x, height(x, z), z);
+    let len = |s: usize| {
+        let (a, b) = (pts[s], pts[(s + 1) % n]);
+        (b[0] - a[0]).hypot(b[1] - a[1])
+    };
+
+    // A cross-section (left side, middle, right side: `off` across), and the ribbon between two of them.
+    let section = |c: [f32; 2], off: [f32; 2]| (on(c[0] + off[0], c[1] + off[1]), on(c[0], c[1]), on(c[0] - off[0], c[1] - off[1]));
+    let quad = |a: (Float3, Float3, Float3), b: (Float3, Float3, Float3), o: &mut Overlay| {
+        let (EdgeColours { middle, side, .. }, (l0, m0, r0), (l1, m1, r1)) = (colours, a, b);
+        o.triangle_colours([l0, m0, m1], [side, middle, middle]);
+        o.triangle_colours([l0, m1, l1], [side, middle, side]);
+        o.triangle_colours([m0, r0, r1], [middle, side, side]);
+        o.triangle_colours([m0, r1, m1], [middle, side, middle]);
+    };
+
+    // A straight piece from c0 to c1 (offsets across at each end), cut every `step`.
+    let piece = |c0: [f32; 2], c1: [f32; 2], off0: [f32; 2], off1: [f32; 2], o: &mut Overlay| {
+        let l = (c1[0] - c0[0]).hypot(c1[1] - c0[1]);
+        let k = (l / step.max(0.1)).ceil().max(1.0) as usize;
+        let at = |t: f32| ([c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t], [off0[0] + (off1[0] - off0[0]) * t, off0[1] + (off1[1] - off0[1]) * t]);
+        let mut prev = section(c0, off0);
+        for i in 1..=k {
+            let (c, off) = at(i as f32 / k as f32);
+            let next = section(c, off);
+            quad(prev, next, o);
+            prev = next;
+        }
+    };
+
+    let normal = |s: usize| {
+        let (a, b) = (pts[s], pts[(s + 1) % n]);
+        let l = (b[0] - a[0]).hypot(b[1] - a[1]).max(1e-9);
+        [-(b[1] - a[1]) / l, (b[0] - a[0]) / l]
+    };
+
+    if corners {
+        // Each point's disc: as wide as asked, but no more than half its shorter edge (two discs never meet).
+        let radius = |i: usize| {
+            let before = if i > 0 { Some(len(i - 1)) } else if closed { Some(len(n - 1)) } else { None };
+            let after = if i < n - 1 || closed { Some(len(i % n)) } else { None };
+            let room = before.into_iter().chain(after).fold(f32::MAX, f32::min) * 0.5;
+            (half * CORNER_SCALE).min(room)
+        };
+
         for s in 0..segments {
-            let (a, b) = (points[s], points[(s + 1) % n]);
-            let (dx, dz) = (b.x - a.x, b.z - a.z);
-            let len = (dx * dx + dz * dz).sqrt();
-            if len < 1e-4 {
+            let (a, b) = (pts[s], pts[(s + 1) % n]);
+            let l = len(s);
+            let (ra, rb) = (radius(s), radius((s + 1) % n));
+            if l <= ra + rb + 1e-4 {
                 continue;
             }
 
-            let (nx, nz) = (-dz / len * half, dx / len * half);
-            let steps = (len / self.cell.min(2.0)).ceil().max(1.0) as usize;
-            let at = |k: usize| (a.x + dx * k as f32 / steps as f32, a.z + dz * k as f32 / steps as f32);
-            for k in 0..steps {
-                let ((x0, z0), (x1, z1)) = (at(k), at(k + 1));
-                let (p0, p1, q0, q1) = (on(x0 + nx, z0 + nz), on(x0 - nx, z0 - nz), on(x1 + nx, z1 + nz), on(x1 - nx, z1 - nz));
-                o.triangle(p0, p1, q1, rgba);
-                o.triangle(p0, q1, q0, rgba);
-                let lift = Float3::new(0.0, 0.02, 0.0);
-                o.line(on(x0, z0) + lift, on(x1, z1) + lift, line);
-            }
+            let d = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+            let nm = normal(s);
+            let off = [nm[0] * half, nm[1] * half];
+            piece([a[0] + d[0] * ra, a[1] + d[1] * ra], [b[0] - d[0] * rb, b[1] - d[1] * rb], off, off, o);
         }
 
-        for p in points.iter().filter(|_| corners) {
-            let (a, b, c, d) = (on(p.x - half, p.z - half), on(p.x + half, p.z - half), on(p.x + half, p.z + half), on(p.x - half, p.z + half));
-            o.triangle(a, b, c, rgba);
-            o.triangle(a, c, d, rgba);
+        // The discs, fans of triangles on the ground.
+        const SIDES: usize = 16;
+        for (i, &c) in pts.iter().enumerate() {
+            let r = radius(i);
+            let rim = |k: usize| {
+                let t = k as f32 * std::f32::consts::TAU / SIDES as f32;
+                on(c[0] + r * t.cos(), c[1] + r * t.sin())
+            };
+            let centre = on(c[0], c[1]);
+            for k in 0..SIDES {
+                o.triangle(centre, rim(k), rim(k + 1), colours.line);
+            }
+        }
+    } else {
+        // One strip, mitred at the points (at most twice as wide as the ribbon there, on very sharp turns).
+        let miter = |i: usize| {
+            let prev = if i > 0 { Some(i - 1) } else if closed { Some(n - 1) } else { None };
+            let next = if i < n - 1 || closed { Some(i % n) } else { None };
+            let m = match (prev.map(normal), next.map(normal)) {
+                (Some(a), Some(b)) => {
+                    let (sx, sz) = (a[0] + b[0], a[1] + b[1]);
+                    let l = sx.hypot(sz);
+                    if l < 1e-4 {
+                        b
+                    } else {
+                        let m = [sx / l, sz / l];
+                        let cos = (m[0] * b[0] + m[1] * b[1]).max(0.5);
+                        [m[0] / cos, m[1] / cos]
+                    }
+                }
+                (Some(a), None) => a,
+                (None, Some(b)) => b,
+                (None, None) => [0.0, 0.0],
+            };
+            [m[0] * half, m[1] * half]
+        };
+
+        for s in 0..segments {
+            let (i, j) = (s, (s + 1) % n);
+            piece(pts[i], pts[j], miter(i), miter(j), o);
+        }
+    }
+
+    // The line along the middle.
+    let lift = Float3::new(0.0, 0.02, 0.0);
+    for s in 0..segments {
+        let (a, b) = (pts[s], pts[(s + 1) % n]);
+        let k = (len(s) / step.max(0.1)).ceil().max(1.0) as usize;
+        let at = |t: f32| on(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t) + lift;
+        for i in 0..k {
+            o.line(at(i as f32 / k as f32), at((i + 1) as f32 / k as f32), colours.line);
         }
     }
 }

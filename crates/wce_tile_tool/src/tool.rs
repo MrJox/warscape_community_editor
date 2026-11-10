@@ -1692,10 +1692,12 @@ impl TileTool {
             // The edges in the colour the shape will have, on the ground, a little thinner than its finished edges; the way back to the
             // first point (a closed shape) and on to the mouse fainter.
             let ([cr, cg, cb], closed) = self.drawing_look(e, d);
-            let (edge, faint) = (overlay_colour(cr, cg, cb, 0.85), overlay_colour(cr, cg, cb, 0.4));
-            for w in self.draw_pts.windows(2) {
-                drawing_ribbon(t, w[0], w[1], edge, &mut o);
-            }
+            // As the finished edges are drawn (`edge_strip`: soft, nothing drawn twice), half as wide; a closed shape's points as discs.
+            use wce_tile_editor::tile_document::{EdgeColours, edge_strip};
+            let height = |x: f32, z: f32| t.terrain_height(x, z) + 0.4;
+            let solid = EdgeColours::new(overlay_colour(cr, cg, cb, 0.85), overlay_colour(cr, cg, cb, 1.0), [cr, cg, cb]);
+            let faint = EdgeColours::new(overlay_colour(cr, cg, cb, 0.4), overlay_colour(cr, cg, cb, 0.5), [cr, cg, cb]);
+            edge_strip(&self.draw_pts, false, closed, DRAWING_HALF, 2.0, &height, solid, &mut o);
 
             // On the first point (a click there closes the shape): the line goes to it, and it is ringed.
             let first = self.draw_pts.first().copied().filter(|_| self.close_hover);
@@ -1715,11 +1717,11 @@ impl TileTool {
             }
 
             if let (Some(last), Some(m)) = (self.draw_pts.last(), mouse) {
-                drawing_ribbon(t, *last, m, faint, &mut o);
+                edge_strip(&[*last, m], false, false, DRAWING_HALF, 2.0, &height, faint, &mut o);
             }
 
             if closed && self.draw_pts.len() >= 2 && let (Some(first), Some(end)) = (self.draw_pts.first(), mouse.or(self.draw_pts.last().copied())) {
-                drawing_ribbon(t, end, *first, faint, &mut o);
+                edge_strip(&[end, *first], false, false, DRAWING_HALF, 2.0, &height, faint, &mut o);
             }
         }
 
@@ -4515,29 +4517,8 @@ pub fn wall_summary(l: &WallLayout) -> String {
 }
 
 /// How far from a light, across, a ray meets the light's horizontal plane (`None` when it does not, ahead).
-/// A drawn edge from `a` to `b` while drawing (`tool_overlay`): a ribbon 0.4 m wide on the terrain (the finished edges are 0.6 m), with a
-/// line along it.
-fn drawing_ribbon(t: &wce_tile_editor::tile_document::Tile, a: Float3, b: Float3, rgba: u32, o: &mut Overlay) {
-    const HALF: f32 = 0.2;
-    const LIFT: f32 = 0.4;
-    let (dx, dz) = (b.x - a.x, b.z - a.z);
-    let len = (dx * dx + dz * dz).sqrt();
-    if len < 1e-4 {
-        return;
-    }
-
-    let (nx, nz) = (-dz / len * HALF, dx / len * HALF);
-    let on = |x: f32, z: f32| Float3::new(x, t.terrain_height(x, z) + LIFT, z);
-    let steps = (len / 2.0).ceil().max(1.0) as usize;
-    let at = |k: usize| (a.x + dx * k as f32 / steps as f32, a.z + dz * k as f32 / steps as f32);
-    for k in 0..steps {
-        let ((x0, z0), (x1, z1)) = (at(k), at(k + 1));
-        let (p0, p1, q0, q1) = (on(x0 + nx, z0 + nz), on(x0 - nx, z0 - nz), on(x1 + nx, z1 + nz), on(x1 - nx, z1 - nz));
-        o.triangle(p0, p1, q1, rgba);
-        o.triangle(p0, q1, q0, rgba);
-        o.line(on(x0, z0), on(x1, z1), rgba | 0xFF00_0000);
-    }
-}
+/// Half the width of the line being drawn (`tool_overlay`): thinner than the finished edges (0.3).
+const DRAWING_HALF: f32 = 0.2;
 
 fn light_plane_distance(c: Float3, o: Float3, dir: Float3) -> Option<f32> {
     if dir.y.abs() < 1e-4 {

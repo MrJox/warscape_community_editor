@@ -802,6 +802,11 @@ impl Overlay {
         self.triangles.extend([a, b, c].map(|p| OverlayVertex { p, rgba }));
     }
 
+    /// A triangle with a colour per corner (blended across it; table entries too, `overlay_slot`).
+    pub fn triangle_colours(&mut self, p: [Float3; 3], rgba: [u32; 3]) {
+        self.triangles.extend((0..3).map(|i| OverlayVertex { p: p[i], rgba: rgba[i] }));
+    }
+
     /// A box's six faces as triangles.
     pub fn box_solid(&mut self, lo: Float3, hi: Float3, rgba: u32) {
         let c = |i: usize| Float3::new(if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.y } else { hi.y }, if i & 4 == 0 { lo.z } else { hi.z });

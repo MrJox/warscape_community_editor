@@ -1304,7 +1304,9 @@ impl Tile {
                         cover.fill(&points, &holes, overlay_slot(fill), &mut o);
                     }
 
-                    cover.edges(&points, closed, !spline, overlay_slot(outline), overlay_slot(line), &mut o);
+                    // Corners on a polygon's own points only (not on a spline's, a road's or a wall's curve samples).
+                    let corners = !spline && !self.is_road(elem) && !self.is_wall(elem);
+                    cover.edges(&points, closed, corners, super::cover::EdgeColours::new(overlay_slot(outline), overlay_slot(line), [r, g, b]), &mut o);
                     cover.drawn = Some((look, o.clone()));
                 }
             }
