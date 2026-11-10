@@ -38,6 +38,13 @@ fn parent_layer(sc: &TedScene, e: usize) -> Option<usize> {
     None
 }
 
+/// What an element is directly in, for a drop next to it: its layer, or its holder (`wce_tile::parents`: a deployment zone, a siege AI
+/// node or edge, a capture location).
+fn parent_container(sc: &TedScene, e: usize) -> Option<usize> {
+    let els = sc.doc().elements();
+    std::iter::successors(els[e].parent, |&q| els[q].parent).find(|&q| sc.is_layer(q) || wce_tile::parents::child_kind(sc.type_of(q)).is_some())
+}
+
 fn icon_colour(on: bool, inherited_off: bool) -> u32 {
     if !on {
         theme::u32(theme::mix(theme::dim(), theme::palette_background(), 0.35))
@@ -113,6 +120,12 @@ pub(crate) fn layer_by_key(sc: &TedScene, key: &str) -> Option<usize> {
     Some(at)
 }
 
+/// Whether an element opens in the tree to show what it holds: a layer (or a group), or a holder (`wce_tile::parents`), whose shapes are
+/// items of their own.
+fn opens(sc: &TedScene, e: usize) -> bool {
+    sc.is_layer(e) || wce_tile::parents::child_kind(sc.type_of(e)).is_some()
+}
+
 /// The name shown for an element: its name, else its type.
 fn label_of(sc: &TedScene, e: usize) -> String {
     let n = sc.name(e);
@@ -145,7 +158,8 @@ impl TileTool {
         while let Some((e, depth, key)) = stack.pop() {
             // A copy of a prefab opens like a group: a click on one of its items opens the copy for overrides (`select_whole_prefabs`).
             let layer = sc.is_layer(e);
-            let mut kids = if layer { sc.children(e) } else { vec![] };
+            let branch = opens(sc, e);
+            let mut kids = if branch { sc.children(e) } else { vec![] };
             let all_kids = kids.clone();
             if let Some(keep) = &keep {
                 kids.retain(|k| keep.contains(k));
@@ -154,8 +168,8 @@ impl TileTool {
             // The types turned off at the top are not listed (layers and groups always are).
             kids.retain(|&k| sc.is_layer(k) || !hidden.contains(sc.type_of(k)));
 
-            let open = depth == 0 || (layer && !kids.is_empty() && (opened.contains(&e) || self.tree_open.contains(&key)));
-            self.tree_rows.push(TreeRow { elem: e, depth, key: key.clone(), layer, open, kids: kids.len() });
+            let open = depth == 0 || (branch && !kids.is_empty() && (opened.contains(&e) || self.tree_open.contains(&key)));
+            self.tree_rows.push(TreeRow { elem: e, depth, key: key.clone(), layer, branch, open, kids: kids.len() });
             if !open {
                 continue;
             }
@@ -214,11 +228,17 @@ impl TileTool {
 
         // The layers above (nearest first; the file nests a `children` element between a layer and its contents, so the tree's parent of an
         // element is the nearest layer above it), and the row: the element itself, or the ancestor that is a child of the nearest layer.
+        // (A holder opens too: a shape picked in the viewport is shown in it.)
+        let up = |e: usize| {
+            let els = sc.doc().elements();
+            std::iter::successors(els[e].parent, |&q| els[q].parent).find(|&q| opens(sc, q))
+        };
+
         let mut layers = vec![];
-        let mut p = parent_layer(sc, elem);
+        let mut p = up(elem);
         while let Some(l) = p {
             layers.push(l);
-            p = parent_layer(sc, l);
+            p = up(l);
         }
 
         let Some(&nearest) = layers.first() else { return };
@@ -260,7 +280,7 @@ fn mark_matches(sc: &TedScene, e: usize, filter: &str, keep: &mut HashSet<usize>
         let mut stack = vec![e];
         while let Some(x) = stack.pop() {
             keep.insert(x);
-            if sc.is_layer(x) {
+            if opens(sc, x) {
                 stack.extend(sc.children(x));
             }
         }
@@ -270,7 +290,7 @@ fn mark_matches(sc: &TedScene, e: usize, filter: &str, keep: &mut HashSet<usize>
     }
 
     let mut any = false;
-    if sc.is_layer(e) {
+    if opens(sc, e) {
         for k in sc.children(e) {
             any |= mark_matches(sc, k, filter, keep, open);
         }
@@ -726,7 +746,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             if gui::begin_drag_drop_target() {
                 if let Some((data, delivered)) = gui::accept_drag_drop_payload("TILE_ELEMS") {
                     let y = (gui::mouse_pos().y - rmin.y) / row_h;
-                    let mut zone = if row.layer {
+                    let mut zone = if row.branch {
                         if y < 0.25 { Zone::Before } else if y > 0.75 { Zone::After } else { Zone::Into }
                     } else if y < 0.5 {
                         Zone::Before
@@ -740,14 +760,14 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
 
                     let (layer, before) = match zone {
                         Zone::Into => (Some(el), None),
-                        Zone::Before => (parent_layer(sc, el), Some(el)),
+                        Zone::Before => (parent_container(sc, el), Some(el)),
                         Zone::After => {
                             // An open layer: "after" it means its first child position, which is "into" at the front.
-                            if row.layer && row.open && row.kids != 0 {
+                            if row.branch && row.open && row.kids != 0 {
                                 (Some(el), sc.children(el).first().copied())
                             } else {
                                 // In front of the next sibling.
-                                let layer = parent_layer(sc, el);
+                                let layer = parent_container(sc, el);
                                 let sibs = layer.map(|l| sc.children(l)).unwrap_or_default();
                                 (layer, sibs.iter().position(|&s| s == el).and_then(|k| sibs.get(k + 1).copied()))
                             }
@@ -826,7 +846,10 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     }
                 }
 
-                if row.layer && in_stage(el) && !sel.is_empty() && !sel.contains(&el) && gui::menu_item("Move selection here", None, false, true) {
+                // Into a layer, or a holder (`wce_tile::parents`): what goes only inside a holder goes into one alone.
+                let holder = wce_tile::parents::child_kind(sc.type_of(el)).is_some();
+                let fits = sel.iter().all(|&s| wce_tile::parents::fits(sc.type_of(s), sc.type_of(el)).is_ok());
+                if (row.layer || holder) && in_stage(el) && !sel.is_empty() && !sel.contains(&el) && gui::menu_item("Move selection here", None, false, fits) {
                     actions.push(RowAction::MoveInto(sel.clone(), el));
                 }
 
@@ -866,7 +889,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
             // What is drawn on the row.
             let cy = p0.y + row_h * 0.5;
             let x0 = p0.x + 4.0 + row.depth as f32 * 14.0;
-            if row.layer && row.kids != 0 {
+            if row.branch && row.kids != 0 {
                 let c = v2(x0 + 5.0, cy);
                 let ac = theme::u32(theme::mix(theme::text(), theme::dim(), 0.4));
                 if row.open {
@@ -936,7 +959,7 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                 }
             } else {
                 let mut label = label_of(sc, el);
-                if row.layer && row.kids != 0 {
+                if row.branch && row.kids != 0 {
                     label += &format!("  ({})", row.kids);
                 }
 

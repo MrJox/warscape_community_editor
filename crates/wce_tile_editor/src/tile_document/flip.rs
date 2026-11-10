@@ -215,8 +215,9 @@ impl TileDocument {
 
         let items = copy_into.map(|_| self.copy_items(&roots));
         let factors = self.river_factors(&roots);
-        if let Some(into) = copy_into {
+        if let (Some(into), Some(items)) = (copy_into, &items) {
             self.check_structure(&[], Some(into))?;
+            self.check_fits(items.iter().map(|it| super::edits::text_kind(&it.text)), into)?;
         }
 
         let mark = self.begin()?;

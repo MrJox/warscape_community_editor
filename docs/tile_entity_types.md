@@ -20,18 +20,18 @@ nearest layer above it with an export type says (`LayerExportType_Normal`: the t
 | `AI_HINT_POLYGON_INSTANCE` | 6,166 | yes (Create panel: draw; its hint type in the Inspector) | properties, points | outline | AI hints |
 | `NOGO_REGION_POLYGON_INSTANCE` | 3,981 | yes (Create panel: draw) | properties, points | outline | no-go regions |
 | `GO_REGION_POLYGON_INSTANCE` | 222 | yes (Create panel: draw) | properties, points | outline | go regions |
-| `SIEGE_AI_POLYGON_INSTANCE` | 9,085 | yes (Create panel: draw) | properties, points | outline | siege AI |
+| `SIEGE_AI_POLYGON_INSTANCE` | 9,085 | yes (drawn from its node's or edge's Inspector, in a role: Bounding Box, Boundary, Street, Street boundary) | properties, points | outline | siege AI |
 | `VegetationExclusionPolygonInstance` | 12,653 | yes (Create panel: draw) | properties, points | outline | through the vegetation generator |
 | `ZONE_POLYGON_INSTANCE` | 575 | yes (Create: draw) | properties, points | outline | zones |
 | `DeploymentZonePolygonInstanceGroup` | 403 | yes (Create: click; with a 64 m square polygon) | properties | box marker | deployment zones |
-| `DEPLOYMENT_ZONE_POLYGON_INSTANCE` | 800 | yes (Create: draw; into the selected group, else a new one) | properties, points | outline | deployment zones (in their group) |
+| `DEPLOYMENT_ZONE_POLYGON_INSTANCE` | 800 | yes (drawn from its zone's Inspector) | properties, points | outline | deployment zones (in their group) |
 | `CaptureLocationInstance` | 1,006 | yes (Create: click; with a 20 m boundary circle) | properties | box marker | capture locations |
-| `CaptureLocationPolygonInstance` | 1,006 | with its capture location | points (a circle's are read-only) | outline | the capture location's boundary |
+| `CaptureLocationPolygonInstance` | 1,006 | with its capture location; drawn again from its Inspector (replaces its boundary) | points (a circle's are read-only) | outline | the capture location's boundary |
 | `CivilianDeploymentZone` | 941 | yes (Create: draw) | properties, points | outline | civilian deployment zones |
 | `CivilianShelter` | 9,095 | yes (Create: click; its target 10 m ahead) | properties (its `target` only as numbers) | box marker (no target line) | `civilian_shelter.bin` |
 | `LiteBuildingZone` | 140 | yes (Create: draw) | points | outline | lite building zones |
-| `SiegeAINodeInstance` | 1,632 | yes (Create: click; with a 20 m square area) | properties | box marker | siege AI nodes |
-| `SiegeAIEdgeInstance` | 2,419 | yes (Create: draw one boundary; the second is 10 m to its right) | properties | box marker (no line between its nodes) | siege AI edges |
+| `SiegeAINodeInstance` | 1,632 | yes (Create: click; with a 20 m Bounding Box and a 24 m Boundary) | properties | box marker | siege AI nodes |
+| `SiegeAIEdgeInstance` | 2,419 | yes (Create: draw its Street; a street edge gets a Street boundary 8 m to each side) | properties | box marker (no line between its nodes) | siege AI edges |
 | `AISeparatorInstance` | 108 | yes (Create: draw) | properties, points | outline | AI separators |
 | `SplineRiverInstance` | 254 | yes (Create: draw) | properties, points, handles, point values | the river (game shaders) and its curve | through `river_spline<n>.xml`, written on save for each river that changed |
 | `SEGMENTED_SPLINE_INSTANCE` (roads) | 4 | yes (Create: draw) | properties, points, handles, point values | its curve | no (a TEd painting guide) |

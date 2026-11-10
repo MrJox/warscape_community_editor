@@ -1,7 +1,9 @@
 //! The Create panel and its Space popup: everything that can be put in a tile, in one list searched by words. Buildings, trees, decals,
 //! models and effects (every valid key, `TileDocument::key_catalogue`), lights, prefabs (`wce_tile::prefabs`), the gameplay markers and
 //! areas, the AI regions and hints, rivers and roads. A click on an entry starts placing it (clicks on the terrain, previewed under the
-//! mouse; R / Shift+R turn it, Esc stops) or drawing it (clicks, Enter finishes). While it is placed or drawn, the Inspector shows its
+//! mouse; R / Shift+R turn it, Esc stops) or drawing it (clicks; a closed shape ends on its first point, an open line with Enter or a
+//! middle click). The shapes of a holder (a deployment zone's regions, a siege AI node's or edge's, a capture location's boundary) are not
+//! entries: they are drawn from the holder's Inspector (`inspect_holder`). While it is placed or drawn, the Inspector shows its
 //! properties (`Draft`), which every copy takes; they are kept per type until reset.
 //!
 //! As in TEd, the buildings and the prefabs are in folders: a building in its `battlefield_buildings` category (`Tile::building_db`: the
@@ -81,14 +83,18 @@ fn generic_folder(counts: &std::collections::HashMap<String, usize>, key: &str) 
 }
 
 /// The types without a key of each fixed category (category, type, drawn).
-const FIXED: [(usize, &str, bool); 19] = [
+const FIXED: [(usize, &str, bool); 17] = [
     (11, "WceRefHuman", false), (11, "WceRefUnit", false),
     (5, "POINT_LIGHT_INSTANCE", false), (7, "CaptureLocationInstance", false), (7, "DeploymentZonePolygonInstanceGroup", false),
-    (7, "DEPLOYMENT_ZONE_POLYGON_INSTANCE", true), (7, "CivilianShelter", false), (7, "CivilianDeploymentZone", true), (7, "ZONE_POLYGON_INSTANCE", true),
+    (7, "CivilianShelter", false), (7, "CivilianDeploymentZone", true), (7, "ZONE_POLYGON_INSTANCE", true),
     (7, "LiteBuildingZone", true), (9, "SiegeAINodeInstance", false), (9, "SiegeAIEdgeInstance", true), (8, "AI_HINT_POLYGON_INSTANCE", true),
     (8, "NOGO_REGION_POLYGON_INSTANCE", true), (8, "GO_REGION_POLYGON_INSTANCE", true), (8, "VegetationExclusionPolygonInstance", true),
-    (9, "SIEGE_AI_POLYGON_INSTANCE", true), (8, "AISeparatorInstance", true), (10, "SplineRiverInstance", true),
+    (8, "AISeparatorInstance", true), (10, "SplineRiverInstance", true),
 ];
+
+/// The types made only inside a holder (`wce_tile::parents`), drawn from the holder's Inspector (`TileTool::inspect_holder`): not entries of
+/// the Create panel.
+const SHAPES: [&str; 3] = ["DEPLOYMENT_ZONE_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "CaptureLocationPolygonInstance"];
 
 /// The roads, drawn like the rivers.
 const ROAD: (usize, &str, bool) = (10, "SEGMENTED_SPLINE_INSTANCE", true);
@@ -298,6 +304,9 @@ pub struct CreateUi {
 
     /// The prefab being placed, turned: its key, the turn and the text.
     turned: Option<(String, f32, Vec<u8>)>,
+
+    /// What the type being drawn goes into (a holder, `wce_tile::parents`), taken from the selection when it started.
+    pub holder: Option<usize>,
 }
 
 fn words(filter: &str) -> Vec<String> {
@@ -435,30 +444,86 @@ impl TileTool {
         });
     }
 
-    /// What is being drawn looks like once made: its colour (a deployment polygon's by its type and the alliance of the zone it goes into,
-    /// the selected one's, else a new zone's default) and whether it is closed.
-    pub(crate) fn drawing_look(&self, e: &Editor, d: &wce_tile_editor::tile_document::TileDocument) -> ([f32; 3], bool) {
-        use wce_tile_editor::tile_document::{FILLED_TYPES, deployment_colour, deployment_variant, polygon_colour};
+    /// The holder a new `kind` goes into: the selected item, or the item above it, that can hold one (`wce_tile::parents`).
+    pub(crate) fn selected_holder(e: &Editor, kind: &str) -> Option<usize> {
+        let sel = primary(e)?;
+        let id = crate::tool::document_id(e)?;
+        e.docs.find_as::<wce_tile_editor::tile_document::TileDocument>(id)?.holder_for(kind, sel)
+    }
 
-        const ZONE: &str = "DeploymentZonePolygonInstanceGroup";
+    /// Starts drawing a shape of a holder, from the buttons of the holder's Inspector (`inspect_holder`): `kind` in the role `role` (`None`:
+    /// the first the holder lacks), the holder alone selected. The holders' shapes are made only this way (not in the Create panel).
+    pub(crate) fn start_shape(&mut self, e: &mut Editor, holder: usize, kind: &str, role: Option<&str>) {
+        let Some(id) = crate::tool::document_id(e) else { return };
+        e.selection.set(wce_scene::render_scene::SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(holder) });
+        let label = crate::entity_types::type_name(kind).to_owned();
+        let en = Entry { category: 0, label, make: Make::Draw { kind: kind.to_owned() }, folder: String::new(), project: false, search: String::new() };
+        self.start_making(e, &en);
+        if let (Some(role), Some(d)) = (role, &mut self.draft) {
+            d.attrs.insert("name".to_owned(), role.to_owned());
+        }
+    }
+
+    /// The buttons of a holder's Inspector (one holder alone selected): one per shape it can be given (`shape_items`).
+    pub(crate) fn inspect_holder(&mut self, e: &mut Editor) {
+        let sel = crate::tool::selected(e);
+        let ([holder], Some(d)) = (sel.as_slice(), document(e)) else { return };
+        let holder = *holder;
+        if wce_tile::parents::child_kind(d.tile().tscene().type_of(holder)).is_none() {
+            return;
+        }
+
+        let items = shape_items(d, holder);
+        if items.is_empty() {
+            return;
+        }
+
+        gui::separator();
+        gui::text_disabled("Shapes (they are made only here):");
+        let mut pick = None;
+        for (i, it) in items.iter().enumerate() {
+            gui::begin_disabled(it.full.is_some());
+            if gui::button(&format!("{}  {}##shape{i}", icons::PENCIL, it.label)) {
+                pick = Some(i);
+            }
+
+            gui::end_disabled();
+            if let Some(why) = it.full.as_deref().filter(|_| gui::is_item_hovered_allow_disabled()) {
+                gui::set_tooltip(why);
+            }
+        }
+
+        if let Some(it) = pick.map(|i| &items[i]) {
+            self.start_shape(e, it.holder, it.kind, it.role);
+        }
+    }
+
+    /// What is being drawn looks like once made: its colour (a deployment polygon's by its zone's alliance and its type) and whether it is
+    /// closed.
+    pub(crate) fn drawing_look(&self, e: &Editor, d: &wce_tile_editor::tile_document::TileDocument) -> ([f32; 3], bool) {
+        use wce_tile_editor::tile_document::{deployment_colour, deployment_variant, polygon_colour};
+
         let Some(draft) = &self.draft else { return ([1.0, 0.9, 0.1], false) };
         let kind = draft.kind.as_str();
+        let closed = match kind {
+            "SIEGE_AI_POLYGON_INSTANCE" => matches!(draft.attrs.get("name").map(String::as_str), Some("Bounding Box" | "Boundary")),
+            k => wce_tile_editor::tile_document::FILLED_TYPES.contains(&k),
+        };
+
         let colour = match kind {
             "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => {
-                let sc = d.tile().tscene();
-                let els = sc.doc().elements();
-                let zone = primary(e).filter(|&s| s < els.len()).and_then(|s| std::iter::successors(Some(s), |&x| els[x].parent).find(|&x| sc.type_of(x) == ZONE));
-                let default = || wce_tile::new_instances::template(ZONE).and_then(|t| t.attrs.iter().find(|(k, _)| *k == "alliance_id")).map(|(_, v)| (*v).to_owned());
-                let alliance = zone.and_then(|z| sc.doc().get(z, "alliance_id")).or_else(default).unwrap_or_default();
+                let holder = primary(e).and_then(|s| d.holder_for(kind, s)).or(self.create.holder);
+                let alliance = holder.and_then(|h| d.tile().tscene().doc().get(h, "alliance_id"));
+
                 let ty = draft.attrs.get("deployment_polygon_type").map_or("DZPT_ADDITIVE", String::as_str);
-                deployment_colour(deployment_variant(&alliance, ty))
+                deployment_colour(deployment_variant(&alliance.unwrap_or_default(), ty))
             }
 
             "SiegeAIEdgeInstance" => polygon_colour("SIEGE_AI_POLYGON_INSTANCE"),
             k => polygon_colour(k),
         };
 
-        (colour, FILLED_TYPES.contains(&kind))
+        (colour, closed)
     }
 
     /// How what is drawn is finished: a closed shape by a click on its first point (or the finishing shortcut), an open line by the
@@ -476,8 +541,18 @@ impl TileTool {
 
     /// Starts making an entry: placing it, or drawing it.
     pub fn start_making(&mut self, e: &mut Editor, en: &Entry) {
-        // The new set (not saved) is not one to come back to.
-        if !matches!(&en.make, Make::VegSet { name } if name.is_empty()) {
+        // A holder's shape goes into the holder selected (`start_shape`).
+        if let Make::Draw { kind } = &en.make
+            && !wce_tile::parents::holders(kind).is_empty()
+            && Self::selected_holder(e, kind).is_none()
+        {
+            self.status = format!("select {} and use its Inspector's buttons to draw a {}", wce_tile::parents::holders_label(kind), wce_tile::parents::label(kind));
+            return;
+        }
+
+        // The new set (not saved) is not one to come back to; nor a holder's shape (not a Create entry).
+        let shape = matches!(&en.make, Make::Draw { kind } if !wce_tile::parents::holders(kind).is_empty());
+        if !shape && !matches!(&en.make, Make::VegSet { name } if name.is_empty()) {
             let (favourites, mut recent) = self.create_marks(e);
             let id = en.id();
             recent.retain(|r| *r != id);
@@ -517,7 +592,24 @@ impl TileTool {
             }
 
             Make::Draw { kind } => {
-                self.draft = Some(self.create.drafts.get(kind).cloned().unwrap_or_else(|| Draft::new(kind, "")));
+                let mut draft = self.create.drafts.get(kind).cloned().unwrap_or_else(|| Draft::new(kind, ""));
+
+                // Inside the selected holder; a shape's role (its name) one of the holder's, the first it lacks unless one was chosen.
+                self.create.holder = Self::selected_holder(e, kind);
+                if let (Some(h), Some(d)) = (self.create.holder, document(e)) && !d.holder_roles(h).is_empty() && kind != "DEPLOYMENT_ZONE_POLYGON_INSTANCE" {
+                    let named = draft.attrs.get("name").filter(|n| d.holder_roles(h).iter().any(|r| r.name == n.as_str())).cloned();
+                    match d.shape_role(h, named.as_deref()).or_else(|_| d.shape_role(h, None)) {
+                        Ok(role) => {
+                            draft.attrs.insert("name".to_owned(), role.name.to_owned());
+                        }
+
+                        Err(_) => {
+                            draft.attrs.remove("name");
+                        }
+                    }
+                }
+
+                self.draft = Some(draft);
                 self.start_drawing();
             }
 
@@ -577,6 +669,7 @@ impl TileTool {
         self.drawing = false;
         self.draw_pts.clear();
         self.making = None;
+        self.create.holder = None;
     }
 
     /// Keeps the draft's values for the next time its type is made.
@@ -803,15 +896,18 @@ impl TileTool {
         let kind = draft.kind.as_str();
         let layer = self.new_items_layer(d);
 
-        // A deployment polygon goes into the selected deployment group.
-        let group = sel.and_then(|s| {
-            let sc = d.tile().tscene();
-            std::iter::successors(Some(s), |&x| sc.doc().elements()[x].parent).find(|&x| sc.type_of(x) == "DeploymentZonePolygonInstanceGroup")
-        });
+        // A holder's shape (a deployment zone's region, a siege AI node's or edge's shape, a capture location's boundary) goes into the
+        // holder it was started from (its Inspector's buttons), while it is still one; the selected one else.
+        let needs_holder = !wce_tile::parents::holders(kind).is_empty();
+        let holder = self.create.holder.filter(|&h| d.holder_for(kind, h) == Some(h)).or_else(|| sel.and_then(|s| d.holder_for(kind, s)));
+        let into = match (needs_holder, holder) {
+            (true, Some(h)) => Ok(h),
+            (true, None) => Err(format!("select {} to draw it in", wce_tile::parents::holders_label(kind))),
+            _ => layer.ok_or_else(|| "this tile has no scene graph".to_owned()),
+        };
 
-        let into = if kind == "DEPLOYMENT_ZONE_POLYGON_INSTANCE" { group.or(layer) } else { layer };
-        let added = into.ok_or_else(|| "this tile has no scene graph".to_owned())
-            .and_then(|into| d.create_with(kind, into, &Create::Line(self.draw_pts.clone()), &draft.key, &draft.attrs));
+        let added = into.and_then(|into| d.create_with(kind, into, &Create::Line(self.draw_pts.clone()), &draft.key, &draft.attrs));
+        self.create.holder = None;
         self.draw_pts.clear();
         self.poly_point = None;
         self.making = None;
@@ -853,17 +949,56 @@ impl TileTool {
         }
 
         let Some(mut draft) = self.draft.clone() else { return false };
+        let holder = (self.drawing && !wce_tile::parents::holders(&draft.kind).is_empty())
+            .then(|| Self::selected_holder(e, &draft.kind).or(self.create.holder))
+            .flatten();
         let Some(d) = document(e) else { return false };
         ins.begin(d.id(), u64::MAX - 7);
-        if d.inspect_draft(&mut draft, !self.drawing, ins) {
-            self.draft = Some(draft);
+
+        // A holder's shape: which of its shapes it is (TEd tells them apart by their names; one of a role it has once replaces it).
+        let roles = holder.filter(|_| draft.kind != "DEPLOYMENT_ZONE_POLYGON_INSTANCE").map(|h| d.holder_roles(h)).unwrap_or_default();
+        let mut role_changed = false;
+        if !roles.is_empty() {
+            ins.section(&format!("New {}", wce_tile::parents::label(&draft.kind)));
+            let names = roles.iter().map(|r| r.name.to_owned()).collect::<Vec<_>>();
+            let tips = roles.iter().map(|r| match (r.most, r.closed) {
+                (1, _) => format!("{}: it has one (drawing it again replaces it)", r.name),
+                (n, _) if n > 1 => format!("{}: it has up to {n}", r.name),
+                (_, true) => format!("{}: a closed shape", r.name),
+                _ => format!("{}: an open line", r.name),
+            }).collect::<Vec<_>>();
+            let mut idx = draft.attrs.get("name").and_then(|n| names.iter().position(|x| x == n)).unwrap_or(0) as i32;
+            if ins.edit_choice_tips("wce_role", "shape", &mut idx, &names, &tips) {
+                draft.attrs.insert("name".to_owned(), names[idx.max(0) as usize].clone());
+                role_changed = true;
+            }
+        }
+
+        if d.inspect_draft(&mut draft, !self.drawing, ins) || role_changed {
+            self.draft = Some(draft.clone());
             self.keep_draft();
         }
 
         if gui::button(&format!("{}  Reset to the defaults", icons::UNDO_2)) && let Some(dr) = &mut self.draft {
+            let role = dr.attrs.get("name").cloned().filter(|_| !roles.is_empty());
             dr.attrs.clear();
+            dr.attrs.extend(role.map(|r| ("name".to_owned(), r)));
             dr.yaw = 0.0;
             self.keep_draft();
+        }
+
+        // Where it goes: the holder's own values, as they are now (changed here as when it is selected).
+        match holder {
+            Some(h) if self.drawing => {
+                let sc = d.tile().tscene();
+                gui::separator();
+                gui::text_disabled(&format!("Inside the {} {}", wce_tile::parents::label(sc.type_of(h)), sc.name(h)));
+                let item = wce_scene::render_scene::SourceRef { doc: d.id(), item: wce_tile_editor::tile_document::item_of(h) };
+                ins.begin(item.doc, item.item);
+                d.inspect(item, ins);
+            }
+
+            _ => {}
         }
 
         true
@@ -972,6 +1107,7 @@ impl TileTool {
         let (side, line) = (GRID_PICTURE, gui::text_line_height_with_spacing());
         let at = gui::cursor_screen_pos();
         let clicked = gui::selectable_sized(&format!("##cell{uid}"), on, 0, gui::v2(side, side + line));
+
         let hovered = gui::is_item_hovered();
         let star = hovered && gui::is_item_clicked_with(1);
         self.create.grid_seen.borrow_mut().push(i);
@@ -1127,6 +1263,7 @@ impl TileTool {
             gui::end();
             return;
         }
+
 
         if document(e).is_none() {
             gui::text_disabled("Open a tile first.");
@@ -1517,7 +1654,7 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
     let make = match what {
         "building" => Make::Place { kind: "BUILDING_INSTANCE".to_owned(), key: key.to_owned() },
         "prefab" => Make::Prefab { key: key.to_owned() },
-        kind if FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD]).any(|(_, k, drawn)| *k == kind && *drawn) => Make::Draw { kind: kind.to_owned() },
+        kind if FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD]).any(|(_, k, drawn)| *k == kind && *drawn) || SHAPES.contains(&kind) => Make::Draw { kind: kind.to_owned() },
         kind if FIXED.iter().any(|(_, k, _)| *k == kind) || KEYED.iter().any(|(_, k)| *k == kind) => Make::Place { kind: kind.to_owned(), key: key.to_owned() },
         kind => return Err(format!("{kind} can't be created here")),
     };
@@ -1525,6 +1662,12 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
     let label = if key.is_empty() { crate::entity_types::type_name(what).to_owned() } else { key.to_owned() };
     let en = Entry { category: 0, label, make, folder: String::new(), project: false, search: String::new() };
     t.start_making(e, &en);
+
+    // A holder's shape goes only into the holder selected (as its Inspector's buttons start it).
+    if SHAPES.contains(&what) && !t.drawing {
+        return Err(t.status.clone());
+    }
+
     Ok(())
 }
 
@@ -1558,4 +1701,40 @@ mod generic_tests {
         assert_eq!(group("30_30_10"), "blocks");
         assert_eq!(group("colossus_of_rhodes"), OTHER_BUILDINGS);
     }
+}
+
+/// A button drawing a shape of a holder (`shape_items`).
+pub(crate) struct ShapeItem {
+    pub label: String,
+    pub holder: usize,
+    pub kind: &'static str,
+    pub role: Option<&'static str>,
+
+    /// It has as many of that shape as it may (a street edge's two boundaries): why it can't be drawn.
+    pub full: Option<String>,
+}
+
+/// What can be drawn in the holder `elem` is, or is in (a deployment zone's regions, a siege AI node's or edge's shapes, a capture
+/// location's boundary): one item per role, a button of the holder's Inspector (`TileTool::inspect_holder`).
+pub(crate) fn shape_items(d: &wce_tile_editor::tile_document::TileDocument, elem: usize) -> Vec<ShapeItem> {
+    const KINDS: [&str; 3] = ["DEPLOYMENT_ZONE_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "CaptureLocationPolygonInstance"];
+    let Some((holder, kind)) = KINDS.iter().find_map(|&k| d.holder_for(k, elem).map(|h| (h, k))) else { return vec![] };
+    if kind == "DEPLOYMENT_ZONE_POLYGON_INSTANCE" {
+        return vec![ShapeItem { label: "Draw a deployment region".to_owned(), holder, kind, role: None, full: None }];
+    }
+
+    let sc = d.tile().tscene();
+    let kids = sc.children(holder);
+    d.holder_roles(holder).iter().map(|r| {
+        let count = kids.iter().filter(|&&c| sc.name(c) == r.name).count();
+        let has = count > 0;
+        let full = (r.most > 1 && count >= r.most).then(|| format!("It has its {} {}s: delete one to draw another.", r.most, r.name.to_lowercase()));
+        let label = match r.most {
+            1 if has => format!("Draw its {} again (replaces it)", r.name),
+            1 => format!("Draw its {}", r.name),
+            _ => format!("Draw a {}", r.name.to_lowercase()),
+        };
+
+        ShapeItem { label, holder, kind, role: Some(r.name), full }
+    }).collect()
 }
