@@ -1350,6 +1350,80 @@ fn local_outline(g: &Grid, cells: &[usize], grow: f64) -> Vec<P> {
     outer_loop(&lg, &grown, 1.5)
 }
 
+/// One node's Boundary for the ground as it is (the editor's *Adjust the Boundary*), as `generate` makes each node's: the free ground
+/// (no no-go region, steep ground, building, fort piece or sea) nearest to it along the ground, within its reach (`reach`, from the room
+/// around its centre; at least its rectangle's half diagonal), the free ground nearer to another node (`others`) left to that one, with its
+/// rectangle, grown 3 units onto the faces of what is around it. Empty when its rectangle is not one.
+pub fn node_boundary(input: &Input, node: &Node, others: &[Node]) -> Vec<P> {
+    let c = [node.bbox.iter().map(|p| p[0]).sum::<f64>() / 4.0, node.bbox.iter().map(|p| p[1]).sum::<f64>() / 4.0];
+    let half_diagonal = node.bbox.iter().map(|&p| dist(p, c)).fold(0.0, f64::max);
+    if half_diagonal < CELL {
+        return vec![];
+    }
+
+    // A grid around it: its reach (60 at most) and the nodes near enough to share its ground.
+    let span = half_diagonal.max(60.0) * 2.0 + 20.0;
+    let (lo, hi) = input.bounds;
+    let g = Grid::new([(c[0] - span).max(lo[0]), (c[1] - span).max(lo[1])], [(c[0] + span).min(hi[0]), (c[1] + span).min(hi[1])], CELL);
+    if g.is_empty() {
+        return vec![];
+    }
+
+    let mut blocked = g.mask();
+    for p in input.nogo.iter().chain(&input.obstacles) {
+        g.fill_polygon(&mut blocked, p);
+    }
+
+    for (b, s) in blocked.iter_mut().zip(even_odd(&g, &input.steep)) {
+        *b |= s;
+    }
+
+    for w in &input.walls {
+        for r in w.footprint.iter().chain(&w.platforms) {
+            g.fill_polygon(&mut blocked, r);
+        }
+
+        for k in line_cells(&g, &w.walkway, 3.0) {
+            blocked[k] = true;
+        }
+    }
+
+    if let Some(sea) = &input.sea {
+        for (k, b) in blocked.iter_mut().enumerate() {
+            *b |= sea.at(g.centre(k));
+        }
+    }
+
+    // The nodes' own rectangles are theirs, whatever is under them.
+    let mut free: Mask = blocked.iter().map(|&b| !b).collect();
+    let mine = g.polygon_cells(&node.bbox);
+    for &k in &mine {
+        free[k] = true;
+    }
+
+    let clearance = g.distance(&blocked);
+    let mut sources = vec![];
+    for (n, other) in std::iter::once(node).chain(others).enumerate() {
+        let oc = [other.bbox.iter().map(|p| p[0]).sum::<f64>() / 4.0, other.bbox.iter().map(|p| p[1]).sum::<f64>() / 4.0];
+        let Some(k) = g.at(oc) else { continue };
+        for &b in &g.polygon_cells(&other.bbox) {
+            free[b] = true;
+        }
+
+        let r = reach(other.kind, clearance[k].min(1e6)).max(other.bbox.iter().map(|&p| dist(p, oc)).fold(0.0, f64::max) + CELL);
+        sources.push((k, r, n));
+    }
+
+    if sources.first().is_none_or(|s| s.2 != 0) {
+        return vec![];
+    }
+
+    let (owner, _) = g.geodesic_split(&free, &sources.iter().map(|s| (s.0, s.1)).collect::<Vec<_>>());
+    let mut cells: Vec<usize> = (0..g.len()).filter(|&k| owner[k] == 0).collect();
+    cells.extend(mine);
+    simplify_loop(&local_outline(&g, &cells, 3.0), 0.5)
+}
+
 /// A street from node a to node b along `path` (cells from a's seed to b's).
 #[allow(clippy::too_many_arguments)]
 fn street(g: &Grid, free: &Mask, owner: &[usize], boxes: &[Rect], nodes: &[Node], a: usize, b: usize, path: &[usize]) -> Option<Edge> {

@@ -1309,6 +1309,53 @@ fn shapes_go_only_into_their_holders() {
 }
 
 #[test]
+fn a_bounding_box_is_a_rectangle_and_a_boundary_fits_the_ground() {
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let graph = d.tile().tscene().scene_graph().unwrap();
+    let (ex, ez) = (d.tile().extent_x() as f32, d.tile().extent_z() as f32);
+    let (cx, cz) = (ex / 2.0, ez / 2.0);
+    d.create("SiegeAINodeInstance", graph, &Create::Point(Float3::new(cx, 0.0, cz)), "").unwrap();
+    let find = |d: &TileDocument| d.tile().tscene().find_all("SiegeAINodeInstance")[0];
+    let shape = |d: &TileDocument, name: &str| {
+        let sc = d.tile().tscene();
+        sc.children(find(d)).into_iter().find(|&c| sc.name(c) == name).unwrap()
+    };
+
+    // Its first side, then a point at its depth (turned 30 degrees): a true rectangle, 12 x 6.
+    let (s, c) = (0.5f32, 0.866f32);
+    let at = |u: f32, v: f32| Float3::new(cx + u * c - v * s, 0.0, cz + u * s + v * c);
+    let bbox = BTreeMap::from([("name".to_owned(), "Bounding Box".to_owned())]);
+    for pts in [vec![at(-6.0, -3.0), at(6.0, -3.0), at(5.0, 3.0)], vec![at(-6.0, -3.0), at(6.0, -3.0), at(7.0, 3.0), at(-4.0, 2.0)]] {
+        d.create_with("SIEGE_AI_POLYGON_INSTANCE", find(&d), &Create::Line(pts), "", &bbox).unwrap();
+        let p = d.tile().polygon_world_points(shape(&d, "Bounding Box"));
+        assert_eq!(p.len(), 4);
+        let len = |a: Float3, b: Float3| ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
+        assert!((len(p[0], p[1]) - 12.0).abs() < 0.05 && (len(p[1], p[2]) - 6.0).abs() < 0.05, "{p:?}");
+        let dot = (p[1].x - p[0].x) * (p[2].x - p[1].x) + (p[1].z - p[0].z) * (p[2].z - p[1].z);
+        assert!(dot.abs() < 0.05, "square corners: {p:?}");
+        assert!((len(p[2], p[3]) - 12.0).abs() < 0.05);
+    }
+
+    // A no-go region 4 m east of the box: the Boundary stops at it (grown onto its face), and reaches further the other ways.
+    let nogo = [(cx + 10.0, cz - 30.0), (cx + 40.0, cz - 30.0), (cx + 40.0, cz + 30.0), (cx + 10.0, cz + 30.0)].map(|(x, z)| Float3::new(x, 0.0, z));
+    d.add_polygon(Some(graph), "NOGO_REGION_POLYGON_INSTANCE", "", &nogo).unwrap();
+    let b = d.adjust_node_boundary(find(&d)).unwrap();
+    let sc = d.tile().tscene();
+    assert_eq!(sc.children(find(&d)).into_iter().map(|c| sc.name(c)).collect::<Vec<_>>(), ["Bounding Box", "Boundary"], "replaced in place");
+    assert_eq!(shape(&d, "Boundary"), b);
+    let p = d.tile().polygon_world_points(b);
+    let u = d.tile().unit() as f32;
+    let east = p.iter().map(|q| q.x).fold(f32::MIN, f32::max);
+    let west = p.iter().map(|q| q.x).fold(f32::MAX, f32::min);
+    assert!(east <= cx + 10.0 + 6.0 / u, "stops at the no-go region: {east} (centre {cx})");
+    assert!(west < cx - 10.0, "reaches out where the ground is free: {west}");
+
+    while d.history_mut().undo() {}
+    assert_eq!(text(&d), original);
+}
+
+#[test]
 fn a_spline_is_drawn_and_edited_with_its_handles() {
     let (_dir, mut d) = open();
     let original = text(&d);
