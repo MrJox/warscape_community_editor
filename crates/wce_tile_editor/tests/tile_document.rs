@@ -1341,7 +1341,7 @@ fn a_bounding_box_is_a_rectangle_and_a_boundary_fits_the_ground() {
     // raster's 2 units), and reaches further the other ways.
     let nogo = [(cx + 10.0, cz - 30.0), (cx + 40.0, cz - 30.0), (cx + 40.0, cz + 30.0), (cx + 10.0, cz + 30.0)].map(|(x, z)| Float3::new(x, 0.0, z));
     d.add_polygon(Some(graph), "NOGO_REGION_POLYGON_INSTANCE", "", &nogo).unwrap();
-    let b = d.adjust_node_boundary(find(&d)).unwrap();
+    let b = d.adjust_node_boundary(find(&d), None).unwrap();
     let sc = d.tile().tscene();
     assert_eq!(sc.children(find(&d)).into_iter().map(|c| sc.name(c)).collect::<Vec<_>>(), ["Bounding Box", "Boundary"], "replaced in place");
     assert_eq!(shape(&d, "Boundary"), b);
@@ -1351,6 +1351,39 @@ fn a_bounding_box_is_a_rectangle_and_a_boundary_fits_the_ground() {
     let west = p.iter().map(|q| q.x).fold(f32::MAX, f32::min);
     assert!(east <= cx + 10.0 + 2.0 / u, "stops at the no-go region's edge: {east} (centre {cx}, {u} units a metre)");
     assert!(west < cx - 10.0, "reaches out where the ground is free: {west}");
+
+    // Another node 40 m west, its Boundary 24 m square (cx - 52 to cx - 28): even a wide range keeps out of it and does not go round it.
+    d.create("SiegeAINodeInstance", graph, &Create::Point(Float3::new(cx - 40.0, 0.0, cz)), "").unwrap();
+    let b = d.adjust_node_boundary(find(&d), Some(60.0)).unwrap();
+    let p = d.tile().polygon_world_points(b);
+    let m = 2.0 / u;
+    let inside = |q: &Float3| q.x > cx - 52.0 + m && q.x < cx - 28.0 - m && q.z > cz - 12.0 + m && q.z < cz + 12.0 - m;
+    assert!(!p.iter().any(inside), "a point inside the other node's Boundary: {p:?}");
+    let mid = Float3::new(cx - 40.0, 0.0, cz);
+    // Where its outline crosses the line through both centres.
+    let xs = (0..p.len()).filter_map(|i| {
+        let (a, b) = (p[i], p[(i + 1) % p.len()]);
+        ((a.z > cz) != (b.z > cz)).then(|| a.x + (cz - a.z) / (b.z - a.z) * (b.x - a.x))
+    }).collect::<Vec<_>>();
+    assert!(xs.iter().all(|&x| x >= cx - 28.0 - m), "level with it, it is east of it: {xs:?} ({mid:?})");
+    let holds = |o: Float3| {
+        let mut inside = false;
+        for i in 0..p.len() {
+            let (a, b) = (p[i], p[(i + 1) % p.len()]);
+            if (a.z > o.z) != (b.z > o.z) && o.x < a.x + (o.z - a.z) / (b.z - a.z) * (b.x - a.x) {
+                inside = !inside;
+            }
+        }
+
+        inside
+    };
+    assert!(!holds(mid) && !holds(Float3::new(cx - 51.0, 0.0, cz)), "not round it: it holds none of it");
+    assert!(xs.iter().any(|&x| x <= cx - 28.0 + 2.0 * m), "up to it (they touch): {xs:?}");
+
+    // A range: no farther from the centre than it (or the Bounding Box's corners, 7.2 m here), and the growth onto faces.
+    let b = d.adjust_node_boundary(find(&d), Some(8.0)).unwrap();
+    let far = d.tile().polygon_world_points(b).iter().map(|q| (q.x - cx).hypot(q.z - cz)).fold(0.0, f32::max);
+    assert!(far <= 8.0 + 5.0 / u && far > 6.0, "within the range: {far}");
 
     while d.history_mut().undo() {}
     assert_eq!(text(&d), original);

@@ -1997,10 +1997,11 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("node_adjust_boundary", "node_adjust_boundary", "make the selected siege AI node's Boundary again for the ground around it, as its Inspector's button does (one undo entry)", |e, _| {
+    c.add("node_adjust_boundary", "node_adjust_boundary [range m]", "make the selected siege AI node's Boundary again for the ground around it, as its Inspector's button does, within the range from its centre (none or 0: automatic; one undo entry)", |e, a| {
+        let reach = a.first().and_then(|r| number(r)).filter(|&r| r > 0.0);
         let Some(el) = primary(e) else { return fail("no node selected") };
         let Some(d) = document(e) else { return no_tile() };
-        d.adjust_node_boundary(el).map_or_else(fail, |b| ok(format!("Boundary {b}: {} points", d.tile().tscene().polygon_points(b).len())))
+        d.adjust_node_boundary(el, reach).map_or_else(fail, |b| ok(format!("Boundary {b}: {} points", d.tile().tscene().polygon_points(b).len())))
     });
 
     c.add("holder_draw", "holder_draw [shape name]", "start drawing a shape of the selected holder (a deployment zone's region, a siege AI node's or edge's shape, a capture location's boundary), as its Inspector's buttons do", |e, a| {

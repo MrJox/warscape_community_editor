@@ -601,7 +601,10 @@ impl TileDocument {
             return false;
         }
 
-        let below = whole.then(|| t.items_below(elem));
+        // So does a holder (a siege AI node or edge, a deployment zone, a capture location): its shapes are local to it, as in TEd's
+        // files (every vanilla tile), and are published again with it.
+        let holder = wce_tile::parents::child_kind(t.tscene().type_of(elem)).is_some();
+        let below = (whole || holder).then(|| t.items_below(elem));
 
         let sc = t.tscene();
         let old_pos = position.and(sc.position(elem));

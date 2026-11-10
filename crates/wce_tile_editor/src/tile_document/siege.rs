@@ -684,14 +684,15 @@ fn polys(sc: &TedScene, e: usize) -> Vec<(String, Vec<P>)> {
 
 impl TileDocument {
     /// A siege AI node's Boundary made again for the ground around it as it is (its Inspector's *Adjust the Boundary*): the free ground
-    /// nearest to it, out to the no-go regions, buildings, fort pieces, steep ground and sea around it and halfway to the other nodes
-    /// (`wce_siege::generate::node_boundary`, as the generator makes them), grown onto the faces of what is around it. It replaces the
-    /// Boundary it has, in its place (one undo entry); returns the new one.
+    /// nearest to it, within `reach` metres of its centre (`None`: the generator's reach, from the room around it), out to the no-go
+    /// regions, buildings, fort pieces, steep ground and sea around it, the other nodes' Boundaries, and halfway to the nodes without one
+    /// (`wce_siege::generate::node_boundary`, as the generator makes them), grown onto the faces of the buildings and fort pieces. It
+    /// replaces the Boundary it has, in its place (one undo entry); returns the new one.
     ///
     /// # Errors
     ///
     /// Not a siege AI node, a node without a Bounding Box of 4 points, or no free ground around it.
-    pub fn adjust_node_boundary(&mut self, node: usize) -> Result<usize, String> {
+    pub fn adjust_node_boundary(&mut self, node: usize, reach: Option<f32>) -> Result<usize, String> {
         let t = self.tile();
         let sc = t.tscene();
         if node >= sc.doc().elements().len() || sc.type_of(node) != "SiegeAINodeInstance" {
@@ -700,7 +701,8 @@ impl TileDocument {
 
         let me = node_of(sc, node).ok_or("the node has no Bounding Box of 4 points")?;
         let others = sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| e != node && exported(sc, e)).filter_map(|e| node_of(sc, e)).collect::<Vec<_>>();
-        let pts = wce_siege::generate::node_boundary(&t.siege_input(), &me, &others);
+        let reach = reach.filter(|&r| r > 0.0).map(|r| f64::from(r) * t.unit());
+        let pts = wce_siege::generate::node_boundary(&t.siege_input(), &me, &others, reach);
         if pts.len() < 3 {
             return Err("no free ground around the node".to_owned());
         }
