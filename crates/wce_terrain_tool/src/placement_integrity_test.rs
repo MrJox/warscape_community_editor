@@ -84,8 +84,14 @@ fn zero_rows_allow_count_commands_save_and_exact_undo_with_multiple_names() {
 
 #[test]
 fn missing_built_placements_keep_the_informative_error_before_guard_checks() {
-    let mut d = document(9, false);
-    d.model_mut().unwrap().built = false;
+    let mut d = MapDocument::new(
+        "no native model".into(),
+        MapSource::Packs("test".into()),
+        None,
+        Arc::default(),
+        None,
+        Arc::default(),
+    );
     let before = (
         d.history().size(),
         d.history().position(),
