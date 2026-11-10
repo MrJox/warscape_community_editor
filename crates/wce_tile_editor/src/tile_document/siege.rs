@@ -374,6 +374,20 @@ impl Tile {
             left.extend(right);
             let ends = [walk[0], walk[walk.len() - 1]];
             input.walls.push(WallPiece { footprint: vec![left], platforms: vec![], walkway: walk, gate: false, ends });
+
+            // Its towers and bastions and the caps past its free ends (the game's pieces, placed as they are): what blocks of them, from
+            // their logic files, as a fort building's (they stand out of the wall's depth).
+            let caps = wce_walls::pieces::cap_instances(&layout.plan, layout.profile).into_iter().map(|(_, p)| p);
+            for p in wce_walls::pieces::pieces(&layout.plan, layout.profile).into_iter().filter(|p| p.rigid).chain(caps) {
+                let Some(l) = p.base.and_then(|key| read(key)) else { continue };
+                let (sn, cs) = p.yaw.sin_cos();
+                let at = |x: f64, z: f64| -> P { [p.origin[0] + x * cs - z * sn, p.origin[2] + x * sn + z * cs] };
+                let place = |rings: &[Vec<P>]| -> Vec<Vec<P>> { rings.iter().map(|r| r.iter().map(|q| at(q[0], q[1])).collect()).collect() };
+                let mut footprint = place(&l.footprint);
+                footprint.extend(place(&l.hard));
+                let (x0, x1, z) = l.ends;
+                input.walls.push(WallPiece { footprint, platforms: place(&l.platforms), walkway: vec![], gate: false, ends: [at(x0, z), at(x1, z)] });
+            }
         }
 
         for e in sc.find_all("CaptureLocationInstance") {
