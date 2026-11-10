@@ -1233,6 +1233,21 @@ impl Tile {
         out
     }
 
+    /// A polygon's colour and its entries in the overlay colour table: its type's; a deployment polygon's by its zone's alliance and its
+    /// own type (`deployment_variant`).
+    fn polygon_paint(&self, elem: usize) -> ([f32; 3], (usize, usize, usize)) {
+        let sc = self.tscene();
+        let ty = sc.type_of(elem);
+        if ty != "DEPLOYMENT_ZONE_POLYGON_INSTANCE" {
+            return (polygon_colour(ty), super::index::polygon_slots(ty));
+        }
+
+        let els = sc.doc().elements();
+        let alliance = els[elem].parent.and_then(|w| els[w].parent).and_then(|g| sc.doc().get(g, "alliance_id")).unwrap_or_default();
+        let v = super::index::deployment_variant(&alliance, &sc.doc().get(elem, "deployment_polygon_type").unwrap_or_default());
+        (super::index::deployment_colour(v), super::index::deployment_slots(v))
+    }
+
     /// What a polygon's fill leaves out: a deployment zone's standard additive polygon is less the subtractive ones of its zone (CA's
     /// attacker zone is the map less a hole around the settlement); `None`: not filled (a zone's subtractive and guerrilla exclusion
     /// polygons are lines, filled they hid the zone's hole).
@@ -1273,13 +1288,12 @@ impl Tile {
             // A wall's line stays on the ground (its own pieces would lift it onto the wall).
             let over = if self.is_wall(elem) { &[][..] } else { solids };
             let mut cover = self.cover_for(lo, hi, over);
-            let [r, g, b] = polygon_colour(&ty);
+            let ([r, g, b], (fill, outline, line)) = self.polygon_paint(elem);
             let holes = self.zone_holes(elem);
             let filled = holes.is_some();
             let holes = holes.unwrap_or_default();
 
             // The colours are entries of the overlay colour table: a change of the look does not come here.
-            let (fill, outline, line) = super::index::polygon_slots(&ty);
             let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
             let look = [r, g, b, f32::from(u8::from(filled))].iter().fold(mix(u64::from(closed) << 1 | u64::from(spline), points.len() as u64), |h, v| mix(h, u64::from(v.to_bits())));
             let look = points.iter().chain(holes.iter().flatten()).fold(look, |h, p| mix(mix(mix(h, u64::from(p.x.to_bits())), u64::from(p.y.to_bits())), u64::from(p.z.to_bits())));
@@ -1587,6 +1601,14 @@ impl Tile {
 
         if self.is_polygon(elem) && self.display.show_polygons && self.shown(elem) {
             self.rebuild_polygon(scene, self.layer, elem);
+        }
+
+        // A deployment zone's alliance colours its polygons.
+        if self.tscene().type_of(elem) == "DeploymentZonePolygonInstanceGroup" && self.display.show_polygons {
+            let kids = self.tscene().children(elem).into_iter().filter(|&c| self.is_polygon(c) && self.shown(c)).collect::<Vec<_>>();
+            for c in kids {
+                self.rebuild_polygon(scene, self.layer, c);
+            }
         }
 
         if self.tscene().type_of(elem) == "SplineRiverInstance" {

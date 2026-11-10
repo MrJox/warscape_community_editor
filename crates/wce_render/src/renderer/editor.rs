@@ -21,7 +21,7 @@ cbuffer Frame : register(b0) { row_major float4x4 vp; uint id; };
 struct OvlIn  { float3 pos : POSITION; float4 col : COLOR; };
 struct OvlOut { float4 pos : SV_Position; float4 col : COLOR; };
 // A vertex of alpha 0 and these green and blue bytes stands for an entry of the table (`overlay_slot`), its red byte the entry.
-cbuffer OverlaySlots : register(b1) { float4 slot_colour[48]; };
+cbuffer OverlaySlots : register(b1) { float4 slot_colour[84]; };
 OvlOut ovl_vs(OvlIn i) {
     OvlOut o;
     o.pos = mul(vp, float4(i.pos, 1));
@@ -112,6 +112,9 @@ const FRAME_CB: usize = 80;
 
 /// The size of the overlay colour table.
 const SLOTS_CB: usize = 16 * wce_scene::render_scene::OVERLAY_SLOTS;
+
+// The shader's `slot_colour` array has as many.
+const _: () = assert!(wce_scene::render_scene::OVERLAY_SLOTS == 84);
 
 /// The size of an overlay vertex.
 const OVERLAY_VERTEX: usize = 16;

@@ -60,14 +60,59 @@ pub(crate) fn polygon_slots(ty: &str) -> (usize, usize, usize) {
     (3 * i, 3 * i + 1, 3 * i + 2)
 }
 
+/// The deployment polygon types, in the order of their colours.
+const DEPLOYMENT_TYPES: [&str; 4] = ["DZPT_ADDITIVE", "DZPT_SUBSTRACTIVE", "DZPT_GUERRILLA_EXCLUSION_ADDITIVE", "DZPT_GUERRILLA_EXCLUSION_SUBTRACTIVE"];
+
+/// The deployment polygons' colours, as the minimap's (`minimap_panel::draw_zones`): per alliance (the defender's, 1, blue; the attacker's,
+/// 0, red; any other yellow), per type (standard additive, standard subtractive darker, guerrilla exclusion additive paler, guerrilla
+/// exclusion subtractive paler and darker).
+const DEPLOYMENT_COLOURS: [[[f32; 3]; 4]; 3] = [
+    [[0.27, 0.43, 1.0], [0.15, 0.25, 0.6], [0.6, 0.68, 1.0], [0.34, 0.4, 0.62]],
+    [[1.0, 0.27, 0.24], [0.6, 0.15, 0.13], [1.0, 0.62, 0.55], [0.62, 0.38, 0.34]],
+    [[0.94, 0.78, 0.16], [0.56, 0.46, 0.09], [0.97, 0.9, 0.55], [0.6, 0.55, 0.32]],
+];
+
+/// A deployment polygon's look: its zone's `alliance_id` (none: 0's) and its `deployment_polygon_type` (unknown: additive).
+pub fn deployment_variant(alliance: &str, polygon_type: &str) -> usize {
+    let a = match alliance.trim() {
+        "1" => 0,
+        "0" | "" => 1,
+        _ => 2,
+    };
+
+    a * DEPLOYMENT_TYPES.len() + DEPLOYMENT_TYPES.iter().position(|t| *t == polygon_type).unwrap_or(0)
+}
+
+/// The colour of a deployment polygon's look.
+pub fn deployment_colour(variant: usize) -> [f32; 3] {
+    let v = variant.min(DEPLOYMENT_COLOURS.len() * DEPLOYMENT_TYPES.len() - 1);
+    DEPLOYMENT_COLOURS[v / DEPLOYMENT_TYPES.len()][v % DEPLOYMENT_TYPES.len()]
+}
+
+// The types' entries and the deployment looks' fit the table.
+const _: () = assert!(3 * (SLOT_TYPES.len() + 1 + DEPLOYMENT_COLOURS.len() * DEPLOYMENT_TYPES.len()) <= wce_scene::render_scene::OVERLAY_SLOTS);
+
+/// The entries of a deployment polygon look in the overlay colour table: after the types' (and the shared last one's).
+pub(crate) fn deployment_slots(variant: usize) -> (usize, usize, usize) {
+    let i = SLOT_TYPES.len() + 1 + variant;
+    (3 * i, 3 * i + 1, 3 * i + 2)
+}
+
 /// The overlay colour table of a look.
 pub(crate) fn polygon_slot_table(look: &super::PolygonLook) -> [[f32; 4]; wce_scene::render_scene::OVERLAY_SLOTS] {
     let mut table = [[0.0; 4]; wce_scene::render_scene::OVERLAY_SLOTS];
-    for ty in SLOT_TYPES.iter().copied().chain([""]) {
-        let ([r, g, b], (fill, outline, line)) = (polygon_colour(ty), polygon_slots(ty));
+    let mut put = |[r, g, b]: [f32; 3], (fill, outline, line): (usize, usize, usize), ty: &str| {
         table[fill] = [r, g, b, look.fill_of(ty)];
         table[outline] = [r, g, b, look.outline];
         table[line] = [r, g, b, (look.outline / OPAQUE_LINE).min(1.0)];
+    };
+
+    for ty in SLOT_TYPES.iter().copied().chain([""]) {
+        put(polygon_colour(ty), polygon_slots(ty), ty);
+    }
+
+    for v in 0..DEPLOYMENT_COLOURS.len() * DEPLOYMENT_TYPES.len() {
+        put(deployment_colour(v), deployment_slots(v), "DEPLOYMENT_ZONE_POLYGON_INSTANCE");
     }
 
     table
