@@ -156,7 +156,6 @@ impl TileFiles {
 
         Ok(())
     }
-
 }
 
 /// The raw_data folder a tile path lives under (the part before `terrain/tiles`), if there is one.
