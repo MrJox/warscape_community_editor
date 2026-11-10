@@ -1631,7 +1631,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("draw_polygon", "draw_polygon <type> [hint | base wall]", "start drawing a polygon (or a WceWallSpline, with its base wall): click the ground for points, Enter finishes (key Enter), Esc cancels", |e, a| {
+    c.add("draw_polygon", "draw_polygon <type> [hint | base wall]", "start drawing a polygon (or a WceWallSpline, with its base wall): click the ground for points; a closed shape finishes on its first point, Enter finishes any; Esc cancels", |e, a| {
         let Some(kind) = a.first() else { return fail("usage: draw_polygon <type> [hint | base wall]") };
         with_tile(e, |t, e| {
             if let Err(err) = crate::create_panel::make_for_script(t, e, kind, "") {

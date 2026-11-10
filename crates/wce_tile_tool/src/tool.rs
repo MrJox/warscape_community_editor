@@ -362,6 +362,9 @@ pub struct TileTool {
 
     // The cursor on the terrain (from the last hover / press).
     pub(crate) terrain_hit: bool,
+
+    /// While drawing a closed shape: the mouse is on its first point, where a click closes and finishes it (`closes_drawing`).
+    pub(crate) close_hover: bool,
     pub(crate) cursor: Float3,
 
     /// The blend channel the paint brush lays (4 * group + variation), and whether the stroke going on erases (Ctrl: paints channel 0).
@@ -669,7 +672,7 @@ impl Default for TileTool {
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: 0.75, ground_thumbs_failed: HashSet::new(), link_follow: true, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            ref_units: Default::default(), drawing: false, flip: None, flip_asked: false, ground_chip_width: 0.0, areas_chip_width: 0.0, pack_categories: None, areas: None, tech_chip_width: 0.0, draw_pts: vec![], placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            ref_units: Default::default(), drawing: false, flip: None, flip_asked: false, ground_chip_width: 0.0, areas_chip_width: 0.0, pack_categories: None, areas: None, tech_chip_width: 0.0, draw_pts: vec![], close_hover: false, placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -1625,6 +1628,20 @@ impl TileTool {
         })
     }
 
+    /// Whether a click at the mouse closes the closed shape being drawn: it has 3 points or more and the mouse is within 12 pixels of the
+    /// first on screen.
+    pub(crate) fn closes_drawing(&self, e: &Editor, ev: &ViewportEvent) -> bool {
+        const REACH_PX: f32 = 12.0;
+        let Some(&first) = self.draw_pts.first().filter(|_| self.drawing && self.draw_pts.len() >= 3) else { return false };
+        let Some(d) = document_id(e).and_then(|id| e.docs.find_as::<TileDocument>(id)) else { return false };
+        if !self.drawing_look(e, d).1 {
+            return false;
+        }
+
+        let reach = REACH_PX * gui::io().DisplayFramebufferScale.x.max(1.0);
+        e.viewport.project(first).is_some_and(|(x, y)| (x - ev.x as f32).hypot(y - ev.y as f32) <= reach)
+    }
+
     fn handle_size(e: &Editor) -> f32 {
         let c = e.viewport.camera();
         (length(c.eye - c.target) * 0.012).max(0.8)
@@ -1676,7 +1693,23 @@ impl TileTool {
                 drawing_ribbon(t, w[0], w[1], edge, &mut o);
             }
 
-            let mouse = (self.terrain_hit && e.viewport.hovered).then_some(self.snapped_cursor);
+            // On the first point (a click there closes the shape): the line goes to it, and it is ringed.
+            let first = self.draw_pts.first().copied().filter(|_| self.close_hover);
+            let mouse = first.or((self.terrain_hit && e.viewport.hovered).then_some(self.snapped_cursor));
+            if let Some(p) = first {
+                let ring = r * 1.6;
+                let mut prev = None;
+                for i in 0..=24 {
+                    let a = i as f32 * std::f32::consts::TAU / 24.0;
+                    let q = Float3::new(p.x + a.cos() * ring, t.terrain_height(p.x + a.cos() * ring, p.z + a.sin() * ring) + 0.4, p.z + a.sin() * ring);
+                    if let Some(prev) = prev {
+                        o.line(prev, q, hot);
+                    }
+
+                    prev = Some(q);
+                }
+            }
+
             if let (Some(last), Some(m)) = (self.draw_pts.last(), mouse) {
                 drawing_ribbon(t, *last, m, faint, &mut o);
             }
@@ -1717,6 +1750,7 @@ impl TileTool {
 
     fn on_hover(&mut self, e: &mut Editor, ev: &ViewportEvent) {
         self.hover_surface(e, ev);
+        self.close_hover = self.closes_drawing(e, ev);
         self.terrain_hit = false;
         let Some((o, dir)) = e.viewport.ray(ev.x, ev.y) else { return };
         let Some(d) = document(e) else { return };
@@ -2149,7 +2183,8 @@ impl TileTool {
             }
         }
 
-        if self.drawing && pressed("tile.finish_drawing", false) {
+        // A mouse button finishes over the viewport only (a middle click: a middle drag pans).
+        if self.drawing && wce_editor::shortcuts::pressed_here("tile.finish_drawing", false, e.viewport.hovered) {
             self.finish_drawing(e);
         }
     }
@@ -3172,7 +3207,7 @@ const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
         a("tile.quick_add", "Tile", "Add here... (the quick-add popup)", &["Space"]),
         a("tile.turn_placing", "Tile: placing and drawing", "Turn what is placed", &["R"]),
         a("tile.turn_placing_back", "Tile: placing and drawing", "Turn what is placed back", &["Shift+R"]),
-        a("tile.finish_drawing", "Tile: placing and drawing", "Finish drawing", &["Enter", "KeypadEnter"]),
+        a("tile.finish_drawing", "Tile: placing and drawing", "Finish drawing (an open line; a closed shape: also a click on its first point)", &["Enter", "MouseMiddle"]),
         a("tile.grab_raise", "Tile: grabbing", "Raise along the ground's normal (0.25 m)", &["PageUp"]),
         a("tile.grab_lower", "Tile: grabbing", "Lower along the ground's normal (0.25 m)", &["PageDown"]),
         a("tile.grab_raise_more", "Tile: grabbing", "Raise along the ground's normal (1 m)", &["Shift+PageUp"]),
@@ -3826,7 +3861,10 @@ impl Tool for TileTool {
                 }
 
                 if self.drawing {
-                    if self.terrain_hit {
+                    // A closed shape closes on its first point: that click finishes it.
+                    if self.closes_drawing(e, ev) {
+                        self.finish_drawing(e);
+                    } else if self.terrain_hit {
                         self.draw_pts.push(self.cursor);
                     }
 

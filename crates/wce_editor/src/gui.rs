@@ -1127,7 +1127,7 @@ pub use sys::{
     ImGuiButtonFlags_MouseButtonLeft as BUTTON_LEFT, ImGuiButtonFlags_MouseButtonMiddle as BUTTON_MIDDLE, ImGuiButtonFlags_MouseButtonRight as BUTTON_RIGHT,
     ImGuiChildFlags_Borders as CHILD_BORDERS, ImGuiCol_Button as COL_BUTTON, ImGuiInputTextFlags_AutoSelectAll as INPUT_AUTO_SELECT_ALL, ImGuiTableFlags_SizingFixedFit as TABLE_SIZING_FIXED_FIT,
     ImGuiTableFlags_BordersInnerV as TABLE_BORDERS_INNER_V, ImGuiKey_Delete as KEY_DELETE, ImGuiKey_G as KEY_G, ImGuiKey_Enter as KEY_ENTER, ImGuiKey_KeypadEnter as KEY_KEYPAD_ENTER,
-    ImGuiKey_F2 as KEY_F2, ImGuiCol_FrameBg as COL_FRAME_BG, ImGuiCol_ButtonActive as COL_BUTTON_ACTIVE, ImGuiCol_CheckMark as COL_CHECK_MARK,
+    ImGuiKey_F2 as KEY_F2, ImGuiKey_MouseMiddle as KEY_MOUSE_MIDDLE, ImGuiKey_MouseX1 as KEY_MOUSE_X1, ImGuiKey_MouseX2 as KEY_MOUSE_X2, ImGuiCol_FrameBg as COL_FRAME_BG, ImGuiCol_ButtonActive as COL_BUTTON_ACTIVE, ImGuiCol_CheckMark as COL_CHECK_MARK,
     ImGuiCol_Text as COL_TEXT, ImGuiCol_TextDisabled as COL_TEXT_DISABLED, ImGuiColorEditFlags_AlphaBar as COLOR_ALPHA_BAR, ImGuiColorEditFlags_Float as COLOR_FLOAT,
     ImGuiColorEditFlags_HDR as COLOR_HDR, ImGuiCond_Always as COND_ALWAYS, ImGuiCond_Appearing as COND_APPEARING, ImGuiCond_FirstUseEver as COND_FIRST_USE_EVER, ImGuiDir_Down as DIR_DOWN,
     ImGuiDir_Left as DIR_LEFT, ImGuiDir_Right as DIR_RIGHT, ImGuiInputTextFlags_EnterReturnsTrue as INPUT_ENTER_RETURNS_TRUE, ImGuiKey_1 as KEY_1,
