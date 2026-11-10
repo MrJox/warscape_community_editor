@@ -461,6 +461,19 @@ impl TileTool {
         (colour, FILLED_TYPES.contains(&kind))
     }
 
+    /// How what is drawn is finished: a closed shape by a click on its first point (or the finishing shortcut), an open line by the
+    /// shortcut (Enter, a middle click: `tile.finish_drawing`).
+    fn finish_hint(&self, e: &Editor) -> String {
+        let keys = wce_editor::shortcuts::keys("tile.finish_drawing").iter().flatten().map(|c| c.text()).collect::<Vec<_>>().join(" or ");
+        let closed = crate::tool::document_id(e).and_then(|id| e.docs.find_as::<wce_tile_editor::tile_document::TileDocument>(id)).is_some_and(|d| self.drawing_look(e, d).1);
+        match (closed, keys.is_empty()) {
+            (true, true) => "click its first point to close it".to_owned(),
+            (true, false) => format!("click its first point to close it ({keys} too)"),
+            (false, true) => "set a key to finish it in Settings > Shortcuts".to_owned(),
+            (false, false) => format!("{keys} finishes it"),
+        }
+    }
+
     /// Starts making an entry: placing it, or drawing it.
     pub fn start_making(&mut self, e: &mut Editor, en: &Entry) {
         // The new set (not saved) is not one to come back to.
@@ -517,7 +530,7 @@ impl TileTool {
         // Its values, before the first click.
         e.pending_focus = Some("Inspector".to_owned());
         self.status = match &en.make {
-            Make::Draw { .. } => format!("{}: click the terrain for its points, Enter finishes, Esc cancels", en.label),
+            Make::Draw { .. } => format!("{}: click the terrain for its points; {}; Esc cancels", en.label, self.finish_hint(e)),
             _ => format!("{}: click the terrain to place (R / Shift+R turn it, Esc stops)", en.label),
         };
     }
@@ -1328,12 +1341,7 @@ impl TileTool {
         if let Some(label) = self.making.clone().filter(|_| self.placing.is_some() || self.drawing) {
             gui::text_colored(theme::palette().highlight, &format!("{}  {label}", if self.drawing { icons::SQUARE_PEN } else { icons::MOUSE_POINTER_2 }));
             if self.drawing {
-                gui::text_disabled(&format!("{} points: click the terrain; Enter finishes", self.draw_pts.len()));
-                if gui::button("Finish") {
-                    self.finish_drawing(e);
-                }
-
-                gui::same_line();
+                gui::text_disabled(&format!("{} points: {}", self.draw_pts.len(), self.finish_hint(e)));
             } else {
                 gui::text_disabled("click the terrain to place; R / Shift+R turn it");
             }

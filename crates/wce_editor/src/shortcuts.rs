@@ -26,6 +26,24 @@ pub struct Chord {
 /// The keyboard's keys in Dear ImGui's numbering (no mouse or gamepad keys).
 const KEYS: std::ops::Range<i32> = 512..632;
 
+/// The mouse buttons a shortcut can be (Dear ImGui's mouse keys, named MouseMiddle, MouseX1, MouseX2) and their button numbers: not the left
+/// and right buttons, which pick and orbit.
+const MOUSE_KEYS: [(i32, i32); 3] = [(gui::KEY_MOUSE_MIDDLE, 2), (gui::KEY_MOUSE_X1, 3), (gui::KEY_MOUSE_X2, 4)];
+
+/// How far a mouse button may move between its press and its release to be a click (a shortcut), not a drag (pixels).
+const CLICK_SLOP: f32 = 4.0;
+
+/// The mouse button a key is (`MOUSE_KEYS`).
+pub fn mouse_button(key: i32) -> Option<i32> {
+    MOUSE_KEYS.iter().find(|(k, _)| *k == key).map(|(_, b)| *b)
+}
+
+/// Whether a mouse button was clicked this frame: released where it was pressed (a drag, the middle button's pan, is not a click).
+fn mouse_clicked(button: i32) -> bool {
+    let i = button as usize;
+    gui::is_mouse_released(button) && gui::io().MouseDragMaxDistanceSqr.get(i).is_some_and(|&d| d <= CLICK_SLOP * CLICK_SLOP)
+}
+
 /// The modifier keys (Left / Right Ctrl, Shift, Alt, Super).
 const MODIFIER_KEYS: std::ops::RangeInclusive<i32> = 527..=534;
 
@@ -65,10 +83,14 @@ impl Chord {
         s
     }
 
-    /// Whether the key was pressed this frame with exactly these modifiers.
-    fn pressed(&self, repeat: bool) -> bool {
+    /// Whether the key was pressed this frame with exactly these modifiers; a mouse button: clicked (`mouse_clicked`), when `mouse` lets it.
+    fn pressed(&self, repeat: bool, mouse: bool) -> bool {
         let io = gui::io();
-        gui::is_key_pressed(self.key, repeat) && (is_modifier(self.key) || (io.KeyCtrl == self.ctrl && io.KeyShift == self.shift && io.KeyAlt == self.alt))
+        let mods = io.KeyCtrl == self.ctrl && io.KeyShift == self.shift && io.KeyAlt == self.alt;
+        match mouse_button(self.key) {
+            Some(b) => mouse && mods && mouse_clicked(b),
+            None => gui::is_key_pressed(self.key, repeat) && (is_modifier(self.key) || mods),
+        }
     }
 
     /// Whether the key is held with these Ctrl and Alt (Shift too when the chord has it).
@@ -79,7 +101,7 @@ impl Chord {
 }
 
 fn key_by_name(name: &str) -> Option<i32> {
-    KEYS.into_iter().find(|&k| gui::key_name(k).eq_ignore_ascii_case(name))
+    KEYS.into_iter().chain(MOUSE_KEYS.map(|(k, _)| k)).find(|&k| gui::key_name(k).eq_ignore_ascii_case(name))
 }
 
 /// Where an action's keys work, for the clashes: the editor's work everywhere, the viewport's while the mouse is over it, a tool's while it is
@@ -230,7 +252,12 @@ pub fn keys(id: &str) -> [Option<Chord>; 2] {
 
 /// Whether one of the action's keys was pressed this frame (`repeat`: and while it is held, at the key repeat's rate).
 pub fn pressed(id: &str, repeat: bool) -> bool {
-    !CAPTURING.load(Ordering::Relaxed) && keys(id).iter().flatten().any(|c| c.pressed(repeat))
+    pressed_here(id, repeat, true)
+}
+
+/// [`pressed`], its mouse buttons only when `mouse` (the mouse is where the action works: a viewport's action over the viewport).
+pub fn pressed_here(id: &str, repeat: bool, mouse: bool) -> bool {
+    !CAPTURING.load(Ordering::Relaxed) && keys(id).iter().flatten().any(|c| c.pressed(repeat, mouse))
 }
 
 /// Whether one of the action's keys is held.
@@ -251,7 +278,8 @@ pub fn set_capturing(on: bool) {
 /// The key pressed this frame with the modifiers held, for the Settings page. A modifier key alone counts only for a held action.
 pub fn captured(held: bool) -> Option<Chord> {
     let io = gui::io();
-    let key = KEYS.into_iter().find(|&k| gui::is_key_pressed(k, false) && (held || !is_modifier(k)))?;
+    let clicked = MOUSE_KEYS.iter().find(|(_, b)| !held && mouse_clicked(*b)).map(|(k, _)| *k);
+    let key = clicked.or_else(|| KEYS.into_iter().find(|&k| gui::is_key_pressed(k, false) && (held || !is_modifier(k))))?;
     if is_modifier(key) {
         return Some(Chord { key, ctrl: false, shift: false, alt: false });
     }
@@ -291,5 +319,17 @@ mod tests {
         assert!(Scope::Viewport.overlaps(Scope::Tool("tile")));
         assert!(Scope::Tool("tile").overlaps(Scope::Tool("tile")));
         assert!(!Scope::Tool("tile").overlaps(Scope::Tool("ui")));
+    }
+
+    #[test]
+    fn mouse_buttons_are_keys_too() {
+        for name in ["MouseMiddle", "Shift+MouseX1", "MouseX2"] {
+            let c = Chord::parse(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(c.text(), name);
+            assert!(mouse_button(c.key).is_some());
+        }
+
+        assert!(Chord::parse("MouseLeft").is_none(), "the left and right buttons pick and orbit");
+        assert_eq!(Chord::parse("Enter").map(|c| mouse_button(c.key)), Some(None));
     }
 }
