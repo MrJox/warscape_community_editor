@@ -4,6 +4,7 @@
 
 pub mod attila;
 pub mod built;
+mod campaign_props;
 
 use std::collections::BTreeMap;
 use std::path::Path;

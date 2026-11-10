@@ -89,6 +89,9 @@ pub struct MapModel {
     pub explicit: Option<Item<ExplicitTiles>>,
     pub project: Option<Item<TerryProject>>,
 
+    /// Existing campaign props in a native marker file; Terry projects retain their own representation.
+    pub native_props: Option<Item<crate::campaign_props::CampaignProps>>,
+
     /// The XML settings read losslessly (`config.xml`, `masks.xml`, `map_info.xml`, ...).
     pub xml: Vec<Item<XmlDoc>>,
 
