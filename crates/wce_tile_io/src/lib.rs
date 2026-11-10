@@ -47,8 +47,14 @@ fn collect(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Blob>) -> std::i
     for e in std::fs::read_dir(dir)? {
         let e = e?;
         let name = e.file_name().to_string_lossy().into_owned();
-        if wce_foundation::publication::reserved(&name) { continue; }
-        let rel = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+        if wce_foundation::publication::reserved(&name) {
+            continue;
+        }
+        let rel = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
         if e.file_type()?.is_dir() {
             collect(&e.path(), &rel, out)?;
         } else {
@@ -106,15 +112,51 @@ impl TileFiles {
     ///
     /// A file could not be read or written.
     pub fn write_to(&self, dir: &Path, entry_dir: Option<&Path>) -> Result<()> {
-        use wce_foundation::publication::{Output,Source,Staged,resource_path};
-        let source=|blob:&Blob|match blob{Blob::File(p)=>Source::File(p.clone()),Blob::Bytes(b)=>Source::Bytes(b.clone())};
-        let mut outputs=vec![];
-        for (rel,blob) in &self.folder {outputs.push(Output::new(resource_path(dir,rel).map_err(std::io::Error::other)?,source(blob)));}
-        if let (Some((name,blob)),Some(entry_dir))=(&self.entry,entry_dir){let mut entry=Output::new(resource_path(entry_dir,name).map_err(std::io::Error::other)?,source(blob));entry.priority=4;outputs.push(entry);}
-        Staged::prepare(outputs).and_then(Staged::publish).map_err(|e|std::io::Error::other(e.to_string()))?;
+        use wce_foundation::publication::{Output, Source, Staged, resource_path};
+        let source = |blob: &Blob| match blob {
+            Blob::File(p) => Source::File(p.clone()),
+            Blob::Bytes(b) => Source::Bytes(b.clone()),
+        };
+        let mut outputs = vec![];
+        for (rel, blob) in &self.folder {
+            let mut output = Output::new(
+                resource_path(dir, rel).map_err(std::io::Error::other)?,
+                source(blob),
+            );
+            output.priority = match rel
+                .rsplit('/')
+                .next()
+                .unwrap_or(rel)
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "tile.wce" | "tile.ted" | "terrain_layers.wcl" => 4,
+                "lf_height_map.dds"
+                | "lf_sea_height_map.dds"
+                | "lf_heights.tif"
+                | "lf_sea_heights.tif"
+                | "height_map_0.png" => 3,
+                "lf_height_map_lq.dds" => 2,
+                "lf_height_map.data" => 1,
+                _ => 0,
+            };
+            outputs.push(output);
+        }
+        if let (Some((name, blob)), Some(entry_dir)) = (&self.entry, entry_dir) {
+            let mut entry = Output::new(
+                resource_path(entry_dir, name).map_err(std::io::Error::other)?,
+                source(blob),
+            );
+            entry.priority = 4;
+            outputs.push(entry);
+        }
+        Staged::prepare(outputs)
+            .and_then(Staged::publish)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
 
         Ok(())
     }
+
 }
 
 /// The raw_data folder a tile path lives under (the part before `terrain/tiles`), if there is one.
