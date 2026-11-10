@@ -497,11 +497,26 @@ impl TileTool {
         }
 
         // A node: its Boundary made for the ground around it, and how its Bounding Box is read.
-        let mut adjust = false;
+        let mut adjust = None;
         if d.tile().tscene().type_of(holder) == "SiegeAINodeInstance" {
-            adjust = gui::button(&format!("{}  Adjust the Boundary to what is around it", icons::SQUARE_DASHED));
+            if gui::button(&format!("{}  Adjust the Boundary to what is around it", icons::SQUARE_DASHED)) {
+                adjust = Some(());
+            }
+
             if gui::is_item_hovered() {
-                gui::set_tooltip("The Boundary made again as the generator makes it: the free ground nearest to the node, out to the no-go regions, buildings, fort pieces, steep ground and sea around it and halfway to the other nodes, onto their faces. One undo entry.");
+                gui::set_tooltip("The Boundary made again as the generator makes it: the free ground nearest to the node, within the range, out to the no-go regions, buildings, fort pieces, steep ground and sea around it, the other nodes' Boundaries and halfway to the nodes without one; grown onto the buildings' faces, stopping at the no-go regions' and the other Boundaries' edges. One undo entry.");
+            }
+
+            // Its range (kept in the Tile settings).
+            let mut reach = e.tool_settings::<TileSettings>(SETTINGS_ID).boundary_reach;
+            gui::set_next_item_width(160.0);
+            let format = if reach > 0.0 { "%.1f m" } else { "automatic" };
+            if gui::drag_float("range (m from its centre; 0: automatic)##boundary_reach", &mut reach, 0.25, 0.0, 200.0, format) {
+                e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.boundary_reach = reach.max(0.0));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("How far the adjusted Boundary may reach from the node's centre (at least to its Bounding Box's corners). Automatic: as the generator, 30 to 60 units for an area node by the room around it, 18 to 32 for an intersection, 24 for an entry.");
             }
 
             gui::text_wrapped(BOUNDING_BOX_NOTE);
@@ -511,8 +526,9 @@ impl TileTool {
             self.start_shape(e, it.holder, it.kind, it.role);
         }
 
-        if adjust && let Some(d) = document(e) {
-            self.status = match d.adjust_node_boundary(holder) {
+        let reach = e.tool_settings::<TileSettings>(SETTINGS_ID).boundary_reach;
+        if adjust.is_some() && let Some(d) = document(e) {
+            self.status = match d.adjust_node_boundary(holder, Some(reach).filter(|&r| r > 0.0)) {
                 Ok(_) => "the Boundary adjusted to what is around the node".to_owned(),
                 Err(err) => err,
             };

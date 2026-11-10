@@ -1363,31 +1363,44 @@ fn local_outline_clear(g: &Grid, cells: &[usize], grow: f64, keep_out: Option<&M
 }
 
 /// One node's Boundary for the ground as it is (the editor's *Adjust the Boundary*), as `generate` makes each node's: the free ground
-/// (no no-go region, steep ground, building, fort piece or sea) nearest to it along the ground, within its reach (`reach`, from the room
-/// around its centre; at least its rectangle's half diagonal), the free ground nearer to another node (`others`) left to that one, with its
-/// rectangle, grown 3 units onto the faces of what is around it but the no-go regions (it stops at their edge). Empty when its rectangle is
-/// not one.
-pub fn node_boundary(input: &Input, node: &Node, others: &[Node]) -> Vec<P> {
-    let c = [node.bbox.iter().map(|p| p[0]).sum::<f64>() / 4.0, node.bbox.iter().map(|p| p[1]).sum::<f64>() / 4.0];
-    let half_diagonal = node.bbox.iter().map(|&p| dist(p, c)).fold(0.0, f64::max);
-    if half_diagonal < CELL {
+/// (no no-go region, steep ground, building, fort piece or sea) nearest to it along the ground, within `reach` from its centre (scene
+/// units; `None`: the generator's, `reach`, from the room around its centre; at least its rectangle's half diagonal), with its
+/// rectangle, grown 3 units onto the faces of what is around it. The other nodes (`others`) bound it: one with a Boundary of its own
+/// (3 points or more) by that Boundary, which it comes up to and stops at as at a no-go region, leaving the ground hidden behind it from
+/// its centre (it never goes round it); one without, by the ground nearer to it. Its growth stops at the no-go regions' and the other
+/// Boundaries' edges. Empty when its rectangle is not one.
+pub fn node_boundary(input: &Input, node: &Node, others: &[Node], reach: Option<f64>) -> Vec<P> {
+    let centre = |n: &Node| [n.bbox.iter().map(|p| p[0]).sum::<f64>() / 4.0, n.bbox.iter().map(|p| p[1]).sum::<f64>() / 4.0];
+    let half_diagonal = |n: &Node| {
+        let c = centre(n);
+        n.bbox.iter().map(|&p| dist(p, c)).fold(0.0, f64::max)
+    };
+
+    let c = centre(node);
+    if half_diagonal(node) < CELL {
         return vec![];
     }
 
-    // A grid around it: its reach (60 at most) and the nodes near enough to share its ground.
-    let span = half_diagonal.max(60.0) * 2.0 + 20.0;
+    // A grid around it: its reach and the nodes near enough to share its ground.
+    let most = reach.unwrap_or(60.0).max(half_diagonal(node) + CELL);
+    let span = most * 2.0 + 20.0;
     let (lo, hi) = input.bounds;
     let g = Grid::new([(c[0] - span).max(lo[0]), (c[1] - span).max(lo[1])], [(c[0] + span).min(hi[0]), (c[1] + span).min(hi[1])], CELL);
     if g.is_empty() {
         return vec![];
     }
 
-    let mut nogo = g.mask();
+    // What it may not go into, nor grow onto: the no-go regions and the other nodes' Boundaries.
+    let mut keep_out = g.mask();
     for p in &input.nogo {
-        g.fill_polygon(&mut nogo, p);
+        g.fill_polygon(&mut keep_out, p);
     }
 
-    let mut blocked = nogo.clone();
+    for o in others.iter().filter(|o| o.boundary.len() >= 3) {
+        g.fill_polygon(&mut keep_out, &o.boundary);
+    }
+
+    let mut blocked = keep_out.clone();
     for p in &input.obstacles {
         g.fill_polygon(&mut blocked, p);
     }
@@ -1412,36 +1425,55 @@ pub fn node_boundary(input: &Input, node: &Node, others: &[Node]) -> Vec<P> {
         }
     }
 
-    // The nodes' own rectangles are theirs, whatever is under them.
+    // Its own rectangle is its own, whatever is under it; the other nodes without a Boundary take the ground nearer to them.
     let mut free: Mask = blocked.iter().map(|&b| !b).collect();
     let mine = g.polygon_cells(&node.bbox);
     for &k in &mine {
         free[k] = true;
+        keep_out[k] = false;
     }
 
     let clearance = g.distance(&blocked);
-    let mut sources = vec![];
-    for (n, other) in std::iter::once(node).chain(others).enumerate() {
-        let oc = [other.bbox.iter().map(|p| p[0]).sum::<f64>() / 4.0, other.bbox.iter().map(|p| p[1]).sum::<f64>() / 4.0];
-        let Some(k) = g.at(oc) else { continue };
-        for &b in &g.polygon_cells(&other.bbox) {
+    let Some(k0) = g.at(c) else { return vec![] };
+    let own = reach.unwrap_or_else(|| reach_of(node.kind, clearance[k0])).max(half_diagonal(node) + CELL);
+    // A node without a Boundary has the ground nearer to it, within its reach (as the generator splits the ground).
+    let mut sources = vec![(k0, own)];
+    for o in others.iter().filter(|o| o.boundary.len() < 3) {
+        let Some(k) = g.at(centre(o)) else { continue };
+        for b in g.polygon_cells(&o.bbox) {
             free[b] = true;
         }
 
-        let r = reach(other.kind, clearance[k].min(1e6)).max(other.bbox.iter().map(|&p| dist(p, oc)).fold(0.0, f64::max) + CELL);
-        sources.push((k, r, n));
+        sources.push((k, reach_of(o.kind, clearance[k]).max(half_diagonal(o) + CELL)));
     }
 
-    if sources.first().is_none_or(|s| s.2 != 0) {
-        return vec![];
-    }
+    // A node with one: this one comes up to it (they touch, as CA's neighbours do), and leaves the ground hidden behind it seen from
+    // its centre, so that it never goes round it and holds it inside.
+    let walls: Vec<(P, P)> = others.iter().filter(|o| o.boundary.len() >= 3)
+        .flat_map(|o| (0..o.boundary.len()).map(|i| (o.boundary[i], o.boundary[(i + 1) % o.boundary.len()])))
+        .filter(|&(a, b)| crate::raster::seg_dist(c, a, b) <= own + span)
+        .collect();
+    let hidden = |k: usize| walls.iter().any(|&(a, b)| segments_cross(c, g.centre(k), a, b));
 
-    let (owner, _) = g.geodesic_split(&free, &sources.iter().map(|s| (s.0, s.1)).collect::<Vec<_>>());
-    let mut cells: Vec<usize> = (0..g.len()).filter(|&k| owner[k] == 0).collect();
+    let (owner, _) = g.geodesic_split(&free, &sources);
+    let mut cells: Vec<usize> = (0..g.len()).filter(|&k| owner[k] == 0 && !hidden(k)).collect();
     cells.extend(mine);
-    // Grown onto the buildings' faces, not into the no-go regions: a map's no-go regions are often drawn to ease the buildings' line
-    // for the pathfinder, and the Boundary stops at their edge.
-    simplify_loop(&local_outline_clear(&g, &cells, 3.0, Some(&nogo)), 0.5)
+
+    // Grown onto the buildings' faces, not into what it is kept out of: a map's no-go regions are often drawn to ease the buildings'
+    // line for the pathfinder, and the Boundary stops at their edge (as at the other nodes').
+    simplify_loop(&local_outline_clear(&g, &cells, 3.0, Some(&keep_out)), 0.5)
+}
+
+/// Whether segments a-b and p-q cross (touching ends count).
+fn segments_cross(a: P, b: P, p: P, q: P) -> bool {
+    let side = |o: P, x: P, y: P| (x[0] - o[0]) * (y[1] - o[1]) - (x[1] - o[1]) * (y[0] - o[0]);
+    let (d1, d2, d3, d4) = (side(p, q, a), side(p, q, b), side(a, b, p), side(a, b, q));
+    ((d1 > 0.0) != (d2 > 0.0) || d1 == 0.0 || d2 == 0.0) && ((d3 > 0.0) != (d4 > 0.0) || d3 == 0.0 || d4 == 0.0)
+}
+
+/// [`reach`], a clearance that is not one (no obstacle near) taken as a large one.
+fn reach_of(kind: NodeKind, clearance: f64) -> f64 {
+    reach(kind, clearance.min(1e6))
 }
 
 /// A street from node a to node b along `path` (cells from a's seed to b's).
