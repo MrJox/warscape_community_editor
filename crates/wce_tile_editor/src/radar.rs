@@ -101,6 +101,9 @@ pub struct RadarInput {
 
     /// The steep ground the game will not walk (outlines, even-odd).
     pub cliffs: Vec<Vec<P>>,
+
+    /// The water planes' footprints: the steep ground in them is a bank (a stream bed's, a marsh's), not a cliff.
+    pub water_planes: Vec<Vec<P>>,
 }
 
 /// How the radar is drawn (every colour sRGB).
@@ -143,6 +146,9 @@ pub struct RadarStyle {
 
     /// Ripple lines along the shore.
     pub ripples: u32,
+
+    /// Water shallower than this (metres) is drawn pale and without an ink edge.
+    pub shallow_m: f32,
 }
 
 impl Default for RadarStyle {
@@ -170,6 +176,7 @@ impl Default for RadarStyle {
             hachure_slope: 12.0,
             cliff_slope: 35.0,
             ripples: 3,
+            shallow_m: 0.4,
         }
     }
 }
@@ -533,10 +540,19 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
         let k = j * n + i;
         let sea = input.sea && heights[k] < 0.0;
         let p = frame.world(i, j);
-        let wet = input.water.as_ref().is_some_and(|w| w.sample(p[0], p[1]) > 0.15);
+        let wet = input.water.as_ref().is_some_and(|w| w.sample(p[0], p[1]) > 0.01);
         f32::from(u8::from(sea || wet))
     });
     let water_soft = water.blurred(1);
+    // The sea alone (its shore gets ripples and sea cliffs), and the water inland (rivers, water planes: still water, no cliffs at its
+    // banks).
+    let sea_only = Mask::from_fn(n, |i, j| f32::from(u8::from(input.sea && heights[j * n + i] < 0.0)));
+    let inland = Mask { n, v: water.v.iter().zip(&sea_only.v).map(|(w, s)| (w - s).max(0.0)).collect() };
+    let mut inland_near = inland.blurred(((3.0 * px_m) as usize).max(2));
+    if !input.water_planes.is_empty() {
+        let polys: Vec<&[P]> = input.water_planes.iter().map(Vec::as_slice).collect();
+        inland_near.max_with(&fill_union(&frame, &polys));
+    }
 
     // 1. Paper: the base, broad stains, grain, the faint plots of fields the hand-made ones have.
     let mut canvas = Canvas { n, c: vec![style.paper; n * n] };
@@ -597,13 +613,13 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
     });
     // Sea cliffs: the land along the shore standing well above the ground just off it (the steep band at the waterline is too thin for
     // the slope test above).
-    let sea_rim = if water.v.iter().any(|&w| w > 0.5) {
-        let near = water.blurred(1);
+    let sea_rim = if sea_only.v.iter().any(|&w| w > 0.5) {
+        let near = sea_only.blurred(1);
         let low = min_filter(&heights, n, ((8.0 * px_m) as usize).max(2));
         Some(Mask::from_fn(n, |i, j| {
             let k = j * n + i;
             let shore = f32::from(u8::from(near.v[k] > 0.02 && water.v[k] < 0.5));
-            shore * smooth(3.5, 6.0, heights[k] - low[k])
+            shore * smooth(3.5, 6.0, heights[k] - low[k]) * f32::from(u8::from(inland_near.v[k] < 0.02))
         }).blurred(1).step(0.35, 0.12))
     } else {
         None
@@ -621,7 +637,9 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             let band = (grown.v[k] - rock.v[k]).max(0.0);
             band * smooth(0.0, 0.4, heights[k] - around.v[k]) * (1.0 - water.v[k])
         });
-        let mut rim = rim.blurred(1).step(0.3, 0.12);
+        let rim = rim.blurred(1).step(0.3, 0.12);
+        // Not at the banks of a river or a water plane.
+        let mut rim = Mask { n, v: rim.v.iter().zip(&inland_near.v).map(|(r, w)| r * (1.0 - smooth(0.0, 0.05, *w))).collect() };
         if let Some(sea) = &sea_rim {
             rim.max_with(sea);
         }
@@ -678,11 +696,21 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             let sea = if input.sea { (-heights[k]).max(0.0) } else { 0.0 };
             river.max(sea)
         };
-        canvas.paint_with(&water_soft, |i, j, _| {
+        // Shallow water (a plane over mud, a marsh's puddles) is a pale wash, full from `style.shallow_m` deep.
+        let cover = Mask::from_fn(n, |i, j| {
+            let k = j * n + i;
+            water_soft.v[k] * (0.4 + 0.6 * smooth(0.0, style.shallow_m, depth_of(i, j)).max(sea_only.v[k]))
+        });
+        let deep = Mask::from_fn(n, |i, j| {
+            let k = j * n + i;
+            water.v[k] * f32::from(u8::from(sea_only.v[k] > 0.5 || depth_of(i, j) >= style.shallow_m))
+        });
+        canvas.paint_with(&cover, |i, j, _| {
             let p = frame.world(i, j);
             let d = smooth(0.0, 25.0, depth_of(i, j));
             let t = fbm(p[0] / 40.0, p[1] / 40.0, 4, seed ^ 0x5ea) - 0.5;
-            let streak = value_noise(p[0] / 3.0, p[1] / 30.0, seed ^ 0x5eb) - 0.5;
+            // Streaks on the sea only: still water inland.
+            let streak = (value_noise(p[0] / 3.0, p[1] / 30.0, seed ^ 0x5eb) - 0.5) * sea_only.v[j * n + i];
             let mut c = [0.0; 3];
             for q in 0..3 {
                 c[q] = (style.sea[q] + (style.sea_deep[q] - style.sea[q]) * d) * (1.0 + t * 0.16 + streak * 0.05);
@@ -691,18 +719,19 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
         });
 
         // Ripples: lines at set distances off the shore, out on the water.
-        let far = water.blurred(((6.0 * px_m) as usize).max(2));
+        let far = sea_only.blurred(((6.0 * px_m) as usize).max(2));
         for r in 0..style.ripples {
             let level = 0.62 + 0.11 * r as f32;
             let width = 0.025;
             let line = Mask::from_fn(n, |i, j| {
                 let k = j * n + i;
                 let v = far.v[k];
-                (1.0 - ((v - level).abs() / width).min(1.0)) * water.v[k]
+                (1.0 - ((v - level).abs() / width).min(1.0)) * sea_only.v[k]
             });
             canvas.paint(&line, style.sea_deep, 0.55 - 0.12 * r as f32);
         }
-        canvas.paint(&water.edge(1), style.ink, 0.8);
+        // The ink edge along deep water only.
+        canvas.paint(&deep.edge(1), style.ink, 0.8);
     }
 
     if let Some((rim, ticks)) = &cliff_rims {

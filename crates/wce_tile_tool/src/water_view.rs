@@ -97,6 +97,28 @@ impl TileTool {
     }
 }
 
+impl TileTool {
+    /// The water depth and the automatic no-go areas of the open tile worked out now when it has none (the radar's rivers and cliffs).
+    ///
+    /// # Errors
+    ///
+    /// No tile, or stage B failed.
+    pub(crate) fn ensure_radar_water(&mut self, e: &mut Editor, id: DocumentId) -> Result<(), String> {
+        let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile")?;
+        if d.tile().water_depth().is_some() && d.tile().auto_nogos().is_some() {
+            return Ok(());
+        }
+
+        let game = self.exported_game(e).ok();
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let (water, nogos) = stage_b_of(d, game.as_deref(), true)?;
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        d.tile_mut().set_water_depth(&mut e.scene, Some(water));
+        d.tile_mut().set_auto_nogos(nogos);
+        Ok(())
+    }
+}
+
 /// The tile as it is in memory (its scene, its heights in the range the next save gives them, its entry with that range) through stage B's
 /// water map; the water planes' models from the game's packs when they are known.
 /// Polygons in metres (tile frame).
