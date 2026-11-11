@@ -922,6 +922,45 @@ impl Command<Tile> for GroundFillCommand {
     }
 }
 
+/// A whole-map edit of the blend map (the whole tile painted): undo and redo use the field's own records, as the brush strokes do; the edit
+/// is made before the command is pushed.
+pub(crate) struct BlendFillCommand {
+    pub name: String,
+    pub first: bool,
+}
+
+impl Command<Tile> for BlendFillCommand {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, t: &mut Tile) {
+        if std::mem::take(&mut self.first) {
+            return;
+        }
+
+        t.end_stroke_edit();
+        if let Some(b) = &mut t.project.blend {
+            b.redo();
+        }
+    }
+
+    fn revert(&mut self, t: &mut Tile) {
+        t.end_stroke_edit();
+        if let Some(b) = &mut t.project.blend {
+            b.undo();
+        }
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        vec![TERRAIN]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// A whole-map edit of the heights (a height map imported): undo and redo use the height field's records; the landscape instances moved
 /// with the ground go back and forth with them. The edit is made before the command is pushed.
 pub(crate) struct HeightFillCommand {

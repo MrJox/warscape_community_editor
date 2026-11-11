@@ -288,6 +288,14 @@ impl Tile {
 
     /// A step of a paint stroke on the blend map, which covers the bordered tile.
     fn apply_paint(&mut self, channel: usize, x: f32, z: f32, s: &BrushSettings, dt: f32) {
+        // At strength 1 a second of painting lays 98 % (1 - e^-4).
+        let amount = (4.0 * f64::from(s.opacity) * f64::from(dt.min(0.05))).min(1.0);
+        self.paint_blend(channel, Some((x, z)), s, amount);
+    }
+
+    /// A dab of paint on the blend map with `amount` at its middle: at (x, z) with the brush's radius, falloff and image, or (`None`) over
+    /// the whole map, border included, the same at every pixel (the filters and the mode still apply).
+    pub(crate) fn paint_blend(&mut self, channel: usize, at: Option<(f32, f32)>, s: &BrushSettings, amount: f64) {
         let p = &mut self.project;
         let (b, ex, ez, mpp_x, mpp_z, unit) = (p.border_m(), p.extent_x(), p.extent_z(), p.mpp_x(), p.mpp_z(), p.unit_scale);
         if p.load_blend().is_err() {
@@ -301,11 +309,16 @@ impl Tile {
         }
 
         let (ppx, ppz) = (f64::from(blend.width()) / (ex + 2.0 * b), f64::from(blend.height()) / (ez + 2.0 * b));
-        // At strength 1 a second of painting lays 98 % (1 - e^-4).
-        let amount = (4.0 * f64::from(s.opacity) * f64::from(dt.min(0.05))).min(1.0);
-        let brush = Brush {
-            cx: (f64::from(x) + b) * ppx - 0.5, cy: (f64::from(z) + b) * ppz - 0.5, radius: (f64::from(s.radius_m) * ppx).max(1.0), strength: amount,
-            falloff: f64::from(s.falloff), curve: s.curve, image: s.brush_image(),
+        let brush = match at {
+            Some((x, z)) => Brush {
+                cx: (f64::from(x) + b) * ppx - 0.5, cy: (f64::from(z) + b) * ppz - 0.5, radius: (f64::from(s.radius_m) * ppx).max(1.0), strength: amount,
+                falloff: f64::from(s.falloff), curve: s.curve, image: s.brush_image(),
+            },
+
+            None => {
+                let (w, h) = (f64::from(blend.width()), f64::from(blend.height()));
+                Brush { cx: w * 0.5, cy: h * 0.5, radius: w.hypot(h), strength: amount, falloff: 0.0, curve: None, image: None }
+            }
         };
 
         // The terrain's height and slope (degrees) at a pixel's centre, in the editor's metres: TEd's Blendmap Filters and Rock-painting.
@@ -2847,6 +2860,30 @@ impl TileDocument {
 
         self.history.push(Box::new(GroundFillCommand { name: "Paint water ground types".to_owned(), first: true }));
         Ok(changed)
+    }
+
+    /// Paints the whole tile at once (the texture painter's Paint the whole tile): one dab of the paint brush over the whole blend map, border
+    /// included, at the brush's strength with no falloff, in its mode and through its filters: at strength 1, normal mode and no filter,
+    /// every pixel becomes the channel's texture. Goes into the working terrain layer as a stroke does. One undo entry; false when nothing
+    /// changed.
+    ///
+    /// # Errors
+    ///
+    /// The tile has no blend map, or the settings are not the paint brush's.
+    pub fn paint_whole_tile(&mut self, kind: BrushKind, settings: &BrushSettings) -> Result<bool, String> {
+        let BrushKind::Paint(channel) = kind else { return Err("not a paint brush".to_owned()) };
+        self.end_stroke();
+        let t = self.tile_mut();
+        t.project.load_blend()?;
+        let depth = t.project.blend.as_ref().map_or(0, wce_tile::blend_field::BlendField::edit_depth);
+        t.paint_blend(usize::from(channel), None, settings, f64::from(settings.opacity).clamp(0.0, 1.0));
+        t.end_stroke_edit();
+        if t.project.blend.as_ref().map_or(0, wce_tile::blend_field::BlendField::edit_depth) == depth {
+            return Ok(false);
+        }
+
+        self.history.push(Box::new(super::commands::BlendFillCommand { name: "Paint the whole tile".to_owned(), first: true }));
+        Ok(true)
     }
 
     /// The tile's lowest and highest heights (metres as the editor shows them), `None` without a height map.

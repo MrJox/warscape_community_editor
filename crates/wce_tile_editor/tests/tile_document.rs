@@ -1050,6 +1050,64 @@ fn a_whole_tile_flip_mirrors_the_terrain_layers_and_undoes_them() {
     assert_eq!(heights(&d), before, "undo puts the layer back where it was");
 }
 
+/// `open`'s tile with a 32 x 32 blend map: all the first texture, but channel 5 in its west quarter.
+fn open_with_blend() -> (tempfile::TempDir, TileDocument) {
+    let (dir, _) = open();
+    let (w, h) = (32u32, 32u32);
+    let mut bytes = wce_formats::image_containers::TiffFile::ted_header(w, h);
+    for _ in 0..h {
+        for x in 0..w {
+            let mut px = [0u16; 16];
+            px[if x < w / 4 { 5 } else { 0 }] = u16::MAX;
+            bytes.extend(px.iter().flat_map(|v| v.to_le_bytes()));
+        }
+    }
+
+    std::fs::write(dir.path().join("blend_map.tif"), bytes).unwrap();
+    let doc = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
+    (dir, doc)
+}
+
+#[test]
+fn painting_the_whole_tile_is_one_dab_everywhere_and_one_undo_entry() {
+    let (_dir, mut d) = open_with_blend();
+    d.tile_mut().load_blend().unwrap();
+    let weights = |d: &TileDocument| d.project().blend.as_ref().unwrap().weights().to_vec();
+    let before = weights(&d);
+    let size = d.history().size();
+
+    // Full strength: every pixel is the texture.
+    let s = BrushSettings { opacity: 1.0, ..BrushSettings::default() };
+    assert!(d.paint_whole_tile(BrushKind::Paint(9), &s).unwrap());
+    assert_eq!(d.history().size(), size + 1);
+    assert!(weights(&d).chunks(16).all(|p| p[9] == u16::MAX && p.iter().map(|&v| u32::from(v)).sum::<u32>() == 65535), "all channel 9");
+    assert!(!d.paint_whole_tile(BrushKind::Paint(9), &s).unwrap(), "again: nothing changes, no entry");
+    assert_eq!(d.history().size(), size + 1);
+    d.history_mut().undo();
+    assert_eq!(weights(&d), before);
+    d.history_mut().redo();
+    assert!(weights(&d).chunks(16).all(|p| p[9] == u16::MAX));
+    d.history_mut().undo();
+
+    // Half strength: half of what each pixel held moves over, the same everywhere.
+    let s = BrushSettings { opacity: 0.5, ..BrushSettings::default() };
+    d.paint_whole_tile(BrushKind::Paint(9), &s).unwrap();
+    assert!(weights(&d).chunks(16).all(|p| (i32::from(p[9]) - 32768).abs() <= 1), "half: {:?}", &weights(&d)[..16]);
+}
+
+#[test]
+fn a_whole_tile_flip_mirrors_the_blend_map() {
+    use wce_tile_editor::tile_document::TileFlipAxis;
+
+    let (_dir, mut d) = open_with_blend();
+    d.flip_tile(TileFlipAxis::X).unwrap();
+    let b = d.project().blend.as_ref().unwrap();
+    assert!((0..32).all(|x| (b.pixel(x, 7)[5] == u16::MAX) == (x >= 24)), "the painted quarter is in the east now");
+    d.history_mut().undo();
+    let b = d.project().blend.as_ref().unwrap();
+    assert!((0..32).all(|x| (b.pixel(x, 7)[5] == u16::MAX) == (x < 8)));
+}
+
 #[test]
 fn the_steps_of_a_drag_are_one_entry() {
     let (_dir, mut d) = open();
