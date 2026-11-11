@@ -133,8 +133,9 @@ pub struct DamagePart {
     /// `bow_01`, `port_02`, `misc_12`, ...
     pub name: String,
 
-    /// 0 in every row; meaning unknown.
-    pub unknown: u32,
+    /// The sail states the part is shown in (`stationary`, `battle_sail`, `half_sail`: 1, 2, 3 to `FUN_10fe9620`); empty in every row of
+    /// Attila's and Rome 2's, whose sails have no states (docs/re/cloth.md, "Sail states").
+    pub states: Vec<String>,
 
     /// Polygons (3 or 4 vertices, a few more).
     pub panels: Vec<Vec<[f32; 3]>>,
@@ -389,7 +390,7 @@ fn ship(r: &mut Reader) -> Result<ShipLogic> {
     })?;
 
     r.zero("cannon count")?;
-    let damage_parts = r.list(10, |r| Ok(DamagePart { name: r.wide()?, unknown: r.u32()?, panels: r.list(4, |r| r.list(12, Reader::floats))? }))?;
+    let damage_parts = r.list(10, |r| Ok(DamagePart { name: r.wide()?, states: r.list(2, Reader::wide)?, panels: r.list(4, |r| r.list(12, Reader::floats))? }))?;
     let collision = r.list(42, |r| Ok(CollisionFace { name: r.wide()?, index: r.u32()?, vertices: [r.floats()?, r.floats()?, r.floats()?] }))?;
     let ef_lines = r.list(42, |r| Ok(EfLine { name: r.wide()?, purpose: r.u32()?, ends: [r.floats()?, r.floats()?], direction: r.floats()? }))?;
     let custom_positions = r.list(34, |r| Ok(CustomPosition { name: r.wide()?, kind: r.u32()?, unknown: r.u32()?, position: r.floats()?, up: r.floats()? }))?;
@@ -537,7 +538,10 @@ pub fn encode(table: &ModelsNaval) -> Result<Vec<u8>> {
         w.count(s.damage_parts.len())?;
         for part in &s.damage_parts {
             w.wide(&part.name)?;
-            w.u32(part.unknown);
+            w.count(part.states.len())?;
+            for state in &part.states {
+                w.wide(state)?;
+            }
             w.count(part.panels.len())?;
             for panel in &part.panels {
                 w.count(panel.len())?;
@@ -603,7 +607,7 @@ mod tests {
                 }],
             }],
             pipes: vec![Pipe { id: 31, unknown: 2, start_deck_piece: -1, end_deck_piece: 12, points: vec![[1.0; 3], [2.0; 3], [3.0; 3]] }],
-            damage_parts: vec![DamagePart { name: "bow_01".into(), unknown: 0, panels: vec![vec![[1.0; 3]; 3], vec![[2.0; 3]; 4]] }],
+            damage_parts: vec![DamagePart { name: "bow_01".into(), states: vec!["battle_sail".into()], panels: vec![vec![[1.0; 3]; 3], vec![[2.0; 3]; 4]] }],
             collision: vec![CollisionFace { name: "logic_collision3D".into(), index: 1, vertices: [[0.0; 3], [1.0; 3], [2.0; 3]] }],
             ef_lines: vec![EfLine { name: "EFLine001".into(), purpose: 23, ends: [[0.0; 3], [1.0; 3]], direction: [-1.0, 0.0, 0.0] }],
             custom_positions: vec![CustomPosition { name: "oar_left_l3".into(), kind: 8, unknown: 1, position: [4.5, 1.3, -7.4], up: [0.0, 1.0, 0.0] }],
