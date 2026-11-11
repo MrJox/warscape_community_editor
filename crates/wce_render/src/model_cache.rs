@@ -677,7 +677,8 @@ fn weighted_material(material: MaterialType) -> Option<(MeshKind, bool, bool)> {
         MaterialType::WeightedSkinDirtmap => (MeshKind::WeightedSkin, true, false),
         MaterialType::WeightedSkinDecal => (MeshKind::WeightedSkin, false, true),
         MaterialType::WeightedSkinDecalDirtmap => (MeshKind::WeightedSkin, true, true),
-        MaterialType::WeightedCloth => (MeshKind::WeightedCloth, false, false),
+        // `weightedcloth` samples a dirt map and mask (`s_decal_dirt_map`, `s_decal_dirt_mask`): the material's, black without.
+        MaterialType::WeightedCloth => (MeshKind::WeightedCloth, true, false),
         MaterialType::Decal => (MeshKind::RigidDecal, false, true),
         MaterialType::DecalDirtmap => (MeshKind::RigidDecal, true, true),
         _ => return None,
