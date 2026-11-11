@@ -112,7 +112,7 @@ enum Placed {
 
 /// A mesh's vertices are skinned (else it is a static mesh on a bone).
 fn is_skinned(m: &GpuMesh) -> bool {
-    matches!(m.kind, MeshKind::Weighted | MeshKind::WeightedSkin)
+    matches!(m.kind, MeshKind::Weighted | MeshKind::WeightedSkin | MeshKind::WeightedCloth)
 }
 
 fn matrix_of(rows: &[f32; 12]) -> Float4x4 {
@@ -157,6 +157,12 @@ fn layout_of(stride: u32) -> Vec<InputElement> {
 /// what the standard lighting reads, and the engine's choice between them isn't traced). **ASSUMPTION** until compared with the game: `_noclip`
 /// for the materials that aren't alpha-tested.
 fn gbuffer_ps(m: &GpuMesh) -> String {
+    // A sail: `weightedcloth`, which has no dirt or decal variants (its dirt maps are its own textures; unbound, no dirt and no damage).
+    if m.kind == MeshKind::WeightedCloth {
+        let noclip = if m.alpha_mode == 1 { "" } else { "_noclip" };
+        return format!("dx11_sm_3_0_weightedcloth.hlsl_ps_ps30_gbuffer{noclip}");
+    }
+
     let family = match (m.dirt, m.decal) {
         (false, false) => "weighted",
         (true, false) => "weightedwithdirt",

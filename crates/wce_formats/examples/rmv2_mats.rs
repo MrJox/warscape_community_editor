@@ -43,5 +43,8 @@ fn main() {
         let mat = block.material();
         let v4: Vec<(i32, [f32; 4])> = mat.params_vector4df32().iter().map(|(k, v)| (*k, [v.x, v.y, v.z, v.w])).collect();
         println!("   params string {:?} f32 {:?} i32 {:?} vec4 {:?}", mat.params_string(), mat.params_f32(), mat.params_i32(), v4);
+        if !mat.rope().nodes().is_empty() {
+            println!("   rope: {} nodes, uk_1 {}, uk_2 {}, attachments {:?}, first {:?}", mat.rope().nodes().len(), mat.rope().uk_1(), mat.rope().uk_2(), mat.rope().attachments(), mat.rope().nodes().first().map(|n| *n.position()));
+        }
     }
 }

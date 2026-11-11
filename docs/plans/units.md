@@ -210,10 +210,18 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    perimeter, boarding: **ASSUMPTION**, the oracle ship's men are on the `Marines` lines; the game's filling order isn't traced), `land_units`'
    file spacing apart. Afloat: on `Tile::water_level` (rivers, lakes' planes, the sea at 0 m in the sea's sets), the ground where that is
    higher; freeform keeps the element's height. **ASSUMPTION**: a ship's origin is its waterline.
-   Left: the sails (`Cloth`, `WeightedCloth`: no draw path yet) and the ropes (`Rope` blocks are empty, made by the game from the rigging and the
-   logic's pipes); motion (bobbing, the oars' row clips `left_row` / `left_end`); the oars stand in their bind pose; level 1 is taken as the
-   lowest oar row and the primary weapon as the `Engine_placement` line's (**ASSUMPTION**s). Faction colours on ship parts (sails' masks)
-   wait for the sails.
+   Sails and ropes (2026-11-11). A sail model holds `display_*` WeightedCloth meshes (Cinematic vertices, four bones: the cloth simulation's,
+   rpfm's `cloth_bones`), `sim_*` Cloth meshes (the simulation's own, grey test textures) and their colliders, never drawn, and Rope meshes
+   without vertices: each a chain of nodes in its material (rpfm's `Rope`). The sails go through the skinned path at rest (an identity
+   palette: the vertices as stored) with `weightedcommon`'s four-bone shaders and `weightedcloth.hlsl` ps30_gbuffer (`MeshKind::WeightedCloth`),
+   their masks and the faction's colours (or the reference's own); they cast shadows. The ropes: `<model>#ropes` (MODEL_ROPES_SUFFIX,
+   `MeshKind::Rope`), two vertices per node, through `rope.hlsl`'s rigid technique (vs30_main_rigid, ps30_main_gbuffer_rigid: a strip turned to
+   the camera in view space, shaded as a cylinder, uv x across). That technique reads the instance's POSITION4.w as a burn (0 to 1), not the
+   rigid materials' opacity: a ropes instance has it 0 and is never filed as faded. **ASSUMPTION**s: the material's `uk_1` (about 0.03) is
+   the radius; the texture repeats once per diameter along the rope; the ropes come out nearly black (the shader writes specular (1, 1, 1)),
+   not compared with the game yet. Ropes cast no shadow (`rope.hlsl`'s depth techniques aren't wired) and aren't in the id pass.
+   Left: motion (bobbing, the cloth's sway, the oars' row clips `left_row` / `left_end`); the oars stand in their bind pose; level 1 is taken
+   as the lowest oar row and the primary weapon as the `Engine_placement` line's (**ASSUMPTION**s).
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
    tool needs them.

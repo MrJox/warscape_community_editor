@@ -21,7 +21,7 @@ use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
 use wce_scene::model_top::ModelTop;
-use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_SKINNED_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain, TerrainSkin};
+use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_ROPES_SUFFIX, MODEL_SKINNED_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain, TerrainSkin};
 
 use crate::texture::{Texture, load_dds, load_dds_tail, make_rgba_texture, make_solid_texture, plan_dds_stream};
 
@@ -97,6 +97,10 @@ pub const CINEMATIC_STRIDE: u32 = 32;
 /// The Uk8 vertex format of water meshes: position (f16 x 4) and uv (f16 x 2).
 pub const WATER_STRIDE: u32 = 12;
 
+/// A rope's vertex (`rope.hlsl` vs30_main_rigid, f32): POSITION0 its node (model space), NORMAL0 the rope's way there, TEXCOORD0 the uv (x
+/// across the rope, 0 to 1; y along it), TEXCOORD1.x how far to the side, signed (the shader turns it to the camera), TEXCOORD2 unused.
+pub const ROPE_STRIDE: u32 = 48;
+
 /// Which of the game's rigid shaders draw a mesh (its material type).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MeshKind {
@@ -143,6 +147,13 @@ pub enum MeshKind {
     /// TreeBillboardMaterial (vertex format Billboard, [`BILLBOARD_STRIDE`] bytes): a tree's farthest LOD, a quad turned to the camera
     /// showing one of four views (rigidtreebillboard); its diffuse in the diffuse slot, the normal and displacement map in the normal slot.
     TreeBillboard,
+
+    /// A Rope material's chain of nodes ([`ROPE_STRIDE`] bytes), loaded with MODEL_ROPES_SUFFIX: `rope.hlsl`'s rigid technique.
+    Rope,
+
+    /// WeightedCloth (a ship's sails, loaded with MODEL_SKINNED_SUFFIX, drawn by renderer/skinned.rs): `weightedcloth.hlsl`. Its bones are
+    /// the cloth simulation's; at rest (an identity palette) the vertices are where the file has them.
+    WeightedCloth,
 }
 
 /// The shader name of a texture slot (`s_diffuse_map`...); empty for other slots.
@@ -660,6 +671,7 @@ fn weighted_material(material: MaterialType) -> Option<(MeshKind, bool, bool)> {
         MaterialType::WeightedSkinDirtmap => (MeshKind::WeightedSkin, true, false),
         MaterialType::WeightedSkinDecal => (MeshKind::WeightedSkin, false, true),
         MaterialType::WeightedSkinDecalDirtmap => (MeshKind::WeightedSkin, true, true),
+        MaterialType::WeightedCloth => (MeshKind::WeightedCloth, false, false),
         MaterialType::Decal => (MeshKind::RigidDecal, false, true),
         MaterialType::DecalDirtmap => (MeshKind::RigidDecal, true, true),
         _ => return None,
@@ -727,6 +739,48 @@ fn pose_first_frame(model: &mut RigidModel, stem: &str, read: &SharedReader) {
     }
 }
 
+/// A rope's strip from its nodes (in order along it) and radius: the vertices ([`ROPE_STRIDE`] bytes each), the triangles, the bounds (the
+/// nodes, widened by the radius). `None` for fewer than two nodes.
+pub(crate) fn rope_geometry(nodes: &[[f32; 3]], radius: f32) -> Option<(Vec<u8>, Vec<u16>, [f32; 3], [f32; 3])> {
+    if nodes.len() < 2 || nodes.len() * 2 > usize::from(u16::MAX) {
+        return None;
+    }
+
+    let radius = if radius > 0.0 { radius } else { 0.03 };
+    let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let length = |d: [f32; 3]| (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    let mut vertices = Vec::with_capacity(nodes.len() * 2 * ROPE_STRIDE as usize);
+    let mut along = 0.0;
+    for (k, p) in nodes.iter().enumerate() {
+        if k > 0 {
+            along += length(sub(*p, nodes[k - 1]));
+        }
+
+        // Its way: from the node before to the node after.
+        let way = sub(nodes[(k + 1).min(nodes.len() - 1)], nodes[k.saturating_sub(1)]);
+        let v = along / (2.0 * radius);
+        for (u, side) in [(0.0f32, -radius), (1.0, radius)] {
+            for f in [p[0], p[1], p[2], way[0], way[1], way[2], u, v, side, 0.0, 0.0, 0.0] {
+                vertices.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+
+        for a in 0..3 {
+            lo[a] = lo[a].min(p[a] - radius);
+            hi[a] = hi[a].max(p[a] + radius);
+        }
+    }
+
+    let mut indices = Vec::with_capacity((nodes.len() - 1) * 6);
+    for k in 0..nodes.len() as u16 - 1 {
+        let (a, b, c, d) = (2 * k, 2 * k + 1, 2 * k + 2, 2 * k + 3);
+        indices.extend_from_slice(&[a, c, b, b, c, d]);
+    }
+
+    Some((vertices, indices, lo, hi))
+}
+
 /// LOD 0's solid meshes from above (the material types drawn as static meshes), with their pivots.
 fn model_top(model: &RigidModel) -> Option<ModelTop> {
     wce_prof!("model.top");
@@ -763,6 +817,12 @@ impl ModelInner {
 
         // `<file>#skinned`: the same model, its weighted vertices as stored (MODEL_SKINNED_SUFFIX).
         let (path, skinned) = match path.strip_suffix(MODEL_SKINNED_SUFFIX) {
+            Some(p) => (p, true),
+            None => (path, false),
+        };
+
+        // `<file>#ropes`: its ropes only (MODEL_ROPES_SUFFIX).
+        let (path, ropes) = match path.strip_suffix(MODEL_ROPES_SUFFIX) {
             Some(p) => (p, true),
             None => (path, false),
         };
@@ -812,6 +872,10 @@ impl ModelInner {
         let textures = &self.textures;
         let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| -> Option<GpuMesh> {
             let (mesh, material) = (block.mesh(), block.material());
+            if ropes || *mesh.material_type() == MaterialType::Rope {
+                return if ropes && *mesh.material_type() == MaterialType::Rope { self.rope_mesh(path, material) } else { None };
+            }
+
             let weighted = weighted_material(*mesh.material_type());
             let (dirt, decal) = weighted.map_or((false, false), |(_, dirt, decal)| (dirt, decal));
             let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
@@ -1041,6 +1105,52 @@ impl ModelInner {
         }
 
         Ok(Some(gm))
+    }
+
+    /// A Rope material's strip: two vertices per node, across the rope. **ASSUMPTION** (not traced): the material's `uk_1` (about 0.03) is the
+    /// rope's radius, and the texture repeats once per diameter along it.
+    fn rope_mesh(&self, path: &str, material: &rpfm_lib::files::rigidmodel::materials::Material) -> Option<GpuMesh> {
+        let rope = material.rope();
+        let nodes: Vec<[f32; 3]> = rope.nodes().iter().map(|n| { let p = n.position(); [p.x, p.y, p.z] }).collect();
+        let (vertices, indices, lo, hi) = rope_geometry(&nodes, *rope.uk_1())?;
+        let vb = immutable_buffer(self.dev.device(), &vertices, D3D11_BIND_VERTEX_BUFFER)?;
+        let ib = immutable_buffer(self.dev.device(), &indices.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER)?;
+        let textures = &self.textures;
+        let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
+        Some(GpuMesh {
+            vb: Some(vb),
+            ib: Some(ib),
+            index_count: indices.len() as u32,
+            alpha_mode: 1,
+            stride: ROPE_STRIDE,
+            kind: MeshKind::Rope,
+            dirt: false,
+            decal: false,
+            bone: -1,
+            decal_rect: [0.0, 0.0, 1.0, 1.0],
+            uv2_tile: [0.0; 2],
+            tint: [1.0; 12],
+            offset: pivot,
+            has_offset: pivot != Float3::default(),
+            tex: [
+                material_texture(textures, path, material, TextureType::Diffuse, true, textures.white()),
+                textures.black(),
+                textures.black(),
+                textures.black(),
+                material_texture(textures, path, material, TextureType::Normal, false, textures.flat_normal()),
+                textures.white(),
+                textures.white(),
+                textures.white(),
+                textures.black(),
+                textures.black(),
+            ],
+            diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
+            normal_path: String::new(),
+            displacement: None,
+            bmin: Float3::new(lo[0], lo[1], lo[2]),
+            bmax: Float3::new(hi[0], hi[1], hi[2]),
+            snow: false,
+        })
     }
 
     fn finish(&self, path: &str, model: Option<GpuModel>) {
@@ -1664,4 +1774,29 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
     out.bmin = Float3::new(x0, miny, z0);
     out.bmax = Float3::new(x0 + (w - 1) as f32 * t.step, maxy, z0 + (h - 1) as f32 * t.step);
     Some((out, skin_out))
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{ROPE_STRIDE, rope_geometry};
+
+    fn floats(v: &[u8], vertex: usize) -> Vec<f32> {
+        v[vertex * ROPE_STRIDE as usize..(vertex + 1) * ROPE_STRIDE as usize].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+    }
+
+    #[test]
+    fn a_rope_is_a_strip_across_its_nodes() {
+        let (v, i, lo, hi) = rope_geometry(&[[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], 0.05).expect("a strip");
+        assert_eq!((v.len(), i.len()), (6 * ROPE_STRIDE as usize, 12));
+        assert_eq!(&i[..6], &[0, 2, 1, 1, 2, 3]);
+
+        // Each node twice, one to each side, the uv across 0 to 1 and along by diameters.
+        let (a, b, last) = (floats(&v, 2), floats(&v, 3), floats(&v, 5));
+        assert_eq!((&a[..3], &a[6..9], &b[6..9]), (&[0.0, 0.0, 1.0][..], &[0.0, 10.0, -0.05][..], &[1.0, 10.0, 0.05][..]));
+        assert_eq!(&a[3..6], &[0.0, 0.0, 3.0], "its way: from the node before to the node after");
+        assert!((last[7] - 30.0).abs() < 1e-4);
+        assert_eq!((lo, hi), ([-0.05, -0.05, -0.05], [0.05, 0.05, 3.05]));
+        assert!(rope_geometry(&[[0.0; 3]], 0.05).is_none());
+    }
 }

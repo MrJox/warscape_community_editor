@@ -122,6 +122,11 @@ pub const MODEL_SNOW_SUFFIX: &str = "#snow";
 /// Suffix of a model path that keeps a weighted mesh's vertices as stored, for the skinned path ([`SkinnedInstance`]).
 pub const MODEL_SKINNED_SUFFIX: &str = "#skinned";
 
+/// Suffix of a model path that is only its ropes (`Rope` materials, a chain of nodes each), drawn by `rope.hlsl`'s rigid technique: a strip
+/// turned to the camera along each rope. The rope shader reads the instance's POSITION4.w as its burn: such an instance has it 0, not the
+/// rigid materials' opacity (1000). The plain model leaves its ropes out.
+pub const MODEL_ROPES_SUFFIX: &str = "#ropes";
+
 /// One part of a skinned instance.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkinnedPart {
