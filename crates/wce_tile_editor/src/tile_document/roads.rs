@@ -348,6 +348,12 @@ impl Tile {
         Plan { line, at_point, heights, gaps: p.gaps, fords: p.fords, decks: p.decks }
     }
 
+    /// The highest water surface over a point (world units), if any: a river, a lake's water plane, the sea in a tile of the sea's sets. It
+    /// goes over the tile's rivers and planes: not for every frame.
+    pub fn water_level(&self, x: f32, z: f32) -> Option<f32> {
+        self.water_map().level(f64::from(x), f64::from(z)).map(|y| y as f32)
+    }
+
     /// The tile's water, as a road crossing it finds it (world metres): its rivers' ribbons as they are drawn, its lakes' water planes, and
     /// the sea at 0 m in a tile of the sea's sets (`sea`, `sea_coast`, `sea_coast_landing`, `river_mouth`: docs/re/water.md).
     pub(super) fn water_map(&self) -> WaterMap {

@@ -102,6 +102,14 @@ struct Assembler<'a> {
     rng: Rng,
     files: HashMap<String, Option<std::rc::Rc<VariantMeshFile>>>,
     out: AssembledUnit,
+
+    /// A ship's definition: only its intact pieces, and a part on every point of a slot's list.
+    ship: bool,
+}
+
+/// A ship's piece in a damaged state: `bow_01_dm2` (`_dm1` is the piece intact).
+fn damaged(slot: &str) -> bool {
+    slot.rsplit_once("_dm").is_some_and(|(_, n)| n.parse::<u32>().is_ok_and(|n| n > 1))
 }
 
 impl Assembler<'_> {
@@ -120,11 +128,22 @@ impl Assembler<'_> {
     }
 
     fn slot(&mut self, slot: &Slot, parent: Option<&str>, attach: &Attach, depth: u32) {
-        if slot.alternatives.is_empty() || slot.probability.is_some_and(|p| self.rng.unit() >= p) {
+        if slot.alternatives.is_empty() || slot.probability.is_some_and(|p| self.rng.unit() >= p) || (self.ship && damaged(&slot.name)) {
             return;
         }
 
-        // A list of points is a ship's; a person's slot names one.
+        // A ship's list of points: a part on each, picked each time. **ASSUMPTION**: `use_different_attach_point_parts` (on every such slot of
+        // Attila's ships) asks for that.
+        if self.ship && let Some(points) = slot.attach_point.as_deref().filter(|a| a.contains(',')) {
+            for point in points.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                let one = Slot { attach_point: Some(point.to_owned()), probability: None, ..slot.clone() };
+                self.slot(&one, parent, attach, depth);
+            }
+
+            return;
+        }
+
+        // A person's slot names one point.
         let attach = match slot.attach_point.as_deref().and_then(|a| a.split(',').next()).map(str::trim) {
             None | Some("") => attach.clone(),
             Some(point) if point.starts_with("weapon_") => Attach::Bone(format!("bn_{point}")),
@@ -169,7 +188,17 @@ impl Assembler<'_> {
 
 /// One soldier of a definition (`variantmeshes/variantmeshdefinitions/<name>.variantmeshdefinition`); `None` when it can't be read.
 pub fn assemble(read: &Reader, definition: &str, seed: u64) -> Option<AssembledUnit> {
-    let mut a = Assembler { read, rng: Rng(seed), files: HashMap::new(), out: AssembledUnit::default() };
+    assemble_as(read, definition, seed, false)
+}
+
+/// A ship of a definition (`unit_variants_ships.variant`): its pieces intact (the `_dm2` slots are their damaged states), a part on every point
+/// of a list (the shields along its sides).
+pub fn assemble_ship(read: &Reader, definition: &str, seed: u64) -> Option<AssembledUnit> {
+    assemble_as(read, definition, seed, true)
+}
+
+fn assemble_as(read: &Reader, definition: &str, seed: u64, ship: bool) -> Option<AssembledUnit> {
+    let mut a = Assembler { read, rng: Rng(seed), files: HashMap::new(), out: AssembledUnit::default(), ship };
     let root = a.file(definition)?;
     a.mesh(&root.root, None, &Attach::None, 0);
     Some(a.out)
@@ -179,7 +208,7 @@ pub fn assemble(read: &Reader, definition: &str, seed: u64) -> Option<AssembledU
 mod tests {
     use std::collections::HashMap;
 
-    use super::{Attach, assemble};
+    use super::{Attach, assemble, assemble_ship, damaged};
 
     fn files() -> HashMap<String, Vec<u8>> {
         let mut f = HashMap::new();
@@ -210,6 +239,24 @@ mod tests {
         assert!(matches!(u.parts[1].decal_diffuse.as_deref(), Some("p/one.dds" | "p/two.dds")));
         assert_eq!(u.missing, ["gone.variantmeshdefinition"]);
         assert_eq!(assemble(&read, "A.variantmeshdefinition", 1), Some(u), "a seed gives one soldier");
+    }
+
+    #[test]
+    fn a_ship_is_intact_with_a_part_on_every_point() {
+        let mut f = HashMap::new();
+        f.insert("s.variantmeshdefinition".to_owned(), br#"<VARIANT_MESH>
+            <SLOT name="bow_01_dm1"><VARIANT_MESH model="bow1.rigid_model_v2" /></SLOT>
+            <SLOT name="bow_01_dm2"><VARIANT_MESH model="bow2.rigid_model_v2" /></SLOT>
+            <SLOT name="port_01_dm1"><VARIANT_MESH model="port.rigid_model_v2">
+                <SLOT name="shields" attach_point="a,b, c" use_different_attach_point_parts="true"><VARIANT_MESH model="shield.rigid_model_v2" /></SLOT>
+            </VARIANT_MESH></SLOT>
+        </VARIANT_MESH>"#.to_vec());
+        let read = |p: &str| f.get(p).cloned();
+        let ship = assemble_ship(&read, "s.variantmeshdefinition", 3).expect("assembles");
+        let models: Vec<&str> = ship.parts.iter().map(|p| p.model.as_str()).collect();
+        assert_eq!(models, ["bow1.rigid_model_v2", "port.rigid_model_v2", "shield.rigid_model_v2", "shield.rigid_model_v2", "shield.rigid_model_v2"]);
+        assert_eq!(assemble(&read, "s.variantmeshdefinition", 3).expect("assembles").parts.len(), 4, "a unit's slot takes the list's first point");
+        assert!(damaged("stern_02_dm2") && !damaged("stern_02_dm1") && !damaged("sails") && !damaged("x_dmz"));
     }
 
     #[test]

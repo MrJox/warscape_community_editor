@@ -4,15 +4,22 @@
 //! `unit_variants` (`unit`, `faction`, `variant`, sizes) is the list of units and gives the definition, by faction when a row names one: the game
 //! doesn't find it by name. `main_units.land_unit` -> `land_units` (`man_animation`, `mount`) -> `mounts` (`animation`, `variant`). A whole unit:
 //! `main_units` (`num_men`, `unit_scaling`), `land_units` (`rank_depth`, `spacing`) -> `unit_spacings`.
+//!
+//! A naval unit is a `main_units` row with `is_naval`: its `land_unit` is the men aboard (their `unit_variants` rows are under the land unit's key,
+//! not the main unit's), its `naval_unit` -> `naval_units.ship` -> `ship_dbs` (`model`: a `models_naval` key, the ship's logic) and
+//! `unit_variants_ships` (`unit`: the naval unit, `variant`: the ship's definition). A ship's logic is `models_naval`, which rpfm doesn't read
+//! (`wce_formats::models_naval`); its oars `models_oars`; its weapons `naval_weapons` -> `models_entity_weapons`.
 
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::sync::Arc;
 
 use rpfm_lib::files::db::DB;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::schema::Schema;
 use wce_formats::anim_tables::{AnimationTable, parse_tables};
-use wce_vfs::Vfs;
+use wce_formats::models_naval::{self, ShipLogic};
+use wce_vfs::{Vfs, normalize};
 
 /// One `unit_variants` row.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -50,6 +57,37 @@ pub struct Mount {
     pub variant: String,
 }
 
+/// A naval unit: a ship and the men aboard.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NavalUnit {
+    /// The men's land unit: their `unit_variants` rows and [`UnitCatalog::land_units`] entry.
+    pub land_unit: String,
+
+    /// `naval_units`' key.
+    pub naval_unit: String,
+
+    /// `ship_dbs`' key.
+    pub ship: String,
+
+    /// `ship_dbs.model`: the `models_naval` row (the ship's decks, oars, weapon lines).
+    pub model: String,
+
+    /// `naval_units.category` (`light_ship`...).
+    pub category: String,
+    pub primary_weapon: String,
+    pub secondary_weapon: String,
+}
+
+/// One `unit_variants_ships` row: a naval unit's ship, by faction when it names one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ShipEntry {
+    pub unit: String,
+
+    /// Empty: any faction.
+    pub faction: String,
+    pub variant: String,
+}
+
 /// The tables.
 #[derive(Clone, Debug, Default)]
 pub struct UnitCatalog {
@@ -62,6 +100,19 @@ pub struct UnitCatalog {
     /// By faction: primary, secondary and uniform colours, linear, as the shaders multiply them (**ASSUMPTION**: the tables' 0..255 are sRGB).
     pub colours: HashMap<String, [[f32; 3]; 4]>,
     pub tables: HashMap<String, AnimationTable>,
+
+    /// By main unit.
+    pub naval_units: HashMap<String, NavalUnit>,
+    pub ships: Vec<ShipEntry>,
+
+    /// `models_naval`, by key.
+    pub ship_logic: HashMap<String, Arc<ShipLogic>>,
+
+    /// `models_oars`: an oar kind's model (its port side's; the starboard one is beside it, `oar_right_`).
+    pub oars: HashMap<String, String>,
+
+    /// `naval_weapons`: a weapon's model (`models_entity_weapons`: the first piece, intact, LOD 1, in its logic file's folder).
+    pub naval_weapons: HashMap<String, String>,
 }
 
 /// The rows of a table, every file of it, the columns as text, in `columns`' order. A key that comes twice keeps the first: the packs are read
@@ -126,11 +177,61 @@ impl UnitCatalog {
                 spacing: spacings.get(&r[4]).copied().unwrap_or_default(),
                 ..LandUnit::default()
             })).collect();
+        // `naval_units` (key, ship, category, primary and secondary weapon) and `ship_dbs` (key, model).
+        let naval: HashMap<String, Vec<String>> = rows(vfs, schema, "naval_units", &["key", "ship", "category", "primary_naval_weapon", "secondary_naval_weapon"])?
+            .into_iter().map(|r| (r[0].clone(), r)).collect();
+        let ship_models: HashMap<String, String> = rows(vfs, schema, "ship_dbs", &["key", "model"])?.into_iter().map(|r| (r[0].clone(), r[1].clone())).collect();
+
         // Attila's table has no `unit_scaling`: there, everything scales.
-        for r in rows_with(vfs, schema, "main_units", &["unit", "land_unit", "num_men"], &["unit_scaling"])? {
+        let truth = |s: &str| matches!(s.trim(), "true" | "1");
+        for r in rows_with(vfs, schema, "main_units", &["unit", "land_unit", "num_men"], &["unit_scaling", "is_naval", "naval_unit"])? {
             if let Some(l) = land.get(&r[1]) {
                 let row = LandUnit { num_men: number(&r[2]) as u32, scales: !matches!(r[3].trim(), "false" | "0"), ..l.clone() };
-                c.land_units.entry(r[0].clone()).or_insert(row);
+                c.land_units.entry(r[0].clone()).or_insert(row.clone());
+
+                // The men aboard are found by their land unit.
+                if truth(&r[4]) {
+                    c.land_units.entry(r[1].clone()).or_insert(row);
+                }
+            }
+
+            if truth(&r[4]) && let Some(n) = naval.get(&r[5]) {
+                c.naval_units.entry(r[0].clone()).or_insert_with(|| NavalUnit {
+                    land_unit: r[1].clone(),
+                    naval_unit: r[5].clone(),
+                    ship: n[1].clone(),
+                    model: ship_models.get(&n[1]).cloned().unwrap_or_default(),
+                    category: n[2].clone(),
+                    primary_weapon: n[3].clone(),
+                    secondary_weapon: n[4].clone(),
+                });
+            }
+        }
+
+        for r in rows(vfs, schema, "unit_variants_ships", &["unit", "faction", "variant"])? {
+            c.ships.push(ShipEntry { unit: r[0].clone(), faction: r[1].clone(), variant: r[2].clone() });
+        }
+
+        for path in vfs.list("db/models_naval_tables/", "") {
+            let table = models_naval::decode(&vfs.read(path).map_err(|e| e.to_string())?).map_err(|e| format!("{path}: {e}"))?;
+            for row in table.rows {
+                c.ship_logic.entry(row.key.clone()).or_insert_with(|| Arc::new(row));
+            }
+        }
+
+        for r in rows(vfs, schema, "models_oars", &["key", "rigid_model"])? {
+            c.oars.entry(r[0].clone()).or_insert_with(|| normalize(&r[1]));
+        }
+
+        // `logic_file` is `<folder>/<model>.meta_data`; the model's pieces beside it, `<model>_piece01_destruct01_lod01.rigid_model_v2`.
+        let weapon_models: HashMap<String, String> = rows(vfs, schema, "models_entity_weapons", &["key", "logic_file", "model_file"])?.into_iter().map(|r| {
+            let logic = normalize(&r[1]);
+            let folder = logic.rsplit_once('/').map_or("", |(f, _)| f);
+            (r[0].clone(), format!("{folder}/{}_piece01_destruct01_lod01.rigid_model_v2", r[2].to_lowercase()))
+        }).collect();
+        for r in rows(vfs, schema, "naval_weapons", &["key", "models_entity_weaponry"])? {
+            if let Some(model) = weapon_models.get(&r[1]) {
+                c.naval_weapons.entry(r[0].clone()).or_insert_with(|| model.clone());
             }
         }
 
@@ -157,6 +258,19 @@ impl UnitCatalog {
     pub fn entry(&self, unit: &str, faction: &str) -> Option<&UnitEntry> {
         let of_unit = || self.entries.iter().filter(|e| e.unit == unit);
         of_unit().find(|e| e.faction == faction).or_else(|| of_unit().find(|e| e.faction.is_empty())).or_else(|| of_unit().next())
+    }
+
+    /// A naval unit's ship (`naval_unit` is `naval_units`' key): the faction's row when it has one, else the row of any faction, else the first.
+    pub fn ship_entry(&self, naval_unit: &str, faction: &str) -> Option<&ShipEntry> {
+        let of_unit = || self.ships.iter().filter(|e| e.unit == naval_unit);
+        of_unit().find(|e| e.faction == faction).or_else(|| of_unit().find(|e| e.faction.is_empty())).or_else(|| of_unit().next())
+    }
+
+    /// The naval units with a ship to show, sorted.
+    pub fn naval(&self) -> Vec<&str> {
+        let mut units: Vec<&str> = self.naval_units.iter().filter(|(_, n)| self.ship_entry(&n.naval_unit, "").is_some()).map(|(k, _)| k.as_str()).collect();
+        units.sort_unstable();
+        units
     }
 
     /// The units, each once, sorted.

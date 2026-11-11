@@ -40,6 +40,9 @@ pub const REF_HUMAN: &str = "WceRefHuman";
 /// A whole unit standing in the tile, of the size the game is set to.
 pub const REF_UNIT: &str = "WceRefUnit";
 
+/// A ship of a naval unit with its men aboard, afloat on the tile's water.
+pub const REF_SHIP: &str = "WceRefShip";
+
 /// A reference's attributes the Tile tool edits, with lists of the game's units, not as properties.
 pub const REF_TOOL_ATTRS: [&str; 5] = ["unit", "faction", "seed", "slot", "colours"];
 
@@ -54,6 +57,7 @@ const REF_ATTRS: &[(&str, &str)] = &[
 pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
     InstanceTemplate { kind: REF_HUMAN, attrs: REF_ATTRS, wrappers: &[], point_attrs: &[] },
     InstanceTemplate { kind: REF_UNIT, attrs: REF_ATTRS, wrappers: &[], point_attrs: &[] },
+    InstanceTemplate { kind: REF_SHIP, attrs: REF_ATTRS, wrappers: &[], point_attrs: &[] },
     InstanceTemplate {
     kind: WALL_SPLINE,
     attrs: &[

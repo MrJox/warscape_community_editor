@@ -13,6 +13,7 @@ pub mod particles;
 pub mod vfx_rome2;
 pub mod render_target;
 pub mod sea_surface;
+pub mod ship_model;
 pub mod renderer;
 pub mod shader_lib;
 pub mod texture;

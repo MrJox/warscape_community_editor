@@ -10,6 +10,7 @@ pub mod dds_decode;
 pub mod env_value;
 pub mod image_containers;
 pub mod markers;
+pub mod models_naval;
 pub mod old_lists;
 pub mod png_file;
 pub mod text_encoding;
