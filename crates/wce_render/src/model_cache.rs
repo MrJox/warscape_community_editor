@@ -623,7 +623,8 @@ fn engine_default(path: &str, srgb: bool) -> Option<String> {
 
 /// A material texture's path, the engine's stand-in for a placeholder (when it loads) taking its place.
 fn material_path(textures: &TextureCache, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool) -> Option<String> {
-    let path = material.textures().iter().find(|t| *t.tex_type() == kind).map(|t| t.path().replace('\\', "/"))?;
+    // Some files root their paths (`/variantmeshes/...`: the naval weapons'); the game finds them all the same.
+    let path = material.textures().iter().find(|t| *t.tex_type() == kind).map(|t| t.path().replace('\\', "/").trim_start_matches('/').to_owned())?;
     Some(engine_default(&path, srgb).filter(|d| textures.get_quiet(d, srgb).is_some()).unwrap_or(path))
 }
 
