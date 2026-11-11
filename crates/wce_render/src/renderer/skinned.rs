@@ -157,7 +157,8 @@ fn layout_of(stride: u32) -> Vec<InputElement> {
 /// what the standard lighting reads, and the engine's choice between them isn't traced). **ASSUMPTION** until compared with the game: `_noclip`
 /// for the materials that aren't alpha-tested.
 fn gbuffer_ps(m: &GpuMesh) -> String {
-    // A sail: `weightedcloth`, which has no dirt or decal variants (its dirt maps are its own textures; unbound, no dirt and no damage).
+    // A sail: `weightedcloth`, which has no dirt or decal variants: it always samples its dirt map and mask (the mesh's `dirt`), and its
+    // damage and fire maps (bound in `draw_skinned_gbuffer`).
     if m.kind == MeshKind::WeightedCloth {
         let noclip = if m.alpha_mode == 1 { "" } else { "_noclip" };
         return format!("dx11_sm_3_0_weightedcloth.hlsl_ps_ps30_gbuffer{noclip}");
@@ -477,6 +478,14 @@ impl Renderer {
             ps_samplers(&self.ctx, &ps, &self.states.s_wrap_aniso);
             let slots = self.slots_of(&ps);
             self.bind_mesh_material(&ps, &slots, m);
+
+            // A sail's damage and burn: none (white: nothing discarded or darkened; black: no embers). Left unbound, the slots kept an
+            // earlier draw's textures, which slid over the sails as they moved.
+            if m.kind == MeshKind::WeightedCloth {
+                bind_srv(&self.ctx, &ps, "s_diffuse_damage_map", self.res.white_srv.as_ref());
+                bind_srv(&self.ctx, &ps, "s_fire_map", self.res.black_srv.as_ref());
+            }
+
             if m.decal {
                 self.bind_decal(&ps, run);
             }
