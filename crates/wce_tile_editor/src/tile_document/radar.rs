@@ -5,7 +5,7 @@
 
 use rayon::prelude::*;
 use wce_siege::NodeKind;
-use wce_foundation::math::Double3;
+use wce_foundation::math::{Double3, Float3};
 use wce_tile::blend_field::BlendField;
 use wce_tile::world_transform::world_transform;
 
@@ -53,6 +53,9 @@ impl Tile {
         // the ground, with stage B's depth, every `WATER_CELL_M`.
         let mut wm = self.water_map();
         wm.sea = false;
+        // The water planes from their models' bounds as the files have them: the viewport's need not have loaded them (a hidden layer,
+        // far from the camera), and a plane it has not is missing from the water map.
+        wm.planes = self.radar_water_planes();
         input.water_planes = wm.planes.iter().map(|(c, _)| c.to_vec()).collect();
         if !wm.planes.is_empty() || !wm.rivers.is_empty() || input.water.is_some() {
             let (w, h) = (((w_m / WATER_CELL_M).ceil() as usize).max(2), ((h_m / WATER_CELL_M).ceil() as usize).max(2));
@@ -200,6 +203,33 @@ impl Tile {
 }
 
 impl Tile {
+    /// The water planes (`SIMPLE_MESH_INSTANCE`s of a `water_plane` model) as `Tile::water_map` has them (corners in metres, height in the
+    /// scene's units), their models' bounds from the loaded model, else from the model file's mesh headers.
+    fn radar_water_planes(&self) -> Vec<([[f64; 2]; 4], f64)> {
+        let sc = self.tscene();
+        let mut read: std::collections::HashMap<String, Option<(Float3, Float3)>> = std::collections::HashMap::new();
+        sc.find_all("SIMPLE_MESH_INSTANCE").into_iter().filter_map(|e| {
+            let key = sc.doc().get(e, "key")?;
+            if !key.to_lowercase().contains("water_plane") {
+                return None;
+            }
+            let (lo, hi) = match self.model_of(e).filter(|m| m.ok && m.resolved) {
+                Some(m) => (m.bmin, m.bmax),
+                None => (*read.entry(key.clone()).or_insert_with(|| {
+                    let path = key.replace('\\', "/").to_lowercase();
+                    self.files.as_deref().and_then(|f| f.read(&path).ok()).and_then(|b| rmv2_bounds(&b))
+                }))?,
+            };
+            let w = self.world_matrix(e);
+            let corner = |x: f32, z: f32| {
+                let p = w.transform_point(Float3::new(x, 0.0, z));
+                [f64::from(p.x), f64::from(p.z)]
+            };
+            let y = f64::from(w.transform_point(Float3::new(0.0, 0.0, 0.0)).y);
+            Some(([corner(lo.x, lo.z), corner(hi.x, lo.z), corner(hi.x, hi.z), corner(lo.x, hi.z)], y))
+        }).collect()
+    }
+
     /// How many of the tile's models have their bounds (they come in while the renderer loads them): the water planes' footprints are
     /// their models', so a radar drawn before they came is drawn again.
     pub fn radar_models_resolved(&self) -> usize {
@@ -230,6 +260,25 @@ impl Tile {
         }
         out
     }
+}
+
+/// A rigid model's bounds (model space) from its first LOD's mesh headers: each holds its box at 0x18 (min x y z, max x y z).
+fn rmv2_bounds(b: &[u8]) -> Option<(Float3, Float3)> {
+    let u32_at = |o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]) as usize);
+    let f32_at = |o: usize| b.get(o..o + 4).map(|s| f32::from_le_bytes([s[0], s[1], s[2], s[3]]));
+    if b.get(..4) != Some(b"RMV2") || u32_at(8)? == 0 {
+        return None;
+    }
+    let (count_at, offset_at) = if u32_at(4)? < 6 { (0x10c, 0x118) } else { (0x8c, 0x98) };
+    let (count, mut at) = (u32_at(count_at)?, u32_at(offset_at)?);
+    let (mut lo, mut hi) = (Float3::new(f32::MAX, f32::MAX, f32::MAX), Float3::new(f32::MIN, f32::MIN, f32::MIN));
+    for _ in 0..count {
+        let v: Vec<f32> = (0..6).map(|k| f32_at(at + 0x18 + 4 * k)).collect::<Option<_>>()?;
+        lo = Float3::new(lo.x.min(v[0]), lo.y.min(v[1]), lo.z.min(v[2]));
+        hi = Float3::new(hi.x.max(v[3]), hi.y.max(v[4]), hi.z.max(v[5]));
+        at += u32_at(at + 4)?.max(1);
+    }
+    (count > 0 && hi.x >= lo.x && hi.z >= lo.z).then_some((lo, hi))
 }
 
 /// Whether a vegetation model or key is a tree (the lists hold shrubs, flowers and stones too: `trees/shrubs/...`,
