@@ -1854,6 +1854,11 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("tile_flip_tile", "tile_flip_tile x|z", "flip the whole tile about its middle along x or z: items, terrain, terrain layers and links (one undo entry)", |e, a| {
+        let Some(axis) = a.first().and_then(|w| wce_tile_editor::tile_document::TileFlipAxis::named(w)) else { return fail("usage: tile_flip_tile x|z") };
+        with_tile(e, |t, e| t.do_flip_tile(e, axis).map_or_else(fail, ok))
+    });
+
     c.add("place_turn", "place_turn <degrees>", "turn what is being placed, as R does by the rotate step", |e, a| {
         let Some(deg) = a.first().and_then(|v| number(v)) else { return fail("usage: place_turn <degrees>") };
         with_tile(e, |t, _| {

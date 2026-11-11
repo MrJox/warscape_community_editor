@@ -966,6 +966,91 @@ fn a_flip_mirrors_places_and_headings_undoes_at_once_and_can_copy() {
 }
 
 #[test]
+fn a_whole_tile_flip_mirrors_the_items_and_the_ground_under_them_and_undoes_at_once() {
+    use wce_tile::world_transform::world_transform;
+    use wce_tile_editor::tile_document::TileFlipAxis;
+
+    let (_dir, mut d) = open();
+    let original = text(&d);
+    let unit = d.tile().unit();
+    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
+    let house = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
+    let pos = |d: &TileDocument| world_transform(d.tile().tscene(), house).position;
+    let p0 = pos(&d);
+    let (hx, hz) = ((p0.x / unit) as f32, (p0.z / unit) as f32);
+    let ground_before = d.tile().terrain_height(hx, hz);
+    let heights = |d: &TileDocument| (0..9).flat_map(|i| (0..9).map(move |j| (i as f32 * ex / 8.0, j as f32 * ez / 8.0))).map(|(x, z)| d.tile().terrain_height(x, z)).collect::<Vec<_>>();
+    let before_heights = heights(&d);
+    let size = d.history().size();
+
+    for axis in [TileFlipAxis::X, TileFlipAxis::Z] {
+        d.flip_tile(axis).unwrap();
+        assert_eq!(d.history().size(), size + 1, "one undo entry");
+        let p = pos(&d);
+        let (mx, mz) = if axis == TileFlipAxis::X { (ex - hx, hz) } else { (hx, ez - hz) };
+        assert!(((p.x / unit) as f32 - mx).abs() < 1e-3 && ((p.z / unit) as f32 - mz).abs() < 1e-3, "{axis:?}: the house goes across: {p:?}");
+        assert!((p.y - p0.y).abs() < 1e-6, "{axis:?}: a landscape item keeps its height, the ground went with it");
+        let ground = d.tile().terrain_height(mx, mz);
+        assert!((ground - ground_before).abs() < 1e-3, "{axis:?}: the ground under it went with it: {ground} vs {ground_before}");
+        let mirrored = heights(&d);
+        for i in 0..9 {
+            for j in 0..9 {
+                let (a, b) = if axis == TileFlipAxis::X { (8 - i, j) } else { (i, 8 - j) };
+                assert!((mirrored[i * 9 + j] - before_heights[a * 9 + b]).abs() < 1e-3, "{axis:?}: the heights mirror at ({i}, {j})");
+            }
+        }
+
+        d.history_mut().undo();
+        assert_eq!(text(&d), original, "{axis:?}: undo gives the file back");
+        assert_eq!(heights(&d), before_heights, "{axis:?}: and the heights");
+        d.history_mut().redo();
+        assert!(((pos(&d).x / unit) as f32 - mx).abs() < 1e-3, "{axis:?}: redo");
+        assert_eq!(heights(&d), mirrored, "{axis:?}: redo mirrors the heights again");
+        d.history_mut().undo();
+    }
+}
+
+#[test]
+fn a_whole_tile_flip_mirrors_the_terrain_layers_and_undoes_them() {
+    use wce_tile_editor::tile_document::TileFlipAxis;
+    use wce_tile_editor::tile_document::layers::LayerType;
+
+    let (_dir, mut d) = open();
+    let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
+    let heights = |d: &TileDocument| (0..9).flat_map(|i| (0..9).map(move |j| (i as f32 * ex / 8.0, j as f32 * ez / 8.0))).map(|(x, z)| d.tile().terrain_height(x, z)).collect::<Vec<_>>();
+    let layer = d.add_terrain_layer(LayerType::Height, "bump").unwrap();
+    d.set_working_layer(LayerType::Height, Some(layer));
+    d.brush_step(BrushKind::Raise, ex * 0.25, ez * 0.25, BrushSettings::default(), 0.05);
+    d.end_stroke();
+    d.refresh_terrain();
+    let before = heights(&d);
+
+    d.flip_tile(TileFlipAxis::X).unwrap();
+    d.refresh_terrain();
+    let after = heights(&d);
+    for i in 0..9 {
+        for j in 0..9 {
+            assert!((after[i * 9 + j] - before[(8 - i) * 9 + j]).abs() < 1e-3, "the heights mirror at ({i}, {j})");
+        }
+    }
+
+    // The layer itself went across: hidden, the bump goes with it from both sides.
+    d.set_terrain_layer_visible(LayerType::Height, layer, false);
+    d.refresh_terrain();
+    let hidden = heights(&d);
+    d.set_terrain_layer_visible(LayerType::Height, layer, true);
+    d.refresh_terrain();
+    assert_eq!(heights(&d), after);
+    assert!(hidden.iter().zip(&after).any(|(a, b)| (a - b).abs() > 1e-3), "the bump is in the layer");
+
+    d.history_mut().undo();
+    d.history_mut().undo();
+    d.history_mut().undo();
+    d.refresh_terrain();
+    assert_eq!(heights(&d), before, "undo puts the layer back where it was");
+}
+
+#[test]
 fn the_steps_of_a_drag_are_one_entry() {
     let (_dir, mut d) = open();
     let original = text(&d);

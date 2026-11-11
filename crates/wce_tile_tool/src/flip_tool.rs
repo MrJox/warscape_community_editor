@@ -5,7 +5,7 @@ use wce_editor::editor::Editor;
 use wce_editor::gui::{self, label_column, row};
 use wce_foundation::math::Float4x4;
 use wce_scene::render_scene::{Overlay, overlay_colour};
-use wce_tile_editor::tile_document::{FlipPlane, Tile, TileDocument};
+use wce_tile_editor::tile_document::{FlipPlane, Tile, TileDocument, TileFlipAxis};
 
 use crate::selection_tools::set_selection;
 use crate::tool::{TileTool, document, document_id, selected};
@@ -14,6 +14,12 @@ use crate::tool::{TileTool, document, document_id, selected};
 const PLANE_REACH: f32 = 1024.0;
 const PLANE_HEIGHT: f32 = 60.0;
 const PLANE_STEP: f32 = 32.0;
+
+/// What the Whole tile buttons do (their tooltips).
+const WHOLE_TILE_TIP_X: &str = "Flips the whole tile about its middle: west and east change places. Every item of every layer (hidden and locked ones \
+     too), the height map, the textures, the ground types, the terrain layers and the tile's links go across, as one undo step; the plane above plays no part.";
+const WHOLE_TILE_TIP_Z: &str = "Flips the whole tile about its middle: north and south change places. Every item of every layer (hidden and locked ones \
+     too), the height map, the textures, the ground types, the terrain layers and the tile's links go across, as one undo step; the plane above plays no part.";
 
 /// The most lines drawn from the selection to where it would go.
 const MAX_LINES: usize = 128;
@@ -49,20 +55,28 @@ pub(crate) struct FlipMode {
 }
 
 impl TileTool {
-    /// Enters Flip mode with the plane through the selection's centre.
+    /// Enters Flip mode with the plane through the selection's centre, or the tile's without a selection (its Whole tile buttons need none).
     pub fn begin_flip(&mut self, e: &mut Editor) -> Result<String, String> {
         let sel = selected(e);
         let d = document(e).ok_or("no tile is open")?;
-        if sel.is_empty() {
-            return Err("select what to flip first".to_owned());
-        }
-
         let t = d.tile();
         let n = sel.len() as f32;
-        let (x, z) = sel.iter().map(|&s| t.world_position(s)).fold((0.0, 0.0), |(x, z), p| (x + p.x / n, z + p.z / n));
+        let (x, z) = if sel.is_empty() {
+            ((d.project().extent_x() * 0.5) as f32, (d.project().extent_z() * 0.5) as f32)
+        } else {
+            sel.iter().map(|&s| t.world_position(s)).fold((0.0, 0.0), |(x, z), p| (x + p.x / n, z + p.z / n))
+        };
+
         self.stop_making();
         self.flip = Some(FlipMode { plane: FlipPlane { x, z, angle: 0.0 }, copy: false, dragging: false, gizmo_height: 0.0 });
         Ok("flip: its gizmo moves and turns the plane, a press on the ground puts it there; the Inspector flips".to_owned())
+    }
+
+    /// Flips the whole tile, its terrain and links too (`TileDocument::flip_tile`).
+    pub fn do_flip_tile(&mut self, e: &mut Editor, axis: TileFlipAxis) -> Result<String, String> {
+        let id = document_id(e).ok_or("no tile is open")?;
+        let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
+        d.flip_tile(axis)
     }
 
     /// Mirrors the selection across the plane.
@@ -184,6 +198,33 @@ impl TileTool {
         gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
         gui::text_wrapped("Its gizmo moves and turns the plane; a press on the ground puts it there. Models are not mirrored: they turn.");
         gui::pop_style_color(1);
+
+        // The whole tile: everything in it, its terrain and its links, about its middle. The plane above plays no part.
+        gui::spacing();
+        gui::separator_text("Whole tile");
+        row("Flip along");
+        let mut axis = None;
+        if gui::button_sized("X##fliptile", gui::v2(two, 0.0)) {
+            axis = Some(TileFlipAxis::X);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(WHOLE_TILE_TIP_X);
+        }
+
+        gui::same_line();
+        if gui::button_sized("Z##fliptile", gui::v2(two, 0.0)) {
+            axis = Some(TileFlipAxis::Z);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(WHOLE_TILE_TIP_Z);
+        }
+
+        if let Some(axis) = axis {
+            self.status = self.do_flip_tile(e, axis).unwrap_or_else(|why| why);
+        }
+
         true
     }
 

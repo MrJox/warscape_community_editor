@@ -521,7 +521,7 @@ impl TileTool {
             self.status = err;
         }
 
-        if gui::menu_item(&one("Flip...", icons::SPLIT), wce_editor::shortcuts::label("tile.flip").as_deref(), false, some) {
+        if gui::menu_item(&one("Flip...", icons::SPLIT), wce_editor::shortcuts::label("tile.flip").as_deref(), false, true) {
             self.flip_asked = true;
         }
 
