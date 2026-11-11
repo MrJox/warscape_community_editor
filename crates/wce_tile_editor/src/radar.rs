@@ -194,7 +194,7 @@ impl Default for RadarStyle {
             ripples: 3,
             shallow_m: 0.4,
             cliff_style: CliffStyle::Rock,
-            rock_facet_m: 7.0,
+            rock_facet_m: 3.0,
         }
     }
 }
@@ -662,10 +662,8 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             rim.max_with(sea);
         }
         let ticks = cliff_ticks(&frame, &rim, &grad, 3.0 * px_m, 6.0 * px_m, seed);
-        // The rock: the steep ground (not at inland water's banks) and the rims, grown a little so a thin cliff still shows.
-        let mut area = Mask { n, v: rock.v.iter().zip(&inland_near.v).map(|(r, w)| r * (1.0 - smooth(0.0, 0.05, *w))).collect() };
-        area.max_with(&rim);
-        let area = area.blurred(((1.5 * px_m) as usize).max(1)).step(0.2, 0.08);
+        // The rock: where the rim's line is (the same places, a little wider), not the whole steep ground.
+        let area = rim.blurred(((1.0 * px_m) as usize).max(1)).step(0.2, 0.08);
         let area = Mask { n, v: area.v.iter().zip(&water.v).map(|(a, w)| a * (1.0 - w)).collect() };
         cliff_rims = Some((rim, ticks, area));
     }
