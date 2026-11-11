@@ -201,6 +201,9 @@ pub struct RefUnits {
     sails: HashMap<(usize, usize), ClothSim>,
     sails_time: Option<f32>,
 
+    /// Per ship element, its heading (degrees) this frame, for the scripts.
+    headings: BTreeMap<usize, f32>,
+
     /// Per ship element on the waves, its heave (m), pitch and roll (degrees) this frame, for the scripts.
     afloat: BTreeMap<usize, [f32; 3]>,
 }
@@ -215,7 +218,8 @@ impl RefUnits {
         let mut water: Vec<String> = self.water.iter().map(|(elem, (_, _, level))| format!("#{elem} {level:?}")).collect();
         water.sort_unstable();
         let afloat = self.afloat.iter().map(|(elem, [h, p, r])| format!("#{elem} heave {h:.2} pitch {p:.2} roll {r:.2}")).collect::<Vec<_>>().join(", ");
-        let ships = format!("{ships}; water under them: {}; afloat: {afloat}", water.join(", "));
+        let headings = self.headings.iter().map(|(elem, h)| format!("#{elem} {h:.1}")).collect::<Vec<_>>().join(", ");
+        let ships = format!("{ships}; water under them: {}; afloat: {afloat}; headings: {headings}", water.join(", "));
         format!(
             "tables {}, {} loaded, loading {}, {} failed, {} entities, unit size {:?}, update {:.2} ms [{units}]; ships {} loaded, loading {}, {} failed, {} entities [{ships}]: {}",
             self.catalog.is_some(), self.models.len(), self.loading.is_some(), self.failed.len(), self.entities.len(), self.size, self.update_ms,
@@ -514,6 +518,7 @@ impl RefUnits {
                     let land = catalog.as_ref().and_then(|c| c.land_units.get(&ship.unit));
                     let spots = land.map_or_else(Vec::new, |land| ship.crew(men_at_size(land, size), land.spacing[0]));
                     // The sails: the wind of the ship's heading on the waves (model to world, without the scale).
+                    self.headings.insert(r.elem, yaw_of(&m).to_degrees());
                     let turn = rotation_y(yaw_of(&m)) * if renderer.is_some() { ship.afloat(&wave) } else { Float4x4::IDENTITY };
                     let rows = [0, 1, 2].map(|r| [turn.m[r][0], turn.m[r][1], turn.m[r][2]]);
                     let wind = ship_wind(rows);
