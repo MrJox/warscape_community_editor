@@ -39,6 +39,9 @@ pub struct ShipPart {
     /// An oar's row (`models_oars.left_row` / `right_row`): its one bone turns the oar about the oarlock, `local`'s origin.
     pub row: Option<Arc<Animation>>,
 
+    /// The oar's own offset in its clip (s): `MAX_OAR_ANIM_OFFSET` (0.25) times a random 0..1 (`FUN_10239a00`).
+    pub row_offset: f32,
+
     /// A sail model's cloth (`cloth_sim`): what its sails' bones follow.
     pub cloth: Option<Arc<ClothRig>>,
 }
@@ -97,6 +100,9 @@ const MARINES: u32 = 4;
 
 /// The marines template's spacing (m).
 const MARINE_SPACING: f32 = 0.7;
+
+/// The most an oar's clip is offset from the others' (s; the tweaker `MAX_OAR_ANIM_OFFSET`).
+const MAX_OAR_ANIM_OFFSET: f32 = 0.25;
 
 /// The weapon lines: the primary weapon's, the secondary's (**ASSUMPTION**, by their names).
 const ENGINE_PLACEMENT: u32 = 22;
@@ -222,16 +228,18 @@ impl ShipModel {
                 Attach::None | Attach::Bone(_) => Float4x4::IDENTITY,
             };
 
-            ShipPart { model: p.model, local, masks: p.masks, what: PartMeshes::default(), row: None, cloth: None }
+            ShipPart { model: p.model, local, masks: p.masks, what: PartMeshes::default(), row: None, row_offset: 0.0, cloth: None }
         }).collect();
 
         let logic = catalog.ship_logic.get(&naval.model).cloned();
         if let Some(logic) = &logic {
             let mut clips: HashMap<String, Option<Arc<Animation>>> = HashMap::new();
             let mut clip = |path: &str| clips.entry(path.to_owned()).or_insert_with(|| read(path).and_then(|b| Animation::decode(&b, usize::MAX)).map(Arc::new)).clone();
+            let mut rng = crate::unit_assembly::Rng(seed ^ 0x0A12_5EED);
             let mut add = |model: String, local: Float4x4, row: Option<Arc<Animation>>| {
                 if read(&model).is_some() {
-                    parts.push(ShipPart { model, local, masks: [0, 1, 2], what: PartMeshes::default(), row, cloth: None });
+                    let row_offset = if row.is_some() { MAX_OAR_ANIM_OFFSET * rng.unit() } else { 0.0 };
+                    parts.push(ShipPart { model, local, masks: [0, 1, 2], what: PartMeshes::default(), row, row_offset, cloth: None });
                 } else if !missing.contains(&model) {
                     missing.push(model);
                 }
@@ -290,9 +298,14 @@ impl ShipModel {
         m
     }
 
-    /// A part where it is at time `t` (seconds): an oar rowing turns about its oarlock with its clip; the rest stays at `local`.
+    /// A part where it is at time `t` (seconds): an oar turns about its oarlock with its row clip at its own offset, the clip running while
+    /// rowing and held at the offset when not (a ship that never moved: `FUN_102bb100`, docs/re/cloth.md, "Oars"); the rest stays at `local`.
     pub fn part_at(part: &ShipPart, t: f32, rowing: bool) -> Float4x4 {
-        match part.row.as_ref().filter(|_| rowing).and_then(|clip| clip.sample(t.rem_euclid(clip.duration().max(1e-3))).first().copied()) {
+        let at = |clip: &Animation| {
+            let length = clip.duration().max(1e-3);
+            ((if rowing { t.rem_euclid(length) } else { 0.0 }) + part.row_offset).rem_euclid(length)
+        };
+        match part.row.as_ref().and_then(|clip| clip.sample(at(clip)).first().copied()) {
             Some((offset, turn)) => part.local * bone_matrix(offset, turn),
             None => part.local,
         }
