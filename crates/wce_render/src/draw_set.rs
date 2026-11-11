@@ -391,7 +391,9 @@ impl DrawSet {
     /// `add`, burning or not (the fire shaders).
     #[allow(clippy::too_many_arguments)]
     pub fn add_burning(&mut self, model: &Arc<GpuModel>, world: &Float4x4, params: Option<&[f32; 16]>, casts_shadow: bool, lod: bool, burning: bool, entity: EntityId) -> u32 {
-        let mi = self.model_index(model, burning, params.is_some_and(faded));
+        // A rope reads its POSITION4.w as its burn (`MODEL_ROPES_SUFFIX`), not as an opacity: never faded.
+        let ropes = model.meshes.iter().all(|m| m.kind == MeshKind::Rope);
+        let mi = self.model_index(model, burning, !ropes && params.is_some_and(faded));
         let me = &self.models[mi as usize];
         let c = world.transform_point(me.centre);
         let sphere = [c.x, c.y, c.z, me.radius * max_scale2(world).sqrt()];

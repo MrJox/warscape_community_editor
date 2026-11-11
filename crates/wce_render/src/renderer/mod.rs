@@ -82,6 +82,11 @@ pub(crate) const TREE_BILLBOARD_VS: &str = "dx11_sm_3_0_rigidtreebillboard.hlsl_
 pub(crate) const TREE_BILLBOARD_PS: &str = "dx11_sm_3_0_rigidtreebillboard.hlsl_ps_ps30_gbuffer";
 pub(crate) const TERRAIN_BLEND_VS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_vs_vs30_main";
 
+/// A placed model's ropes (MeshKind::Rope): `rope.hlsl`'s rigid technique, a strip along each rope turned to the camera in view space,
+/// shaded as a cylinder (uv x across it).
+pub(crate) const ROPE_VS: &str = "dx11_sm_3_0_rope.hlsl_vs_vs30_main_rigid";
+pub(crate) const ROPE_GBUFFER_PS: &str = "dx11_sm_3_0_rope.hlsl_ps_ps30_main_gbuffer_rigid";
+
 /// The TerrainBlend meshes with their own textures. The game draws them with ps30_null_gbuffer instead, from the terrain's virtual texture
 /// (the ground's colour under the building), which the editor doesn't build.
 pub(crate) const TERRAIN_BLEND_GBUFFER_PS: &str = "dx11_sm_3_0_rigidterrainblend.hlsl_ps_ps30_gbuffer";
@@ -103,7 +108,7 @@ pub(crate) const FIRE_MAP: &str = "commontextures/vfx_fire_diffuse.dds";
 /// timer label. rigidtileddirtmapmesh and rigidambientmapmesh have no vertex shader of their own: rigidcommon's. A burning instance (the
 /// engine's render flag 0x200: a building on fire, or TEd's `burn`) draws with its material's fire variant, which chars the colour by
 /// POSITION6.x (the burn amount) with embers from `s_fire_map`.
-pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 20] = [
+pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 21] = [
     (MeshKind::Standard, false, false, RIGID_VS, RIGID_GBUFFER_PS, "gbuffer opaque"),
     (MeshKind::Standard, true, false, RIGID_VS, RIGID_GBUFFER_ALPHA_PS, "gbuffer alpha-tested"),
     (MeshKind::TiledDirtmap, false, false, RIGID_VS, TILED_DIRT_GBUFFER_PS, "gbuffer tiled dirt"),
@@ -124,6 +129,7 @@ pub(crate) const GBUFFER_PASSES: [(MeshKind, bool, bool, &str, &str, &str); 20] 
     (MeshKind::TreeLeaf, false, false, TREE_LEAF_VS, TREE_LEAF_PS, "gbuffer tree leaves"),
     (MeshKind::TreeBillboard, false, false, TREE_BILLBOARD_VS, TREE_BILLBOARD_PS, "gbuffer tree billboards"),
     (MeshKind::TerrainBlend, false, false, TERRAIN_BLEND_VS, TERRAIN_BLEND_GBUFFER_PS, "gbuffer terrain blend"),
+    (MeshKind::Rope, false, false, ROPE_VS, ROPE_GBUFFER_PS, "gbuffer ropes"),
 ];
 
 /// The blended forward shaders of the faded instances (opacity below 1: the engine's render flag 0x2000, docs/re/buildings.md), per
@@ -359,6 +365,24 @@ pub(crate) fn rigid_layout() -> Vec<InputElement> {
         element(c"NORMAL", 1, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 20, false),
         element(c"NORMAL", 2, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 24, false),
         element(c"COLOR", 0, DXGI_FORMAT_B8G8R8A8_UNORM, 0, 28, false),
+    ];
+
+    for i in 1..=7 {
+        el.push(element(c"POSITION", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i - 1) * 16, true));
+    }
+
+    el
+}
+
+/// The inputs of `rope.hlsl`'s rigid vertex shader: a rope vertex ([`crate::model_cache::ROPE_STRIDE`] bytes, f32: POSITION0, NORMAL0,
+/// TEXCOORD0..2) and the rigid instance (POSITION1..7, as [`rigid_layout`]).
+pub(crate) fn rope_layout() -> Vec<InputElement> {
+    let mut el = vec![
+        element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
+        element(c"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, false),
+        element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, false),
+        element(c"TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT, 0, 32, false),
+        element(c"TEXCOORD", 2, DXGI_FORMAT_R32G32_FLOAT, 0, 40, false),
     ];
 
     for i in 1..=7 {

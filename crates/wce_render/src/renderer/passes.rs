@@ -56,6 +56,7 @@ impl Renderer {
         let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
         let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
         let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
+        let rope_layout = self.shader(ROPE_VS).and_then(|rvs| self.layout(&rvs, "rope", &rope_layout()));
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -162,14 +163,16 @@ impl Renderer {
                 let pass_layout = match GBUFFER_PASSES[pass].0 {
                     MeshKind::TreeBranch | MeshKind::TreeLeaf => tree_layout.as_ref(),
                     MeshKind::TreeBillboard => billboard_layout.as_ref(),
+                    MeshKind::Rope => rope_layout.as_ref(),
                     _ => Some(&layout),
                 };
 
                 let Some(pass_layout) = pass_layout else { continue };
                 self.ctx.set_input_layout(Some(pass_layout));
 
-                // The game draws the trees' branches and leaves two-sided (RenderDoc captures of Rome: CULL_NONE).
-                let two_sided = matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf);
+                // The game draws the trees' branches and leaves two-sided (RenderDoc captures of Rome: CULL_NONE); a rope's strip, turned to
+                // the camera, faces it either way round.
+                let two_sided = matches!(GBUFFER_PASSES[pass].0, MeshKind::TreeBranch | MeshKind::TreeLeaf | MeshKind::Rope);
                 self.ctx.set_rasterizer_state(if two_sided { self.states.rs_none.as_ref() } else { self.states.rs_back.as_ref() });
 
                 let slots = self.slots_of(&ps);
@@ -822,7 +825,8 @@ impl Renderer {
 
                 self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
                 self.ctx.set_rasterizer_state(rs_shadow_rigid.as_ref());
-                let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && m.kind != MeshKind::Water);
+                // Ropes cast no shadow here: their vertices aren't the rigid layout (`rope.hlsl`'s depth technique isn't wired).
+                let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope));
                 self.draw_skinned_shadow();
                 self.ctx.set_rasterizer_state(rs_shadow.as_ref());
                 self.draw_stats.shadow_instances += instances;

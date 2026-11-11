@@ -1242,6 +1242,12 @@ impl Renderer {
             self.ctx.set_vertex_buffers(1, &[Some(inst_vb), Some(id_vb)], &[size_of::<RigidInstance>() as u32, 4], &[0, 0]);
             for &b in &vis.active {
                 let m = set.batch_mesh(b);
+
+                // A rope's vertex isn't the f16 position the pick layout reads (and is a line a click would hardly find).
+                if m.kind == crate::model_cache::MeshKind::Rope {
+                    continue;
+                }
+
                 // A tree's LOD position (bytes 8..16) is the one drawn at LOD 0 (its weights are 0, 1): picked as POSITION0.
                 let offset = if m.stride == crate::model_cache::TREE_STRIDE { 8 } else { 0 };
                 self.ctx.set_vertex_buffers(0, std::slice::from_ref(&m.vb), &[m.stride], &[offset]);

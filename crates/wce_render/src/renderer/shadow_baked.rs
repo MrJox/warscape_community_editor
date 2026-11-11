@@ -218,7 +218,7 @@ impl Renderer {
 
         let firsts = self.upload_instances([&terrain_draws, &draws], [&vis_terrain, &vis]);
         self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
-        let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && m.kind != MeshKind::Water);
+        let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope));
         self.draw_stats.shadow_instances += instances;
         self.draw_stats.shadow_triangles += triangles;
 

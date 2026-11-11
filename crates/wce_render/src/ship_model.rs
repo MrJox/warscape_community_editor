@@ -4,8 +4,13 @@
 //! stored and the logic's: metres, x starboard, y up, +z its bow. **ASSUMPTION** (by the hulls' bounds and the logic's buoyancy spheres about 0,
 //! not traced): its origin is at the waterline.
 
+use std::collections::HashMap;
+use std::io::Cursor;
 use std::sync::Arc;
 
+use rpfm_lib::files::rigidmodel::RigidModel;
+use rpfm_lib::files::rigidmodel::materials::MaterialType;
+use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use wce_formats::models_naval::{EfLine, ShipLogic};
 use wce_foundation::math::{Float4x4, rotation_y, translation};
 use wce_foundation::math::Float3;
@@ -23,6 +28,37 @@ pub struct ShipPart {
 
     /// The faction colour each channel of the colour mask takes.
     pub masks: [u8; 3],
+
+    /// What its model holds: meshes the rigid path draws, ropes (`#ropes`), sails (WeightedCloth, the skinned path).
+    pub what: PartMeshes,
+}
+
+/// The kinds of meshes in a part's model (LOD 0).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PartMeshes {
+    pub solid: bool,
+    pub ropes: bool,
+    pub cloth: bool,
+}
+
+/// What a model holds; a model that can't be read is taken for a solid one (the rigid path reports it).
+fn part_meshes(read: &Reader, model: &str) -> PartMeshes {
+    let solid = PartMeshes { solid: true, ..PartMeshes::default() };
+    let Some(bytes) = read(model) else { return solid };
+    let Ok(m) = RigidModel::decode(&mut Cursor::new(bytes), &Some(DecodeableExtraData::default())) else { return solid };
+    let mut out = PartMeshes::default();
+    for block in m.lods().first().map(|l| l.mesh_blocks().as_slice()).unwrap_or_default() {
+        match block.mesh().material_type() {
+            MaterialType::Rope => out.ropes |= block.material().rope().nodes().len() > 1,
+            MaterialType::WeightedCloth => out.cloth = true,
+
+            // The cloth simulation's own meshes (`sim_*`, grey test textures) and its colliders: never drawn.
+            MaterialType::Cloth | MaterialType::CollisionShape => {}
+            _ => out.solid = true,
+        }
+    }
+
+    out
 }
 
 /// A ship, ready to place.
@@ -37,6 +73,9 @@ pub struct ShipModel {
 
     /// Its logic (`ship_dbs.model`), when the table has it.
     pub logic: Option<Arc<ShipLogic>>,
+
+    /// The faction's colours (primary, secondary, uniform, and a fourth), for the sails' masks.
+    pub faction_colours: [[f32; 3]; 4],
 
     /// The definitions and models named that could not be read.
     pub missing: Vec<String>,
@@ -130,14 +169,14 @@ impl ShipModel {
                 Attach::None | Attach::Bone(_) => Float4x4::IDENTITY,
             };
 
-            ShipPart { model: p.model, local, masks: p.masks }
+            ShipPart { model: p.model, local, masks: p.masks, what: PartMeshes::default() }
         }).collect();
 
         let logic = catalog.ship_logic.get(&naval.model).cloned();
         if let Some(logic) = &logic {
             let mut add = |model: String, local: Float4x4| {
                 if read(&model).is_some() {
-                    parts.push(ShipPart { model, local, masks: [0, 1, 2] });
+                    parts.push(ShipPart { model, local, masks: [0, 1, 2], what: PartMeshes::default() });
                 } else if !missing.contains(&model) {
                     missing.push(model);
                 }
@@ -157,7 +196,14 @@ impl ShipModel {
             }
         }
 
-        Ok(Self { unit: unit.to_owned(), variant: entry.variant.clone(), parts, logic, missing })
+        let mut seen: HashMap<String, PartMeshes> = HashMap::new();
+        for p in &mut parts {
+            p.what = *seen.entry(p.model.clone()).or_insert_with(|| part_meshes(read, &p.model));
+        }
+
+        let white = [[1.0; 3], [1.0; 3], [1.0; 3], [0.0; 3]];
+        let faction_colours = catalog.colours.get(faction).copied().unwrap_or(white);
+        Ok(Self { unit: unit.to_owned(), variant: entry.variant.clone(), parts, logic, faction_colours, missing })
     }
 
     /// Where `men` stand aboard, `spacing` metres apart along the lines; none without its logic.
