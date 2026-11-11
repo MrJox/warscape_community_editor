@@ -551,6 +551,10 @@ pub struct TileTool {
     pub(crate) kit_prompt: Option<crate::kit_prompt::KitPrompt>,
     pub(crate) kit_prompt_open: bool,
 
+    /// An import of a shared project that replaces files, asked about (`share_prompt.rs`).
+    pub(crate) import_prompt: Option<crate::share_prompt::ImportPrompt>,
+    pub(crate) import_prompt_open: bool,
+
     /// Launch in game (`launch_prompt.rs`): the game launched (waited for, then its launch pack removed), whether a pack left by an earlier
     /// run was looked for, and the question about stray movie-type packs (their names; opens on the next frame).
     pub(crate) launched: Option<crate::launch::Running>,
@@ -676,7 +680,7 @@ impl Default for TileTool {
             begin_rename_next: false, delete_confirm: false, delete_weight: 0, terrain_hit: false, cursor: Float3::default(), paint_channel: 0, paint_erase: false, ground_type: 1, view_before_ground: None, curve: None, falloff_open: false, falloff_drag: None, falloff_unsaved: false, image_brush: None, thumbs: Default::default(), view_name: String::new(), box_select: Default::default(), saved_selections: vec![], selection_name: String::new(), link_pick: None, link_sets: None, link_typing: false, prop_typing: false, cells_ground: 0.75, ground_thumbs_failed: HashSet::new(), link_follow: true, save_as: None, resize: None, tile_db: None, link_candidates: None, clipboard: vec![], light_drag: None, light_gesture: 0, light_grab: 0.0, target_drag: None, target_gesture: 0, water_for: None, water_seen: None, water_since: 0.0, nogo_for: None, water_shallow_m: 0.3, water_deep_m: 2.5, filter_height_on: false, filter_height: [-1000.0, 1000.0], filter_slope_on: false,
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0], flange_threshold: 0.0, grouped_variation: 1.5, stroke_active: false,
             grabbing: false, grab_elem: None, grab_y_offset: 0.0, grab_history: 0, grab_gesture: 0, poly_point: None, spline_handle: None, spline_all: false, value_gesture: 0, point_drag: false, point_gesture: 0,
-            ref_units: Default::default(), drawing: false, flip: None, flip_asked: false, ground_chip_width: 0.0, areas_chip_width: 0.0, pack_categories: None, areas: None, tech_chip_width: 0.0, draw_pts: vec![], close_hover: false, placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
+            ref_units: Default::default(), drawing: false, flip: None, flip_asked: false, ground_chip_width: 0.0, areas_chip_width: 0.0, pack_categories: None, areas: None, tech_chip_width: 0.0, draw_pts: vec![], close_hover: false, placing: None, draft: None, making: None, create: Default::default(), left_dock: None, right_dock: None, context_menu: false, modes: None, surface_hit: None, surface_px: None, place_chips_width: 0.0, veg: None, stroke: None, random: crate::veg_brush::Random::new(), veg_sets: None, veg_sets_version: 0, veg_set: None, new_set_name: None, new_set_open: false, new_tile: None, new_tile_open: false, height_import: None, height_import_open: false, extract_prompt: None, extract_prompt_open: false, kit_prompt: None, kit_prompt_open: false, import_prompt: None, import_prompt_open: false, launched: None, launch_swept: false, launch_prompt: None, launch_prompt_open: false, launch_job: None, launch_worker: None, launch_progress_open: false, browse_extracted: Default::default(), scratch_set: None, scratch_name: String::new(), problems: None, river_problems: None, link_problems: None, integrity: None, open_kit_copy: false, chips_width: 0.0, right_used: false, catalogues: HashMap::new(), placing_prefab_text: None, preview_forced: false, camera_set_for: 0, marks: HashMap::new(), browse_filter: String::new(), browse_focus_frames: 3, scene_focus_frames: 0,
             browse_kit: 0, browse_kind: 0, browse_selected: String::new(), pending_entry: None, pending_variation: None, browse_roots: vec![],
             browse_roots_time: -1e9, browse_rows: vec![], browse_rows_key: String::new(), browse_index: None, browse_kit_rows: Arc::default(),
             browse_marks: None, browse_marks_version: 0, browse_fav_rows: vec![], browse_recent_rows: vec![], browse_fav_keys: HashSet::new(), workspaces: HashSet::new(),
@@ -3689,6 +3693,7 @@ impl Tool for TileTool {
         self.draw_falloff_window(e);
         self.draw_extract_prompt(e);
         self.draw_kit_prompt(e);
+        self.draw_import_prompt(e);
         self.draw_launch_prompt(e);
         self.draw_launch_progress(e);
         self.draw_quick_add(e);
@@ -4294,6 +4299,11 @@ impl Tool for TileTool {
 
     fn unsaved_work(&self) -> Vec<String> {
         self.scratch_set.iter().filter(|s| !s.entries.is_empty()).map(|s| format!("the new vegetation set ({} kind(s) of tree; Tile tool, the Inspector)", s.entries.len())).collect()
+    }
+
+    fn share_menu(&mut self, e: &mut Editor) -> bool {
+        self.share_menu_items(e);
+        true
     }
 
     fn export_menu(&mut self, e: &mut Editor) -> bool {

@@ -208,6 +208,16 @@ export_dirs`), and its script command takes the destination as an argument:
 | Terrain | Built files... (`terrain_export [folder] [--wait]`; also the Export section's button) |
 | UI | Layout into a mod pack..., Project as a mod pack... (`ui_export <pack>`), XML... |
 
+**Sharing projects** (File menu, after Export, from the active tool: `Tool::share_menu`; the Tile tool's in `share_prompt.rs`, the format in
+`wce_tile::share`). *Share project...* (`share_project <zip>`) writes the open tile's project into one zip: every variation of its location
+folder (no `.bak` or dot files), its database entry, and the projects' prefabs its references use, followed into those they use, with the road
+pieces (`roads_proc/<type>`) of its roads' types; the tile has to be saved. Prefabs of the Assembly Kit are not copied: the manifest
+(`wce_share.txt`) names them, and those found nowhere. *Import shared project...* (`import_shared <zip> [overwrite]`) puts it into
+`<projects>/assembly_kit/raw_data` and opens its tile: new files are written, identical ones skipped; when a file differs, or the tile's
+folder holds files the zip lacks, a prompt lists them and Overwrite moves each aside to `.bak` first (Cancel writes nothing). Another game's
+zip, and paths that would land outside the projects folder, are refused; the tile open in the editor is not replaced under it. The import
+names the kit prefabs it uses that this editor does not find.
+
 Throw-away build files (the launch staging folders, dry runs, the export a terrain launch makes) go to `<projects>/build`
 (`Editor::build_dir`), which nothing reads back between runs. Until the release, an interactive start offers once per game to move the old
 output folder's edits of game files into `loose/` (`project_prompts.rs`: not the build files, `ui_xml/` exports or exports in the game's

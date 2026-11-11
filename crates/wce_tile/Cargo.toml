@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 md-5 = "0.10"
 rayon = "1"
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 wce_formats = { path = "../wce_formats" }
 wce_foundation = { path = "../wce_foundation" }
 

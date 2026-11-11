@@ -2535,6 +2535,7 @@ dependencies = [
  "wce_formats",
  "wce_foundation",
  "wce_vfs",
+ "zip",
 ]
 
 [[package]]
