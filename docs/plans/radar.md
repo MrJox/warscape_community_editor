@@ -26,7 +26,8 @@ of tuning with the user.
   RGBA. Drawn at 1024 and averaged down. No assets: the paper is procedural noise (user's choice, 2026-11-11).
 - `Tile::radar_input(water)` (`tile_document/radar.rs`) gathers:
   - heights (the height map, every 2 m), the sea (ground under -0.5 m), rivers and lakes: stage B's water depth and the tile's own
-    water planes and river ribbons (`Tile::water_map`; its heights are the scene's, metres / unit), still water: no ripples or
+    water planes (their footprints from the model file's mesh headers when the viewport has not loaded the model: hidden
+    layers, far from the camera) and river ribbons (`Tile::water_map`; its heights are the scene's, metres / unit), still water: no ripples or
     streaks. Any water from 1 cm deep shows (a plane barely over mud, a marsh's puddles: middle_men_port_a's town and stream),
     sampled every metre; shallower than `shallow_m` it is a little lighter with a light ink edge;
   - roads: the procedural roads' centre lines, the `path_*` / `road_*` decals as lines along their x, and the blend map's thin layers
