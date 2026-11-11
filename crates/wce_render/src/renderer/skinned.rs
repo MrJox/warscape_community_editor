@@ -217,6 +217,8 @@ impl Renderer {
         let mut texels: Vec<[f32; 4]> = vec![];
         let mut offset_of = HashMap::<usize, usize>::new();
         let mut placed: Vec<(Run, Placed)> = vec![];
+        // Each model looked up once a frame: a crew's men share a few dozen models over thousands of parts.
+        let mut found: HashMap<String, Option<Arc<GpuModel>>> = HashMap::new();
         for id in self.skinned.ids.clone() {
             let Some(e) = scene.find(id) else { continue };
             let Payload::SkinnedInstance(s) = &e.payload else { continue };
@@ -245,7 +247,15 @@ impl Renderer {
             let pos = Float3::new(e.world.m[0][3], e.world.m[1][3], e.world.m[2][3]);
             let distance = length(pos - eye) * units;
             for part in &s.parts {
-                let Some(model) = self.models.try_get(&format!("{}{MODEL_SKINNED_SUFFIX}", part.model), distance) else { continue };
+                let model = match found.get(&part.model) {
+                    Some(m) => m.clone(),
+                    None => {
+                        let m = self.models.try_get(&format!("{}{MODEL_SKINNED_SUFFIX}", part.model), distance);
+                        found.insert(part.model.clone(), m.clone());
+                        m
+                    }
+                };
+                let Some(model) = model else { continue };
                 let lod = (0..=model.lods.len()).find(|&l| match l {
                     0 => model.distance == 0.0 || distance <= model.distance,
                     l => distance <= model.lods[l - 1].distance,
@@ -285,8 +295,12 @@ impl Renderer {
         }
 
         // The same mesh and colours in a row: one instanced draw.
-        let key = |r: &Run| (Arc::as_ptr(&r.model) as usize, r.lod, r.mesh, r.faction.map(|c| c.map(f32::to_bits)), r.casts_shadow, r.decal.clone());
-        placed.sort_by_key(|(r, _)| key(r));
+        // Borrowed: cloning the decals' paths per comparison took 17 ms a frame with four ships' crews (2026-11-11).
+        fn key(r: &Run) -> (usize, usize, usize, [[u32; 3]; 4], bool, &[Option<String>; 2]) {
+            (Arc::as_ptr(&r.model) as usize, r.lod, r.mesh, r.faction.map(|c| c.map(f32::to_bits)), r.casts_shadow, &r.decal)
+        }
+
+        placed.sort_by(|(a, _), (b, _)| key(a).cmp(&key(b)));
         let (mut skinned, mut rigid) = (vec![], vec![]);
         let mut runs: Vec<Run> = vec![];
         for (mut run, instance) in placed {
