@@ -269,8 +269,8 @@ pub struct MinimapUi {
     /// The middle button is panning from this cursor position.
     pan_from: Option<Vec2>,
     wheel_owned: bool,
-    /// The fit pill's width last frame (it hangs from the map's right edge).
-    fit_width: f32,
+    /// The fit pill's size last frame (it sits in the map's bottom right corner).
+    fit_size: Vec2,
 }
 
 impl Default for MinimapUi {
@@ -278,7 +278,7 @@ impl Default for MinimapUi {
         Self {
             base: Base::Ground(TerrainView::Colour), show_siege: true, show_zones: true, show_cells: false, show_nogo: false, show_camera: true, zoom: 1.0, centre: None,
             visible: false, doc: 0, serial: 0, note: String::new(), colour: GroundPicture::default(), ground: GroundPicture::default(), heights: Picture::default(),
-            height_for: None, height_time: -1e9, height_range: (0.0, 0.0), radar: Picture::default(), radar_for: None, radar_time: -1e9, siege: None, siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false, fit_width: 0.0,
+            height_for: None, height_time: -1e9, height_range: (0.0, 0.0), radar: Picture::default(), radar_for: None, radar_time: -1e9, siege: None, siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false, fit_size: v2(0.0, 0.0),
         }
     }
 }
@@ -467,8 +467,8 @@ impl MinimapUi {
         draw_north(&dl, hi, lo, e.viewport.north);
         dl.pop_clip_rect();
 
-        // The chips over the map: the base's and the overlays' at the top left, fit at the top right.
-        let hovered = self.draw_chip(lo) && self.draw_fit(lo, hi) && hovered;
+        // The chips over the map: the base's and the overlays' at the top left, fit at the bottom right (the north marker has the top right).
+        let hovered = self.draw_chip(lo) && self.draw_fit(hi) && hovered;
 
         // The left button: the camera goes there.
         if active && gui::is_mouse_down(0) {
@@ -560,13 +560,13 @@ impl MinimapUi {
         gui::checkbox("Camera##minimap", &mut self.show_camera);
     }
 
-    /// The fit pill at the top right of the map (`lo`, `hi`): the whole tile again; false while the cursor is over it.
-    fn draw_fit(&mut self, lo: Vec2, hi: Vec2) -> bool {
-        gui::set_cursor_screen_pos(v2(hi.x - self.fit_width - 6.0, lo.y + 6.0));
+    /// The fit pill at the bottom right of the map (`hi`): the whole tile again; false while the cursor is over it.
+    fn draw_fit(&mut self, hi: Vec2) -> bool {
+        gui::set_cursor_screen_pos(v2(hi.x - self.fit_size.x - 6.0, hi.y - self.fit_size.y - 6.0));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         let mut over = false;
         if gui::begin_pill("##minimapfit") {
-            if chip(false, &format!("{} Fit", icons::FOCUS), "minimapfit", "Fit: the whole tile in the panel again (undoes the zoom and the pan)") {
+            if chip(false, icons::FOCUS, "minimapfit", "Fit: the whole tile in the panel again (undoes the zoom and the pan)") {
                 self.zoom = 1.0;
                 self.centre = None;
             }
@@ -576,7 +576,7 @@ impl MinimapUi {
 
         gui::end_child();
         let (l, h) = gui::item_rect();
-        self.fit_width = h.x - l.x;
+        self.fit_size = v2(h.x - l.x, h.y - l.y);
         gui::pop_style_color(1);
         !over
     }
