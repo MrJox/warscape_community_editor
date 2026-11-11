@@ -665,13 +665,6 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
         // The rock: the steep ground (not at inland water's banks) and the rims, grown a little so a thin cliff still shows.
         let mut area = Mask { n, v: rock.v.iter().zip(&inland_near.v).map(|(r, w)| r * (1.0 - smooth(0.0, 0.05, *w))).collect() };
         area.max_with(&rim);
-        // Down the fairly steep ground right by it too (a cliff's foot to the shore).
-        let near = area.blurred(((6.0 * px_m) as usize).max(2));
-        let foot = Mask::from_fn(n, |i, j| {
-            let k = j * n + i;
-            f32::from(u8::from(near.v[k] > 0.05)) * smooth(18.0, 24.0, slope_deg(k) as f32) * (1.0 - smooth(0.0, 0.05, inland_near.v[k]))
-        });
-        area.max_with(&foot);
         let area = area.blurred(((1.5 * px_m) as usize).max(1)).step(0.2, 0.08);
         let area = Mask { n, v: area.v.iter().zip(&water.v).map(|(a, w)| a * (1.0 - w)).collect() };
         cliff_rims = Some((rim, ticks, area));
