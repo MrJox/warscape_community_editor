@@ -1756,9 +1756,17 @@ impl TileDocument {
                 new_polygon(kind, points, false).position(c).attr("road_id", t.next_road_id().to_string())
             }
 
-            ("AISeparatorInstance" | wce_tile::new_instances::MEASURE_LINE, Create::Line(pts)) => {
+            ("AISeparatorInstance", Create::Line(pts)) => {
                 let (c, points) = line(pts)?;
                 new_polygon(kind, points, false).position(c)
+            }
+
+            // A line: no area.
+            (wce_tile::new_instances::MEASURE_LINE, Create::Line(pts)) => {
+                let (c, points) = line(pts)?;
+                let mut n = new_polygon(kind, points, false).position(c);
+                n.attrs.remove("area");
+                n
             }
 
             ("DEPLOYMENT_ZONE_POLYGON_INSTANCE", Create::Line(pts)) => {
@@ -3119,6 +3127,10 @@ impl TileDocument {
         // A reference's own are the tool's rows, below.
         if matches!(tag.as_str(), super::REF_HUMAN | super::REF_UNIT) {
             shown.extend(wce_tile::new_instances::REF_TOOL_ATTRS);
+        }
+
+        if tag == wce_tile::new_instances::MEASURE_LINE {
+            shown.extend(wce_tile::new_instances::MEASURE_HIDDEN_ATTRS);
         }
 
         for prop in schema {

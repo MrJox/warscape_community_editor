@@ -955,7 +955,13 @@ impl TedScene {
             area += p.x * q.z - q.x * p.z;
         }
 
-        a.insert("area".to_owned(), format_number(area.abs() / 2.0));
+        // A tape measure is a line with only its template's attributes: no area, none of the polygons' look.
+        if kind == crate::new_instances::MEASURE_LINE {
+            let keep = crate::new_instances::template(kind).map_or(&[][..], |t| t.attrs);
+            a.retain(|k, _| keep.iter().any(|(t, _)| t == k) || extra.contains_key(k));
+        } else {
+            a.insert("area".to_owned(), format_number(area.abs() / 2.0));
+        }
 
         self.doc.bake_pending().map_err(xml_error)?;
         let (at, ind) = self.append_point(layer, "layer has no children element")?;
