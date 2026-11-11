@@ -30,7 +30,7 @@ impl TileTool {
             return;
         }
 
-        let wants_water = d.tile().terrain_look().view == TerrainView::WaterDepth || self.minimap.view() == Some(TerrainView::WaterDepth);
+        let wants_water = d.tile().terrain_look().view == TerrainView::WaterDepth || self.minimap.view() == Some(TerrainView::WaterDepth) || self.minimap.wants_radar();
         let wants_nogo = d.tile().display().show_auto_nogo || self.minimap.shows_auto_nogos();
         let version = d.history().version();
         let key = Some((id, version));
@@ -100,10 +100,10 @@ impl TileTool {
 /// The tile as it is in memory (its scene, its heights in the range the next save gives them, its entry with that range) through stage B's
 /// water map; the water planes' models from the game's packs when they are known.
 /// Polygons in metres (tile frame).
-type Outlines = Vec<Vec<[f32; 2]>>;
+pub type Outlines = Vec<Vec<[f32; 2]>>;
 
 /// With `nogos`, the automatic no-go areas too.
-fn stage_b_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Game>, nogos: bool) -> Result<(WaterDepth, Option<Outlines>), String> {
+pub fn stage_b_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Game>, nogos: bool) -> Result<(WaterDepth, Option<Outlines>), String> {
     use wce_tile::project_files::{TED_FILE, WCE_FILE, to_ted};
 
     let p = d.project();

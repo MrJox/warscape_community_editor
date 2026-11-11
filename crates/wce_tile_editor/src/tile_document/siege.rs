@@ -51,6 +51,10 @@ pub struct LogicSummary {
 
     /// Its ends along the wall: (x from, x to, z), the frame's x extent at the middle of its top platforms (z 0 without platforms).
     pub ends: (f64, f64, f64),
+
+    /// Its collision hull seen from above (x, z): the triangles of `collision_3d` reaching 1.5 units up or more (the radar's footprint
+    /// of a house, whose logic has no outlines).
+    pub hull: Vec<[P; 3]>,
 }
 
 /// A logic file summed up; `None` when it doesn't read.
@@ -88,6 +92,17 @@ pub fn logic_summary(bytes: &[u8]) -> Option<LogicSummary> {
             }).collect();
             if r.len() >= 3 {
                 outlines.push(r);
+            }
+        }
+
+        let c3 = &d["collision_3d"];
+        let verts: Vec<[f64; 3]> = c3["vertices"].as_array().into_iter().flatten().map(|q| at(f(&q["x"]), f(&q["y"]), f(&q["z"]))).collect();
+        for t in c3["triangles"].as_array().into_iter().flatten() {
+            let idx = ["vertex_1", "vertex_2", "vertex_3"].map(|k| t[k].as_u64().map(|i| i as usize).filter(|&i| i < verts.len()));
+            let [Some(a), Some(b), Some(c)] = idx else { continue };
+            let [a, b, c] = [verts[a], verts[b], verts[c]];
+            if a[1].max(b[1]).max(c[1]) >= 1.5 {
+                out.hull.push([[a[0], a[2]], [b[0], b[2]], [c[0], c[2]]]);
             }
         }
 
@@ -226,7 +241,7 @@ impl Tile {
     }
 
     /// A building's logic summed up, read once.
-    fn logic_of(&self, key: &str) -> Option<Arc<LogicSummary>> {
+    pub(crate) fn logic_of(&self, key: &str) -> Option<Arc<LogicSummary>> {
         if let Some(l) = self.logic_summaries.borrow().get(key) {
             return l.clone();
         }

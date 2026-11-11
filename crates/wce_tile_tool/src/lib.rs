@@ -43,6 +43,7 @@ pub mod tool;
 pub mod veg_brush;
 pub mod veg_sets;
 mod water_view;
+pub use water_view::stage_b_of;
 pub mod weather_panel;
 
 pub use prefab_tool::PrefabTool;
