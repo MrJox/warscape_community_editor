@@ -106,6 +106,17 @@ pub struct RadarInput {
     pub water_planes: Vec<Vec<P>>,
 }
 
+/// How cliffs are drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CliffStyle {
+    /// As CA's radars: the top edge a cyan line with ink ticks down the slope.
+    Rim,
+
+    /// Rock: the steep ground as grey stone in lit and shaded facets, cracked, outlined in ink, ticks down the slope.
+    #[default]
+    Rock,
+}
+
 /// How the radar is drawn (every colour sRGB).
 #[derive(Clone, Debug)]
 pub struct RadarStyle {
@@ -149,6 +160,11 @@ pub struct RadarStyle {
 
     /// Water shallower than this (metres) is drawn pale and without an ink edge.
     pub shallow_m: f32,
+
+    pub cliff_style: CliffStyle,
+
+    /// The rock's facets, across (metres).
+    pub rock_facet_m: f64,
 }
 
 impl Default for RadarStyle {
@@ -168,7 +184,7 @@ impl Default for RadarStyle {
             building: [104.0, 94.0, 84.0],
             roof: [164.0, 70.0, 48.0],
             cliff: [112.0, 186.0, 206.0],
-            rock: [120.0, 112.0, 100.0],
+            rock: [150.0, 140.0, 124.0],
             road_width: 6.0,
             blend_roads: true,
             forest_density: 0.03,
@@ -177,6 +193,8 @@ impl Default for RadarStyle {
             cliff_slope: 35.0,
             ripples: 3,
             shallow_m: 0.4,
+            cliff_style: CliffStyle::Rock,
+            rock_facet_m: 7.0,
         }
     }
 }
@@ -626,7 +644,7 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
     };
 
     // Drawn after the water: a sea cliff's rim is along the shore, whose ink would cover it.
-    let mut cliff_rims: Option<(Mask, Mask)> = None;
+    let mut cliff_rims: Option<(Mask, Mask, Mask)> = None;
     if rock.v.iter().any(|&r| r > 0.5) || sea_rim.is_some() {
         // The top edge: just outside the steep ground, where the ground bulges (higher than around it).
         let hm = Mask { n, v: heights.clone() };
@@ -644,7 +662,19 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             rim.max_with(sea);
         }
         let ticks = cliff_ticks(&frame, &rim, &grad, 3.0 * px_m, 6.0 * px_m, seed);
-        cliff_rims = Some((rim, ticks));
+        // The rock: the steep ground (not at inland water's banks) and the rims, grown a little so a thin cliff still shows.
+        let mut area = Mask { n, v: rock.v.iter().zip(&inland_near.v).map(|(r, w)| r * (1.0 - smooth(0.0, 0.05, *w))).collect() };
+        area.max_with(&rim);
+        // Down the fairly steep ground right by it too (a cliff's foot to the shore).
+        let near = area.blurred(((6.0 * px_m) as usize).max(2));
+        let foot = Mask::from_fn(n, |i, j| {
+            let k = j * n + i;
+            f32::from(u8::from(near.v[k] > 0.05)) * smooth(18.0, 24.0, slope_deg(k) as f32) * (1.0 - smooth(0.0, 0.05, inland_near.v[k]))
+        });
+        area.max_with(&foot);
+        let area = area.blurred(((1.5 * px_m) as usize).max(1)).step(0.2, 0.08);
+        let area = Mask { n, v: area.v.iter().zip(&water.v).map(|(a, w)| a * (1.0 - w)).collect() };
+        cliff_rims = Some((rim, ticks, area));
     }
 
     // 4. Hachures: short ink strokes down the slopes, more and darker the steeper (fewer on the lit side).
@@ -734,10 +764,34 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
         canvas.paint(&deep.edge(1), style.ink, 0.8);
     }
 
-    if let Some((rim, ticks)) = &cliff_rims {
-        canvas.paint(ticks, style.ink, 0.75);
-        canvas.paint(&rim.blurred(1).step(0.1, 0.08), style.ink, 0.6);
-        canvas.paint(rim, style.cliff, 1.0);
+    match &cliff_rims {
+        Some((rim, ticks, _)) if style.cliff_style == CliffStyle::Rim => {
+            canvas.paint(ticks, style.ink, 0.75);
+            canvas.paint(&rim.blurred(1).step(0.1, 0.08), style.ink, 0.6);
+            canvas.paint(rim, style.cliff, 1.0);
+        }
+
+        Some((_, ticks, area)) => {
+            let facet = style.rock_facet_m;
+            canvas.paint_with(area, |i, j, _| {
+                let k = j * n + i;
+                let p = frame.world(i, j);
+                let (d1, d2, cx, cz) = voronoi(p[0] / facet, p[1] / facet, seed ^ 0x70c);
+                // Each facet turned its own way: lit or shaded by the light, the slope's own shade on top.
+                let a = f64::from(hash(cx, cz, seed ^ 0x70d)) * std::f64::consts::TAU;
+                let tilt = 0.6f32;
+                let (fx, fz) = ((a.cos() as f32) * tilt + grad[k][0] * 0.5, (a.sin() as f32) * tilt + grad[k][1] * 0.5);
+                let lit = ((-fx * light[0] - fz * light[1] + light[2]) / (fx * fx + fz * fz + 1.0).sqrt()).clamp(0.0, 1.0);
+                let crack = smooth(0.0, 0.1, (d2 - d1) as f32);
+                let grain = fbm(p[0] / 2.0, p[1] / 2.0, 2, seed ^ 0x70e);
+                let shade = (0.78 + 0.45 * (lit - light[2])) * (0.68 + 0.32 * crack) * (0.92 + 0.16 * grain);
+                [style.rock[0] * shade, style.rock[1] * shade, style.rock[2] * shade]
+            });
+            canvas.paint(ticks, style.ink, 0.3);
+            canvas.paint(&area.edge(1), style.ink, 0.8);
+        }
+
+        None => {}
     }
 
     // 7. Roads: the lines, and the blend map's roads where the tile has few lines; cream, softly edged.
@@ -864,6 +918,28 @@ fn min_filter(v: &[f32], n: usize, r: usize) -> Vec<f32> {
         }).collect()
     };
     pass(&pass(v, true), false)
+}
+
+/// Distances to the nearest and second nearest points of a jittered grid (cells of 1), and the nearest point's cell.
+fn voronoi(x: f64, y: f64, seed: u32) -> (f64, f64, i64, i64) {
+    let (cx, cy) = (x.floor() as i64, y.floor() as i64);
+    let (mut d1, mut d2, mut best) = (f64::MAX, f64::MAX, (0, 0));
+    for dy in -1..=1 {
+        for dx in -1..=1 {
+            let (gx, gy) = (cx + dx, cy + dy);
+            let px = gx as f64 + f64::from(hash(gx, gy, seed));
+            let py = gy as f64 + f64::from(hash(gx, gy, seed ^ 0x55));
+            let d = ((x - px).powi(2) + (y - py).powi(2)).sqrt();
+            if d < d1 {
+                d2 = d1;
+                d1 = d;
+                best = (gx, gy);
+            } else if d < d2 {
+                d2 = d;
+            }
+        }
+    }
+    (d1, d2, best.0, best.1)
 }
 
 /// The fields' pattern on the paper at a point: a multiplier about 1.

@@ -43,7 +43,11 @@ fn main() -> Result<(), String> {
     };
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
 
-    let style = RadarStyle::default();
+    // `$RADAR_CLIFFS=rim|rock` picks how cliffs are drawn.
+    let mut style = RadarStyle::default();
+    if let Ok(c) = std::env::var("RADAR_CLIFFS") {
+        style.cliff_style = if c == "rim" { wce_tile_editor::radar::CliffStyle::Rim } else { wce_tile_editor::radar::CliffStyle::Rock };
+    }
     for d in dirs {
         let dir = Path::new(d);
         let parts: Vec<String> = dir.components().rev().take(3).map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
