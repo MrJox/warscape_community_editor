@@ -2425,8 +2425,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_ref", "tile_ref human|unit|ship <x m> <z m> [unit] [faction] [soldier] [slot] | status", "places a reference: a soldier (ref_human), a whole unit of the game's unit size (ref_unit) or a naval unit's ship with its men aboard (ref_ship, on the water); saved in tile.wce, never exported. status: what is loaded and drawn", |e, a| {
-        let usage = "usage: tile_ref human|unit|ship <x m> <z m> [unit] [faction] [soldier] [slot] | status";
+    c.add("tile_ref", "tile_ref human|unit|ship <x m> <z m> [unit] [faction] [soldier] [slot] [rowing] | status", "places a reference: a soldier (ref_human), a whole unit of the game's unit size (ref_unit) or a naval unit's ship with its men aboard (ref_ship, on the water; `rowing`: its oars row); saved in tile.wce, never exported. status: what is loaded and drawn", |e, a| {
+        let usage = "usage: tile_ref human|unit|ship <x m> <z m> [unit] [faction] [soldier] [slot] [rowing] | status";
         if a.first().is_some_and(|c| c == "status") {
             return with_tile(e, |t, _| ok(t.ref_units.summary()));
         }
@@ -2439,7 +2439,12 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         };
 
         let (Some(x), Some(z)) = (a.get(1).and_then(|v| number(v)), a.get(2).and_then(|v| number(v))) else { return fail(usage) };
-        let attrs: std::collections::BTreeMap<String, String> = ["unit", "faction", "seed", "slot"].iter().zip(a.iter().skip(3)).map(|(k, v)| ((*k).to_owned(), v.clone())).collect();
+        let rowing = a.iter().skip(3).any(|v| v == "rowing");
+        let mut attrs: std::collections::BTreeMap<String, String> = ["unit", "faction", "seed", "slot"].iter().zip(a.iter().skip(3).filter(|v| *v != "rowing")).map(|(k, v)| ((*k).to_owned(), v.clone())).collect();
+        if rowing {
+            attrs.insert("rowing".to_owned(), "1".to_owned());
+        }
+
         with_tile(e, |t, e| {
             let Some(d) = document(e) else { return no_tile() };
             let Some(into) = t.new_items_layer(d) else { return fail("this tile has no scene graph") };

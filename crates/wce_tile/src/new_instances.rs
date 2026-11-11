@@ -43,8 +43,9 @@ pub const REF_UNIT: &str = "WceRefUnit";
 /// A ship of a naval unit with its men aboard, afloat on the tile's water.
 pub const REF_SHIP: &str = "WceRefShip";
 
-/// A reference's attributes the Tile tool edits, with lists of the game's units, not as properties.
-pub const REF_TOOL_ATTRS: [&str; 5] = ["unit", "faction", "seed", "slot", "colours"];
+/// A reference's attributes the Tile tool edits, with lists of the game's units, not as properties. `rowing` (a ship's, "1": its oars row) is
+/// absent until set.
+pub const REF_TOOL_ATTRS: [&str; 6] = ["unit", "faction", "seed", "slot", "colours", "rowing"];
 
 /// `unit`, `faction`, `slot` empty: the game's default unit, standing. `colours`: three faction colours, nine numbers, over the faction's.
 const REF_ATTRS: &[(&str, &str)] = &[

@@ -220,8 +220,17 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    rigid materials' opacity: a ropes instance has it 0 and is never filed as faded. **ASSUMPTION**s: the material's `uk_1` (about 0.03) is
    the radius; the texture repeats once per diameter along the rope; the ropes come out nearly black (the shader writes specular (1, 1, 1)),
    not compared with the game yet. Ropes cast no shadow (`rope.hlsl`'s depth techniques aren't wired) and aren't in the id pass.
-   Left: motion (bobbing, the cloth's sway, the oars' row clips `left_row` / `left_end`); the oars stand in their bind pose; level 1 is taken
-   as the lowest oar row and the primary weapon as the `Engine_placement` line's (**ASSUMPTION**s).
+   Motion (2026-11-11). On the battle sea (the tile's sea on, `tile_sea`, with a wind's waves: `Renderer::sea_wave_height`, the sea and
+   swell surfaces as the ocean's chunks are displaced), `ShipModel::afloat` samples the waves under the logic's buoyancy spheres and fits a
+   plane through them, each by its mass: heave, pitch and roll, men and parts with it. **ASSUMPTION**: the game floats ships with a physics
+   simulation over those spheres (their `connections`); the editor shows where the ship would rest on the waves of the moment, without
+   inertia (a storm: about 1 degree of pitch and roll, decimetres of heave, smooth). Rivers and lakes stay flat. `rowing` ("1", the
+   Inspector's Rowing, `tile_ref ... rowing`): the oars play `models_oars.left_row` / `right_row` (one bone turning the oar about its
+   middle, the oarlock), all in step (**ASSUMPTION**); without it they rest in their bind pose, straight out. These moves go through
+   `RenderScene::update_world_quiet`: the draw lists follow them, without a new scene revision every frame. Level 1 is taken as the lowest oar
+   row and the primary weapon as the `Engine_placement` line's (**ASSUMPTION**s).
+   Left: the sails' cloth simulation (they stand at rest: their `sim_*` meshes, `cloth_bones` and the material's undocumented cloth
+   sections would drive them).
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
    tool needs them.

@@ -94,6 +94,9 @@ struct Reference {
 
     /// On the ground under each soldier, or at its own height (freeform: a wall's top).
     on_ground: bool,
+
+    /// A ship's oars row.
+    rowing: bool,
 }
 
 /// The turn about y of a matrix: how far it takes +z, where a soldier faces. A reference stands upright whatever else its matrix holds.
@@ -127,6 +130,9 @@ fn size_name(size: u32) -> &'static str {
 }
 
 type Loaded = (Wanted, Result<Vec<UnitModel>, String>);
+
+/// A ship this frame: its matrix (on the waves), its model, the reference's colours, whether its oars row.
+type ShipPlace = (Float4x4, Arc<ShipModel>, Option<[[f32; 3]; 3]>, bool);
 
 /// One entity of a ship: its model (with its suffix), its element, its matrix, and for a sail its masks and colours.
 #[derive(Clone, Debug, PartialEq)]
@@ -183,6 +189,9 @@ pub struct RefUnits {
 
     /// Per ship element, the water under it: where it was asked, when, the level.
     water: HashMap<usize, ([u32; 2], f64, Option<f32>)>,
+
+    /// Per ship element on the waves, its heave (m), pitch and roll (degrees) this frame, for the scripts.
+    afloat: BTreeMap<usize, [f32; 3]>,
 }
 
 impl RefUnits {
@@ -194,7 +203,8 @@ impl RefUnits {
         let ships = self.ships.values().map(|s| format!("{}: {} ({} parts{})", s.unit, s.variant, s.parts.len(), if s.missing.is_empty() { String::new() } else { format!(", missing {:?}", s.missing) })).collect::<Vec<_>>().join("; ");
         let mut water: Vec<String> = self.water.iter().map(|(elem, (_, _, level))| format!("#{elem} {level:?}")).collect();
         water.sort_unstable();
-        let ships = format!("{ships}; water under them: {}", water.join(", "));
+        let afloat = self.afloat.iter().map(|(elem, [h, p, r])| format!("#{elem} heave {h:.2} pitch {p:.2} roll {r:.2}")).collect::<Vec<_>>().join(", ");
+        let ships = format!("{ships}; water under them: {}; afloat: {afloat}", water.join(", "));
         format!(
             "tables {}, {} loaded, loading {}, {} failed, {} entities, unit size {:?}, update {:.2} ms [{units}]; ships {} loaded, loading {}, {} failed, {} entities [{ships}]: {}",
             self.catalog.is_some(), self.models.len(), self.loading.is_some(), self.failed.len(), self.entities.len(), self.size, self.update_ms,
@@ -357,7 +367,8 @@ impl RefUnits {
             for elem in t.tscene().find_all(tag).into_iter().filter(|&elem| t.shown(elem)) {
                 let attr = |name: &str| t.tscene().doc().get(elem, name).unwrap_or_default();
                 let Some((wanted, ship)) = self.wanted(e, &attr("unit"), &attr("faction"), attr("seed").trim().parse().unwrap_or(0), &attr("slot"), kind) else { continue };
-                out.push(Reference { elem, kind, wanted, ship, colours: parse_colours(&attr("colours")), on_ground: attr("surface_mode") != "MSM_FREEFORM" });
+                let (colours, on_ground, rowing) = (parse_colours(&attr("colours")), attr("surface_mode") != "MSM_FREEFORM", attr("rowing") == "1");
+                out.push(Reference { elem, kind, wanted, ship, colours, on_ground, rowing });
             }
         }
 
@@ -450,7 +461,7 @@ impl RefUnits {
 
         // Each reference's men (where they stand: about its origin, or on a ship's deck) and, for a ship, its matrix.
         let catalog = self.catalog.clone();
-        let mut ship_places: HashMap<usize, (Float4x4, Arc<ShipModel>, Option<[[f32; 3]; 3]>)> = HashMap::new();
+        let mut ship_places: HashMap<usize, ShipPlace> = HashMap::new();
         let mut men_of: HashMap<usize, Vec<[f32; 3]>> = HashMap::new();
         let units = e.scene.game_units.max(1e-3);
         for r in &references {
@@ -464,11 +475,28 @@ impl RefUnits {
                     let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
                     let (at, m) = (d.tile().world_position(r.elem), d.tile().world_matrix(r.elem));
                     let ground = d.tile().terrain_height(at.x, at.z);
-                    let y = if r.on_ground { self.water_under(e, id, r.elem, at.x, at.z).map_or(ground, |w| w.max(ground)) } else { at.y };
-                    let place = translation(Float3::new(at.x, y, at.z)) * rotation_y(yaw_of(&m)) * scaling(1.0 / units);
+                    let water = if r.on_ground { self.water_under(e, id, r.elem, at.x, at.z) } else { None };
+                    let y = if r.on_ground { water.map_or(ground, |w| w.max(ground)) } else { at.y };
+                    let level = translation(Float3::new(at.x, y, at.z)) * rotation_y(yaw_of(&m)) * scaling(1.0 / units);
+
+                    // On the sea (its water at 0 m), with the waves of the moment under its buoyancy spheres.
+                    let on_sea = water.is_some_and(|w| w.abs() < 1e-4 && w >= ground);
+                    let renderer = if on_sea { e.renderer().map(|r| &*r) } else { None };
+                    let wave = |x: f32, z: f32| {
+                        let p = level.transform_point(Float3::new(x, 0.0, z));
+                        renderer.and_then(|r| r.sea_wave_height(p.x, p.z)).unwrap_or(0.0) * units
+                    };
+                    let place = if renderer.is_some() {
+                        let a = ship.afloat(&wave);
+                        self.afloat.insert(r.elem, [a.m[1][3], a.m[1][2].asin().to_degrees(), (-a.m[1][0]).asin().to_degrees()]);
+                        level * a
+                    } else {
+                        self.afloat.remove(&r.elem);
+                        level
+                    };
                     let land = catalog.as_ref().and_then(|c| c.land_units.get(&ship.unit));
                     let spots = land.map_or_else(Vec::new, |land| ship.crew(men_at_size(land, size), land.spacing[0]));
-                    ship_places.insert(r.elem, (place, ship, r.colours));
+                    ship_places.insert(r.elem, (place, ship, r.colours, r.rowing));
                     spots
                 }
             };
@@ -476,7 +504,8 @@ impl RefUnits {
             men_of.insert(r.elem, stands);
         }
 
-        self.place_ships(e, id, &ship_places);
+        let time = e.clock.time() as f32;
+        self.place_ships(e, id, &ship_places, time);
         let used: HashSet<&Wanted> = references.iter().filter(|r| men_of.get(&r.elem).is_some_and(|m| !m.is_empty())).map(|r| &r.wanted).collect();
         self.models.retain(|w, _| used.contains(w));
         if self.loading.is_none()
@@ -553,19 +582,19 @@ impl RefUnits {
     }
 
     /// The ships' parts in the scene, each ship at its matrix: added again when what is shown changes, moved when only where does.
-    fn place_ships(&mut self, e: &mut Editor, id: DocumentId, ships: &HashMap<usize, (Float4x4, Arc<ShipModel>, Option<[[f32; 3]; 3]>)>) {
+    fn place_ships(&mut self, e: &mut Editor, id: DocumentId, ships: &HashMap<usize, ShipPlace>, time: f32) {
         let mut elems: Vec<&usize> = ships.keys().collect();
         elems.sort_unstable();
         let mut want: Vec<ShipShown> = vec![];
         for &elem in elems {
-            let (place, ship, colours) = &ships[&elem];
+            let (place, ship, colours, rowing) = &ships[&elem];
             let mut faction = ship.faction_colours;
             if let Some(c) = colours {
                 faction[..3].copy_from_slice(c);
             }
 
             for p in &ship.parts {
-                let world = *place * p.local;
+                let world = *place * ShipModel::part_at(p, time, *rowing);
                 if p.what.solid {
                     want.push(ShipShown { model: p.model.clone(), elem, world, sail: None });
                 }
@@ -601,9 +630,10 @@ impl RefUnits {
                 e.scene.add(layer, w.world, payload, SourceRef { doc: id, item: item_of(w.elem) })
             }).collect();
         } else {
+            // Every frame on the waves: moves the scene follows without going over itself again.
             for (&entity, (shown, wanted)) in self.ship_entities.iter().zip(self.ship_shown.iter().zip(&want)) {
                 if shown.world != wanted.world {
-                    e.scene.update_world(entity, wanted.world);
+                    e.scene.update_world_quiet(entity, wanted.world);
                 }
             }
         }
@@ -712,6 +742,10 @@ impl RefUnits {
             let model = self.ships.get(s).map_or_else(|| "loading".to_owned(), |m| format!("{}, {} parts", m.variant, m.parts.len()));
             gui::text_disabled(&format!("{} ({}), {model}", naval.map_or("", |n| n.ship.as_str()), naval.map_or("", |n| n.category.as_str())));
             gui::text_disabled(&format!("{men} men of {} aboard (the game's unit size: {})", wanted.unit, size_name(size)));
+            let mut rowing = attr("rowing") == "1";
+            if gui::checkbox("Rowing##reference", &mut rowing) {
+                edits.insert("rowing", if rowing { "1" } else { "0" }.to_owned());
+            }
         }
 
         if kind == Kind::Unit && let Some(land) = catalog.land_units.get(&wanted.unit) {

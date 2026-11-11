@@ -1293,6 +1293,20 @@ impl RenderScene {
         self.moved_log.push(id);
     }
 
+    /// Moves an entity every frame (a ship on the waves, an oar rowing): logged for [`Self::moved_since`] as [`Self::update_world`], but without
+    /// a new revision, which what follows it (the sea bed, the terrain list, the baked shadows, the placed effects) would go over the scene
+    /// for. Not for what those depend on: terrains, effects.
+    pub fn update_world_quiet(&mut self, id: EntityId, world: Float4x4) {
+        let Some(e) = self.find_mut(id) else { return };
+        e.world = world;
+        if self.moved_log.len() > MOVED_LOG_LIMIT {
+            self.moved_base += self.moved_log.len() as u64;
+            self.moved_log.clear();
+        }
+
+        self.moved_log.push(id);
+    }
+
     /// A mesh instance's burn (its POSITION6): logged for [`Self::burn_since`], no change of anything else, so the renderer keeps its draws
     /// (a fire's char moves many times a second).
     pub fn update_burn(&mut self, id: EntityId, p6: [f32; 4]) {
