@@ -747,6 +747,20 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("paint_whole_tile", "paint_whole_tile [<group 0-3> <variation 0-3>]", "paint the whole tile at once with the paint brush as it is set (its strength, mode and filters; default its texture), one undo entry", |e, a| {
+        with_doc(e, |t, e| {
+            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten().filter(|p| (0.0..4.0).contains(&p.0) && (0.0..4.0).contains(&p.1));
+            let channel = match parsed {
+                Some((g, v)) => g as u8 * 4 + v as u8,
+                None if a.is_empty() => t.paint_channel,
+                None => return fail("usage: paint_whole_tile [<group 0-3> <variation 0-3>]"),
+            };
+
+            let d = document(e).expect("a tile");
+            d.paint_whole_tile(BrushKind::Paint(channel), &t.brush).map_or_else(fail, |changed| ok(if changed { "painted" } else { "nothing changed" }))
+        })
+    });
+
     c.add("brush_curve", "brush_curve off | on | <preset> | <distance,weight>...", "the brushes' falloff curve: off (the falloff slider), on, a preset (smooth, linear, plateau, spike, hard) or its points", |e, a| {
         let Some(first) = a.first() else { return fail("usage: brush_curve off | on | <preset> | <distance,weight>...") };
         with_tile(e, |t, e| {

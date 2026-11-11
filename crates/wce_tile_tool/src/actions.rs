@@ -55,6 +55,11 @@ const BRUSHES: [(&str, &str); 9] = [
 ];
 
 /// The Ground brush on a prefab's stage (its tooltip).
+/// What Paint the whole tile does (its tooltip).
+const PAINT_WHOLE_TILE_TIP: &str = "One dab of the brush over the whole tile, its border included: the texture chosen above, at the brush's strength, in its mode \
+     and only where the Blendmap filters below let it through; no falloff and no image. At strength 1 in normal mode with no filter every pixel becomes \
+     that texture. It goes into the working terrain layer as a stroke does. One undo step.";
+
 const FOOTPRINT_TIP: &str = "Paint the prefab's footprint: where a normalized prefab levels the ground it stands on, even where you sculpt nothing \
     (Ctrl: erase). Sculpted ground is in it already.";
 
@@ -232,6 +237,7 @@ impl TileTool {
             }
         }
 
+        let mut paint_whole = false;
         if self.mode == TileMode::Paint {
             // What the stroke does: TEd's Blend Map operations (docs/re/terrain.md), explained, since nobody knew what they did.
             let mut m = match self.brush.paint_mode {
@@ -276,6 +282,8 @@ impl TileTool {
             }
 
             self.paint_channel = (group.clamp(0, 3) * 4 + variation.clamp(0, 3)) as u8;
+            paint_whole = ins.button("paint_whole_tile", "Paint the whole tile", true);
+            ins.tooltip(PAINT_WHOLE_TILE_TIP);
         }
 
         if self.mode == TileMode::Paint {
@@ -341,6 +349,17 @@ impl TileTool {
             let d = document(e).expect("a tile");
             let msg = match d.level_along(line, &self.brush) {
                 Ok(n) => format!("ground levelled along the line: {n} dabs"),
+                Err(why) => why,
+            };
+
+            e.status(&msg, false);
+        }
+
+        if paint_whole {
+            let d = document(e).expect("a tile");
+            let msg = match d.paint_whole_tile(wce_tile_editor::tile_document::BrushKind::Paint(self.paint_channel), &self.brush) {
+                Ok(true) => "the whole tile painted".to_owned(),
+                Ok(false) => "nothing changed".to_owned(),
                 Err(why) => why,
             };
 
