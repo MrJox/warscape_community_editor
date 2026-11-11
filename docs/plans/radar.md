@@ -44,7 +44,7 @@ of tuning with the user.
     the lowest ground within 8 m (the steep band at the waterline is too thin for the slope test). The rims are drawn after the water,
     whose shore ink would cover them.
 - Cliffs (`RadarStyle::cliff_style`): `Rock` (default since 2026-11-11, on trial: the user was not convinced by the cyan rims) draws the
-  steep ground and the rims as grey stone in lit and shaded facets (`rock_facet_m`), cracked,
+  rims (where `Rim` draws its line, a little wider: the user wants only those changed) as grey stone in lit and shaded facets (`rock_facet_m`), cracked,
   outlined in ink (taking the fairly steep ground at a cliff's foot too turned half of middle_men_port_a's hills into rock: not
   done); `Rim` is CA's cyan top edge with ink ticks. The example takes `RADAR_CLIFFS=rim|rock`.
 - Ink extras (user: "vanilla base, ink extras"): a soft hill shade, hachures on slopes over `hachure_slope`, ripples off the shore.
