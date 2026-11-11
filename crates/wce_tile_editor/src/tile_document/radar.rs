@@ -46,6 +46,24 @@ impl Tile {
             input.water = Some(Field { x0: -sx * 0.5, z0: -sz * 0.5, w_m: ex + sx, h_m: ez + sz, w: d.w, h: d.h, v });
         }
 
+        // The water planes and the rivers as the tile places them (stage B leaves out a plane barely over the ground): their surface over
+        // the ground, with stage B's depth, every 2 m.
+        let mut wm = self.water_map();
+        wm.sea = false;
+        input.water_planes = wm.planes.iter().map(|(c, _)| c.to_vec()).collect();
+        if !wm.planes.is_empty() || !wm.rivers.is_empty() || input.water.is_some() {
+            let (w, h) = (((w_m / HEIGHT_CELL_M).ceil() as usize).max(2), ((h_m / HEIGHT_CELL_M).ceil() as usize).max(2));
+            let (cx, cz) = (w_m / w as f64, h_m / h as f64);
+            let (project, staged, unit) = (&self.project, input.water.as_ref(), self.unit());
+            let v: Vec<f32> = (0..w * h).into_par_iter().map(|k| {
+                let (x, z) = (x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz);
+                // The water map's heights are the scene's (metres over the unit).
+                let own = wm.level(x, z).map_or(0.0, |l| (l * unit - project.height_at(x, z)).max(0.0)) as f32;
+                own.max(staged.map_or(0.0, |f| f.sample(x, z)))
+            }).collect();
+            input.water = Some(Field { x0, z0, w_m, h_m, w, h, v });
+        }
+
         // The roads of the blend map (the map in memory, else its file), over the bordered tile.
         let read;
         let blend = match self.project.blend.as_ref() {

@@ -2978,7 +2978,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add("radar_save", "radar_save [path.png]", "write the open tile's radar (docs/plans/radar.md: the minimap the game shows, drawn from the tile) as a PNG, by default into the tile's folder", |e, a| {
-        with_tile(e, |t, e| t.minimap.save_radar(e, a.first().map(String::as_str)).map_or_else(fail, ok))
+        with_tile(e, |t, e| {
+            let id = crate::tool::document_id(e).ok_or("no tile");
+            if let Ok(id) = id
+                && let Err(why) = t.ensure_radar_water(e, id)
+            {
+                wce_foundation::log::warn(format!("radar: no rivers or cliffs: {why}"));
+            }
+            t.minimap.save_radar(e, a.first().map(String::as_str)).map_or_else(fail, ok)
+        })
     });
 
     c.add("tile_links", "tile_links [on|off]", "log the tile database entry's link targets and rules (the cells they name), or show / hide them on the ground", |e, a| {

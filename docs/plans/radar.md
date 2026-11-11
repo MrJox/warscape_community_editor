@@ -25,7 +25,10 @@ of tuning with the user.
 - `wce_tile_editor::radar` (pure): `RadarInput` (rasters and outlines in the tile's metres) -> `render(input, RadarStyle)` -> 512 x 512
   RGBA. Drawn at 1024 and averaged down. No assets: the paper is procedural noise (user's choice, 2026-11-11).
 - `Tile::radar_input(water)` (`tile_document/radar.rs`) gathers:
-  - heights (the height map, every 2 m), the sea (ground under -0.5 m), rivers and lakes (stage B's water depth, the tool's);
+  - heights (the height map, every 2 m), the sea (ground under -0.5 m), rivers and lakes: stage B's water depth and the tile's own
+    water planes and river ribbons (`Tile::water_map`; its heights are the scene's, metres / unit), still water: no ripples or
+    streaks. Water shallower than `shallow_m` (a plane over mud, a marsh's puddles: middle_men_port_a's town) is a pale wash without
+    an ink edge;
   - roads: the procedural roads' centre lines, the `path_*` / `road_*` decals as lines along their x, and the blend map's thin layers
     (`radar::blend_roads`: per channel, what is left after an opening of about 10 m, its long pieces) only when the tile has fewer than
     50 road lines; road pixels where roads cover most of the ground around (a vineyard's paths) are dropped;
@@ -36,7 +39,8 @@ of tuning with the user.
     1.5 m seen from above (vanilla houses have no 2D outlines); house-sized only (2.5 m across, 10 m2);
   - walls: the siege input's fort pieces (footprints and the line between their ends);
   - streets and squares: the exported siege AI's street edges and area nodes;
-  - cliffs: the automatic no-go areas plus ground steeper than `cliff_slope`; sea cliffs: land at the shore 3.5 .. 6 m or more above
+  - cliffs: the automatic no-go areas plus ground steeper than `cliff_slope`, none at inland water's banks or inside a water plane's
+    footprint (middle_men_port_a's stream bed steps down past planes its floor stands 0.3 m above: a bank, not a cliff); sea cliffs: land at the shore 3.5 .. 6 m or more above
     the lowest ground within 8 m (the steep band at the waterline is too thin for the slope test). The rims are drawn after the water,
     whose shore ink would cover them.
 - Ink extras (user: "vanilla base, ink extras"): a soft hill shade, hachures on slopes over `hachure_slope`, ripples off the shore.
@@ -54,5 +58,6 @@ of tuning with the user.
 - Save next to the export: a button and the export carrying the generated file, never overwriting a hand-made one without asking.
 - Tuning with the user: colours, the paper, forest density, road widths, which decals are roads, hachure density, red roofs (now 30 %
   at random; CA's red may mean something: important buildings?).
+- `radar_save` works out the water depth and the no-go areas itself when the tile has none yet.
 - The radar is drawn on the UI thread (0.25 s on dunedain_city_c); move to a thread if it gets in the way.
 - Style settings in the UI (now `RadarStyle::default()`).

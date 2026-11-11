@@ -84,6 +84,15 @@ fn main() -> Result<(), String> {
             (t1 - t0).as_secs_f64(), (t2 - t1).as_secs_f64(), (t3 - t2).as_secs_f64(),
         );
 
+        // `$RADAR_PROBE=x0,x1,z`: the ground's heights along a line, every metre.
+        if let Ok(probe) = std::env::var("RADAR_PROBE") {
+            let v: Vec<f64> = probe.split(',').filter_map(|t| t.parse().ok()).collect();
+            if let [x0, x1, z] = v[..] {
+                let line: Vec<String> = (x0 as i64..=x1 as i64).map(|x| format!("{x}:{:.2}", doc.project().height_at(x as f64, z))).collect();
+                println!("  z {z}: {}", line.join(" "));
+            }
+        }
+
         if std::env::var("RADAR_SLOPE_DUMP").is_ok() {
             // The slope (white 45 degrees and up), the sea blue, the steep outlines red: 1 m a pixel.
             let [ax, az, aw, ah] = input.area;
@@ -98,7 +107,8 @@ fn main() -> Result<(), String> {
                     let deg = (f64::from((dx * dx + dz * dz).sqrt() * 0.5)).atan().to_degrees();
                     let v = (deg / 45.0 * 255.0).min(255.0) as u8;
                     let k = (j * w + i) * 4;
-                    px[k..k + 3].copy_from_slice(&if y < 0.0 { [v / 2, v / 2, 160] } else { [v, v, v] });
+                    let wet = input.water.as_ref().map_or(0.0, |f| f.sample(x, z));
+                    px[k..k + 3].copy_from_slice(&if wet > 0.0 { [0, (60.0 + wet * 60.0).min(255.0) as u8, 0] } else if y < 0.0 { [v / 2, v / 2, 160] } else { [v, v, v] });
                 }
             }
             let png = PngFile { width: w as u32, height: h as u32, bit_depth: 8, color_type: 6, pixels: px, pixels_edited: true, ..PngFile::default() };
