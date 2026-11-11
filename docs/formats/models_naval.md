@@ -61,8 +61,7 @@ The kit's `logic_folder` column (`ships\attila_dromon\`) has no field: the logic
   last point's deck piece, vec3 last point. The XML's `<segment deck_piece="..">` carries the attribute only on the first and last
   segment; -1 is none. The id is the XML id's number less 100 (`mpipe_rope_131` is 31) in the one oracle: **ASSUMPTION** in general.
   The unknown is 2 for four-point ropes, 1 for two-point ones (whose ends are tied to deck pieces 11..60).
-- part: wstring name (`bow_01`, `port_02`, `starb_01`, `stern_02`, `misc_12`; a ship's `<name>_dm1` / `_dm2` models), u32 unknown (0
-  in every row), list<panel>; panel: list<vec3> (3 or 4 vertices).
+- part: wstring name (`bow_01`, `port_02`, `starb_01`, `stern_02`, `misc_12`; a ship's `<name>_dm1` / `_dm2` models), list<wstring> sail states (`stationary`, `battle_sail`, `half_sail`, read by `FUN_10fe9620` as 1, 2, 3; empty in every row: Attila's and Rome 2's sails have no states, docs/re/cloth.md), list<panel>; panel: list<vec3> (3 or 4 vertices).
 - face: wstring name (`logic_collision3d`, some ships `logic_collision3D`), u32 index (from 1), 3 vec3 (no count).
 - ef_line: wstring name (`EFLine001`), u32 purpose, vec3 end, vec3 end, vec3 direction. The XML's direction (length about 0.38) is
   stored normalised. The purpose is the game's entity formation purpose enum, named as the XML's `action` (the names are in
@@ -109,5 +108,5 @@ goes on the `Engine_placement` line and the secondary on `Secondary_engine_place
 
 ## Unknown
 
-The pipe's second u32, the damage part's u32 (0), the custom position's u32 (1) and vector (0, 1, 0), the camera's last float, the
+The pipe's second u32, the custom position's u32 (1) and vector (0, 1, 0), the camera's last float, the
 trailing count's meaning. The reader keeps them raw and fails on a non-zero cannon or trailing count, whose layouts no row shows.

@@ -155,20 +155,77 @@ Per particle k (`FUN_11814990` at runtime, `FUN_11814c00` for the rest pose from
   `sqrt(x) ≈ f32::from_bits(((x.to_bits() as i32 − 0x3F80_0000) >> 1) + 0x3F80_0000)` (then `1/that`); vectors come out slightly off unit length.
   The constraint lengths, wind normalisation and the normal-based frame use the exact square root.
 
-## The wind
+## The wind (confirmed 2026-11-11)
 Built per ship per frame by `FUN_102ba0f0` (the sail item's update, dispatched by `FUN_1022d9f0`, multi-threaded), then passed as the
-context of the manager's update. With R the sail item's 3×4 matrix at item +0x08 (rows; its inverse at +0x48 is used to bring projectile
-segments from world to model space, so **ASSUMPTION** R is model → world):
+context of the manager's update.
+
+**The sail item** (0xa0 bytes, `FUN_1023e160`, made by `FUN_102570e0`): one per ship part whose model has a simulation (`FUN_1023dec0`
+keeps it at part +0x30). `+0x00` the part model's rigid-sim manager, `+0x04` the ship display, `+0x08` a 4×4 matrix M (row-major, rows of
+4, translation in column 3: `p' = M·(p, 1)`), `+0x48` its inverse, `+0x90` flag, `+0x94/+0x98/+0x9c` the projectile segments (capacity,
+count, data). Both matrices start as the identity.
+
+**What M is**: every frame the ship display update (`FUN_10273420`) builds the ship's display transform from its position and orientation
+quaternion (the two latest simulation states, or the interpolated one from `FUN_1025b730`), and the part update (`FUN_102aa7e0`, through
+`FUN_102aa700`/`FUN_102aa730`) uses that same matrix to place every part of the ship (its world bounds for culling), copies it whole into
+the sail item's +0x08 and writes its full 4×4 inverse (cofactors / determinant) into +0x48. So **M is the ship's model → world matrix**,
+the one its hull is drawn with; nothing else (weather, battle setup, ship speed, sail order) touches it. Row i of its 3×3 part is world
+axis i in model coordinates.
+
+With R = M's 3×3 rows:
 - `(a, b, c) = SHIP_DISPLAY_WIND_SCALE (30) × (R[2][0], R[2][1], R[2][2])`: world +Z expressed in model space, × 30.
 - `f = max(SHIP_DISPLAY_MIN_FORWARD_WIND (1.0), c)`, `L = SHIP_DISPLAY_MAX_LATERAL_WIND_FORWARD_SCALE (5) × f`.
-- `W = −9.8·(R[1][0], R[1][1], R[1][2]) + (clamp(a, −L, L), clamp(b, −L, L), f)`: gravity (0, −9.8, 0) in model space plus the clamped wind.
+- `W = −9.8·(R[1][0], R[1][1], R[1][2]) + (clamp(a, −L, L), clamp(b, −L, L), f)`: gravity (0, −9.8, 0) (a constant vector at
+  RVA 0x1d24368) in model space plus the clamped wind.
 - Context: `[W, 0, 0, rope break value, projectile segments, count]`; rope break value = max(`SHIP_DISPLAY_SAIL_ROPES_BREAK_VALUE` (0),
-  `..._ROPES_BREAK_DAMAGE_MULTIPLIER` (1) × the ship's damage (+0x688)); the segment list is cleared after the call.
+  `..._ROPES_BREAK_DAMAGE_MULTIPLIER` (1) × the ship display's sail damage d (+0x688)); the segment list is cleared after the call.
+- Sail damage d (`FUN_10273420`): each frame `d = min(d + SHIP_DISPLAY_SAILS_DAMAGE_SPEED (1.0 /s) × dt, target)`, target (+0x68c) =
+  `1 − min(1, ship[+0x710] / ship[+0x70c])` (set in `FUN_102904e0`; **ASSUMPTION** hit points left over the maximum). The burn value
+  (+0x690) follows its target (+0x694, a 0..1 burn fraction that only grows) the same way at `SHIP_DISPLAY_SAILS_BURN_SPEED` (0.03 /s). A
+  ship at full health: d = 0, no rope breaks.
 
-So the sails see a fixed world wind of 30 along world +Z (no battle weather or ship speed enters this path), never less than 1 forward
-along the model's +z, sideways at most 5× the forward part: a ship heading +Z gets full wind, one heading −Z gets (0, −9.8, 1) and its sails
-sag. **ASSUMPTION**: that nothing upstream rotates R by a weather wind direction (not traced further). The `*_SAIL_WIND_GUST` and
-`SHIP_GUST_HEIGHT_OFFSET` tweakers drive sound events (`FUN_104e7340`, `FUN_104341a0`), not the cloth.
+**Conclusion**: in a battle the sails' wind always blows toward **world +Z** (from −Z), strength 30, for every ship and every battle; it
+never varies. Ships differ only by heading (and pitch/roll, through M): heading +Z gets the full 30 forward, heading −Z gets (0, −9.8, 1)
+and the sails hang, broadside gets the lateral part clamped to 5 (with f = 1). f is clamped from below at 1, so a ship always feels at
+least 1 forward and its sails never blow backwards.
+
+There is no battle wind direction on this path. What exists elsewhere, none of it reaching the sails:
+- `EmpireBattle\Source\model\wind\Wind.cpp` tweakers `wind_maximum` (200), `wp_damp` (0.1), `wp_gain` (0.1): no code reads their values
+  (byte scan of the DLL for their value addresses, 2026-11-11). Empire's wind model, dead in Attila.
+- The battle setup field names `prevailing_wind`, `wind_strength` (a name table at RVA 0x1d229c4, next to `attacker_direction`,
+  `battle_size`): not traced; not on the sail path.
+- `BattleShipSailingIntoWind` / `BATTLE_SHIP_SAILING_INTO_WIND` (script event, registered at RVA 0x41f40), `g_wind_dir_offset`
+  (`WindGaugeDisplay.cpp`, 0), the weather's `wind_dir_degrees` / `g_wind_direction` (shaders, vegetation): not traced; not on the sail path.
+- The `*_SAIL_WIND_GUST` and `SHIP_GUST_HEIGHT_OFFSET` tweakers drive sound events (`FUN_104e7340`, `FUN_104341a0`), not the cloth.
+
+**For the editor**: the game's battle world +Z, i.e. W from the ship's model → world rotation exactly as above; no wind setting.
+
+## Sail states (furling)
+**Attila's sails have no states: they are always fully set.** The ship's speed, its sail order, anchoring and deployment do not change the
+sail model, its simulation or its wind. A stationary ship shows the same set sails as a moving one, billowing by its heading alone (above).
+
+What was checked (2026-11-11):
+- **No furled data.** One sail model per variant (`variantmeshes/_variantmodels/ships/<ship>/sails_*.rigid_model_v2`), no `*_furled*`
+  model anywhere in the packs, no `.anim` for sails (the only ship animations are `animations/rome2/ships/campaign_trireme_*` for the
+  campaign map and two rope destruction anims). The `Cloth` / `WeightedCloth` materials and the solver have no furl input: the pinned
+  particles never move, rest lengths are only scaled by the rope flex, and the wind has no speed or order term.
+- **Empire's rigging system, unused.** `logic.xml.rigging` (the `models_naval` row's rigging file) is parsed by `FUN_105c98f0`, whose
+  keywords include `sail` blocks with `yard`, `surface_area`, `drag_coefficient`, `gravity_coefficient`, and a `size` of `battle_sail` or
+  `half_sail` (the strings at RVA 0x1b49ffc..0x1b4a034); `FUN_10412bd0` loads such sails' `RigidModels/naval/Variant/<name>.rigid_model_v2`
+  and `<name>_furled.rigid_model_v2`. None of Attila's 24 rigging files has a `sail`: they hold `lanterns` (empty, or 4 `lantern x y z`
+  on the heavy liburnians), an empty `sub_systems` and at most `version 1.0`, `rope_width 0.05`; and `RigidModels/naval/Variant/` holds only oars: the path never runs.
+- **`models_naval` part sail states, empty.** The damage part's u32 after its name (docs/formats/models_naval.md, "u32 unknown (0)") is
+  the count of a list of wstrings read by `FUN_10fe9620` and mapped `stationary` → 1, `battle_sail` → 2, `half_sail` → 3 (other names
+  dropped): **ASSUMPTION** the sail states in which that part is shown (Empire's furled / half / battle sail meshes). 0 in every Attila
+  and Rome II row.
+- **The sail order is movement only.** `BCQ_SHIP_ORDER_SET_SAIL` (a battle command, handler `FUN_10452230`) sets the ship's speed
+  setting (`FUN_1037fbf0`, ship +0x1078: 1, 2, 4, 8, 16) and its speed fraction (`FUN_1037c940`: 0, 0.25, 0.5, 1.0, 0.5). No display code
+  reads +0x1078 (every reader is in battle logic).
+- **`FUN_102bb100` is not a sail state machine.** It times one animation (slot 6 of the ship model; length from `FUN_102abaf0(6)`)
+  played forward (states 3 → 6) when a ship flag (+0xb15, set once by `FUN_106027a0` when the ship reaches a target position, cleared by
+  the state built in `FUN_10238900`) is set, and backwards (7 → 8 → 2) when it clears; while it plays, the ship's animated parts are posed
+  at that time (`FUN_10273120` → `FUN_102562a0`). **ASSUMPTION** a beaching / disembark animation; it never touches the sails.
+
+So the editor's always-set sails are what the game shows. Nothing to add to `cloth_sim` for states.
 
 ## Tweakers (defaults)
 `RigidMesh_v2.cpp` (registrations at RVA 0xb6910..0xb7210; float value at object +0x48):
@@ -200,17 +257,19 @@ sag. **ASSUMPTION**: that nothing upstream rotates R by a weather wind direction
 
 Ship side (`EmpireBattle`): `SHIP_DISPLAY_WIND_SCALE` 30, `SHIP_DISPLAY_MIN_FORWARD_WIND` 1, `SHIP_DISPLAY_MAX_LATERAL_WIND_FORWARD_SCALE` 5,
 `SHIP_DISPLAY_SAILS_PROJECTILE_EFFECT_MULTIPLIER` 0.1, `SHIP_DISPLAY_SAIL_ROPES_BREAK_VALUE` 0, `..._ROPES_BREAK_DAMAGE_MULTIPLIER` 1,
+`SHIP_DISPLAY_SAILS_DAMAGE_SPEED` 1.0 /s and `SHIP_DISPLAY_SAILS_BURN_SPEED` 0.03 /s (the sail damage and burn values' rates, under "The wind"),
 `ship_display_max_sail_simulations_per_frame` 8, `ship_display_num_sail_simulations_per_thread` 2, `ship_display_multi_thread_sail_simulation`
 true, `ship_display_update_all_sail_simulations` false (these four have no code reader besides the registration: their effect, likely a
 per-frame budget of sails updated, is not traced), `RIGGING_UPDATE_ALL_SAILS` false, `render_disable_ship_verlet` false (read by `FUN_10473c10`,
 not traced).
 
 ## Not traced
-- Where R (sail item +0x08) is written, so whether a weather wind direction ever rotates it.
 - How many sails are simulated per frame (the `ship_display_*` budget) and what dt a skipped sail then gets.
 - The rope break threshold (+0x70), the rope node `uk_1`, the rope `uk_1` radius, and the rope particle builder (pinned assumed `w < 0.5` as for
   the cloth).
-- The sail furl / half-sail states (`FUN_102bb100` animates a sail state machine; `battle_sail`, `half_sail`).
+- Where the sail burn value (+0x690) and the `SHIP_DISPLAY_SAILS_DAMAGE_VALUE` / `_BURN_VALUE` / `_MULTIPLIER` tweakers go (**ASSUMPTION**
+  the sail material's damage / burn look, not the simulation).
+- What ship +0x70c / +0x710 are (the sail damage target), and which animation slot 6 is (`FUN_102bb100`).
 
 ## Key RVAs
 | RVA | What |
@@ -233,4 +292,10 @@ not traced).
 | 0x1890e10, 0x1896c60 | bone palette from particles; pinned particles following bones |
 | 0x1801e40, 0x1801e60 | rope break |
 | 0x102ba0f0 | ship sail wind context |
+| 0x23e160, 0x2570e0, 0x23dec0 | sail item constructor (identity matrices), its creation, the ship part keeping it at +0x30 |
+| 0x273420, 0x2aa7e0 | ship display update (ship transform, sail damage / burn rates); part update writing the sail item's matrix and inverse |
+| 0x5c98f0, 0x412bd0 | Empire's `.rigging` parser (`battle_sail`, `half_sail`), its `_furled` sail loader: unused in Attila |
+| 0xfe9620 | `models_naval` row reader (damage part sail states `stationary` / `battle_sail` / `half_sail`) |
+| 0x452230, 0x37fbf0, 0x37c940 | `BCQ_SHIP_ORDER_SET_SAIL` handler, ship speed setting (+0x1078), its speed fraction |
+| 0x2bb100, 0x290450 | ship model animation slot 6 timer (not sails) and its trigger |
 | 0x102589b0 | projectile segments into the sail context |

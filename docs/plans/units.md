@@ -235,9 +235,10 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    gravity, clamped) with its travelling side perturbation. Each frame the sails' palette (`X_k (v - p0_k) + x_k` per bone) goes to their
    skinned entity (`update_pose`), and the model's ropes to a `Payload::Ropes` entity drawn by `rope.hlsl`'s world technique
    (`renderer/ropes.rs`; the static `#ropes` strips are for models without a cloth). A model's sails share one palette, each mesh from its
-   `GpuMesh::palette_base`. **ASSUMPTION**s (docs/re/cloth.md): that no weather direction rotates the world wind, the clock of the
-   perturbation, the rope radius; the wind's per-sail phase uses the editor's generator, not the game's. Not done: the sails' furled
-   states, projectile gusts and rope breaks (no battle in the editor). The moving ropes cast shadows (`rope.hlsl` vs30_depth / ps30_depth into each
+   `GpuMesh::palette_base`. The wind is the ship's world matrix's (traced: nothing rotates it, no weather or battle wind reaches the sails;
+   every ship feels 30 along world +Z). Attila's sails have no states: always set (Empire's furling code is there, its data isn't).
+   **ASSUMPTION**s (docs/re/cloth.md): the clock of the perturbation, the rope radius; the wind's per-sail phase uses the editor's
+   generator, not the game's. Not done: projectile gusts and rope breaks (no battle in the editor). The moving ropes cast shadows (`rope.hlsl` vs30_depth / ps30_depth into each
    cascade, after the units; thinner than a shadow texel, they come out dotted); a model's static `#ropes` strips don't.
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
