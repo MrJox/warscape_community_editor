@@ -1,5 +1,5 @@
-//! Draw the radar (docs/plans/radar.md) of tiles to PNGs, to work on its look: `<out>/<tile>_radar.png`, and the tile's own
-//! `loading_screen_radar.jpg` beside it when it has one (`<tile>_ca.jpg`).
+//! Draw the radar (docs/plans/radar.md) of tiles to PNGs, to work on its look: `<out>/<tile>_radar.png` (and the game's JPEG,
+//! `<tile>_radar.jpg`), and the tile's own `loading_screen_radar.jpg` beside it when it has one (`<tile>_ca.jpg`).
 //!
 //!   cargo run --release -p wce_tile_tool --example radar -- <game folder> <out folder> <tile folder>... [--mods a.pack;b.pack] [--kit <kit>]
 //!
@@ -148,6 +148,8 @@ fn main() -> Result<(), String> {
             println!("  street {:?}", input.streets.first().map(|s| (&s.0[..s.0.len().min(3)], s.1)));
         }
 
+        let jpeg = wce_tile_tool::minimap_panel::radar_jpeg(img.size, &img.rgba)?;
+        std::fs::write(Path::new(out).join(format!("{name}_radar.jpg")), jpeg).map_err(|e| e.to_string())?;
         let png = PngFile { width: img.size, height: img.size, bit_depth: 8, color_type: 6, pixels: img.rgba, pixels_edited: true, ..PngFile::default() };
         let bytes = png.encode().map_err(|e| e.to_string())?;
         std::fs::write(Path::new(out).join(format!("{name}_radar.png")), bytes).map_err(|e| e.to_string())?;

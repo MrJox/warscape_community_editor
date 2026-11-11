@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 rpfm_lib.workspace = true
 serde = { version = "1", features = ["derive"] }
 wce_editor = { path = "../wce_editor" }

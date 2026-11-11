@@ -50,16 +50,16 @@ of tuning with the user.
   done); `Rim` is CA's cyan top edge with ink ticks. The example takes `RADAR_CLIFFS=rim|rock`.
 - Ink extras (user: "vanilla base, ink extras"): a soft hill shade, hachures on slopes over `hachure_slope`, ripples off the shore.
 - Editor: the Minimap panel's base chip has **radar** (redrawn at most every second after an edit, once the buttons are up; the tool
-  works out the water depth and the no-go areas while it shows). `minimap radar`, `radar_save [path.png]` (default: the tile folder's
-  `loading_screen_radar.png`).
+  works out the water depth and the no-go areas while it shows). `minimap radar`, `radar_save [force] [path.jpg|path.png]` (default: the tile
+  folder's `loading_screen_radar.jpg`, which the export carries). The JPEG is baseline RGB at quality 92 (`image`'s encoder, already
+  built for rpfm_lib) with a `wce radar generator` comment after the JFIF header: a radar without it (CA's, in a decompiled tile) is
+  hand-made and only `force` replaces it. A `.png` path writes a PNG.
 - Iterating: `cargo run --release -p wce_tile_tool --example radar -- <game> <out> <tile folder>... [--mods ...] [--kit ...]` writes
-  `<tile>_radar.png` and copies CA's radar beside it (`<tile>_ca.jpg`). `RADAR_TREES=<list>` picks the tree list (the editor shows the
+  `<tile>_radar.png` (and `<tile>_radar.jpg`, what the game gets) and copies CA's radar beside it (`<tile>_ca.jpg`). `RADAR_TREES=<list>` picks the tree list (the editor shows the
   climate's; the example's default is `default`), `RADAR_TREE_DUMP=1` / `RADAR_SLOPE_DUMP=1` write the trees / the slopes at 1 m a pixel.
 
 ## Open
 
-- JPEG: the game wants `loading_screen_radar.jpg`; the prototype writes PNG (user, 2026-11-11: no new dependency for now). Options: the
-  `image` crate's `jpeg` feature (zune-jpeg, zune-core) or a small baseline encoder of our own.
 - Save next to the export: a button and the export carrying the generated file, never overwriting a hand-made one without asking.
 - Tuning with the user: colours, the paper, forest density, road widths, which decals are roads, hachure density, red roofs (now 30 %
   at random; CA's red may mean something: important buildings?).

@@ -50,8 +50,12 @@ const OWN_BASES: [(Base, &str, &str); 3] = [(Base::Height, "height", "height"), 
 /// Seconds between two radars while the tile is edited (it waits for the buttons to be released too).
 const RADAR_EVERY: f64 = 1.0;
 
-/// The radar's file in the tile's folder (a PNG until the radar is written as the game's JPEG).
-pub const RADAR_FILE: &str = "loading_screen_radar.png";
+/// The radar's file in the tile's folder: the game reads a JPEG by this name (CA's: 512 x 512 baseline RGB), the export carries it.
+pub const RADAR_FILE: &str = "loading_screen_radar.jpg";
+/// JPEG quality of a written radar (CA's 512 x 512 radars are about 190 kB, a high quality).
+const RADAR_JPEG_QUALITY: u8 = 92;
+/// The JPEG comment (COM segment) marking a radar the editor wrote: one without it is hand-made and is only replaced with `force`.
+const RADAR_MARK: &[u8] = b"wce radar generator";
 const VIEW_WORDS: [(TerrainView, &str); 5] = [
     (TerrainView::Colour, "colour"), (TerrainView::BlendGroups, "groups"), (TerrainView::GroundTypes, "ground"), (TerrainView::Protection, "protection"),
     (TerrainView::WaterDepth, "water"),
@@ -603,22 +607,35 @@ impl MinimapUi {
         };
     }
 
-    /// Writes the open tile's radar to `path` (a PNG; the tile's folder's `RADAR_FILE` without one).
+    /// Writes the open tile's radar to `path` (a PNG when it ends in `.png`, else the game's JPEG; the tile's folder's `RADAR_FILE`
+    /// without one). A JPEG the editor did not write (a hand-made radar, CA's in a decompiled tile) is only replaced with `force`.
     ///
     /// # Errors
     ///
-    /// No tile, or the file does not write.
-    pub fn save_radar(&mut self, e: &mut Editor, path: Option<&str>) -> Result<String, String> {
+    /// No tile, a hand-made radar in the way without `force`, or the file does not write.
+    pub fn save_radar(&mut self, e: &mut Editor, path: Option<&str>, force: bool) -> Result<String, String> {
         let id = document_id(e).ok_or("no tile")?;
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
         let (water, nogo) = (d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some());
         let path = path.map_or_else(|| d.project().dir.join(RADAR_FILE), std::path::PathBuf::from);
+        let png = path.extension().is_some_and(|x| x.eq_ignore_ascii_case("png"));
+        if !force
+            && !png
+            && let Ok(old) = std::fs::read(&path)
+            && !radar_is_generated(&old)
+        {
+            return Err(format!("{} is a hand-made radar: `radar_save force` replaces it", path.display()));
+        }
         let (size, rgba, _) = draw_radar(e, id);
         // Back to rows from the north.
         let row = size as usize * 4;
         let pixels: Vec<u8> = rgba.chunks(row).rev().flatten().copied().collect();
-        let png = wce_formats::png_file::PngFile { width: size, height: size, bit_depth: 8, color_type: 6, pixels, pixels_edited: true, ..Default::default() };
-        let bytes = png.encode().map_err(|e| e.to_string())?;
+        let bytes = if png {
+            let png = wce_formats::png_file::PngFile { width: size, height: size, bit_depth: 8, color_type: 6, pixels, pixels_edited: true, ..Default::default() };
+            png.encode().map_err(|e| e.to_string())?
+        } else {
+            radar_jpeg(size, &pixels)?
+        };
         std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         let missing = match (water, nogo) {
             (true, true) => String::new(),
@@ -982,4 +999,66 @@ fn draw_north(dl: &gui::DrawList, hi: Vec2, lo: Vec2, north: [f32; 2]) {
     dl.circle_filled(c, 14.0, col32(0, 0, 0, 110));
     dl.triangle_filled(tip, v2(tail.x + px, tail.y + py), v2(tail.x - px, tail.y - py), col32(235, 70, 60, 255));
     dl.text(v2(tail.x - dx * 6.0 - 4.0, tail.y - dy * 6.0 - 7.0), col32(255, 255, 255, 230), "N");
+}
+
+/// The radar (rows from the north) as the game's JPEG: RGB (the alpha dropped), baseline, `RADAR_JPEG_QUALITY`, with `RADAR_MARK` as
+/// a comment after the JFIF header (APP0 has to follow SOI).
+///
+/// # Errors
+///
+/// The encoder fails.
+pub fn radar_jpeg(size: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
+    let rgb: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+    let mut jpeg = vec![];
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, RADAR_JPEG_QUALITY)
+        .encode(&rgb, size, size, image::ExtendedColorType::Rgb8)
+        .map_err(|e| e.to_string())?;
+    let len = u16::try_from(RADAR_MARK.len() + 2).expect("a short mark");
+    let mut com = vec![0xFF, 0xFE];
+    com.extend_from_slice(&len.to_be_bytes());
+    com.extend_from_slice(RADAR_MARK);
+    let at = if jpeg[2..4] == [0xFF, 0xE0] { 4 + usize::from(u16::from_be_bytes([jpeg[4], jpeg[5]])) } else { 2 };
+    jpeg.splice(at..at, com);
+    Ok(jpeg)
+}
+
+/// Whether a radar file is one the editor wrote (`RADAR_MARK` in a COM segment before the image data).
+fn radar_is_generated(bytes: &[u8]) -> bool {
+    if !bytes.starts_with(&[0xFF, 0xD8]) {
+        return false;
+    }
+    let mut at = 2;
+    while at + 4 <= bytes.len() && bytes[at] == 0xFF {
+        let marker = bytes[at + 1];
+        let len = usize::from(u16::from_be_bytes([bytes[at + 2], bytes[at + 3]]));
+        if marker == 0xDA || len < 2 || at + 2 + len > bytes.len() {
+            return false;
+        }
+        if marker == 0xFE && &bytes[at + 4..at + 2 + len] == RADAR_MARK {
+            return true;
+        }
+        at += 2 + len;
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn radar_jpeg_decodes_and_is_marked() {
+        let size = 16;
+        let rgba: Vec<u8> = (0..size * size).flat_map(|i| [(i % 256) as u8, 120, 80, 255]).collect();
+        let jpeg = radar_jpeg(size, &rgba).unwrap();
+        assert!(radar_is_generated(&jpeg));
+        assert_eq!(&jpeg[..4], &[0xFF, 0xD8, 0xFF, 0xE0], "JFIF's APP0 right after SOI");
+        let img = image::load_from_memory_with_format(&jpeg, image::ImageFormat::Jpeg).unwrap();
+        assert_eq!((img.width(), img.height(), img.color()), (size, size, image::ColorType::Rgb8));
+        // A JPEG without the mark (a hand-made radar) is not ours, nor is anything that is not a JPEG.
+        let mut plain = vec![];
+        image::codecs::jpeg::JpegEncoder::new(&mut plain).encode(&[0; 3 * 4], 2, 2, image::ExtendedColorType::Rgb8).unwrap();
+        assert!(!radar_is_generated(&plain));
+        assert!(!radar_is_generated(b"\x89PNG"));
+    }
 }
