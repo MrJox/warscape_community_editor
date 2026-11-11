@@ -222,8 +222,13 @@ fn render_lf(settings: &std::path::Path) -> Option<(f64, f64)> {
 
 /// Campaign metadata follows the layered database's first settings file, independently of the map resources' source.
 fn campaign_render_lf(roots: &[PathBuf], kind: MapKind) -> Option<(f64, f64)> {
-    if kind != MapKind::Campaign { return None; }
-    let settings = roots.iter().map(|r| r.join(database_dir(kind)).join("_settings.xml")).find(|p| p.is_file())?;
+    if kind != MapKind::Campaign {
+        return None;
+    }
+    let settings = roots
+        .iter()
+        .map(|r| r.join(database_dir(kind)).join("_settings.xml"))
+        .find(|p| p.is_file())?;
     render_lf(&settings)
 }
 
@@ -233,30 +238,68 @@ mod campaign_metadata_tests {
 
     #[test]
     fn settings_follow_database_order_independently_of_map_resources() {
-        let scratch = std::env::temp_dir().join(format!("wce-campaign-metadata-{}-{}", std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-        let roots: Vec<_> = ["project", "kit-first", "kit-second"].iter().map(|s| scratch.join(s)).collect();
-        let settings: Vec<_> = roots.iter().map(|r| r.join(database_dir(MapKind::Campaign)).join("_settings.xml")).collect();
-        for p in &settings { std::fs::create_dir_all(p.parent().unwrap()).unwrap(); }
-        let write = |i: usize, height: f64, offset: f64| std::fs::write(&settings[i],
-            format!(r#"<ROOT><RENDER_PARAMS lf_height="{height}" vertical_offset="{offset}"/></ROOT>"#)).unwrap();
+        let scratch = std::env::temp_dir().join(format!(
+            "wce-campaign-metadata-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let roots: Vec<_> = ["project", "kit-first", "kit-second"]
+            .iter()
+            .map(|s| scratch.join(s))
+            .collect();
+        let settings: Vec<_> = roots
+            .iter()
+            .map(|r| {
+                r.join(database_dir(MapKind::Campaign))
+                    .join("_settings.xml")
+            })
+            .collect();
+        for p in &settings {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        }
+        let write = |i: usize, height: f64, offset: f64| {
+            let xml = format!(
+                r#"<ROOT><RENDER_PARAMS lf_height="{height}" vertical_offset="{offset}"/></ROOT>"#
+            );
+            std::fs::write(&settings[i], xml).unwrap()
+        };
         write(1, 810., 42.);
         write(2, 920., 16.);
         // A saved map and even an incomplete project database directory must not hide the kit's metadata.
         std::fs::create_dir_all(kit_map_dir(&roots[0], "campaigns/test")).unwrap();
-        assert_eq!(campaign_render_lf(&roots, MapKind::Campaign), Some((810., 42.)));
+        assert_eq!(
+            campaign_render_lf(&roots, MapKind::Campaign),
+            Some((810., 42.))
+        );
         // The project's complete settings file is authoritative over both kits.
         write(0, 1234., 56.);
-        assert_eq!(campaign_render_lf(&roots, MapKind::Campaign), Some((1234., 56.)));
+        assert_eq!(
+            campaign_render_lf(&roots, MapKind::Campaign),
+            Some((1234., 56.))
+        );
         // As with TileDatabase::load_layered, a first settings file lacking a value does not borrow it from a later file.
         std::fs::write(&settings[0], b"<ROOT/>").unwrap();
         assert_eq!(campaign_render_lf(&roots, MapKind::Campaign), None);
         // The native-map adapter's single packs database and battle-map defaults keep their existing behavior.
-        assert_eq!(campaign_render_lf(&roots[1..2], MapKind::Campaign), Some((810., 42.)));
+        assert_eq!(
+            campaign_render_lf(&roots[1..2], MapKind::Campaign),
+            Some((810., 42.))
+        );
         assert_eq!(campaign_render_lf(&roots, MapKind::Battle), None);
-        for p in settings { if p.is_file() { std::fs::remove_file(p).unwrap(); } }
+        for p in settings {
+            if p.is_file() {
+                std::fs::remove_file(p).unwrap();
+            }
+        }
     }
 }
+
+#[cfg(test)]
+#[path = "campaign_metadata_native_tests.rs"]
+mod campaign_metadata_native_tests;
 
 /// A kit's campaign maps (folders with a `tile_map.png`), as the map list names them.
 fn kit_campaign_maps(raw: &std::path::Path) -> Vec<String> {
@@ -623,24 +666,52 @@ impl TerrainTool {
         // A game without kit maps (Rome 2): the maps of its packs, with the packs' tile database (`PacksTree::raw`).
         if !e.game().features.kit_tiles {
             if game_map_folder(name, e.game().campaign_battle_map).is_none() {
-                return Err(format!("{}: no kit maps; open one of the packs' (game files)", e.game().display_name));
+                return Err(format!(
+                    "{}: no kit maps; open one of the packs' (game files)",
+                    e.game().display_name
+                ));
             }
 
             let raw = self.packs.as_ref().ok_or("no game files")?.raw()?;
             let db = self.databases_of(std::slice::from_ref(&raw), map_kind(name).0)?;
             let render_lf = campaign_render_lf(std::slice::from_ref(&raw), map_kind(name).0);
             let built = Some(built_dir(e, name));
-            return Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, render_lf, files: e.files(), packs: self.packs.clone(), built, game: e.game(), install: e.settings_ref().game_dir() });
+            return Ok(OpenInputs {
+                name: name.to_owned(),
+                game_dir: e.game().campaign_battle_map,
+                raw,
+                db,
+                render_lf,
+                files: e.files(),
+                packs: self.packs.clone(),
+                built,
+                game: e.game(),
+                install: e.settings_ref().game_dir(),
+            });
         }
 
         let roots = kit_roots(e);
-        let raw = roots.iter().find(|r| kit_map_dir(r, name).join("tile_map.png").is_file()).cloned()
+        let raw = roots
+            .iter()
+            .find(|r| kit_map_dir(r, name).join("tile_map.png").is_file())
+            .cloned()
             .or_else(|| database_root(e))
             .ok_or("no Assembly Kit with a battle tile database in the settings")?;
         // Every kit's tiles (a project's few and the Assembly Kit's): the project's database alone misses the map's tiles.
         let db = self.databases_of(&roots, map_kind(name).0)?;
         let render_lf = campaign_render_lf(&roots, map_kind(name).0);
-        Ok(OpenInputs { name: name.to_owned(), game_dir: e.game().campaign_battle_map, raw, db, render_lf, files: e.files(), packs: self.packs.clone(), built: None, game: e.game(), install: e.settings_ref().game_dir() })
+        Ok(OpenInputs {
+            name: name.to_owned(),
+            game_dir: e.game().campaign_battle_map,
+            raw,
+            db,
+            render_lf,
+            files: e.files(),
+            packs: self.packs.clone(),
+            built: None,
+            game: e.game(),
+            install: e.settings_ref().game_dir(),
+        })
     }
 
     /// Starts reading a map (the open map gives way: asked about first when it has unsaved changes, the read starts after the prompt's Save
