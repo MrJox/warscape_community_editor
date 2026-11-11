@@ -224,8 +224,9 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    plane through them, each by its mass: heave, pitch and roll, men and parts with it. **ASSUMPTION**: the game floats ships with a physics
    simulation over those spheres (their `connections`); the editor shows where the ship would rest on the waves of the moment, without
    inertia (a storm: about 1 degree of pitch and roll, decimetres of heave, smooth). Rivers and lakes stay flat. `rowing` ("1", the
-   Inspector's Rowing, `tile_ref ... rowing`): the oars play `models_oars.left_row` / `right_row` (one bone turning the oar about its
-   middle, the oarlock), all in step (**ASSUMPTION**); without it they rest in their bind pose, straight out. These moves go through
+   Inspector's Rowing, `tile_ref ... rowing`): the oars run their `models_oars.left_row` / `right_row` clips; without it they hold the clip at
+   their own offset (up to `MAX_OAR_ANIM_OFFSET` 0.25 s: a ship that never moved; docs/re/cloth.md, "Oars"), blades in the water, as the
+   game's idle ships. These moves go through
    `RenderScene::update_world_quiet`: the draw lists follow them, without a new scene revision every frame. Level 1 is taken as the lowest oar
    row and the primary weapon as the `Engine_placement` line's (**ASSUMPTION**s).
    Sails' cloth (2026-11-11): the game's verlet simulation, traced in docs/re/cloth.md and run on the CPU by `wce_render::cloth_sim`
@@ -237,6 +238,8 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    `GpuMesh::palette_base`. The wind is the ship's world matrix's (traced: nothing rotates it, no weather or battle wind reaches the sails;
    every ship feels 30 along world +Z). Attila's sails have no states: always set (Empire's furling code is there, its data isn't).
    The ropes are built as the game builds them (docs/re/cloth.md, "Rope drawing": half width the material's `uk_1`, v the nodes' `uk_1`).
+   A particle's pin is its sim vertex's colour alpha: rpfm keeps those bytes raw (`uk_1`) for the Static layout; read from `color` (zero),
+   every particle was pinned and nothing moved but the ropes until 2026-11-11 (`cloth_rig_dump` lists what a sail model builds).
    **ASSUMPTION**s (docs/re/cloth.md): the clock of the perturbation; the wind's per-sail phase uses the editor's
    generator, not the game's. Not done: projectile gusts and rope breaks (no battle in the editor). The moving ropes cast shadows (`rope.hlsl` vs30_depth / ps30_depth into each
    cascade, after the units; thinner than a shadow texel, they come out dotted); a model's static `#ropes` strips don't.

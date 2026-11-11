@@ -178,6 +178,12 @@ pub struct ClothRig {
 }
 
 impl ClothRig {
+    /// What was built, for checks: per cloth its particles, pinned ones, links, bones and first bone; then the free ropes and spheres.
+    pub fn summary(&self) -> String {
+        let cloths = self.cloths.iter().map(|c| format!("{} particles ({} pinned), {} links, {} bones from {}, {} ropes", c.particles.len(), c.particles.iter().filter(|p| p.pinned).count(), c.links.len(), c.bones.len(), c.palette_base, c.ropes.len())).collect::<Vec<_>>().join("; ");
+        format!("{} bones; cloths: {cloths}; {} free ropes, {} spheres", self.bones, self.free.len(), self.spheres.len())
+    }
+
     /// A model's cloth, if it has any (`None` without a `WeightedCloth` mesh paired with its `sim_` block).
     pub fn load(bytes: Vec<u8>) -> Option<Self> {
         let model = RigidModel::decode(&mut Cursor::new(bytes), &Some(DecodeableExtraData::default())).ok()?;
@@ -259,7 +265,8 @@ fn cloth_of(block: &rpfm_lib::files::rigidmodel::MeshBlock, bones: Vec<usize>, p
         return None;
     }
 
-    let particles = mesh.vertices()[..n].iter().map(|v| { let p = v.position(); Particle::at([p.x, p.y, p.z], v.color().w) }).collect();
+    // The weight is the colour's alpha: the vertex's last four bytes (BGRA), which rpfm keeps raw as `uk_1` for this layout.
+    let particles = mesh.vertices()[..n].iter().map(|v| { let p = v.position(); Particle::at([p.x, p.y, p.z], f32::from(v.uk_1().w) / 255.0) }).collect();
     let links = material.uk_7().iter().filter(|l| (*l.uk1() as usize) < n && (*l.uk2() as usize) < n).map(|l| (*l.uk1() as usize, *l.uk2() as usize, *l.uk3())).collect();
     let mut fans = Vec::with_capacity(n);
     let mut at = 0;

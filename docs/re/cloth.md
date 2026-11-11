@@ -221,10 +221,8 @@ What was checked (2026-11-11):
 - **The sail order is movement only.** `BCQ_SHIP_ORDER_SET_SAIL` (a battle command, handler `FUN_10452230`) sets the ship's speed
   setting (`FUN_1037fbf0`, ship +0x1078: 1, 2, 4, 8, 16) and its speed fraction (`FUN_1037c940`: 0, 0.25, 0.5, 1.0, 0.5). No display code
   reads +0x1078 (every reader is in battle logic).
-- **`FUN_102bb100` is not a sail state machine.** It times one animation (slot 6 of the ship model; length from `FUN_102abaf0(6)`)
-  played forward (states 3 → 6) when a ship flag (+0xb15, set once by `FUN_106027a0` when the ship reaches a target position, cleared by
-  the state built in `FUN_10238900`) is set, and backwards (7 → 8 → 2) when it clears; while it plays, the ship's animated parts are posed
-  at that time (`FUN_10273120` → `FUN_102562a0`). **ASSUMPTION** a beaching / disembark animation; it never touches the sails.
+- **`FUN_102bb100` is not a sail state machine.** It is the oars' (see "Oars": "slot 6" is oar kind 6, `oar_left_l1`); it never touches
+  the sails.
 
 So the editor's always-set sails are what the game shows. Nothing to add to `cloth_sim` for states.
 
@@ -289,6 +287,112 @@ instead of every 1/k ≈ 0.2..0.3 m: 3..5× too many twists, so the strands look
 smaller mips and, the DXT1 diffuse's cut-out texels being black, the albedo darkens. **ASSUMPTION** that this, not the width, is the
 "3× thinner, darker" difference: the game's width is the same ±r.
 
+## Oars (2026-11-11)
+Not cloth: rigid models posed by a one-bone clip, driven by a per-ship state machine. Source: `EmpireBattle\...\view\Naval\ShipEntity\
+ShipEntityDisplay.cpp` (the tweaker), the ship display (`FUN_10273420`) and its oar object.
+
+**Data.**
+- `models_oars` rows, file column order: `left_row` (anim), key, `rigid_model`, `left_end` (anim), `right_row`, `right_end`. One model for
+  both sides. The vanilla rows use `RigidModels/naval/variant/Oars/{roman_four,roman_six,egyptian_eight}/` (the `*_l1` keys use the `_l2`
+  files). The folder's root `oar_left_l1.anim` etc. (4 s) and the 0-bone `oar_{l,r}_{loop,raise,lower}_anim.anim` are named by no row
+  and by no string in the DLL: unused.
+- The oar model (e.g. `roman_six/oar_left_l2`): one `Static` block, x −1.90..1.90, the blade at **−x** (y ±0.10), the handle at +x
+  (z ±0.06): the origin is mid-shaft, the oarlock. The right model is the same geometry; **the side is in the clip**: the right row clips
+  start with a 180° turn about ≈ y (frame 0 of `roman_six/oar_right_l2`: 180° about (−0.11, −0.99, 0)), the left ones near identity. In
+  ship model space port is −x (docs/formats/models_naval.md), so a left blade at −x is outboard.
+- Clips: 20 fps, one track (rotation; `_end` also translation). Rows 2.0 s, looping (first frame = last). Ends 3.3 s (roman_six,
+  egyptian_eight; 2.0 s roman_four): the oar slides +x (inboard) to 6.385 m and rolls ≈83° about −x, final from ≈2.6 s: oars shipped,
+  horizontal. Some end clips name another bone (`roman_six/oar_left_l2_end.anim`: `bone_oar_left_l3_lod01`); **ASSUMPTION** the game
+  binds the single track whatever its name.
+- Sockets: the `models_naval` custom positions, kind by name (`FUN_11009ff0`, substring match): `flag` 0, `oar_left_l1..l3` 6..8,
+  `oar_right_l1..l3` 9..11. `FUN_102407e0` makes one oar per position of kind 6..11 from its xyz only (the u32 and the (0, 1, 0) are not
+  read); kind 0's first point is kept (+0x38 of that object; its use not traced).
+- Level → row: the row's `oar_upper`, `oar_middle`, `oar_lower` (ship row +0xfc, +0x100, +0x104) feed `_l3`, `_l2`, `_l1`. The loader
+  (`FUN_10239b80`) loads lower, middle, upper × (model + left row clip, looping; model + left end clip, once), then the same with the right
+  clips: row-clip instances at index kind − 6 (resource +0xc, 0xc8 bytes each), end-clip instances likewise (+0x18).
+
+**Placement** (`FUN_10273120`, every frame): the oar model's transform is the **ship's model → world matrix × translate(socket)**: no
+rotation of its own, no scale, no side flip; the clip's bone transform is applied about the model origin.
+
+**Time per oar.** The oar object (ship display +0x5f8, built by `FUN_10239a00`) keeps a state (+0x14), the last clock (+0x18), the oar
+time T (+0x1c, starts at 0), a target (+0x20) and an "end clip" flag (+0x30). Each socket i gets a fixed offset
+**o_i = `MAX_OAR_ANIM_OFFSET` (0.25 s) × u**, u = (rand >> 16) / 65535 from the MSVC LCG (`x·0x343FD + 0x269EC3`) on a battle seed: phases
+differ by up to 5 frames. Drawn time:
+- end flag clear: the row clip at `fmod(T, L) (+ L if T < 0) + o_i`, L = the row clip length of kind 6 (`oar_left_l1`'s row, 2.0 s), the
+  clip looping (`FUN_10280eb0`, `FUN_10256d30`);
+- end flag set: the end clip at `T + o_i` (`FUN_102562a0`), **ASSUMPTION** clamped to its last frame (it was loaded "once" and T grows
+  without bound in state 6).
+
+**States** (`FUN_102bb100`, each frame; clock = battle time, ms × 0.001 at battle +0x643bc; dt = clock − last clock):
+
+| state | T | end flag |
+|---|---|---|
+| 0 idle | frozen | clear |
+| 1 rowing | T += dt | clear |
+| 2 backing water | T −= dt | clear |
+| 3 → 4 stopping | target = T + L − fmod(T, L), then T += dt until T ≥ target, T = target (the stroke finished), → 5 | clear |
+| 5 → 6 | T = 0, then T += dt | set |
+| 7 → 8 → 2 | T = min(T, end clip length), then T −= dt until ≤ 0, T = 0, → 2 | set |
+
+Transitions (`FUN_10290450`, from the ship display update `FUN_102904e0`): in 0, 1 or 2: if the ship's "oars in" flag (+0xb15) is set
+→ 3; else if it is moving (`FUN_105fb3d0`: its movement controller +0x718's vtable +0x24, else ship +0x194 ∈ {1, 2}) and ship +0xb1c ≠ 1
+→ 1 when ship +0x4de is set, 2 when not; else → 0. In 6: flag cleared → 7. +0x4de is 1 by default and 0 while the ship backs away
+(`FUN_103ebff0`, `FUN_10238900`), so forward rowing plays the row clip forward. +0xb15 is set by `FUN_106027a0` (from `FUN_1025be40`, a
+position test) and cleared by `FUN_10602a00` (from `FUN_10238900`, which also sets the ship backing): **ASSUMPTION** beaching / landing.
++0xb1c = 1: not traced (oars freeze).
+
+**Speed does not change the rate**: T runs 1:1 with battle time while moving. `SHIP_OAR_*` are all sound (`NavalSoundTracker.cpp`,
+`FUN_104e3df0`, which reads the same oar time): `SHIP_OAR_DRUM_MIN_SPEED` 0.5, `_DRUM_TIME` 1.0, `_EFFORT_TIME` 0.15, `_IMPACT_TIME` 1.85,
+`_POSITION_SIDE/FRONT/BACK_OFFSET` 5.0 / 7.5 / 6.0, `SHIP_OAR_SOUND_COUNT_CLOSE` 3, `SHIP_OAR_SOUND_DISTANCE_FAR` 40.0,
+`SHIP_SPEED_IS_MOVING` 3.0.
+
+**A stationary ship** is in state 0: each oar holds its row clip at `fmod(T, L) + o_i`. Never moved (T = 0): frames 0..5, no bind pose
+anywhere. Blade below horizontal at frame 0 (the −x end through the clip's rotation): roman_six and egyptian_eight left l2 9.4°, l3 11.2°,
+right l2 13.0°, l3 16.0°; roman_four left l2 3.2°, l3 7.3°, right l2 1.8°, l3 7.3°. A ship that rowed and stopped keeps the stroke phase it
+stopped at (mid-stroke the blades go 29..47° down and sweep ±20..50°), each oar o_i apart. Only "oars in" brings out the end clip.
+
+**Splash and foam**: while rowing, each oar's blade tip (a per-level point from the model's bounds, +0x24) is posed at the oar's time
+(`FUN_10296c00`); crossing below the water height (`FUN_1169c1a0`) spawns a splash (`FUN_1051a5e0`, `vfx\naval_vfx_oar_splashes.xml`),
+not on the first frame (+0x31). `FUN_10534bc0` runs per-oar foam (`FUN_10568f90`, the `oar_sea_foam_*` tweakers) from the ship's speed
+(+0x34, ship +0x1e0 while moving): not traced further.
+
+**For the editor**: per socket of kind 6..11, model = the level's `models_oars.rigid_model`, clip = its `left_row` / `right_row`;
+transform = ship model → world × translate(socket) × the clip's bone at t_i; t_i = (offset o_i, uniform 0..0.25 s, per oar) + T, T = 0
+for an idle ship (frozen), T += dt rowing (wrap by 2.0 s). The bind pose is never shown (and would put the right blades inboard).
+
+## Pennants (2026-11-11)
+The masthead pennants are cloth blocks of the sail model (`display_dm1_misc_10/11` + `sim_dm1_misc_10/11_LOD1` on the heavy
+liburnian): **the same path as the sails**: same manager update, same context wind W ("The wind"), same solver and tweakers. Nothing in
+the solver tells them apart (only 3-particle cloths with a rope get the rigid-block treatment).
+
+**Their data** (heavy liburnian, checked against the recipe): 50 particles (100 sim vertices), in the plane x ≈ −0.00114 (x varies by
+2e-6), 7.85 m long along z and 0.83 m high (y 27.5..28.4), mass multiplier 1.0. **Pinned: 3 particles** (alpha 0), a vertical column at the
+mast end (misc_10 at z 8.62, the foremast; misc_11 at z −6.54, the mainmast); the free end trails aft (−z). 54 triangles, 162 links = the
+103 edges + 59 bend links (one per interior edge), rest = distance at rest within 0.013, 0.11..1.17 m; `uk_8` sums to 162. The display
+mesh: 310 vertices, 50 bones. No rope is tied to them; the mast spheres stop at y 20.
+
+**Offline check** of this file's recipe on misc_10 (a Python run of the forces and steps above, exact square roots, no colliders): the
+pennant does not stay horizontal at any heading. Heading +Z (W = (0, −9.8, 30)): within 2 s it swings off its aft-trailing pose (upwind:
+pressure is normal-only, so that pose is unstable) to stream forward, the tip 6.8..7.8 m from the pins, drooping 5..63° and waving.
+Heading −Z (W = (0, −9.8, 1)) and broadside (W = (−5, −9.8, 1)): it hangs and swings, droop 38..77°. Even an exactly planar copy at
+W.x = 0 hangs (65..85°): the 10 Gauss-Seidel iterations let gravity bend the strip in its own plane. So a short, stiff, horizontal pennant
+is not this recipe's result: in the editor the cause is the inputs or the plumbing (the cloth not stepping, the wind, the palette slots of
+those meshes), not a different model.
+
+**The other flags, unused in Attila.** `ShipEntityDisplay.cpp` has a separate flag system: models
+`VariantMeshes/_VariantModels/ships/<display folder>/flags.rigid_model_v2` with nodes `naval_group_flag_01..04_lod1` and
+`naval_faction_flag_01..04_lod1` (`FUN_102a4f20`), kept on the ship display (+0x668). No vanilla Attila pack has a `flags.rigid_model_v2`
+(2026-11-11; only a mod pack does), so none of this runs. What it would do, per flag each frame (`FUN_10272dd0` → `FUN_10272e30`), when
+`naval_flag_wind_display_enabled` (true) and the camera is nearer than `naval_flag_wind_clip_distance` (200):
+- a random walk (`FUN_10619800`, the MSVC LCG): strength s += (u − 0.5) / `naval_flag_wind_strength_change` (1.0), clamped to
+  [`_strength_min` 1, `_strength_max` 10]; angle a (65536 = 360°) += round((u − 0.5) rad / `naval_flag_wind_direction_change` (10)),
+  clamped to ±10°; wind = 10 · s · (sin a, 0, cos a) (the engine's angle table: +0 sin, +4 cos), so 10..100 along +z ± 10°;
+- that flag's rigid-sim update (`FUN_10622040`) with context (wind.x, −9.8, wind.z, 0…) and first argument 0.01 (**ASSUMPTION** the dt,
+  a fixed 0.01 per frame), only while battle +0x643c4 ≠ 0;
+- `naval_flag_wind_show_strength` (false) prints "Naval Wind strength…". The walk is per frame, so frame-rate dependent.
+
+**For the editor**: nothing to add for pennants: the sails' recipe with the ship's wind.
+
 ## Tweakers (defaults)
 `RigidMesh_v2.cpp` (registrations at RVA 0xb6910..0xb7210; float value at object +0x48):
 
@@ -323,14 +427,16 @@ Ship side (`EmpireBattle`): `SHIP_DISPLAY_WIND_SCALE` 30, `SHIP_DISPLAY_MIN_FORW
 `ship_display_max_sail_simulations_per_frame` 8, `ship_display_num_sail_simulations_per_thread` 2, `ship_display_multi_thread_sail_simulation`
 true, `ship_display_update_all_sail_simulations` false (these four have no code reader besides the registration: their effect, likely a
 per-frame budget of sails updated, is not traced), `RIGGING_UPDATE_ALL_SAILS` false, `render_disable_ship_verlet` false (read by `FUN_10473c10`,
-not traced).
+not traced). `MAX_OAR_ANIM_OFFSET` 0.25 ("Oars"); the `naval_flag_wind_*` set ("Pennants": `_clip_distance` 200, `_display_enabled` true,
+`_show_strength` false, `_strength_min` 1, `_strength_max` 10, `_strength_change` 1, `_direction_change` 10; registrations at RVA
+0x3d440..0x3d650).
 
 ## Not traced
 - How many sails are simulated per frame (the `ship_display_*` budget) and what dt a skipped sail then gets.
 - The rope break threshold (+0x70) and the rope particle builder (pinned assumed `w < 0.5` as for the cloth).
 - Where the sail burn value (+0x690) and the `SHIP_DISPLAY_SAILS_DAMAGE_VALUE` / `_BURN_VALUE` / `_MULTIPLIER` tweakers go (**ASSUMPTION**
   the sail material's damage / burn look, not the simulation).
-- What ship +0x70c / +0x710 are (the sail damage target), and which animation slot 6 is (`FUN_102bb100`).
+- What ship +0x70c / +0x710 are (the sail damage target).
 
 ## Key RVAs
 | RVA | What |
@@ -358,7 +464,13 @@ not traced).
 | 0x5c98f0, 0x412bd0 | Empire's `.rigging` parser (`battle_sail`, `half_sail`), its `_furled` sail loader: unused in Attila |
 | 0xfe9620 | `models_naval` row reader (damage part sail states `stationary` / `battle_sail` / `half_sail`) |
 | 0x452230, 0x37fbf0, 0x37c940 | `BCQ_SHIP_ORDER_SET_SAIL` handler, ship speed setting (+0x1078), its speed fraction |
-| 0x2bb100, 0x290450 | ship model animation slot 6 timer (not sails) and its trigger |
+| 0x2bb100, 0x290450 | oar state machine and its transitions ("Oars") |
+| 0x239a00, 0x273120, 0x280eb0 | oar object (per-oar offsets), oar posing per frame, the row-clip time |
+| 0x2407e0, 0x239b80, 0x1009ff0 | oar sockets from the custom positions, oar models and clips, custom position kinds |
+| 0x256d30, 0x2562a0, 0x296c00 | pose a row clip / an end clip, blade tip for splashes |
+| 0x5fa2a0, 0x5fb3d0, 0x5fb7f0, 0x6027a0, 0x602a00 | ship: "oars in" (+0xb15), moving, +0xb1c == 1, set / clear "oars in" |
+| 0x4e3df0 | naval sound tracker (`SHIP_OAR_*`) |
+| 0x2a4f20, 0x272dd0, 0x272e30, 0x619800, 0x622040 | `flags.rigid_model_v2` flags (unused in Attila): build, per-frame update, wind walk, sim update |
 | 0x102589b0 | projectile segments into the sail context |
 | 0x189a3e0, 0x188a180 | rope vertices from the particles; its per-frame caller (rope vtable 0x1cbe330 slot 25) |
 | 0x17f5f70, 0x1890500, 0x18870c0 | rope draw and culling, technique (gbuffer_rigid / shadowmap_rigid), texture binding |
