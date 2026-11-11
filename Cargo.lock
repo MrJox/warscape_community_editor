@@ -2581,6 +2581,7 @@ version = "0.0.1"
 name = "wce_tile_tool"
 version = "0.0.1"
 dependencies = [
+ "image",
  "rayon",
  "rpfm_lib",
  "serde",

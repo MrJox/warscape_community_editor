@@ -2977,7 +2977,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("radar_save", "radar_save [path.png]", "write the open tile's radar (docs/plans/radar.md: the minimap the game shows, drawn from the tile) as a PNG, by default into the tile's folder", |e, a| {
+    c.add("radar_save", "radar_save [force] [path.jpg|path.png]", "write the open tile's radar (docs/plans/radar.md: the minimap the game shows, drawn from the tile) as the game's JPEG (a PNG for a .png path), by default the tile folder's loading_screen_radar.jpg; force replaces a hand-made radar", |e, a| {
         with_tile(e, |t, e| {
             let id = crate::tool::document_id(e).ok_or("no tile");
             if let Ok(id) = id
@@ -2985,7 +2985,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             {
                 wce_foundation::log::warn(format!("radar: no rivers or cliffs: {why}"));
             }
-            t.minimap.save_radar(e, a.first().map(String::as_str)).map_or_else(fail, ok)
+            let force = a.iter().any(|w| w == "force");
+            let path = a.iter().find(|w| *w != "force").map(String::as_str);
+            t.minimap.save_radar(e, path, force).map_or_else(fail, ok)
         })
     });
 
