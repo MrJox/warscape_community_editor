@@ -269,6 +269,8 @@ pub struct MinimapUi {
     /// The middle button is panning from this cursor position.
     pan_from: Option<Vec2>,
     wheel_owned: bool,
+    /// The fit pill's width last frame (it hangs from the map's right edge).
+    fit_width: f32,
 }
 
 impl Default for MinimapUi {
@@ -276,7 +278,7 @@ impl Default for MinimapUi {
         Self {
             base: Base::Ground(TerrainView::Colour), show_siege: true, show_zones: true, show_cells: false, show_nogo: false, show_camera: true, zoom: 1.0, centre: None,
             visible: false, doc: 0, serial: 0, note: String::new(), colour: GroundPicture::default(), ground: GroundPicture::default(), heights: Picture::default(),
-            height_for: None, height_time: -1e9, height_range: (0.0, 0.0), radar: Picture::default(), radar_for: None, radar_time: -1e9, siege: None, siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false,
+            height_for: None, height_time: -1e9, height_range: (0.0, 0.0), radar: Picture::default(), radar_for: None, radar_time: -1e9, siege: None, siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false, fit_width: 0.0,
         }
     }
 }
@@ -369,7 +371,6 @@ impl MinimapUi {
             self.doc = id;
         }
 
-        self.draw_bar();
         self.refresh(e, id);
         if !self.note.is_empty() {
             gui::text_disabled(&self.note);
@@ -466,8 +467,8 @@ impl MinimapUi {
         draw_north(&dl, hi, lo, e.viewport.north);
         dl.pop_clip_rect();
 
-        // The base's chip at the top left, over the map.
-        let hovered = self.draw_chip(lo) && hovered;
+        // The chips over the map: the base's and the overlays' at the top left, fit at the top right.
+        let hovered = self.draw_chip(lo) && self.draw_fit(lo, hi) && hovered;
 
         // The left button: the camera goes there.
         if active && gui::is_mouse_down(0) {
@@ -486,7 +487,8 @@ impl MinimapUi {
         hovered
     }
 
-    /// The base's chip and its popup (the ground views, then the minimap's own bases); false while the cursor is over the chip.
+    /// The base's chip and its popup (the ground views, then the minimap's own bases), and the overlays' chip; false while the cursor is
+    /// over the pill.
     fn draw_chip(&mut self, lo: Vec2) -> bool {
         gui::set_cursor_screen_pos(v2(lo.x + 6.0, lo.y + 6.0));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
@@ -497,7 +499,7 @@ impl MinimapUi {
                 gui::open_popup("minimapbase");
             }
 
-            over = gui::is_item_hovered();
+            over |= gui::is_item_hovered();
             if begin_chip_popup("minimapbase") {
                 gui::text_disabled("Minimap");
                 let current = match self.base {
@@ -518,6 +520,22 @@ impl MinimapUi {
 
                 gui::end_popup();
             }
+
+            gui::same_line_touching();
+            let shown = [(self.show_siege, "siege AI"), (self.show_zones, "deployment"), (self.show_cells, "cells"), (self.show_nogo, "no-go"), (self.show_camera, "camera")]
+                .into_iter()
+                .filter_map(|(on, name)| on.then_some(name))
+                .collect::<Vec<_>>();
+            let tip = format!("Overlays: {}\nClick: what is drawn over the map", if shown.is_empty() { "none".to_owned() } else { shown.join(", ") });
+            if chip(!shown.is_empty(), icons::EYE, "minimapoverlays", &tip) {
+                gui::open_popup("minimapoverlays");
+            }
+
+            over |= gui::is_item_hovered();
+            if begin_chip_popup("minimapoverlays") {
+                self.draw_overlays();
+                gui::end_popup();
+            }
         }
 
         gui::end_child();
@@ -525,29 +543,42 @@ impl MinimapUi {
         !over
     }
 
-    fn draw_bar(&mut self) {
-        gui::checkbox("siege AI", &mut self.show_siege);
-        gui::same_line_or_wrap(gui::checkbox_width("deployment"));
-        gui::checkbox("deployment", &mut self.show_zones);
-        gui::same_line_or_wrap(gui::checkbox_width("cells"));
-        gui::checkbox("cells", &mut self.show_cells);
+    fn draw_overlays(&mut self) {
+        gui::text_disabled("Overlays");
+        gui::checkbox("Siege AI##minimap", &mut self.show_siege);
+        gui::checkbox("Deployment##minimap", &mut self.show_zones);
+        gui::checkbox("Cells##minimap", &mut self.show_cells);
         if gui::is_item_hovered() {
             gui::set_tooltip("The tile's cells (its database entry's): the valid ones outlined, the others darkened (the Tile panel's valid cells).");
         }
 
-        gui::same_line_or_wrap(gui::checkbox_width("no-go"));
-        gui::checkbox("no-go", &mut self.show_nogo);
+        gui::checkbox("No-go##minimap", &mut self.show_nogo);
         if gui::is_item_hovered() {
             gui::set_tooltip(AUTO_NOGO_TIP);
         }
 
-        gui::same_line_or_wrap(gui::checkbox_width("camera"));
-        gui::checkbox("camera", &mut self.show_camera);
-        gui::same_line_or_wrap(gui::button_width("fit"));
-        if gui::small_button("fit") {
-            self.zoom = 1.0;
-            self.centre = None;
+        gui::checkbox("Camera##minimap", &mut self.show_camera);
+    }
+
+    /// The fit pill at the top right of the map (`lo`, `hi`): the whole tile again; false while the cursor is over it.
+    fn draw_fit(&mut self, lo: Vec2, hi: Vec2) -> bool {
+        gui::set_cursor_screen_pos(v2(hi.x - self.fit_width - 6.0, lo.y + 6.0));
+        gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
+        let mut over = false;
+        if gui::begin_pill("##minimapfit") {
+            if chip(false, &format!("{} Fit", icons::FOCUS), "minimapfit", "Fit: the whole tile in the panel again (undoes the zoom and the pan)") {
+                self.zoom = 1.0;
+                self.centre = None;
+            }
+
+            over = gui::is_item_hovered();
         }
+
+        gui::end_child();
+        let (l, h) = gui::item_rect();
+        self.fit_width = h.x - l.x;
+        gui::pop_style_color(1);
+        !over
     }
 
     /// Makes what is out of date: the base picture, the siege AI.
@@ -1008,7 +1039,7 @@ fn draw_north(dl: &gui::DrawList, hi: Vec2, lo: Vec2, north: [f32; 2]) {
 ///
 /// The encoder fails.
 pub fn radar_jpeg(size: u32, rgba: &[u8]) -> Result<Vec<u8>, String> {
-    let rgb: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+    let rgb: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
     let mut jpeg = vec![];
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, RADAR_JPEG_QUALITY)
         .encode(&rgb, size, size, image::ExtendedColorType::Rgb8)
