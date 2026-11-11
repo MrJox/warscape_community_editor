@@ -44,10 +44,10 @@ pub const FILLED_TYPES: [&str; 11] = [
 ];
 
 /// The types of polygon and line with entries of their own in the overlay colour table; anything else shares the last.
-const SLOT_TYPES: [&str; 15] = [
+const SLOT_TYPES: [&str; 16] = [
     "AI_HINT_POLYGON_INSTANCE", "CaptureLocationPolygonInstance", "CivilianDeploymentZone", "DEPLOYMENT_ZONE_POLYGON_INSTANCE", "EF_POLYGON_INSTANCE", "GO_REGION_POLYGON_INSTANCE",
     "LiteBuildingZone", "NOGO_REGION_POLYGON_INSTANCE", "SIEGE_AI_POLYGON_INSTANCE", "VegetationExclusionPolygonInstance", "ZONE_POLYGON_INSTANCE", "AISeparatorInstance",
-    "SplineRiverInstance", "SEGMENTED_SPLINE_INSTANCE", "WceWallSpline",
+    "SplineRiverInstance", "SEGMENTED_SPLINE_INSTANCE", "WceWallSpline", "WceMeasureLine",
 ];
 
 /// The outline's opacity at which the line along an edge is opaque: the default look.
@@ -136,6 +136,7 @@ pub fn polygon_colour(t: &str) -> [f32; 3] {
         "SEGMENTED_SPLINE_INSTANCE" => [0.8, 0.62, 0.4],
         "WceWallSpline" => [0.75, 0.75, 0.75],
         "WceRoadSpline" => [0.8, 0.62, 0.4],
+        "WceMeasureLine" => [1.0, 0.95, 0.3],
         _ => [0.3, 0.9, 0.9],
     }
 }

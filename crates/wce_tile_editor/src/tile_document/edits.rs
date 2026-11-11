@@ -911,6 +911,7 @@ impl TileDocument {
             "AI_HINT_POLYGON_INSTANCE" => "AI hint polygon",
             super::WALL_SPLINE => "Wall",
             super::ROAD_SPLINE => "Road",
+            wce_tile::new_instances::MEASURE_LINE => "Tape measure",
             _ => "Polygon",
         };
         let e = self.tscene_mut().add_polygon(Some(layer), kind, name, &local, &extra)?;
@@ -1755,7 +1756,7 @@ impl TileDocument {
                 new_polygon(kind, points, false).position(c).attr("road_id", t.next_road_id().to_string())
             }
 
-            ("AISeparatorInstance", Create::Line(pts)) => {
+            ("AISeparatorInstance" | wce_tile::new_instances::MEASURE_LINE, Create::Line(pts)) => {
                 let (c, points) = line(pts)?;
                 new_polygon(kind, points, false).position(c)
             }

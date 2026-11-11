@@ -1392,7 +1392,36 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if a.first().and_then(|x| x.parse::<usize>().ok()) == Some(doors.len()) { ok("") } else { fail(format!("{} door section(s)", doors.len())) }
     });
 
-    c.add("new_layer", "new_layer <name>", "a new layer under the scene graph, selected", |e, a| {
+    c.add("tile_measure", "tile_measure", "log the selected tape measure's (WceMeasureLine) lengths: the whole line's and each stretch's", |e, _| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(m) = el.and_then(|el| d.tile().measure_line(el)) else { return fail("no tape measure selected") };
+        let mut out = crate::measure_tool::summary(&m).into_iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>();
+        for (i, s) in m.stretches.iter().enumerate() {
+            out.push(format!("{i}-{}: ground {:.3} straight {:.3} map {:.3} rise {:+.3} grade {:+.2} %", i + 1, s.ground, s.straight, s.horizontal, s.rise, s.grade_percent()));
+        }
+
+        ok(out.join("\n"))
+    });
+
+    c.add(
+        "assert_measure", "assert_measure <ground m> <straight m> <map m> [tolerance m]",
+        "test: the selected tape measure's total lengths along the ground, straight and on the map (tolerance 0.01 m)",
+        |e, a| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(m) = el.and_then(|el| d.tile().measure_line(el)) else { return fail("no tape measure selected") };
+            let want = |i: usize| a.get(i).and_then(|v| number(v));
+            let (Some(ground), Some(straight), Some(map)) = (want(0), want(1), want(2)) else { return fail("usage: assert_measure <ground> <straight> <map> [tolerance]") };
+            let tol = f64::from(want(3).unwrap_or(0.01));
+            let t = &m.total;
+            let got = format!("ground {:.3}, straight {:.3}, map {:.3}", t.ground, t.straight, t.horizontal);
+            let off = |a: f64, b: f32| (a - f64::from(b)).abs() > tol;
+            if off(t.ground, ground) || off(t.straight, straight) || off(t.horizontal, map) { fail(got) } else { ok(got) }
+        },
+    );
+
+    c.add("new_layer", "new_layer <name>","a new layer under the scene graph, selected", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let Some(name) = a.first() else { return fail("usage: new_layer <name>") };
         let graph = d.tile().tscene().scene_graph();

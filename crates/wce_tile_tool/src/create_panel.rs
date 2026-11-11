@@ -83,8 +83,8 @@ fn generic_folder(counts: &std::collections::HashMap<String, usize>, key: &str) 
 }
 
 /// The types without a key of each fixed category (category, type, drawn).
-const FIXED: [(usize, &str, bool); 17] = [
-    (11, "WceRefHuman", false), (11, "WceRefUnit", false),
+const FIXED: [(usize, &str, bool); 18] = [
+    (11, "WceRefHuman", false), (11, "WceRefUnit", false), (11, "WceMeasureLine", true),
     (5, "POINT_LIGHT_INSTANCE", false), (7, "CaptureLocationInstance", false), (7, "DeploymentZonePolygonInstanceGroup", false),
     (7, "CivilianShelter", false), (7, "CivilianDeploymentZone", true), (7, "ZONE_POLYGON_INSTANCE", true),
     (7, "LiteBuildingZone", true), (9, "SiegeAINodeInstance", false), (9, "SiegeAIEdgeInstance", true), (8, "AI_HINT_POLYGON_INSTANCE", true),

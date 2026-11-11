@@ -20,6 +20,7 @@ mod layers_panel;
 pub mod kit_prompt;
 pub mod launch;
 pub mod launch_prompt;
+pub mod measure_tool;
 pub mod minimap_panel;
 pub mod new_tile_dialog;
 pub mod placement_modes;
