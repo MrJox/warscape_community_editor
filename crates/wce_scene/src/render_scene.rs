@@ -57,6 +57,9 @@ pub enum Kind {
 
     /// A point light, drawn by the renderer's light pass.
     PointLight,
+
+    /// Moving ropes, drawn by the renderer's rope pass.
+    Ropes,
 }
 
 /// One grass model's patches (rigidgrass, drawn instanced near the camera). Each instance is the rows of its 3x4 world matrix; the entity's
@@ -126,6 +129,24 @@ pub const MODEL_SKINNED_SUFFIX: &str = "#skinned";
 /// turned to the camera along each rope. The rope shader reads the instance's POSITION4.w as its burn: such an instance has it 0, not the
 /// rigid materials' opacity (1000). The plain model leaves its ropes out.
 pub const MODEL_ROPES_SUFFIX: &str = "#ropes";
+
+/// Ropes in the entity's space (a simulated sail's, `cloth_sim`): a strip turned to the camera along each line of nodes, through `rope.hlsl`'s
+/// world technique. Their nodes move every frame ([`RenderScene::update_ropes`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Ropes {
+    pub lines: Vec<RopeLine>,
+
+    /// The ropes' diffuse and normal maps (VFS paths).
+    pub diffuse: String,
+    pub normal: String,
+}
+
+/// One rope: its nodes in order, and its radius (game units).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RopeLine {
+    pub nodes: Vec<[f32; 3]>,
+    pub radius: f32,
+}
 
 /// One part of a skinned instance.
 #[derive(Clone, Debug, PartialEq)]
@@ -905,6 +926,7 @@ impl Default for Water {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Payload {
     MeshInstance(MeshInstance),
+    Ropes(Ropes),
     SkinnedInstance(SkinnedInstance),
     Terrain(Terrain),
     VfxEmitter(VfxEmitter),
@@ -929,6 +951,7 @@ impl Payload {
             Self::Decal(_) => Kind::Decal,
             Self::Grass(_) => Kind::Grass,
             Self::PointLight(_) => Kind::PointLight,
+            Self::Ropes(_) => Kind::Ropes,
         }
     }
 }
@@ -1344,6 +1367,17 @@ impl RenderScene {
             e.payload = Payload::SkinnedInstance(instance);
         } else {
             self.update_payload(id, Payload::SkinnedInstance(instance));
+        }
+    }
+
+    /// Moving ropes' nodes, every frame: as [`Self::update_pose`], without anything moving on (the renderer reads them every frame).
+    pub fn update_ropes(&mut self, id: EntityId, world: Float4x4, ropes: Ropes) {
+        let Some(e) = self.find_mut(id) else { return };
+        e.world = world;
+        if matches!(e.payload, Payload::Ropes(_)) {
+            e.payload = Payload::Ropes(ropes);
+        } else {
+            self.update_payload(id, Payload::Ropes(ropes));
         }
     }
 

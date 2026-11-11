@@ -29,6 +29,7 @@ mod lights;
 mod grass;
 mod draws;
 mod skinned;
+mod ropes;
 mod editor;
 pub mod game;
 pub use self::editor::{SurfaceGrid, SurfaceHit};
@@ -846,6 +847,7 @@ pub(crate) struct KindIndex {
     pub water: Vec<wce_scene::render_scene::EntityId>,
     pub lights: Vec<wce_scene::render_scene::EntityId>,
     pub terrain: Vec<wce_scene::render_scene::EntityId>,
+    pub ropes: Vec<wce_scene::render_scene::EntityId>,
 }
 
 impl KindIndex {
@@ -859,8 +861,10 @@ impl KindIndex {
         self.water.clear();
         self.lights.clear();
         self.terrain.clear();
+        self.ropes.clear();
         for e in scene.entities() {
             match &e.payload {
+                wce_scene::render_scene::Payload::Ropes(_) => self.ropes.push(e.id),
                 wce_scene::render_scene::Payload::Water(_) => self.water.push(e.id),
                 wce_scene::render_scene::Payload::PointLight(_) => self.lights.push(e.id),
                 wce_scene::render_scene::Payload::Terrain(_) => self.terrain.push(e.id),
@@ -927,6 +931,7 @@ pub struct Renderer {
     pub(crate) climate: String,
     pub(crate) draw_lists: SceneDraws,
     pub(crate) skinned: skinned::SkinnedDraws,
+    pub(crate) ropes: ropes::RopeDraws,
     pub(crate) camera: CameraState,
     pub(crate) clock: FrameClock,
     pub(crate) draw_stats: DrawStats,
@@ -1075,6 +1080,7 @@ impl Renderer {
             climate: String::new(),
             draw_lists: SceneDraws::default(),
             skinned: skinned::SkinnedDraws::default(),
+            ropes: ropes::RopeDraws::default(),
             camera: CameraState::default(),
             clock: FrameClock::default(),
             draw_stats: DrawStats::default(),
@@ -1625,6 +1631,7 @@ impl Renderer {
         let proj = cam.projection(aspect);
 
         self.prepare_skinned(scene, cam.eye);
+        self.prepare_ropes(scene);
 
         // Before the shadows: the material terrain casts its own. The shadow pass sets only the cascades' view_projection; the rest of the
         // camera's constants (its position and view, which the trees' shaders take their LOD and billboards' facing from) must be the main

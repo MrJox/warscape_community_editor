@@ -229,8 +229,15 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    middle, the oarlock), all in step (**ASSUMPTION**); without it they rest in their bind pose, straight out. These moves go through
    `RenderScene::update_world_quiet`: the draw lists follow them, without a new scene revision every frame. Level 1 is taken as the lowest oar
    row and the primary weapon as the `Engine_placement` line's (**ASSUMPTION**s).
-   Left: the sails' cloth simulation (they stand at rest: their `sim_*` meshes, `cloth_bones` and the material's undocumented cloth
-   sections would drive them).
+   Sails' cloth (2026-11-11): the game's verlet simulation, traced in docs/re/cloth.md and run on the CPU by `wce_render::cloth_sim`
+   (`ClothRig` from a sail model, `ClothSim` per reference): the `sim_*` meshes' particles, links and triangle fans, the ropes tied to them
+   and the free ones, the masts' spheres; 20 Hz fixed steps, ten relaxations, the wind of the ship's heading (`ship_wind`: 30 along world +Z,
+   gravity, clamped) with its travelling side perturbation. Each frame the sails' palette (`X_k (v - p0_k) + x_k` per bone) goes to their
+   skinned entity (`update_pose`), and the model's ropes to a `Payload::Ropes` entity drawn by `rope.hlsl`'s world technique
+   (`renderer/ropes.rs`; the static `#ropes` strips are for models without a cloth). A model's sails share one palette, each mesh from its
+   `GpuMesh::palette_base`. **ASSUMPTION**s (docs/re/cloth.md): that no weather direction rotates the world wind, the clock of the
+   perturbation, the rope radius; the wind's per-sail phase uses the editor's generator, not the game's. Not done: the sails' furled
+   states, projectile gusts and rope breaks (no battle in the editor), the ropes' shadows.
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
    tool needs them.
