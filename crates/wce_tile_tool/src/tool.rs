@@ -1655,6 +1655,7 @@ impl TileTool {
         let mut o = Overlay { depth_test: false, pickable: false, ..Default::default() };
         let t = d.tile();
         self.flip_overlay(t, &selected(e), &mut o);
+        self.angle_overlay(e, t, &mut o);
         let gold = overlay_colour(1.0, 0.85, 0.2, 1.0);
         let veg = self.placing == Some(Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE") && self.veg.is_some_and(|b| b.on);
         let radius = if veg { self.veg.map_or(1.0, |b| b.radius) } else { self.brush.radius_m };
@@ -3888,6 +3889,11 @@ impl Tool for TileTool {
                         self.finish_drawing(e);
                     } else if self.terrain_hit {
                         self.draw_pts.push(self.cursor);
+
+                        // An angle finder is done at its third point.
+                        if self.draw_pts.len() == 3 && self.draft.as_ref().is_some_and(|d| d.kind == wce_tile_editor::tile_document::ANGLE_FINDER) {
+                            self.finish_drawing(e);
+                        }
                     }
 
                     return true;
@@ -4264,6 +4270,7 @@ impl Tool for TileTool {
         if let Some(id) = document_id(e) {
             self.ref_units.draw(e, id);
             self.inspect_measure(e, id);
+            self.inspect_angle(e, id);
         }
     }
 

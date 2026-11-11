@@ -1421,6 +1421,23 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("tile_angle", "tile_angle", "log the selected angle finder's (WceAngleFinder) angle and arms", |e, _| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(a) = el.and_then(|el| d.tile().angle_finder(el)) else { return fail("no angle finder selected") };
+        ok(crate::measure_tool::angle_summary(&a).into_iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"))
+    });
+
+    c.add("assert_angle", "assert_angle <on the map deg> <in space deg> [tolerance deg]", "test: the selected angle finder's angles (tolerance 0.1 deg)", |e, a| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(got) = el.and_then(|el| d.tile().angle_finder(el)) else { return fail("no angle finder selected") };
+        let (Some(map), Some(space)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else { return fail("usage: assert_angle <map> <space> [tolerance]") };
+        let tol = f64::from(a.get(2).and_then(|v| number(v)).unwrap_or(0.1));
+        let text = format!("on the map {:.3}, in space {:.3}", got.on_map, got.in_space);
+        if (got.on_map - f64::from(map)).abs() > tol || (got.in_space - f64::from(space)).abs() > tol { fail(text) } else { ok(text) }
+    });
+
     c.add("new_layer", "new_layer <name>","a new layer under the scene graph, selected", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let Some(name) = a.first() else { return fail("usage: new_layer <name>") };

@@ -341,7 +341,7 @@ pub fn schema(tag: &str) -> Option<&'static [Prop]> {
         "WceWallSpline" => WALL,
         "WceRoadSpline" => ROAD,
         "WceRefHuman" | "WceRefUnit" => REFERENCE,
-        "WceMeasureLine" => MEASURE,
+        "WceMeasureLine" | "WceAngleFinder" => MEASURE,
         "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => DEPLOYMENT_POLYGON,
         "ZONE_POLYGON_INSTANCE" => ZONE_POLYGON,
         "AISeparatorInstance" => SEPARATOR,

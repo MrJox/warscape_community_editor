@@ -104,6 +104,7 @@ pub const ARROW_BIG_UP: &str = "\u{e1e4}";
 pub const ARROW_BIG_DOWN: &str = "\u{e1e1}";
 pub const MINUS: &str = "\u{e11c}";
 pub const RULER: &str = "\u{e14b}";
+pub const ANGLE: &str = "\u{e732}";
 pub const COPY: &str = "\u{e09e}";
 pub const SCISSORS: &str = "\u{e14e}";
 pub const CLIPBOARD: &str = "\u{e3e8}";

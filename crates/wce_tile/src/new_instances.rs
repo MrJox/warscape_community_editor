@@ -23,7 +23,14 @@ pub const ROAD_GUIDE: &str = "WceRoadGuide";
 /// meant its own to be (TEd's never reach tile.ted); never in what the kit or the game gets.
 pub const MEASURE_LINE: &str = "WceMeasureLine";
 
-/// A tape measure's attributes the editor keeps to itself (an open line, on the ground, not turned): not shown in the Inspector.
+/// An angle finder (TEd's `ANGLE_FINDER_INSTANCE`, `wce_tile::measure::angle`): three points, the angle at the middle one. As
+/// [`MEASURE_LINE`], in tile.wce only.
+pub const ANGLE_FINDER: &str = "WceAngleFinder";
+
+/// A tape measure's (and an angle finder's) attributes the editor keeps to itself (an open line, on the ground, not turned): not shown in the Inspector.
+pub const MEASURE_KINDS: [&str; 2] = [MEASURE_LINE, ANGLE_FINDER];
+
+/// What [`MEASURE_KINDS`] hide in the Inspector.
 pub const MEASURE_HIDDEN_ATTRS: [&str; 3] = ["polygon_closed", "surface_mode", "orientation"];
 
 /// A soldier standing in the tile to measure the scale against (docs/plans/units.md). Not TEd's, nor the game's: it is saved in tile.wce and goes no
@@ -75,6 +82,15 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
     kind: MEASURE_LINE,
     attrs: &[
         ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("name", "Tape measure"),
+        ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
+    ],
+    wrappers: &["points"],
+    point_attrs: &[("position", "0,0,0")],
+    },
+    InstanceTemplate {
+    kind: ANGLE_FINDER,
+    attrs: &[
+        ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("name", "Angle finder"),
         ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
     ],
     wrappers: &["points"],
