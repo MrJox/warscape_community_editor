@@ -125,6 +125,13 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// Items of the File menu after Export: sharing the tool's projects with other users (a zip to give, one to import). True when the
+    /// tool drew any.
+    fn share_menu(&mut self, editor: &mut Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
     /// Items of File > Export: what the tool writes for the game or for TEd (a kit, a mod pack, an exported tile...), each asking for its
     /// destination. Saves go into the project; exports go where they are asked to. True when the tool drew any.
     fn export_menu(&mut self, editor: &mut Editor) -> bool {

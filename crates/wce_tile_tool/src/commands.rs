@@ -1868,6 +1868,17 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("share_project", "share_project <zip>", "write the open tile's project (its variations, entry and the projects' prefabs it uses) into a zip to share", |e, a| {
+        let Some(out) = a.first().map(std::path::PathBuf::from) else { return fail("usage: share_project <zip>") };
+        with_tile(e, |t, e| t.share_project(e, Some(&out)).map_or_else(fail, ok))
+    });
+
+    c.add("import_shared", "import_shared <zip> [overwrite]", "import a shared project into the projects folder and open its tile; without overwrite, one that replaces files asks first", |e, a| {
+        let Some(zip) = a.first().map(std::path::PathBuf::from) else { return fail("usage: import_shared <zip> [overwrite]") };
+        let overwrite = a.get(1).is_some_and(|w| w == "overwrite");
+        with_tile(e, |t, e| t.import_shared_from(e, &zip, overwrite).map_or_else(fail, ok))
+    });
+
     c.add("tile_flip_tile", "tile_flip_tile x|z", "flip the whole tile about its middle along x or z: items, terrain, terrain layers and links (one undo entry)", |e, a| {
         let Some(axis) = a.first().and_then(|w| wce_tile_editor::tile_document::TileFlipAxis::named(w)) else { return fail("usage: tile_flip_tile x|z") };
         with_tile(e, |t, e| t.do_flip_tile(e, axis).map_or_else(fail, ok))

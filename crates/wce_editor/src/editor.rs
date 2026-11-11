@@ -1979,6 +1979,7 @@ impl Editor {
                 gui::end_menu();
             }
 
+            let _ = self.with_tool_at(self.active_tool, |t, e| t.share_menu(e));
             if gui::menu_item(&format!("{}  Close document", icons::X), None, false, has_doc) {
                 self.ask_close(active);
             }

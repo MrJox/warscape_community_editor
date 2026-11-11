@@ -2,6 +2,7 @@
 //! a tile opened for editing with its tile database entry.
 
 pub mod link_checks;
+pub mod share;
 pub mod measure;
 pub mod resize;
 pub mod road_dirt;
