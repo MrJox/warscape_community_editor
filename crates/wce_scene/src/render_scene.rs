@@ -141,10 +141,11 @@ pub struct Ropes {
     pub normal: String,
 }
 
-/// One rope: its nodes in order, and its radius (game units).
+/// One rope: its nodes in order, their texture coordinates along it (one per node), and its half width (game units).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RopeLine {
     pub nodes: Vec<[f32; 3]>,
+    pub v: Vec<f32>,
     pub radius: f32,
 }
 

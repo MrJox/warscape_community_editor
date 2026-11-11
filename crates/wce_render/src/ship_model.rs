@@ -91,9 +91,12 @@ pub struct ShipModel {
     pub missing: Vec<String>,
 }
 
-/// The EF lines' purposes the men fill, in this order (`models_naval::EF_PURPOSES`): marines, the firing positions, seamen, overflow, the
-/// perimeter, boarding. **ASSUMPTION**: the game's order isn't traced; the lines of the first are where the oracle ship's men are drawn.
-const CREW_PURPOSES: [u32; 8] = [4, 10, 11, 12, 5, 3, 13, 9];
+/// The EF lines' purpose a ship's men stand on (`models_naval::EF_PURPOSES`): Marines. The ship builds no slots for the others (`FUN_10268910`;
+/// docs/formats/models_naval.md, "Men aboard").
+const MARINES: u32 = 4;
+
+/// The marines template's spacing (m).
+const MARINE_SPACING: f32 = 0.7;
 
 /// The weapon lines: the primary weapon's, the secondary's (**ASSUMPTION**, by their names).
 const ENGINE_PLACEMENT: u32 = 22;
@@ -170,28 +173,31 @@ pub fn fit_plane(points: &[([f32; 2], f32, f32)]) -> (f32, f32, f32) {
     (mh - a * mx - b * mz, a, b)
 }
 
-/// Where `men` stand on a ship (its space): along its lines of the crew's purposes in [`CREW_PURPOSES`]' order, each line from its first end,
-/// `spacing` metres apart, as many as it holds. Fewer when the lines are full.
-pub fn crew_spots(logic: &ShipLogic, men: u32, spacing: f32) -> Vec<[f32; 3]> {
-    let spacing = if spacing > 0.1 { spacing } else { 0.8 };
+/// Where `men` stand on a ship (its space) and which way each faces (a turn about y): the slots of its Marines lines (`FUN_10650ff0`), the
+/// lines highest first (by their middle's height; equal ones in the file's order), on each `trunc(L / 0.7)` slots (at least one) 0.7 m apart,
+/// centred, from its first end, facing the line's direction on the level. The first `men` slots; fewer when the lines hold fewer.
+/// **ASSUMPTION**: the unit takes the slots in this order (the code that fills its list from the ship's template isn't traced; it gives the
+/// game's look: the stern platform first).
+pub fn crew_spots(logic: &ShipLogic, men: u32) -> Vec<[f32; 4]> {
+    let mut lines: Vec<&EfLine> = logic.ef_lines.iter().filter(|l| l.purpose == MARINES).collect();
+    let middle = |l: &EfLine| (l.ends[0][1] + l.ends[1][1]) * 0.5;
+    lines.sort_by(|a, b| middle(b).total_cmp(&middle(a)));
     let mut out = Vec::with_capacity(men as usize);
-    for purpose in CREW_PURPOSES {
-        for line in logic.ef_lines.iter().filter(|l| l.purpose == purpose) {
-            let [a, b] = line.ends;
-            let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-            let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-            let fits = (length / spacing).floor() as u32 + 1;
-
-            // Centred on the line.
-            let margin = (length - (fits - 1) as f32 * spacing) * 0.5 / length.max(1e-6);
-            for k in 0..fits {
-                if out.len() >= men as usize {
-                    return out;
-                }
-
-                let t = if fits == 1 { 0.5 } else { margin + k as f32 * spacing / length };
-                out.push([a[0] + d[0] * t, a[1] + d[1] * t, a[2] + d[2] * t]);
+    for line in lines {
+        let [a, b] = line.ends;
+        let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        let u = if length > 0.0 { [d[0] / length, d[1] / length, d[2] / length] } else { [0.0; 3] };
+        let slots = ((length / MARINE_SPACING) as u32).max(1);
+        let first = (length - (slots - 1) as f32 * MARINE_SPACING) * 0.5;
+        let turn = if line.direction[0] == 0.0 && line.direction[2] == 0.0 { 0.0 } else { facing(line.direction) };
+        for k in 0..slots {
+            if out.len() >= men as usize {
+                return out;
             }
+
+            let t = first + k as f32 * MARINE_SPACING;
+            out.push([a[0] + u[0] * t, a[1] + u[1] * t, a[2] + u[2] * t, turn]);
         }
     }
 
@@ -259,9 +265,9 @@ impl ShipModel {
         Ok(Self { unit: unit.to_owned(), variant: entry.variant.clone(), parts, logic, faction_colours, missing })
     }
 
-    /// Where `men` stand aboard, `spacing` metres apart along the lines; none without its logic.
-    pub fn crew(&self, men: u32, spacing: f32) -> Vec<[f32; 3]> {
-        self.logic.as_ref().map_or_else(Vec::new, |l| crew_spots(l, men, spacing))
+    /// Where `men` stand aboard and which way each faces ([`crew_spots`]); none without its logic.
+    pub fn crew(&self, men: u32) -> Vec<[f32; 4]> {
+        self.logic.as_ref().map_or_else(Vec::new, |l| crew_spots(l, men))
     }
 
     /// The ship on the waves (its space, metres): `wave` the sea's lift at a point of its deck plan (x, z), sampled under its buoyancy spheres
@@ -336,14 +342,20 @@ mod tests {
     }
 
     #[test]
-    fn men_fill_the_marines_lines_first_centred() {
-        let logic = ShipLogic { ef_lines: vec![line(5, [0.0, 1.0, 9.0], [2.0, 1.0, 9.0]), line(4, [-1.0, 2.0, 0.0], [1.0, 2.0, 0.0])], ..ShipLogic::default() };
-        let spots = crew_spots(&logic, 4, 0.8);
+    fn men_fill_the_highest_marines_lines_first() {
+        let logic = ShipLogic {
+            ef_lines: vec![line(4, [-1.0, 2.0, 0.0], [1.0, 2.0, 0.0]), line(10, [0.0, 9.0, 9.0], [2.0, 9.0, 9.0]), line(4, [0.0, 4.0, 5.0], [1.5, 4.0, 5.0])],
+            ..ShipLogic::default()
+        };
+
+        // The raised line first (1.5 m: 2 slots, 0.7 apart, centred), then the deck's (2 m: 2 slots); the firing position's none.
+        let spots = crew_spots(&logic, 10);
         assert_eq!(spots.len(), 4);
-        assert!(spots[..3].iter().all(|s| s[1] == 2.0), "the marines' line holds three: {spots:?}");
-        assert!((spots[0][0] + 0.8).abs() < 1e-5 && spots[1][0].abs() < 1e-5 && (spots[2][0] - 0.8).abs() < 1e-5, "{spots:?}");
-        assert_eq!(spots[3][1], 1.0);
-        assert_eq!(crew_spots(&logic, 100, 0.8).len(), 6, "no more than the lines hold");
+        assert!(spots[..2].iter().all(|s| s[1] == 4.0) && spots[2..].iter().all(|s| s[1] == 2.0), "{spots:?}");
+        assert!((spots[0][0] - 0.4).abs() < 1e-5 && (spots[1][0] - 1.1).abs() < 1e-5, "{spots:?}");
+        assert!((spots[2][0] + 0.35).abs() < 1e-5 && (spots[3][0] - 0.35).abs() < 1e-5, "{spots:?}");
+        assert!(spots.iter().all(|s| s[3].abs() < 1e-6), "facing the lines' way (+z)");
+        assert_eq!(crew_spots(&logic, 3).len(), 3);
     }
 
     #[test]

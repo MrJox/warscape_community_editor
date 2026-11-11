@@ -483,13 +483,14 @@ impl RefUnits {
         let sails_dt = self.sails_time.map_or(0.0, |was| (sails_t - was).max(0.0));
         self.sails_time = Some(sails_t);
         self.sails.retain(|(elem, _), _| references.iter().any(|r| r.elem == *elem && r.kind == Kind::Ship));
-        let mut men_of: HashMap<usize, Vec<[f32; 3]>> = HashMap::new();
+        // Each man: where he stands (x, y, z) and a turn of his own about y (aboard: his slot's facing).
+        let mut men_of: HashMap<usize, Vec<[f32; 4]>> = HashMap::new();
         let units = e.scene.game_units.max(1e-3);
         for r in &references {
-            let stands: Vec<[f32; 3]> = match r.kind {
-                Kind::Human => vec![[0.0; 3]],
-                Kind::Unit => catalog.as_ref().and_then(|c| c.land_units.get(&r.wanted.unit)).map_or_else(|| vec![[0.0; 3]], |land| {
-                    formation(men_at_size(land, size), land.rank_depth, land.spacing).into_iter().map(|[x, z]| [x, 0.0, z]).collect()
+            let stands: Vec<[f32; 4]> = match r.kind {
+                Kind::Human => vec![[0.0; 4]],
+                Kind::Unit => catalog.as_ref().and_then(|c| c.land_units.get(&r.wanted.unit)).map_or_else(|| vec![[0.0; 4]], |land| {
+                    formation(men_at_size(land, size), land.rank_depth, land.spacing).into_iter().map(|[x, z]| [x, 0.0, z, 0.0]).collect()
                 }),
                 Kind::Ship => {
                     let Some(ship) = r.ship.as_ref().and_then(|w| self.ships.get(w)).cloned() else { continue };
@@ -516,7 +517,7 @@ impl RefUnits {
                         level
                     };
                     let land = catalog.as_ref().and_then(|c| c.land_units.get(&ship.unit));
-                    let spots = land.map_or_else(Vec::new, |land| ship.crew(men_at_size(land, size), land.spacing[0]));
+                    let spots = land.map_or_else(Vec::new, |land| ship.crew(men_at_size(land, size)));
                     // The sails: the wind of the ship's heading on the waves (model to world, without the scale).
                     self.headings.insert(r.elem, yaw_of(&m).to_degrees());
                     let turn = rotation_y(yaw_of(&m)) * if renderer.is_some() { ship.afloat(&wave) } else { Float4x4::IDENTITY };
@@ -581,7 +582,7 @@ impl RefUnits {
                 let variation = (k * 7) % models.len();
                 let model = &models[variation];
                 let figures = poses.entry((&r.wanted, variation)).or_insert_with(|| model.instances(time, true));
-                let place = translation(Float3::new(x, y, z)) * turn;
+                let place = translation(Float3::new(x, y, z)) * turn * rotation_y(stand[3]);
                 for figure in figures.iter() {
                     // Models are in game units; the tile's scene isn't.
                     let mut world = place;
@@ -635,7 +636,7 @@ impl RefUnits {
                 // A sail model's ropes move with its cloth; elsewhere they stand as the file has them.
                 let sim = self.sails.get(&(elem, k));
                 if let (Some(sim), Some(rig)) = (sim, &p.cloth) {
-                    let lines = sim.ropes().into_iter().map(|(nodes, radius)| RopeLine { nodes, radius }).collect();
+                    let lines = sim.ropes().into_iter().map(|(nodes, v, radius)| RopeLine { nodes, v, radius }).collect();
                     let [diffuse, normal] = rig.rope_textures.clone();
                     let ropes = Some(Ropes { lines, diffuse, normal });
                     want.push(ShipShown { model: format!("{}#moving_ropes", p.model), elem, world, sail: None, palette: None, ropes });

@@ -106,6 +106,70 @@ either `models_entity_weaponry` -> `models_entity_weapons` (`model_file`, e.g. `
 `battlefield_engines_autonomous` (`att_shp_scorpio`; its model through `battlefield_engines.model`). **ASSUMPTION** the primary weapon
 goes on the `Engine_placement` line and the secondary on `Secondary_engine_placement`.
 
+## Men aboard
+
+How Attila turns a ship's EF lines into places for men (Ghidra, `empire.retail.dll`, RVAs; 2026-11-11). This replaces the
+**ASSUMPTION** under "What the sections are for" where the two disagree.
+
+**The ship's formations** (`FUN_10268910`, 0x268910, run once by the ship's constructor 0x23e4f0). It walks the row's EF lines in file
+order and sorts each into a template by purpose (jump table at 0x269118 / 0x269130):
+
+| Purpose | Template | Slot spacing | Ship field |
+|---|---|---|---|
+| 4 Marines | `marines` | 0.7 m | +0x308 |
+| 22, 23 Engine / Secondary_engine_placement | `engine_placement_template` | 10 m (one slot each, below) | +0x30c |
+| 24 Disembark_left | `leftside_disembark_template` | 0.7 m | +0x310 |
+| 25 Disembark_right | `rightside_disembark_template` | 0.7 m | +0x314 |
+| 9 Boarding | `leftside_` / `rightside_boarding_template`, by a side test (0x284df0) | 0.7 m | +0x318 / +0x31c |
+
+Every other purpose is dropped: Seamen (5), Overflow (3), Gunners_overflow, Captain, Officers and the Naval_firing_position /
+Naval_perimeter lines (10..13) make no slots on a ship. Attila's rows do carry Naval_firing_position_stand lines (on the heavy
+liburnian the same 46 lines as Boarding); the game ignores them. So the men of a ship's unit stand on its **Marines lines only**,
+melee and missile marines alike. No code builds slots for the ship's own crew (`unit_stats_naval_crews`), so no seamen or rowers are
+drawn. **ASSUMPTION** artillery crews too stand on the Marines lines (nothing else is built for them).
+
+Each template line keeps its two ends and a facing: the line's `direction` with y dropped and renormalised. Before the slots are made,
+the Marines lines are **sorted by the height of their midpoint, highest first** (0x22c380 -> introsort 0x222020, insertion sort
+0x217e50; key `(end1.y + end2.y) / 2`, the comparator is `a > b`). It is MSVC's `std::sort`, not stable: lines of equal height can
+come out in any order (with up to 32 lines it is a plain insertion sort, which keeps file order; more lines are partitioned first).
+
+**Slots on a line** (`FUN_10650ff0`, 0x650ff0, for each template line in that order, 0x637a70 -> 0x637e10):
+
+- `L` = the 3D distance between the ends, `u` = the unit vector from the first end (the file's first vec3) to the second.
+- `n = max(1, trunc(L / s))` (the x87 rounding mode is set to truncate), with `s` the spacing above: 0.7 m (`0x3f333333`).
+- Slot `k` (0..n-1) is at `end1 + u * ((L - (n - 1) * s) / 2 + k * s)`: `s` apart, centred on the line, in order from the first end.
+- Purposes 22 and 23 (`FUN_10661bb0`) get a single slot at the line's midpoint instead.
+- Each slot is snapped to the ship's deck mesh (0x645b60 -> 0x68b880, search radius 0.5 m); a slot with no deck piece within 0.5 m is
+  dropped. The lines sit 1-2 cm above the deck, so on the kit ships none are.
+- The slot faces the line's horizontal facing (the same for every slot of a line).
+- Within 10 m behind a line, a line of purpose Overflow (3) of the same height and facing (within 25 degrees) would be linked as its
+  overflow (0x65ee90); the Marines template holds no Overflow lines, so nothing is linked on a ship.
+
+So the ship's Marines slots, in order, are: the highest line's slots from its first end to its second, then the next line's, and so on.
+`att_shp_heavy_liburnian`: 42 Marines lines, 199 slots; the 6 stern-platform lines (y 4.48..4.53, z -11.9..-15.1) come first with 32
+slots (3, 3, 3, 3, 10, 10), then 36 main-deck lines (y 1.96) with 167. `att_shp_dromon_large`: 47 lines, 212 slots.
+
+**Which slots the men take.** The slots are registered with the battle (0x645d00, 0x6702e0); a unit holds a list of slot pointers
+(unit +0xa70) and pairs its men with them (`FUN_10253740`, 0x253740): man `i` with slot `i` (pairs = max(men, slots), slot index taken
+mod the slot count), then a swap pass (`FUN_1022d3f0`, 0x22d3f0) that keeps swapping men between pairs while that lowers the sum of the
+squared horizontal distances from each man to his slot (an Overflow slot counts double, 0x641290). Each paired man then gets his slot's
+position and facing. At deployment the units' slot lists are fed in list order to their formations (`FUN_103ad660`, 0x3ad660, slot `k`
+-> position `k` with the slot's facing).
+**ASSUMPTION** (the code that fills a naval unit's slot list from the ship's `marines` formation was not traced): the list is the ship's
+Marines slots in the order above, and men placed at deployment start on their slots, so the swap pass changes nothing: **the first N
+slots get the N men**. That fills the highest decks first (the heavy liburnian's 148 heavy marines: the 32 stern-platform slots, then 116
+of the 167 main-deck slots), which matches the game's screenshots (rows on the raised decks and on the main deck, facing the bow). Men
+beyond the slot count share slots (index mod count) in that code; **ASSUMPTION** no Attila naval unit is larger than its ship's slots.
+
+Buildings use another selection (`FUN_10593bb0`, 0x593bb0): starting from the slot nearest the unit's position, it grows outwards by
+horizontal distance and along overflow links, wall / window / crenel purposes (0, 1, 2, 18..21; `FUN_1059dd50`) first; men left without
+a slot are released (0x586940). Ship purposes are none of those.
+
+The editor's recipe for an idle unit aboard: take the row's purpose-4 lines, sort them by midpoint height, highest first (equal heights:
+file order; exact only up to 32 lines, see above), make `max(1, trunc(L / 0.7))` slots per line, 0.7 m apart and centred, from the
+first end, each facing the line's horizontal `direction`, and put the unit's men on the first N slots. No other purpose holds men while
+idle; Disembark, Boarding and Engine lines are for those actions and the naval weapons.
+
 ## Unknown
 
 The pipe's second u32, the custom position's u32 (1) and vector (0, 1, 0), the camera's last float, the
