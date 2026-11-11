@@ -16,6 +16,9 @@ use crate::terrain_bake::WaterDepth;
 /// The heights are sampled every this many metres.
 const HEIGHT_CELL_M: f64 = 2.0;
 
+/// The water planes and rivers every this many metres (a narrow stream barely over the ground still shows).
+const WATER_CELL_M: f64 = 1.0;
+
 /// The share of the buildings with a red roof.
 const RED_ROOFS: f64 = 0.3;
 
@@ -47,18 +50,26 @@ impl Tile {
         }
 
         // The water planes and the rivers as the tile places them (stage B leaves out a plane barely over the ground): their surface over
-        // the ground, with stage B's depth, every 2 m.
+        // the ground, with stage B's depth, every `WATER_CELL_M`.
         let mut wm = self.water_map();
         wm.sea = false;
         input.water_planes = wm.planes.iter().map(|(c, _)| c.to_vec()).collect();
         if !wm.planes.is_empty() || !wm.rivers.is_empty() || input.water.is_some() {
-            let (w, h) = (((w_m / HEIGHT_CELL_M).ceil() as usize).max(2), ((h_m / HEIGHT_CELL_M).ceil() as usize).max(2));
+            let (w, h) = (((w_m / WATER_CELL_M).ceil() as usize).max(2), ((h_m / WATER_CELL_M).ceil() as usize).max(2));
             let (cx, cz) = (w_m / w as f64, h_m / h as f64);
             let (project, staged, unit) = (&self.project, input.water.as_ref(), self.unit());
+            // The planes' and the rivers' boxes: the water map is asked only inside one (it walks every plane and river segment).
+            let mut boxes: Vec<[f64; 4]> = wm.planes.iter().map(|(c, _)| {
+                c.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])])
+            }).collect();
+            boxes.extend(wm.rivers.iter().map(|r| {
+                r.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0] - p[3]), b[1].min(p[1] - p[3]), b[2].max(p[0] + p[3]), b[3].max(p[1] + p[3])])
+            }));
             let v: Vec<f32> = (0..w * h).into_par_iter().map(|k| {
                 let (x, z) = (x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz);
+                let inside = boxes.iter().any(|b| x >= b[0] && x <= b[2] && z >= b[1] && z <= b[3]);
                 // The water map's heights are the scene's (metres over the unit).
-                let own = wm.level(x, z).map_or(0.0, |l| (l * unit - project.height_at(x, z)).max(0.0)) as f32;
+                let own = if inside { wm.level(x, z).map_or(0.0, |l| (l * unit - project.height_at(x, z)).max(0.0)) as f32 } else { 0.0 };
                 own.max(staged.map_or(0.0, |f| f.sample(x, z)))
             }).collect();
             input.water = Some(Field { x0, z0, w_m, h_m, w, h, v });

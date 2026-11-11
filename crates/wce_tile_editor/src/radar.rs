@@ -717,10 +717,10 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             let sea = if input.sea { (-heights[k]).max(0.0) } else { 0.0 };
             river.max(sea)
         };
-        // Shallow water (a plane over mud, a marsh's puddles) is a pale wash, full from `style.shallow_m` deep.
+        // Shallow water (a plane barely over mud, a marsh's puddles) shows too, only a little lighter, full from `style.shallow_m` deep.
         let cover = Mask::from_fn(n, |i, j| {
             let k = j * n + i;
-            water_soft.v[k] * (0.4 + 0.6 * smooth(0.0, style.shallow_m, depth_of(i, j)).max(sea_only.v[k]))
+            water_soft.v[k] * (0.85 + 0.15 * smooth(0.0, style.shallow_m, depth_of(i, j)).max(sea_only.v[k]))
         });
         let deep = Mask::from_fn(n, |i, j| {
             let k = j * n + i;
@@ -751,7 +751,8 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             });
             canvas.paint(&line, style.sea_deep, 0.55 - 0.12 * r as f32);
         }
-        // The ink edge along deep water only.
+        // The ink edge: full along deep water, light along shallow water.
+        canvas.paint(&water.edge(1), style.ink, 0.35);
         canvas.paint(&deep.edge(1), style.ink, 0.8);
     }
 
