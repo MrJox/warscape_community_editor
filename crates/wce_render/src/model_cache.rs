@@ -97,8 +97,9 @@ pub const CINEMATIC_STRIDE: u32 = 32;
 /// The Uk8 vertex format of water meshes: position (f16 x 4) and uv (f16 x 2).
 pub const WATER_STRIDE: u32 = 12;
 
-/// A rope's vertex (`rope.hlsl` vs30_main_rigid, f32): POSITION0 its node (model space), NORMAL0 the rope's way there, TEXCOORD0 the uv (x
-/// across the rope, 0 to 1; y along it), TEXCOORD1.x how far to the side, signed (the shader turns it to the camera), TEXCOORD2 unused.
+/// A rope's vertex (`rope.hlsl` vs30_main_rigid, f32; docs/re/cloth.md, "Rope drawing"): POSITION0 its node (model space), NORMAL0 the rope's
+/// way there, TEXCOORD0 the uv (x across the rope: 0, 1; y the node's own texture coordinate), TEXCOORD1 (how far to the side, signed: the
+/// shader turns it to the camera; 1), TEXCOORD2 (the game's parity values; no technique reads them).
 pub const ROPE_STRIDE: u32 = 48;
 
 /// Which of the game's rigid shaders draw a mesh (its material type).
@@ -753,29 +754,36 @@ fn palette_bases(meshes: &mut [GpuMesh]) {
     }
 }
 
-/// A rope's strip from its nodes (in order along it) and radius: the vertices ([`ROPE_STRIDE`] bytes each), the triangles, the bounds (the
-/// nodes, widened by the radius). `None` for fewer than two nodes.
-pub(crate) fn rope_geometry(nodes: &[[f32; 3]], radius: f32) -> Option<(Vec<u8>, Vec<u16>, [f32; 3], [f32; 3])> {
-    if nodes.len() < 2 || nodes.len() * 2 > usize::from(u16::MAX) {
+/// A rope's strip as the game builds it (`FUN_1189a3e0`, docs/re/cloth.md, "Rope drawing"): per node two vertices, the first at u 0 and
+/// `+radius`, the second at u 1 and `-radius`, v the node's texture coordinate (its file `uk_1`; `vs`, one per node), the way the mean of the
+/// segments' directions on each side. Then the triangles (the game's strip as a list) and the bounds (the nodes, widened by the radius).
+/// `None` for fewer than two nodes or a `vs` of another length.
+pub(crate) fn rope_geometry(nodes: &[[f32; 3]], vs: &[f32], radius: f32) -> Option<(Vec<u8>, Vec<u16>, [f32; 3], [f32; 3])> {
+    if nodes.len() < 2 || nodes.len() * 2 > usize::from(u16::MAX) || vs.len() != nodes.len() {
         return None;
     }
 
-    let radius = if radius > 0.0 { radius } else { 0.03 };
     let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-    let length = |d: [f32; 3]| (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+
+    // Each segment's direction; (1, 0, 0) for one too short.
+    let dirs: Vec<[f32; 3]> = nodes.windows(2).map(|w| {
+        let d = sub(w[1], w[0]);
+        let l2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        if l2 <= 0.001 { [1.0, 0.0, 0.0] } else { let l = l2.sqrt(); [d[0] / l, d[1] / l, d[2] / l] }
+    }).collect();
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
     let mut vertices = Vec::with_capacity(nodes.len() * 2 * ROPE_STRIDE as usize);
-    let mut along = 0.0;
     for (k, p) in nodes.iter().enumerate() {
-        if k > 0 {
-            along += length(sub(*p, nodes[k - 1]));
-        }
+        // The ends take their segment's way, the others the mean of their two (not normalised).
+        let way = match k {
+            0 => dirs[0],
+            k if k == nodes.len() - 1 => dirs[k - 1],
+            k => std::array::from_fn(|a| (dirs[k - 1][a] + dirs[k][a]) * 0.5),
+        };
 
-        // Its way: from the node before to the node after.
-        let way = sub(nodes[(k + 1).min(nodes.len() - 1)], nodes[k.saturating_sub(1)]);
-        let v = along / (2.0 * radius);
-        for (u, side) in [(0.0f32, -radius), (1.0, radius)] {
-            for f in [p[0], p[1], p[2], way[0], way[1], way[2], u, v, side, 0.0, 0.0, 0.0] {
+        let parity = if k % 2 == 0 { 1.0 } else { 0.0 };
+        for (u, side, t2) in [(0.0f32, radius, [1.0, parity]), (1.0, -radius, [0.0, parity])] {
+            for f in [p[0], p[1], p[2], way[0], way[1], way[2], u, vs[k], side, 1.0, t2[0], t2[1]] {
                 vertices.extend_from_slice(&f.to_le_bytes());
             }
         }
@@ -1125,12 +1133,13 @@ impl ModelInner {
         Ok(Some(gm))
     }
 
-    /// A Rope material's strip: two vertices per node, across the rope. **ASSUMPTION** (not traced): the material's `uk_1` (about 0.03) is the
-    /// rope's radius, and the texture repeats once per diameter along it.
+    /// A Rope material's strip: two vertices per node, across the rope; the material's `uk_1` (about 0.03) its half width, the nodes' `uk_1`
+    /// their texture coordinate along it (docs/re/cloth.md, "Rope drawing").
     fn rope_mesh(&self, path: &str, material: &rpfm_lib::files::rigidmodel::materials::Material) -> Option<GpuMesh> {
         let rope = material.rope();
         let nodes: Vec<[f32; 3]> = rope.nodes().iter().map(|n| { let p = n.position(); [p.x, p.y, p.z] }).collect();
-        let (vertices, indices, lo, hi) = rope_geometry(&nodes, *rope.uk_1())?;
+        let vs: Vec<f32> = rope.nodes().iter().map(|n| *n.uk_1()).collect();
+        let (vertices, indices, lo, hi) = rope_geometry(&nodes, &vs, *rope.uk_1())?;
         let vb = immutable_buffer(self.dev.device(), &vertices, D3D11_BIND_VERTEX_BUFFER)?;
         let ib = immutable_buffer(self.dev.device(), &indices.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER)?;
         let textures = &self.textures;
@@ -1807,16 +1816,19 @@ mod tests {
 
     #[test]
     fn a_rope_is_a_strip_across_its_nodes() {
-        let (v, i, lo, hi) = rope_geometry(&[[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 3.0]], 0.05).expect("a strip");
+        let nodes = [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 1.0, 1.0]];
+        let (v, i, lo, hi) = rope_geometry(&nodes, &[2.0, 0.5, -1.0], 0.05).expect("a strip");
         assert_eq!((v.len(), i.len()), (6 * ROPE_STRIDE as usize, 12));
         assert_eq!(&i[..6], &[0, 2, 1, 1, 2, 3]);
 
-        // Each node twice, one to each side, the uv across 0 to 1 and along by diameters.
+        // Each node twice: u 0 at +r, u 1 at -r, v the node's own; the way the mean of the two segments' directions.
         let (a, b, last) = (floats(&v, 2), floats(&v, 3), floats(&v, 5));
-        assert_eq!((&a[..3], &a[6..9], &b[6..9]), (&[0.0, 0.0, 1.0][..], &[0.0, 10.0, -0.05][..], &[1.0, 10.0, 0.05][..]));
-        assert_eq!(&a[3..6], &[0.0, 0.0, 3.0], "its way: from the node before to the node after");
-        assert!((last[7] - 30.0).abs() < 1e-4);
-        assert_eq!((lo, hi), ([-0.05, -0.05, -0.05], [0.05, 0.05, 3.05]));
-        assert!(rope_geometry(&[[0.0; 3]], 0.05).is_none());
+        assert_eq!((&a[..3], &a[6..10], &b[6..10]), (&[0.0, 0.0, 1.0][..], &[0.0, 0.5, 0.05, 1.0][..], &[1.0, 0.5, -0.05, 1.0][..]));
+        assert_eq!(&a[3..6], &[0.0, 0.5, 0.5], "the mean, not normalised");
+        assert_eq!((&floats(&v, 0)[3..6], &last[3..6]), (&[0.0, 0.0, 1.0][..], &[0.0, 1.0, 0.0][..]), "the ends: their segment's way");
+        assert_eq!((last[7], &floats(&v, 0)[10..12], &a[10..12]), (-1.0, &[1.0, 1.0][..], &[1.0, 0.0][..]));
+        assert_eq!((lo, hi), ([-0.05, -0.05, -0.05], [0.05, 1.05, 1.05]));
+        assert!(rope_geometry(&[[0.0; 3]], &[0.0], 0.05).is_none());
+        assert!(rope_geometry(&nodes, &[0.0], 0.05).is_none(), "a v per node");
     }
 }

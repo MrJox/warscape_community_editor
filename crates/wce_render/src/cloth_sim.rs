@@ -121,8 +121,9 @@ struct RopeRig {
     rests: Vec<f32>,
     mass: f32,
 
-    /// **ASSUMPTION** (the material's `uk_1`, not read by the simulation): its radius for drawing.
+    /// Its half width for drawing (the material's `uk_1`; not read by the simulation), and its nodes' texture coordinates (their `uk_1`).
     radius: f32,
+    v: Vec<f32>,
 
     /// The tied node (0 or the last) and the cloth particle it is tied to; unused on a free rope.
     node: usize,
@@ -225,7 +226,8 @@ impl ClothRig {
             let stiffness = ROPE_FLEX * param(3, 1.0);
             let nodes = rope.nodes().iter().map(|nd| { let p = nd.position(); Particle::at([p.x, p.y, p.z], *nd.weight()) }).collect();
             let rests = rope.links().iter().map(|l| l.length() * stiffness).collect();
-            let mut r = RopeRig { nodes, rests, mass: ROPE_MASS * param(2, 1.0), radius: *rope.uk_1(), node: usize::MAX, particle: usize::MAX };
+            let v = rope.nodes().iter().map(|nd| *nd.uk_1()).collect();
+            let mut r = RopeRig { nodes, rests, mass: ROPE_MASS * param(2, 1.0), radius: *rope.uk_1(), v, node: usize::MAX, particle: usize::MAX };
 
             // Tied to a cloth particle: `attachments` = [v0, b0, v1, b1] (node 0 to particle v0 of block b0, the last node to v1 of b1).
             let at = rope.attachments();
@@ -649,10 +651,10 @@ impl ClothSim {
         out
     }
 
-    /// Where every rope is (model space): its nodes and its radius; the cloths' ropes first, then the free ones.
-    pub fn ropes(&self) -> Vec<(Vec<V3>, f32)> {
-        let tied = self.cloths.iter().flat_map(|c| c.ropes.iter().zip(&c.rig.ropes).map(|(r, rig)| (r.iter().map(|p| p.x).collect(), rig.radius)));
-        tied.chain(self.free.iter().map(|(rig, nodes)| (nodes.iter().map(|p| p.x).collect(), rig.radius))).collect()
+    /// Where every rope is (model space): its nodes, their texture coordinates and its half width; the cloths' ropes first, then the free ones.
+    pub fn ropes(&self) -> Vec<(Vec<V3>, Vec<f32>, f32)> {
+        let tied = self.cloths.iter().flat_map(|c| c.ropes.iter().zip(&c.rig.ropes).map(|(r, rig)| (r.iter().map(|p| p.x).collect(), rig.v.clone(), rig.radius)));
+        tied.chain(self.free.iter().map(|(rig, nodes)| (nodes.iter().map(|p| p.x).collect(), rig.v.clone(), rig.radius))).collect()
     }
 }
 
@@ -697,7 +699,7 @@ mod tests {
     #[test]
     fn a_free_rope_hangs_between_its_pinned_ends() {
         let nodes: Vec<Particle> = (0..5).map(|k| Particle::at([k as f32, 0.0, 0.0], if k == 0 || k == 4 { 0.0 } else { 1.0 })).collect();
-        let rope = super::RopeRig { nodes, rests: vec![1.1; 4], mass: 5.0, radius: 0.03, node: usize::MAX, particle: usize::MAX };
+        let rope = super::RopeRig { nodes, rests: vec![1.1; 4], mass: 5.0, radius: 0.03, v: vec![0.0; 5], node: usize::MAX, particle: usize::MAX };
         let rig = ClothRig { free: vec![rope], ..ClothRig::default() };
         let mut sim = ClothSim::new(&rig, 1);
         for k in 0..300 {

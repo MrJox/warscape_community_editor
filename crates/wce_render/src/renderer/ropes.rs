@@ -60,7 +60,7 @@ impl Renderer {
                     let w = e.world.transform_point(Float3::new(p[0], p[1], p[2]));
                     [(w.x - o.x) * u, (w.y - o.y) * u, (w.z - o.z) * u]
                 }).collect();
-                let Some((v, i, ..)) = rope_geometry(&nodes, line.radius) else { continue };
+                let Some((v, i, ..)) = rope_geometry(&nodes, &line.v, line.radius) else { continue };
                 let base = (vertices.len() / ROPE_STRIDE as usize) as u32;
                 vertices.extend_from_slice(&v);
                 indices.extend(i.iter().map(|&k| base + u32::from(k)));

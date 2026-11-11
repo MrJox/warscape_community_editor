@@ -206,9 +206,8 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    (docs/formats/models_naval.md, every row of Attila and Rome 2, byte for byte, against the kits' `logic.xml`; gate `models_naval_check`).
    `wce_render::ship_model`: the definition's intact pieces (`_dm1`; `_dm2` are the damaged states), a shield on every point of a slot's list,
    the oars (`models_oars`) on the logic's oar sockets, the weapons (`naval_weapons` -> `models_entity_weapons`) on its engine lines, as
-   rigid mesh instances (picked by the picture), and the men on its EF lines (`Marines` first, then the firing positions, seamen, overflow,
-   perimeter, boarding: **ASSUMPTION**, the oracle ship's men are on the `Marines` lines; the game's filling order isn't traced), `land_units`'
-   file spacing apart. Afloat: on `Tile::water_level` (rivers, lakes' planes, the sea at 0 m in the sea's sets), the ground where that is
+   rigid mesh instances (picked by the picture), and the men on its Marines EF lines (docs/formats/models_naval.md, "Men aboard": the
+   lines highest first, 0.7 m slots centred on each, facing along the line; the first N slots: the stern platform first). Afloat: on `Tile::water_level` (rivers, lakes' planes, the sea at 0 m in the sea's sets), the ground where that is
    higher; freeform keeps the element's height. **ASSUMPTION**: a ship's origin is its waterline.
    Sails and ropes (2026-11-11). A sail model holds `display_*` WeightedCloth meshes (Cinematic vertices, four bones: the cloth simulation's,
    rpfm's `cloth_bones`), `sim_*` Cloth meshes (the simulation's own, grey test textures) and their colliders, never drawn, and Rope meshes
@@ -237,7 +236,8 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    (`renderer/ropes.rs`; the static `#ropes` strips are for models without a cloth). A model's sails share one palette, each mesh from its
    `GpuMesh::palette_base`. The wind is the ship's world matrix's (traced: nothing rotates it, no weather or battle wind reaches the sails;
    every ship feels 30 along world +Z). Attila's sails have no states: always set (Empire's furling code is there, its data isn't).
-   **ASSUMPTION**s (docs/re/cloth.md): the clock of the perturbation, the rope radius; the wind's per-sail phase uses the editor's
+   The ropes are built as the game builds them (docs/re/cloth.md, "Rope drawing": half width the material's `uk_1`, v the nodes' `uk_1`).
+   **ASSUMPTION**s (docs/re/cloth.md): the clock of the perturbation; the wind's per-sail phase uses the editor's
    generator, not the game's. Not done: projectile gusts and rope breaks (no battle in the editor). The moving ropes cast shadows (`rope.hlsl` vs30_depth / ps30_depth into each
    cascade, after the units; thinner than a shadow texel, they come out dotted); a model's static `#ropes` strips don't.
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth

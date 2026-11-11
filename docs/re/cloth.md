@@ -57,11 +57,12 @@ checked against the alpha on every bone). The material's u32 after the bone coun
   particle `v1` of block `b1`; −1 = not attached. An attached end has weight 1 and sits on that particle (within 0.008). In the data one end at
   most is attached, the other is pinned; 31 of the 341 ropes have both ends pinned. Attached ends sit on rigid blocks or on sail particles
   (sail corners and edges).
-- `uk_1` ≈ 0.031 (0.037 on the thick stays): **ASSUMPTION** the tube radius for drawing; the simulation does not read it.
+- `uk_1` ≈ 0.031 (0.037 on the thick stays): the drawn ribbon's **half width** in model units (see "Rope drawing"); the simulation does not
+  read it.
 - `uk_2` (0, 3, 8, 16, 32, 64): the node index released when the rope breaks under ship damage (`FUN_11801e60` frees node `uk_2`: weight 1,
   unpinned, and detaches the rope entry with that node). **ASSUMPTION** on the meaning; irrelevant without damage.
-- Node `uk_1`: decreasing along the rope through ~0.5 at the middle; copied by the loader (`FUN_117c8f90`) but **not read by the simulation**
-  (the renderer may use it; not traced). The loader also makes a per-node arc length 0..1 (mesh +0x584) for the texture.
+- Node `uk_1`: decreasing along the rope through ~0.5 at the middle; **the texture's v** (see "Rope drawing"), not read by the simulation.
+  The loader (`FUN_117c8f90`) also makes a per-node arc length 0..1 (mesh +0x584) that the vertex builder is passed but does not read.
 - Material params: f32 2 = mass multiplier (1.0 or 1.7), f32 3 = **rest-length multiplier** (mesh +0x114: 0.8 on the long sagging stays, 1.0 on
   the others; scales every link's rest length, so 0.8 pulls the stays taut).
 
@@ -227,6 +228,67 @@ What was checked (2026-11-11):
 
 So the editor's always-set sails are what the game shows. Nothing to add to `cloth_sim` for states.
 
+## Rope drawing (2026-11-11)
+A simulated rope (the `Rope` mesh object of a sail model, vtable RVA 0x1cbe330, loader `FUN_117c8f90`) is drawn as a **camera-facing
+ribbon**: two vertices per node, rebuilt from the rope's particles every frame, offset sideways in the vertex shader. Not a tube.
+
+**Rope mesh fields** (loader): +0x574 node count, +0x578 the nodes (20 bytes: position, weight, `uk_1`), +0x57c/+0x580 the links, +0x584 the
+per-node arc length 0..1 (unused by the drawing), +0x588 the vertices (2 × nodes, 0x30 bytes each), +0x58c..+0x598 its fallback textures
+(below), +0x59c.. the material header as stored (+0x5b0 = the material's `uk_1`, +0x5b4 = `uk_2`).
+
+**Vertices** (`FUN_1189a3e0`, called each frame by vtable slot 25 `FUN_1188a180` with the rope's sim object; the sim particle positions are
+in the sail model's space). Node i (of n) gives vertex 2i (A) then 2i+1 (B), 12 floats each:
+
+| attribute | A (2i) | B (2i+1) |
+|---|---|---|
+| POSITION0 (xyz) | particle i's position | the same |
+| NORMAL0 (xyz) | tangent t_i | the same |
+| TEXCOORD0 (u, v) | (0, node i's `uk_1`) | (1, node i's `uk_1`) |
+| TEXCOORD1 (x, y) | (+r, 1.0) | (−r, 1.0) |
+| TEXCOORD2 (x, y) | (1, 1) for even i, (1, 0) for odd i | (0, 1) for even i, (0, 0) for odd i |
+
+- **r = the material's `uk_1`** (mesh +0x5b0) exactly, B its sign-flipped copy (xor 0x80000000). No constant, no tweaker, no taper: the width
+  is the same along the whole rope, and node `uk_1` never scales it.
+- **v = node `uk_1` as stored**, not computed. It is the exporter's texture coordinate along the rope: it runs from about 0.5 + L·k/2 down to
+  0.5 − L·k/2 over the rope's length L, k = 3.1..5.0 texture repeats per metre (the 44 ropes of the spike's dumped sail model; e.g. 59.7 →
+  −58.8 over 23.6 m). The 0..1 arc length at +0x584 is passed to the builder but not read.
+- Tangent: `d_i = normalize(p_i+1 − p_i)`, or (1, 0, 0) when |p_i+1 − p_i|² ≤ 0.001. Node 0 takes d_0, the last node d_n−2, every other node
+  `(d_i−1 + d_i) × 0.5` (not renormalised; the shaders normalise it).
+- TEXCOORD1.y and TEXCOORD2 are not read by the rigid techniques (below). The (0, 0) for odd B comes from a zero-filled static (RVA
+  0x2a62fe4; **ASSUMPTION** never written).
+- Draw: vertex count = 2n (vtable +0x44 `FUN_11863bd0`); the index-count slots (+0x3c, +0x40 → +0x48) return the same 2n, one part (+0x4c
+  returns 1), and the frame update uploads vertices only. **ASSUMPTION** (topology call not traced): a **triangle strip** A0 B0 A1 B1 …,
+  2n − 2 triangles; with A on the +side every triangle has the same screen winding. Cull state not traced.
+
+**Technique: rigid.** Vtable +0x58 (`FUN_11890500`) returns 0x3b (`ROPE_SHADER` "gbuffer_rigid": `vs30_main_rigid` /
+`ps30_main_gbuffer_rigid`) or, for the shadow pass, 1 ("shadowmap_rigid": `vs30_depth_rigid` / `ps30_depth`). The world techniques
+("gbuffer" 0x3a, "shadowmap" 0; `ROPE_SHADER` built by `FUN_116edf60`) belong to another class, `DYNAMIC_ROPE_MESH` (vtable 0x1ccebd0, ctor
+`FUN_118c34b0`, made by the "Dynamic Node" `FUN_118c3090`): 0x30-byte vertices drawn as quads (index count = vertices / 4 × 6), not the
+ship ropes. The draw call (vtable slot 67 `FUN_117f5f70`) copies the instance's 3×4 model → world matrix into the render item (the rigid
+technique's POSITION1..3 rows) and queues it only while the render context's +0xb8 (also its depth sort key, rounded and clamped to 0xffff;
+**ASSUMPTION** the camera distance) is below `rigid_rope_culling_threshold` (4000). **ASSUMPTION**: POSITION4.w is the ship's burn value
+(the item's other words were not mapped).
+
+What `vs30_main_rigid` does with them: side = the view-space tangent's perpendicular `normalize(t_view.y, −t_view.x, 0)`, and the view-space
+position moves by **side × TEXCOORD1.x × |(row0.x, row1.x, row2.x)|** (the instance matrix's x-axis length). So the ribbon is 2r wide in
+model units, in the screen plane. The world technique's offset, `TEXCOORD1.x × normalize(cross(camera − P, t))`, is the same direction.
+The pixel shader's profile `s = (u − 0.5) × 2` gives the normal `sqrt(1 − s²) · o1 + s · side`: u = 0 (the +r vertex) gets −side, so the
+game's cylinder shading is mirrored left to right against the geometry.
+
+**Textures** (vtable slot 26 `FUN_118870c0`, bound as `t_diffuse_map`, `t_normal_map`, `t_dissolve_map`, `t_fire_map`): the mesh's own texture
+slots +0x160, +0x164, +0x184, +0x1d4 when set, else `RigidModels/naval/Textures/rope_unwrapped_diffuse.dds`, `..._normal.dds`,
+`CommonTextures/dissolve.dds`, `CommonTextures/vfx_fire_diffuse`. **ASSUMPTION** +0x160/+0x164 are the material's diffuse and normal: the
+ship rope materials list `attila_repeating_rope_diffuse.dds` / `_normal.dds` (128×256, DXT1 and DXT5), so those are drawn. The gbuffer pixel
+shader samples only the diffuse (alpha test at 84/255), the normal (x = R, y = A, z = B) and `s_fire_map`; its only constant buffer is
+`camera_VS_PS` (`time_in_sec` scrolls the fire). No rope tint or colour constant. It writes albedo `sqrt(diffuse)` (fire blended in by
+POSITION4.w), RT2 = (1, 1, 1, 0).
+
+**For the editor** (its two vertices per node with u 0 at −r, v = distance / (2r)): put **+r on u = 0 and −r on u = 1**, take **v from each
+node's `uk_1`** instead of the distance, and use the averaged tangent above. With v = distance / 2r the texture repeats every 2r ≈ 0.06 m
+instead of every 1/k ≈ 0.2..0.3 m: 3..5× too many twists, so the strands look 3× finer (a thinner-looking rope), the twist drops into the
+smaller mips and, the DXT1 diffuse's cut-out texels being black, the albedo darkens. **ASSUMPTION** that this, not the width, is the
+"3× thinner, darker" difference: the game's width is the same ±r.
+
 ## Tweakers (defaults)
 `RigidMesh_v2.cpp` (registrations at RVA 0xb6910..0xb7210; float value at object +0x48):
 
@@ -252,7 +314,7 @@ So the editor's always-set sails are what the game shows. Nothing to add to `clo
 | `rigid_collision_sphere_scale` | 1.0 | × sphere radius |
 | `rigid_collision_z_offset` | 0.0 | bone-driven colliders only |
 | `rigid_cloth_y_axis_rotation_constraint` | 360 | **unused** (no reader besides its registration) |
-| `rigid_rope_culling_threshold` | 4000 | read at RVA 0x17f5f79, not traced (**ASSUMPTION** rope draw distance) |
+| `rigid_rope_culling_threshold` | 4000 | rope draw distance ("Rope drawing") |
 | `rigid_show_weighted_cloth_sim_mesh`, `_unsimulated`, `rigid_show_weighted_mesh` (true), `rigid_show_colliders` | false | debug draw |
 
 Ship side (`EmpireBattle`): `SHIP_DISPLAY_WIND_SCALE` 30, `SHIP_DISPLAY_MIN_FORWARD_WIND` 1, `SHIP_DISPLAY_MAX_LATERAL_WIND_FORWARD_SCALE` 5,
@@ -265,8 +327,7 @@ not traced).
 
 ## Not traced
 - How many sails are simulated per frame (the `ship_display_*` budget) and what dt a skipped sail then gets.
-- The rope break threshold (+0x70), the rope node `uk_1`, the rope `uk_1` radius, and the rope particle builder (pinned assumed `w < 0.5` as for
-  the cloth).
+- The rope break threshold (+0x70) and the rope particle builder (pinned assumed `w < 0.5` as for the cloth).
 - Where the sail burn value (+0x690) and the `SHIP_DISPLAY_SAILS_DAMAGE_VALUE` / `_BURN_VALUE` / `_MULTIPLIER` tweakers go (**ASSUMPTION**
   the sail material's damage / burn look, not the simulation).
 - What ship +0x70c / +0x710 are (the sail damage target), and which animation slot 6 is (`FUN_102bb100`).
@@ -299,3 +360,7 @@ not traced).
 | 0x452230, 0x37fbf0, 0x37c940 | `BCQ_SHIP_ORDER_SET_SAIL` handler, ship speed setting (+0x1078), its speed fraction |
 | 0x2bb100, 0x290450 | ship model animation slot 6 timer (not sails) and its trigger |
 | 0x102589b0 | projectile segments into the sail context |
+| 0x189a3e0, 0x188a180 | rope vertices from the particles; its per-frame caller (rope vtable 0x1cbe330 slot 25) |
+| 0x17f5f70, 0x1890500, 0x18870c0 | rope draw and culling, technique (gbuffer_rigid / shadowmap_rigid), texture binding |
+| 0x16edf60 | `ROPE_SHADER` techniques and samplers |
+| 0x18c34b0, 0x18c3090 | `DYNAMIC_ROPE_MESH` (world technique, not ships) and its dynamic node |
