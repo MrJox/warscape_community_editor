@@ -75,6 +75,43 @@ pub struct LfRecord {
 }
 
 impl LfRecord {
+    /// Plan an exact region replacement without mutating the field. Only changed pages are kept; no-op returns no record.
+    pub fn replacement(
+        field: &PagedU16,
+        region: crate::lf_region::LfRegion,
+        samples: &[u16],
+    ) -> Result<Option<Self>, String> {
+        use crate::paged::PAGE;
+        let [x0, y0, x1, y1] = region.validate(field)?;
+        if samples.len() != region.width as usize * region.height as usize {
+            return Err("LF region sample count does not match its dimensions".into());
+        }
+        let (w, h, pw) = (field.width(), field.height(), field.pages().0);
+        let grid = field.grid().read();
+        let mut pages = Vec::new();
+        for py in y0 / PAGE..=(y1 - 1) / PAGE {
+            for px in x0 / PAGE..=(x1 - 1) / PAGE {
+                let p = py * pw + px;
+                let before = crate::paged::page_of(&grid, w, h, pw, p);
+                let mut after = before.clone();
+                let (left, right) = (x0.max(px * PAGE), x1.min((px + 1) * PAGE));
+                for y in y0.max(py * PAGE)..y1.min((py + 1) * PAGE) {
+                    let src = (y - y0) as usize * region.width as usize + (left - x0) as usize;
+                    let dst = ((y % PAGE) * PAGE + left % PAGE) as usize;
+                    after[dst..dst + (right - left) as usize]
+                        .copy_from_slice(&samples[src..src + (right - left) as usize]);
+                }
+                if before != after {
+                    pages.push((p, before, after));
+                }
+            }
+        }
+        Ok((!pages.is_empty()).then_some(Self {
+            rect: [x0, y0, x1, y1],
+            pages,
+        }))
+    }
+
     /// The field as the stroke left it.
     pub fn apply(&self, field: &mut PagedU16) {
         for (p, _, after) in &self.pages {
@@ -198,6 +235,39 @@ impl LfStroke {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn region_plan_is_pure_and_records_only_changed_pages() {
+        use crate::lf_region::LfRegion;
+        let mut field = PagedU16::filled(130, 67, 100);
+        let original = field.to_vec();
+        let region = LfRegion {
+            x: 63,
+            y: 63,
+            width: 67,
+            height: 4,
+        };
+        let mut samples = vec![100; 67 * 4];
+        assert!(
+            LfRecord::replacement(&field, region, &samples)
+                .unwrap()
+                .is_none()
+        );
+        samples[0] = 0;
+        samples[267] = 65535;
+        let record = LfRecord::replacement(&field, region, &samples)
+            .unwrap()
+            .unwrap();
+        assert_eq!(field.to_vec(), original);
+        assert_eq!(record.bytes(), 2 * PAGE_LEN * 4);
+        assert!(LfRecord::replacement(&field, region, &samples[..267]).is_err());
+        record.apply(&mut field);
+        assert_eq!(field.at(63, 63), 0);
+        assert_eq!(field.at(129, 66), 65535);
+        assert_eq!(field.at(64, 63), 100);
+        record.revert(&mut field);
+        assert_eq!(field.to_vec(), original);
+    }
 
     fn brush(cx: f64, cy: f64, r: f64) -> LfBrush {
         LfBrush { brush: Brush { cx, cy, radius: r, strength: 1.0, falloff: 1.0, ..Default::default() }, aspect: 1.0, rotation: 0.0 }

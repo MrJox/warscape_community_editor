@@ -9,6 +9,7 @@ pub mod deployment;
 pub mod explicit;
 pub mod lf_edit;
 pub mod lf_patch;
+pub mod lf_region;
 pub mod locations;
 pub mod map;
 pub mod paged;
