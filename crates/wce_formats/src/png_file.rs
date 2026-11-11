@@ -51,7 +51,7 @@ fn be32(b: &[u8]) -> u32 {
     u32::from_be_bytes([b[0], b[1], b[2], b[3]])
 }
 
-fn crc32(data: &[u8]) -> u32 {
+pub(crate) fn crc32(data: &[u8]) -> u32 {
     // SAFETY: zlib reads `len` bytes from a valid slice.
     unsafe { z::crc32(0, data.as_ptr(), data.len() as z::uInt) as u32 }
 }
