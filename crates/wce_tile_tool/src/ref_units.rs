@@ -143,8 +143,8 @@ struct ShipShown {
     sail: Option<([u8; 3], [[f32; 3]; 4])>,
 }
 
-/// The bones a sail's palette has: more than any of Attila's sails uses (a cloth bone per simulated vertex, a byte per index).
-const SAIL_BONES: usize = 256;
+/// The bones of a ship's sails' palette at rest: more than all the sails of any of Attila's sail models have, one after another.
+const SAIL_BONES: usize = 4096;
 type ShipLoaded = (ShipWanted, Result<ShipModel, String>);
 
 /// How long a ship's water level is trusted: the tile's rivers and lakes may be edited under it.
