@@ -9,6 +9,7 @@ use std::sync::mpsc;
 
 use wce_editor::editor::Editor;
 use wce_editor_core::camera_controller::CameraMode;
+use wce_editor_core::document::Document;
 use wce_editor::gui::{self, Vec2, col32, v2};
 use wce_editor::{icons, theme};
 use wce_foundation::log;
@@ -37,11 +38,20 @@ const SIEGE_EVERY: f64 = 0.5;
 enum Base {
     Ground(TerrainView),
     Height,
+
+    /// The radar the tile would ship (`wce_tile_editor::radar`, docs/plans/radar.md).
+    Radar,
     None,
 }
 
 /// The bases of the minimap only (after the ground views), with their names and the `minimap` command's words; the ground views' words.
-const OWN_BASES: [(Base, &str, &str); 2] = [(Base::Height, "height", "height"), (Base::None, "none", "none")];
+const OWN_BASES: [(Base, &str, &str); 3] = [(Base::Height, "height", "height"), (Base::Radar, "radar", "radar"), (Base::None, "none", "none")];
+
+/// Seconds between two radars while the tile is edited (it waits for the buttons to be released too).
+const RADAR_EVERY: f64 = 1.0;
+
+/// The radar's file in the tile's folder (a PNG until the radar is written as the game's JPEG).
+pub const RADAR_FILE: &str = "loading_screen_radar.png";
 const VIEW_WORDS: [(TerrainView, &str); 5] = [
     (TerrainView::Colour, "colour"), (TerrainView::BlendGroups, "groups"), (TerrainView::GroundTypes, "ground"), (TerrainView::Protection, "protection"),
     (TerrainView::WaterDepth, "water"),
@@ -51,6 +61,7 @@ fn base_name(base: Base) -> &'static str {
     match base {
         Base::Ground(v) => view_name(v),
         Base::Height => "height",
+        Base::Radar => "radar",
         Base::None => "none",
     }
 }
@@ -241,6 +252,11 @@ pub struct MinimapUi {
     height_time: f64,
     height_range: (f64, f64),
 
+    /// The radar: its picture, what it was drawn from (the history's version, whether the water depth and the no-go areas were in), when.
+    radar: Picture,
+    radar_for: Option<(u64, bool, bool)>,
+    radar_time: f64,
+
     siege: Option<MinimapSiege>,
     siege_for: u64,
     siege_time: f64,
@@ -255,7 +271,7 @@ impl Default for MinimapUi {
         Self {
             base: Base::Ground(TerrainView::Colour), show_siege: true, show_zones: true, show_cells: false, show_nogo: false, show_camera: true, zoom: 1.0, centre: None,
             visible: false, doc: 0, serial: 0, note: String::new(), colour: GroundPicture::default(), ground: GroundPicture::default(), heights: Picture::default(),
-            height_for: None, height_time: -1e9, height_range: (0.0, 0.0), siege: None, siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false,
+            height_for: None, height_time: -1e9, height_range: (0.0, 0.0), radar: Picture::default(), radar_for: None, radar_time: -1e9, siege: None, siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false,
         }
     }
 }
@@ -310,9 +326,14 @@ impl MinimapUi {
         }
     }
 
-    /// The automatic no-go areas show on it (the tool works them out).
+    /// The automatic no-go areas show on it (the tool works them out); the radar's cliffs are drawn from them too.
     pub fn shows_auto_nogos(&self) -> bool {
-        self.visible && self.show_nogo
+        self.visible && (self.show_nogo || self.base == Base::Radar)
+    }
+
+    /// The radar shows: the tool works out the water depth for its rivers.
+    pub fn wants_radar(&self) -> bool {
+        self.visible && self.base == Base::Radar
     }
 
     /// The ground's colour picture, for the Tile panel's valid cells (its bake starts now when it is not made): the texture and the ground
@@ -400,6 +421,7 @@ impl MinimapUi {
             Base::Ground(TerrainView::Colour) => self.colour.image(e),
             Base::Ground(_) => self.ground.image(e),
             Base::Height => self.heights.image(e),
+            Base::Radar => self.radar.image(e),
             Base::None => None,
         };
 
@@ -465,7 +487,7 @@ impl MinimapUi {
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         let mut over = false;
         if gui::begin_pill("##minimapchip") {
-            let tip = format!("Minimap: {}\nClick: the ground views, the heights or nothing", base_name(self.base));
+            let tip = format!("Minimap: {}\nClick: the ground views, the heights, the radar or nothing", base_name(self.base));
             if chip(self.base != Base::Ground(TerrainView::Colour), icons::LAYERS, "minimapbase", &tip) {
                 gui::open_popup("minimapbase");
             }
@@ -530,6 +552,7 @@ impl MinimapUi {
         match self.base {
             Base::None => {}
             Base::Height => self.refresh_heights(e, id, now),
+            Base::Radar => self.refresh_radar(e, id, now),
             Base::Ground(TerrainView::Colour) => {
                 self.colour.update(e, &mut self.serial, id, TerrainView::Colour);
                 self.note = self.colour.note();
@@ -557,6 +580,52 @@ impl MinimapUi {
                 self.siege_time = now;
             }
         }
+    }
+
+    fn refresh_radar(&mut self, e: &mut Editor, id: DocumentId, now: f64) {
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let key = (d.history().version(), d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some());
+        let idle = !(0..3).any(gui::is_mouse_down);
+        if self.radar_for != Some(key) && (self.radar_for.is_none() || (idle && now - self.radar_time >= RADAR_EVERY)) {
+            let started = std::time::Instant::now();
+            let (size, rgba, area) = draw_radar(e, id);
+            self.radar.set(e, &mut self.serial, size, size, rgba, area);
+            self.radar_for = Some(key);
+            self.radar_time = now;
+            log::info(format!("radar drawn in {:.2} s", started.elapsed().as_secs_f64()));
+        }
+
+        let (water, nogo) = (key.1, key.2);
+        self.note = match (water, nogo) {
+            (true, true) => format!("the radar the tile would ship (`radar_save` writes {RADAR_FILE})"),
+            _ => "radar: working out the rivers and the cliffs...".to_owned(),
+        };
+    }
+
+    /// Writes the open tile's radar to `path` (a PNG; the tile's folder's `RADAR_FILE` without one).
+    ///
+    /// # Errors
+    ///
+    /// No tile, or the file does not write.
+    pub fn save_radar(&mut self, e: &mut Editor, path: Option<&str>) -> Result<String, String> {
+        let id = document_id(e).ok_or("no tile")?;
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let (water, nogo) = (d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some());
+        let path = path.map_or_else(|| d.project().dir.join(RADAR_FILE), std::path::PathBuf::from);
+        let (size, rgba, _) = draw_radar(e, id);
+        // Back to rows from the north.
+        let row = size as usize * 4;
+        let pixels: Vec<u8> = rgba.chunks(row).rev().flatten().copied().collect();
+        let png = wce_formats::png_file::PngFile { width: size, height: size, bit_depth: 8, color_type: 6, pixels, pixels_edited: true, ..Default::default() };
+        let bytes = png.encode().map_err(|e| e.to_string())?;
+        std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        let missing = match (water, nogo) {
+            (true, true) => String::new(),
+            (false, false) => " (without rivers and cliffs: show the radar on the minimap first)".to_owned(),
+            (false, true) => " (without rivers: show the radar on the minimap first)".to_owned(),
+            (true, false) => " (without cliffs: show the radar on the minimap first)".to_owned(),
+        };
+        Ok(format!("radar written to {}{missing}", path.display()))
     }
 
     fn refresh_heights(&mut self, e: &mut Editor, id: DocumentId, now: f64) {
@@ -639,11 +708,25 @@ impl MinimapUi {
         self.colour.clear(e);
         self.ground.clear(e);
         self.heights.clear(e);
+        self.radar.clear(e);
         *self = Self {
             base: self.base, show_siege: self.show_siege, show_zones: self.show_zones, show_cells: self.show_cells, show_nogo: self.show_nogo, show_camera: self.show_camera,
             visible: self.visible, serial: self.serial, wheel_owned: self.wheel_owned, ..Self::default()
         };
     }
+}
+
+/// The radar of a tile as it is (with the water depth and the no-go areas the tool has worked out): its side, its pixels with rows along +z
+/// (as the minimap's pictures), the ground it covers.
+fn draw_radar(e: &mut Editor, id: DocumentId) -> (u32, Vec<u8>, [f64; 4]) {
+    wce_foundation::wce_prof!("tile.minimap.radar");
+    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+    let water = d.tile().water_depth().cloned();
+    let input = d.tile_mut().radar_input(water.as_ref());
+    let img = wce_tile_editor::radar::render(&input, &wce_tile_editor::radar::RadarStyle::default());
+    let row = img.size as usize * 4;
+    let rgba = img.rgba.chunks(row).rev().flatten().copied().collect();
+    (img.size, rgba, input.area)
 }
 
 /// The entry's cells (x, rows from the +z edge, as the entry counts them) and whether each is valid (its mask; all without one).

@@ -2971,11 +2971,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "minimap", "minimap [colour|groups|ground|protection|water|height|none | siege|deployment|cells|nogo|camera on|off | zoom <k> [x z] | goto <x> <z>]",
+        "minimap", "minimap [colour|groups|ground|protection|water|height|radar|none | siege|deployment|cells|nogo|camera on|off | zoom <k> [x z] | goto <x> <z>]",
         "the Minimap panel: its base picture, its layers, its zoom (and centre, metres); goto moves the camera as a click on it does", |e, a| {
             with_tile(e, |t, e| t.minimap.command(e, a).map_or_else(fail, ok))
         },
     );
+
+    c.add("radar_save", "radar_save [path.png]", "write the open tile's radar (docs/plans/radar.md: the minimap the game shows, drawn from the tile) as a PNG, by default into the tile's folder", |e, a| {
+        with_tile(e, |t, e| t.minimap.save_radar(e, a.first().map(String::as_str)).map_or_else(fail, ok))
+    });
 
     c.add("tile_links", "tile_links [on|off]", "log the tile database entry's link targets and rules (the cells they name), or show / hide them on the ground", |e, a| {
         let Some(d) = document(e) else { return no_tile() };

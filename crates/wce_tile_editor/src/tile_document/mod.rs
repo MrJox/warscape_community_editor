@@ -33,6 +33,7 @@ mod jobs;
 pub use jobs::running as jobs_running;
 pub mod layers;
 pub mod minimap;
+mod radar;
 pub mod kit;
 mod pick;
 pub mod prefab_ground;
