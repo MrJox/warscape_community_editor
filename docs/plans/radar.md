@@ -29,18 +29,23 @@ of tuning with the user.
   - roads: the procedural roads' centre lines, the `path_*` / `road_*` decals as lines along their x, and the blend map's thin layers
     (`radar::blend_roads`: per channel, what is left after an opening of about 10 m, its long pieces) only when the tile has fewer than
     50 road lines; road pixels where roads cover most of the ground around (a vineyard's paths) are dropped;
-  - trees: the shown tree list and the static vegetation; a forest where they are denser than `forest_density`;
+  - trees: the shown tree list and the static vegetation, trees only (the lists hold shrubs, flowers and stones too: over half of
+    middle_men_port_a's `rome_continental` list); a forest where they are denser than `forest_density` about 4 m around, so thin strips
+    of wood stay strips;
   - buildings: exported, not fort pieces, not rocks / barricades; their hard outlines, else their logic's `collision_3d` triangles above
     1.5 m seen from above (vanilla houses have no 2D outlines); house-sized only (2.5 m across, 10 m2);
   - walls: the siege input's fort pieces (footprints and the line between their ends);
   - streets and squares: the exported siege AI's street edges and area nodes;
-  - cliffs: the automatic no-go areas plus ground steeper than `cliff_slope`.
+  - cliffs: the automatic no-go areas plus ground steeper than `cliff_slope`; sea cliffs: land at the shore 3.5 .. 6 m or more above
+    the lowest ground within 8 m (the steep band at the waterline is too thin for the slope test). The rims are drawn after the water,
+    whose shore ink would cover them.
 - Ink extras (user: "vanilla base, ink extras"): a soft hill shade, hachures on slopes over `hachure_slope`, ripples off the shore.
 - Editor: the Minimap panel's base chip has **radar** (redrawn at most every second after an edit, once the buttons are up; the tool
   works out the water depth and the no-go areas while it shows). `minimap radar`, `radar_save [path.png]` (default: the tile folder's
   `loading_screen_radar.png`).
 - Iterating: `cargo run --release -p wce_tile_tool --example radar -- <game> <out> <tile folder>... [--mods ...] [--kit ...]` writes
-  `<tile>_radar.png` and copies CA's radar beside it (`<tile>_ca.jpg`).
+  `<tile>_radar.png` and copies CA's radar beside it (`<tile>_ca.jpg`). `RADAR_TREES=<list>` picks the tree list (the editor shows the
+  climate's; the example's default is `default`), `RADAR_TREE_DUMP=1` / `RADAR_SLOPE_DUMP=1` write the trees / the slopes at 1 m a pixel.
 
 ## Open
 

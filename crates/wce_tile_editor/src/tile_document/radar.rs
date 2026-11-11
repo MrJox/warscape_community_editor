@@ -62,10 +62,23 @@ impl Tile {
         // The trees: the shown list's and the static ones.
         let trees = self.tree_list();
         let ez = self.project.extent_z() as f32;
-        input.trees = trees.iter().map(|t| [f64::from(t.x), f64::from(ez - t.z)]).collect();
+        input.trees = trees.iter().filter(|t| is_tree(&t.model)).map(|t| [f64::from(t.x), f64::from(ez - t.z)]).collect();
+        if std::env::var("RADAR_TREE_MODELS").is_ok() {
+            let mut m = std::collections::BTreeMap::<&str, (usize, f32)>::new();
+            for t in trees.iter() {
+                let e = m.entry(t.model.as_str()).or_default();
+                e.0 += 1;
+                e.1 += t.scale;
+            }
+            let mut v: Vec<_> = m.into_iter().collect();
+            v.sort_by_key(|x| std::cmp::Reverse(x.1.0));
+            for (k, (n, s)) in v.iter().take(40) {
+                println!("  {n:6} {k} (scale {:.2})", s / *n as f32);
+            }
+        }
         let sc = self.tscene();
         for e in sc.find_all("VEGETATION_INSTANCE") {
-            if self.shown(e) {
+            if self.shown(e) && is_tree(&sc.doc().get(e, "key").unwrap_or_default()) {
                 let p = self.world_position(e);
                 input.trees.push([f64::from(p.x), f64::from(p.z)]);
             }
@@ -183,6 +196,15 @@ impl Tile {
         out
     }
 }
+
+/// Whether a vegetation model or key is a tree (the lists hold shrubs, flowers and stones too: `trees/shrubs/...`,
+/// `trees/stones_atlantic/...`, `shrubs.shrub_rosec`).
+fn is_tree(model: &str) -> bool {
+    let m = model.to_lowercase();
+    !NOT_TREES.iter().any(|k| m.contains(k))
+}
+
+const NOT_TREES: [&str; 11] = ["shrub", "stone", "rock", "flower", "grass", "bush", "reed", "fern", "calamus", "bulrush", "drya_"];
 
 /// The decals that are roads (their names' starts, or after an underscore: `global_terrain_path_01`).
 const ROAD_DECALS: [&str; 2] = ["path_", "road_"];

@@ -3,7 +3,8 @@
 //!
 //!   cargo run --release -p wce_tile_tool --example radar -- <game folder> <out folder> <tile folder>... [--mods a.pack;b.pack] [--kit <kit>]
 //!
-//! A tile folder is a variation's (holding tile.ted or tile.wce). `$WCE_GAME_KEY` picks the game.
+//! A tile folder is a variation's (holding tile.ted or tile.wce). `$WCE_GAME_KEY` picks the game; `$RADAR_TREES` the tree list;
+//! `$RADAR_TREE_DUMP` / `$RADAR_SLOPE_DUMP` write the trees / the slopes beside it (1 m a pixel), `$RADAR_DEBUG` prints the input.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -57,6 +58,10 @@ fn main() -> Result<(), String> {
 
         let t0 = Instant::now();
         let mut doc = TileDocument::new(project, Some(files.clone()));
+        // `$RADAR_TREES` picks the tree list (the editor shows the climate's).
+        if let Ok(list) = std::env::var("RADAR_TREES") {
+            doc.tile_mut().display_mut().tree_list = list;
+        }
         let water = match wce_tile_tool::stage_b_of(&doc, game.as_ref(), true) {
             Ok((w, nogos)) => {
                 doc.tile_mut().set_auto_nogos(nogos);
@@ -78,6 +83,43 @@ fn main() -> Result<(), String> {
             if input.sea { ", sea" } else { "" }, if input.water.is_some() { ", water" } else { "" }, if input.roads.is_some() { ", roads" } else { "" },
             (t1 - t0).as_secs_f64(), (t2 - t1).as_secs_f64(), (t3 - t2).as_secs_f64(),
         );
+
+        if std::env::var("RADAR_SLOPE_DUMP").is_ok() {
+            // The slope (white 45 degrees and up), the sea blue, the steep outlines red: 1 m a pixel.
+            let [ax, az, aw, ah] = input.area;
+            let (w, h) = (aw as usize, ah as usize);
+            let hf = &input.height;
+            let mut px = vec![255u8; w * h * 4];
+            for j in 0..h {
+                for i in 0..w {
+                    let (x, z) = (ax + i as f64 + 0.5, az + ah - j as f64 - 0.5);
+                    let y = hf.sample(x, z);
+                    let (dx, dz) = (hf.sample(x + 1.0, z) - hf.sample(x - 1.0, z), hf.sample(x, z + 1.0) - hf.sample(x, z - 1.0));
+                    let deg = (f64::from((dx * dx + dz * dz).sqrt() * 0.5)).atan().to_degrees();
+                    let v = (deg / 45.0 * 255.0).min(255.0) as u8;
+                    let k = (j * w + i) * 4;
+                    px[k..k + 3].copy_from_slice(&if y < 0.0 { [v / 2, v / 2, 160] } else { [v, v, v] });
+                }
+            }
+            let png = PngFile { width: w as u32, height: h as u32, bit_depth: 8, color_type: 6, pixels: px, pixels_edited: true, ..PngFile::default() };
+            std::fs::write(Path::new(out).join(format!("{name}_slope.png")), png.encode().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        }
+
+        if std::env::var("RADAR_TREE_DUMP").is_ok() {
+            // The trees, a dark pixel each, 1 m a pixel.
+            let [ax, az, aw, ah] = input.area;
+            let (w, h) = (aw as usize, ah as usize);
+            let mut px = vec![255u8; w * h * 4];
+            for t in &input.trees {
+                let (i, j) = ((t[0] - ax).floor(), (az + ah - t[1]).floor());
+                if i >= 0.0 && j >= 0.0 && (i as usize) < w && (j as usize) < h {
+                    let k = (j as usize * w + i as usize) * 4;
+                    px[k..k + 3].copy_from_slice(&[0, 90, 0]);
+                }
+            }
+            let png = PngFile { width: w as u32, height: h as u32, bit_depth: 8, color_type: 6, pixels: px, pixels_edited: true, ..PngFile::default() };
+            std::fs::write(Path::new(out).join(format!("{name}_trees.png")), png.encode().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        }
 
         if std::env::var("RADAR_DEBUG").is_ok() {
             let t = doc.tile();

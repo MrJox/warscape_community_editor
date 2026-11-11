@@ -165,7 +165,7 @@ impl Default for RadarStyle {
             rock: [120.0, 112.0, 100.0],
             road_width: 6.0,
             blend_roads: true,
-            forest_density: 0.035,
+            forest_density: 0.03,
             relief: 0.22,
             hachure_slope: 12.0,
             cliff_slope: 35.0,
@@ -595,7 +595,23 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
         }
         r
     });
-    if rock.v.iter().any(|&r| r > 0.5) {
+    // Sea cliffs: the land along the shore standing well above the ground just off it (the steep band at the waterline is too thin for
+    // the slope test above).
+    let sea_rim = if water.v.iter().any(|&w| w > 0.5) {
+        let near = water.blurred(1);
+        let low = min_filter(&heights, n, ((8.0 * px_m) as usize).max(2));
+        Some(Mask::from_fn(n, |i, j| {
+            let k = j * n + i;
+            let shore = f32::from(u8::from(near.v[k] > 0.02 && water.v[k] < 0.5));
+            shore * smooth(3.5, 6.0, heights[k] - low[k])
+        }).blurred(1).step(0.35, 0.12))
+    } else {
+        None
+    };
+
+    // Drawn after the water: a sea cliff's rim is along the shore, whose ink would cover it.
+    let mut cliff_rims: Option<(Mask, Mask)> = None;
+    if rock.v.iter().any(|&r| r > 0.5) || sea_rim.is_some() {
         // The top edge: just outside the steep ground, where the ground bulges (higher than around it).
         let hm = Mask { n, v: heights.clone() };
         let around = hm.blurred(((6.0 * px_m) as usize).max(3));
@@ -605,11 +621,12 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             let band = (grown.v[k] - rock.v[k]).max(0.0);
             band * smooth(0.0, 0.4, heights[k] - around.v[k]) * (1.0 - water.v[k])
         });
-        let rim = rim.blurred(1).step(0.3, 0.12);
+        let mut rim = rim.blurred(1).step(0.3, 0.12);
+        if let Some(sea) = &sea_rim {
+            rim.max_with(sea);
+        }
         let ticks = cliff_ticks(&frame, &rim, &grad, 3.0 * px_m, 6.0 * px_m, seed);
-        canvas.paint(&ticks, style.ink, 0.75);
-        canvas.paint(&rim.blurred(1).step(0.1, 0.08), style.ink, 0.6);
-        canvas.paint(&rim, style.cliff, 1.0);
+        cliff_rims = Some((rim, ticks));
     }
 
     // 4. Hachures: short ink strokes down the slopes, more and darker the steeper (fewer on the lit side).
@@ -633,11 +650,11 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             density.sample(p[0], p[1])
         });
         // About 12 m around, its edge wobbled.
-        let soft = raw.blurred(((8.0 * px_m) as usize).max(1));
+        let soft = raw.blurred(((4.0 * px_m) as usize).max(1));
         let t = style.forest_density as f32;
         let forest = Mask::from_fn(n, |i, j| {
             let k = j * n + i;
-            let wobble = (fbm(i as f64 / 24.0, j as f64 / 24.0, 3, seed ^ 0xf0) - 0.5) * 0.8;
+            let wobble = (fbm(i as f64 / 24.0, j as f64 / 24.0, 3, seed ^ 0xf0) - 0.5) * 0.4;
             smooth(t * 0.85, t * 1.15, soft.v[k] * (1.0 + wobble)) * (1.0 - water.v[k])
         });
         canvas.paint_with(&forest, |i, j, c| {
@@ -686,6 +703,12 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             canvas.paint(&line, style.sea_deep, 0.55 - 0.12 * r as f32);
         }
         canvas.paint(&water.edge(1), style.ink, 0.8);
+    }
+
+    if let Some((rim, ticks)) = &cliff_rims {
+        canvas.paint(ticks, style.ink, 0.75);
+        canvas.paint(&rim.blurred(1).step(0.1, 0.08), style.ink, 0.6);
+        canvas.paint(rim, style.cliff, 1.0);
     }
 
     // 7. Roads: the lines, and the blend map's roads where the tile has few lines; cream, softly edged.
@@ -797,6 +820,21 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
     });
 
     RadarImage { size: out as u32, rgba }
+}
+
+/// The least of `v` (an `n` x `n` raster) within `r` pixels (a square), per pixel.
+fn min_filter(v: &[f32], n: usize, r: usize) -> Vec<f32> {
+    let pass = |src: &[f32], horizontal: bool| -> Vec<f32> {
+        (0..n * n).into_par_iter().map(|k| {
+            let (i, j) = (k % n, k / n);
+            if horizontal {
+                (i.saturating_sub(r)..=(i + r).min(n - 1)).map(|x| src[j * n + x]).fold(f32::MAX, f32::min)
+            } else {
+                (j.saturating_sub(r)..=(j + r).min(n - 1)).map(|y| src[y * n + i]).fold(f32::MAX, f32::min)
+            }
+        }).collect()
+    };
+    pass(&pass(v, true), false)
 }
 
 /// The fields' pattern on the paper at a point: a multiplier about 1.
