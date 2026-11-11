@@ -237,7 +237,8 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    (`renderer/ropes.rs`; the static `#ropes` strips are for models without a cloth). A model's sails share one palette, each mesh from its
    `GpuMesh::palette_base`. **ASSUMPTION**s (docs/re/cloth.md): that no weather direction rotates the world wind, the clock of the
    perturbation, the rope radius; the wind's per-sail phase uses the editor's generator, not the game's. Not done: the sails' furled
-   states, projectile gusts and rope breaks (no battle in the editor), the ropes' shadows.
+   states, projectile gusts and rope breaks (no battle in the editor). The moving ropes cast shadows (`rope.hlsl` vs30_depth / ps30_depth into each
+   cascade, after the units; thinner than a shadow texel, they come out dotted); a model's static `#ropes` strips don't.
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
    tool needs them.
