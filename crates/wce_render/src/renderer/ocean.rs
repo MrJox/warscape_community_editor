@@ -327,6 +327,15 @@ impl Renderer {
         &self.cbs
     }
 
+    /// How far the battle sea's waves lift its surface at a scene point (scene units, at the last frame's time): the sea and swell
+    /// surfaces, as the ocean's chunks are displaced. `None` while no sea is drawn (no sea plane, or its surfaces not loaded).
+    pub fn sea_wave_height(&self, x: f32, z: f32) -> Option<f32> {
+        let sea = self.water.ocean.sea.as_ref().filter(|_| !self.water.ocean.planes.is_empty())?;
+        let (u, o, t) = (self.camera.units.max(1e-6), self.water.ocean.origin, self.clock.last_time.max(0.0));
+        let (gx, gz) = ((x - o.x) * u, (z - o.z) * u);
+        Some((sea.sea.height_at(sea.sea.frame_at(t), gx, gz) + sea.swell.height_at(sea.swell.frame_at(t), gx, gz)) / u)
+    }
+
     /// The battle winds a sea can be drawn with (`wind_levels_tables`, in its order; empty without the table).
     pub fn sea_states(&mut self) -> Vec<String> {
         if self.water.ocean.winds.is_none() {

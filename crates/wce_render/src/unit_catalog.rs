@@ -78,6 +78,15 @@ pub struct NavalUnit {
     pub secondary_weapon: String,
 }
 
+/// A `models_oars` row: an oar kind's model (its port side's; the starboard one is beside it, `oar_right_`) and its clips.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OarModel {
+    pub model: String,
+
+    /// The row, port and starboard (`left_row`, `right_row`): one bone turning the oar about its middle, the oarlock.
+    pub rows: [String; 2],
+}
+
 /// One `unit_variants_ships` row: a naval unit's ship, by faction when it names one.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ShipEntry {
@@ -108,8 +117,8 @@ pub struct UnitCatalog {
     /// `models_naval`, by key.
     pub ship_logic: HashMap<String, Arc<ShipLogic>>,
 
-    /// `models_oars`: an oar kind's model (its port side's; the starboard one is beside it, `oar_right_`).
-    pub oars: HashMap<String, String>,
+    /// `models_oars`, by kind.
+    pub oars: HashMap<String, OarModel>,
 
     /// `naval_weapons`: a weapon's model (`models_entity_weapons`: the first piece, intact, LOD 1, in its logic file's folder).
     pub naval_weapons: HashMap<String, String>,
@@ -219,8 +228,8 @@ impl UnitCatalog {
             }
         }
 
-        for r in rows(vfs, schema, "models_oars", &["key", "rigid_model"])? {
-            c.oars.entry(r[0].clone()).or_insert_with(|| normalize(&r[1]));
+        for r in rows(vfs, schema, "models_oars", &["key", "rigid_model", "left_row", "right_row"])? {
+            c.oars.entry(r[0].clone()).or_insert_with(|| OarModel { model: normalize(&r[1]), rows: [normalize(&r[2]), normalize(&r[3])] });
         }
 
         // `logic_file` is `<folder>/<model>.meta_data`; the model's pieces beside it, `<model>_piece01_destruct01_lod01.rigid_model_v2`.
