@@ -4237,6 +4237,7 @@ impl Tool for TileTool {
         self.sync_polygon_look(e);
         self.draw_areas_chip(e, origin, size, top);
         self.draw_placement_chips(e, origin, gui::v2(size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 12.0, size.y), top);
+        self.draw_measure_labels(e, origin);
         self.draw_box_select(origin);
         self.draw_context_menu(e);
         self.context.draw_minimap(e, origin, size);
@@ -4262,6 +4263,7 @@ impl Tool for TileTool {
         self.inspect_holder(e);
         if let Some(id) = document_id(e) {
             self.ref_units.draw(e, id);
+            self.inspect_measure(e, id);
         }
     }
 

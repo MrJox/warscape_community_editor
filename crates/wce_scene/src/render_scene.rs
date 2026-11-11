@@ -748,7 +748,7 @@ pub struct OverlayVertex {
 }
 
 /// The entries of a scene's overlay colour table (`RenderScene::overlay_slots`).
-pub const OVERLAY_SLOTS: usize = 84;
+pub const OVERLAY_SLOTS: usize = 96;
 
 /// A vertex colour that stands for an entry of the scene's overlay colour table, read when it is drawn: what uses one changes colour by
 /// the table alone, without touching its geometry. Alpha 0 and these green and blue bytes (the overlay shader's `SLOT_`) say so: such a

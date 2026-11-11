@@ -1,0 +1,19 @@
+# Tape measures (WceMeasureLine, TEd's Tape Measure): a line drawn on flat ground measures what its points say, survives undo / redo, is
+# saved in tile.wce and dropped from what the Assembly Kit gets. %TILE% is the kit tile farm_eastern/1x1/aa (flat where the line runs);
+# %OUT% gets the saved tile, the export text and the kit copy (tile.wce has the line, the kit's tile.ted not).
+tile "%TILE%"
+frames 5
+add_polygon "WceMeasureLine||100,100;150,100;150,140"
+frames 2
+assert_selected_type WceMeasureLine
+tile_measure
+assert_measure 90 90 90 0.05
+undo
+frames 2
+redo
+frames 2
+tile_select WceMeasureLine
+assert_measure 90 90 90 0.05
+save_to "%OUT%/saved"
+save_for_kit "%OUT%/kit/raw_data"
+quit

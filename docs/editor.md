@@ -142,6 +142,16 @@ unit's soldiers selects it), saved in `tile.wce` as `WceRefHuman` / `WceRefUnit`
 faction, animation slot, soldier and colours; an edit goes to every selected reference. They stand on the ground under each man, or level at their own height when
 freeform. They aren't drawn in the Game view. Script: `tile_ref human|unit <x> <z> [unit] [faction] [soldier] [slot]`, `tile_ref status`.
 
+**Tape measure (`WceMeasureLine`; TEd's Tape Measure, `TAPE_MEASURE_LINE`):** the Create panel's References category draws an open line of points on the ground
+(clicks; Enter finishes, Esc cancels), as many as wanted. TEd's measure lines never reach a file it writes, and some versions lose them on save; ours are tile
+elements like the polygons (points edited, moved, hidden, undone), saved in `tile.wce` and dropped from anything TEd or the game reads (Save for Assembly Kit lists
+it as dropped; the game export is byte for byte the same with or without one). `wce_tile::measure` works out, for each stretch and the whole line, the length
+along the ground (the terrain sampled every 0.5 m between the points), straight (3D), on the map (x and z) and the rise and grade (rise over the length on the map;
+the whole line's from its first point to its last). The points stand on the ground, as a landscape polygon's do. The viewport labels every line shown with its length
+along the ground (and straight, when it differs) at its last point, the selected one each stretch at its middle, and the line being drawn at the mouse; the
+Inspector below the grid shows the totals and a table of the stretches. Commands: `tile_measure` logs the selected line's lengths, `assert_measure <ground>
+<straight> <map> [tol]` tests them.
+
 ## Cross-tool composition (Phase 7)
 
 Every open file is a `Document` in the one `DocumentManager`, whichever tool opened it. **Each tool has one document** (a tool's stand-in scene aside, the Weather tool's sample map): a tile and an `.environment` are open at once, each with its own history, modified marker and layer, but opening another tile closes the open one, another weather file the open weather file, and so on. With unsaved changes the replace prompt asks first: **Save and open**, **Discard changes and open**, **Cancel**; the old document goes only once the new one is open (if the open fails it stays, with its changes when they were discarded). Scripts: `open <path> [disk] [save|discard]` (it fails with unsaved changes and no answer, as `close` does; the tools' own open commands too: `close <doc> save|discard` first), `open_prompt <path>` opens the prompt as the menus would, `answer` answers it (`Editor::clear_to_replace`, `Editor::replace_document`). Opening a file of another tool switches to that tool (`open_path(..., switch_tool = false)` does not); a file that is open already is shown in its tool, not opened again. **The active document is the active tool's** (else its stand-in): the menus, History, `save`, `close` and the default Inspector target follow it, and switching tools switches document. Its title is at the right of the menu bar, `[Tool] title *` (amber while it has unsaved changes), and in the window's title.

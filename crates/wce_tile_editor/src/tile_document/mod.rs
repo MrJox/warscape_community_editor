@@ -28,6 +28,7 @@ mod flip;
 pub mod fire;
 mod index;
 mod jobs;
+mod measure;
 
 /// Whether anything is being made off the editor's thread (`tile_wait_jobs`).
 pub use jobs::running as jobs_running;
@@ -81,7 +82,7 @@ pub use self::tech::{GROUPS, KINDS, TechInfo, TechKind, TechScope, TechSettings,
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
 pub use self::roads::ROAD_SPLINE;
 pub use self::walls::{Anchor, WALL_SPLINE, WallLayout};
-pub use wce_tile::new_instances::{REF_HUMAN, REF_UNIT};
+pub use wce_tile::new_instances::{MEASURE_LINE, REF_HUMAN, REF_UNIT};
 
 /// What a new instance is made from (`TileDocument::create`): a point on the ground (world metres), or drawn points.
 #[derive(Clone, Debug, PartialEq)]

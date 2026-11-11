@@ -34,6 +34,7 @@ pub fn type_icon(ty: &str) -> &'static str {
         "WceRoadSpline" => icons::ROUTE,
         "WceRefHuman" => icons::USER,
         "WceRefUnit" => icons::USERS,
+        "WceMeasureLine" => icons::RULER,
         "LayerInstance" | "SCENE_GRAPH" => icons::LAYERS,
         "UserInstanceGroup" | "INSTANCE_GROUP" | "LAYER_INSTANCE_GROUP" => icons::BOXES,
         _ => icons::CIRCLE_HELP,
@@ -71,6 +72,7 @@ pub fn type_name(ty: &str) -> &'static str {
         "WceRoadSpline" => "Road (procedural)",
         "WceRefHuman" => "ref_human (a soldier, for scale)",
         "WceRefUnit" => "ref_unit (a whole unit, for scale)",
+        "WceMeasureLine" => "Tape measure (editor only)",
         _ => "Other",
     }
 }
