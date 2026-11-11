@@ -252,9 +252,10 @@ pub struct MinimapUi {
     height_time: f64,
     height_range: (f64, f64),
 
-    /// The radar: its picture, what it was drawn from (the history's version, whether the water depth and the no-go areas were in), when.
+    /// The radar: its picture, what it was drawn from (the history's version, whether the water depth and the no-go areas were in, how many
+    /// models had their bounds: the water planes' footprints), when.
     radar: Picture,
-    radar_for: Option<(u64, bool, bool)>,
+    radar_for: Option<(u64, bool, bool, usize)>,
     radar_time: f64,
 
     siege: Option<MinimapSiege>,
@@ -584,7 +585,7 @@ impl MinimapUi {
 
     fn refresh_radar(&mut self, e: &mut Editor, id: DocumentId, now: f64) {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-        let key = (d.history().version(), d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some());
+        let key = (d.history().version(), d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some(), d.tile().radar_models_resolved());
         let idle = !(0..3).any(gui::is_mouse_down);
         if self.radar_for != Some(key) && (self.radar_for.is_none() || (idle && now - self.radar_time >= RADAR_EVERY)) {
             let started = std::time::Instant::now();
@@ -592,7 +593,7 @@ impl MinimapUi {
             self.radar.set(e, &mut self.serial, size, size, rgba, area);
             self.radar_for = Some(key);
             self.radar_time = now;
-            log::info(format!("radar drawn in {:.2} s", started.elapsed().as_secs_f64()));
+            log::info(format!("radar drawn in {:.2} s ({} models with their bounds)", started.elapsed().as_secs_f64(), key.3));
         }
 
         let (water, nogo) = (key.1, key.2);
