@@ -333,6 +333,22 @@ impl<T: Copy + Default> Blocks<T> {
         self.blocks.iter().flatten().map(|b| b.len() * size_of::<T>()).sum()
     }
 
+    /// A copy mirrored about the map's middle (`pixel_layer::mirror_source`): its columns (`across_x`) or its rows. Only where it holds
+    /// samples: a block it lacks stays empty.
+    fn mirrored(&self, w: u32, h: u32, channels: usize, across_x: bool, corners: bool) -> Self {
+        let mut out = Self::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let (sx, sy) = if across_x { (crate::pixel_layer::mirror_source(w, x, corners), y) } else { (x, crate::pixel_layer::mirror_source(h, y, corners)) };
+                if let Some(px) = self.pixel(sx, sy, channels) {
+                    out.pixel_mut(x, y, channels).copy_from_slice(px);
+                }
+            }
+        }
+
+        out
+    }
+
     /// Whether two hold the very same blocks (shared, not equal by value): one is a copy of the other with nothing written since.
     fn same(&self, other: &Self) -> bool {
         self.across == other.across && self.blocks.len() == other.blocks.len() && self.blocks.iter().zip(&other.blocks).all(|(a, b)| match (a, b) {
@@ -489,6 +505,16 @@ impl<K: Kind> Stack<K> {
         (self.base, self.layers, self.working) = (state.base.clone(), state.layers.clone(), state.working);
         self.remember();
         self.apply_all(field);
+    }
+
+    /// Mirrors the base and every layer about the map's middle (`Blocks::mirrored`), the field left as it is: the caller mirrors it as an
+    /// edit of its own, which [`Self::sync`] then finds the stack already agreeing with, and whose undo puts back the state before.
+    pub fn mirror(&mut self, across_x: bool, corners: bool) {
+        let (w, h) = (self.w, self.h);
+        self.base = self.base.mirrored(w, h, K::CHANNELS, across_x, corners);
+        for l in &mut self.layers {
+            l.samples = l.samples.mirrored(w, h, K::CHANNELS, across_x, corners);
+        }
     }
 
     /// Keeps the state under the serial last seen: a later undo comes back to it.

@@ -380,6 +380,36 @@ impl HeightField {
         Ok(())
     }
 
+    /// Mirrors the heights about the tile's middle during an edit: columns (`across_x`) or rows, each sample taking
+    /// `pixel_layer::mirror_source`'s (`corners`: the bordered map, whose samples sit at its pixels' corners). The samples changed.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open.
+    pub fn mirror(&mut self, across_x: bool, corners: bool) -> Result<usize> {
+        if !self.editing {
+            return Err("begin_edit() before editing".to_owned());
+        }
+
+        let src = self.v.clone();
+        let (w, h) = (self.w, self.h);
+        let mut changed = 0;
+        for y in 0..h {
+            for x in 0..w {
+                let (sx, sy) = if across_x { (crate::pixel_layer::mirror_source(w, x, corners), y) } else { (x, crate::pixel_layer::mirror_source(h, y, corners)) };
+                let v = src[sy as usize * w as usize + sx as usize];
+                let i = y as usize * w as usize + x as usize;
+                if self.v[i] != v {
+                    self.v[i] = v;
+                    self.touch(x, y);
+                    changed += 1;
+                }
+            }
+        }
+
+        Ok(changed)
+    }
+
     /// Blends towards the local average (of the samples before this stroke step).
     ///
     /// # Errors

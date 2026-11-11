@@ -171,6 +171,19 @@ impl GroundTypeField {
         self.layer.end_edit();
     }
 
+    /// Mirrors the map about the tile's middle during an edit (`PixelLayer::mirror`, as cells); the pixels changed.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open.
+    pub fn mirror(&mut self, across_x: bool) -> Result<usize> {
+        if !self.layer.is_editing() {
+            return Err("begin_edit() before editing".to_owned());
+        }
+
+        Ok(self.layer.mirror(across_x, false))
+    }
+
     pub fn is_editing(&self) -> bool {
         self.layer.is_editing()
     }

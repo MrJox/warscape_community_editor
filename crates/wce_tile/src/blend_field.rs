@@ -424,6 +424,45 @@ impl BlendField {
         self.layer.is_editing()
     }
 
+    /// Mirrors the map about the tile's middle during an edit (`PixelLayer::mirror`, as cells); the pixels changed.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open.
+    pub fn mirror(&mut self, across_x: bool) -> Result<usize> {
+        if !self.layer.is_editing() {
+            return Err("begin_edit() before editing".to_owned());
+        }
+
+        Ok(self.layer.mirror(across_x, false))
+    }
+
+    /// Sets every pixel to `samples` (16 weights) during an edit; the pixels changed. `mask` says which pixels.
+    ///
+    /// # Errors
+    ///
+    /// No edit is open, or not 16 weights.
+    pub fn fill(&mut self, samples: &[u16], mask: &dyn Fn(u32, u32) -> bool) -> Result<usize> {
+        if !self.layer.is_editing() {
+            return Err("begin_edit() before editing".to_owned());
+        }
+
+        if samples.len() != 16 {
+            return Err("a blend map pixel has 16 weights".to_owned());
+        }
+
+        let mut changed = 0;
+        for y in 0..self.height() {
+            for x in 0..self.width() {
+                if mask(x, y) {
+                    changed += usize::from(self.layer.set_pixel(x, y, samples));
+                }
+            }
+        }
+
+        Ok(changed)
+    }
+
     pub fn undo(&mut self) -> bool {
         self.layer.undo()
     }
