@@ -16,9 +16,14 @@ const LABEL_TEXT: u32 = gui::col32(255, 244, 120, 255);
 const LABEL_FAINT: u32 = gui::col32(230, 230, 230, 255);
 const LABEL_BG: u32 = gui::col32(16, 16, 18, 190);
 
+/// A value to one decimal with its sign, without a "-0.0" for what rounds to nothing.
+fn signed1(v: f64) -> String {
+    if v.abs() < 0.05 { "0.0".to_owned() } else { format!("{v:+.1}") }
+}
+
 /// A grade for people: percent and degrees.
 fn grade(l: &Lengths) -> String {
-    format!("{:+.1} % ({:+.1} deg)", l.grade_percent(), l.grade_degrees())
+    format!("{} % ({} deg)", signed1(l.grade_percent()), signed1(l.grade_degrees()))
 }
 
 /// What the Inspector and `tile_measure` say of a line: its total lengths, one per line.
@@ -56,7 +61,7 @@ impl TileTool {
                 for (i, s) in m.stretches.iter().enumerate() {
                     gui::table_next_row();
                     let lit = self.poly_point.is_some_and(|p| p == i || p == i + 1);
-                    let cells = [format!("{i}-{}", i + 1), format_length(s.ground), format_length(s.straight), format_length(s.horizontal), format!("{:+.1} %", s.grade_percent())];
+                    let cells = [format!("{i}-{}", i + 1), format_length(s.ground), format_length(s.straight), format_length(s.horizontal), format!("{} %", signed1(s.grade_percent()))];
                     for c in cells {
                         gui::table_next_column();
                         if lit { gui::text_colored([1.0, 0.95, 0.45, 1.0], &c) } else { gui::text(&c) }
