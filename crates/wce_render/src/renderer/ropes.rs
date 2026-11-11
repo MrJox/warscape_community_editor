@@ -1,7 +1,8 @@
 //! The scene's moving ropes (`Payload::Ropes`: a simulated sail's ropes, `cloth_sim`): drawn into the G-buffer after the units, through
 //! `rope.hlsl`'s world technique (vs30_main: the rope's vertices in game units about the render origin, no instance; ps30_main_gbuffer, the
 //! rigid technique's pixel shader without the instance's burn). Their strips are made again every frame on the CPU, one dynamic vertex and
-//! index buffer for all of them. Not in the shadows (the rope depth techniques aren't wired) nor the id pass.
+//! index buffer for all of them. They cast shadows with the technique's depth entries (vs30_depth, ps30_depth: the same strips, turned to the
+//! view's camera, into each cascade). Not in the id pass.
 
 use wce_d3d11::*;
 use wce_foundation::math::Float3;
@@ -13,6 +14,8 @@ use crate::shader_lib::bind_srv;
 
 pub(crate) const ROPE_WORLD_VS: &str = "dx11_sm_3_0_rope.hlsl_vs_vs30_main";
 pub(crate) const ROPE_WORLD_PS: &str = "dx11_sm_3_0_rope.hlsl_ps_ps30_main_gbuffer";
+const ROPE_DEPTH_VS: &str = "dx11_sm_3_0_rope.hlsl_vs_vs30_depth";
+const ROPE_DEPTH_PS: &str = "dx11_sm_3_0_rope.hlsl_ps_ps30_depth";
 
 /// The frame's ropes on the GPU: the buffers (grown when needed) and per entity its indices and textures.
 #[derive(Default)]
@@ -85,6 +88,28 @@ impl Renderer {
                 self.ropes.draws.clear();
                 return;
             }
+        }
+    }
+
+    /// Draws the frame's ropes into the bound shadow cascade (its view-projection already in the camera constants); the caller binds its own
+    /// shaders again.
+    pub(crate) fn draw_ropes_shadow(&mut self) {
+        if self.ropes.draws.is_empty() {
+            return;
+        }
+
+        let (Some(vs), Some(ps)) = (self.shader(ROPE_DEPTH_VS), self.shader(ROPE_DEPTH_PS)) else { return };
+        let Some(layout) = self.layout(&vs, "rope_world", &rope_world_layout()) else { return };
+        self.upload();
+        self.ctx.set_input_layout(Some(&layout));
+        self.bind(&vs);
+        self.bind(&ps);
+        self.ctx.set_vertex_buffers(0, std::slice::from_ref(&self.ropes.vb), &[ROPE_STRIDE], &[0]);
+        self.ctx.set_index_buffer(self.ropes.ib.as_ref(), DXGI_FORMAT_R32_UINT, 0);
+        for &(first, count, ..) in &self.ropes.draws {
+            self.ctx.draw_indexed(count, first, 0);
+            self.draw_stats.draw_calls += 1;
+            self.draw_stats.shadow_triangles += u64::from(count / 3);
         }
     }
 

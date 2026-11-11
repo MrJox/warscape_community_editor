@@ -826,9 +826,10 @@ impl Renderer {
 
                 self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
                 self.ctx.set_rasterizer_state(rs_shadow_rigid.as_ref());
-                // Ropes cast no shadow here: their vertices aren't the rigid layout (`rope.hlsl`'s depth technique isn't wired).
+                // A model's static ropes (`#ropes`) cast none here: their vertices aren't the rigid layout. The moving ropes cast theirs below.
                 let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope));
                 self.draw_skinned_shadow();
+                self.draw_ropes_shadow();
                 self.ctx.set_rasterizer_state(rs_shadow.as_ref());
                 self.draw_stats.shadow_instances += instances;
                 self.draw_stats.shadow_triangles += triangles;
