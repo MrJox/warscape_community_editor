@@ -43,6 +43,9 @@ of tuning with the user.
     footprint (middle_men_port_a's stream bed steps down past planes its floor stands 0.3 m above: a bank, not a cliff); sea cliffs: land at the shore 3.5 .. 6 m or more above
     the lowest ground within 8 m (the steep band at the waterline is too thin for the slope test). The rims are drawn after the water,
     whose shore ink would cover them.
+- Cliffs (`RadarStyle::cliff_style`): `Rock` (default since 2026-11-11, on trial: the user was not convinced by the cyan rims) draws the
+  steep ground, the rims and the fairly steep ground at their foot as grey stone in lit and shaded facets (`rock_facet_m`), cracked,
+  outlined in ink; `Rim` is CA's cyan top edge with ink ticks. The example takes `RADAR_CLIFFS=rim|rock`.
 - Ink extras (user: "vanilla base, ink extras"): a soft hill shade, hachures on slopes over `hachure_slope`, ripples off the shore.
 - Editor: the Minimap panel's base chip has **radar** (redrawn at most every second after an edit, once the buttons are up; the tool
   works out the water depth and the no-go areas while it shows). `minimap radar`, `radar_save [path.png]` (default: the tile folder's
