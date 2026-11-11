@@ -200,6 +200,12 @@ impl Tile {
 }
 
 impl Tile {
+    /// How many of the tile's models have their bounds (they come in while the renderer loads them): the water planes' footprints are
+    /// their models', so a radar drawn before they came is drawn again.
+    pub fn radar_models_resolved(&self) -> usize {
+        self.models.values().filter(|m| m.resolved).count()
+    }
+
     /// The roads as lines: the procedural roads' centre lines, and every shown road decal (a path, a road, its borders) as a line along
     /// its x, in metres.
     fn radar_road_lines(&self) -> Vec<Vec<P>> {
