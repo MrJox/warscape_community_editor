@@ -10,7 +10,10 @@ use std::collections::HashMap;
 use wce_editor::editor::Editor;
 use wce_editor::gui;
 use wce_foundation::math::{Float3, Float4x4};
-use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, OverlayVertex, Payload, RenderScene, SourceRef, overlay_colour};
+use wce_scene::render_scene::{
+    DocumentId, EntityId, LayerId, Overlay, OverlayVertex, Payload, RenderScene, SourceRef,
+    overlay_colour,
+};
 use wce_terrain::terry::{EntityKind, TerryProject};
 use wce_terrain_editor::MapDocument;
 use wce_terrain_editor::document::{TERRY_CELL, TerryFrame};
@@ -35,15 +38,38 @@ mod removal_tests {
         let source = SourceRef { doc: 7, item: 101 };
         let mut keep = vec![];
         for i in 0..6 {
-            let id = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()),
-                SourceRef { item: source.item + i, ..source });
+            let id = scene.add(
+                view.layer,
+                Float4x4::IDENTITY,
+                Payload::Overlay(Overlay::default()),
+                SourceRef {
+                    item: source.item + i,
+                    ..source
+                },
+            );
             view.shown.insert(source.item + i, id);
             // Interleaving unrelated ids catches accidental removal of a whole layer or a contiguous enclosing range.
-            keep.push(scene.add(other_layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 8, item: i }));
+            keep.push(scene.add(
+                other_layer,
+                Float4x4::IDENTITY,
+                Payload::Overlay(Overlay::default()),
+                SourceRef { doc: 8, item: i },
+            ));
         }
-        view.draft = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 7, item: u64::MAX });
+        view.draft = scene.add(
+            view.layer,
+            Float4x4::IDENTITY,
+            Payload::Overlay(Overlay::default()),
+            SourceRef {
+                doc: 7,
+                item: u64::MAX,
+            },
+        );
         keep.push(view.draft);
-        let retained: Vec<_> = keep.iter().map(|&id| scene.find(id).unwrap().clone()).collect();
+        let retained: Vec<_> = keep
+            .iter()
+            .map(|&id| scene.find(id).unwrap().clone())
+            .collect();
         let layers = scene.layers().to_vec();
         let terrain_revision = scene.terrain_revision();
         let mut cursor = 0;
@@ -55,8 +81,22 @@ mod removal_tests {
         assert_eq!(scene.entities(), retained);
         assert_eq!(scene.layers(), layers);
         assert_eq!(scene.terrain_revision(), terrain_revision);
-        assert!(scene.structure_since(&mut cursor).unwrap().iter().all(|c| matches!(c, StructureChange::Removed(_))));
-        let rebuilt = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), source);
+        let changes = scene.structure_since(&mut cursor).unwrap();
+        assert_eq!(changes.len(), 6);
+        assert!(
+            changes
+                .iter()
+                .all(|c| matches!(c, StructureChange::Removed(_)))
+        );
+        view.remove_shown(&mut scene);
+        assert!(scene.structure_since(&mut cursor).unwrap().is_empty());
+        assert_eq!(scene.entities(), retained);
+        let rebuilt = scene.add(
+            view.layer,
+            Float4x4::IDENTITY,
+            Payload::Overlay(Overlay::default()),
+            source,
+        );
         assert_eq!(selection.items(), &[source]);
         assert_eq!(selection.entities(&scene), vec![rebuilt]);
         assert!(scene.pickable(scene.find(rebuilt).unwrap()));
@@ -75,20 +115,38 @@ mod removal_tests {
                     let mut view = TerryView::default();
                     view.layer = scene.add_layer(1, "benchmark");
                     for i in 0..filler {
-                        scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 2, item: i });
+                        scene.add(
+                            view.layer,
+                            Float4x4::IDENTITY,
+                            Payload::Overlay(Overlay::default()),
+                            SourceRef { doc: 2, item: i },
+                        );
                     }
                     for i in 0..count {
-                        let id = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 1, item: i });
+                        let id = scene.add(
+                            view.layer,
+                            Float4x4::IDENTITY,
+                            Payload::Overlay(Overlay::default()),
+                            SourceRef { doc: 1, item: i },
+                        );
                         view.shown.insert(i, id);
                     }
                     let start = std::time::Instant::now();
-                    if batch { view.remove_shown(&mut scene); }
-                    else { for (_, id) in view.shown.drain() { scene.remove(id); } }
+                    if batch {
+                        view.remove_shown(&mut scene);
+                    } else {
+                        for (_, id) in view.shown.drain() {
+                            scene.remove(id);
+                        }
+                    }
                     times.push(start.elapsed().as_secs_f64() * 1000.);
                     assert_eq!(scene.entities().len(), filler as usize);
                 }
                 times.sort_by(f64::total_cmp);
-                println!("overlays={count} unrelated={filler} batch={batch} median_ms={:.3} samples_ms={times:?}", times[1]);
+                println!(
+                    "overlays={count} unrelated={filler} batch={batch} median_ms={:.3} samples_ms={times:?}",
+                    times[1]
+                );
             }
         }
     }
