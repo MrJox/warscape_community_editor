@@ -262,7 +262,9 @@ impl Renderer {
                             continue;
                         }
 
-                        Placed::Skinned(SkinnedGpuInstance { world, palette: [palette as f32, s.faction_scale, 0.0, 0.0], tint: part.tint, ..SkinnedGpuInstance::default() })
+                        // A sail's mesh: its own bones, after the model's earlier sails' (3 texels a bone).
+                        let first = palette + 3 * m.palette_base as usize;
+                        Placed::Skinned(SkinnedGpuInstance { world, palette: [first as f32, s.faction_scale, 0.0, 0.0], tint: part.tint, ..SkinnedGpuInstance::default() })
                     } else {
                         // A static mesh: on its part's bone, or its material's, at the pivot its vertices are stored around.
                         let bone = part.bone.or(u32::try_from(m.bone).ok()).and_then(|b| s.bones.get(b as usize));
@@ -550,7 +552,7 @@ mod tests {
         let mesh = |kind, dirt, decal, alpha_mode| {
             let (vb, ib, offset, bmin, bmax) = (None, None, Default::default(), Default::default(), Default::default());
             let tex = std::array::from_fn(|_| Default::default());
-            GpuMesh { vb, ib, index_count: 0, alpha_mode, stride: 28, kind, dirt, decal, bone: -1, decal_rect: [0.0; 4], uv2_tile: [0.0; 2], tint: [0.0; 12], offset, has_offset: false, tex, diffuse_path: String::new(), normal_path: String::new(), displacement: None, bmin, bmax, snow: false }
+            GpuMesh { vb, ib, index_count: 0, alpha_mode, stride: 28, kind, dirt, decal, bone: -1, decal_rect: [0.0; 4], uv2_tile: [0.0; 2], tint: [0.0; 12], offset, has_offset: false, tex, diffuse_path: String::new(), normal_path: String::new(), displacement: None, bmin, bmax, snow: false, palette_base: 0 }
         };
 
         assert_eq!(gbuffer_ps(&mesh(MeshKind::Weighted, false, false, -1)), "dx11_sm_3_0_weighted.hlsl_ps_ps30_gbuffer_noclip");

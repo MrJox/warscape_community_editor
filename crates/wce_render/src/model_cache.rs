@@ -218,6 +218,10 @@ pub struct GpuMesh {
 
     /// Loaded as `<file>#snow` (MODEL_SNOW_SUFFIX): drawn with the snow regions' intensity.
     pub snow: bool,
+
+    /// A WeightedCloth mesh's first bone in its model's palette: its vertices index its own material's cloth bones, and a model's sails share
+    /// one palette, theirs one after another in the order of the LOD's meshes.
+    pub palette_base: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -739,6 +743,16 @@ fn pose_first_frame(model: &mut RigidModel, stem: &str, read: &SharedReader) {
     }
 }
 
+/// The cloth meshes' bone counts (their `palette_base` as made) turned into their first bones, one after another.
+fn palette_bases(meshes: &mut [GpuMesh]) {
+    let mut next = 0;
+    for m in meshes.iter_mut().filter(|m| m.kind == MeshKind::WeightedCloth) {
+        let count = m.palette_base;
+        m.palette_base = next;
+        next += count;
+    }
+}
+
 /// A rope's strip from its nodes (in order along it) and radius: the vertices ([`ROPE_STRIDE`] bytes each), the triangles, the bounds (the
 /// nodes, widened by the radius). `None` for fewer than two nodes.
 pub(crate) fn rope_geometry(nodes: &[[f32; 3]], radius: f32) -> Option<(Vec<u8>, Vec<u16>, [f32; 3], [f32; 3])> {
@@ -1035,6 +1049,9 @@ impl ModelInner {
                 bmin: Float3::new(lo[0], lo[1], lo[2]),
                 bmax: Float3::new(hi[0], hi[1], hi[2]),
                 snow,
+
+                // Its bone count for now: [`palette_bases`] makes it the first bone.
+                palette_base: if kind == MeshKind::WeightedCloth { material.cloth_bones().len() as u32 } else { 0 },
             })
         };
 
@@ -1065,7 +1082,8 @@ impl ModelInner {
         }
 
         for (l, lod) in model.lods().iter().enumerate() {
-            let meshes = lod.mesh_blocks().iter().filter_map(make_mesh).collect::<Vec<_>>();
+            let mut meshes = lod.mesh_blocks().iter().filter_map(make_mesh).collect::<Vec<_>>();
+            palette_bases(&mut meshes);
             if meshes.is_empty() {
                 // A model of decals only (its boxes give the bounds).
                 if l == 0 && !gm.decals.is_empty() {
@@ -1150,6 +1168,7 @@ impl ModelInner {
             bmin: Float3::new(lo[0], lo[1], lo[2]),
             bmax: Float3::new(hi[0], hi[1], hi[2]),
             snow: false,
+            palette_base: 0,
         })
     }
 
@@ -1718,6 +1737,7 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         bmin: Float3::default(),
         bmax: Float3::new((w - 1) as f32 * t.step, maxy - miny, (h - 1) as f32 * t.step),
         snow: false,
+        palette_base: 0,
     };
 
     let cells = (ci1 - ci0).max(cj1 - cj0);
