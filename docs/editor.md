@@ -152,6 +152,13 @@ along the ground (and straight, when it differs) at its last point, the selected
 Inspector below the grid shows the totals and a table of the stretches. Commands: `tile_measure` logs the selected line's lengths, `assert_measure <ground>
 <straight> <map> [tol]` tests them.
 
+**Angle finder (`WceAngleFinder`; TEd's `ANGLE_FINDER_INSTANCE`):** next to the tape measure in References: three clicks on the ground (an arm's end, the corner,
+the other arm's end; the third finishes it), kept and dropped as the tape measure is. It has three points always: inserting or removing one, or making one with
+another number, is refused. `wce_tile::measure::angle` gives the angle at the corner seen from above (on the map) and in space (with the arms' rises), and each
+arm from the corner out as the tape measure's stretches (along the ground, on the map, grade). The viewport draws an arc at each one's corner (a third of the
+shorter arm, 1 .. 25 m) with the angle beside it, the one being drawn included; the Inspector shows both angles and the arms. Commands: `tile_angle`,
+`assert_angle <on the map> <in space> [tol]`. TEd's other instance types and what the editor does with them: [formats/tile_ted.md](formats/tile_ted.md).
+
 ## Cross-tool composition (Phase 7)
 
 Every open file is a `Document` in the one `DocumentManager`, whichever tool opened it. **Each tool has one document** (a tool's stand-in scene aside, the Weather tool's sample map): a tile and an `.environment` are open at once, each with its own history, modified marker and layer, but opening another tile closes the open one, another weather file the open weather file, and so on. With unsaved changes the replace prompt asks first: **Save and open**, **Discard changes and open**, **Cancel**; the old document goes only once the new one is open (if the open fails it stays, with its changes when they were discarded). Scripts: `open <path> [disk] [save|discard]` (it fails with unsaved changes and no answer, as `close` does; the tools' own open commands too: `close <doc> save|discard` first), `open_prompt <path>` opens the prompt as the menus would, `answer` answers it (`Editor::clear_to_replace`, `Editor::replace_document`). Opening a file of another tool switches to that tool (`open_path(..., switch_tool = false)` does not); a file that is open already is shown in its tool, not opened again. **The active document is the active tool's** (else its stand-in): the menus, History, `save`, `close` and the default Inspector target follow it, and switching tools switches document. Its title is at the right of the menu bar, `[Tool] title *` (amber while it has unsaved changes), and in the window's title.

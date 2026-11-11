@@ -1,13 +1,15 @@
-//! Tape measures (`WceMeasureLine`, TEd's Tape Measure): the selected one's lengths in the Inspector, and labels in the viewport on every
-//! one shown and on the one being drawn. The lines themselves are polygons of the tile (drawn, edited, saved in tile.wce like the others);
-//! nothing of them reaches the kit or the game.
+//! Tape measures (`WceMeasureLine`, TEd's Tape Measure) and angle finders (`WceAngleFinder`, TEd's `ANGLE_FINDER_INSTANCE`): the selected
+//! one's lengths or angle in the Inspector, and labels in the viewport on every one shown and on the one being drawn (an angle finder's
+//! corner gets an arc too). They are polygons of the tile (drawn, edited, saved in tile.wce like the others); nothing of them reaches the
+//! kit or the game.
 
 use wce_editor::editor::Editor;
 use wce_editor::gui;
 use wce_scene::render_scene::DocumentId;
 use wce_foundation::math::Float3;
-use wce_tile::measure::{Lengths, Measure, format_length, measure};
-use wce_tile_editor::tile_document::{MEASURE_LINE, Tile, TileDocument};
+use wce_scene::render_scene::{Overlay, overlay_colour};
+use wce_tile::measure::{Angle, Lengths, Measure, angle, format_length, measure};
+use wce_tile_editor::tile_document::{ANGLE_FINDER, MEASURE_LINE, Tile, TileDocument};
 
 use crate::tool::{TileTool, document_id, primary};
 
@@ -38,7 +40,94 @@ pub fn summary(m: &Measure) -> Vec<(&'static str, String)> {
     ]
 }
 
+/// What the Inspector and `tile_angle` say of an angle finder.
+pub fn angle_summary(a: &Angle) -> Vec<(&'static str, String)> {
+    let arm = |l: &Lengths| format!("{} ({} on the map), {} %", format_length(l.ground), format_length(l.horizontal), signed1(l.grade_percent()));
+    vec![
+        ("Angle on the map", format!("{:.1} deg", a.on_map)),
+        ("Angle in space", format!("{:.1} deg", a.in_space)),
+        ("Arm to point 0", arm(&a.arms[0])),
+        ("Arm to point 2", arm(&a.arms[1])),
+    ]
+}
+
+/// An angle finder's label: the angle on the map, and in space when that differs by a tenth of a degree or more.
+fn angle_text(a: &Angle) -> String {
+    if (a.on_map - a.in_space).abs() >= 0.05 { format!("{:.1} deg (in space {:.1})", a.on_map, a.in_space) } else { format!("{:.1} deg", a.on_map) }
+}
+
+/// The angle at the middle of three points (world metres) on the tile's ground.
+fn angle_world(t: &Tile, pts: &[Float3]) -> Option<Angle> {
+    let points = pts.iter().map(|p| [f64::from(p.x), f64::from(t.terrain_height(p.x, p.z)), f64::from(p.z)]).collect::<Vec<_>>();
+    angle(&points, &|x, z| f64::from(t.terrain_height(x as f32, z as f32)))
+}
+
+/// The arc between an angle finder's arms at its corner, on the ground: a third of the shorter arm, 1 .. 25 m.
+fn angle_arc(t: &Tile, pts: &[Float3], o: &mut Overlay) {
+    let &[a, c, b] = pts else { return };
+    let (ua, ub) = ((a.x - c.x).atan2(a.z - c.z), (b.x - c.x).atan2(b.z - c.z));
+    let r = ((a.x - c.x).hypot(a.z - c.z).min((b.x - c.x).hypot(b.z - c.z)) / 3.0).clamp(1.0, 25.0);
+    let mut sweep = ub - ua;
+    while sweep > std::f32::consts::PI {
+        sweep -= std::f32::consts::TAU;
+    }
+
+    while sweep < -std::f32::consts::PI {
+        sweep += std::f32::consts::TAU;
+    }
+
+    let col = overlay_colour(0.45, 0.85, 1.0, 1.0);
+    let at = |u: f32| {
+        let (x, z) = (c.x + u.sin() * r, c.z + u.cos() * r);
+        Float3::new(x, t.terrain_height(x, z) + 0.4, z)
+    };
+
+    let n = 32;
+    for i in 0..n {
+        let (u0, u1) = (ua + sweep * i as f32 / n as f32, ua + sweep * (i + 1) as f32 / n as f32);
+        o.line(at(u0), at(u1), col);
+    }
+}
+
 impl TileTool {
+    /// The arcs of the angle finders shown, and of the one being drawn (the tool's overlay).
+    pub(crate) fn angle_overlay(&self, e: &Editor, t: &Tile, o: &mut Overlay) {
+        for elem in t.shown_measures().into_iter().filter(|&el| t.is_angle_finder(el)) {
+            angle_arc(t, &t.measure_points(elem), o);
+        }
+
+        if let Some(pts) = self.drawn_angle(e) {
+            angle_arc(t, &pts, o);
+        }
+    }
+
+    /// The angle finder being drawn, with the mouse as its last point: its three points.
+    fn drawn_angle(&self, e: &Editor) -> Option<Vec<Float3>> {
+        if !self.drawing || !self.draft.as_ref().is_some_and(|d| d.kind == ANGLE_FINDER) || self.draw_pts.len() != 2 || !(self.terrain_hit && e.viewport.hovered) {
+            return None;
+        }
+
+        Some(vec![self.draw_pts[0], self.draw_pts[1], self.snapped_cursor])
+    }
+
+    /// The selected angle finder in the Inspector, below the grid.
+    pub(crate) fn inspect_angle(&self, e: &Editor, id: DocumentId) {
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        let Some(a) = primary(e).and_then(|s| d.tile().angle_finder(s)) else { return };
+        gui::separator_text("Angle finder");
+        for (label, value) in angle_summary(&a) {
+            gui::row(label);
+            gui::text(&value);
+        }
+
+        gui::push_style_color(gui::COL_TEXT, gui::style_color(gui::COL_TEXT_DISABLED));
+        gui::text_wrapped(
+            "The corner is point 1. On the map: seen from above; in space: with the arms' rises. Arms: along the ground (on the map), grade from \
+             the corner out. Editor only: kept in tile.wce, never written for the Assembly Kit or the game.",
+        );
+        gui::pop_style_color(1);
+    }
+
     /// The Inspector below the grid: the selected tape measure's lengths, the whole line's and each stretch's.
     pub(crate) fn inspect_measure(&self, e: &Editor, id: DocumentId) {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
@@ -109,6 +198,19 @@ impl TileTool {
             }
 
             label(last, &total_text(&m), LABEL_TEXT);
+        }
+
+        for elem in t.shown_measures() {
+            let Some(a) = t.angle_finder(elem) else { continue };
+            if let Some(&corner) = t.measure_points(elem).get(1) {
+                label(corner, &angle_text(&a), LABEL_TEXT);
+            }
+        }
+
+        if let Some(pts) = self.drawn_angle(e)
+            && let Some(a) = angle_world(t, &pts)
+        {
+            label(pts[1], &angle_text(&a), LABEL_TEXT);
         }
 
         // The line being drawn, to the mouse.

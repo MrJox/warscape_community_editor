@@ -878,6 +878,10 @@ impl TileDocument {
             return Err("a polygon needs at least 2 points".to_owned());
         }
 
+        if kind == wce_tile::new_instances::ANGLE_FINDER && pts.len() != 3 {
+            return Err(ANGLE_POINTS.to_owned());
+        }
+
         let t = self.tile();
         let layer = layer.or(t.tscene().scene_graph()).ok_or("this tile has no SCENE_GRAPH, so there is no layer to add a polygon to")?;
         self.check_fits([kind], layer)?;
@@ -912,6 +916,7 @@ impl TileDocument {
             super::WALL_SPLINE => "Wall",
             super::ROAD_SPLINE => "Road",
             wce_tile::new_instances::MEASURE_LINE => "Tape measure",
+            wce_tile::new_instances::ANGLE_FINDER => "Angle finder",
             _ => "Polygon",
         };
         let e = self.tscene_mut().add_polygon(Some(layer), kind, name, &local, &extra)?;
@@ -946,6 +951,10 @@ impl TileDocument {
 
         if !t.is_polygon(elem) {
             return Err("not a polygon".to_owned());
+        }
+
+        if op != "move" && t.is_angle_finder(elem) {
+            return Err(ANGLE_POINTS.to_owned());
         }
 
         let pts = t.tscene().polygon_points(elem);
@@ -1761,8 +1770,12 @@ impl TileDocument {
                 new_polygon(kind, points, false).position(c)
             }
 
-            // A line: no area.
-            (wce_tile::new_instances::MEASURE_LINE, Create::Line(pts)) => {
+            // A line: no area. An angle finder: an arm's end, the corner, the other arm's end.
+            (wce_tile::new_instances::MEASURE_LINE | wce_tile::new_instances::ANGLE_FINDER, Create::Line(pts)) => {
+                if kind == wce_tile::new_instances::ANGLE_FINDER && pts.len() != 3 {
+                    return Err(ANGLE_POINTS.to_owned());
+                }
+
                 let (c, points) = line(pts)?;
                 let mut n = new_polygon(kind, points, false).position(c);
                 n.attrs.remove("area");
@@ -3129,7 +3142,7 @@ impl TileDocument {
             shown.extend(wce_tile::new_instances::REF_TOOL_ATTRS);
         }
 
-        if tag == wce_tile::new_instances::MEASURE_LINE {
+        if wce_tile::new_instances::MEASURE_KINDS.contains(&tag.as_str()) {
             shown.extend(wce_tile::new_instances::MEASURE_HIDDEN_ATTRS);
         }
 
@@ -4066,6 +4079,9 @@ pub(crate) fn new_polygon(kind: &str, points: Vec<Double3>, closed: bool) -> wce
     n.points = points.into_iter().map(NewPoint::at).collect();
     n
 }
+
+/// Why an angle finder is not made or changed with another number of points.
+const ANGLE_POINTS: &str = "an angle finder has 3 points: an arm's end, the corner, the other arm's end";
 
 /// A new deployment zone's category: Default (TEd's template has Ambush, which a new zone is rarely meant to be).
 const NEW_ZONE_CATEGORY: &str = "DAC_DEFAULT";

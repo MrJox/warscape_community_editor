@@ -82,7 +82,7 @@ pub use self::tech::{GROUPS, KINDS, TechInfo, TechKind, TechScope, TechSettings,
 pub use self::vegetation::{DEFAULT_TREE_LIST, GENERATED_PREFIX};
 pub use self::roads::ROAD_SPLINE;
 pub use self::walls::{Anchor, WALL_SPLINE, WallLayout};
-pub use wce_tile::new_instances::{MEASURE_LINE, REF_HUMAN, REF_UNIT};
+pub use wce_tile::new_instances::{ANGLE_FINDER, MEASURE_LINE, REF_HUMAN, REF_UNIT};
 
 /// What a new instance is made from (`TileDocument::create`): a point on the ground (world metres), or drawn points.
 #[derive(Clone, Debug, PartialEq)]

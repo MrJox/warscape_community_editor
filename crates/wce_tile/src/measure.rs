@@ -1,7 +1,8 @@
 //! Tape measures (`new_instances::MEASURE_LINE`, TEd's `TAPE_MEASURE_LINE`): the lengths of an open line of points on the ground. TEd shows
 //! a `length` and an `arc_length`; here each stretch between two points, and the whole line, has its straight length (through the air),
 //! its length on the map (x and z only), its length along the ground (over the terrain's rises and dips between the points) and its rise
-//! (its grade from that: the rise over the length on the map).
+//! (its grade from that: the rise over the length on the map). An angle finder (`new_instances::ANGLE_FINDER`, TEd's `ANGLE_FINDER_INSTANCE`)
+//! is a corner between two arms: three points, the corner the middle one.
 
 /// How far apart the ground is sampled for the length along it (metres).
 pub const GROUND_STEP: f64 = 0.5;
@@ -79,6 +80,40 @@ fn stretch(a: [f64; 3], b: [f64; 3], height: &dyn Fn(f64, f64) -> f64) -> Length
     Lengths { straight: (horizontal * horizontal + dy * dy).sqrt(), horizontal, ground, rise: dy }
 }
 
+/// An angle finder's angle at its corner, and its two arms measured from the corner out.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Angle {
+    /// Between the arms seen from above (x and z only), 0 .. 180 degrees.
+    pub on_map: f64,
+
+    /// Between the arms in space, 0 .. 180 degrees.
+    pub in_space: f64,
+
+    /// From the corner to the first point, and to the last.
+    pub arms: [Lengths; 2],
+}
+
+/// The angle at the middle of three points (world metres, x y z) over the ground `height`; `None` unless there are exactly three. An arm
+/// of no length makes an angle of 0.
+pub fn angle(points: &[[f64; 3]], height: &dyn Fn(f64, f64) -> f64) -> Option<Angle> {
+    let &[a, c, b] = points else { return None };
+    let between = |u: [f64; 3], v: [f64; 3]| {
+        let (lu, lv) = ((u[0] * u[0] + u[1] * u[1] + u[2] * u[2]).sqrt(), (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt());
+        if lu < 1e-9 || lv < 1e-9 {
+            return 0.0;
+        }
+
+        ((u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (lu * lv)).clamp(-1.0, 1.0).acos().to_degrees()
+    };
+
+    let (u, v) = ([a[0] - c[0], a[1] - c[1], a[2] - c[2]], [b[0] - c[0], b[1] - c[1], b[2] - c[2]]);
+    Some(Angle {
+        on_map: between([u[0], 0.0, u[2]], [v[0], 0.0, v[2]]),
+        in_space: between(u, v),
+        arms: [stretch(c, a, height), stretch(c, b, height)],
+    })
+}
+
 /// A length for people: centimetres under a metre, metres with two decimals under a kilometre, kilometres with three after.
 pub fn format_length(m: f64) -> String {
     match m.abs() {
@@ -136,6 +171,24 @@ mod tests {
         assert_eq!(measure(&[], &|_, _| 0.0), Measure::default());
         let m = measure(&[[1.0, 2.0, 3.0]], &|_, _| 0.0);
         assert!(m.stretches.is_empty() && close(m.total.straight, 0.0) && close(m.total.rise, 0.0));
+    }
+
+    #[test]
+    fn angles() {
+        // A right angle on flat ground, then the same with one arm climbing: the map's angle stays, the one in space opens.
+        let flat = angle(&[[10.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 10.0]], &|_, _| 0.0).unwrap();
+        assert!(close(flat.on_map, 90.0) && close(flat.in_space, 90.0) && close(flat.arms[0].horizontal, 10.0));
+        let up = angle(&[[10.0, 10.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 10.0]], &|x, _| x).unwrap();
+        assert!(close(up.on_map, 90.0) && close(up.in_space, 90.0), "{up:?}");
+        let both = angle(&[[10.0, 10.0, 0.0], [0.0, 0.0, 0.0], [0.0, 10.0, 10.0]], &|x, z| x.max(z)).unwrap();
+        assert!(close(both.on_map, 90.0) && close(both.in_space, 60.0), "{both:?}");
+        assert!(close(up.arms[0].rise, 10.0) && close(up.arms[0].grade_percent(), 100.0) && close(up.arms[1].rise, 0.0));
+
+        // Straight on, folded back, an arm of no length, the wrong count.
+        assert!(close(angle(&[[-5.0, 0.0, 0.0], [0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], &|_, _| 0.0).unwrap().on_map, 180.0));
+        assert!(close(angle(&[[5.0, 0.0, 0.0], [0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], &|_, _| 0.0).unwrap().on_map, 0.0));
+        assert!(close(angle(&[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [5.0, 0.0, 0.0]], &|_, _| 0.0).unwrap().on_map, 0.0));
+        assert!(angle(&[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], &|_, _| 0.0).is_none());
     }
 
     #[test]
