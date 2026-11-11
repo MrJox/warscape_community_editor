@@ -85,6 +85,7 @@ pub const SWORDS: &str = "\u{e2b4}";
 pub const FLAG: &str = "\u{e0d1}";
 pub const CIRCLE_DOT_DASHED: &str = "\u{e4b1}";
 pub const USERS: &str = "\u{e1a4}";
+pub const SAILBOAT: &str = "\u{e37e}";
 pub const HOUSE: &str = "\u{e0f5}";
 pub const SQUARE_DASHED: &str = "\u{e1cb}";
 pub const ROUTE: &str = "\u{e53e}";

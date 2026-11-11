@@ -1717,13 +1717,14 @@ fn a_wall_is_drawn_as_the_create_panel_draws_it() {
 
 #[test]
 fn a_reference_is_an_element_the_tile_keeps_and_no_export_sees() {
-    use wce_tile_editor::tile_document::{REF_HUMAN, REF_UNIT};
+    use wce_tile_editor::tile_document::{REF_HUMAN, REF_SHIP, REF_UNIT};
 
     let (_dir, mut d) = open();
     let layer = d.tile().find_layer("Buildings").unwrap();
     let attrs = std::collections::BTreeMap::from([("unit".to_owned(), "att_rom_sagittarii".to_owned())]);
     let human = d.create_with(REF_HUMAN, layer, &Create::Point(Float3::new(10.0, 0.0, 10.0)), "", &attrs).unwrap();
     let unit = d.create(REF_UNIT, layer, &Create::Point(Float3::new(30.0, 0.0, 10.0)), "").unwrap();
+    let ship = d.create(REF_SHIP, layer, &Create::Point(Float3::new(60.0, 0.0, -40.0)), "").unwrap();
     let again = d.create(REF_HUMAN, layer, &Create::Point(Float3::new(20.0, 0.0, 10.0)), "").unwrap();
 
     // As many as wanted, and each an instance like any other.
@@ -1732,7 +1733,7 @@ fn a_reference_is_an_element_the_tile_keeps_and_no_export_sees() {
     wce_editor_core::document::Document::republish(&mut d, &mut scene, scene_layer, &wce_editor_core::command::Dirty::default());
     let t = d.tile();
     assert_eq!(t.tscene().find_all(REF_HUMAN).len(), 2);
-    assert!(t.is_instance(human) && t.is_instance(unit) && t.is_instance(again) && !t.is_polygon(unit));
+    assert!(t.is_instance(human) && t.is_instance(unit) && t.is_instance(ship) && t.is_instance(again) && !t.is_polygon(unit));
     assert_eq!(t.tscene().doc().get(human, "unit").as_deref(), Some("att_rom_sagittarii"));
     assert_eq!(t.tscene().doc().get(unit, "surface_mode").as_deref(), Some("MSM_LANDSCAPE"));
 
@@ -1747,7 +1748,7 @@ fn a_reference_is_an_element_the_tile_keeps_and_no_export_sees() {
     assert!(String::from_utf8_lossy(&wce).contains(REF_UNIT));
     let (ted, report) = wce_tile::project_files::to_ted(wce).unwrap();
     assert!(!String::from_utf8_lossy(&ted).contains("WceRef"));
-    assert!(report.dropped.iter().any(|d| d.contains(REF_UNIT)), "{report:?}");
+    assert!(report.dropped.iter().any(|d| d.contains(REF_UNIT)) && report.dropped.iter().any(|d| d.contains(REF_SHIP)), "{report:?}");
 
     d.history_mut().undo();
     assert_eq!(d.tile().tscene().find_all(REF_HUMAN).len(), 1);

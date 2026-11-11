@@ -2425,8 +2425,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_ref", "tile_ref human|unit <x m> <z m> [unit] [faction] [soldier] [slot] | status", "places a reference: a soldier (ref_human) or a whole unit of the game's unit size (ref_unit); saved in tile.wce, never exported. status: what is loaded and drawn", |e, a| {
-        let usage = "usage: tile_ref human|unit <x m> <z m> [unit] [faction] [soldier] [slot] | status";
+    c.add("tile_ref", "tile_ref human|unit|ship <x m> <z m> [unit] [faction] [soldier] [slot] | status", "places a reference: a soldier (ref_human), a whole unit of the game's unit size (ref_unit) or a naval unit's ship with its men aboard (ref_ship, on the water); saved in tile.wce, never exported. status: what is loaded and drawn", |e, a| {
+        let usage = "usage: tile_ref human|unit|ship <x m> <z m> [unit] [faction] [soldier] [slot] | status";
         if a.first().is_some_and(|c| c == "status") {
             return with_tile(e, |t, _| ok(t.ref_units.summary()));
         }
@@ -2434,6 +2434,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let kind = match a.first().map(String::as_str) {
             Some("human") => wce_tile_editor::tile_document::REF_HUMAN,
             Some("unit") => wce_tile_editor::tile_document::REF_UNIT,
+            Some("ship") => wce_tile_editor::tile_document::REF_SHIP,
             _ => return fail(usage),
         };
 

@@ -198,6 +198,22 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    Skinned meshes aren't in the id pass: a click finds a soldier by a sphere per man (`Tile::set_ref_spots`), and there is no selection outline on them. They
    follow the ground man by man; freeform keeps them level at the element's height. No viewer in the Unit tool yet: the references and `unit_render_check` are the
    test bench so far.
+7b. **Naval units** (`ref_ship`, 2026-11-11; decided with the user: a third reference, the men placed by the ship's own logic, afloat on the
+   water, all of the ship in scope). Tile element `WceRefShip` (Create panel's References, `tile_ref ship`), its `unit` a naval `main_units` key
+   (Attila's default `att_shp_rom_heavy_marines_lib_heavy`). The tables: `main_units.is_naval` -> `land_unit` (the men; their `unit_variants` rows
+   are under the land unit's key) and `naval_unit` -> `naval_units.ship` -> `ship_dbs.model` (a `models_naval` key) and `unit_variants_ships`
+   (the ship's definition). `models_naval` is the ships' compiled logic, which rpfm doesn't read: `wce_formats::models_naval`
+   (docs/formats/models_naval.md, every row of Attila and Rome 2, byte for byte, against the kits' `logic.xml`; gate `models_naval_check`).
+   `wce_render::ship_model`: the definition's intact pieces (`_dm1`; `_dm2` are the damaged states), a shield on every point of a slot's list,
+   the oars (`models_oars`) on the logic's oar sockets, the weapons (`naval_weapons` -> `models_entity_weapons`) on its engine lines, as
+   rigid mesh instances (picked by the picture), and the men on its EF lines (`Marines` first, then the firing positions, seamen, overflow,
+   perimeter, boarding: **ASSUMPTION**, the oracle ship's men are on the `Marines` lines; the game's filling order isn't traced), `land_units`'
+   file spacing apart. Afloat: on `Tile::water_level` (rivers, lakes' planes, the sea at 0 m in the sea's sets), the ground where that is
+   higher; freeform keeps the element's height. **ASSUMPTION**: a ship's origin is its waterline.
+   Left: the sails (`Cloth`, `WeightedCloth`: no draw path yet) and the ropes (`Rope` blocks are empty, made by the game from the rigging and the
+   logic's pipes); motion (bobbing, the oars' row clips `left_row` / `left_end`); the oars stand in their bind pose; level 1 is taken as the
+   lowest oar row and the primary weapon as the `Engine_placement` line's (**ASSUMPTION**s). Faction colours on ship parts (sails' masks)
+   wait for the sails.
 8. **Later, for cinematics.** Close-ups once units render for reference: facial clips on `rome_man`, `cinematics_only` models, baked cloth
    clips (`cinematic_dynamiccape_roman`, `army_banner_cine_sim`). Rider and mount in sync in motion, layering and matched combat as the
    tool needs them.
