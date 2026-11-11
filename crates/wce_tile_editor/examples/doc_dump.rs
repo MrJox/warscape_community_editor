@@ -82,6 +82,7 @@ fn scene_hash(s: &RenderScene) -> u64 {
             Payload::Grass(_) => 7,
             Payload::PointLight(_) => 8,
             Payload::SkinnedInstance(_) => 9,
+            Payload::Ropes(_) => 10,
         };
 
         h = u8_(index, h);

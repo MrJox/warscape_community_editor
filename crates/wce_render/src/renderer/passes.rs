@@ -238,6 +238,7 @@ impl Renderer {
 
         if !self.env.active {
             self.draw_skinned_gbuffer();
+            self.draw_ropes_gbuffer();
         }
 
         // The tessellated round leaves its stages bound.

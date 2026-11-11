@@ -2,6 +2,7 @@
 
 pub mod anim_pose;
 pub mod cbuffers;
+pub mod cloth_sim;
 pub mod draw_set;
 pub mod environment_apply;
 pub mod files;

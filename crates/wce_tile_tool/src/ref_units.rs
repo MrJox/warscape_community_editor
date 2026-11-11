@@ -16,11 +16,12 @@ use wce_editor::editor::Editor;
 use wce_editor::gui;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
 use wce_foundation::settings::rpfm_schema_path;
+use wce_render::cloth_sim::{ClothSim, ship_wind};
 use wce_render::ship_model::ShipModel;
 use wce_render::unit_animation::{UnitInstance, UnitModel};
 use wce_render::unit_catalog::{UnitCatalog, formation, men_at_size};
 use wce_scene::environment::read_game_graphics_values;
-use wce_scene::render_scene::{DocumentId, EntityId, LayerId, MODEL_ROPES_SUFFIX, MeshInstance, Payload, SKINNED_NO_OFFSET, SkinnedInstance, SkinnedPart, SourceRef};
+use wce_scene::render_scene::{DocumentId, EntityId, LayerId, MODEL_ROPES_SUFFIX, MeshInstance, Payload, RopeLine, Ropes, SKINNED_NO_OFFSET, SkinnedInstance, SkinnedPart, SourceRef};
 use wce_tile_editor::tile_document::{REF_HUMAN, REF_SHIP, REF_UNIT, TileDocument, item_of};
 
 use crate::tool::selected;
@@ -141,6 +142,12 @@ struct ShipShown {
     elem: usize,
     world: Float4x4,
     sail: Option<([u8; 3], [[f32; 3]; 4])>,
+
+    /// A sail's palette this frame (its cloth's bones); not what tells one entity from another.
+    palette: Option<Arc<Vec<[f32; 12]>>>,
+
+    /// A sail model's simulated ropes this frame (instead of its `#ropes` strips).
+    ropes: Option<Ropes>,
 }
 
 /// The bones of a ship's sails' palette at rest: more than all the sails of any of Attila's sail models have, one after another.
@@ -189,6 +196,10 @@ pub struct RefUnits {
 
     /// Per ship element, the water under it: where it was asked, when, the level.
     water: HashMap<usize, ([u32; 2], f64, Option<f32>)>,
+
+    /// Per ship element and part, its sails' cloth (the game's simulation), and the time it was last run.
+    sails: HashMap<(usize, usize), ClothSim>,
+    sails_time: Option<f32>,
 
     /// Per ship element on the waves, its heave (m), pitch and roll (degrees) this frame, for the scripts.
     afloat: BTreeMap<usize, [f32; 3]>,
@@ -462,6 +473,12 @@ impl RefUnits {
         // Each reference's men (where they stand: about its origin, or on a ship's deck) and, for a ship, its matrix.
         let catalog = self.catalog.clone();
         let mut ship_places: HashMap<usize, ShipPlace> = HashMap::new();
+
+        // The sails' clock: the editor's, its step since the last frame (none the first time).
+        let sails_t = e.clock.time() as f32;
+        let sails_dt = self.sails_time.map_or(0.0, |was| (sails_t - was).max(0.0));
+        self.sails_time = Some(sails_t);
+        self.sails.retain(|(elem, _), _| references.iter().any(|r| r.elem == *elem && r.kind == Kind::Ship));
         let mut men_of: HashMap<usize, Vec<[f32; 3]>> = HashMap::new();
         let units = e.scene.game_units.max(1e-3);
         for r in &references {
@@ -496,6 +513,17 @@ impl RefUnits {
                     };
                     let land = catalog.as_ref().and_then(|c| c.land_units.get(&ship.unit));
                     let spots = land.map_or_else(Vec::new, |land| ship.crew(men_at_size(land, size), land.spacing[0]));
+                    // The sails: the wind of the ship's heading on the waves (model to world, without the scale).
+                    let turn = rotation_y(yaw_of(&m)) * if renderer.is_some() { ship.afloat(&wave) } else { Float4x4::IDENTITY };
+                    let rows = [0, 1, 2].map(|r| [turn.m[r][0], turn.m[r][1], turn.m[r][2]]);
+                    let wind = ship_wind(rows);
+                    for (k, part) in ship.parts.iter().enumerate() {
+                        if let Some(rig) = &part.cloth {
+                            let sim = self.sails.entry((r.elem, k)).or_insert_with(|| ClothSim::new(rig, r.wanted.seed.wrapping_add(k as u64)));
+                            sim.update(sails_dt, sails_t, wind);
+                        }
+                    }
+
                     ship_places.insert(r.elem, (place, ship, r.colours, r.rowing));
                     spots
                 }
@@ -593,18 +621,26 @@ impl RefUnits {
                 faction[..3].copy_from_slice(c);
             }
 
-            for p in &ship.parts {
+            for (k, p) in ship.parts.iter().enumerate() {
                 let world = *place * ShipModel::part_at(p, time, *rowing);
                 if p.what.solid {
-                    want.push(ShipShown { model: p.model.clone(), elem, world, sail: None });
+                    want.push(ShipShown { model: p.model.clone(), elem, world, sail: None, palette: None, ropes: None });
                 }
 
-                if p.what.ropes {
-                    want.push(ShipShown { model: format!("{}{MODEL_ROPES_SUFFIX}", p.model), elem, world, sail: None });
+                // A sail model's ropes move with its cloth; elsewhere they stand as the file has them.
+                let sim = self.sails.get(&(elem, k));
+                if let (Some(sim), Some(rig)) = (sim, &p.cloth) {
+                    let lines = sim.ropes().into_iter().map(|(nodes, radius)| RopeLine { nodes, radius }).collect();
+                    let [diffuse, normal] = rig.rope_textures.clone();
+                    let ropes = Some(Ropes { lines, diffuse, normal });
+                    want.push(ShipShown { model: format!("{}#moving_ropes", p.model), elem, world, sail: None, palette: None, ropes });
+                } else if p.what.ropes {
+                    want.push(ShipShown { model: format!("{}{MODEL_ROPES_SUFFIX}", p.model), elem, world, sail: None, palette: None, ropes: None });
                 }
 
                 if p.what.cloth {
-                    want.push(ShipShown { model: p.model.clone(), elem, world, sail: Some((p.masks, faction)) });
+                    let palette = sim.map(|s| Arc::new(s.palette()));
+                    want.push(ShipShown { model: p.model.clone(), elem, world, sail: Some((p.masks, faction)), palette, ropes: None });
                 }
             }
         }
@@ -616,10 +652,13 @@ impl RefUnits {
             let rest = self.rest.get_or_insert_with(|| Arc::new(vec![SKINNED_NO_OFFSET; SAIL_BONES])).clone();
             self.ship_entities = want.iter().map(|w| {
                 let payload = match w.sail {
-                    // At rest: every cloth bone where the file has it.
+                    _ if w.ropes.is_some() => Payload::Ropes(w.ropes.clone().unwrap_or_default()),
+
+                    // Its cloth's bones, or at rest: every cloth bone where the file has it.
                     Some((masks, faction_colours)) => {
                         let part = SkinnedPart { model: w.model.clone(), tint: [0.0; 4], decal_diffuse: None, decal_normal: None, masks, bone: None, offset: SKINNED_NO_OFFSET };
-                        Payload::SkinnedInstance(SkinnedInstance { parts: vec![part], palette: rest.clone(), bones: rest.clone(), casts_shadow: true, faction_colours, faction_scale: 0.0 })
+                        let palette = w.palette.clone().unwrap_or_else(|| rest.clone());
+                        Payload::SkinnedInstance(SkinnedInstance { parts: vec![part], palette, bones: rest.clone(), casts_shadow: true, faction_colours, faction_scale: 0.0 })
                     }
 
                     // The ropes read POSITION4.w as their burn.
@@ -630,9 +669,14 @@ impl RefUnits {
                 e.scene.add(layer, w.world, payload, SourceRef { doc: id, item: item_of(w.elem) })
             }).collect();
         } else {
-            // Every frame on the waves: moves the scene follows without going over itself again.
+            // Every frame on the waves: moves the scene follows without going over itself again; a sail takes its cloth's bones.
             for (&entity, (shown, wanted)) in self.ship_entities.iter().zip(self.ship_shown.iter().zip(&want)) {
-                if shown.world != wanted.world {
+                if let Some(ropes) = &wanted.ropes {
+                    e.scene.update_ropes(entity, wanted.world, ropes.clone());
+                } else if let (Some(palette), Some(Payload::SkinnedInstance(s))) = (&wanted.palette, e.scene.find(entity).map(|en| &en.payload)) {
+                    let instance = SkinnedInstance { palette: palette.clone(), ..s.clone() };
+                    e.scene.update_pose(entity, wanted.world, instance);
+                } else if shown.world != wanted.world {
                     e.scene.update_world_quiet(entity, wanted.world);
                 }
             }

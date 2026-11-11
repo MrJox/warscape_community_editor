@@ -18,6 +18,7 @@ use wce_formats::anim::Animation;
 use wce_formats::models_naval::{EfLine, ShipLogic};
 use wce_foundation::math::{Float3, Float4x4, cross, normalize, rotation_y, translation};
 
+use crate::cloth_sim::ClothRig;
 use crate::unit_assembly::{Attach, Reader, assemble_ship};
 use crate::unit_catalog::{UnitCatalog, variant_path};
 
@@ -37,6 +38,9 @@ pub struct ShipPart {
 
     /// An oar's row (`models_oars.left_row` / `right_row`): its one bone turns the oar about the oarlock, `local`'s origin.
     pub row: Option<Arc<Animation>>,
+
+    /// A sail model's cloth (`cloth_sim`): what its sails' bones follow.
+    pub cloth: Option<Arc<ClothRig>>,
 }
 
 /// The kinds of meshes in a part's model (LOD 0).
@@ -145,14 +149,20 @@ fn bone_matrix(t: [f32; 3], q: [f32; 4]) -> Float4x4 {
 /// z. Flat at the weighted mean height when the points don't span a plane.
 pub fn fit_plane(points: &[([f32; 2], f32, f32)]) -> (f32, f32, f32) {
     let total: f32 = points.iter().map(|p| p.2).sum::<f32>().max(1e-6);
-    let mean = |f: &dyn Fn(&([f32; 2], f32, f32)) -> f32| points.iter().map(|p| f(p) * p.2).sum::<f32>() / total;
-    let (mx, mz, mh) = (mean(&|p| p.0[0]), mean(&|p| p.0[1]), mean(&|p| p.1));
-    let cov = |f: &dyn Fn(&([f32; 2], f32, f32)) -> f32, g: &dyn Fn(&([f32; 2], f32, f32)) -> f32| points.iter().map(|p| f(p) * g(p) * p.2).sum::<f32>() / total;
-    let (dx, dz, dh): (&dyn Fn(&([f32; 2], f32, f32)) -> f32, &dyn Fn(&([f32; 2], f32, f32)) -> f32, &dyn Fn(&([f32; 2], f32, f32)) -> f32) =
-        (&|p| p.0[0] - mx, &|p| p.0[1] - mz, &|p| p.1 - mh);
-    let (sxx, szz, sxz, sxh, szh) = (cov(dx, dx), cov(dz, dz), cov(dx, dz), cov(dx, dh), cov(dz, dh));
+    let mean = |k: usize| points.iter().map(|p| [p.0[0], p.0[1], p.1][k] * p.2).sum::<f32>() / total;
+    let (mx, mz, mh) = (mean(0), mean(1), mean(2));
+    let (mut sxx, mut szz, mut sxz, mut sxh, mut szh) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for &([x, z], h, w) in points {
+        let (dx, dz, dh) = (x - mx, z - mz, h - mh);
+        sxx += dx * dx * w;
+        szz += dz * dz * w;
+        sxz += dx * dz * w;
+        sxh += dx * dh * w;
+        szh += dz * dh * w;
+    }
+
     let det = sxx * szz - sxz * sxz;
-    if det.abs() < 1e-9 {
+    if det.abs() < 1e-9 * total * total {
         return (mh, 0.0, 0.0);
     }
 
@@ -206,7 +216,7 @@ impl ShipModel {
                 Attach::None | Attach::Bone(_) => Float4x4::IDENTITY,
             };
 
-            ShipPart { model: p.model, local, masks: p.masks, what: PartMeshes::default(), row: None }
+            ShipPart { model: p.model, local, masks: p.masks, what: PartMeshes::default(), row: None, cloth: None }
         }).collect();
 
         let logic = catalog.ship_logic.get(&naval.model).cloned();
@@ -215,7 +225,7 @@ impl ShipModel {
             let mut clip = |path: &str| clips.entry(path.to_owned()).or_insert_with(|| read(path).and_then(|b| Animation::decode(&b, usize::MAX)).map(Arc::new)).clone();
             let mut add = |model: String, local: Float4x4, row: Option<Arc<Animation>>| {
                 if read(&model).is_some() {
-                    parts.push(ShipPart { model, local, masks: [0, 1, 2], what: PartMeshes::default(), row });
+                    parts.push(ShipPart { model, local, masks: [0, 1, 2], what: PartMeshes::default(), row, cloth: None });
                 } else if !missing.contains(&model) {
                     missing.push(model);
                 }
@@ -236,8 +246,12 @@ impl ShipModel {
         }
 
         let mut seen: HashMap<String, PartMeshes> = HashMap::new();
+        let mut cloths: HashMap<String, Option<Arc<ClothRig>>> = HashMap::new();
         for p in &mut parts {
             p.what = *seen.entry(p.model.clone()).or_insert_with(|| part_meshes(read, &p.model));
+            if p.what.cloth {
+                p.cloth = cloths.entry(p.model.clone()).or_insert_with(|| read(&p.model).and_then(ClothRig::load).map(Arc::new)).clone();
+            }
         }
 
         let white = [[1.0; 3], [1.0; 3], [1.0; 3], [0.0; 3]];
