@@ -311,6 +311,7 @@ impl TileFlipCommand {
         t.polygons_dirty = true;
         t.sync_terrain_layers();
         t.reload_grass();
+        t.reload_tree_list();
     }
 }
 
@@ -388,6 +389,15 @@ impl TileDocument {
             return Err(e);
         }
 
+        // The packed tree and grass lists (BOB's, made before) are drawn mirrored from now on: the root says along which axes.
+        let sc = self.tscene_mut();
+        let root = sc.doc().roots()[0];
+        let attr = super::vegetation::LIST_FLIP_ATTR;
+        let now = sc.doc().get(root, attr).unwrap_or_default();
+        let (mut fx, mut fz) = (now.contains('x'), now.contains('z'));
+        if axis == TileFlipAxis::X { fx = !fx } else { fz = !fz }
+        sc.set_attr(root, attr, match (fx, fz) { (true, true) => "xz", (true, false) => "x", (false, true) => "z", _ => "" });
+
         let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
         let t = self.tile_mut();
         t.idx.valid = false;
@@ -455,6 +465,7 @@ impl TileDocument {
         t.polygons_dirty = true;
         t.sync_terrain_layers();
         t.reload_grass();
+        t.reload_tree_list();
 
         // The links.
         let links = t.project.entry.as_ref().map(|entry| {

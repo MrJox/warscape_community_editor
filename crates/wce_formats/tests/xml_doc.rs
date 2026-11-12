@@ -174,3 +174,35 @@ fn inplace_edits_match_functional_and_undo() {
     assert_eq!(fast.elements(), slow.elements());
     assert!(fast.splice(1000, 0, b"").is_err());
 }
+
+#[test]
+fn many_attribute_edits_bake_as_one_splice_that_undoes_and_redoes() {
+    let mut text = String::from("<root>\n");
+    for i in 0..200 {
+        text += &format!("  <item a='{i}' b=\"x{i}\"/>\n");
+    }
+    text += "</root>\n";
+    let mut doc = XmlDoc::parse(text.clone().into_bytes()).unwrap();
+    let mark = doc.journal_mark();
+    let items = doc.elements()[0].children.clone();
+    for (k, &e) in items.iter().enumerate() {
+        doc.set(e, "a", &format!("{}", k * 10));
+        if k % 3 == 0 {
+            doc.set(e, "c", "new");
+        }
+    }
+
+    let edited = doc.save();
+    doc.bake_pending().unwrap();
+    assert_eq!(doc.save(), edited, "the same text baked");
+    let record = doc.journal_since(mark);
+    assert_eq!(record.len(), 1, "one splice");
+    assert_eq!(doc.get(items[3], "c").as_deref(), Some("new"), "the added attributes read back");
+    assert_eq!(doc.get(items[199], "a").as_deref(), Some("1990"));
+
+    doc.unapply_splice(&record[0]).unwrap();
+    assert_eq!(doc.save(), text.as_bytes(), "undo gives the text back");
+    assert_eq!(doc.get(items[5], "a").as_deref(), Some("5"));
+    doc.apply_splice(&record[0]).unwrap();
+    assert_eq!(doc.save(), edited, "redo");
+}

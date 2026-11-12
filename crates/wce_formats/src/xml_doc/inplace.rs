@@ -287,6 +287,27 @@ impl XmlDoc {
             }
         }
 
+        // Many edits (a whole tile flipped: 36,000 on a city) go in as one splice over the span they cover: each splice moves the whole
+        // text and every offset after it, and undo replays them one by one (45 s for the flip of a 6.8 MB tile.wce; 2026-11-12). The text
+        // is the same; the span is read again once.
+        if ops.len() > COALESCE {
+            let lo = ops.iter().map(|op| op.0).min().unwrap_or(0);
+            let hi = ops.iter().map(|op| op.0 + op.1).max().unwrap_or(lo);
+            let mut inserted = Vec::with_capacity(hi - lo + ops.iter().map(|op| op.2.len()).sum::<usize>());
+            let mut at = lo;
+            for (pos, remove_len, text) in ops.iter().rev() {
+                inserted.extend_from_slice(&self.text[at..*pos]);
+                inserted.extend_from_slice(text);
+                at = pos + remove_len;
+            }
+
+            inserted.extend_from_slice(&self.text[at..hi]);
+            let removed = self.text[lo..hi].to_vec();
+            self.replace_text(lo, hi - lo, &inserted, false)?;
+            self.journal.push(XmlSplice { pos: lo, removed, inserted });
+            return Ok(());
+        }
+
         for (pos, remove_len, text) in ops {
             let removed = self.text[pos..pos + remove_len].to_vec();
             self.replace_text(pos, remove_len, &text, false)?;
@@ -343,3 +364,6 @@ impl XmlDoc {
         Ok(new_index)
     }
 }
+
+/// Past this many pending edits, `bake_pending` makes them one splice.
+const COALESCE: usize = 64;
