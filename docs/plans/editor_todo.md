@@ -37,6 +37,10 @@ zip, another game's, a path outside the projects folder, the shared tile open, a
 show a failure in a dialog (or a lasting notice) with the reason and what to do about it, write it to the log, and list there the
 prefabs a share left out and an import could not find.
 
+Done (2026-11-12, `share_prompt.rs`): a failure (menu, prompt or console) opens a dialog with the reason (red) and what to do about it, and
+is a red line in the log; a share that leaves out prefabs found nowhere, and an import that lacks prefabs, open it too with the list (a
+warning in the log).
+
 ## The Inspector comes to the foreground when it changes
 
 User, 2026-11-12: when something changes what the Inspector shows (a selection, Flip mode's panel, a brush's settings, a placing's
