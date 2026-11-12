@@ -53,3 +53,25 @@ phase, each phase reviewed by the user before the next. Ported already: `logic::
 3. **Ends**: snapping to gates, towers and wall pieces; the procedural last 1 or 2 pieces when the kit cannot meet the joint cleanly.
 4. **Slopes**: step pieces and the wall's height layer.
 5. **Out**: export and Save for Assembly Kit, Siege AI, Check platforms.
+
+## Phase 1: the catalogue (done 2026-11-12)
+
+`wce_walls::kit`: `culture_keys` (the keys with the base's prefix), `catalogue` / `measure` / `classify`, `joints` (`logic::ends`, else
+`walkway_ends`), `footprint`. Roles: Straight, Turn, **Jog** (a kink: joints in parallel, shifted across the wall: the 8 m `kink_left` /
+`kink_right`, 20 along by 10 across), Curve, Step, Defence, Access, Cap; each piece's span, turn, rise, shift and walk height between its
+joints (not its origin: TDD's gondor curves sit hundreds of units from theirs). Gates, gateways, stairs, watchtowers, bridging columns
+and TDD's helper pieces are left out (listed with why). Unit tests on the roles; `examples/kit_pieces.rs` lists every culture
+(`KIT_DETAIL=key,...` prints a piece's joints and platforms).
+
+Measured (`kit_pieces`):
+- Attila: barbarian, eastern / sassanid / western small walls (8 m: straight, two kinks, the 20 m and 60 m curves, steps, curved bastion,
+  caps), roman (15 m: straight, angled joiner, 6 turns, steps, 3 defences, a door section, tower caps), eastern and sassanid (both sets).
+  Greek, egyptian and persian have a few pieces only in Attila's packs (no straight): Rome 2's cultures.
+- With TDD's packs: all 15 bases complete; khazad and mordor as the 8 m set; easterling and gondorean as the roman set; TDD's barbarian has
+  the five `600m` curves (17.8 degrees); gondor has 3 straights, 6 turns, 5 curves (5 degrees each, 41.5 chord, whatever their names
+  say), 9 defences, 3 access pieces, caps.
+- Rome 2: barbarian, roman, greek, egyptian, persian complete.
+
+For phase 2: **TDD's `gondor_fort_straight_stepped_up_bastion_a` and `gondor_fort_curve_600m` have no platforms** (left out), so gondor has
+a step down and no step up; and some pieces' joints don't say their outer side (`side` zero: the walk-end joints, gondor's steps), which
+the orientation has to infer.
