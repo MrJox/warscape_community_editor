@@ -14,6 +14,7 @@ pub mod bridge;
 pub mod building;
 pub mod db;
 pub mod export;
+pub mod kit;
 pub mod lines;
 pub mod logic;
 pub mod mesh;
