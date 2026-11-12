@@ -33,7 +33,7 @@ impl Schema for TedSchema {
             "ai_breachable" | "autoplay" | "burn" | "dockable" | "exportable" | "generated" | "head_bob" | "indestructible" | "is_generated"
             | "locked" | "orthographic" | "show_collision" | "smoothed" | "terrain_collision" | "tiled" | "toggleable" | "use_in_outfield"
             | "visible_inside_destruction_zone" | "visible_inside_snow_zone" | "visible_outside_destruction_zone" | "visible_outside_snow_zone"
-            | "weak_wall" | "wall_flip" | "sharp" => Kind::Bool,
+            | "weak_wall" | "wall_flip" | "wall_procedural" | "sharp" => Kind::Bool,
 
             "add_boundary" | "add_polygon" | "alliance_id" | "closed" | "decal_generation_seed" | "deployment_zone_id" | "destruction_level"
             | "flatten" | "generation_seed" | "max_num_players" | "max_subdivisions" | "min_num_players" | "polygon_closed" | "rank_count"

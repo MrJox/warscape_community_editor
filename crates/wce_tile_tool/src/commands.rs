@@ -2979,14 +2979,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_inspect", "tile_inspect <element> [piece]", "log the Property Editor rows of an element (or of one of its building pieces) with their values", |e, a| {
-        let (Some(d), Some(el)) = (document(e), a.first().and_then(|x| x.parse::<usize>().ok())) else { return fail("usage: tile_inspect <element> [piece]") };
+    c.add("tile_inspect", "tile_inspect <element | #elem | selected> [piece]", "log the Property Editor rows of an element (or of one of its building pieces) with their values", |e, a| {
+        let sel = selected(e);
+        let Some(d) = document(e) else { return fail("usage: tile_inspect <element | #elem | selected> [piece]") };
+        let arg = a.first().map_or("selected", String::as_str);
+        let Some(el) = arg.parse::<usize>().ok().or_else(|| element_arg(d, arg, primary_of(&sel, d))) else { return fail("usage: tile_inspect <element | #elem | selected> [piece]") };
         let item = match a.get(1).and_then(|x| x.parse::<usize>().ok()) {
             Some(k) => wce_tile_editor::tile_document::piece_item(el, k),
             None => wce_tile_editor::tile_document::item_of(el),
         };
 
         let mut rows = DumpInspector::default();
+        rows.lines.push(format!("#{el} {}", d.tile().tscene().type_of(el)));
         let src = wce_scene::render_scene::SourceRef { doc: d.id(), item };
         d.inspect(src, &mut rows);
         for l in &rows.lines {

@@ -13,6 +13,16 @@ use crate::ted_scene::format_number;
 /// (`project_files`).
 pub const WALL_SPLINE: &str = "WceWallSpline";
 
+/// A wall's "Procedural" checkbox (the Inspector's; what it does is still to be defined, user 2026-11-12). A new wall has it off; a wall
+/// saved before the checkbox has it on as it opens (`project_files::migrate_walls`), and one without it reads as on ([`wall_procedural`]).
+pub const WALL_PROCEDURAL: &str = "wall_procedural";
+
+/// A wall's "Procedural" checkbox: on when it is not said (a wall from before the checkbox).
+#[must_use]
+pub fn wall_procedural(value: Option<&str>) -> bool {
+    value.is_none_or(crate::properties::parse_bool)
+}
+
 /// The element of a procedural road (docs/plans/procedural_roads.md): as [`WALL_SPLINE`], TEd never sees it.
 pub const ROAD_SPLINE: &str = "WceRoadSpline";
 
@@ -65,7 +75,7 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
         ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("recenter_polygon", "0"), ("lf_offset", "0"), ("line_colour", "argb(1.0,0.8,0.0,1.0)"),
         ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("name", "Wall"),
         ("polygon_shape", "PS_POLYGON"), ("area", "0"), ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
-        ("wall_base", "barbarian_fort_straight"), ("wall_tolerance", "0.5"), ("wall_flip", "false"), ("wall_access_every", "200"),
+        (WALL_PROCEDURAL, "false"), ("wall_base", "barbarian_fort_straight"), ("wall_tolerance", "0.5"), ("wall_flip", "false"), ("wall_access_every", "200"),
         ("wall_defence_every", "0"),
     ],
     wrappers: &["points"],

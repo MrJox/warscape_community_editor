@@ -741,3 +741,45 @@ mod tests {
         assert_eq!((kept_text, kept.len()), (more, 1));
     }
 }
+
+/// The walls of a scene brought to the current version as the tile opens: a `WceWallSpline` saved before its "Procedural" checkbox
+/// (`new_instances::WALL_PROCEDURAL` absent) has it on. The scene is read again from its text when anything changed, so that it opens with
+/// it and unmodified (saving writes it).
+///
+/// # Errors
+///
+/// The changed text does not read.
+pub fn migrate_walls(mut scene: TedScene) -> Result<TedScene, String> {
+    use crate::new_instances::{WALL_PROCEDURAL, WALL_SPLINE};
+    let old = scene.find_all(WALL_SPLINE).into_iter().filter(|&e| scene.doc().get(e, WALL_PROCEDURAL).is_none()).collect::<Vec<_>>();
+    if old.is_empty() {
+        return Ok(scene);
+    }
+
+    for e in old {
+        scene.set_attr(e, WALL_PROCEDURAL, "true");
+    }
+
+    TedScene::parse(scene.save())
+}
+
+#[cfg(test)]
+mod wall_migration_tests {
+    use super::*;
+
+    #[test]
+    fn walls_saved_before_the_checkbox_open_procedural_and_unmodified() {
+        let text = br#"<project version="17"><scene><SCENE_GRAPH><children><WceWallSpline name="old"/><WceWallSpline name="new" wall_procedural="false"/></children></SCENE_GRAPH></scene></project>"#;
+        let scene = migrate_walls(TedScene::parse(text.to_vec()).unwrap()).unwrap();
+        let walls = scene.find_all(crate::new_instances::WALL_SPLINE);
+        let get = |e: usize| scene.doc().get(e, crate::new_instances::WALL_PROCEDURAL).unwrap_or_default();
+        assert_eq!((get(walls[0]).as_str(), get(walls[1]).as_str()), ("true", "false"));
+        assert!(!scene.modified(), "it opens unmodified");
+    }
+
+    #[test]
+    fn a_wall_without_the_checkbox_reads_as_procedural() {
+        use crate::new_instances::wall_procedural;
+        assert!(wall_procedural(None) && wall_procedural(Some("true")) && !wall_procedural(Some("false")));
+    }
+}
