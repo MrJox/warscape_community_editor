@@ -76,11 +76,7 @@ pub struct LfRecord {
 
 impl LfRecord {
     /// Plan an exact region replacement without mutating the field. Only changed pages are kept; no-op returns no record.
-    pub fn replacement(
-        field: &PagedU16,
-        region: crate::lf_region::LfRegion,
-        samples: &[u16],
-    ) -> Result<Option<Self>, String> {
+    pub fn replacement(field: &PagedU16, region: crate::lf_region::LfRegion, samples: &[u16]) -> Result<Option<Self>, String> {
         use crate::paged::PAGE;
         let [x0, y0, x1, y1] = region.validate(field)?;
         if samples.len() != region.width as usize * region.height as usize {
@@ -98,18 +94,14 @@ impl LfRecord {
                 for y in y0.max(py * PAGE)..y1.min((py + 1) * PAGE) {
                     let src = (y - y0) as usize * region.width as usize + (left - x0) as usize;
                     let dst = ((y % PAGE) * PAGE + left % PAGE) as usize;
-                    after[dst..dst + (right - left) as usize]
-                        .copy_from_slice(&samples[src..src + (right - left) as usize]);
+                    after[dst..dst + (right - left) as usize].copy_from_slice(&samples[src..src + (right - left) as usize]);
                 }
                 if before != after {
                     pages.push((p, before, after));
                 }
             }
         }
-        Ok((!pages.is_empty()).then_some(Self {
-            rect: [x0, y0, x1, y1],
-            pages,
-        }))
+        Ok((!pages.is_empty()).then_some(Self { rect: [x0, y0, x1, y1], pages }))
     }
 
     /// The field as the stroke left it.
@@ -241,23 +233,12 @@ mod tests {
         use crate::lf_region::LfRegion;
         let mut field = PagedU16::filled(130, 67, 100);
         let original = field.to_vec();
-        let region = LfRegion {
-            x: 63,
-            y: 63,
-            width: 67,
-            height: 4,
-        };
+        let region = LfRegion { x: 63, y: 63, width: 67, height: 4 };
         let mut samples = vec![100; 67 * 4];
-        assert!(
-            LfRecord::replacement(&field, region, &samples)
-                .unwrap()
-                .is_none()
-        );
+        assert!(LfRecord::replacement(&field, region, &samples).unwrap().is_none());
         samples[0] = 0;
         samples[267] = 65535;
-        let record = LfRecord::replacement(&field, region, &samples)
-            .unwrap()
-            .unwrap();
+        let record = LfRecord::replacement(&field, region, &samples).unwrap().unwrap();
         assert_eq!(field.to_vec(), original);
         assert_eq!(record.bytes(), 2 * PAGE_LEN * 4);
         assert!(LfRecord::replacement(&field, region, &samples[..267]).is_err());

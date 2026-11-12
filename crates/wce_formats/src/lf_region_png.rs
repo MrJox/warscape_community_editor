@@ -17,9 +17,7 @@ pub struct Image {
 pub fn sample_count(width: u32, height: u32) -> Result<usize, PngError> {
     let n = u64::from(width) * u64::from(height);
     if width == 0 || height == 0 || n > MAX_SAMPLES as u64 {
-        return Err(PngError(format!(
-            "LF region must contain 1..={MAX_SAMPLES} samples"
-        )));
+        return Err(PngError(format!("LF region must contain 1..={MAX_SAMPLES} samples")));
     }
     Ok(n as usize)
 }
@@ -27,9 +25,7 @@ pub fn sample_count(width: u32, height: u32) -> Result<usize, PngError> {
 /// Encode raw samples without normalization, conversion, flipping or resampling.
 pub fn encode(width: u32, height: u32, samples: &[u16]) -> Result<Vec<u8>, PngError> {
     if samples.len() != sample_count(width, height)? {
-        return Err(PngError(
-            "LF region sample count does not match its dimensions".into(),
-        ));
+        return Err(PngError("LF region sample count does not match its dimensions".into()));
     }
     PngFile {
         width,
@@ -48,18 +44,12 @@ pub fn decode(bytes: &[u8]) -> Result<Image, PngError> {
     if bytes.len() > MAX_FILE_BYTES || bytes.get(..8) != Some(b"\x89PNG\r\n\x1a\n") {
         return Err(bad("LF region requires a PNG file of at most 16 MiB"));
     }
-    let (mut pos, mut header, mut data, mut data_ended, mut end) =
-        (8usize, false, false, false, false);
+    let (mut pos, mut header, mut data, mut data_ended, mut end) = (8usize, false, false, false, false);
     while pos < bytes.len() {
-        let head = bytes
-            .get(pos..pos + 8)
-            .ok_or_else(|| bad("truncated PNG chunk"))?;
+        let head = bytes.get(pos..pos + 8).ok_or_else(|| bad("truncated PNG chunk"))?;
         let n = u32::from_be_bytes(head[..4].try_into().unwrap()) as usize;
-        let next = pos
-            .checked_add(12)
-            .and_then(|p| p.checked_add(n))
-            .filter(|&p| p <= bytes.len())
-            .ok_or_else(|| bad("truncated PNG chunk"))?;
+        let next =
+            pos.checked_add(12).and_then(|p| p.checked_add(n)).filter(|&p| p <= bytes.len()).ok_or_else(|| bad("truncated PNG chunk"))?;
         let kind = &head[4..8];
         let payload = &bytes[pos + 8..next - 4];
         let crc = u32::from_be_bytes(bytes[next - 4..next].try_into().unwrap());
@@ -77,14 +67,9 @@ pub fn decode(bytes: &[u8]) -> Result<Image, PngError> {
                 if header || n != 13 {
                     return Err(bad("invalid or duplicate PNG IHDR"));
                 }
-                sample_count(
-                    u32::from_be_bytes(payload[..4].try_into().unwrap()),
-                    u32::from_be_bytes(payload[4..8].try_into().unwrap()),
-                )?;
+                sample_count(u32::from_be_bytes(payload[..4].try_into().unwrap()), u32::from_be_bytes(payload[4..8].try_into().unwrap()))?;
                 if payload[8..] != [16, 0, 0, 0, 0] {
-                    return Err(bad(
-                        "LF region requires non-interlaced 16-bit grayscale PNG (no alpha)",
-                    ));
+                    return Err(bad("LF region requires non-interlaced 16-bit grayscale PNG (no alpha)"));
                 }
                 header = true;
             }
@@ -113,10 +98,6 @@ pub fn decode(bytes: &[u8]) -> Result<Image, PngError> {
     Ok(Image {
         width: png.width,
         height: png.height,
-        samples: png
-            .pixels
-            .chunks_exact(2)
-            .map(|s| u16::from_be_bytes([s[0], s[1]]))
-            .collect(),
+        samples: png.pixels.chunks_exact(2).map(|s| u16::from_be_bytes([s[0], s[1]])).collect(),
     })
 }

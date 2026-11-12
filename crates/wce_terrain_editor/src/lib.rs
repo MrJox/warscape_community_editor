@@ -3,6 +3,7 @@
 pub mod cells;
 pub mod document;
 pub mod lf;
+pub mod lf_region;
 pub mod terry;
 
 pub use document::{MapDocument, MapSource};
