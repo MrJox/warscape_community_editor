@@ -24,7 +24,11 @@ use wce_foundation::log;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, scaling, translation};
 use wce_scene::render_scene::{EntityId, LayerId, MeshInstance, Payload, RenderScene};
 
+use wce_foundation::math::Double3;
+use wce_tile::ted_scene::TedScene;
+use wce_tile::tile_project::TileProject;
 use wce_tile::vegetation::{self, GenerationParams};
+use wce_tile::world_transform::world_transform;
 
 use super::{TERRAIN, Tile, TileDocument};
 
@@ -346,101 +350,103 @@ impl Tile {
     }
 }
 
-impl TileDocument {
-    /// A decompiled project's exclusion polygon over the whole tile (the decompiler's until 2026-11-12: BOB kept the static trees and
-    /// generated nothing) replaced by polygons around its static trees (`wce_tile::vegetation::static_cover`, without the squares where the
-    /// carried lists have generated trees), so that the trees are generated around them; one undo entry. How many polygons it made; None
-    /// when the tile is not a decompiled one or has no such polygon.
-    ///
-    /// # Errors
-    ///
-    /// The polygon is in no layer, or the edit failed.
-    pub fn convert_whole_tile_exclusion(&mut self) -> Result<Option<usize>, String> {
-        let t = self.tile();
-        let dir = t.project.dir.join(CARRIED_DIR);
-        if !dir.is_dir() {
-            return Ok(None);
+/// A decompiled project's exclusion polygon over the whole tile (the decompiler's until 2026-11-12: BOB kept the static trees and generated
+/// nothing) replaced by polygons around its static trees (`wce_tile::vegetation::static_cover`, without the squares where the carried lists
+/// have generated trees), so that the trees are generated around them. Done on the project as it opens, before the document is made from
+/// it (the document's tables and the drawing then start from the new scene; the document says it is modified,
+/// `TileDocument::set_converted_on_open`). How many polygons it made; None when the tile is not a decompiled one or has no such polygon.
+///
+/// # Errors
+///
+/// The scene's edit failed or does not read again.
+pub fn convert_whole_tile_exclusion(project: &mut TileProject) -> Result<Option<usize>, String> {
+    let dir = project.dir.join(CARRIED_DIR);
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+
+    let unit = project.unit_scale;
+    let (ex, ez) = (project.extent_x(), project.extent_z());
+    let scene = &project.scene;
+
+    // The decompiler's rectangle (4 points), not an outline of the trees that happens to reach every edge.
+    let whole = vegetation::exclusion_outlines(scene).into_iter().filter(|(_, pts)| pts.len() == 4).find(|(_, pts)| {
+        let (mut lo, mut hi) = ((f64::MAX, f64::MAX), (f64::MIN, f64::MIN));
+        for &(x, z) in pts {
+            let (x, z) = (f64::from(x) / unit, f64::from(z) / unit);
+            lo = (lo.0.min(x), lo.1.min(z));
+            hi = (hi.0.max(x), hi.1.max(z));
         }
 
-        let unit = t.unit() as f32;
-        let (ex, ez) = (t.extent_x(), t.extent_z());
-        // The decompiler's rectangle (4 points), not an outline of the trees that happens to reach every edge.
-        let whole = vegetation::exclusion_outlines(t.tscene()).into_iter().filter(|(_, pts)| pts.len() == 4).find(|(_, pts)| {
-            let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
-            for &(x, z) in pts {
-                lo = (lo.0.min(x / unit), lo.1.min(z / unit));
-                hi = (hi.0.max(x / unit), hi.1.max(z / unit));
-            }
+        lo.0 <= 0.0 && lo.1 <= 0.0 && hi.0 >= ex && hi.1 >= ez
+    });
+    let Some((elem, _)) = whole else { return Ok(None) };
+    let doc = scene.doc();
+    let layer = std::iter::successors(Some(elem), |&e| doc.elements()[e].parent)
+        .find(|&e| scene.is_layer(e))
+        .or_else(|| scene.scene_graph())
+        .ok_or("the tile's exclusion polygon is in no layer")?;
 
-            lo.0 <= 0.0 && lo.1 <= 0.0 && f64::from(hi.0) >= ex && f64::from(hi.1) >= ez
-        });
-        let Some((elem, _)) = whole else { return Ok(None) };
-        let layer = t.layer_of(elem).ok_or("the tile's exclusion polygon is in no layer")?;
+    // The static trees (metres), and the carried lists' trees that are none of them: their generated ones.
+    let statics = (0..doc.elements().len())
+        .filter(|&e| doc.elements()[e].name == "VEGETATION_INSTANCE")
+        .map(|e| {
+            let p = world_transform(scene, e).position;
+            (p.x / unit, p.z / unit)
+        })
+        .collect::<Vec<_>>();
+    let key = |x: f64, z: f64| ((x * 20.0).round() as i64, (z * 20.0).round() as i64);
+    let at = statics.iter().map(|&(x, z)| key(x, z)).collect::<HashSet<_>>();
+    let is_static = |x: f64, z: f64| {
+        let (kx, kz) = key(x, z);
+        (-1..=1).any(|dx| (-1..=1).any(|dz| at.contains(&(kx + dx, kz + dz))))
+    };
 
-        // The static trees (metres), and the carried lists' trees that are none of them: their generated ones.
-        let doc = t.tscene().doc();
-        let statics = (0..doc.elements().len())
-            .filter(|&e| doc.elements()[e].name == "VEGETATION_INSTANCE")
-            .map(|e| {
-                let p = t.world_position(e);
-                (f64::from(p.x), f64::from(p.z))
-            })
-            .collect::<Vec<_>>();
-        let key = |x: f64, z: f64| ((x * 20.0).round() as i64, (z * 20.0).round() as i64);
-        let at = statics.iter().map(|&(x, z)| key(x, z)).collect::<HashSet<_>>();
-        let is_static = |x: f64, z: f64| {
-            let (kx, kz) = key(x, z);
-            (-1..=1).any(|dx| (-1..=1).any(|dz| at.contains(&(kx + dx, kz + dz))))
+    let flip = doc.get(doc.roots()[0], LIST_FLIP_ATTR).unwrap_or_default();
+    let (fx, fz) = (flip.contains('x'), flip.contains('z'));
+    let mut generated = vec![];
+    for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
+        let name = entry.file_name().to_string_lossy().to_lowercase();
+        let Ok(bytes) = std::fs::read(entry.path()) else { continue };
+        let trees = if name.ends_with(TREE_LIST_EXTENSION) {
+            TreeListFile::decode(&mut Cursor::new(bytes), &None).map(|f| list_trees(&f)).ok()
+        } else if name.ends_with(OLD_TREE_LIST_EXTENSION) {
+            OldList::parse(OldListKind::Tree, &bytes).map(|l| old_list_trees(&l)).ok()
+        } else {
+            None
         };
 
-        let (fx, fz) = t.list_flip();
-        let mut generated = vec![];
-        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten() {
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            let Ok(bytes) = std::fs::read(entry.path()) else { continue };
-            let trees = if name.ends_with(TREE_LIST_EXTENSION) {
-                TreeListFile::decode(&mut Cursor::new(bytes), &None).map(|f| list_trees(&f)).ok()
-            } else if name.ends_with(OLD_TREE_LIST_EXTENSION) {
-                OldList::parse(OldListKind::Tree, &bytes).map(|l| old_list_trees(&l)).ok()
-            } else {
-                None
-            };
-
-            for tree in trees.unwrap_or_default() {
-                // The list's z runs from the far edge; mirrored as the tile was since (`list_flip`).
-                let x = if fx { ex - f64::from(tree.x) } else { f64::from(tree.x) };
-                let z = if fz { f64::from(tree.z) } else { ez - f64::from(tree.z) };
-                if !is_static(x, z) {
-                    generated.push((x, z));
-                }
+        for tree in trees.unwrap_or_default() {
+            // The list's z runs from the far edge; mirrored as the tile was since (`list_flip`).
+            let x = if fx { ex - f64::from(tree.x) } else { f64::from(tree.x) };
+            let z = if fz { f64::from(tree.z) } else { ez - f64::from(tree.z) };
+            if !is_static(x, z) {
+                generated.push((x, z));
             }
         }
+    }
 
-        let cover = vegetation::static_cover::static_cover(&statics, &generated, (ex, ez));
-        let local = cover
-            .iter()
-            .map(|outline| outline.iter().map(|&(x, z)| t.to_local(layer, Float3::new(x as f32, 0.0, z as f32))).collect::<Vec<_>>())
-            .collect::<Vec<_>>();
+    let cover = vegetation::static_cover::static_cover(&statics, &generated, (ex, ez));
+    let w = world_transform(scene, layer);
+    let to_layer = |x: f64, z: f64| w.rotation.transpose() * (Double3::new(x * unit, 0.0, z * unit) - w.position);
+    let local = cover.iter().map(|outline| outline.iter().map(|&(x, z)| to_layer(x, z)).collect::<Vec<_>>()).collect::<Vec<_>>();
 
-        // The polygon goes first (its layer, before it, keeps its index), then the new ones at the layer's end.
-        let mark = self.begin()?;
-        let made = (|| {
-            self.tscene_mut().remove(elem)?;
-            for pts in &local {
-                self.tscene_mut().add_polygon(Some(layer), "VegetationExclusionPolygonInstance", "Static trees", pts, &BTreeMap::new())?;
-            }
+    // On a copy (the project is left as it was when this fails). The polygon goes first (its layer, before it, keeps its index), then the
+    // new ones at the layer's end; the scene read again, as the tile opens (`TileProject::make_references`).
+    let mut edited = TedScene::parse(project.scene.save())?;
+    edited.remove(elem)?;
+    for pts in &local {
+        edited.add_polygon(Some(layer), "VegetationExclusionPolygonInstance", "Static trees", pts, &BTreeMap::new())?;
+    }
 
-            Ok::<_, String>(())
-        })();
-        if let Err(e) = made {
-            let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-            let _ = self.tscene_mut().unapply(&record);
-            return Err(e);
-        }
+    project.scene = TedScene::parse(edited.save())?;
+    Ok(Some(cover.len()))
+}
 
-        self.push_splice("Exclusion polygons around the static trees".to_owned(), mark, vec![], vec![]);
-        self.tile_mut().reload_tree_list();
-        Ok(Some(cover.len()))
+impl TileDocument {
+    /// The project was converted as it opened (`convert_whole_tile_exclusion`): the document says it is modified until it is saved.
+    pub fn set_converted_on_open(&mut self) {
+        self.tile_mut().converted_on_open = true;
     }
 }
 
