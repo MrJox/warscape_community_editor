@@ -2216,8 +2216,11 @@ impl Tool for TerrainTool {
 
                     (Some("turn"), _) => selected.and_then(|i| PlacementsPanel::turn(e, doc, i)),
                     (Some("remove"), _) => selected.and_then(|i| {
-                        t.placements.selected = None;
-                        PlacementsPanel::remove(e, doc, i)
+                        let r = PlacementsPanel::remove(e, doc, i);
+                        if r.is_ok() {
+                            t.placements.selected = None;
+                        }
+                        r
                     }),
                     (Some("variation"), _) => match (selected, num(1)) {
                         (Ok(i), Some(k)) => PlacementsPanel::set_variation(e, doc, i, k.clamp(0, 255) as u8),

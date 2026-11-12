@@ -100,6 +100,148 @@ impl Reader<'_> {
 
 impl TileList {
 
+    /// Structural identity with floating-point payloads compared as stored bits, without serialization or normalization.
+    pub fn same_bits(&self, other: &Self) -> bool {
+        self.version == other.version
+            && self.lf_position.map(f32::to_bits) == other.lf_position.map(f32::to_bits)
+            && self.lf_scale.map(f32::to_bits) == other.lf_scale.map(f32::to_bits)
+            && self.unknown.map(f32::to_bits) == other.unknown.map(f32::to_bits)
+            && self.strings == other.strings
+            && self.battle_size == other.battle_size
+            && self.battle_centre == other.battle_centre
+            && self.origin_offset.map(f32::to_bits) == other.origin_offset.map(f32::to_bits)
+            && self.bounds == other.bounds
+            && self.is_campaign == other.is_campaign
+            && self.names == other.names
+            && self.placements.len() == other.placements.len()
+            && self.placements.iter().zip(&other.placements).all(|(a, b)| {
+                a.name == b.name
+                    && a.x == b.x
+                    && a.y == b.y
+                    && a.flags == b.flags
+                    && a.climate == b.climate
+                    && a.lf.map(f32::to_bits) == b.lf.map(f32::to_bits)
+                    && a.old == b.old
+            })
+            && self.rects == other.rects
+            && self.tail == other.tail
+    }
+
+    /// The row count of the Rome 2 v9 trailer: `(4, K)`, K byte strings, a u32 count and 32 opaque bytes per row.
+    /// `None` is an unknown layout, not an invalid original file. This inspects cardinality only; it does not decode row semantics.
+    ///
+    /// # Errors
+    ///
+    /// A recognized trailer is truncated or its declared rows do not fit exactly (including checked size overflow).
+    pub fn v9_paired_metadata_count(&self) -> Result<Option<u32>, String> {
+        if self.version != 9 || !self.tail.starts_with(&4u32.to_le_bytes()) {
+            return Ok(None);
+        }
+
+        let b = &self.tail;
+        let names = b
+            .get(4..8)
+            .ok_or("v9 paired metadata: truncated name count")?;
+        let names = u32::from_le_bytes(names.try_into().unwrap());
+        // Each name needs at least its u16 length, followed by the u32 row count.
+        let minimum = u64::from(names) * 2 + 4;
+        if minimum > b.len().saturating_sub(8) as u64 {
+            return Err("v9 paired metadata: truncated names or row count".into());
+        }
+        let mut at: usize = 8;
+        for _ in 0..names {
+            let end = at
+                .checked_add(2)
+                .ok_or("v9 paired metadata: name offset overflow")?;
+            let len = b
+                .get(at..end)
+                .ok_or("v9 paired metadata: truncated name length")?;
+            at = end
+                .checked_add(usize::from(u16::from_le_bytes([len[0], len[1]])))
+                .ok_or("v9 paired metadata: name size overflow")?;
+            if at > b.len() {
+                return Err("v9 paired metadata: truncated name".into());
+            }
+        }
+        let end = at
+            .checked_add(4)
+            .ok_or("v9 paired metadata: count offset overflow")?;
+        let count = b
+            .get(at..end)
+            .ok_or("v9 paired metadata: truncated label or row count")?;
+        let count = u32::from_le_bytes([count[0], count[1], count[2], count[3]]);
+        let bytes = usize::try_from(count)
+            .ok()
+            .and_then(|n| n.checked_mul(32))
+            .and_then(|n| end.checked_add(n));
+        if bytes != Some(b.len()) {
+            return Err(format!(
+                "v9 paired metadata: {count} rows do not match the payload length"
+            ));
+        }
+
+        Ok(Some(count))
+    }
+
+    /// Checks a native placement action before a caller mutates the list or records a command. Other versions are unaffected.
+    /// Same-count v9 edits retain existing behavior for a recognized, consistent trailer; this does not prove their row semantics.
+    ///
+    /// # Errors
+    ///
+    /// Nonzero paired rows prevent count changes; unknown, malformed or inconsistent metadata prevents placement edits.
+    pub fn check_placement_edit(&self, operation: &str, changes_count: bool) -> Result<(), String> {
+        if self.version != 9 {
+            return Ok(());
+        }
+
+        let check = || {
+            let count = self.v9_paired_metadata_count()?.ok_or(
+                "unknown v9 metadata layout; keep the original placements unchanged".to_owned(),
+            )?;
+            if count != 0 && usize::try_from(count).ok() != Some(self.placements.len()) {
+                return Err(format!(
+                    "v9 placement count {} differs from paired metadata count {count}",
+                    self.placements.len()
+                ));
+            }
+
+            if changes_count && count != 0 {
+                return Err("v9 placement insertion/removal is unsupported: paired metadata cannot yet be updated; keep the original placement count".to_owned());
+            }
+
+            Ok(())
+        };
+        check().map_err(|err| format!("{operation}: {err}"))
+    }
+
+    /// Validates an edited built list against its original, independently of editor commands. Unedited opaque layouts remain valid.
+    ///
+    /// # Errors
+    ///
+    /// A v9 edit changes a paired nonzero row count, has unknown/inconsistent metadata, changes the opaque trailer, or changes the format version.
+    pub fn validate_placement_edit(&self, original: &Self) -> Result<(), String> {
+        if (self.version != 9 && original.version != 9) || self.same_bits(original) {
+            return Ok(());
+        }
+
+        if self.version != original.version {
+            return Err(
+                "save/export placements: changing a v9 list's version is unsupported".to_owned(),
+            );
+        }
+
+        self.check_placement_edit(
+            "save/export placements",
+            self.placements.len() != original.placements.len(),
+        )?;
+        original.check_placement_edit("save/export placements (original)", false)?;
+        if self.tail != original.tail {
+            return Err("save/export placements: changing opaque v9 paired metadata is unsupported; keep the original metadata".to_owned());
+        }
+
+        Ok(())
+    }
+
     /// # Errors
     ///
     /// Fails on a truncated file.
@@ -213,6 +355,10 @@ impl TileList {
         o
     }
 }
+
+#[cfg(test)]
+#[path = "tile_list_integrity_test.rs"]
+mod integrity_tests;
 
 #[cfg(test)]
 mod tests {
