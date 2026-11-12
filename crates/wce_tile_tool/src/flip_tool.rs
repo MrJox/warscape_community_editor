@@ -79,6 +79,38 @@ impl TileTool {
         d.flip_tile(axis)
     }
 
+    /// A whole-tile flip asked for: a modal says it is under way for two frames (so that it is on screen), then the flip runs.
+    pub(crate) fn draw_flip_tile_busy(&mut self, e: &mut Editor) {
+        const TITLE: &str = "Flipping the tile";
+        /// The flip is done: the message stays one frame more, over the tile being published again (the next frame's start).
+        const DONE: u8 = u8::MAX;
+        let Some((axis, frames)) = self.flip_tile_pending else { return };
+        gui::open_popup(TITLE);
+        if gui::begin_popup_modal(TITLE, None, gui::WINDOW_ALWAYS_AUTO_RESIZE) {
+            gui::text(&format!("Flipping the whole tile along {}...", if axis == TileFlipAxis::X { "x" } else { "z" }));
+            gui::text_disabled("Every item, the terrain and the links: this takes a while on a big tile.");
+            if frames == DONE {
+                gui::close_current_popup();
+            }
+
+            gui::end_popup();
+        }
+
+        match frames {
+            DONE => self.flip_tile_pending = None,
+            0 => {
+                let start = std::time::Instant::now();
+                self.status = match self.do_flip_tile(e, axis) {
+                    Ok(msg) => format!("{msg} ({:.1} s)", start.elapsed().as_secs_f32()),
+                    Err(why) => why,
+                };
+                self.flip_tile_pending = Some((axis, DONE));
+            }
+
+            n => self.flip_tile_pending = Some((axis, n - 1)),
+        }
+    }
+
     /// Mirrors the selection across the plane.
     pub fn do_flip(&mut self, e: &mut Editor) -> Result<String, String> {
         let flip = self.flip.ok_or("not in Flip mode")?;
@@ -221,8 +253,9 @@ impl TileTool {
             gui::set_tooltip(WHOLE_TILE_TIP_Z);
         }
 
+        // The flip of a big tile takes seconds: a message is shown first (`draw_flip_tile_busy`), then it runs.
         if let Some(axis) = axis {
-            self.status = self.do_flip_tile(e, axis).unwrap_or_else(|why| why);
+            self.flip_tile_pending = Some((axis, 2));
         }
 
         true

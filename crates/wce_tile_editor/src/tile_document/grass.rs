@@ -109,7 +109,24 @@ impl Tile {
             return list.clone();
         }
 
-        let packed = if generate { None } else { self.read_grass_list() };
+        // A packed list of a tile flipped since: mirrored as the tile was (`list_flip`).
+        let (fx, fz) = self.list_flip();
+        let (ex, ez) = (self.project.extent_x() as f32, self.project.extent_z() as f32);
+        let packed = if generate { None } else { self.read_grass_list() }.map(|mut list| {
+            for (_, patches) in &mut list {
+                for (x, z) in patches.iter_mut() {
+                    if fx {
+                        *x = ex - *x;
+                    }
+
+                    if fz {
+                        *z = ez - *z;
+                    }
+                }
+            }
+
+            list
+        });
         let list = packed.unwrap_or_else(|| {
             if self.project.raw_root.is_none() {
                 return vec![];

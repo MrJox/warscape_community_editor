@@ -31,6 +31,9 @@ use wce_tile::vegetation::{self, GenerationParams};
 
 use super::{TERRAIN, Tile};
 
+/// The root attribute saying the packed lists are mirrored (`Tile::list_flip`).
+pub const LIST_FLIP_ATTR: &str = "wce_list_flip";
+
 /// The list drawn unless the display says otherwise: BOB's list for no particular climate.
 pub const DEFAULT_TREE_LIST: &str = "default";
 
@@ -189,6 +192,15 @@ impl Tile {
     }
 
     /// Drops the decoded or generated list, so the next update reads or generates it again (after editing the seeds, the exclusions...).
+    /// Whether the tile's packed tree and grass lists (BOB's, made before) are mirrored along x and along z: the tile was flipped whole
+    /// since (`TileDocument::flip_tile`, the root's `wce_list_flip`: "x", "z" or "xz"). Lists generated now follow the tile as it is.
+    pub(crate) fn list_flip(&self) -> (bool, bool) {
+        let sc = self.tscene();
+        let root = sc.doc().roots()[0];
+        let v = sc.doc().get(root, LIST_FLIP_ATTR).unwrap_or_default();
+        (v.contains('x'), v.contains('z'))
+    }
+
     pub fn reload_tree_list(&mut self) {
         self.trees.name.clear();
         self.trees.shown = None;
@@ -266,8 +278,23 @@ impl Tile {
                 TreeListFile::decode(&mut Cursor::new(bytes), &None).map(|file| list_trees(&file)).map_err(|error| format!("{name}{TREE_LIST_EXTENSION}: {error}"))
             }
         });
+        let (fx, fz) = self.list_flip();
+        let (ex, ez) = (self.project.extent_x() as f32, self.project.extent_z() as f32);
         let trees = match decoded {
-            Some(Ok(trees)) => trees,
+            // A packed list of a tile flipped since (`list_flip`): mirrored as the tile was (both of its coordinates run 0 .. extent).
+            Some(Ok(mut trees)) => {
+                for t in &mut trees {
+                    if fx {
+                        t.x = ex - t.x;
+                    }
+
+                    if fz {
+                        t.z = ez - t.z;
+                    }
+                }
+
+                trees
+            }
             Some(Err(error)) => {
                 log::warn(error);
                 vec![]
