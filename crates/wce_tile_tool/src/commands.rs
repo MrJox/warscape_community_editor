@@ -1870,13 +1870,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("share_project", "share_project <zip>", "write the open tile's project (its variations, entry and the projects' prefabs it uses) into a zip to share", |e, a| {
         let Some(out) = a.first().map(std::path::PathBuf::from) else { return fail("usage: share_project <zip>") };
-        with_tile(e, |t, e| t.share_project(e, Some(&out)).map_or_else(fail, ok))
+        with_tile(e, |t, e| t.share_project(e, Some(&out)).map_or_else(|why| {
+            t.share_failed(e, "Share project", &why);
+            fail(why)
+        }, ok))
     });
 
     c.add("import_shared", "import_shared <zip> [overwrite]", "import a shared project into the projects folder and open its tile; without overwrite, one that replaces files asks first", |e, a| {
         let Some(zip) = a.first().map(std::path::PathBuf::from) else { return fail("usage: import_shared <zip> [overwrite]") };
         let overwrite = a.get(1).is_some_and(|w| w == "overwrite");
-        with_tile(e, |t, e| t.import_shared_from(e, &zip, overwrite).map_or_else(fail, ok))
+        with_tile(e, |t, e| t.import_shared_from(e, &zip, overwrite).map_or_else(|why| {
+            t.share_failed(e, "Import shared project", &why);
+            fail(why)
+        }, ok))
     });
 
     c.add("check_bridges", "check_bridges", "check the tile's bridges as the game links them: the ones units cannot get onto or cross (the Problems section's Check bridges)", |e, _| {
