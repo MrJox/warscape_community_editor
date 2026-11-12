@@ -1126,6 +1126,11 @@ impl Renderer {
     }
 
     /// The game shaders that couldn't be loaded (name: reason), newest first: the editor shows them where a pass would otherwise silently draw nothing.
+    /// The game it renders as (its shaders and passes).
+    pub fn render_game(&self) -> game::RenderGame {
+        self.game
+    }
+
     pub fn shader_failures(&self) -> &[String] {
         &self.shader_failures
     }
@@ -1227,6 +1232,18 @@ impl Renderer {
 
                 None
             }
+        }
+    }
+
+    /// A game shader some games don't have (Rome 2's packs have no rope shaders): `None`, not reported, when no pack has it; reported as
+    /// [`Self::shader`] when it is there but doesn't load.
+    pub(crate) fn optional_shader(&mut self, name: &str) -> Option<Rc<GameShader>> {
+        let files = self.files.clone();
+        let read: &FileReader = &|path: &str| files.read(path);
+        match self.lib.get(read, &mut self.cbs, name) {
+            Ok(shader) => Some(shader),
+            Err(error) if error.0.starts_with("not found in any pack") => None,
+            Err(_) => self.shader(name),
         }
     }
 
