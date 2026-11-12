@@ -5,9 +5,7 @@ fn chunk(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     let mut bytes = (payload.len() as u32).to_be_bytes().to_vec();
     bytes.extend(kind);
     bytes.extend(payload);
-    let crc =
-        unsafe { libz_sys::crc32(0, bytes[4..].as_ptr(), (bytes.len() - 4) as libz_sys::uInt) }
-            as u32;
+    let crc = unsafe { libz_sys::crc32(0, bytes[4..].as_ptr(), (bytes.len() - 4) as libz_sys::uInt) } as u32;
     bytes.extend(crc.to_be_bytes());
     bytes
 }
@@ -20,30 +18,13 @@ fn all_u16_values_roundtrip_without_normalization_and_top_row_first() {
     assert_eq!((decoded.width, decoded.height), (256, 256));
     assert_eq!(decoded.samples, values);
     let png = encode(3, 2, &[0x1234, 1, 65535, 40000, 256, 0]).unwrap();
-    assert_eq!(
-        PngFile::parse(&png).unwrap().pixels,
-        [0x12, 0x34, 0, 1, 255, 255, 0x9c, 0x40, 1, 0, 0, 0]
-    );
+    assert_eq!(PngFile::parse(&png).unwrap().pixels, [0x12, 0x34, 0, 1, 255, 255, 0x9c, 0x40, 1, 0, 0, 0]);
 }
 
 #[test]
 fn rejects_conversion_formats_including_alpha_and_interlace() {
-    for (depth, color, pixels) in [
-        (8, 0, vec![4]),
-        (16, 2, vec![0; 6]),
-        (16, 4, vec![0; 4]),
-        (8, 6, vec![0; 4]),
-    ] {
-        let png = PngFile {
-            width: 1,
-            height: 1,
-            bit_depth: depth,
-            color_type: color,
-            pixels,
-            ..Default::default()
-        }
-        .encode()
-        .unwrap();
+    for (depth, color, pixels) in [(8, 0, vec![4]), (16, 2, vec![0; 6]), (16, 4, vec![0; 4]), (8, 6, vec![0; 4])] {
+        let png = PngFile { width: 1, height: 1, bit_depth: depth, color_type: color, pixels, ..Default::default() }.encode().unwrap();
         assert!(decode(&png).is_err());
     }
     let good = encode(1, 1, &[5]).unwrap();
@@ -71,12 +52,7 @@ fn validates_limits_before_decoding_or_allocating_pixels() {
         assert!(decode(&png).unwrap_err().0.contains("samples"));
     }
     let at_limit = vec![0x3456; MAX_SAMPLES];
-    assert_eq!(
-        decode(&encode(1024, 1024, &at_limit).unwrap())
-            .unwrap()
-            .samples,
-        at_limit
-    );
+    assert_eq!(decode(&encode(1024, 1024, &at_limit).unwrap()).unwrap().samples, at_limit);
 }
 
 #[test]
@@ -95,11 +71,7 @@ fn malformed_chunks_crcs_and_streams_are_errors_not_panics() {
     bad.extend(chunk(b"IDAT", &[1, 2, 3]));
     bad.extend(chunk(b"IEND", &[]));
     assert!(decode(&bad).is_err());
-    for extra in [
-        chunk(b"IHDR", &png[16..29]),
-        chunk(b"PLTE", &[0, 0, 0]),
-        chunk(b"tRNS", &[0, 0]),
-    ] {
+    for extra in [chunk(b"IHDR", &png[16..29]), chunk(b"PLTE", &[0, 0, 0]), chunk(b"tRNS", &[0, 0])] {
         let mut bad = png[..33].to_vec();
         bad.extend(extra);
         bad.extend(&png[33..]);
