@@ -62,6 +62,7 @@ fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
         bmin: Float3::default(),
         bmax: Float3::default(),
         snow: false,
+        palette_base: 0,
     }
 }
 
