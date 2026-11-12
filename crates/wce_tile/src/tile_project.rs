@@ -353,7 +353,7 @@ impl TileProject {
                 };
 
                 wce_prof!("tile.open.parse_ted");
-                TedScene::parse(bytes)
+                TedScene::parse(bytes).and_then(crate::project_files::migrate_walls)
             },
             || -> Result<Side> {
                 let found = found.unwrap_or_else(|| {

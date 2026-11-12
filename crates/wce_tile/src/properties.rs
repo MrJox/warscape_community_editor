@@ -100,7 +100,11 @@ pub enum Rule {
 impl Prop {
     /// The name the Inspector shows: TEd's, its attribute, or the editor's own for what TEd lacks.
     pub fn label(&self) -> &'static str {
-        if self.attr == crate::export_as_prop::EXPORT_AS_PROP_ATTR { "Export as prop" } else { self.attr }
+        match self.attr {
+            crate::export_as_prop::EXPORT_AS_PROP_ATTR => "Export as prop",
+            crate::new_instances::WALL_PROCEDURAL => "Procedural",
+            attr => attr,
+        }
     }
 }
 
@@ -258,6 +262,7 @@ const MEASURE: &[Prop] = &[p("flags", Kind::Flags), p("position", Kind::Position
 const WALL: &[Prop] = &[
     p("flags", Kind::Flags),
     p("position", Kind::Position),
+    p(crate::new_instances::WALL_PROCEDURAL, Kind::Bool),
     p("line_colour", Kind::Colour),
     p("selected_line_colour", Kind::Colour),
     p("wall_base", Kind::Enum(en::WALL_BASE)),
