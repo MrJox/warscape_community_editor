@@ -81,7 +81,7 @@ pub use self::flip::{FlipPlane, TileFlipAxis};
 pub use self::index::{FILLED_TYPES, deployment_colour, deployment_variant, polygon_colour, style_of};
 pub use self::view::{LIGHT_RADIUS_HANDLE, SHELTER_TARGET_HANDLE, link_rgb};
 pub use self::tech::{GROUPS, KINDS, TechInfo, TechKind, TechScope, TechSettings, TechStats, WallTechReport, tech_counts};
-pub use self::vegetation::DEFAULT_TREE_LIST;
+pub use self::vegetation::{DEFAULT_TREE_LIST, convert_whole_tile_exclusion};
 pub use self::roads::ROAD_SPLINE;
 pub use self::walls::{Anchor, WALL_SPLINE, WallLayout};
 pub use wce_tile::new_instances::{ANGLE_FINDER, MEASURE_LINE, REF_HUMAN, REF_SHIP, REF_UNIT};
@@ -466,6 +466,9 @@ pub struct Tile {
     pub(crate) scene_key: usize,
     pub(crate) layer: LayerId,
     pub(crate) terrain_entity: EntityId,
+
+    /// The project was changed as it opened (`vegetation::convert_whole_tile_exclusion`): modified until saved.
+    pub(crate) converted_on_open: bool,
     pub(crate) overlay_entity: EntityId,
     pub(crate) terrain_version: u64,
     pub(crate) terrain_stride: i32,
@@ -851,7 +854,7 @@ impl TileDocument {
         let t0 = std::time::Instant::now();
         let mut tile = Tile {
             ref_spots: Default::default(),
-            id: core.id(), project, files, display: TileDisplay::default(), scene_key: 0, layer: 0, terrain_entity: 0, overlay_entity: 0, terrain_version: 1,
+            id: core.id(), project, files, display: TileDisplay::default(), scene_key: 0, layer: 0, terrain_entity: 0, converted_on_open: false, overlay_entity: 0, terrain_version: 1,
             terrain_stride: 1, instances: vec![], type_ordinal: vec![], markers: Markers::default(), type_counts: BTreeMap::new(), batch_entity: vec![], dirty_type: vec![],
             first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), covers: HashMap::new(), covers_dirty: BTreeSet::new(), cover_spare: HashMap::new(), cover_ground: 0, polygons_published: false, tops: HashMap::new(), tops_wanted: BTreeSet::new(), tops_polls: 0, tops_came: false, models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
             markers_dirty: true, polygons_dirty: false, wall_preview: walls::WallPreview::default(), hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
@@ -1041,7 +1044,7 @@ impl Document for TileDocument {
     }
 
     fn modified(&self) -> bool {
-        self.history().modified() || self.terrain_layers_dirty()
+        self.history().modified() || self.terrain_layers_dirty() || self.tile().converted_on_open
     }
 
     fn can_save(&self) -> bool {
@@ -1053,7 +1056,11 @@ impl Document for TileDocument {
             return self.save_stage();
         }
 
-        self.save_tile(target).map(|message| self.tile_mut().last_message = message)
+        self.save_tile(target).map(|message| {
+            let t = self.tile_mut();
+            t.last_message = message;
+            t.converted_on_open = false;
+        })
     }
 
     fn publish(&mut self, scene: &mut RenderScene, layer: LayerId) {
