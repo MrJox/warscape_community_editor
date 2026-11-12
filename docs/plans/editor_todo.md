@@ -49,3 +49,14 @@ foreground, so that what changed is seen. Only on a change of what it shows, not
 while they work in it.
 
 Done (2026-11-12): docs/editor.md, "Layouts".
+
+## Rome 2 references: to check, and ships on the sea
+
+User, 2026-11-12, after the Rome 2 reference fixes (feature/rome2_refs):
+- Check a Rome 2 ship's sails up close: their cloth is skinned with the per-palette lines of `renderer/skinned.rs` (a sail's bones on a line
+  of their own), not seen yet.
+- Check a Rome 2 ship's crew up close (the shot so far was too far to tell).
+- A ship reference reported no water under it on roman_minor_port_b/minor_b, even where the sea should be: check whether the water lookup
+  (`Tile::water_level`) sees Rome 2's sea at all.
+- Ships placed over the sea should float on the sea's surface by default, not sit freeform or on the ground at the bottom of the sea: a
+  way to make a ship reference take the sea water level (0 m, or the tile's sea) when it is over the sea.
