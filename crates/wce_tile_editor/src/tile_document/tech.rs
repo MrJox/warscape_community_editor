@@ -247,6 +247,20 @@ struct TechLevel {
 
     /// The collision outlines (else the state's box as a rectangle): what the collision detection compares.
     rings: Vec<Vec<Float3>>,
+
+    /// The platforms (their corners, and whether each is a ground one: `flag_2`), and the plain collision outlines (named with neither
+    /// "outline" nor "gate": those the game cuts into the ground's triangulation corner for corner), for the bridge check (`bridges.rs`).
+    platforms: Vec<(Vec<Float3>, bool)>,
+    plain_outlines: Vec<Vec<Float3>>,
+}
+
+/// A building's (or a generated piece's) walkable surfaces in the world, at the states its pieces show: its platforms (corners, ground
+/// or not) and its plain collision outlines.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WalkSurfaces {
+    pub key: String,
+    pub platforms: Vec<(Vec<Float3>, bool)>,
+    pub outlines: Vec<Vec<Float3>>,
 }
 
 #[derive(Clone, Debug)]
@@ -353,9 +367,14 @@ fn parse_level(d: &Value) -> TechLevel {
         }
     }
 
-    let mut rings = vec![];
+    let (mut rings, mut platforms, mut plain_outlines) = (vec![], vec![], vec![]);
     for o in list(&d["collision_outlines"]) {
         let pts: Vec<Float3> = list(&o["vertices"]["outline"]).iter().map(p3).collect();
+        let name = o["name"].as_str().unwrap_or_default().to_ascii_lowercase();
+        if pts.len() >= 2 && !name.contains("outline") && !name.contains("gate") {
+            plain_outlines.push(pts.clone());
+        }
+
         if pts.len() >= 2 {
             if pts.len() >= 3 {
                 rings.push(pts.clone());
@@ -393,6 +412,7 @@ fn parse_level(d: &Value) -> TechLevel {
             [0.3, 0.55, 1.0]
         };
 
+        platforms.push((pts.clone(), p["flag_2"].as_bool() == Some(true)));
         push(TechKind::Platforms, Some(rgb), Shape::Fill(pts.clone()));
         push(TechKind::Platforms, Some(rgb), Shape::Lines { pts, closed: true });
     }
@@ -437,6 +457,8 @@ fn parse_level(d: &Value) -> TechLevel {
     }
 
     level.rings = rings;
+    level.platforms = platforms;
+    level.plain_outlines = plain_outlines;
     level
 }
 
@@ -968,6 +990,46 @@ impl Tile {
         }
 
         Some(report)
+    }
+
+    /// A building's walkable surfaces in the world (`WalkSurfaces`): a placed building's at the states its pieces show, a procedural wall's or
+    /// a road's generated pieces each on its own, intact. Empty without a logic file.
+    pub(crate) fn walk_surfaces(&mut self, e: usize) -> Vec<WalkSurfaces> {
+        let world_of = |frame: &Float4x4, level: &TechLevel| {
+            let w = |r: &Vec<Float3>| r.iter().map(|&q| frame.transform_point(q)).collect::<Vec<_>>();
+            (level.platforms.iter().map(|(r, g)| (w(r), *g)).collect::<Vec<_>>(), level.plain_outlines.iter().map(w).collect::<Vec<_>>())
+        };
+
+        if self.is_wall(e) || self.is_road(e) {
+            let mut out = vec![];
+            for (world, key) in self.generated_buildings(e) {
+                let Some(model) = self.tech_model(&key) else { continue };
+                let mut s = WalkSurfaces { key, ..Default::default() };
+                for piece in &model.pieces {
+                    let Some(level) = pick(&piece.levels, 0) else { continue };
+                    let (p, o) = world_of(&(world * piece.local), level);
+                    s.platforms.extend(p);
+                    s.outlines.extend(o);
+                }
+
+                out.push(s);
+            }
+
+            return out;
+        }
+
+        let Some(placed) = self.tech_placed(e, false) else { return vec![] };
+        let key = self.tscene().doc().get(e, "key").unwrap_or_default().to_lowercase();
+        let mut s = WalkSurfaces { key, ..Default::default() };
+        for &(w, i, want) in &placed.pieces {
+            let piece = &placed.model.pieces[i];
+            let Some(level) = pick(&piece.levels, want) else { continue };
+            let (p, o) = world_of(&(w * piece.local), level);
+            s.platforms.extend(p);
+            s.outlines.extend(o);
+        }
+
+        vec![s]
     }
 
     /// The selection, from the highlight: the overlay of the selected buildings follows it.

@@ -21,6 +21,7 @@ pub mod kit_prompt;
 pub mod launch;
 pub mod launch_prompt;
 pub mod measure_tool;
+mod bridge_check;
 pub mod minimap_panel;
 pub mod new_tile_dialog;
 pub mod placement_modes;
