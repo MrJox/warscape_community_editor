@@ -830,29 +830,24 @@ pub fn tree_key(model: &str) -> String {
 
 /// Whether a list position (metres) is on BOB's generator grid at a density: the centre of a cell of 128 / density metres, as every
 /// generated object is (`x density / 128 - 0.5` whole, and the same for z, which counts from the far edge of a whole number of cells).
-pub fn on_generator_grid(x: f64, z: f64, density: u32) -> bool {
-    let whole = |v: f64| {
-        let g = v * f64::from(density) / 128.0 - 0.5;
-        (g - g.round()).abs() < 1e-4
-    };
-    whole(x) && whole(z)
-}
+pub use wce_tile::vegetation::static_cover::on_generator_grid;
 
 /// The static trees of a FASTBIN tree list document as TEd's VEGETATION_INSTANCEs (the list's frame: x, z metres with z from the far
 /// edge, y in scene units; scale as the list's), and how many generated objects were left out: those on the generator's grid at
 /// `density` (BOB makes them from the seeds; an outfield_tents list's yurts, a climate's generated trees).
-fn tree_nodes(doc: &Node, extent_z: f64, density: u32) -> (Vec<Node>, usize) {
-    let (mut out, mut generated) = (vec![], 0);
+fn tree_nodes(doc: &Node, extent_z: f64, density: u32) -> ListTrees {
+    let mut out = ListTrees::default();
     for t in doc.children.iter().filter(|c| c.class == "type") {
         let key = tree_key(t.get("key").and_then(Value::as_str).unwrap_or_default());
         let (pos, scale) = (t.get("position").and_then(Value::as_floats).unwrap_or_default(), t.get("scale").and_then(Value::as_floats).unwrap_or_default());
         let flags = t.get("flags").and_then(Value::as_ints).unwrap_or_default();
         for (i, p) in pos.as_chunks::<3>().0.iter().enumerate() {
             if on_generator_grid(p[0], p[2], density) {
-                generated += 1;
+                out.generated.push((p[0], p[2]));
                 continue;
             }
 
+            out.statics.push((p[0], p[2]));
             let own = vec![("key", s(&key)), ("scale", Value::Float(r32(scale.get(i).copied().unwrap_or(1.0))))];
             let mut n = instance("VEGETATION_INSTANCE", "tree", [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])], [0.0; 3], own);
             // The list's flag is BOB's `surface_mode == MSM_FREEFORM`.
@@ -860,18 +855,27 @@ fn tree_nodes(doc: &Node, extent_z: f64, density: u32) -> (Vec<Node>, usize) {
                 n.set("surface_mode", s("MSM_LANDSCAPE"));
             }
 
-            out.push(n);
+            out.nodes.push(n);
         }
     }
 
-    (out, generated)
+    out
+}
+
+/// A tree list's static trees as TEd instances and where they stand, and where its generated objects stand (list metres: x, z from the far
+/// edge).
+#[derive(Default)]
+struct ListTrees {
+    nodes: Vec<Node>,
+    statics: Vec<(f64, f64)>,
+    generated: Vec<(f64, f64)>,
 }
 
 /// [`tree_nodes`] of an older list (`default.tree_list`, Rome 2's: types named by their model with the index of their first record;
 /// half-float positions, the scale byte): its trees off the generator's grid, put on the terrain (the list has no known freeform flag).
-fn old_tree_nodes(doc: &Node, extent_z: f64, density: u32) -> (Vec<Node>, usize) {
-    let (mut out, mut generated) = (vec![], 0);
-    let Some(recs) = doc.child("records") else { return (out, generated) };
+fn old_tree_nodes(doc: &Node, extent_z: f64, density: u32) -> ListTrees {
+    let mut out = ListTrees::default();
+    let Some(recs) = doc.child("records") else { return out };
     let pos = recs.get("position").and_then(Value::as_floats).unwrap_or_default();
     let scale = recs.get("scale").and_then(Value::as_bytes).unwrap_or_default();
     let n = pos.len() / 3;
@@ -884,19 +888,20 @@ fn old_tree_nodes(doc: &Node, extent_z: f64, density: u32) -> (Vec<Node>, usize)
         for i in first..end {
             let p = &pos[3 * i..3 * i + 3];
             if on_generator_grid(p[0], p[2], density) {
-                generated += 1;
+                out.generated.push((p[0], p[2]));
                 continue;
             }
 
+            out.statics.push((p[0], p[2]));
             let size = scale.get(i).map_or(1.0, |b| f64::from(*b) / 127.0);
             let own = vec![("key", s(&key)), ("scale", Value::Float(r32(size)))];
             let mut n = instance("VEGETATION_INSTANCE", "tree", [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])], [0.0; 3], own);
             n.set("surface_mode", s("MSM_LANDSCAPE"));
-            out.push(n);
+            out.nodes.push(n);
         }
     }
 
-    (out, generated)
+    out
 }
 
 // ---- logic: polygons, deployment, AI hints, the siege graph
@@ -1959,9 +1964,9 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         graph(&mut p).wrapped_mut("children").push(logic);
     }
 
-    // The trees: one list, as explicit instances (the seeds that would regenerate them are not in the binary), inside an exclusion
-    // polygon over the whole tile: BOB keeps only the instances inside one (and generates nothing there), so a project whose trees are
-    // edited exports exactly its instances.
+    // The trees: one list's static trees, as explicit instances, inside exclusion polygons around them (BOB keeps only the static trees
+    // inside one, and generates nothing there); the generated objects are left out (the seeds that made them are not in the binary): the
+    // editor's generator and BOB make them again around the polygons. The polygons leave out where any list has a generated object.
     let lists = ctx.tree_list.map_or(vec!["outfield_tents.tree_list.bin", "default.tree_list.bin"], |l| vec![l]);
     let vegetation = binary.documents.iter().any(|d| super::stage_c::kind_of(&d.name).is_some());
     if vegetation {
@@ -1969,23 +1974,40 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         let doc = lists.iter().find_map(|l| binary.document(l)).or_else(|| ctx.tree_list.is_none().then(|| binary.document("default.tree_list")).flatten());
         // The generator ran at the database's density (the row's, before the height map's may replace it above).
         let density = vi.map_or(128, |v| *row.variations()[v].raw_data_tri_density()).max(1);
-        let (trees, generated) = doc
-            .map(|d| if d.root.class == "TREE_LIST" { old_tree_nodes(&d.root, extent.1, density) } else { tree_nodes(&d.root, extent.1, density) })
-            .unwrap_or_default();
-        if let Some(doc) = doc.filter(|_| !trees.is_empty() || generated > 0) {
+        let read = |d: &Node| if d.class == "TREE_LIST" { old_tree_nodes(d, extent.1, density) } else { tree_nodes(d, extent.1, density) };
+        let trees = doc.map(|d| read(&d.root)).unwrap_or_default();
+        if let Some(doc) = doc.filter(|_| !trees.nodes.is_empty() || !trees.generated.is_empty()) {
             losses.note(format!(
-                "vegetation: {} static trees of {} as explicit instances; its {generated} generated objects left out (the generation seeds are not in the binary)",
-                trees.len(),
-                doc.name
+                "vegetation: {} static trees of {} as explicit instances; its {} generated objects left out (the generation seeds are not in the binary: generated again)",
+                trees.nodes.len(),
+                doc.name,
+                trees.generated.len()
             ));
         }
 
+        let generated = binary
+            .documents
+            .iter()
+            .filter(|d| {
+                let n = d.name.to_lowercase();
+                n.ends_with(".tree_list.bin") || n.ends_with(".tree_list")
+            })
+            .flat_map(|d| read(&d.root).generated)
+            .collect::<Vec<_>>();
+        let cover = wce_tile::vegetation::static_cover::static_cover(&trees.statics, &generated, extent);
         let mut l = layer("Decompiled vegetation", "LayerExportType_Normal");
-        // The tile in the scene's half metres, a metre past each edge.
-        let (w, h) = (2.0 * extent.0, 2.0 * extent.1);
-        let whole = [(-2.0, -2.0), (w + 2.0, -2.0), (w + 2.0, h + 2.0), (-2.0, h + 2.0)];
-        l.wrapped_mut("children").push(polygon("VegetationExclusionPolygonInstance", "Polygon Instance", &whole, true, vec![], (0.0, 0.0)));
-        l.wrapped_mut("children").extend(trees);
+        let ez = extent.1;
+        for outline in &cover {
+            // The list's z runs from the far edge; the scene's half metres.
+            let pts = outline.iter().map(|&(x, z)| (2.0 * x, 2.0 * (ez - z))).collect::<Vec<_>>();
+            l.wrapped_mut("children").push(polygon("VegetationExclusionPolygonInstance", "Static trees", &pts, true, vec![], (0.0, 0.0)));
+        }
+
+        if !cover.is_empty() {
+            losses.note(format!("vegetation: {} exclusion polygons around the static trees (the rest of the tile is generated)", cover.len()));
+        }
+
+        l.wrapped_mut("children").extend(trees.nodes);
         graph(&mut p).wrapped_mut("children").push(l);
     }
 

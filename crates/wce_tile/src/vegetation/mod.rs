@@ -10,6 +10,7 @@ pub mod grass;
 pub mod height_alpha;
 pub mod msvc_sort;
 pub mod params;
+pub mod static_cover;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -59,6 +60,11 @@ pub fn grass_params_path(project: &TileProject) -> Option<PathBuf> {
 
 /// The `VegetationExclusionPolygonInstance` outlines in the generator's frame, which is tile.ted's scene (x, z); hidden ones too.
 pub fn exclusions(scene: &TedScene) -> Vec<Vec<(f32, f32)>> {
+    exclusion_outlines(scene).into_iter().map(|(_, p)| p).collect()
+}
+
+/// [`exclusions`] with their elements.
+pub fn exclusion_outlines(scene: &TedScene) -> Vec<(usize, Vec<(f32, f32)>)> {
     let doc = scene.doc();
     let mut out = vec![];
     for (elem, e) in doc.elements().iter().enumerate() {
@@ -77,7 +83,7 @@ pub fn exclusions(scene: &TedScene) -> Vec<Vec<(f32, f32)>> {
             })
             .collect();
         if points.len() >= 3 {
-            out.push(points);
+            out.push((elem, points));
         }
     }
 

@@ -468,17 +468,8 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
     t.display.show_polygons = false;
     t.display.show_border = false;
     t.display.lod = false;
-    t.display.tree_list_auto = false;
-    if !trees {
-        t.display.tree_list.clear();
-    } else {
-        // The climate's own tree list when the tile has one (the packed tiles have `rome_med.tree_list.bin` and the like), as the game
-        // picks it; else the default one.
-        let own = look.climate.to_lowercase();
-        if t.tree_lists().contains(&own) {
-            t.display.tree_list = own;
-        }
-    }
+    // The trees generated for the look's climate, as the game picks it (its own list when the kit has one, else the default one).
+    t.display.show_trees = trees;
 
     let mut scratch = RenderScene::default();
     let layer = scratch.add_layer(t.id, "context");

@@ -3478,18 +3478,26 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("tree_list", "tree_list [name | gen:name | none]", "draw one of the tile's procedural tree lists (BOB's <name>.tree_list.bin: default, a climate key; gen:<name> generates it from the seeds, again on every call); no name: log the lists", |e, a| {
+    c.add("tree_list", "tree_list [on | off | auto | <category>]", "the procedural trees, generated as BOB would (again on every call): on / off; a category of the kit's (default, a climate key) instead of the ground's climate; auto: the ground's climate again; no argument: log the categories", |e, a| {
         let Some(d) = document(e) else { return fail("no tile open") };
-        let lists = d.tile().tree_lists().to_vec();
-        let Some(name) = a.first() else { return ok(format!("tree lists: {} (drawn: {})", lists.join(", "), d.tile().display().tree_list)) };
-        let name = if *name == "none" { String::new() } else { name.to_lowercase() };
-        if !name.is_empty() && !lists.contains(&name) {
-            return fail(format!("no tree list {name}; the tile has: {}", lists.join(", ")));
+        let t = d.tile_mut();
+        let categories = t.tree_categories();
+        match a.first().map(|s| s.to_lowercase()) {
+            None => return ok(format!("tree categories: {} (drawn: {})", categories.join(", "), if t.display().tree_list.is_empty() { "none" } else { &t.display().tree_list })),
+            Some(v) if v == "on" => t.display_mut().show_trees = true,
+            Some(v) if v == "off" || v == "none" => t.display_mut().show_trees = false,
+            Some(v) if v == "auto" => t.display_mut().tree_category.clear(),
+            Some(v) => {
+                if !categories.contains(&v) {
+                    return fail(format!("no tree category {v}; the kit has: {}", categories.join(", ")));
+                }
+
+                t.display_mut().tree_category = v;
+                t.display_mut().show_trees = true;
+            }
         }
 
-        d.tile_mut().display_mut().tree_list = name;
-        d.tile_mut().display_mut().tree_list_auto = false;
-        d.tile_mut().reload_tree_list();
+        t.reload_tree_list();
         ok("")
     });
 
