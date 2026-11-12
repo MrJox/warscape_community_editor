@@ -69,3 +69,9 @@ defenders; which escalation). Checked with the editor (`wall_pairs`, `on_walks`,
 pair of its pieces joins (5 edges each), the terrain over the ramps is as on the vanilla tiles, the siege AI graph has no problems. The one
 lead: four `vik_small_rocks_group_06` of category generic (vanilla's rocks there are incidentals) on rampart and gateway walks, at (379,
 485), (368, 482), (667, 307) and (575, 280). Not for this branch.
+
+## Check platforms: piers
+
+User, 2026-11-12: on port tiles Check platforms lists many `bridge_wood_1` pieces (piers: buildings of the bridge category that reach the
+ground on one side by design) as bridges units cannot cross, and they flood the list. Leave out (or list apart) the bridges that are piers.
+Not for now.
