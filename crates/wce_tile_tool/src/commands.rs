@@ -1894,6 +1894,80 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("on_walks", "on_walks <x m> <z m> <radius m>", "the buildings that are not the fort's but stand on its walks near a point (what blocks units on the walls)", |e, a| {
+        let (Some(x), Some(z), Some(r)) = (a.first().and_then(|v| v.parse::<f32>().ok()), a.get(1).and_then(|v| v.parse::<f32>().ok()), a.get(2).and_then(|v| v.parse::<f32>().ok())) else {
+            return fail("usage: on_walks <x m> <z m> <radius m>");
+        };
+        let Some(d) = document(e) else { return fail("no tile open") };
+        let found = d.tile_mut().things_on_walks(x, z, r);
+        ok(format!("{} on the walks\n{}", found.len(), found.join("\n")))
+    });
+
+    c.add("siege_check", "siege_check", "check the tile's siege AI layout as the game needs it (wce_siege::check: the perimeter, the nodes' rectangles and boundaries, the edges' ends): its problems and notes", |e, _| {
+        let Some(d) = document(e) else { return fail("no tile open") };
+        let layout = d.tile().current_siege_layout();
+        let r = wce_siege::check::check(&layout);
+        ok(format!(
+            "{} node(s), {} edge(s); {} problem(s), {} note(s)\n{}",
+            layout.nodes.len(),
+            layout.edges.len(),
+            r.problems.len(),
+            r.notes.len(),
+            r.problems.iter().map(|p| format!("problem: {p}")).chain(r.notes.iter().map(|n| format!("note: {n}"))).collect::<Vec<_>>().join("\n")
+        ))
+    });
+
+    c.add("wall_pairs", "wall_pairs <x m> <z m> <radius m> [detail]", "the fort buildings near a point and how their walks meet (Check platforms' wall walks): each building's key, position and turn, and per pair that meets its joints and, when it does not join, how far its facing edges are off", |e, a| {
+        let (Some(x), Some(z), Some(r)) = (a.first().and_then(|v| v.parse::<f32>().ok()), a.get(1).and_then(|v| v.parse::<f32>().ok()), a.get(2).and_then(|v| v.parse::<f32>().ok())) else {
+            return fail("usage: wall_pairs <x m> <z m> <radius m>");
+        };
+        let Some(d) = document(e) else { return fail("no tile open") };
+        let t = d.tile_mut();
+        let report = t.check_walls();
+        let near = |t: &wce_tile_editor::tile_document::Tile, el: usize| {
+            let p = t.world_position(el);
+            (p.x - x).hypot(p.z - z) <= r
+        };
+        let doc = t.tscene().doc();
+        let name = |el: usize| format!("#{el} {}", doc.get(el, "key").unwrap_or_default());
+        let mut out = vec![];
+        for p in report.wall_pairs.iter().filter(|p| near(t, p.a) || near(t, p.b)) {
+            let state = match (p.joints, p.closest) {
+                (0, Some((across, rise))) => format!("BREAK: facing {across:.3} m across, {rise:.3} m in height"),
+                (n, Some((across, rise))) => format!("{n} joint(s); also facing {across:.3} m / {rise:.3} m"),
+                (n, None) => format!("{n} joint(s)"),
+            };
+            out.push(format!("{} <-> {}: {state}", name(p.a), name(p.b)));
+        }
+
+        // The fort buildings there that meet nothing.
+        let met = report.wall_pairs.iter().flat_map(|p| [p.a, p.b]).collect::<std::collections::HashSet<_>>();
+        for el in (0..doc.elements().len()).filter(|&el| t.tscene().type_of(el) == "BUILDING_INSTANCE" && near(t, el)) {
+            let key = doc.get(el, "key").unwrap_or_default();
+            let c = t.building_category(&key.to_lowercase()).unwrap_or_default();
+            if (c.contains("fort") || c.contains("wall") || c.contains("gate") || c.contains("tower")) && !met.contains(&el) {
+                let p = t.world_position(el);
+                out.push(format!("{} at ({:.2}, {:.2}, {:.2}): meets no other wall", name(el), p.x, p.y, p.z));
+            }
+        }
+
+        // With `detail`: each fort building's walks against the terrain.
+        if a.get(3).is_some_and(|w| w == "detail") {
+            let els = (0..t.tscene().doc().elements().len()).filter(|&el| t.tscene().type_of(el) == "BUILDING_INSTANCE" && near(t, el)).collect::<Vec<_>>();
+            for el in els {
+                let key = t.tscene().doc().get(el, "key").unwrap_or_default();
+                let c = t.building_category(&key.to_lowercase()).unwrap_or_default();
+                if c.contains("fort") || c.contains("wall") || c.contains("gate") || c.contains("tower") {
+                    let p = t.world_position(el);
+                    out.push(format!("#{el} {key} ({c}) at ({:.2}, {:.2}, {:.2}):", p.x, p.y, p.z));
+                    out.extend(t.walk_heights(el));
+                }
+            }
+        }
+
+        ok(format!("{} line(s)\n{}", out.len(), out.join("\n")))
+    });
+
     c.add("tile_flip_tile", "tile_flip_tile x|z", "flip the whole tile about its middle along x or z: items, terrain, terrain layers and links (one undo entry)", |e, a| {
         let Some(axis) = a.first().and_then(|w| wce_tile_editor::tile_document::TileFlipAxis::named(w)) else { return fail("usage: tile_flip_tile x|z") };
         with_tile(e, |t, e| t.do_flip_tile(e, axis).map_or_else(fail, ok))

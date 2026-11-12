@@ -111,7 +111,10 @@ break in the wall walk, listed and drawn in orange (joints in cyan). Calibrated 
 western_city_c/medium, western_city_b/small, western_city_rome/medium: 0 breaks; Rome has two pairs 1 to 2 cm off, under the 3 cm floor).
 The palisades' walks are ground platforms (`flag_2`, green): they are checked the same way (ASSUMPTION: the joint rule holds for them; a
 break there leaves units stuck on a piece and siege towers short of the walk, user 2026-11-12). Vanilla palisades (western_city_a/b/c/small,
-western_port_b/small: `western_fort_small_wall_*`, 1460 to 2092 joints each): 0 breaks; TDD's middle_men_city_b/medium: 8. **Bridges**: the tile's bridges
+western_port_b/small: `western_fort_small_wall_*`, 1460 to 2092 joints each): 0 breaks; TDD's middle_men_city_b/medium: 8. Buildings in two different escalation layers ("Escalation 1".."3": one stands at a time) do not meet.
+Diagnostics: `wall_pairs <x> <z> <radius> [detail]` (each pair of fort buildings near a point, its joints or how far it is off; `detail`: each
+walk platform against the terrain), `on_walks <x> <z> <radius>` (the buildings that are not the fort's standing on its walks, with their
+category and layer), `siege_check` (`wce_siege::check` on the tile's siege AI layout). **Bridges**: the tile's bridges
 (`bridge` buildings and the roads' generated bridges) as the game's nav graph links them (docs/re/platforms_and_bridges.md, "The editor's
 check"): lists the ones units cannot get onto and the ones that reach one bank only (a click selects the bridge's pieces and frames them),
 and draws their edges in the viewport (*show edges*): green ground links, cyan joints, blue ways onto other buildings, red ramp feet the
