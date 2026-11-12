@@ -50,6 +50,7 @@ mod vegetation;
 mod tech;
 mod view;
 mod walls;
+mod kit_walls;
 
 use std::any::Any;
 use std::cell::{OnceCell, RefCell};

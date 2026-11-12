@@ -365,10 +365,10 @@ impl TileDocument {
         Ok(msg)
     }
 
-    /// The procedural walls of the tile as text, each with the layer path it is in (to put back with [`Self::restore_walls`]).
+    /// The walls of the tile (both kinds) as text, each with the layer path it is in (to put back with [`Self::restore_walls`]).
     pub fn wall_texts(&self) -> Vec<(String, Vec<u8>)> {
         let sc = self.tile().tscene();
-        wce_walls::scene::walls(sc).into_iter().map(|w| (sc.layer_path(w), sc.element_text(w))).collect()
+        wce_walls::scene::all_walls(sc).into_iter().map(|w| (sc.layer_path(w), sc.element_text(w))).collect()
     }
 
     /// Import from Assembly Kit of a tile whose project has walls: the layer of their pieces (`wce_walls::export::KIT_LAYER`) goes and the

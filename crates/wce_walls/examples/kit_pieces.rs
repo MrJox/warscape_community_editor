@@ -5,7 +5,8 @@
 //!
 //! `WCE_MODS` (packs, comma separated) mounts mods (TDD's packs for its cultures); `WCE_GAME_KEY` picks the game (default attila).
 //! Exits non-zero when a base's culture has no straight. `KIT_DETAIL=key,...` prints those pieces' joints, and their pieces' platforms (level
-//! 0: corners, height range), instead.
+//! 0: corners, height range), instead. `KIT_LAY=1` lays test lines with each culture (a straight, an L each way, a quarter arc, an S) and
+//! prints the pieces, how far the wall strays from the line at most and how short of its end it stops.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -66,6 +67,25 @@ fn main() {
         println!("== {base}: {} key(s), {} piece(s) {counts:?}, {} left out", keys.len(), c.pieces.len(), c.left_out.len());
         for p in &c.pieces {
             println!("   {:<9} {:<55} span {:6.2} turn {:7.2} rise {:6.2} shift {:6.2} walk {:6.2} footprint {}", format!("{:?}", p.role), p.key, p.span, p.turn, p.rise, p.shift, p.walk, p.footprint.len());
+        }
+
+        if std::env::var_os("KIT_LAY").is_some() && !c.pieces.is_empty() {
+            let arc = |r: f64, a0: f64, a1: f64, c: [f64; 2]| (0..=40).map(|i| { let a = a0 + (a1 - a0) * f64::from(i) / 40.0; [c[0] + r * a.cos(), c[1] + r * a.sin()] }).collect::<Vec<_>>();
+            let mut s_curve = arc(120.0, -std::f64::consts::FRAC_PI_2, 0.0, [0.0, 120.0]);
+            s_curve.extend(arc(120.0, std::f64::consts::PI, std::f64::consts::FRAC_PI_2, [240.0, 120.0]).into_iter().skip(1));
+            let lines = [
+                ("straight", vec![[0.0, 0.0], [300.0, 0.0]]),
+                ("L right", vec![[0.0, 0.0], [150.0, 0.0], [150.0, -150.0]]),
+                ("L left", vec![[0.0, 0.0], [150.0, 0.0], [150.0, 150.0]]),
+                ("arc", arc(200.0, -std::f64::consts::FRAC_PI_2, 0.0, [0.0, 200.0])),
+                ("S", s_curve),
+            ];
+            for (name, line) in lines {
+                let laid = wce_walls::kit::lay(&line, &c, wce_walls::kit::LayOptions { defence_every: 120.0, access_every: 200.0, caps: [true, true], ..Default::default() });
+                let prefix = wce_walls::kit::prefix_of(base);
+                let keys = laid.placed.iter().map(|p| p.key.trim_start_matches(&prefix).to_owned()).collect::<Vec<_>>();
+                println!("   lay {name:<8}: {:2} pieces, stray {:5.1}, short by {:5.1}{}: {}", laid.placed.len(), laid.stray, laid.short_by, if laid.notes.is_empty() { String::new() } else { format!(" ({})", laid.notes.join("; ")) }, keys.join(" "));
+            }
         }
 
         for (k, why) in &c.left_out {

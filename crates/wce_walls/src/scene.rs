@@ -40,9 +40,20 @@ pub struct WallLayout {
     pub ends: [Option<Anchor>; 2],
 }
 
-/// The walls of a scene, in document order.
+/// The procedural walls of a scene (*Procedural* on), in document order: what the generator, the exports' lowering and Generate SiegeAI
+/// read. A wall of kit pieces (*Procedural* off, docs/plans/kit_walls.md) is not one of them.
 pub fn walls(scene: &TedScene) -> Vec<usize> {
+    scene.find_all(WALL_SPLINE).into_iter().filter(|&e| is_procedural(scene, e)).collect()
+}
+
+/// Every wall of a scene, both kinds, in document order.
+pub fn all_walls(scene: &TedScene) -> Vec<usize> {
     scene.find_all(WALL_SPLINE)
+}
+
+/// Whether a wall is procedural: its *Procedural* checkbox (`wall_procedural`), on when it does not say (a wall from before it).
+pub fn is_procedural(scene: &TedScene, elem: usize) -> bool {
+    wce_tile::new_instances::wall_procedural(scene.doc().get(elem, wce_tile::new_instances::WALL_PROCEDURAL).as_deref())
 }
 
 /// The ends of the fort buildings (`*_fort_*` keys, not generated ones): their frame's x extent (`extent(key)`: the logic file's box)
@@ -98,7 +109,7 @@ pub fn wall_profile(scene: &TedScene, elem: usize) -> Option<&'static Profile> {
 
 /// A wall's layout; `None` for an element that is not a wall or has fewer than 2 points.
 pub fn layout(scene: &TedScene, elem: usize, anchors: &[Anchor], ground: &dyn Fn(f64, f64) -> f64) -> Option<WallLayout> {
-    if scene.type_of(elem) != WALL_SPLINE {
+    if scene.type_of(elem) != WALL_SPLINE || !is_procedural(scene, elem) {
         return None;
     }
 

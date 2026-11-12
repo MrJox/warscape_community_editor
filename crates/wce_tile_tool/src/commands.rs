@@ -1358,9 +1358,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if d.set_point_attribute(el, i, "sharp", wce_tile::properties::format_bool(on)) { ok("") } else { fail("no such point") }
     });
 
-    c.add("wall_info", "wall_info", "log the selected wall's layout: base, length, corners, runs, step sections, attached ends, warnings", |e, _| {
+    c.add("wall_info", "wall_info", "log the selected wall's layout: base, length, corners, runs, step sections, attached ends, warnings (a kit wall: its pieces, how far it strays from its line, how short of its end it stops)", |e, _| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };
+        // A wall of kit pieces (*Procedural* off): what it was laid with.
+        if let Some(k) = el.and_then(|el| d.tile().kit_wall_report(el)) {
+            let keys = k.placed.iter().map(|p| p.key.as_str()).collect::<Vec<_>>().join(" ");
+            return ok(format!("kit wall: {} pieces, strays {:.2} at most, short of its end by {:.2}{}: {keys}", k.placed.len(), k.stray, k.short_by, k.notes.iter().map(|n| format!("; {n}")).collect::<String>()));
+        }
+
         let Some(l) = el.and_then(|el| d.tile().wall_layout(el)) else { return fail("no wall selected") };
         let runs = l.plan.runs.iter().map(|r| format!("{:.0}..{:.0} at {:.2} (drift {:.2})", r.s.0, r.s.1, r.level, r.drift)).collect::<Vec<_>>().join(", ");
         let steps = l.plan.steps.iter().map(|st| format!("{:.0}..{:.0} {:.2} -> {:.2}{}", st.s.0, st.s.1, st.from, st.to, if st.whole { " (bastion)" } else { "" })).collect::<Vec<_>>().join(", ");

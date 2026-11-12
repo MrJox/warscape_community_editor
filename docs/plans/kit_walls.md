@@ -75,3 +75,31 @@ Measured (`kit_pieces`):
 For phase 2: **TDD's `gondor_fort_straight_stepped_up_bastion_a` and `gondor_fort_curve_600m` have no platforms** (left out), so gondor has
 a step down and no step up; and some pieces' joints don't say their outer side (`side` zero: the walk-end joints, gondor's steps), which
 the orientation has to infer.
+
+## Phase 2: the flat fit (done 2026-11-12)
+
+`wce_walls::kit::lay(line, catalogue, LayOptions)` -> `KitLayout { placed, stray, short_by, notes }`:
+- **Ways** (`ways`): each piece is laid joint to joint, entry to exit, in the ways that keep the wall's outer face outward: by its
+  joints' `side`; a curve that says neither faces out on its convex side; anything else either way. TDD's gondor step down, gone through
+  backwards, is its step up (user 2026-11-12).
+- **The fit**: from the line's first point along its first segment, at each joint the way that, with the best two after it, follows the
+  line best (distance off the line, heading, a cost per piece, worth for length), until the end is nearer than half a straight. Each
+  joint is the last one's exit, so no platform is broken by construction.
+- **Towers and door sections**: every `wall_defence_every` / `wall_access_every`, a defence / access piece of the same shape (span, turn,
+  shift) takes the place of the piece laid.
+- **Caps**: both ends, the cap whose side fits.
+
+Editor (`tile_document/kit_walls.rs`):
+- A wall with *Procedural* off is laid at the ground under its first point and drawn as the game's pieces, whole.
+- `scene::walls` and friends take procedural walls only; `all_walls` / `is_procedural` are there for the rest.
+- Toggling *Procedural* remakes the wall either way, with its own preview signature.
+- Check platforms checks a kit wall's pieces each as a building of its own, so the joints between them count.
+- `wall_info` reports the pieces, the stray and how short of the end the wall stops.
+
+Measured:
+- `kit_pieces` with `KIT_LAY=1`, on a straight, an L each way, a quarter arc of 200 and an S, every culture: strays 10.7 at most and
+  stops short by 10 at most.
+- In the editor, farm_western/1x1/ab, a barbarian L of 90 + 80 m: 18 pieces (caps, straights, the 20 m internal curve at the corner),
+  strays 0.35; Check platforms: 85 joints, 0 breaks.
+
+Left for later phases: the ends stop where the pieces do (up to half a straight short), ground is flat (phase 4), no snapping (phase 3).

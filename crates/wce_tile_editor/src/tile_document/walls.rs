@@ -49,10 +49,10 @@ pub(crate) struct WallPreview {
 
     /// The fort pieces' ends from their logic files (`Tile::piece_ends`), read once.
     ends: std::cell::RefCell<HashMap<String, Vec<wce_walls::logic::PieceEnd>>>,
-    entities: HashMap<usize, Vec<EntityId>>,
+    pub(super) entities: HashMap<usize, Vec<EntityId>>,
 
     /// The signature of each wall's pieces on the scene, and the pieces made by signature.
-    shown_as: HashMap<usize, u64>,
+    pub(super) shown_as: HashMap<usize, u64>,
     made: HashMap<u64, Made>,
     pending: HashMap<usize, Instant>,
     revision: u64,
@@ -62,14 +62,21 @@ pub(crate) struct WallPreview {
 
     /// How many times walls' pieces were made (not taken again): for the tests.
     made_count: u64,
+
+    /// The kit walls' cultures (`wce_walls::kit::catalogue`) by base, and the buildings with a logic file, read once.
+    pub(super) kits: HashMap<String, Option<Arc<wce_walls::kit::Catalogue>>>,
+    pub(super) building_keys: Option<Arc<Vec<String>>>,
+
+    /// Each kit wall's last layout (`Tile::kit_layout`): what `wall_info` reports.
+    pub(super) kit_layouts: HashMap<usize, wce_walls::kit::KitLayout>,
 }
 
 /// A wall's pieces being made: the job and what applying its result needs.
 struct WallJob {
     job: super::jobs::Job<Vec<(String, wce_walls::pieces::Piece, BuildingFiles)>>,
     signature: u64,
-    caps: Vec<(&'static str, wce_walls::pieces::Piece)>,
-    own: HashMap<&'static str, Arc<BuildingFiles>>,
+    caps: Vec<(String, wce_walls::pieces::Piece)>,
+    own: HashMap<String, Arc<BuildingFiles>>,
 }
 
 impl WallPreview {
@@ -314,6 +321,7 @@ impl Tile {
         map.keys(&mut self.wall_preview.shown_as);
         map.keys(&mut self.wall_preview.pending);
         map.keys(&mut self.wall_preview.jobs);
+        map.keys(&mut self.wall_preview.kit_layouts);
     }
 
     /// Every wall's preview is made again (the layer was cleared, or the ground changed).
@@ -332,6 +340,7 @@ impl Tile {
         self.wall_preview.shown_as.clear();
         self.wall_preview.pending.clear();
         self.wall_preview.jobs.clear();
+        self.wall_preview.kit_layouts.clear();
         self.walls_changed();
     }
 
@@ -357,7 +366,7 @@ impl Tile {
     }
 
     /// The pieces made under signatures no wall shows any more, and their files, go.
-    fn drop_unused_wall_pieces(&mut self) {
+    pub(super) fn drop_unused_wall_pieces(&mut self) {
         let wp = &mut self.wall_preview;
         let unused = wp.made.keys().filter(|s| !wp.shown_as.values().any(|v| v == *s)).copied().collect::<Vec<_>>();
         let gone = unused.into_iter().flat_map(|sig| wp.made.remove(&sig).map(|m| m.keys).unwrap_or_default()).collect::<Vec<_>>();
@@ -384,7 +393,7 @@ impl Tile {
     }
 
     /// The base wall's files, read once.
-    fn wall_base(&mut self, key: &str) -> Option<Arc<BuildingFiles>> {
+    pub(super) fn wall_base(&mut self, key: &str) -> Option<Arc<BuildingFiles>> {
         if let Some(b) = self.wall_preview.bases.get(key) {
             return b.clone();
         }
@@ -414,6 +423,14 @@ impl Tile {
     fn make_wall_pieces(&mut self, scene: &mut RenderScene, elem: usize) {
         // What was being made for it is not wanted any more.
         self.wall_preview.jobs.remove(&elem);
+        self.wall_preview.kit_layouts.remove(&elem);
+
+        // A wall of kit pieces (*Procedural* off): laid with the game's own pieces (kit_walls.rs).
+        if self.is_wall(elem) && !wce_walls::scene::is_procedural(self.tscene(), elem) {
+            self.make_kit_wall_pieces(scene, elem);
+            return;
+        }
+
         let before = self.wall_preview.shown_as.remove(&elem);
         let ids = self.wall_preview.entities.remove(&elem).unwrap_or_default();
         let layout = self.wall_layout(elem).filter(|_| self.is_wall(elem) && self.shown(elem));
@@ -464,11 +481,11 @@ impl Tile {
         let (rigid, ps): (Vec<_>, Vec<_>) = pieces(&layout.plan, layout.profile).into_iter().partition(|p| p.rigid);
 
         // The pieces made from another building (whole steps), and the game's pieces placed as they are (caps, towers, bastions).
-        let mut caps = wce_walls::pieces::cap_instances(&layout.plan, layout.profile);
-        caps.extend(rigid.into_iter().filter_map(|p| p.base.map(|k| (k, p))));
-        let mut own = HashMap::new();
-        for k in ps.iter().filter_map(|p| p.base).chain(caps.iter().map(|c| c.0)) {
-            if !own.contains_key(k) && let Some(b) = self.wall_base(k) {
+        let mut caps = wce_walls::pieces::cap_instances(&layout.plan, layout.profile).into_iter().map(|(k, p)| (k.to_owned(), p)).collect::<Vec<_>>();
+        caps.extend(rigid.into_iter().filter_map(|p| p.base.map(|k| (k.to_owned(), p))));
+        let mut own: HashMap<String, Arc<BuildingFiles>> = HashMap::new();
+        for k in ps.iter().filter_map(|p| p.base).chain(caps.iter().map(|c| c.0.as_str())).map(str::to_owned).collect::<Vec<_>>() {
+            if !own.contains_key(&k) && let Some(b) = self.wall_base(&k) {
                 own.insert(k, b);
             }
         }
@@ -534,7 +551,7 @@ impl Tile {
     }
 
     /// A wall's pieces put on the scene, and kept by their signature: those made, and its caps as they are.
-    fn show_wall_pieces(&mut self, scene: &mut RenderScene, elem: usize, signature: u64, made: Vec<(String, wce_walls::pieces::Piece, BuildingFiles)>, caps: &[(&'static str, wce_walls::pieces::Piece)], own: &HashMap<&'static str, Arc<BuildingFiles>>) {
+    pub(super) fn show_wall_pieces(&mut self, scene: &mut RenderScene, elem: usize, signature: u64, made: Vec<(String, wce_walls::pieces::Piece, BuildingFiles)>, caps: &[(String, wce_walls::pieces::Piece)], own: &HashMap<String, Arc<BuildingFiles>>) {
         let u = self.unit();
         let source = self.source(super::item_of(elem));
         let mut ids = vec![];
@@ -558,7 +575,8 @@ impl Tile {
         }
 
         // The caps as they are: their intact meshes from the game's files.
-        for &(key, piece) in caps {
+        for (key, piece) in caps {
+            let (key, piece) = (key.as_str(), *piece);
             let Some(files) = own.get(key) else { continue };
             let wt = WorldTransform { position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]), rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)) };
             let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));
