@@ -1879,6 +1879,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.import_shared_from(e, &zip, overwrite).map_or_else(fail, ok))
     });
 
+    c.add("check_bridges", "check_bridges", "check the tile's bridges as the game links them: the ones units cannot get onto or cross (the Problems section's Check bridges)", |e, _| {
+        with_tile(e, |t, e| {
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            let msg = t.run_bridge_check(e, id);
+            let (problems, summary) = t.bridge_check.as_ref().map(|(_, r)| (r.problems.iter().map(|p| p.message.clone()).collect::<Vec<_>>().join("; "), r.summary.join("; "))).unwrap_or_default();
+            ok(if problems.is_empty() { format!("{msg} [{summary}]") } else { format!("{msg}: {problems} [{summary}]") })
+        })
+    });
+
     c.add("tile_flip_tile", "tile_flip_tile x|z", "flip the whole tile about its middle along x or z: items, terrain, terrain layers and links (one undo entry)", |e, a| {
         let Some(axis) = a.first().and_then(|w| wce_tile_editor::tile_document::TileFlipAxis::named(w)) else { return fail("usage: tile_flip_tile x|z") };
         with_tile(e, |t, e| t.do_flip_tile(e, axis).map_or_else(fail, ok))

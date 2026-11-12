@@ -319,6 +319,23 @@ the kit's `bridge_wood_2_end` (1 of 1 foot edges along its outline). So the gene
 - `AIH_BRIDGE_CROSSING` (string at file offset 0x1bab290): no code references its address directly.
 - Water under bridges.
 
+## The editor's check: *Check bridges* (2026-11-11)
+
+The Tile panel's Problems section has a *Check bridges* button (`check_bridges`; `tile_document/bridges.rs`, its overlay in the tool's
+`bridge_check.rs`). It gathers the platforms of the tile's `bridge` buildings and of the roads' generated bridges, and of the buildings and
+walls around them, in the world at the states their pieces show, and applies the rules above: ground links along plain collision outline
+edges (corner for corner, the ground within the snap tolerance), joints along reversed edges. A bridge is its platforms joined together;
+its ways off are its ground links and its joints to other buildings' platforms, grouped by side (closer than a third of its length, at
+least 4 m). None: units cannot get onto it; one group: it reaches one bank only.
+
+**Ground platforms as the ground** (inferred, user 2026-11-11, not traced): the kit's working river bridges fail the height rule against
+the terrain. `river_crossing/2x2_riv_lb_br_road_bl_tr/aa`'s `bridge_wood_complete` has its ramps' feet ~2.3 game units over the terrain
+(the editing heights and `final_heights.dds` agree there), but each foot lies on the edge of one of the building's two `flag_2` (green)
+platforms, at the foot's height. Since a `flag_2` platform has no region of its own and "units walk the ground there", the check takes the
+ground's height from a ground platform where there is one (on it, or on its edge within 0.0141), else from the terrain. With that, both
+kit river crossings pass. `farm_eastern/4x4/ab`'s four lone `bridge_wood_1_end` pieces (no deck, no ground platform, 0.6 to 2.6 m over the
+terrain) are flagged, and a road's generated bridge passes (its feet run along its outline edges since 88348e13).
+
 ## Checker: `bridge_check` (`crates/wce_walls/examples/bridge_check.rs`)
 
 `cargo run --release -p wce_walls --example bridge_check -- <game folder> [radius] [rise] [rpfm schema .ron] [exported .pack]`
