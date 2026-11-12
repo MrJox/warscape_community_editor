@@ -1885,7 +1885,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }, ok))
     });
 
-    c.add("check_bridges", "check_bridges", "check the tile's bridges as the game links them: the ones units cannot get onto or cross (the Problems section's Check bridges)", |e, _| {
+    c.add("check_platforms", "check_platforms", "check the tile's bridges and wall walks as the game links them: the bridges units cannot get onto or cross, the walls whose walkways meet but do not join (the Problems section's Check platforms)", |e, _| {
         with_tile(e, |t, e| {
             let Some(id) = crate::tool::document_id(e) else { return no_tile() };
             let msg = t.run_bridge_check(e, id);

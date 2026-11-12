@@ -319,7 +319,14 @@ the kit's `bridge_wood_2_end` (1 of 1 foot edges along its outline). So the gene
 - `AIH_BRIDGE_CROSSING` (string at file offset 0x1bab290): no code references its address directly.
 - Water under bridges.
 
-## The editor's check: *Check bridges* (2026-11-11)
+## The editor's check: *Check platforms* (2026-11-11; walls 2026-11-12)
+
+The wall walks (docs/editor.md, "Check platforms") use rule 6 (joints) only: a pair of fort buildings whose platforms face each other within
+0.75 m but join nowhere is a break. Found on TDD's middle_men_city_hornburg (1: `hd_deepingwall_stairs_left_2` to `hd_deepingwall_15`, 0.49
+m across, 0.39 m in height) and middle_men_city_dale (84, mostly consecutive `roman_fort_straight` 0.1 to 0.45 m apart); none on the vanilla
+Roman forts. Not checked in game.
+
+Bridges, as before:
 
 The Tile panel's Problems section has a *Check bridges* button (`check_bridges`; `tile_document/bridges.rs`, its overlay in the tool's
 `bridge_check.rs`). It gathers the platforms of the tile's `bridge` buildings and of the roads' generated bridges, and of the buildings and

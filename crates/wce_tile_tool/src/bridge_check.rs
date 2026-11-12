@@ -1,5 +1,6 @@
-//! The bridge check in the Tile panel's Problems (`Tile::check_bridges`): a button that checks the tile's bridges against the game's
-//! linking rules, the bridges units cannot cross (a click selects one and frames it), and their edges in the viewport.
+//! The platform check in the Tile panel's Problems (`Tile::check_platforms`): a button that checks the tile's bridges and wall walks against
+//! the game's linking rules, the bridges units cannot cross and the breaks in the wall walks (a click selects one and frames it), and their
+//! edges in the viewport.
 
 use wce_editor::editor::Editor;
 use wce_editor::gui;
@@ -10,24 +11,26 @@ use wce_tile_editor::tile_document::{BridgeEdge, TileDocument, item_of};
 
 use crate::tool::TileTool;
 
-/// What Check bridges does (its tooltip).
-const CHECK_TIP: &str = "Checks the tile's bridges (buildings of the bridge category and the roads' generated bridges) as the game links them \
-     (docs/re/platforms_and_bridges.md): a platform edge links to the ground only along an edge of its collision outline, with the ground \
-     within 1 m of it there; platforms join along edges with the same two corners. Lists the bridges units cannot get onto, and those that \
-     reach the ground on one side only. The viewport shows the edges: green ground links, cyan joints, blue ways onto other buildings, red \
-     ramp feet the ground does not link to. The ground is the editor's heights.";
+/// What Check platforms does (its tooltip).
+const CHECK_TIP: &str = "Checks the tile's platforms as the game links them (docs/re/platforms_and_bridges.md): a platform edge links to the \
+     ground only along an edge of its collision outline, with the ground within 1 m of it there; platforms join only along edges with the same \
+     two corners (within 1.4 cm, and 10 cm in height). Lists the bridges (buildings of the bridge category and the roads' generated bridges) \
+     units cannot get onto or that reach the ground on one side only, and the fort walls, towers and gates whose walkways meet but do not \
+     join (units on the walls stop there). The viewport shows the edges: green ground links, cyan joints, blue ways onto other buildings, \
+     red ramp feet the ground does not link to, orange wall walks that do not join. The ground is the editor's heights.";
 
 impl TileTool {
     /// Runs the check on the open tile; the message says what it found.
     pub(crate) fn run_bridge_check(&mut self, e: &mut Editor, id: DocumentId) -> String {
         let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return "no tile is open".to_owned() };
         let stamp = (id, d.history().version(), d.tile().structure_version());
-        let report = d.tile_mut().check_bridges();
-        let msg = match (report.bridges, report.problems.len()) {
-            (0, _) => "no bridges in the tile".to_owned(),
-            (b, 0) => format!("{b} bridge(s), all reach the ground on two sides or more"),
-            (b, p) => format!("{b} bridge(s), {p} that units cannot cross"),
-        };
+        let report = d.tile_mut().check_platforms();
+        let gaps = report.problems.iter().filter(|p| p.message.starts_with("walls ")).count();
+        let bridges = report.problems.len() - gaps;
+        let msg = format!(
+            "{} bridge(s), {bridges} that units cannot cross; {} wall building(s), {} joint(s), {gaps} break(s) in the wall walks",
+            report.bridges, report.walls, report.wall_joints
+        );
 
         let msg = if report.unread.is_empty() { msg } else { format!("{msg}; without a logic file (not checked): {}", report.unread.join(", ")) };
         self.bridge_check = Some((stamp, report));
@@ -36,7 +39,7 @@ impl TileTool {
 
     /// The check's part of the Problems section. True when a click selected a bridge (the section stops there).
     pub(crate) fn draw_bridge_check(&mut self, e: &mut Editor, id: DocumentId, stamp: (DocumentId, u64, u64)) -> bool {
-        if gui::button(&format!("{}  Check bridges", icons::ROUTE)) {
+        if gui::button(&format!("{}  Check platforms", icons::ROUTE)) {
             self.status = self.run_bridge_check(e, id);
         }
 
@@ -46,18 +49,18 @@ impl TileTool {
 
         let Some((when, report)) = self.bridge_check.as_ref().filter(|(s, _)| s.0 == id) else { return false };
         gui::same_line();
-        gui::checkbox("show edges##bridges", &mut self.bridge_overlay);
+        gui::checkbox("show edges##platforms", &mut self.bridge_overlay);
         if *when != stamp {
             gui::text_disabled("The tile changed since: check again.");
         }
 
         if report.problems.is_empty() {
-            gui::text_disabled(&if report.bridges == 0 { "No bridges.".to_owned() } else { format!("{} bridge(s), none with a problem.", report.bridges) });
+            gui::text_disabled(&format!("{} bridge(s) and {} wall building(s), none with a problem.", report.bridges, report.walls));
             gui::separator();
             return false;
         }
 
-        gui::text_wrapped(&format!("{} of {} bridge(s) units cannot cross:", report.problems.len(), report.bridges));
+        gui::text_wrapped(&format!("{} problem(s) in {} bridge(s) and {} wall building(s):", report.problems.len(), report.bridges, report.walls));
         let mut pick = None;
         for (i, p) in report.problems.iter().enumerate() {
             if gui::selectable(&format!("{}  {}##bridge{i}", icons::TRIANGLE_ALERT, p.message), false, 0) {
@@ -90,6 +93,8 @@ impl TileTool {
                 BridgeEdge::Joint => overlay_colour(0.2, 0.9, 1.0, 1.0),
                 BridgeEdge::Exit => overlay_colour(0.3, 0.45, 1.0, 1.0),
                 BridgeEdge::LooseFoot => overlay_colour(1.0, 0.2, 0.15, 1.0),
+                BridgeEdge::WallJoint => overlay_colour(0.2, 0.9, 1.0, 1.0),
+                BridgeEdge::WallGap => overlay_colour(1.0, 0.55, 0.0, 1.0),
             };
 
             // Thick enough to see from afar: three lines side by side.
