@@ -27,3 +27,12 @@ the front of its message (docs/editor.md, "Problems").
 
 Autosave of modified documents, from the old tile plan's cross-cutting items; nothing exists yet. To decide: where the copies go (never
 over the user's file) and how they are offered back after a crash.
+
+## Share / Import shared project: visible errors
+
+User, 2026-11-12: share and import work, but when one fails it is hard to see why. Today a failure is only the status line's text
+(`share failed: ...`, `import failed: ...`, `share_prompt.rs`), easy to miss and gone at the next message, and the reasons a share can
+refuse (an unsaved tile, no database entry, the tile not in a kit's layout, a file that does not read) or an import can (not a shared
+zip, another game's, a path outside the projects folder, the shared tile open, a file that does not write) never reach the log. To do:
+show a failure in a dialog (or a lasting notice) with the reason and what to do about it, write it to the log, and list there the
+prefabs a share left out and an import could not find.
