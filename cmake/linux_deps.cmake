@@ -37,26 +37,44 @@ if(WCE_JOBS EQUAL 0)
 endif()
 
 # ---- DXVK-native: libdxvk_d3d11.so, libdxvk_dxgi.so and the Windows/D3D headers (include/dxvk)
-# One local change, backported from upstream master (not in a release yet): D3D11SwapChain::ChangeProperties gave the presenter the old size on
-# ResizeBuffers. Windows and X11 surfaces report their size, so it did not matter there; a Wayland surface does not, and a maximized window
-# kept its first swapchain, stretched by the compositor.
-set(WCE_DXVK_STAMP "${WCE_DEPS_PREFIX}/.dxvk-${WCE_DXVK_TAG}-resize")
-if(NOT EXISTS "${WCE_DXVK_STAMP}")
-    wce_dep_clone(dxvk https://github.com/doitsujin/dxvk.git ${WCE_DXVK_TAG})
-    set(dxvk_swapchain "${WCE_DEPS_DIR}/dxvk/src/d3d11/d3d11_swapchain.cpp")
-    file(READ "${dxvk_swapchain}" dxvk_src)
-    set(dxvk_old "if (m_desc.Width != pDesc->Width || m_desc.Height != pDesc->Height)\n      m_presenter->setSurfaceExtent({ m_desc.Width, m_desc.Height });")
-    set(dxvk_new "if (m_desc.Width != pDesc->Width || m_desc.Height != pDesc->Height)\n      m_presenter->setSurfaceExtent({ pDesc->Width, pDesc->Height });")
-    string(FIND "${dxvk_src}" "${dxvk_old}" at)
+# Local changes (`wce_dxvk_patch`; each applies once, and a source that has it already is left alone):
+# - backported from upstream master (not in a release yet): D3D11SwapChain::ChangeProperties gave the presenter the old size on
+#   ResizeBuffers. Windows and X11 surfaces report their size, so it did not matter there; a Wayland surface does not, and a maximized
+#   window kept its first swapchain, stretched by the compositor;
+# - Presenter::getSupportedFormats / getSupportedPresentModes ask again when the second call returns VK_INCOMPLETE (the count changed
+#   between the two calls, as the spec allows: seen on NVIDIA under Wayland while the window was resized). DXVK took it as a failure,
+#   kept no swapchain, and the next Present crashed in D3D11SwapChain::PresentImage (2026-11-12).
+function(wce_dxvk_patch file old new what)
+    set(path "${WCE_DEPS_DIR}/dxvk/${file}")
+    file(READ "${path}" src)
+    string(FIND "${src}" "${old}" at)
     if(NOT at EQUAL -1)
-        string(REPLACE "${dxvk_old}" "${dxvk_new}" dxvk_src "${dxvk_src}")
-        file(WRITE "${dxvk_swapchain}" "${dxvk_src}")
+        string(REPLACE "${old}" "${new}" src "${src}")
+        file(WRITE "${path}" "${src}")
     else()
-        string(FIND "${dxvk_src}" "${dxvk_new}" at)
+        string(FIND "${src}" "${new}" at)
         if(at EQUAL -1)
-            message(FATAL_ERROR "DXVK: the swapchain resize backport no longer applies to ${WCE_DXVK_TAG}")
+            message(FATAL_ERROR "DXVK: ${what} no longer applies to ${WCE_DXVK_TAG}")
         endif()
     endif()
+endfunction()
+
+set(WCE_DXVK_STAMP "${WCE_DEPS_PREFIX}/.dxvk-${WCE_DXVK_TAG}-resize-incomplete")
+if(NOT EXISTS "${WCE_DXVK_STAMP}")
+    wce_dep_clone(dxvk https://github.com/doitsujin/dxvk.git ${WCE_DXVK_TAG})
+    wce_dxvk_patch(src/d3d11/d3d11_swapchain.cpp
+        "if (m_desc.Width != pDesc->Width || m_desc.Height != pDesc->Height)\n      m_presenter->setSurfaceExtent({ m_desc.Width, m_desc.Height });"
+        "if (m_desc.Width != pDesc->Width || m_desc.Height != pDesc->Height)\n      m_presenter->setSurfaceExtent({ pDesc->Width, pDesc->Height });"
+        "the swapchain resize backport")
+    foreach(query "formats|getSupportedFormats(formats)|surface formats" "modes|getSupportedPresentModes(modes)|present modes")
+        string(REPLACE "|" ";" query "${query}")
+        list(GET query 1 call)
+        list(GET query 2 label)
+        wce_dxvk_patch(src/dxvk/dxvk_presenter.cpp
+            "    if (status != VK_SUCCESS)\n      Logger::err(str::format(\"Presenter: Failed to query ${label}: \", status));\n\n    return status;"
+            "    // The count changed between the two calls: ask again (patched by warscape_community_editor).\n    if (status == VK_INCOMPLETE)\n      return ${call};\n\n    if (status != VK_SUCCESS)\n      Logger::err(str::format(\"Presenter: Failed to query ${label}: \", status));\n\n    return status;"
+            "the ${label} retry")
+    endforeach()
     message(STATUS "Building DXVK-native (a few minutes, once)")
     file(REMOVE_RECURSE "${WCE_DEPS_DIR}/dxvk/build")
     wce_dep_run("DXVK meson setup" ${WCE_MESON} setup "${WCE_DEPS_DIR}/dxvk/build" "${WCE_DEPS_DIR}/dxvk" --buildtype=release --prefix=${WCE_DEPS_PREFIX} --libdir=lib
