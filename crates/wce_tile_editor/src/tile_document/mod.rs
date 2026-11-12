@@ -76,7 +76,7 @@ use crate::terrain_bake::{BakedColour, TerrainLook};
 
 pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::{BoundaryKind, BoundaryShape, prefab_reference_text, text_kind};
-pub use self::bridges::{BridgeEdge, BridgeProblem, BridgeReport};
+pub use self::bridges::{BridgeEdge, BridgeProblem, BridgeReport, WallPair};
 pub use self::flip::{FlipPlane, TileFlipAxis};
 pub use self::index::{FILLED_TYPES, deployment_colour, deployment_variant, polygon_colour, style_of};
 pub use self::view::{LIGHT_RADIUS_HANDLE, SHELTER_TARGET_HANDLE, link_rgb};
