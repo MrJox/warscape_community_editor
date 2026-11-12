@@ -3,6 +3,8 @@
 tile "%TILE%"
 frames 5
 add_polygon "WceWallSpline|roman_fort_straight|20,120;220,120"
+frames 2
+tile_edit selected Procedural true
 frames 400
 tile_wait_jobs
 frames 3
@@ -25,6 +27,8 @@ assert_tech 1 200
 # A curved wall: every formation line end on a platform (the cut of the long ones along the curve: logic.rs a_long_firing_line_follows_the_bend).
 select none
 add_polygon "WceWallSpline|roman_fort_straight|30,300;130,250;230,300"
+frames 2
+tile_edit selected Procedural true
 frames 400
 tile_wait_jobs
 frames 3

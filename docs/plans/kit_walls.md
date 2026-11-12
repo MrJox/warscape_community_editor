@@ -103,3 +103,35 @@ Measured:
   strays 0.35; Check platforms: 85 joints, 0 breaks.
 
 Left for later phases: the ends stop where the pieces do (up to half a straight short), ground is flat (phase 4), no snapping (phase 3).
+
+## Phase 3: the ends (done 2026-11-12)
+
+- **Attached ends**: a wall's end within `scene::ATTACH` of a fort building's end (as a procedural wall attaches) meets that building's
+  joint (`kit::joints` of its logic file, through its transform: the 8 m cultures' gates have no end caps, their walk's ends are the joints),
+  on it whatever its point was left within reach. The line's end is made straight along the building's way for a straight's length.
+- **First end**: on the joint, the wall at the building's walk, when the walks match (within 0.5) and a piece joins it; else a procedural
+  stretch a straight long, the pieces from its end. **Last end**: up to 3 pieces landing on the joint exactly (0.01 across, 0.1 degrees,
+  joining it, at its walk); else the pieces stop 0.5 to 1.5 straights short and a procedural stretch meets it. **Only the last end
+  attached**: the wall is laid from it (the pieces gone through the other way), so that the pieces meet it.
+- **Stretches** (`kit::Stretch`): a procedural wall of two points, the Bezier leaving and arriving along the ways, both ends held (the
+  kit joint's level, the building's walk less the culture's: a stretch to another culture's gate climbs to its walk), made with the
+  procedural walls' pieces on the editor's thread (`spawn_wall_job`, shared with them), the kit pieces drawn whole beside them.
+- **Every joint joins**: each piece's joints carry their platforms' edges (`kit::joint_edges`), and a piece follows another only where
+  an edge of each has the same corners (`kit::joins`, rule 6 of `docs/re/platforms_and_bridges.md`); caps, the buildings' joints and the
+  exact finishes too. So TDD's barbarian `600m` curves (4.70 across where its straights are 4.10) and gondor's curves (one edge where its
+  straights have two) are laid only after each other or a joiner, never after a straight. The catalogue leaves out a piece whose joint
+  joins none of its culture's.
+- **Pieces at their walk**: each piece stands where its entry joint's walk meets the last one's (a piece whose walk is off its culture's
+  stands that much higher or lower).
+
+Fixed on the way:
+- `logic::ends` read the Roman external corners' and `tower_b_corner_with_extension`'s joints on their outer face (every culture of the
+  Roman set, Attila, TDD and Rome 2): of the pairs of cap sides nearly as far apart as the farthest, the one whose sides the walk's end
+  continues is taken (`examples/kit_pieces` `KIT_ENDS=1` dumps every fort piece's ends: only those pieces changed).
+- `solver::runs`: a wall with both ends attached at levels within the tolerance and one run between them took the far end's level for
+  the whole run, its first end that much off its building (0.22 at the test's gate); the run is split, each end at its own level.
+
+Tested (`scratch kitwall/k3.txt`, farm_western/1x1/ab with a barbarian and a Roman gate): a barbarian wall from the barbarian gate meets it
+(5 joints); one from it to the Roman gate meets its first gate and climbs to the Roman one's walk by a stretch (a break there: the Roman
+gate's joint is another culture's, the report says so); a Roman wall attached by its last end only is laid from it and meets it. Check
+platforms: no break inside any wall.
