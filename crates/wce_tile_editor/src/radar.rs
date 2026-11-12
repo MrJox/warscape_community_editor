@@ -580,7 +580,8 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
         let stain = fbm(x * 4.0, y * 4.0, 5, seed);
         let blotch = fbm(x * 11.0 + 3.1, y * 11.0 - 1.7, 3, seed ^ 0xb10c);
         let grain = hash((k % n) as i64, (k / n) as i64, seed ^ 0x9a1) - 0.5;
-        let fibre = value_noise(x * 900.0, y * 60.0, seed ^ 0xf1b) - 0.5;
+        // Fibres along the image's rows (user 2026-11-12: horizontal, not vertical).
+        let fibre = value_noise(x * 60.0, y * 900.0, seed ^ 0xf1b) - 0.5;
         let t = (stain - 0.5) * 1.3 + (blotch - 0.5) * 0.5;
         for q in 0..3 {
             c[q] = style.paper[q] + (style.paper_dark[q] - style.paper[q]) * t.clamp(-0.6, 1.0) * 0.8;
@@ -731,7 +732,8 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
             let d = smooth(0.0, 25.0, depth_of(i, j));
             let t = fbm(p[0] / 40.0, p[1] / 40.0, 4, seed ^ 0x5ea) - 0.5;
             // Streaks on the sea only: still water inland.
-            let streak = (value_noise(p[0] / 3.0, p[1] / 30.0, seed ^ 0x5eb) - 0.5) * sea_only.v[j * n + i];
+            // Along the image's rows, as the paper's fibres.
+            let streak = (value_noise(p[0] / 30.0, p[1] / 3.0, seed ^ 0x5eb) - 0.5) * sea_only.v[j * n + i];
             let mut c = [0.0; 3];
             for q in 0..3 {
                 c[q] = (style.sea[q] + (style.sea_deep[q] - style.sea[q]) * d) * (1.0 + t * 0.16 + streak * 0.05);
