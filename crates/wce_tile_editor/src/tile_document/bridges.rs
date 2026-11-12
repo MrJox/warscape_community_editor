@@ -1,5 +1,10 @@
-//! The bridge check (the Tile panel's Problems, *Check bridges*): the tile's bridges as the game's nav graph would link them, from the rules
-//! traced in `docs/re/platforms_and_bridges.md`, without launching the game.
+//! The platform check (the Tile panel's Problems, *Check platforms*): the tile's bridges and fort walls as the game's nav graph would link
+//! them, from the rules traced in `docs/re/platforms_and_bridges.md`, without launching the game.
+//!
+//! **Walls** (`check_walls`): the walkways of the fort's buildings (fort walls, towers, gates: the categories with "fort", "wall", "gate" or
+//! "tower" in their name) and of the procedural walls join where two of their platforms have an edge with the same two corners, run the
+//! other way (the joint rule below). Two buildings whose platforms come close along an edge (facing each other within [`WALL_NEAR`] across,
+//! [`WALL_RISE`] in height, along at least [`WALL_OVERLAP`]) but join nowhere are a break in the wall walk: units on the walls stop there.
 //!
 //! A bridge is the platforms of the buildings whose `battlefield_buildings` category is `bridge`, and of the procedural roads' generated
 //! bridges, joined to each other. In the game:
@@ -36,6 +41,16 @@ const JOINT_HEIGHT: f32 = 0.1;
 const SNAP_BRIDGE: f32 = 1.0;
 const SNAP_OTHER: f32 = 0.1;
 
+/// Wall walks: how far across (metres) and in height two facing platform edges may be to be meant to join, and how long they must face each
+/// other.
+const WALL_NEAR: f32 = 0.75;
+const WALL_RISE: f32 = 1.0;
+const WALL_OVERLAP: f32 = 0.5;
+
+/// Facing edges closer than this (and within [`JOINT_HEIGHT`] in height) are not reported: the vanilla tiles' walls, which work in the game,
+/// have a few 1 to 2 cm off (western_city_rome/medium: 2), within what the saved positions round to.
+const WALL_FINE: f32 = 0.03;
+
 /// Ways off a bridge closer than this (metres) are on the same side whatever the bridge's length.
 const MIN_GAP: f32 = 4.0;
 
@@ -56,9 +71,15 @@ pub enum BridgeEdge {
 
     /// A ramp's foot the ground does not link to.
     LooseFoot,
+
+    /// Two wall walks' platforms joined.
+    WallJoint,
+
+    /// Two wall walks' platforms that face each other but do not join: a break in the wall walk.
+    WallGap,
 }
 
-/// A bridge that units cannot cross.
+/// A bridge that units cannot cross, or a break in a wall walk.
 #[derive(Clone, Debug)]
 pub struct BridgeProblem {
     /// The elements its pieces belong to (buildings, roads).
@@ -72,8 +93,10 @@ pub struct BridgeProblem {
 /// What the check found.
 #[derive(Clone, Debug, Default)]
 pub struct BridgeReport {
-    /// The bridges (platforms joined together) and the bad ones.
+    /// The bridges (platforms joined together) and the bad ones; the wall walks' buildings and their joints; the problems of both.
     pub bridges: usize,
+    pub walls: usize,
+    pub wall_joints: usize,
     pub problems: Vec<BridgeProblem>,
 
     /// What to draw: the bridges' ground links, joints, exits and loose feet.
@@ -380,6 +403,151 @@ impl Tile {
     }
 }
 
+impl Tile {
+    /// The tile's bridges and wall walks checked (`check_bridges`, `check_walls`), in one report.
+    pub fn check_platforms(&mut self) -> BridgeReport {
+        let mut report = self.check_bridges();
+        let walls = self.check_walls();
+        report.walls = walls.walls;
+        report.wall_joints = walls.wall_joints;
+        report.problems.extend(walls.problems);
+        report.edges.extend(walls.edges);
+        report.unread.extend(walls.unread);
+        report.summary.extend(walls.summary);
+        report
+    }
+
+    /// The fort's wall walks checked: the pairs of buildings whose platforms face each other but join nowhere (the module's doc).
+    pub fn check_walls(&mut self) -> BridgeReport {
+        let mut report = BridgeReport::default();
+        let fort = |c: &str| c.contains("fort") || c.contains("wall") || c.contains("gate") || c.contains("tower");
+        let buildings = self.instances.iter().copied().filter(|&e| self.tscene().type_of(e) == "BUILDING_INSTANCE").collect::<Vec<_>>();
+        let mut g = Gathered::default();
+        for e in buildings {
+            let c = self.tscene().doc().get(e, "key").and_then(|k| self.building_category(&k.to_lowercase())).unwrap_or_default();
+            if fort(&c) {
+                g.add(self, e, false, SNAP_BRIDGE, false);
+                report.walls += 1;
+            }
+        }
+
+        for e in self.wall_preview.shown_walls() {
+            g.add(self, e, false, SNAP_BRIDGE, false);
+            report.walls += 1;
+        }
+
+        let platforms = g.platforms;
+        report.unread = g.unread;
+        let grounds = g.grounds.len();
+
+        // The platforms' edges, by the cells of a coarse grid (WALL_NEAR) their corners are in.
+        let coarse = |p: Float3| ((p.x / WALL_NEAR).floor() as i64, (p.z / WALL_NEAR).floor() as i64);
+        let mut grid: HashMap<(i64, i64), Vec<(usize, usize)>> = HashMap::new();
+        for (k, p) in platforms.iter().enumerate() {
+            for (i, a, b) in edges(&p.corners) {
+                let (ca, cb) = (coarse(a), coarse(b));
+                for c in [ca, cb] {
+                    grid.entry(c).or_default().push((k, i));
+                }
+            }
+        }
+
+        // Per pair of elements: their joints, and their closest facing edges that do not join.
+        let mut joined: HashMap<(usize, usize), usize> = HashMap::new();
+        let mut gaps: HashMap<(usize, usize), (f32, f32, Float3, Float3, Float3, Float3)> = HashMap::new();
+        for (k, p) in platforms.iter().enumerate() {
+            for (_, a, b) in edges(&p.corners) {
+                let (ca, cb) = (coarse(a), coarse(b));
+                let mut seen = vec![];
+                for (dx, dz) in (-1..=1).flat_map(|x| (-1..=1).map(move |z| (x, z))) {
+                    for c in [(ca.0 + dx, ca.1 + dz), (cb.0 + dx, cb.1 + dz)] {
+                        for &(m, j) in grid.get(&c).into_iter().flatten() {
+                            if m <= k || platforms[m].elem == p.elem || seen.contains(&(m, j)) {
+                                continue;
+                            }
+
+                            seen.push((m, j));
+                            let q = &platforms[m].corners;
+                            let (c0, d0) = (q[j], q[(j + 1) % q.len()]);
+                            let pair = (p.elem.min(platforms[m].elem), p.elem.max(platforms[m].elem));
+                            if near(c0, b) && near(d0, a) && (c0.y - b.y).abs() <= JOINT_HEIGHT && (d0.y - a.y).abs() <= JOINT_HEIGHT {
+                                *joined.entry(pair).or_default() += 1;
+                                report.edges.push((a, b, BridgeEdge::WallJoint));
+                                continue;
+                            }
+
+                            if let Some((across, rise)) = facing(a, b, c0, d0).filter(|&(x, h)| x >= WALL_FINE || h > JOINT_HEIGHT) {
+                                let worst = gaps.get(&pair).map_or(f32::MAX, |g| g.0);
+                                if across < worst {
+                                    gaps.insert(pair, (across, rise, a, b, c0, d0));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        report.wall_joints = joined.values().sum();
+        let key = |e: usize| self.tscene().doc().get(e, "key").unwrap_or_else(|| "procedural wall".to_owned());
+        let mut found = gaps.into_iter().filter(|(pair, _)| !joined.contains_key(pair)).collect::<Vec<_>>();
+        found.sort_by(|a, b| a.0.cmp(&b.0));
+        for ((ea, eb), (across, rise, a, b, c, d)) in found {
+            report.edges.push((a, b, BridgeEdge::WallGap));
+            report.edges.push((c, d, BridgeEdge::WallGap));
+            let at = (a + b + c + d) * 0.25;
+            report.problems.push(BridgeProblem {
+                elems: vec![ea, eb],
+                message: format!(
+                    "walls {} and {}: their walkways meet but do not join ({across:.2} m apart, {rise:.2} m in height; the game joins them within {CORNER} m and {JOINT_HEIGHT} m, corner for corner)",
+                    key(ea),
+                    key(eb)
+                ),
+                at,
+            });
+        }
+
+        report.summary.push(format!("wall walks: {} building(s), {} platform(s) ({grounds} ground), {} joint(s), {} break(s)", report.walls, platforms.len(), report.wall_joints, report.problems.len()));
+        report
+    }
+}
+
+/// Two platform edges that face each other: anti-parallel within 25 degrees, along each other for at least [`WALL_OVERLAP`], at most
+/// [`WALL_NEAR`] apart across and [`WALL_RISE`] in height. How far apart they are (the larger of the two ends' distances to the other edge)
+/// and their height difference there.
+fn facing(a: Float3, b: Float3, c: Float3, d: Float3) -> Option<(f32, f32)> {
+    let (u, v) = ([b.x - a.x, b.z - a.z], [d.x - c.x, d.z - c.z]);
+    let (lu, lv) = (u[0].hypot(u[1]), v[0].hypot(v[1]));
+    if lu < 1e-3 || lv < 1e-3 {
+        return None;
+    }
+
+    let (u, v) = ([u[0] / lu, u[1] / lu], [v[0] / lv, v[1] / lv]);
+    if u[0] * v[0] + u[1] * v[1] > -(25.0f32.to_radians().cos()) {
+        return None;
+    }
+
+    // The overlap along a -> b of c .. d's projection.
+    let along = |p: Float3| (p.x - a.x) * u[0] + (p.z - a.z) * u[1];
+    let (t0, t1) = (along(c).min(along(d)).max(0.0), along(c).max(along(d)).min(lu));
+    if t1 - t0 < WALL_OVERLAP {
+        return None;
+    }
+
+    // Across: the overlap's ends of the other edge to this one's line; height: on each edge at the overlap's middle.
+    let across = |p: Float3| ((p.x - a.x) * -u[1] + (p.z - a.z) * u[0]).abs();
+    let at = |t: f32| Float3::new(a.x + u[0] * t, 0.0, a.z + u[1] * t);
+    let on_cd = |p: Float3| {
+        let t = ((p.x - c.x) * v[0] + (p.z - c.z) * v[1]).clamp(0.0, lv) / lv;
+        c + (d - c) * t
+    };
+    let dist = across(on_cd(at(t0))).max(across(on_cd(at(t1))));
+    let mid = (t0 + t1) * 0.5;
+    let h_ab = a.y + (b.y - a.y) * (mid / lu);
+    let rise = (on_cd(at(mid)).y - h_ab).abs();
+    (dist <= WALL_NEAR && rise <= WALL_RISE).then_some((dist, rise))
+}
+
 /// How many sides a bridge's ways off it are on: grouped when closer than a third of its length (its corners' longest extent along their
 /// main direction), at least `MIN_GAP`.
 fn sides(corners: &[Float3], exits: &[Float3]) -> usize {
@@ -437,6 +605,19 @@ mod tests {
         assert_eq!(sides(&deck, &[]), 0);
         assert_eq!(sides(&deck, &[Float3::new(0.0, 0.0, 0.0), Float3::new(1.0, 0.0, 1.0)]), 1, "both at one end");
         assert_eq!(sides(&deck, &[Float3::new(0.0, 0.0, 0.0), Float3::new(30.0, 0.0, 0.0)]), 2, "one at each end");
+    }
+
+    #[test]
+    fn facing_edges_of_wall_walks() {
+        let a = Float3::new(0.0, 5.0, 0.0);
+        let b = Float3::new(0.0, 5.0, 4.0);
+        // The same edge run the other way, 0.3 m across: facing (it would join if it were within 0.014).
+        let f = facing(a, b, Float3::new(0.3, 5.0, 4.0), Float3::new(0.3, 5.0, 0.0)).expect("facing");
+        assert!((f.0 - 0.3).abs() < 1e-4 && f.1 < 1e-4, "{f:?}");
+        // Run the same way: not facing; too far; too high.
+        assert!(facing(a, b, Float3::new(0.3, 5.0, 0.0), Float3::new(0.3, 5.0, 4.0)).is_none());
+        assert!(facing(a, b, Float3::new(2.0, 5.0, 4.0), Float3::new(2.0, 5.0, 0.0)).is_none());
+        assert!(facing(a, b, Float3::new(0.3, 7.0, 4.0), Float3::new(0.3, 7.0, 0.0)).is_none());
     }
 
     #[test]
