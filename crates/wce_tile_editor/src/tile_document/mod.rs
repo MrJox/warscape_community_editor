@@ -239,11 +239,8 @@ pub struct TileDisplay {
     /// The category drawn now (empty for none): follows the two above.
     pub tree_list: String,
 
-    /// The grass of BOB's `default.grass_list.bin`, near the camera.
+    /// The grass near the camera, generated as BOB would (`grass.rs`).
     pub show_grass: bool,
-
-    /// Generate the grass from the seed (as BOB would) even when the tile has a packed list.
-    pub generate_grass: bool,
 
     /// The automatic no-go areas (`terrain_outlines.xml`: the steep ground of the final heights) outlined on the ground.
     pub show_auto_nogo: bool,
@@ -261,7 +258,7 @@ impl Default for TileDisplay {
     fn default() -> Self {
         Self {
             hidden_types: BTreeSet::new(), show_polygons: true, polygon_look: PolygonLook::default(), polygon_over_buildings: false, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true, tint_freeform: false,
-            show_links: false, show_water: true, show_sea: true, show_trees: true, tree_category: String::new(), tree_list: String::new(), show_grass: true, generate_grass: false, show_auto_nogo: false, tech: TechSettings::default(),
+            show_links: false, show_water: true, show_sea: true, show_trees: true, tree_category: String::new(), tree_list: String::new(), show_grass: true, show_auto_nogo: false, tech: TechSettings::default(),
             game_layers: None,
         }
     }

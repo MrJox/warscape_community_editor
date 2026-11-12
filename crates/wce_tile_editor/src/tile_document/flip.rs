@@ -389,7 +389,7 @@ impl TileDocument {
             return Err(e);
         }
 
-        // The packed tree and grass lists (BOB's, made before) are drawn mirrored from now on: the root says along which axes.
+        // The packed tree and grass lists (BOB's, made before) are mirrored relative to the tile from now on: the root says along which axes.
         let sc = self.tscene_mut();
         let root = sc.doc().roots()[0];
         let attr = super::vegetation::LIST_FLIP_ATTR;

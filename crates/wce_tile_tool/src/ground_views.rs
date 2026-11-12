@@ -228,17 +228,20 @@ impl TileTool {
             d.tile_mut().display_mut().show_grass = grass;
         }
 
-        gui::same_line();
-        let mut generated = d.tile().display().generate_grass;
-        if gui::checkbox("Generated##grass", &mut generated) {
-            d.tile_mut().display_mut().generate_grass = generated;
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The grass near the camera, generated as BOB would from the tile as it is (its seed, the saved blend map, the kit's max_grass.xml).");
         }
 
-        if generated {
+        let unavailable = d.tile().grass_unavailable();
+        if grass && unavailable.is_none() {
             gui::same_line();
             if gui::small_button("Regenerate##grass") {
                 d.tile_mut().reload_grass();
             }
+        }
+
+        if let Some(why) = unavailable.filter(|_| grass) {
+            note(&format!("not generated: {why}"));
         }
 
         gui::separator_text("Checks");

@@ -32,7 +32,8 @@ use wce_tile::world_transform::world_transform;
 
 use super::{TERRAIN, Tile, TileDocument};
 
-/// The root attribute saying the packed lists are mirrored (`Tile::list_flip`).
+/// The root attribute saying the packed lists (the carried ones of a decompiled project) are mirrored: the tile was flipped whole since
+/// (`TileDocument::flip_tile`; "x", "z" or "xz"). Read by `convert_whole_tile_exclusion`.
 pub const LIST_FLIP_ATTR: &str = "wce_list_flip";
 
 /// The category generated for a climate the kit has none for: BOB's list for no particular climate.
@@ -107,13 +108,6 @@ impl Tile {
         tilt(h(x - 0.5, z) - h(x + 0.5, z), h(x, z - 0.5) - h(x, z + 0.5))
     }
 
-    /// The packed tile's folder in the game files (`terrain/tiles/battle/<set>/.../<variation>/`), for a tile under a kit's raw_data.
-    pub(crate) fn packed_folder(&self) -> Option<String> {
-        let dir = self.project.dir.to_string_lossy().replace('\\', "/").to_lowercase();
-        let at = dir.find("/terrain/tiles/")?;
-        Some(format!("{}/", dir[at + 1..].trim_end_matches('/')))
-    }
-
     /// The tree categories the kit's generator has (`default`, the climate keys), empty without its parameters.
     pub fn tree_categories(&self) -> Vec<String> {
         self.generation_params().map(|p| p.categories.iter().map(|c| c.to_lowercase()).collect()).unwrap_or_default()
@@ -174,15 +168,6 @@ impl Tile {
     }
 
     /// Drops the decoded or generated list, so the next update reads or generates it again (after editing the seeds, the exclusions...).
-    /// Whether the tile's packed tree and grass lists (BOB's, made before) are mirrored along x and along z: the tile was flipped whole
-    /// since (`TileDocument::flip_tile`, the root's `wce_list_flip`: "x", "z" or "xz"). Lists generated now follow the tile as it is.
-    pub(crate) fn list_flip(&self) -> (bool, bool) {
-        let sc = self.tscene();
-        let root = sc.doc().roots()[0];
-        let v = sc.doc().get(root, LIST_FLIP_ATTR).unwrap_or_default();
-        (v.contains('x'), v.contains('z'))
-    }
-
     pub fn reload_tree_list(&mut self) {
         self.trees.name.clear();
         self.trees.shown = None;

@@ -3501,18 +3501,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("grass", "grass on|off|generated|packed", "draw the tile's grass near the camera: on / off; packed: BOB's default.grass_list.bin when the tile has one; generated: from the seed (again on every call)", |e, a| {
+    c.add("grass", "grass on|off|regenerate", "draw the tile's grass near the camera, generated as BOB would: on / off; regenerate: again from the tile as it is", |e, a| {
         let Some(d) = document(e) else { return fail("no tile open") };
         let t = d.tile_mut();
         match a.first().map(String::as_str) {
             Some("on") => t.display_mut().show_grass = true,
             Some("off") => t.display_mut().show_grass = false,
-            Some("generated") => {
-                t.display_mut().generate_grass = true;
-                t.reload_grass();
-            }
-            Some("packed") => t.display_mut().generate_grass = false,
-            _ => return fail("usage: grass on|off|generated|packed"),
+            Some("regenerate") => t.reload_grass(),
+            _ => return fail("usage: grass on|off|regenerate"),
         }
 
         ok("")
