@@ -122,6 +122,9 @@ pub struct Editor {
 
     /// A window to bring to the front on the next frame (`window_focus`, for scripts).
     pub pending_focus: Option<String>,
+
+    /// What the Inspector showed last frame (the active tool's index and its key, see `raise_inspector`).
+    inspector_shown: Option<(usize, u64)>,
     pub clock: Clock,
     tools: Vec<Option<Box<dyn Tool>>>,
     tool_info: Vec<ToolInfo>,
@@ -238,7 +241,7 @@ impl Editor {
         let mut e = Self {
             dev: dev.clone(), ctx: ctx.clone(), settings: Settings::load_default(), vfs: None, renderer: None, scene: RenderScene::default(),
             docs: DocumentManager::default(), selection: Selection::default(), commands: CommandRegistry::default(), script: ScriptRunner::default(), script_lines: vec![],
-            viewport: Viewport::default(), pending_focus: None, clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
+            viewport: Viewport::default(), pending_focus: None, inspector_shown: None, clock: Clock::live(), tools: vec![], tool_info: vec![], active_tool: 0, pending_tool: None, layout_pending_default: false,
             layout_loaded: false, dockspace: 0, quit: false, exit_code: 0, frame: 0, status: String::new(), status_error: false, first_run: false, weather_preview: None,
             cam_mark: None, output_gamma: 2.2, output_brightness: 1.0, prompt: PromptKind::None, prompt_docs: vec![], prompt_work: vec![], outline_cache: None, tint_cache: None, prompt_close: vec![], prompt_error: String::new(), prompt_game: None, prompt_open: None, replace_answer: None, replace_granted: None, in_script: false,
             mouse_queue: VecDeque::new(), mouse_cur: MouseState::default(), mouse_active: false, test_keys: vec![], first_run_game: String::new(),
@@ -1752,6 +1755,23 @@ impl Editor {
         self.draw_prompt();
     }
 
+    /// When what the Inspector shows changes (the selection, the active tool's part of it: a mode, what it places, a brush's settings) to
+    /// something, its tab is selected in its dock, so that the change is seen; the keyboard stays where it was. Only on a change: a tab the
+    /// user picked over it stays picked while they work in it. A tool's switch only takes the new tool's as the start.
+    fn raise_inspector(&mut self) {
+        use std::hash::{Hash, Hasher};
+        let tool = self.with_active_tool(|t, e| t.inspector_subject(e)).flatten();
+        let mut h = std::hash::DefaultHasher::new();
+        self.selection.items().hash(&mut h);
+        tool.hash(&mut h);
+        let now = (self.active_tool, h.finish());
+        let before = self.inspector_shown.replace(now);
+        let shows = !self.selection.is_empty() || tool.is_some();
+        if self.panels.inspector && shows && before.is_some_and(|(t, k)| t == now.0 && k != now.1) {
+            gui::select_dock_tab("Inspector");
+        }
+    }
+
     pub fn focus_selection(&mut self) {
         crate::viewport::focus_selection(self);
     }
@@ -1760,6 +1780,8 @@ impl Editor {
         if let Some(name) = self.pending_focus.take() {
             gui::set_window_focus_named(&name);
         }
+
+        self.raise_inspector();
 
         let shows_viewport = self.with_tool_at(self.active_tool, |t, _| t.shows_viewport()).unwrap_or(true);
         if self.panels.viewport && shows_viewport {
