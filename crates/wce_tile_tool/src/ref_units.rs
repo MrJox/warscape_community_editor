@@ -34,6 +34,7 @@ const UNIT_VARIATIONS: u64 = 16;
 fn default_unit(game: &str) -> (&'static str, &'static str) {
     match game {
         "attila" => ("att_rom_legio_comitatenses", "att_fact_western_roman_empire"),
+        "rome_2" => ("Rom_Hastati", "rom_rome"),
         _ => ("", ""),
     }
 }
@@ -42,6 +43,7 @@ fn default_unit(game: &str) -> (&'static str, &'static str) {
 fn default_naval(game: &str) -> (&'static str, &'static str) {
     match game {
         "attila" => ("att_shp_rom_heavy_marines_lib_heavy", "att_fact_western_roman_empire"),
+        "rome_2" => ("Rom_Hastati_Two", "rom_rome"),
         _ => ("", ""),
     }
 }
