@@ -421,18 +421,32 @@ pub fn ends(bytes: &[u8]) -> Result<Vec<PieceEnd>, String> {
     // boundary, the farthest apart that does not turn back on itself. Every wrong pair of the game's and TDD's pieces is shorter (a 45
     // degree joiner's arms are shorter than its walk is wide, a tower's walk is cut by the tower, TDD's gondor caps are 2.5 along the wall
     // by 1.45 across: no rule on one cap alone held for all of them; 2026-11-12) or a U-turn.
+    //
+    // Of the pairs nearly as far apart as the farthest ([`PAIR_NEAR`]), the one whose sides the walk's end continues (`continued_by`: the
+    // shortest such edge of the cap's sides, the walk's width, not an arm's length): a Roman external corner's two caps each have a side on
+    // the outer face along an arm, and the pair of those is farther apart (26.2 to 25.8) than its joints. Not further: a 45 degree joiner's
+    // arms are shorter than its walk is wide, and its joints' pair is the farther by 8.3 to 7.4 (2026-11-12, docs/plans/kit_walls.md phase 3).
     let four = caps.iter().filter(|c| c.len() == 4).cloned().collect::<Vec<_>>();
     if let [c1, c2] = four.as_slice() {
-        let ends = |c: &Vec<[f32; 3]>| cap_candidates(c, &all).into_iter().filter_map(|s| cap_end(c, centre, &flat, &edges, &all, Some(s))).collect::<Vec<_>>();
+        let ends = |c: &Vec<[f32; 3]>| {
+            let sides = cap_candidates(c, &all);
+            let lens = sides.iter().map(|s| continued_by(s.0, s.1, &edges)).collect::<Vec<_>>();
+            let shortest = lens.iter().flatten().copied().fold(f32::MAX, f32::min);
+            sides.into_iter().zip(lens).filter_map(|(s, l)| {
+                let walk_end = shortest < f32::MAX && l.is_some_and(|x| x <= shortest + 0.5);
+                cap_end(c, centre, &flat, &edges, &all, Some(s)).map(|e| (e, walk_end))
+            }).collect::<Vec<_>>()
+        };
         let (e1, e2) = (ends(c1), ends(c2));
-        let best = e1.iter().flat_map(|a| e2.iter().map(move |b| (a, b)))
-            .filter(|(a, b)| a.out[0] * b.out[0] + a.out[1] * b.out[1] < 0.5)
-            .max_by(|x, y| {
-                let span = |p: &(&PieceEnd, &PieceEnd)| (p.0.at[0] - p.1.at[0]).hypot(p.0.at[2] - p.1.at[2]);
-                span(x).total_cmp(&span(y))
-            });
+        let span = |p: &(&(PieceEnd, bool), &(PieceEnd, bool))| (p.0.0.at[0] - p.1.0.at[0]).hypot(p.0.0.at[2] - p.1.0.at[2]);
+        let pairs = e1.iter().flat_map(|a| e2.iter().map(move |b| (a, b))).filter(|(a, b)| a.0.out[0] * b.0.out[0] + a.0.out[1] * b.0.out[1] < 0.5).collect::<Vec<_>>();
+        let far = pairs.iter().map(span).fold(0.0f32, f32::max);
+        let best = pairs.into_iter().filter(|p| span(p) >= far * PAIR_NEAR).max_by(|x, y| {
+            let walk_ends = |p: &(&(PieceEnd, bool), &(PieceEnd, bool))| u8::from(p.0.1) + u8::from(p.1.1);
+            walk_ends(x).cmp(&walk_ends(y)).then(span(x).total_cmp(&span(y)))
+        });
         if let Some((a, b)) = best {
-            return Ok(vec![*a, *b]);
+            return Ok(vec![a.0, b.0]);
         }
     }
 
@@ -465,6 +479,23 @@ fn cap_candidates(cap: &[[f32; 3]], all: &[[f32; 2]]) -> Vec<([f32; 3], [f32; 3]
     if on.is_empty() { sides } else { on }
 }
 
+/// A pair of a two-capped piece's cap sides at least this part of the farthest pair's span apart is weighed by its sides (`ends`).
+const PAIR_NEAR: f32 = 0.97;
+
+/// The longest of the main piece's platform edges (x, z) that continues a cap's side `a`-`b` on its line and touches it: the walk's end
+/// (as wide as the walk) for a joint, an arm's long edge for a side along the wall. `None` when none does.
+fn continued_by(a: [f32; 3], b: [f32; 3], body_edges: &[([f32; 2], [f32; 2])]) -> Option<f32> {
+    let (ux, uz) = (b[0] - a[0], b[2] - a[2]);
+    let l = ux.hypot(uz).max(1e-6);
+    let n = [uz / l, -ux / l];
+    let along = |q: [f32; 2]| ((q[0] - a[0]) * ux + (q[1] - a[2]) * uz) / l;
+    body_edges.iter().filter(|(c, e)| {
+        let on = |q: &[f32; 2]| ((q[0] - a[0]) * n[0] + (q[1] - a[2]) * n[1]).abs() < 0.05;
+        let (tc, te) = (along(*c), along(*e));
+        on(c) && on(e) && tc.min(te) <= l + 0.05 && tc.max(te) >= -0.05
+    }).map(|(c, e)| (e[0] - c[0]).hypot(e[1] - c[1])).fold(None, |m: Option<f32>, x| Some(m.map_or(x, |m| m.max(x))))
+}
+
 /// `joint`: the side to take as the joint (the pair of a two-capped piece's, `ends`), else chosen here.
 fn cap_end(cap: &[[f32; 3]], centre: [f32; 2], body: &[[f32; 2]], body_edges: &[([f32; 2], [f32; 2])], all: &[[f32; 2]], joint: Option<([f32; 3], [f32; 3])>) -> Option<PieceEnd> {
     let len = |a: [f32; 3], b: [f32; 3]| (b[0] - a[0]).hypot(b[2] - a[2]);
@@ -494,16 +525,7 @@ fn cap_end(cap: &[[f32; 3]], centre: [f32; 2], body: &[[f32; 2]], body_edges: &[
     };
     // The wall-walk's edge that continues a side on its line, touching it: the walk's end (as wide as the walk) for the joint, the long
     // edge of an arm for the side along the wall. The joint is the side whose edge is the shortest.
-    let continued = |a: [f32; 3], b: [f32; 3]| {
-        let n = normal(a, b);
-        let (u, l) = ([(b[0] - a[0]), (b[2] - a[2])], len(a, b));
-        let along = |q: [f32; 2]| ((q[0] - a[0]) * u[0] + (q[1] - a[2]) * u[1]) / l.max(1e-6);
-        body_edges.iter().filter(|(c, e)| {
-            let on = |q: &[f32; 2]| ((q[0] - a[0]) * n[0] + (q[1] - a[2]) * n[1]).abs() < 0.05;
-            let (tc, te) = (along(*c), along(*e));
-            on(c) && on(e) && tc.min(te) <= l + 0.05 && tc.max(te) >= -0.05
-        }).map(|(c, e)| (e[0] - c[0]).hypot(e[1] - c[1])).fold(None, |m: Option<f32>, x| Some(m.map_or(x, |m| m.max(x))))
-    };
+    let continued = |a: [f32; 3], b: [f32; 3]| continued_by(a, b, body_edges);
     let mut cands = sides.iter().copied().filter(|&(a, b)| supporting(a, b)).collect::<Vec<_>>();
     if cands.is_empty() {
         cands = sides.clone();

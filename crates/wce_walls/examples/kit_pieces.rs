@@ -6,7 +6,8 @@
 //! `WCE_MODS` (packs, comma separated) mounts mods (TDD's packs for its cultures); `WCE_GAME_KEY` picks the game (default attila).
 //! Exits non-zero when a base's culture has no straight. `KIT_DETAIL=key,...` prints those pieces' joints, and their pieces' platforms (level
 //! 0: corners, height range), instead. `KIT_LAY=1` lays test lines with each culture (a straight, an L each way, a quarter arc, an S) and
-//! prints the pieces, how far the wall strays from the line at most and how short of its end it stops.
+//! prints the pieces, how far the wall strays from the line at most and how short of its end it stops. `KIT_ENDS=1` prints every fort
+//! key's `logic::ends` instead.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -55,6 +56,18 @@ fn main() {
 
         return;
     }
+    if std::env::var_os("KIT_ENDS").is_some() {
+        let mut fort = keys.iter().filter(|k| k.to_lowercase().contains("_fort_")).collect::<Vec<_>>();
+        fort.sort();
+        for key in fort {
+            let ends = read(key).map(|b| wce_walls::logic::ends(&b).unwrap_or_default()).unwrap_or_default();
+            let f = |e: &wce_walls::logic::PieceEnd| format!("({:.2},{:.2},{:.2}) out ({:.2},{:.2})", e.at[0], e.at[1], e.at[2], e.out[0], e.out[1]);
+            println!("{key}: {}", ends.iter().map(f).collect::<Vec<_>>().join(" | "));
+        }
+
+        return;
+    }
+
     let mut failed = false;
     for base in &bases {
         let keys = culture_keys(base, keys.iter().map(String::as_str));

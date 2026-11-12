@@ -65,6 +65,9 @@ pub struct KitPiece {
     /// The walk's height at the first joint.
     pub walk: f32,
 
+    /// Per joint, its platforms' edges on it (`joint_edges`): two pieces join where an edge of each has the same corners.
+    pub edges: Vec<Vec<JointEdge>>,
+
     /// Where it stands (level 0, x / z): its `orange_thingies` rings, else its collision outlines.
     pub footprint: Vec<Vec<[f32; 2]>>,
 }
@@ -144,6 +147,18 @@ pub fn catalogue(base: &str, keys: &[String], read: &dyn Fn(&str) -> Option<Vec<
         c.left_out.extend(other.into_iter().map(|p| (p.key, format!("its walk is at {} (the culture's at {walk})", p.walk))));
     }
 
+    // Joints that join some joint of the culture's (the layout keeps every joint to one that joins it, `lay`): a piece with a joint that
+    // joins none is of no use.
+    let all = c.pieces.iter().flat_map(|p| p.edges.clone()).filter(|e| !e.is_empty()).collect::<Vec<_>>();
+    let lone = |p: &KitPiece| p.edges.iter().position(|e| !e.is_empty() && !all.iter().any(|f| joins(e, f)));
+    let (keep, other): (Vec<_>, Vec<_>) = c.pieces.into_iter().partition(|p| lone(p).is_none());
+    c.pieces = keep;
+    c.left_out.extend(other.into_iter().map(|p| {
+        let k = lone(&p).unwrap_or_default();
+        let across = p.edges[k].iter().map(|e| format!("{:.2}..{:.2}", e.lo, e.hi)).collect::<Vec<_>>().join(" ");
+        (p.key.clone(), format!("its joint {k} ({across}) joins no joint of the culture's corner for corner"))
+    }));
+
     c.pieces.sort_by(|a, b| (a.role, &a.key).cmp(&(b.role, &b.key)));
     c
 }
@@ -157,7 +172,8 @@ pub fn measure(key: &str, bytes: &[u8]) -> Result<KitPiece, String> {
     let joints = joints(bytes);
     let footprint = footprint(bytes).unwrap_or_default();
     let m = classify(key, &joints)?;
-    Ok(KitPiece { key: key.to_owned(), role: m.role, walk: joints[0].at[1], joints, span: m.span, turn: m.turn, rise: m.rise, shift: m.shift, footprint })
+    let edges = joint_edges(bytes, &joints);
+    Ok(KitPiece { key: key.to_owned(), role: m.role, walk: joints[0].at[1], joints, span: m.span, turn: m.turn, rise: m.rise, shift: m.shift, footprint, edges })
 }
 
 /// A piece's role and measures from its joints and its key (see the module's doc).
@@ -219,6 +235,53 @@ fn signed_angle(a: [f32; 2], b: [f32; 2]) -> f32 {
 
 /// A piece's joints: its end caps' (`logic::ends`), else its wall-walk's ends.
 #[must_use]
+/// A platform's edge on a joint: across the wall from the joint's middle (`lo` < `hi`, positive on the left of the way out of the
+/// piece), and the heights at its two ends over the joint's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JointEdge {
+    pub lo: f32,
+    pub hi: f32,
+    pub y_lo: f32,
+    pub y_hi: f32,
+}
+
+/// Per joint, the edges of the level 0 platforms (of any of the piece's pieces) on it: both corners within 0.05 of the joint's line
+/// (through its middle, across its way out), at the walk's height (within 1) or under it.
+#[must_use]
+pub fn joint_edges(bytes: &[u8], joints: &[PieceEnd]) -> Vec<Vec<JointEdge>> {
+    let Ok(v) = parsed(bytes) else { return vec![vec![]; joints.len()] };
+    let rings = v["pieces"].as_array().into_iter().flatten().flat_map(|piece| {
+        level0(piece)["platforms"].as_array().cloned().unwrap_or_default().iter().map(|p| {
+            p["vertices"]["outline"].as_array().cloned().unwrap_or_default().iter().map(point).collect::<Vec<_>>()
+        }).collect::<Vec<_>>()
+    }).filter(|r| r.len() >= 3).collect::<Vec<_>>();
+    joints.iter().map(|j| {
+        let t = [-j.out[1], j.out[0]];
+        let on = |q: [f32; 3]| ((q[0] - j.at[0]) * j.out[0] + (q[2] - j.at[2]) * j.out[1]).abs() <= 0.05 && q[1] <= j.at[1] + 1.0;
+        let across = |q: [f32; 3]| (q[0] - j.at[0]) * t[0] + (q[2] - j.at[2]) * t[1];
+        let mut out = rings.iter().flat_map(|r| (0..r.len()).map(move |i| (r[i], r[(i + 1) % r.len()]))).filter(|(a, b)| on(*a) && on(*b) && (across(*a) - across(*b)).abs() > 0.05).map(|(a, b)| {
+            let (a, b) = if across(a) < across(b) { (a, b) } else { (b, a) };
+            JointEdge { lo: across(a), hi: across(b), y_lo: a[1] - j.at[1], y_hi: b[1] - j.at[1] }
+        }).collect::<Vec<_>>();
+        out.sort_by(|a, b| a.lo.total_cmp(&b.lo));
+        out.dedup_by(|a, b| (a.lo - b.lo).abs() < 1e-4 && (a.hi - b.hi).abs() < 1e-4);
+        out
+    }).collect()
+}
+
+/// How far apart two corners may be and still join (across; in height), as Check platforms joins walks (`docs/re/platforms_and_bridges.md`).
+const CORNER_ACROSS: f32 = 0.0141;
+const CORNER_HEIGHT: f32 = 0.1;
+
+/// Whether two joints facing each other join: an edge of each at the walk's height with the same corners (across the one is the other's
+/// mirrored: they face each other).
+#[must_use]
+pub fn joins(a: &[JointEdge], b: &[JointEdge]) -> bool {
+    a.iter().filter(|e| e.y_lo.abs() <= CORNER_HEIGHT && e.y_hi.abs() <= CORNER_HEIGHT).any(|e| b.iter().any(|f| {
+        (e.lo + f.hi).abs() <= CORNER_ACROSS && (e.hi + f.lo).abs() <= CORNER_ACROSS && (e.y_lo - f.y_hi).abs() <= CORNER_HEIGHT && (e.y_hi - f.y_lo).abs() <= CORNER_HEIGHT
+    }))
+}
+
 pub fn joints(bytes: &[u8]) -> Vec<PieceEnd> {
     match crate::logic::ends(bytes) {
         Ok(e) if !e.is_empty() => e,
@@ -353,10 +416,22 @@ pub struct Way {
     pub role: Role,
     pub entry: PieceEnd,
     pub exit: PieceEnd,
+
+    /// The platforms' edges on the entry and the exit (`KitPiece::edges`; empty: not known, joins anything).
+    pub entry_edges: Vec<JointEdge>,
+    pub exit_edges: Vec<JointEdge>,
     pub span: f32,
     pub turn: f32,
     pub shift: f32,
     pub rise: f32,
+}
+
+impl Way {
+    /// The same piece gone through the other way (its entry the exit), with its measures that way.
+    fn reversed(&self) -> Self {
+        let m = classify(&self.key, &[self.exit, self.entry]).map_or((-self.span, -self.turn, -self.shift, -self.rise), |m| (m.span, m.turn, m.shift, m.rise));
+        Self { key: self.key.clone(), role: self.role, entry: self.exit, exit: self.entry, entry_edges: self.exit_edges.clone(), exit_edges: self.entry_edges.clone(), span: m.0.abs(), turn: m.1, shift: m.2, rise: m.3 }
+    }
 }
 
 /// A quarter turn towards the outer face of an unflipped wall: the wall's way rotated from +x towards +z (the procedural walls'
@@ -375,8 +450,9 @@ fn dot(a: [f32; 2], b: [f32; 2]) -> f32 {
 #[must_use]
 pub fn ways(piece: &KitPiece) -> Vec<Way> {
     let [a, b] = piece.joints.as_slice() else { return vec![] };
+    let edges = |i: usize| piece.edges.get(i).cloned().unwrap_or_default();
     let mut out = vec![];
-    for (entry, exit) in [(*a, *b), (*b, *a)] {
+    for ((entry, exit), (entry_edges, exit_edges)) in [((*a, *b), (edges(0), edges(1))), ((*b, *a), (edges(1), edges(0)))] {
         let way_in = [-entry.out[0], -entry.out[1]];
         let Ok(m) = classify(&piece.key, &[entry, exit]) else { continue };
         let known = if entry.side != [0.0, 0.0] { Some(dot(entry.side, outer_of(way_in)) > 0.0) } else if exit.side != [0.0, 0.0] { Some(dot(exit.side, outer_of(exit.out)) > 0.0) } else { None };
@@ -387,7 +463,7 @@ pub fn ways(piece: &KitPiece) -> Vec<Way> {
         };
 
         if fits {
-            out.push(Way { key: piece.key.clone(), role: piece.role, entry, exit, span: m.span, turn: m.turn, shift: m.shift, rise: m.rise });
+            out.push(Way { key: piece.key.clone(), role: piece.role, entry, exit, entry_edges, exit_edges, span: m.span, turn: m.turn, shift: m.shift, rise: m.rise });
         }
     }
 
@@ -405,18 +481,88 @@ pub struct Placed {
     pub joints: [[f64; 2]; 2],
 }
 
+/// A building's joint a wall's end is attached to (phase 3; the world, scene units): a gate's, tower's or wall piece's end
+/// (`logic::ends` through its instance's transform).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EndJoint {
+    pub at: [f64; 2],
+
+    /// The way the wall leaves the building there (x, z, unit): away from it.
+    pub out: [f64; 2],
+
+    /// Across the wall towards its outer face (x, z, unit), zero when not known.
+    pub side: [f64; 2],
+
+    /// The joint's walk height, and the level the building stands on (scene y).
+    pub walk: f64,
+    pub level: f64,
+
+    /// Its platforms' edges on it (`joint_edges`; empty: not known).
+    pub edges: Vec<JointEdge>,
+}
+
+/// A procedural stretch of a kit wall (phase 3): from a kit piece's joint to a building's that the kit pieces could not meet cleanly, or
+/// the other way. Both ends held where they are: their place, the wall's way there (x, z, unit; the outer face on its left as
+/// `outer_of` turns) and the level the pieces stand on (at a building, its walk's height less the culture's walk: the walks meet,
+/// the stretch climbing or dropping to it).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stretch {
+    pub from: [f64; 2],
+    pub from_way: [f64; 2],
+    pub from_level: f64,
+    pub to: [f64; 2],
+    pub to_way: [f64; 2],
+    pub to_level: f64,
+}
+
+impl Stretch {
+    /// The procedural wall it is (`solver::solve`'s input): its two ends held at their levels and on their joints' planes, the line
+    /// between them the Bezier that leaves and arrives along the ways (handles a third of the way in).
+    #[must_use]
+    pub fn input(&self, tolerance: f64) -> crate::solver::WallInput {
+        let d = (self.to[0] - self.from[0]).hypot(self.to[1] - self.from[1]) / 3.0;
+        let out = [self.from[0] + self.from_way[0] * d, self.from[1] + self.from_way[1] * d];
+        let into = [self.to[0] - self.to_way[0] * d, self.to[1] - self.to_way[1] * d];
+        crate::solver::WallInput {
+            points: vec![self.from, self.to],
+            sharp: vec![false, false],
+            handles: vec![[None, Some(out)], [Some(into), None]],
+            flip: false,
+            tolerance,
+            ends: [Some(self.from_level), Some(self.to_level)],
+            end_planes: [Some(self.from_way), Some(self.to_way)],
+            access_every: 0.0,
+            defence_every: 0.0,
+        }
+    }
+
+    fn reversed(&self) -> Self {
+        let neg = |v: [f64; 2]| [-v[0], -v[1]];
+        Self { from: self.to, from_way: neg(self.to_way), from_level: self.to_level, to: self.from, to_way: neg(self.from_way), to_level: self.from_level }
+    }
+
+    #[must_use]
+    pub fn length(&self) -> f64 {
+        (self.to[0] - self.from[0]).hypot(self.to[1] - self.from[1])
+    }
+}
+
 /// How a wall of kit pieces is laid.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct LayOptions {
-    /// The base level (scene y) the wall stands at (flat: phase 2).
+    /// The base level (scene y) the wall stands at when its first end is free, or attached to a building it cannot meet cleanly (flat:
+    /// phases 2 and 3).
     pub level: f64,
 
     /// A tower or bastion every this much along the wall, a door section every this much (scene units; 0: none).
     pub defence_every: f64,
     pub access_every: f64,
 
-    /// The ends closed with the culture's caps.
+    /// The ends closed with the culture's caps (the free ones: an attached end has none).
     pub caps: [bool; 2],
+
+    /// The buildings' joints the ends are attached to.
+    pub ends: [Option<EndJoint>; 2],
 }
 
 /// A wall laid with kit pieces, and how well it follows its line.
@@ -424,9 +570,15 @@ pub struct LayOptions {
 pub struct KitLayout {
     pub placed: Vec<Placed>,
 
-    /// The most a joint strayed from the line, and the line's length the pieces did not reach (scene units).
+    /// The most a joint strayed from the line, and the line's length the pieces did not reach at a free end (scene units).
     pub stray: f64,
     pub short_by: f64,
+
+    /// The procedural stretches at the attached ends the pieces could not meet cleanly, in the wall's way.
+    pub stretches: Vec<Stretch>,
+
+    /// Per end: free (`None`), or attached and met by a kit piece (`Some(true)`) or by a procedural stretch (`Some(false)`).
+    pub attached: [Option<bool>; 2],
 
     /// What could not be done (no straight, no cap of a side...).
     pub notes: Vec<String>,
@@ -450,6 +602,15 @@ impl Line {
 
     fn length(&self) -> f64 {
         self.s.last().copied().unwrap_or(0.0)
+    }
+
+    /// The point at `s` along, and the line's way there (radians).
+    fn point_at(&self, s: f64) -> ([f64; 2], f64) {
+        let i = self.s.partition_point(|&x| x <= s).clamp(1, self.pts.len() - 1);
+        let (a, b) = (self.pts[i - 1], self.pts[i]);
+        let len = self.s[i] - self.s[i - 1];
+        let t = if len > 0.0 { ((s - self.s[i - 1]) / len).clamp(0.0, 1.0) } else { 0.0 };
+        ([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], (b[1] - a[1]).atan2(b[0] - a[0]))
     }
 
     /// The nearest point to `p`: its distance along, its distance from the line, and the line's way there (radians).
@@ -490,11 +651,13 @@ fn angle_of(v: [f32; 2]) -> f64 {
     f64::from(v[1]).atan2(f64::from(v[0]))
 }
 
-/// Where a way takes a wall at joint `p` going `heading`: the piece placed, and the joint and heading it leaves by.
-fn place(w: &Way, p: [f64; 2], heading: f64, level: f64) -> (Placed, [f64; 2], f64) {
+/// Where a way takes a wall at joint `p` going `heading` with its walk at `walk` (scene y): the piece placed (its entry joint's walk on
+/// it: a piece whose walk is not quite its culture's, TDD's barbarian `600m` curves 0.42 off, stands that much higher or lower), and the
+/// joint and heading it leaves by (its exit's walk: `walk` plus its rise).
+fn place(w: &Way, p: [f64; 2], heading: f64, walk: f64) -> (Placed, [f64; 2], f64) {
     let yaw = wrap(heading - angle_of([-w.entry.out[0], -w.entry.out[1]]));
     let e = turned(xz(&w.entry), yaw);
-    let origin = [p[0] - e[0], level, p[1] - e[1]];
+    let origin = [p[0] - e[0], walk - f64::from(w.entry.at[1]), p[1] - e[1]];
     let x = turned(xz(&w.exit), yaw);
     let out = [origin[0] + x[0], origin[2] + x[1]];
     (Placed { key: w.key.clone(), role: w.role, origin, yaw, joints: [p, out] }, out, wrap(yaw + angle_of(w.exit.out)))
@@ -521,7 +684,8 @@ fn fit(line: &Line, p: [f64; 2], heading: f64, s_from: f64, span: f64) -> Option
     Some((d + wrap(heading - way).abs() * HEADING_WEIGHT + over, at))
 }
 
-/// The cost of laying `w` at a joint, with the best `depth - 1` ways after it (each later one counting less); `None` when it goes back.
+/// The cost of laying `w` at a joint, with the best `depth - 1` ways after it that join it (each later one counting less); `None` when it
+/// goes back or leads nowhere.
 fn ahead(line: &Line, ways: &[&Way], w: &Way, (p, heading): ([f64; 2], f64), at: f64, depth: usize) -> Option<f64> {
     let (_, q, h) = place(w, p, heading, 0.0);
     let (e, at1) = fit(line, q, h, at, f64::from(w.span))?;
@@ -530,8 +694,9 @@ fn ahead(line: &Line, ways: &[&Way], w: &Way, (p, heading): ([f64; 2], f64), at:
         return Some(e);
     }
 
-    let next = ways.iter().filter_map(|&w2| ahead(line, ways, w2, (q, h), at1, depth - 1)).fold(f64::MAX, f64::min);
-    Some(e + if next < f64::MAX { next * 0.7 } else { 0.0 })
+    // No way on from it (none joins its exit): a dead end.
+    let next = ways.iter().filter(|w2| meets(&w.exit_edges, &w2.entry_edges)).filter_map(|&w2| ahead(line, ways, w2, (q, h), at1, depth - 1)).fold(f64::MAX, f64::min);
+    (next < f64::MAX).then_some(e + next * 0.7)
 }
 
 /// A way of the same shape as `w` among `alts` (a tower or door section in its place): the same span, turn and shift.
@@ -539,76 +704,292 @@ fn same_shape<'a>(w: &Way, alts: &[&'a Way]) -> Option<&'a Way> {
     alts.iter().copied().find(|a| (a.span - w.span).abs() < 0.05 && (a.turn - w.turn).abs() < 0.1 && (a.shift - w.shift).abs() < 0.05)
 }
 
+/// How far apart two joints may be and still meet (scene units, across; in height), as Check platforms joins walks
+/// (`docs/re/platforms_and_bridges.md`, rule 6).
+pub const JOINT_ACROSS: f64 = 0.01;
+pub const JOINT_HEIGHT: f64 = 0.1;
+
+/// How far two joints' ways may be off and still meet (radians: 0.1 degrees, a thousandth of a unit at a joint's corners).
+const JOINT_TURN: f64 = 0.1 * std::f64::consts::PI / 180.0;
+
+/// How many pieces an exact finish on an attached end may take, and from how far (straights) it is looked for.
+const FINISH_PIECES: usize = 3;
+const FINISH_REACH: f64 = 3.5;
+
+/// How far a building's walk may be over its level from the culture's and the pieces still meet it (scene units): they stand that much
+/// higher or lower.
+const WALK_SLACK: f64 = 0.5;
+
+/// A procedural stretch at an attached end: about a straight long (from half of one to one and a half).
+const STRETCH_MIN: f64 = 0.5;
+const STRETCH_MAX: f64 = 1.5;
+
 /// Lays a line (x, z, scene units, the wall's way: an unflipped wall's outer face on its left as `outer_of` turns) with a culture's pieces,
 /// on flat ground: from its first point along its first segment, each joint the way that, with the best two after it, follows the line
 /// best, until the line's end is nearer than half a straight. Every `defence_every` a tower or bastion of the same shape takes the place of
-/// the piece laid, every `access_every` a door section; caps close the ends asked.
+/// the piece laid, every `access_every` a door section; caps close the free ends asked. **Every joint joins** (`joins`: an edge of each
+/// with the same corners, as the game links platforms): a piece follows another only where its entry joins the other's exit (TDD's
+/// gondor curves only after a curve or the curved joiner, its barbarian `600m` curves only after each other).
+///
+/// An attached end (phase 3) leaves or meets its building's joint along the building's way (the line's end made straight along it for a
+/// straight's length). A first end is met by the pieces when the building's walk is the culture's (within [`WALK_SLACK`]; the wall at the
+/// building's walk) and a piece joins its joint, else by a procedural stretch a straight long. A last end is met by the pieces when up to
+/// [`FINISH_PIECES`] of them land on its joint exactly, joining it, at its walk, else by a procedural stretch from the last piece. With
+/// only its last end attached, a wall is laid from that end, so that the pieces meet it.
 #[must_use]
 pub fn lay(line: &[[f64; 2]], cat: &Catalogue, options: LayOptions) -> KitLayout {
+    if options.ends[0].is_none() && options.ends[1].is_some() && line.len() >= 2 {
+        let back = line.iter().rev().copied().collect::<Vec<_>>();
+        let o = LayOptions { caps: [options.caps[1], options.caps[0]], ends: [options.ends[1].clone(), None], ..options };
+        let mut laid = lay_from(&back, cat, &o, true);
+        laid.placed.reverse();
+        for p in &mut laid.placed {
+            p.joints.swap(0, 1);
+        }
+
+        laid.stretches = laid.stretches.iter().rev().map(Stretch::reversed).collect();
+        laid.attached.swap(0, 1);
+        return laid;
+    }
+
+    lay_from(line, cat, &options, false)
+}
+
+/// The line with its first `lead` made straight from `at` along `out` (the rest from where it is past `lead` along).
+fn lead_in(pts: &[[f64; 2]], at: [f64; 2], out: [f64; 2], lead: f64) -> Vec<[f64; 2]> {
+    let line = Line::new(pts);
+    let mut v = vec![at, [at[0] + out[0] * lead, at[1] + out[1] * lead]];
+    v.extend(pts.iter().zip(&line.s).filter(|(_, s)| **s > lead * 1.5).map(|(p, _)| *p));
+    if v.len() == 2 {
+        v.push(pts[pts.len() - 1]);
+    }
+
+    v
+}
+
+/// Whether a joint with these edges can be followed by one with those: they join, or either is not known.
+fn meets(a: &[JointEdge], b: &[JointEdge]) -> bool {
+    a.is_empty() || b.is_empty() || joins(a, b)
+}
+
+/// Up to `depth` ways from a joint that land on `goal` going `goal_way` (radians) exactly: the fewest.
+fn finish<'a>(ways: &[&'a Way], (p, heading, edges): ([f64; 2], f64, &[JointEdge]), (goal, goal_way, goal_edges): ([f64; 2], f64, &[JointEdge]), depth: usize) -> Option<Vec<&'a Way>> {
+    let met = |q: [f64; 2], h: f64| (q[0] - goal[0]).hypot(q[1] - goal[1]) <= JOINT_ACROSS && wrap(h - goal_way).abs() <= JOINT_TURN;
+    if met(p, heading) && meets(edges, goal_edges) {
+        return Some(vec![]);
+    }
+
+    let reach = (p[0] - goal[0]).hypot(p[1] - goal[1]);
+    if depth == 0 || reach > ways.iter().map(|w| f64::from(w.span)).fold(0.0, f64::max) * depth as f64 + JOINT_ACROSS {
+        return None;
+    }
+
+    ways.iter().filter(|w| meets(edges, &w.entry_edges)).filter_map(|&w| {
+        let (_, q, h) = place(w, p, heading, 0.0);
+        let mut rest = finish(ways, (q, h, &w.exit_edges), (goal, goal_way, goal_edges), depth - 1)?;
+        rest.insert(0, w);
+        Some(rest)
+    }).min_by_key(Vec::len)
+}
+
+/// Whether two joints' edges are the same (what joins the one joins the other); either not known: the same.
+fn same_edges(a: &[JointEdge], b: &[JointEdge]) -> bool {
+    a.is_empty() || b.is_empty() || (a.len() == b.len() && a.iter().zip(b).all(|(e, f)| (e.lo - f.lo).abs() <= CORNER_ACROSS && (e.hi - f.hi).abs() <= CORNER_ACROSS && (e.y_lo - f.y_lo).abs() <= CORNER_HEIGHT && (e.y_hi - f.y_hi).abs() <= CORNER_HEIGHT))
+}
+
+/// `lay`, from the first end (`right`: the outer face on the line's right, a wall laid from its last end).
+fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: bool) -> KitLayout {
     let mut out = KitLayout::default();
     if line.len() < 2 {
         return out;
     }
 
-    let all = cat.pieces.iter().flat_map(ways).collect::<Vec<_>>();
+    let all = cat.pieces.iter().flat_map(ways).map(|w| if right { w.reversed() } else { w }).collect::<Vec<_>>();
     let laid = all.iter().filter(|w| matches!(w.role, Role::Straight | Role::Jog | Role::Turn | Role::Curve)).collect::<Vec<_>>();
     let (defences, accesses) = (all.iter().filter(|w| w.role == Role::Defence).collect::<Vec<_>>(), all.iter().filter(|w| w.role == Role::Access).collect::<Vec<_>>());
-    let Some(straight) = laid.iter().filter(|w| w.role == Role::Straight).map(|w| f64::from(w.span)).reduce(f64::max) else {
+    let Some(longest) = laid.iter().filter(|w| w.role == Role::Straight).max_by(|a, b| a.span.total_cmp(&b.span)).copied() else {
         out.notes.push(format!("{}: no straight piece", cat.base));
         return out;
     };
 
-    let line = Line::new(line);
+    let straight = f64::from(longest.span);
+    let walk = f64::from(longest.entry.at[1]);
+    let outer = |way: f64| {
+        let o = outer_of([way.cos() as f32, way.sin() as f32]);
+        if right { [-f64::from(o[0]), -f64::from(o[1])] } else { [f64::from(o[0]), f64::from(o[1])] }
+    };
+
+    // The line's attached ends made straight along their buildings' ways.
+    let mut pts = line.to_vec();
+    let lead = straight.min(Line::new(&pts).length() * 0.3);
+    if let Some(j) = &options.ends[0] {
+        pts = lead_in(&pts, j.at, j.out, lead);
+    }
+
+    if let Some(j) = &options.ends[1] {
+        let back = pts.iter().rev().copied().collect::<Vec<_>>();
+        pts = lead_in(&back, j.at, j.out, lead).into_iter().rev().collect();
+    }
+
+    let line = Line::new(&pts);
+    let way_of = |a: f64| [a.cos(), a.sin()];
+    let mut level = options.level;
     let mut p = line.pts[0];
     let mut heading = (line.pts[1][1] - p[1]).atan2(line.pts[1][0] - p[0]);
     let mut at = 0.0;
-    let (mut since_defence, mut since_access) = (0.0, 0.0);
-    for _ in 0..2000 {
-        if at >= line.length() - straight * 0.5 {
-            break;
+
+    // The edges of the joint the next piece joins (empty: anything): a procedural stretch's piece ends as the culture's straight.
+    let mut edges: Vec<JointEdge> = vec![];
+    let side_off = |j: &EndJoint, way: f64| j.side != [0.0, 0.0] && {
+        let o = outer(way);
+        j.side[0] * o[0] + j.side[1] * o[1] < 0.0
+    };
+
+    // The first end on its building: on its joint at its walk when the walks match and a piece joins it, else a straight further on after
+    // a stretch.
+    if let Some(j) = &options.ends[0] {
+        let way = j.out[1].atan2(j.out[0]);
+        if side_off(j, way) {
+            out.notes.push("the first end has its outer side the other way from the building's: flip the wall".to_owned());
         }
 
-        let best = laid.iter().filter_map(|&w| ahead(&line, &laid, w, (p, heading), at, AHEAD).map(|c| (w, c))).min_by(|a, b| a.1.total_cmp(&b.1));
-        let Some((mut w, _)) = best else { break };
+        let walks = ((j.walk - j.level) - walk).abs() <= WALK_SLACK;
+        let joined = laid.iter().any(|w| meets(&j.edges, &w.entry_edges));
+        if walks && joined {
+            (level, p, heading) = (j.walk - walk, j.at, way);
+            edges.clone_from(&j.edges);
+            out.attached[0] = Some(true);
+        } else {
+            let why = if walks { "no piece joins its joint corner for corner".to_owned() } else { format!("its walk is {:.2} up, the pieces' {walk:.2}", j.walk - j.level) };
+            let also = if meets(&j.edges, &longest.entry_edges) { "" } else { " (its pieces do not join it corner for corner either: another culture's)" };
+            out.notes.push(format!("the first end's building: {why}: a procedural stretch meets it{also}"));
+            at = straight.min(line.length() * 0.5);
+            (p, heading) = line.point_at(at);
+            out.stretches.push(Stretch { from: j.at, from_way: j.out, from_level: j.walk - walk, to: p, to_way: way_of(heading), to_level: level });
+            edges.clone_from(&longest.exit_edges);
+            out.attached[0] = Some(false);
+        }
+    }
+
+    let first_edges = edges.clone();
+
+    // The walk's height at the joint (scene y): the pieces are placed by it.
+    let mut walk_at = level + walk;
+    let goal = options.ends[1].as_ref().map(|j| (j, (-j.out[1]).atan2(-j.out[0])));
+    let can_meet = goal.is_some_and(|(j, _)| (j.walk - walk_at).abs() <= JOINT_HEIGHT);
+    let mut met = false;
+    let mut history: Vec<([f64; 2], f64, f64, Vec<JointEdge>)> = vec![];
+
+    // Per piece laid, its entry's edges (what the first end's cap joins).
+    let mut entries: Vec<Vec<JointEdge>> = vec![];
+    let (mut since_defence, mut since_access) = (0.0, 0.0);
+    for _ in 0..2000 {
+        let left = line.length() - at;
+        match goal {
+            Some((j, goal_way)) => {
+                if can_meet && left <= straight * FINISH_REACH && let Some(ws) = finish(&laid, (p, heading, &edges), (j.at, goal_way, &j.edges), FINISH_PIECES) {
+                    for w in ws {
+                        let (placed, q, h) = place(w, p, heading, walk_at);
+                        walk_at = placed.origin[1] + f64::from(w.exit.at[1]);
+                        out.placed.push(placed);
+                        entries.push(w.entry_edges.clone());
+                        (p, heading) = (q, h);
+                        edges.clone_from(&w.exit_edges);
+                    }
+
+                    met = true;
+                    break;
+                }
+
+                if left <= straight * STRETCH_MAX {
+                    break;
+                }
+            }
+            None if left <= straight * 0.5 => break,
+            None => {}
+        }
+
+        let best = laid.iter().filter(|w| meets(&edges, &w.entry_edges)).filter_map(|&w| ahead(&line, &laid, w, (p, heading), at, AHEAD).map(|c| (w, c))).min_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((mut w, _)) = best else {
+            out.notes.push(format!("{}: no piece goes on from the joint at ({:.1}, {:.1})", cat.base, p[0], p[1]));
+            break;
+        };
+
+        // A tower or door section in its place: of the same shape, joining as it does.
         let span = f64::from(w.span);
-        if options.defence_every > 0.0 && since_defence + span >= options.defence_every && let Some(d) = same_shape(w, &defences) {
+        let fits = |a: &&Way| meets(&edges, &a.entry_edges) && same_edges(&a.exit_edges, &w.exit_edges);
+        let (d_ok, a_ok) = (defences.iter().copied().filter(fits).collect::<Vec<_>>(), accesses.iter().copied().filter(fits).collect::<Vec<_>>());
+        if options.defence_every > 0.0 && since_defence + span >= options.defence_every && let Some(d) = same_shape(w, &d_ok) {
             w = d;
             since_defence = 0.0;
-        } else if options.access_every > 0.0 && since_access + span >= options.access_every && let Some(a) = same_shape(w, &accesses) {
+        } else if options.access_every > 0.0 && since_access + span >= options.access_every && let Some(a) = same_shape(w, &a_ok) {
             w = a;
             since_access = 0.0;
         }
 
         since_defence += span;
         since_access += span;
-        let (placed, q, h) = place(w, p, heading, options.level);
+        history.push((p, heading, walk_at, edges.clone()));
+        let (placed, q, h) = place(w, p, heading, walk_at);
+        walk_at = placed.origin[1] + f64::from(w.exit.at[1]);
         out.placed.push(placed);
+        entries.push(w.entry_edges.clone());
         (p, heading) = (q, h);
+        edges.clone_from(&w.exit_edges);
         let (s, d, _) = line.nearest(p);
         out.stray = out.stray.max(d);
         at = s;
     }
 
-    out.short_by = (line.length() - at).max(0.0);
+    // The last end on its building: met by the pieces, else a stretch from the last of them (taken back while it came too near, or ends
+    // on a joint the stretch's straight does not join).
+    if let Some((j, goal_way)) = goal {
+        if !met {
+            while ((p[0] - j.at[0]).hypot(p[1] - j.at[1]) < straight * STRETCH_MIN || !meets(&edges, &longest.entry_edges)) && let Some((q, h, wh, e)) = history.pop() {
+                out.placed.pop();
+                entries.pop();
+                (p, heading, walk_at, edges) = (q, h, wh, e);
+            }
 
-    // The caps: a cap's one joint on the wall's end, its outer side on the wall's.
+            let why = if !can_meet {
+                format!("its walk is {:.2} up, the pieces' {walk:.2}", j.walk - j.level)
+            } else if laid.iter().any(|w| meets(&w.exit_edges, &j.edges)) {
+                "the pieces do not land on its joint".to_owned()
+            } else {
+                "no piece joins its joint corner for corner".to_owned()
+            };
+            let also = if meets(&longest.exit_edges, &j.edges) { "" } else { " (its pieces do not join it corner for corner either: another culture's)" };
+            out.notes.push(format!("the last end: {why}: a procedural stretch meets it{also}"));
+            out.stretches.push(Stretch { from: p, from_way: way_of(heading), from_level: walk_at - walk, to: j.at, to_way: way_of(goal_way), to_level: j.walk - walk });
+        }
+
+        if side_off(j, goal_way) {
+            out.notes.push("the last end has its outer side the other way from the building's: flip the wall".to_owned());
+        }
+
+        out.attached[1] = Some(met);
+    } else {
+        out.short_by = (line.length() - at).max(0.0);
+    }
+
+    // The caps of the free ends: a cap's one joint on the wall's end, joining it, its outer side on the wall's.
     let caps = cat.of(Role::Cap).collect::<Vec<_>>();
-    let start = (line.pts[0], (line.pts[1][1] - line.pts[0][1]).atan2(line.pts[1][0] - line.pts[0][0]));
-    for (k, (joint, wall_way)) in [(0, start), (1, (p, heading))] {
-        if !options.caps[k] {
+    let start = (line.pts[0], (line.pts[1][1] - line.pts[0][1]).atan2(line.pts[1][0] - line.pts[0][0]), level + walk, entries.first().cloned().unwrap_or(first_edges));
+    for (k, (joint, wall_way, cap_walk, end_edges)) in [(0, start), (1, (p, heading, walk_at, edges))] {
+        if !options.caps[k] || options.ends[k].is_some() {
             continue;
         }
 
         // The way the wall leaves the cap through its joint: on along the wall at the start, back along it at the end.
         let leave = if k == 0 { wall_way } else { wrap(wall_way + std::f64::consts::PI) };
-        let wall_dir = [wall_way.cos() as f32, wall_way.sin() as f32];
-        let cap = caps.iter().find(|c| {
+        let wall_outer = outer(wall_way);
+        let cap = caps.iter().filter(|c| meets(c.edges.first().map_or(&[][..], Vec::as_slice), &end_edges)).find(|c| {
             let j = c.joints[0];
             j.side == [0.0, 0.0] || {
                 // The cap's side turned into the world as it will be laid, against the wall's outer side there.
                 let yaw = leave - angle_of(j.out);
                 let s = turned([f64::from(j.side[0]), f64::from(j.side[1])], yaw);
-                dot([s[0] as f32, s[1] as f32], outer_of(wall_dir)) > 0.0
+                s[0] * wall_outer[0] + s[1] * wall_outer[1] > 0.0
             }
         });
         let Some(cap) = cap else {
@@ -619,7 +1000,7 @@ pub fn lay(line: &[[f64; 2]], cat: &Catalogue, options: LayOptions) -> KitLayout
         let j = cap.joints[0];
         let yaw = wrap(leave - angle_of(j.out));
         let e = turned(xz(&j), yaw);
-        let placed = Placed { key: cap.key.clone(), role: Role::Cap, origin: [joint[0] - e[0], options.level, joint[1] - e[1]], yaw, joints: [joint, joint] };
+        let placed = Placed { key: cap.key.clone(), role: Role::Cap, origin: [joint[0] - e[0], cap_walk - f64::from(j.at[1]), joint[1] - e[1]], yaw, joints: [joint, joint] };
         if k == 0 { out.placed.insert(0, placed) } else { out.placed.push(placed) }
     }
 
@@ -641,7 +1022,7 @@ mod tests {
         let j = |at: [f32; 3], out: [f32; 2]| PieceEnd { at, out, side };
         let piece = |key: &str, joints: Vec<PieceEnd>| {
             let m = classify(key, &joints).unwrap();
-            KitPiece { key: key.to_owned(), role: m.role, walk: joints[0].at[1], joints, span: m.span, turn: m.turn, rise: m.rise, shift: m.shift, footprint: vec![] }
+            KitPiece { key: key.to_owned(), role: m.role, walk: joints[0].at[1], joints, span: m.span, turn: m.turn, rise: m.rise, shift: m.shift, footprint: vec![], edges: vec![] }
         };
         let straight = vec![j([-10.0, 15.0, 0.0], [-1.0, 0.0]), j([10.0, 15.0, 0.0], [1.0, 0.0])];
         // The corners: in along +x, out towards -z (turning away from the outer side, +z) or +z.
@@ -683,7 +1064,108 @@ mod tests {
         assert!(keys.contains(&"x_fort_external_corner"), "{keys:?}");
         assert!(keys.contains(&"x_fort_tower_c_straight"), "{keys:?}");
         assert_eq!((keys[0], keys[keys.len() - 1]), ("x_fort_endcap_left", "x_fort_endcap_right"), "{keys:?}");
-        assert!(laid.stray < 12.0, "{}", laid.stray);
+        assert!(laid.stray < 12.0, "{} {:?}", laid.stray, laid.placed.iter().map(|p| (&p.key, p.joints)).collect::<Vec<_>>());
+    }
+
+    /// A building's end at `at`, the wall leaving it along `out`, its walk `walk` over its level 0.
+    fn joint(at: [f64; 2], out: [f64; 2], walk: f64) -> EndJoint {
+        EndJoint { at, out, side: [0.0, 0.0], walk, level: 0.0, edges: vec![] }
+    }
+
+    fn joined(laid: &KitLayout) {
+        for w in laid.placed.windows(2) {
+            let (a, b) = (w[0].joints[1], w[1].joints[0]);
+            assert!((a[0] - b[0]).hypot(a[1] - b[1]) < 1e-6, "joint to joint: {:?}", laid.placed);
+        }
+    }
+
+    #[test]
+    fn ends_on_buildings_a_whole_number_of_pieces_apart_are_met_by_the_pieces() {
+        let ends = [Some(joint([0.0, 0.0], [1.0, 0.0], 15.0)), Some(joint([100.0, 0.0], [-1.0, 0.0], 15.0))];
+        let laid = lay(&[[0.0, 0.0], [100.0, 0.0]], &culture(), LayOptions { caps: [true, true], ends, ..LayOptions::default() });
+        let keys = laid.placed.iter().map(|p| p.key.as_str()).collect::<Vec<_>>();
+        assert_eq!(keys, ["x_fort_straight"; 5], "no caps on attached ends");
+        assert!(laid.stretches.is_empty() && laid.attached == [Some(true), Some(true)], "{laid:?}");
+        let last = laid.placed[4].joints[1];
+        assert!((last[0] - 100.0).abs() < 1e-6 && last[1].abs() < 1e-6);
+        joined(&laid);
+    }
+
+    #[test]
+    fn an_end_the_pieces_cannot_meet_gets_a_procedural_stretch_about_a_straight_long() {
+        let ends = [Some(joint([0.0, 0.0], [1.0, 0.0], 15.0)), Some(joint([95.0, 0.0], [-1.0, 0.0], 15.0))];
+        let laid = lay(&[[0.0, 0.0], [95.0, 0.0]], &culture(), LayOptions { ends, ..LayOptions::default() });
+        assert_eq!(laid.attached, [Some(true), Some(false)]);
+        let [st] = laid.stretches.as_slice() else { panic!("one stretch: {laid:?}") };
+        assert!(st.length() >= 10.0 - 1e-6 && st.length() <= 30.0 + 1e-6, "{st:?}");
+        assert!((st.to[0] - 95.0).abs() < 1e-9 && st.to_way == [1.0, 0.0], "on the building's joint, going into it: {st:?}");
+        let last = laid.placed.last().unwrap().joints[1];
+        assert!((st.from[0] - last[0]).abs() < 1e-9 && (st.from[1] - last[1]).abs() < 1e-9, "from the last piece's joint");
+        joined(&laid);
+    }
+
+    #[test]
+    fn a_wall_attached_at_its_last_end_only_is_laid_from_it() {
+        let ends = [None, Some(joint([93.0, 0.0], [-1.0, 0.0], 15.0))];
+        let laid = lay(&[[0.0, 0.0], [93.0, 0.0]], &culture(), LayOptions { caps: [true, true], ends, ..LayOptions::default() });
+        assert!(laid.stretches.is_empty() && laid.attached == [None, Some(true)], "{laid:?}");
+        assert_eq!(laid.placed[0].key, "x_fort_endcap_left", "the free first end capped");
+        let last = laid.placed.last().unwrap();
+        assert_eq!(last.key, "x_fort_straight");
+        assert!((last.joints[1][0] - 93.0).abs() < 1e-6 && last.joints[1][1].abs() < 1e-6, "on the joint: {last:?}");
+        joined(&laid);
+    }
+
+    #[test]
+    fn a_first_end_on_a_building_of_another_walk_height_starts_with_a_stretch() {
+        let ends = [Some(joint([0.0, 0.0], [1.0, 0.0], 9.0)), None];
+        let laid = lay(&[[0.0, 0.0], [100.0, 0.0]], &culture(), LayOptions { caps: [true, true], ends, ..LayOptions::default() });
+        assert_eq!(laid.attached, [Some(false), None]);
+        let [st] = laid.stretches.as_slice() else { panic!("one stretch: {laid:?}") };
+        assert!(st.from == [0.0, 0.0] && (st.length() - 20.0).abs() < 1e-6, "{st:?}");
+        assert!((laid.placed[0].joints[0][0] - 20.0).abs() < 1e-6, "the pieces from the stretch's end: {:?}", laid.placed[0]);
+        assert_eq!(laid.placed.last().unwrap().key, "x_fort_endcap_right");
+    }
+
+    #[test]
+    fn a_piece_follows_another_only_where_their_joints_join() {
+        // The straights' joints: one edge 4 wide; the curves': one 6 wide (they join each other, not a straight); a joiner between.
+        let e = |half: f32| vec![JointEdge { lo: -half, hi: half, y_lo: 0.0, y_hi: 0.0 }];
+        let mut c = culture();
+        for p in &mut c.pieces {
+            p.edges = vec![e(2.0); p.joints.len()];
+        }
+
+        let side = [0.0, 1.0];
+        let turn = 10f32.to_radians();
+        let curve_joints = |a: [f32; 3]| vec![PieceEnd { at: a, out: [-1.0, 0.0], side }, PieceEnd { at: [a[0] + 20.0, 15.0, -1.7], out: [turn.cos(), -turn.sin()], side: [turn.sin(), turn.cos()] }];
+        let curve = |key: &str, edges: Vec<Vec<JointEdge>>| {
+            let joints = curve_joints([-10.0, 15.0, 0.0]);
+            let m = classify(key, &joints).unwrap();
+            KitPiece { key: key.to_owned(), role: m.role, walk: 15.0, joints, span: m.span, turn: m.turn, rise: m.rise, shift: m.shift, footprint: vec![], edges }
+        };
+        c.pieces.push(curve("x_fort_curve_wide", vec![e(3.0), e(3.0)]));
+        let line = (0..=40).map(|i| {
+            let a = -std::f64::consts::FRAC_PI_2 * f64::from(i) / 40.0;
+            [150.0 * a.sin().abs(), -150.0 + 150.0 * a.cos()]
+        }).collect::<Vec<_>>();
+        // Never side by side: a wide curve and a piece of the straights' joints (a straight, a corner, a tower, a cap).
+        let apart = |l: &KitLayout| {
+            let k = l.placed.iter().map(|p| p.key.as_str()).collect::<Vec<_>>();
+            let wide = |k: &str| k == "x_fort_curve_wide";
+            let narrow = |k: &str| !wide(k) && k != "x_fort_curved_joiner";
+            assert!(k.windows(2).all(|w| !(wide(w[0]) && narrow(w[1]) || narrow(w[0]) && wide(w[1]))), "{k:?}");
+            k.iter().filter(|k| wide(k)).count()
+        };
+        let laid = lay(&line, &c, LayOptions { caps: [true, true], ..LayOptions::default() });
+        apart(&laid);
+
+        // With a joiner (the straights' joint on one end, the curves' on the other) a wall can go from straights to curves.
+        c.pieces.push(curve("x_fort_curved_joiner", vec![e(2.0), e(3.0)]));
+        let mut l2 = line.clone();
+        l2.insert(0, [-60.0, -150.0]);
+        let laid = lay(&l2, &c, LayOptions { caps: [true, true], ..LayOptions::default() });
+        assert!(apart(&laid) > 0, "{:?}", laid.placed.iter().map(|p| &p.key).collect::<Vec<_>>());
     }
 
     #[test]
@@ -692,7 +1174,7 @@ mod tests {
         // A straight with its outer side known: one way; a corner: one way; a step that says no side: both.
         assert_eq!(ways(&c.pieces[0]).len(), 1);
         assert_eq!(ways(&c.pieces[2]).len(), 1);
-        let step = KitPiece { key: "x_fort_straight_stepped_down_bastion_a".to_owned(), role: Role::Step, joints: vec![PieceEnd { at: [10.0, 15.0, 0.0], out: [1.0, 0.0], side: [0.0, 0.0] }, PieceEnd { at: [-10.0, 25.0, 0.0], out: [-1.0, 0.0], side: [0.0, 0.0] }], span: 20.0, turn: 0.0, rise: 10.0, shift: 0.0, walk: 15.0, footprint: vec![] };
+        let step = KitPiece { key: "x_fort_straight_stepped_down_bastion_a".to_owned(), role: Role::Step, joints: vec![PieceEnd { at: [10.0, 15.0, 0.0], out: [1.0, 0.0], side: [0.0, 0.0] }, PieceEnd { at: [-10.0, 25.0, 0.0], out: [-1.0, 0.0], side: [0.0, 0.0] }], span: 20.0, turn: 0.0, rise: 10.0, shift: 0.0, walk: 15.0, footprint: vec![], edges: vec![] };
         let w = ways(&step);
         assert_eq!(w.len(), 2);
         assert!(w.iter().any(|w| w.rise > 5.0) && w.iter().any(|w| w.rise < -5.0), "up one way, down the other");
@@ -743,3 +1225,4 @@ mod tests {
         assert!(classify("x_fort_straight", &[x0]).is_err() && classify("x_fort_straight", &[]).is_err());
     }
 }
+

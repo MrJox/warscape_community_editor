@@ -1855,7 +1855,13 @@ fn a_wall_is_drawn_as_the_create_panel_draws_it() {
     assert_eq!(t.tscene().layer_path(wall), "Buildings");
     let get = |a: &str| t.tscene().doc().get(wall, a).unwrap_or_default();
     assert_eq!((get("wall_base").as_str(), get("polygon_closed").as_str(), get("wall_tolerance").as_str()), ("roman_fort_straight", "0", "0.5"));
-    assert!(t.wall_layout(wall).is_some(), "the wall has a layout");
+
+    // A new wall is a kit wall (*Procedural* off: docs/plans/kit_walls.md), which has no procedural layout; with *Procedural* on it has one.
+    assert!(!wce_walls::scene::is_procedural(t.tscene(), wall) && t.wall_layout(wall).is_none(), "a kit wall");
+    let pts = vec![Float3::new(10.0, 0.0, 50.0), Float3::new(40.0, 0.0, 50.0), Float3::new(60.0, 0.0, 70.0)];
+    let attrs = std::collections::BTreeMap::from([("wall_base".to_owned(), "roman_fort_straight".to_owned()), (wce_tile::new_instances::WALL_PROCEDURAL.to_owned(), "true".to_owned())]);
+    let procedural = d.create_with(WALL_SPLINE, layer, &Create::Line(pts), "", &attrs).unwrap();
+    assert!(d.tile().wall_layout(procedural).is_some(), "the procedural wall has a layout");
 }
 
 #[test]

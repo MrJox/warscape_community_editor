@@ -524,10 +524,21 @@ fn runs(samples: &[Sample], tolerance: f64, min_run: f64, ends: [Option<f64>; 2]
     // The far end attached: its run is at the given level. A short end run whose neighbour is within `tolerance` of that level makes
     // the neighbour take it too: no step squeezed against the building, where it has no room (Amon Calen's wall 1: 0.13 up within the
     // last metre, a near vertical riser at its tower).
+    // Both ends attached and one run between them: it is split in the middle, each half at its end's level (a step between), so that
+    // neither end is moved off its building (a kit wall's procedural stretch between a piece and a gate 0.22 lower, docs/plans/kit_walls.md
+    // phase 3: the run took the gate's level and the piece's joint was 0.22 off).
+    if let ([Some(a), Some(b)], [only]) = (ends, out.as_slice()) && (a - b).abs() > 1e-9 {
+        let (s0, s1) = only.s;
+        let mid = samples.iter().map(|sm| sm.s).min_by(|x, y| (x - (s0 + s1) / 2.0).abs().total_cmp(&(y - (s0 + s1) / 2.0).abs())).unwrap_or(s0);
+        let drift = |lo: f64, hi: f64, level: f64| samples.iter().filter(|sm| sm.s >= lo && sm.s <= hi).map(|sm| (sm.ground - level).abs()).fold(0.0, f64::max);
+        out = vec![Run { s: (s0, mid), level: a, drift: drift(s0, mid, a) }, Run { s: (mid, s1), level: b, drift: drift(mid, s1, b) }];
+    }
+
     if let (Some(h), Some(last)) = (ends[1], out.last_mut()) {
         last.level = h;
         let n = out.len();
-        if n >= 2 && out[n - 1].s.1 - out[n - 1].s.0 < min_run && (out[n - 2].level - h).abs() <= tolerance {
+        let held = n == 2 && ends[0].is_some();
+        if n >= 2 && !held && out[n - 1].s.1 - out[n - 1].s.0 < min_run && (out[n - 2].level - h).abs() <= tolerance {
             out[n - 2].level = h;
         }
     }
@@ -961,6 +972,15 @@ mod tests {
         let plan = solve(&input, eight(), &|_, _| 3.0);
         assert!(plan.steps.iter().all(|st| st.s.0 >= 0.0 && st.s.1 <= plan.length + 1e-9), "{:?}", plan.steps);
         assert!(plan.samples[0].level.abs() < 1e-9, "the wall starts at the building's level: {}", plan.samples[0].level);
+    }
+
+    #[test]
+    fn two_attached_ends_at_levels_within_the_tolerance_hold_both() {
+        let p = crate::profile::profile("barbarian_fort_straight").unwrap();
+        let input = WallInput { points: vec![[0.0, 0.0], [26.0, 0.0]], sharp: vec![false, false], tolerance: 0.5, ends: [Some(0.22), Some(0.0)], ..WallInput::default() };
+        let plan = solve(&input, p, &|_, _| 0.1);
+        let (first, last) = (plan.samples.first().unwrap(), plan.samples.last().unwrap());
+        assert!((first.level - 0.22).abs() < 1e-9 && last.level.abs() < 1e-9, "{} {} {:?} {:?}", first.level, last.level, plan.runs, plan.steps);
     }
 
     #[test]

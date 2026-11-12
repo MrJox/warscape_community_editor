@@ -1364,7 +1364,24 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         // A wall of kit pieces (*Procedural* off): what it was laid with.
         if let Some(k) = el.and_then(|el| d.tile().kit_wall_report(el)) {
             let keys = k.placed.iter().map(|p| p.key.as_str()).collect::<Vec<_>>().join(" ");
-            return ok(format!("kit wall: {} pieces, strays {:.2} at most, short of its end by {:.2}{}: {keys}", k.placed.len(), k.stray, k.short_by, k.notes.iter().map(|n| format!("; {n}")).collect::<String>()));
+            let end = |a: Option<bool>| match a {
+                None => "free",
+                Some(true) => "on its building",
+                Some(false) => "on its building by a procedural stretch",
+            };
+            let u = d.tile().unit();
+            let stretches = k.stretches.iter().map(|st| format!("{:.2} m long ({:.2}, {:.2}) -> ({:.2}, {:.2})", st.length() / u, st.from[0] / u, st.from[1] / u, st.to[0] / u, st.to[1] / u)).collect::<Vec<_>>().join(", ");
+            return ok(format!(
+                "kit wall: {} pieces, strays {:.2} at most, short of its end by {:.2}; first end {}, last end {}; {} stretch(es){}{}: {keys}",
+                k.placed.len(),
+                k.stray,
+                k.short_by,
+                end(k.attached[0]),
+                end(k.attached[1]),
+                k.stretches.len(),
+                if stretches.is_empty() { String::new() } else { format!(" [{stretches}]") },
+                k.notes.iter().map(|n| format!("; {n}")).collect::<String>()
+            ));
         }
 
         let Some(l) = el.and_then(|el| d.tile().wall_layout(el)) else { return fail("no wall selected") };
@@ -1921,6 +1938,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             r.notes.len(),
             r.problems.iter().map(|p| format!("problem: {p}")).chain(r.notes.iter().map(|n| format!("note: {n}"))).collect::<Vec<_>>().join("\n")
         ))
+    });
+
+    c.add("wall_anchors", "wall_anchors <x m> <z m> <radius m>", "the fort buildings' ends near a point that a wall's end attaches to (in metres): each building's element and key, the end, and the way out of the building there", |e, a| {
+        let (Some(x), Some(z), Some(r)) = (a.first().and_then(|v| v.parse::<f64>().ok()), a.get(1).and_then(|v| v.parse::<f64>().ok()), a.get(2).and_then(|v| v.parse::<f64>().ok())) else {
+            return fail("usage: wall_anchors <x m> <z m> <radius m>");
+        };
+        let Some(d) = document(e) else { return fail("no tile open") };
+        let u = d.tile().unit();
+        let out = d.tile().wall_anchors().into_iter().filter(|a| (a.at[0] / u - x).hypot(a.at[2] / u - z) <= r).map(|a| {
+            format!("#{} {} at ({:.3}, {:.3}, {:.3}) axis ({:.3}, {:.3})", a.elem, a.key, a.at[0] / u, a.at[1] / u, a.at[2] / u, a.axis[0], a.axis[1])
+        }).collect::<Vec<_>>();
+        ok(format!("{} end(s)\n{}", out.len(), out.join("\n")))
     });
 
     c.add("wall_pairs", "wall_pairs <x m> <z m> <radius m> [detail]", "the fort buildings near a point and how their walks meet (Check platforms' wall walks): each building's key, position and turn, and per pair that meets its joints and, when it does not join, how far its facing edges are off", |e, a| {
