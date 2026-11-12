@@ -69,6 +69,9 @@ pub(crate) struct WallPreview {
 
     /// Each kit wall's last layout (`Tile::kit_layout`): what `wall_info` reports.
     pub(super) kit_layouts: HashMap<usize, wce_walls::kit::KitLayout>,
+
+    /// The tile's structure the kit walls' height layers were last swept against (`sweep_wall_ground`: a wall deleted takes its layer out).
+    swept: u64,
 }
 
 /// A wall's pieces being made: the job and what applying its result needs.
@@ -380,6 +383,11 @@ impl Tile {
     /// enough.
     pub(crate) fn update_wall_previews(&mut self, scene: &mut RenderScene) {
         self.take_wall_jobs(scene);
+        if self.wall_preview.swept != self.structure_version && !self.stroke_open {
+            self.wall_preview.swept = self.structure_version;
+            self.sweep_wall_ground();
+        }
+
         if self.wall_preview.pending.is_empty() || self.stroke_open {
             return;
         }
@@ -430,6 +438,9 @@ impl Tile {
             self.make_kit_wall_pieces(scene, elem);
             return;
         }
+
+        // A procedural one has no height layer: a kit wall's it was goes (rule 4).
+        self.sweep_wall_ground();
 
         let before = self.wall_preview.shown_as.remove(&elem);
         let ids = self.wall_preview.entities.remove(&elem).unwrap_or_default();

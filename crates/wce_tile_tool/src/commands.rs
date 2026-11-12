@@ -1358,6 +1358,36 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if d.set_point_attribute(el, i, "sharp", wce_tile::properties::format_bool(on)) { ok("") } else { fail("no such point") }
     });
 
+    c.add("ground_profile", "ground_profile <x0 m> <z0 m> <x1 m> <z1 m> <n>", "log the terrain's height (as it shows) at n + 1 points from (x0, z0) to (x1, z1), metres", |e, a| {
+        let v = a.iter().filter_map(|t| t.parse::<f32>().ok()).collect::<Vec<_>>();
+        let [x0, z0, x1, z1, n] = v.as_slice() else { return fail("usage: ground_profile <x0 m> <z0 m> <x1 m> <z1 m> <n>") };
+        let Some(d) = document(e) else { return no_tile() };
+        let n = (*n as usize).max(1);
+        ok((0..=n).map(|i| {
+            let t = i as f32 / n as f32;
+            let (x, z) = (x0 + (x1 - x0) * t, z0 + (z1 - z0) * t);
+            format!("({x:.1}, {z:.1}) {:.2}", d.tile().terrain_height(x, z))
+        }).collect::<Vec<_>>().join("\n"))
+    });
+
+    c.add("wall_layers", "wall_layers", "log the kit walls' height layers, in the stack's order: each one's name and owner (wall:<key>#<signature>)", |e, _| {
+        let Some(d) = document(e) else { return no_tile() };
+        let l = d.tile().kit_wall_layers();
+        ok(format!("{} layer(s){}", l.len(), l.iter().map(|(n, o)| format!("; {n} ({o})")).collect::<String>()))
+    });
+
+    c.add("wall_levels", "wall_levels", "log the selected kit wall's pieces with their levels at their joints, and the ground at their middle below the wall's height layer and as it shows (scene y)", |e, _| {
+        let el = primary(e);
+        let Some(d) = document(e) else { return no_tile() };
+        let Some(el) = el else { return fail("no wall selected") };
+        let rows = d.tile().kit_wall_levels(el);
+        if rows.is_empty() {
+            return fail("no kit wall selected");
+        }
+
+        ok(rows.iter().map(|(k, l, below, shown)| format!("{k}: {:.2} -> {:.2}, ground {below:.2} below, {shown:.2} shown", l[0], l[1])).collect::<Vec<_>>().join("\n"))
+    });
+
     c.add("wall_info", "wall_info", "log the selected wall's layout: base, length, corners, runs, step sections, attached ends, warnings (a kit wall: its pieces, how far it strays from its line, how short of its end it stops)", |e, _| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };

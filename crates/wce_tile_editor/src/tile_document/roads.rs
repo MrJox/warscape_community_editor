@@ -745,8 +745,8 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
     height.layers.retain(|l| alive(&l.owner));
     blend.layers.retain(|l| alive(&l.owner));
     ground.layers.retain(|l| alive(&l.owner));
-    // The owned layers on top, the roads' in the order they are made.
-    let rank = |o: &str| parse_owner(o).and_then(|(id, _)| roads.iter().position(|r| r.id == id)).unwrap_or(0);
+    // The owned layers on top, the roads' in the order they are made, the kit walls' over them as they were (kit_walls.rs).
+    let rank = |o: &str| if o.starts_with(super::kit_walls::OWNER) { usize::MAX } else { parse_owner(o).and_then(|(id, _)| roads.iter().position(|r| r.id == id)).unwrap_or(0) };
     height.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
     blend.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
     ground.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));

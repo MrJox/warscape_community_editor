@@ -918,6 +918,10 @@ impl TileDocument {
             extra.insert("road_id".to_owned(), t.next_road_id().to_string());
         }
 
+        if kind == super::WALL_SPLINE {
+            extra.insert(wce_tile::new_instances::WALL_ID.to_owned(), t.next_wall_id().to_string());
+        }
+
         // A wall's `hint` is its base wall.
         if kind == super::WALL_SPLINE && !hint.is_empty() {
             extra.insert("wall_base".to_owned(), hint.to_owned());
@@ -1770,7 +1774,7 @@ impl TileDocument {
                 }
 
                 let (c, points) = line(&pts)?;
-                new_polygon(kind, points, false).position(c)
+                new_polygon(kind, points, false).position(c).attr(wce_tile::new_instances::WALL_ID, t.next_wall_id().to_string())
             }
 
             (super::ROAD_SPLINE, Create::Line(pts)) => {

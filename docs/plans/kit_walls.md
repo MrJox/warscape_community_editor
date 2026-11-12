@@ -135,3 +135,31 @@ Tested (`scratch kitwall/k3.txt`, farm_western/1x1/ab with a barbarian and a Rom
 (5 joints); one from it to the Roman gate meets its first gate and climbs to the Roman one's walk by a stretch (a break there: the Roman
 gate's joint is another culture's, the report says so); a Roman wall attached by its last end only is laid from it and meets it. Check
 platforms: no break inside any wall.
+
+## Phase 4: slopes (done 2026-11-12)
+
+- **Steps** (`kit::lay_on`, the ground as a function): where the layout lays an in-line piece, a step of the culture's that joins there
+  (and that a piece goes on from) takes its place when the ground ahead (over the next piece and a half) is nearer the level the step
+  goes to than the level the wall is at: never where it would leave the wall farther off (rule 2). A step down gone through backwards is a
+  step up (TDD's gondor). Each piece records its level at its joints (`Placed::levels`: equal but at a step).
+- **One source of truth** (rule 1): the layout reads the ground **below the wall's own height layer** (`Tile::ground_below`); the
+  layer follows the layout, never the other way round. The procedural end stretches stand on the same ground.
+- **The height layer** (`Tile::kit_wall_ground`): a height layer of the wall's own, owned `wall:<key>#<signature>` (the key its `wall_id`,
+  given when a wall is made and by `migrate_walls` to an older one; a copied wall's n-th repeat `<id>.<n>`). Under each piece's base
+  (`KitPiece::area`: the hull of its level 0 platforms and footprint; the 8 m sets' `orange_thingies` are only a strip along the outer
+  face) the ground is set to the piece's level, ramped from one level to the other along a step, feathered over 4 m outside (smoothstep);
+  where two pieces' bases overlap, the one whose joints a point lies nearest the line between. The signature is what it writes (the
+  ground below to the millimetre): a layer is written only when it would change, and when it does the other walls are looked at again.
+  The walls' layers go over the roads' (the roads' job keeps them there), in the document's order. A wall gone, hidden or made procedural
+  takes its layer out (`sweep_wall_ground`: on the tile's structure changing and on a procedural remake). A move of the ground over 5 m
+  is logged (cut and fill).
+- Commands: `wall_levels`, `wall_layers`, `ground_profile`.
+
+Tested (scratch `kitwall/k4..k8.txt`, terrain_rugged_hills_desert/1x1/aa): a 12 m hill raised with the brush, a barbarian wall over it
+climbs five 2.5 m steps and comes down five, each piece's middle within 0.75 m of the ground below and the ground under it at its level; a Roman wall
+where the hill is lower takes one 5 m bastion step each way; Check platforms 0 breaks. A 37 m rock spire under a line: the barbarian wall
+climbs 10 m and the layer cuts the rest (logged). *Procedural* on takes the layer out, off brings the same back; deleting the wall takes it
+out, undo brings it back; saved and opened again, the layer is as it was (not made again).
+
+Left: phase 5 (the exports, Save for Assembly Kit, Siege AI). The height layer is in the tile's layers, so a save writes the ground it
+makes into the height map already.
