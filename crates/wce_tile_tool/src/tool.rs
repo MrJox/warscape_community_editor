@@ -4516,6 +4516,15 @@ impl TileTool {
         }
 
         doc.set_projects_root(Some(projects));
+
+        // A project decompiled before 2026-11-12: its whole-tile exclusion polygon (no generated trees) becomes polygons around the static
+        // trees (undo brings it back; saving keeps it).
+        match doc.convert_whole_tile_exclusion() {
+            Ok(Some(n)) => log::info(format!("{}: the exclusion polygon over the whole tile became {n} around the static trees, so the trees are generated around them (save to keep it)", doc.title())),
+            Ok(None) => {}
+            Err(err) => log::warn(format!("{}: the exclusion polygon over the whole tile was not converted: {err}", doc.title())),
+        }
+
         if let Some(w) = doc.exclusion_warning() {
             log::error(format!("{}: {w}", doc.title()));
         }
