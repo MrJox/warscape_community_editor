@@ -36,3 +36,10 @@ refuse (an unsaved tile, no database entry, the tile not in a kit's layout, a fi
 zip, another game's, a path outside the projects folder, the shared tile open, a file that does not write) never reach the log. To do:
 show a failure in a dialog (or a lasting notice) with the reason and what to do about it, write it to the log, and list there the
 prefabs a share left out and an import could not find.
+
+## The Inspector comes to the foreground when it changes
+
+User, 2026-11-12: when something changes what the Inspector shows (a selection, Flip mode's panel, a brush's settings, a placing's
+Inspector), and the Inspector is a tab that is not the one shown in its dock (behind Weather or Tile, say), it is brought to the
+foreground, so that what changed is seen. Only on a change of what it shows, not on every frame: a tab the user picked must stay picked
+while they work in it.
