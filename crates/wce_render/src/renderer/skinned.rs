@@ -5,6 +5,12 @@
 //! must not cross a line's end: [`PALETTE_WIDTH`] is a multiple of 3 and every palette starts on one. The engine keeps a ring of such textures
 //! (`WEIGHTED_MESH_ANIMATION_TEXTURE_CACHE`); here one dynamic texture, written once a frame, the instances sharing a palette sharing it.
 //!
+//! Rome II's `weightedcommon` (its own `fxc/`) samples the palette instead (`s_animation_map`, a texture and a sampler): texel `3 * bone + row`
+//! of the line in TEXCOORD3.x, at `u = texel * g_animation_texture_width.y` (1 / width) and `v = line * g_animation_texture_height.y`
+//! (1 / height). It has no offset along the line: each palette (and each sail's part of one) starts a line of its own, the width a power of
+//! two ([`ROME2_PALETTE_WIDTH`]) so that `texel / width` is exact (2026-11-12: bound as Attila's, its bones read zero and every skinned mesh
+//! collapsed to a point: the units showed their shields and weapons only).
+//!
 //! The instances are the entities' own small list, not the draw set's items: they change every frame and there are few. Nothing is culled yet,
 //! neither by the camera nor by the shadow cascades: the clipper does it.
 //!
@@ -26,6 +32,9 @@ use crate::shader_lib::{GameShader, bind_srv};
 
 /// The palette texture's width in texels: 512 bones per line, more than any skeleton has.
 pub(crate) const PALETTE_WIDTH: usize = 1536;
+
+/// Rome II's palette width: a line a palette, 682 bones at most.
+const ROME2_PALETTE_WIDTH: usize = 2048;
 
 /// The lines of a new palette texture, doubled when more are needed.
 const PALETTE_LINES: usize = 64;
@@ -97,6 +106,7 @@ pub(crate) struct SkinnedDraws {
     palette: Option<ID3D11Texture2D>,
     palette_srv: Option<ID3D11ShaderResourceView>,
     palette_lines: usize,
+    palette_width: usize,
     instances: Option<ID3D11Buffer>,
     capacity: usize,
     rigid_instances: Option<ID3D11Buffer>,
@@ -192,8 +202,13 @@ fn rigid_ps(m: &GpuMesh) -> String {
 }
 
 /// The lines `texels` take in the palette texture.
+#[cfg(test)]
 fn lines_of(texels: usize) -> usize {
-    texels.div_ceil(PALETTE_WIDTH)
+    lines_in(texels, PALETTE_WIDTH)
+}
+
+fn lines_in(texels: usize, width: usize) -> usize {
+    texels.div_ceil(width)
 }
 
 impl Renderer {
@@ -217,6 +232,9 @@ impl Renderer {
         let (units, o) = (self.camera.units, self.camera.origin);
         let mut texels: Vec<[f32; 4]> = vec![];
         let mut offset_of = HashMap::<usize, usize>::new();
+        let rome2 = self.game == super::game::RenderGame::Rome2;
+        // Rome II: a palette from a bone on (a sail's), a line of its own; by palette and first bone, its line.
+        let mut line_of = HashMap::<(usize, usize), usize>::new();
         let mut placed: Vec<(Run, Placed)> = vec![];
         // Each model looked up once a frame: a crew's men share a few dozen models over thousands of parts.
         let mut found: HashMap<String, Option<Arc<GpuModel>>> = HashMap::new();
@@ -228,11 +246,23 @@ impl Renderer {
             }
 
             // A palette an instance shares with others is written once.
-            let palette = *offset_of.entry(Arc::as_ptr(&s.palette) as usize).or_insert_with(|| {
-                let at = texels.len();
-                texels.extend(s.palette.iter().flat_map(|m| m.chunks_exact(4).map(|r| [r[0], r[1], r[2], r[3]])));
-                at
-            });
+            let palette = if rome2 { 0 } else {
+                *offset_of.entry(Arc::as_ptr(&s.palette) as usize).or_insert_with(|| {
+                    let at = texels.len();
+                    texels.extend(s.palette.iter().flat_map(|m| m.chunks_exact(4).map(|r| [r[0], r[1], r[2], r[3]])));
+                    at
+                })
+            };
+            let mut rome2_line = |base: usize| -> f32 {
+                let at = *line_of.entry((Arc::as_ptr(&s.palette) as usize, base)).or_insert_with(|| {
+                    let line = lines_in(texels.len(), ROME2_PALETTE_WIDTH);
+                    texels.resize(line * ROME2_PALETTE_WIDTH, [0.0; 4]);
+                    let bones = s.palette.iter().skip(base).take(ROME2_PALETTE_WIDTH / 3);
+                    texels.extend(bones.flat_map(|m| m.chunks_exact(4).map(|r| [r[0], r[1], r[2], r[3]])));
+                    line
+                });
+                at as f32 + 0.5
+            };
 
             // Scene units to game units, around the render origin.
             let rows = |m: &Float4x4| -> [[f32; 4]; 3] {
@@ -273,9 +303,9 @@ impl Renderer {
                             continue;
                         }
 
-                        // A sail's mesh: its own bones, after the model's earlier sails' (3 texels a bone).
-                        let first = palette + 3 * m.palette_base as usize;
-                        Placed::Skinned(SkinnedGpuInstance { world, palette: [first as f32, s.faction_scale, 0.0, 0.0], tint: part.tint, ..SkinnedGpuInstance::default() })
+                        // A sail's mesh: its own bones, after the model's earlier sails' (3 texels a bone). Rome II: their line.
+                        let first = if rome2 { rome2_line(m.palette_base as usize) } else { (palette + 3 * m.palette_base as usize) as f32 };
+                        Placed::Skinned(SkinnedGpuInstance { world, palette: [first, s.faction_scale, 0.0, 0.0], tint: part.tint, ..SkinnedGpuInstance::default() })
                     } else {
                         // A static mesh: on its part's bone, or its material's, at the pivot its vertices are stored around.
                         let bone = part.bone.or(u32::try_from(m.bone).ok()).and_then(|b| s.bones.get(b as usize));
@@ -332,11 +362,12 @@ impl Renderer {
     }
 
     fn write_palette(&mut self, texels: &[[f32; 4]]) -> bool {
-        let lines = lines_of(texels.len());
-        if lines > self.skinned.palette_lines {
+        let width = if self.game == super::game::RenderGame::Rome2 { ROME2_PALETTE_WIDTH } else { PALETTE_WIDTH };
+        let lines = lines_in(texels.len(), width);
+        if lines > self.skinned.palette_lines || width != self.skinned.palette_width {
             let height = lines.next_power_of_two().max(PALETTE_LINES);
             let desc = D3D11_TEXTURE2D_DESC {
-                Width: PALETTE_WIDTH as u32, Height: height as u32, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+                Width: width as u32, Height: height as u32, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
                 SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DYNAMIC, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
                 CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, MiscFlags: 0,
             };
@@ -349,13 +380,20 @@ impl Renderer {
             self.skinned.palette_srv = self.dev.create_shader_resource_view(&texture, None).ok();
             self.skinned.palette = Some(texture);
             self.skinned.palette_lines = height;
-            self.cbs.set_f("variant_animation_size", "g_animation_texture_width", &[PALETTE_WIDTH as f32, height as f32]);
+            self.skinned.palette_width = width;
+            if self.game == super::game::RenderGame::Rome2 {
+                // Read as (.y, .w): 1 / height and 1 / width.
+                self.cbs.set_f("variant_animation_size", "g_animation_texture_height", &[height as f32, 1.0 / height as f32]);
+                self.cbs.set_f("variant_animation_size", "g_animation_texture_width", &[width as f32, 1.0 / width as f32]);
+            } else {
+                self.cbs.set_f("variant_animation_size", "g_animation_texture_width", &[PALETTE_WIDTH as f32, height as f32]);
+            }
         }
 
         let Some(texture) = self.skinned.palette.clone() else { return false };
         let Ok(mut mapped) = self.ctx.map(&texture, 0, D3D11_MAP_WRITE_DISCARD, 0) else { return false };
         let pitch = mapped.row_pitch();
-        texels.chunks(PALETTE_WIDTH).enumerate().all(|(y, line)| mapped.write(y * pitch, line))
+        texels.chunks(width).enumerate().all(|(y, line)| mapped.write(y * pitch, line))
     }
 
     fn write_instances(&mut self, skinned: &[SkinnedGpuInstance], rigid: &[RigidInstance]) -> bool {
@@ -396,9 +434,12 @@ impl Renderer {
     /// The vertex shader's textures: the palette, and the rigid passes' empty selection ids.
     fn bind_palette(&self, vs: &GameShader) {
         for (name, slot) in &vs.textures {
-            let srv = if name == "t_animation_map" { &self.skinned.palette_srv } else { &self.res.instance_ids_srv };
+            // Attila's `t_animation_map`; Rome II's `s_animation_map`, sampled at the texels' corners: point.
+            let srv = if name == "t_animation_map" || name == "s_animation_map" { &self.skinned.palette_srv } else { &self.res.instance_ids_srv };
             self.ctx.vs_set_shader_resources(*slot, std::slice::from_ref(srv));
         }
+
+        crate::shader_lib::bind_sampler(&self.ctx, vs, "s_animation_map", self.states.s_clamp_point.as_ref());
     }
 
     fn skinned_vs(&mut self, stride: u32, shadow: bool) -> Option<(Rc<GameShader>, ID3D11InputLayout)> {

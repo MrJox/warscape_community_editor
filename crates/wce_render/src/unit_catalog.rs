@@ -7,7 +7,8 @@
 //!
 //! A naval unit is a `main_units` row with `is_naval`: its `land_unit` is the men aboard (their `unit_variants` rows are under the land unit's key,
 //! not the main unit's), its `naval_unit` -> `naval_units.ship` -> `ship_dbs` (`model`: a `models_naval` key, the ship's logic) and
-//! `unit_variants_ships` (`unit`: the naval unit, `variant`: the ship's definition). A ship's logic is `models_naval`, which rpfm doesn't read
+//! `unit_variants_ships` (`unit`: the naval unit, `variant`: the ship's definition; Rome II has no such table: its definitions are named after
+//! `ship_dbs.model`). A ship's logic is `models_naval`, which rpfm doesn't read
 //! (`wce_formats::models_naval`); its oars `models_oars`; its weapons `naval_weapons` -> `models_entity_weapons`.
 
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::schema::Schema;
 use wce_formats::anim_tables::{AnimationTable, parse_tables};
 use wce_formats::models_naval::{self, ShipLogic};
+use wce_vfs::files::Files as _;
 use wce_vfs::{Vfs, normalize};
 
 /// One `unit_variants` row.
@@ -219,6 +221,20 @@ impl UnitCatalog {
 
         for r in rows(vfs, schema, "unit_variants_ships", &["unit", "faction", "variant"])? {
             c.ships.push(ShipEntry { unit: r[0].clone(), faction: r[1].clone(), variant: r[2].clone() });
+        }
+
+        // Rome II has no `unit_variants_ships`: a ship's definition is named after its `ship_dbs.model` (`pel_three.variantmeshdefinition`,
+        // every one of its 49 models has one). Each naval unit takes its ship's, for every faction.
+        if c.ships.is_empty() {
+            let mut seen = std::collections::HashSet::new();
+            for n in naval.values() {
+                let Some(model) = ship_models.get(&n[1]).filter(|m| !m.is_empty()) else { continue };
+                if seen.insert(n[0].clone()) && vfs.exists(&variant_path(&model.to_lowercase())) {
+                    c.ships.push(ShipEntry { unit: n[0].clone(), faction: String::new(), variant: model.to_lowercase() });
+                }
+            }
+
+            c.ships.sort_by(|a, b| a.unit.cmp(&b.unit));
         }
 
         for path in vfs.list("db/models_naval_tables/", "") {

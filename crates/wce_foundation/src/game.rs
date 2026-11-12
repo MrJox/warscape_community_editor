@@ -353,8 +353,13 @@ impl GameProfile {
                 }
             }
 
+            // In name order (ASCII, case aside): of two packs of a type the first in that order wins, as the engine loads them (mods named
+            // `!...` to win). Rome II's `models3_rome2.pack` has the soldiers' parts that `models_rome2.pack` empties (removes): in the
+            // list's own order those were gone, and units showed only what other packs had (2026-11-12).
             VanillaPacks::List(names) => {
-                for name in *names {
+                let mut names = names.to_vec();
+                names.sort_by_key(|n| n.to_ascii_lowercase());
+                for name in names {
                     add(name, false, &mut order);
                 }
             }
