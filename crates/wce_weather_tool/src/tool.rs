@@ -731,6 +731,12 @@ impl Tool for WeatherTool {
         true
     }
 
+    fn inspector_subject(&mut self, e: &Editor) -> Option<u64> {
+        // The environment file it shows (another one opened: the Inspector to the front).
+        let id = e.docs.of_tool(WEATHER_TOOL_ID).unwrap_or(0);
+        (id != 0 && e.docs.find_as::<XmlFileDocument>(id).is_some_and(|d| d.is_environment())).then_some(id as u64)
+    }
+
     fn game_changed(&mut self, _: &mut Editor) {
         let picker = std::mem::take(&mut self.picker).for_another_game();
         *self = Self { picker, ..Self::default() };

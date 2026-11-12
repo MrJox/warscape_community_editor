@@ -236,6 +236,12 @@ ImGui runs with docking and no ini file. Each tool has its own layout file `<con
 `layout reset`, File menu entries and saving on exit (not in batch runs) manage the files. A layout that was never loaded (a switch before the first
 frame) is not saved over the tool's file.
 
+When what the Inspector shows changes to something (the selection, or the active tool's part of it: `Tool::inspector_subject`, the Tile
+tool's mode, brush settings, flip panel, what it places; the Weather tool's environment file) and the Inspector is a tab behind another in
+its dock, its tab is selected (`Editor::raise_inspector`, `gui::select_dock_tab`): without taking the keyboard's focus, unless the focus is
+in another tab of that same dock (a dock keeps its focused window's tab in front), where the Inspector is focused. Only on a change: a tab
+picked over it stays in front while nothing it shows changes; a tool switch only takes the new tool's as the start.
+
 A plain interactive start opens the tool the last interactive session was in (`last_tool` in the settings, kept on every switch,
 `Editor::restore_last_tool`). `--tool <id>` starts in that tool instead and leaves `last_tool` alone, and so does any scripted run (`--script`,
 `--cmd`, `--open`, `--tile`, `--shot`, `--capture`), so that scripts start where they expect.

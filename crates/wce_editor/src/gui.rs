@@ -79,6 +79,36 @@ pub fn set_window_focus_named(name: &str) {
     call!(sys::igSetWindowFocus_Str(n.as_ptr()))
 }
 
+/// Selects a docked window's tab in its dock without focusing it (the keyboard stays where it is); nothing for a floating window, or one
+/// not seen yet. Call it after the dock space (the tab bar takes it on its next update). When the focus is in another tab of that dock the
+/// window is focused instead: a dock keeps its focused window's tab in front.
+pub fn select_dock_tab(name: &str) {
+    let n = cs(name);
+    call!({
+        let w = sys::igFindWindowByName(n.as_ptr());
+        if w.is_null() || (*w).DockNode.is_null() {
+            return;
+        }
+
+        let nav = (*sys::igGetCurrentContext()).NavWindow;
+        if !nav.is_null() && !(*nav).RootWindow.is_null() && (*(*nav).RootWindow).DockNode == (*w).DockNode {
+            if (*nav).RootWindow != w {
+                sys::igSetWindowFocus_Str(n.as_ptr());
+            }
+        } else if sys::igDockNodeBeginAmendTabBar((*w).DockNode) {
+            let bar = sys::igGetCurrentTabBar();
+            if !bar.is_null() {
+                let tab = sys::igTabBarFindTabByID(bar, (*w).TabId);
+                if !tab.is_null() {
+                    sys::igTabBarQueueFocus_TabItemPtr(bar, tab);
+                }
+            }
+
+            sys::igDockNodeEndAmendTabBar();
+        }
+    })
+}
+
 /// Brings the next window to the front (a docked one: its tab is selected).
 pub fn set_next_window_focus() {
     call!(sys::igSetNextWindowFocus())

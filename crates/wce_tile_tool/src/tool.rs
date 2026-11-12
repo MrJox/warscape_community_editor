@@ -4286,6 +4286,26 @@ impl Tool for TileTool {
         self.inspect_making(e, ins) || self.inspect_brush(e, ins)
     }
 
+    fn inspector_subject(&mut self, e: &Editor) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let painting_trees = self.painting_trees(e);
+        let set = self.scratch_set.as_ref().map(|s| s.entries.len());
+        let brush = (self.mode != TileMode::Select).then(|| {
+            let b = &self.brush;
+            format!("{:?} {} {} {} {} {} {:?}", self.mode, b.radius_m, b.strength, b.falloff, b.flatten_height, b.opacity, b.paint_mode)
+        });
+
+        if self.flip.is_none() && !painting_trees && set.is_none() && self.placing.is_none() && !self.drawing && brush.is_none() {
+            return None;
+        }
+
+        // What it places, not where (the draft's kind, not its points): the Inspector's sections, and the brush's numbers it shows.
+        let mut h = std::hash::DefaultHasher::new();
+        (self.flip.is_some(), painting_trees, set, format!("{:?}", self.placing), self.drawing, self.making.as_deref()).hash(&mut h);
+        (self.draft.as_ref().map(|d| d.kind.as_str()), brush).hash(&mut h);
+        Some(h.finish())
+    }
+
     fn inspect_below(&mut self, e: &mut Editor) {
         // A holder alone selected: the buttons that draw its shapes (made only there).
         self.inspect_holder(e);

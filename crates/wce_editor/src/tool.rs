@@ -167,6 +167,13 @@ pub trait Tool: Any {
         false
     }
 
+    /// What the tool's part of the Inspector shows, as a key (its mode, what it places, its brush's settings): when it changes, the Inspector
+    /// is brought to the front of its dock. None when the tool shows nothing there of its own.
+    fn inspector_subject(&mut self, editor: &Editor) -> Option<u64> {
+        let _ = editor;
+        None
+    }
+
     /// Rows of the tool's below what the document shows of the selection, in the Inspector.
     fn inspect_below(&mut self, _editor: &mut Editor) {}
 

@@ -43,3 +43,5 @@ User, 2026-11-12: when something changes what the Inspector shows (a selection, 
 Inspector), and the Inspector is a tab that is not the one shown in its dock (behind Weather or Tile, say), it is brought to the
 foreground, so that what changed is seen. Only on a change of what it shows, not on every frame: a tab the user picked must stay picked
 while they work in it.
+
+Done (2026-11-12): docs/editor.md, "Layouts".
