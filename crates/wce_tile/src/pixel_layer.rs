@@ -48,6 +48,9 @@ pub struct PixelLayer<T> {
 
     /// The last record's serial.
     serial: u64,
+
+    /// How many changes were made (any pixel, edit, undo or redo): equal while the samples are.
+    changes: u64,
 }
 
 impl<T: Copy + PartialEq> PixelLayer<T> {
@@ -55,7 +58,7 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
     /// `v` holds `channels` samples per pixel, row by row.
     pub fn new(w: u32, h: u32, channels: usize, v: Vec<T>) -> Self {
         debug_assert_eq!(v.len(), w as usize * h as usize * channels);
-        Self { w, h, channels, v, editing: false, saved: vec![], touched: vec![], undo: vec![], redo: vec![], changed: None, edited: None, serial: 0 }
+        Self { w, h, channels, v, editing: false, saved: vec![], touched: vec![], undo: vec![], redo: vec![], changed: None, edited: None, serial: 0, changes: 0 }
     }
 
     pub fn width(&self) -> u32 {
@@ -227,7 +230,13 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
         self.undo.last().map_or(0, |r| r.serial)
     }
 
+    /// How many changes were made: equal while the samples are (what was made from them can be kept).
+    pub fn changes(&self) -> u64 {
+        self.changes
+    }
+
     fn mark(&mut self, x0: u32, y0: u32, x1: u32, y1: u32) {
+        self.changes += 1;
         self.edited = Some(match self.edited {
             None => (x0, y0, x1, y1),
             Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),

@@ -219,8 +219,8 @@ impl TileTool {
             gui::text_disabled(&d.tile().tree_category().unwrap_or_default());
         }
 
-        if let Some(why) = unavailable.filter(|_| trees) {
-            note(&format!("not generated: {why}"));
+        if let Some(text) = d.tile().trees_note().filter(|_| trees && unavailable.is_some()) {
+            note(&text);
         }
 
         let mut grass = d.tile().display().show_grass;
@@ -240,8 +240,8 @@ impl TileTool {
             }
         }
 
-        if let Some(why) = unavailable.filter(|_| grass) {
-            note(&format!("not generated: {why}"));
+        if let Some(text) = d.tile_mut().grass_note().filter(|_| grass && unavailable.is_some()) {
+            note(&text);
         }
 
         gui::separator_text("Checks");
