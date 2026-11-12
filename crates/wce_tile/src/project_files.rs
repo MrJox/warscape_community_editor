@@ -750,14 +750,24 @@ mod tests {
 ///
 /// The changed text does not read.
 pub fn migrate_walls(mut scene: TedScene) -> Result<TedScene, String> {
-    use crate::new_instances::{WALL_PROCEDURAL, WALL_SPLINE};
-    let old = scene.find_all(WALL_SPLINE).into_iter().filter(|&e| scene.doc().get(e, WALL_PROCEDURAL).is_none()).collect::<Vec<_>>();
-    if old.is_empty() {
+    use crate::new_instances::{WALL_ID, WALL_PROCEDURAL, WALL_SPLINE};
+    let walls = scene.find_all(WALL_SPLINE);
+    let old = walls.iter().copied().filter(|&e| scene.doc().get(e, WALL_PROCEDURAL).is_none()).collect::<Vec<_>>();
+    let id = |s: &TedScene, e: usize| s.doc().get(e, WALL_ID).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&i| i > 0);
+    let unnamed = walls.iter().copied().filter(|&e| id(&scene, e).is_none()).collect::<Vec<_>>();
+    if old.is_empty() && unnamed.is_empty() {
         return Ok(scene);
     }
 
     for e in old {
         scene.set_attr(e, WALL_PROCEDURAL, "true");
+    }
+
+    // An id for each wall without one (phase 4 of docs/plans/kit_walls.md: its height layer is its own by it), after the highest.
+    let mut next = walls.iter().filter_map(|&e| id(&scene, e)).max().unwrap_or(0);
+    for e in unnamed {
+        next += 1;
+        scene.set_attr(e, WALL_ID, &next.to_string());
     }
 
     TedScene::parse(scene.save())
@@ -774,6 +784,8 @@ mod wall_migration_tests {
         let walls = scene.find_all(crate::new_instances::WALL_SPLINE);
         let get = |e: usize| scene.doc().get(e, crate::new_instances::WALL_PROCEDURAL).unwrap_or_default();
         assert_eq!((get(walls[0]).as_str(), get(walls[1]).as_str()), ("true", "false"));
+        let id = |e: usize| scene.doc().get(e, crate::new_instances::WALL_ID).unwrap_or_default();
+        assert_eq!((id(walls[0]).as_str(), id(walls[1]).as_str()), ("1", "2"), "each an id");
         assert!(!scene.modified(), "it opens unmodified");
     }
 
