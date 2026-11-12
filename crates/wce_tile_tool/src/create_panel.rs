@@ -1212,6 +1212,22 @@ impl TileTool {
         let (pmin, pmax) = (gui::v2(at.x + 2.0, at.y + 2.0), gui::v2(at.x + side - 2.0, at.y + side - 2.0));
         match self.create.grid_images.get(&en.id()) {
             Some(img) => dl.image(img.id, pmin, pmax, gui::v2(0.0, 0.0), gui::v2(1.0, 1.0), 0xFFFF_FFFF),
+            // No model to picture (a line, a polygon, a marker): its icon over its name, wrapped in the picture.
+            None if !Self::has_thumbnail(en) => {
+                dl.rect_filled(pmin, pmax, style_u32(gui::COL_FRAME_BG), 4.0);
+                let lines = wrap_name(&en.label, side - 12.0, 4);
+                let (icon, lh) = (gui::calc_text_size(en.icon()), gui::text_line_height());
+                let block = icon.y + 4.0 + lh * lines.len() as f32;
+                let mut y = at.y + (side - block) * 0.5;
+                dl.text(gui::v2(at.x + (side - icon.x) * 0.5, y), style_u32(gui::COL_TEXT_DISABLED), en.icon());
+                y += icon.y + 4.0;
+                for l in &lines {
+                    let w = gui::calc_text_size(l).x;
+                    dl.text(gui::v2(at.x + (side - w) * 0.5, y), style_u32(gui::COL_TEXT), l);
+                    y += lh;
+                }
+            }
+
             None => {
                 dl.rect_filled(pmin, pmax, style_u32(gui::COL_FRAME_BG), 4.0);
                 let size = gui::calc_text_size(en.icon());
@@ -1354,6 +1370,11 @@ impl TileTool {
         gui::set_next_window_size(gui::v2(360.0, 480.0), gui::COND_FIRST_USE_EVER);
         if let Some(dock) = self.left_dock.filter(|&d| d != 0) {
             gui::set_next_window_dock_id(dock, gui::COND_FIRST_USE_EVER);
+        }
+
+        if self.create_focus_frames > 0 {
+            self.create_focus_frames -= 1;
+            gui::set_window_focus("Create");
         }
 
         if !gui::begin("Create", None, 0) {
@@ -1834,4 +1855,35 @@ pub(crate) fn shape_items(d: &wce_tile_editor::tile_document::TileDocument, elem
 
         ShapeItem { label, holder, kind, role: Some(r.name), full }
     }).collect()
+}
+
+/// A name broken into lines of at most `width` pixels at its spaces (a word longer than a line is cut), `max` lines at most, the last one
+/// ending in `…` when the name goes on.
+fn wrap_name(name: &str, width: f32, max: usize) -> Vec<String> {
+    let fits = |t: &str| gui::calc_text_size(t).x <= width;
+    let cut = |t: &str| {
+        let mut t = t.to_owned();
+        while t.chars().count() > 1 && !fits(&format!("{t}…")) {
+            t.pop();
+        }
+
+        format!("{t}…")
+    };
+
+    let mut lines: Vec<String> = vec![];
+    for w in name.split_whitespace() {
+        let joined = lines.last().map(|l| format!("{l} {w}"));
+        match joined {
+            Some(j) if fits(&j) => *lines.last_mut().expect("a line") = j,
+            _ if lines.len() == max => {
+                let last = lines.pop().unwrap_or_default();
+                lines.push(cut(&format!("{last} {w}")));
+                return lines;
+            }
+
+            _ => lines.push(if fits(w) { w.to_owned() } else { cut(w) }),
+        }
+    }
+
+    lines
 }

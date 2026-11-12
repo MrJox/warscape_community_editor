@@ -1915,6 +1915,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
         with_tile(e, |t, e| {
             t.set_create_grid(e, grid);
+            t.create_focus_frames = 3;
             ok("")
         })
     });
