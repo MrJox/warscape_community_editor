@@ -128,6 +128,9 @@ pub struct WallPair {
 struct Platform {
     /// Its element (a building, a wall, a road) and its key.
     elem: usize,
+
+    /// Which of its element's buildings (a kit wall's pieces, each its own, `Gathered::add`'s `split`), 0 for the others.
+    part: usize,
     key: String,
     corners: Vec<Float3>,
     bridge: bool,
@@ -181,14 +184,16 @@ struct Gathered {
 }
 
 impl Gathered {
-    /// A building's surfaces (`bridge`: one of the bridges; `snap`: its ground snap tolerance; `all_ground`: every platform of it is ground).
-    fn add(&mut self, t: &mut Tile, e: usize, bridge: bool, snap: f32, all_ground: bool) {
+    /// A building's surfaces (`bridge`: one of the bridges; `snap`: its ground snap tolerance; `all_ground`: every platform of it is ground;
+    /// `split`: each of its buildings is a building of its own, its joints checked as any other's: a kit wall's pieces).
+    fn add(&mut self, t: &mut Tile, e: usize, bridge: bool, snap: f32, all_ground: bool, split: bool) {
         let surfaces = t.walk_surfaces(e);
         if surfaces.is_empty() && bridge {
             self.unread.push(t.tscene().doc().get(e, "key").unwrap_or_default());
         }
 
-        for s in surfaces {
+        for (n, s) in surfaces.into_iter().enumerate() {
+            let part = if split { n } else { 0 };
             for o in &s.outlines {
                 self.outlines.extend(edges(o).map(|(_, a, b)| [a, b]));
             }
@@ -199,10 +204,10 @@ impl Gathered {
                 }
 
                 if ground || all_ground {
-                    self.owned_grounds.push(Platform { elem: e, key: s.key.clone(), corners: corners.clone(), bridge, snap });
+                    self.owned_grounds.push(Platform { elem: e, part, key: s.key.clone(), corners: corners.clone(), bridge, snap });
                     self.grounds.push(corners);
                 } else {
-                    self.platforms.push(Platform { elem: e, key: s.key.clone(), corners, bridge, snap });
+                    self.platforms.push(Platform { elem: e, part, key: s.key.clone(), corners, bridge, snap });
                 }
             }
         }
@@ -267,7 +272,7 @@ impl Tile {
         let roads = self.roads_with_buildings();
         let mut g = Gathered::default();
         for &e in bridges.iter().chain(&roads) {
-            g.add(self, e, true, SNAP_BRIDGE, false);
+            g.add(self, e, true, SNAP_BRIDGE, false, false);
         }
 
         report.unread = std::mem::take(&mut g.unread);
@@ -287,13 +292,13 @@ impl Tile {
         for e in others {
             let c = category(self, e);
             let snap = if matches!(c.as_str(), "fort_wall" | "unbreachable_fort_wall") { SNAP_BRIDGE } else { SNAP_OTHER };
-            g.add(self, e, false, snap, c == "ground_platform");
+            g.add(self, e, false, snap, c == "ground_platform", false);
         }
 
         let walls = self.wall_preview.shown_walls();
         let walls = walls.into_iter().filter(|&e| self.generated_buildings(e).iter().any(|(w, _)| close(w.transform_point(Float3::new(0.0, 0.0, 0.0))))).collect::<Vec<_>>();
         for e in walls {
-            g.add(self, e, false, SNAP_BRIDGE, false);
+            g.add(self, e, false, SNAP_BRIDGE, false, false);
         }
 
         let Gathered { platforms, outlines, grounds, .. } = g;
@@ -445,13 +450,14 @@ impl Tile {
         for e in buildings {
             let c = self.tscene().doc().get(e, "key").and_then(|k| self.building_category(&k.to_lowercase())).unwrap_or_default();
             if fort(&c) {
-                g.add(self, e, false, SNAP_BRIDGE, false);
+                g.add(self, e, false, SNAP_BRIDGE, false, false);
                 report.walls += 1;
             }
         }
 
         for e in self.wall_preview.shown_walls() {
-            g.add(self, e, false, SNAP_BRIDGE, false);
+            let kit = !wce_walls::scene::is_procedural(self.tscene(), e);
+            g.add(self, e, false, SNAP_BRIDGE, false, kit);
             report.walls += 1;
         }
 
@@ -483,9 +489,12 @@ impl Tile {
             }
         }
 
-        // Per pair of elements: their joints, and their closest facing edges that do not join.
-        let mut joined: HashMap<(usize, usize), usize> = HashMap::new();
-        let mut gaps: HashMap<(usize, usize), (f32, f32, Float3, Float3, Float3, Float3)> = HashMap::new();
+        // Per pair of buildings (element and part): their joints, and their closest facing edges that do not join (with the platforms').
+        // A gap: across, in height, the two edges and their platforms.
+        type Who = (usize, usize);
+        type Gap = (f32, f32, Float3, Float3, Float3, Float3, usize, usize);
+        let mut joined: HashMap<(Who, Who), usize> = HashMap::new();
+        let mut gaps: HashMap<(Who, Who), Gap> = HashMap::new();
         for (k, p) in platforms.iter().enumerate() {
             for (_, a, b) in edges(&p.corners) {
                 let (ca, cb) = (coarse(a), coarse(b));
@@ -494,14 +503,15 @@ impl Tile {
                     for c in [(ca.0 + dx, ca.1 + dz), (cb.0 + dx, cb.1 + dz)] {
                         for &(m, j) in grid.get(&c).into_iter().flatten() {
                             let apart = matches!((esc[k], esc[m]), (Some(x), Some(y)) if x != y);
-                            if m <= k || platforms[m].elem == p.elem || apart || seen.contains(&(m, j)) {
+                            let (who, other) = ((p.elem, p.part), (platforms[m].elem, platforms[m].part));
+                            if m <= k || who == other || apart || seen.contains(&(m, j)) {
                                 continue;
                             }
 
                             seen.push((m, j));
                             let q = &platforms[m].corners;
                             let (c0, d0) = (q[j], q[(j + 1) % q.len()]);
-                            let pair = (p.elem.min(platforms[m].elem), p.elem.max(platforms[m].elem));
+                            let pair = (who.min(other), who.max(other));
                             if near(c0, b) && near(d0, a) && (c0.y - b.y).abs() <= JOINT_HEIGHT && (d0.y - a.y).abs() <= JOINT_HEIGHT {
                                 *joined.entry(pair).or_default() += 1;
                                 report.edges.push((a, b, BridgeEdge::WallJoint));
@@ -511,7 +521,7 @@ impl Tile {
                             if let Some((across, rise)) = facing(a, b, c0, d0).filter(|&(x, h)| x >= WALL_FINE || h > JOINT_HEIGHT) {
                                 let worst = gaps.get(&pair).map_or(f32::MAX, |g| g.0);
                                 if across < worst {
-                                    gaps.insert(pair, (across, rise, a, b, c0, d0));
+                                    gaps.insert(pair, (across, rise, a, b, c0, d0, k, m));
                                 }
                             }
                         }
@@ -526,21 +536,28 @@ impl Tile {
         pairs.dedup();
         report.wall_pairs = pairs
             .into_iter()
-            .map(|(a, b)| WallPair { a, b, joints: joined.get(&(a, b)).copied().unwrap_or(0), closest: gaps.get(&(a, b)).map(|g| (g.0, g.1)) })
+            .map(|(a, b)| WallPair { a: a.0, b: b.0, joints: joined.get(&(a, b)).copied().unwrap_or(0), closest: gaps.get(&(a, b)).map(|g| (g.0, g.1)) })
             .collect();
-        let key = |e: usize| self.tscene().doc().get(e, "key").unwrap_or_else(|| "procedural wall".to_owned());
+        let key = |k: usize| {
+            let p = &platforms[k];
+            match self.tscene().doc().get(p.elem, "key") {
+                Some(key) => key,
+                None if !wce_walls::scene::is_procedural(self.tscene(), p.elem) => format!("{} (kit wall {})", p.key, self.tscene().name(p.elem)),
+                None => "procedural wall".to_owned(),
+            }
+        };
         let mut found = gaps.into_iter().filter(|(pair, _)| !joined.contains_key(pair)).collect::<Vec<_>>();
         found.sort_by(|a, b| a.0.cmp(&b.0));
-        for ((ea, eb), (across, rise, a, b, c, d)) in found {
+        for (((ea, _), (eb, _)), (across, rise, a, b, c, d, ka, kb)) in found {
             report.edges.push((a, b, BridgeEdge::WallGap));
             report.edges.push((c, d, BridgeEdge::WallGap));
             let at = (a + b + c + d) * 0.25;
             report.problems.push(BridgeProblem {
-                elems: vec![ea, eb],
+                elems: if ea == eb { vec![ea] } else { vec![ea, eb] },
                 message: format!(
                     "walls {} and {}: their walkways meet but do not join ({across:.2} m apart, {rise:.2} m in height; the game joins them within {CORNER} m and {JOINT_HEIGHT} m, corner for corner)",
-                    key(ea),
-                    key(eb)
+                    key(ka),
+                    key(kb)
                 ),
                 at,
             });
