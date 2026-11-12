@@ -56,7 +56,7 @@ impl Renderer {
         let Some(layout) = self.layout(&vs, "rigid_std", &rigid_layout()) else { return };
         let tree_layout = self.shader(TREE_BRANCH_VS).and_then(|tvs| self.layout(&tvs, "tree", &tree_layout(self.game)));
         let billboard_layout = self.shader(TREE_BILLBOARD_VS).and_then(|bvs| self.layout(&bvs, "tree_billboard", &billboard_layout()));
-        let rope_layout = self.shader(ROPE_VS).and_then(|rvs| self.layout(&rvs, "rope", &rope_layout()));
+        let rope_layout = self.optional_shader(ROPE_VS).and_then(|rvs| self.layout(&rvs, "rope", &rope_layout()));
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
@@ -112,6 +112,11 @@ impl Renderer {
         let ms = self.gbuffer.ms.is_some();
         let shaders = GBUFFER_PASSES.map(|(kind, alpha, fire, vs, ps, _)| {
             let ms_ps = ms.then(|| gbuffer_ms_ps(kind, alpha, ps)).flatten().and_then(|name| self.shader(&name));
+            // The ropes' shaders are not in every game's packs (Rome 2's): without them there are no ropes, quietly.
+            if kind == MeshKind::Rope {
+                return self.optional_shader(vs).zip(ms_ps.or_else(|| self.optional_shader(ps)));
+            }
+
             (!fire || game.has_fire_shaders(kind)).then(|| self.shader(vs).zip(ms_ps.or_else(|| self.shader(ps)))).flatten()
         });
         let pass_in = |m: &GpuMesh, fire: bool| {

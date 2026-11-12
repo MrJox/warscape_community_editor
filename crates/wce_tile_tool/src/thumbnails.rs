@@ -113,10 +113,12 @@ fn fnv(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
 }
 
-/// The cache folder of a game folder's thumbnails.
+/// The cache folder of a game folder's thumbnails. Rome 2's are in a folder of their own below it: their ground is a skin (`add_ground`);
+/// the ones made before on a baked ground came out black, and are not taken.
 pub(crate) fn cache_dir(e: &Editor) -> PathBuf {
     let game = e.settings_ref().game_dir().map(|d| d.display().to_string()).unwrap_or_default();
-    e.settings_ref().paths().cache_dir().join("thumbnails").join(format!("{:016x}", fnv(game.to_lowercase().as_bytes())))
+    let dir = e.settings_ref().paths().cache_dir().join("thumbnails").join(format!("{:016x}", fnv(game.to_lowercase().as_bytes())));
+    if e.game().key == wce_vfs::GameProfile::ROME_2.key { dir.join("skin_ground") } else { dir }
 }
 
 fn image_key(id: &str) -> String {
@@ -260,7 +262,7 @@ impl Thumbnails {
                 };
 
                 // The ground's GPU side is made on a loading thread.
-                let ground = add_ground(&mut job.scene, floor, radius);
+                let ground = add_ground(&mut job.scene, floor, radius, r.render_game() == wce_render::renderer::game::RenderGame::Rome2);
                 job.phase = Phase::Ground { camera, ground, waited: 0 };
                 return;
             }
@@ -325,13 +327,26 @@ impl Thumbnails {
     }
 }
 
-/// The grey ground under a thumbnail: a flat terrain at the bottom of what it shows, coloured by a skin.
-fn add_ground(scene: &mut RenderScene, floor: Float3, radius: f32) -> wce_scene::render_scene::Terrain {
-    use wce_scene::render_scene::{Terrain, TerrainImage, TerrainMaterial};
+/// The grey ground under a thumbnail: a flat terrain at the bottom of what it shows, of one colour. `skin`: coloured by a skin, drawn as the
+/// legacy patches (Rome 2's terrain pass has no baked materials: the ground came out black), without the decals on it.
+fn add_ground(scene: &mut RenderScene, floor: Float3, radius: f32, skin: bool) -> wce_scene::render_scene::Terrain {
+    use wce_scene::render_scene::{Terrain, TerrainImage, TerrainMaterial, TerrainSkin};
+
+    let half = (radius * GROUND_SPAN).max(10.0);
+    let layer = scene.add_layer(0, "thumbnail ground");
+    let mut world = Float4x4::IDENTITY;
+    (world.m[0][3], world.m[1][3], world.m[2][3]) = (floor.x, floor.y - 0.01, floor.z);
+    if skin {
+        let skin = TerrainSkin {
+            x0: f64::from(-half), z0: f64::from(-half), w_m: f64::from(2.0 * half), h_m: f64::from(2.0 * half), w: 2, h: 2, rgba: [GROUND_GREY, GROUND_GREY, GROUND_GREY, 255].repeat(4), id: 1, dirty: None,
+        };
+        let ground = Terrain { nx: 2, nz: 2, origin_x: -half, origin_z: -half, step: 2.0 * half, heights: std::sync::Arc::new(vec![0.0; 4]), skin: Some(std::sync::Arc::new(skin)), ..Default::default() };
+        scene.add(layer, world, Payload::Terrain(ground.clone()), SourceRef::default());
+        return ground;
+    }
 
     // A baked material (one colour, drawn by the terrain pass): the terrain pass marks what it draws as taking decals, which a plain ground
     // is not (the `DECAL_RECEIVER` stencil bit), and a prefab's decals were not seen.
-    let half = (radius * GROUND_SPAN).max(10.0);
     let grey = [GROUND_GREY, GROUND_GREY, GROUND_GREY, 0];
     let material = TerrainMaterial {
         baked: true, x0: f64::from(-half), z0: f64::from(-half), x1: f64::from(half), z1: f64::from(half), y0: -5.0, y1: 5.0,
@@ -344,9 +359,6 @@ fn add_ground(scene: &mut RenderScene, floor: Float3, radius: f32) -> wce_scene:
         nx: 2, nz: 2, origin_x: -half, origin_z: -half, step: 2.0 * half, heights: std::sync::Arc::new(vec![0.0; 4]), legacy: false,
         material: Some(std::sync::Arc::new(material)), ..Default::default()
     };
-    let layer = scene.add_layer(0, "thumbnail ground");
-    let mut world = Float4x4::IDENTITY;
-    (world.m[0][3], world.m[1][3], world.m[2][3]) = (floor.x, floor.y - 0.01, floor.z);
     scene.add(layer, world, Payload::Terrain(ground.clone()), SourceRef::default());
     ground
 }
