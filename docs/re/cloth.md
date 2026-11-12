@@ -476,3 +476,11 @@ not traced). `MAX_OAR_ANIM_OFFSET` 0.25 ("Oars"); the `naval_flag_wind_*` set ("
 | 0x17f5f70, 0x1890500, 0x18870c0 | rope draw and culling, technique (gbuffer_rigid / shadowmap_rigid), texture binding |
 | 0x16edf60 | `ROPE_SHADER` techniques and samplers |
 | 0x18c34b0, 0x18c3090 | `DYNAMIC_ROPE_MESH` (world technique, not ships) and its dynamic node |
+
+## Drawing the sails (2026-11-12)
+`weightedcloth.hlsl` ps30_gbuffer samples, beyond the weighted family's textures: `s_decal_dirt_map` / `s_decal_dirt_mask` (the material's),
+`s_diffuse_damage_map` (t9: its alpha against the damage discards), `s_fire_map` (t10) and two scrolled wind-ripple normal maps,
+`normal0_sampler` (t7) and `normal1_sampler` (t8), which the WeightedCloth mesh loader (`FUN_117d2d00`) takes from
+`/CommonTextures/flag_normal_1.dds` and `flag_normal_2.dds` (strings next to the rope fallbacks, RVA 0x1cc07ec). Unbound, they hold an earlier
+draw's textures: sails showed other sails' patterns sliding over them, and their emblems broke up with the view angle. The editor binds the
+material's dirt maps (black without), a white damage map, a black fire map and the two flag normals.

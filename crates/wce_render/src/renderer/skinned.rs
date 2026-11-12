@@ -484,6 +484,12 @@ impl Renderer {
             if m.kind == MeshKind::WeightedCloth {
                 bind_srv(&self.ctx, &ps, "s_diffuse_damage_map", self.res.white_srv.as_ref());
                 bind_srv(&self.ctx, &ps, "s_fire_map", self.res.black_srv.as_ref());
+                // Its wind ripples, scrolled by the time: the textures the WeightedCloth mesh's loader names (`FUN_117d2d00`), linear.
+                for (name, path) in [("normal0_sampler", "commontextures/flag_normal_1.dds"), ("normal1_sampler", "commontextures/flag_normal_2.dds")] {
+                    let tex = self.textures.get(path, false).unwrap_or_else(|| self.textures.flat_normal());
+                    let srv = tex.read().ok().and_then(|t| t.srv.clone());
+                    bind_srv(&self.ctx, &ps, name, srv.as_ref());
+                }
             }
 
             if m.decal {
