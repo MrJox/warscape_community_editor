@@ -109,7 +109,9 @@ walls; two buildings whose platform edges face each other (anti-parallel within 
 across, within 1 m in height) but which join nowhere (no edge with the same two corners, run the other way, within 1.4 cm and 10 cm) are a
 break in the wall walk, listed and drawn in orange (joints in cyan). Calibrated on the vanilla Roman forts (western_port_a/medium,
 western_city_c/medium, western_city_b/small, western_city_rome/medium: 0 breaks; Rome has two pairs 1 to 2 cm off, under the 3 cm floor).
-Walls whose walks are ground platforms (`flag_2`: the palisades) have no joints to check. **Bridges**: the tile's bridges
+The palisades' walks are ground platforms (`flag_2`, green): they are checked the same way (ASSUMPTION: the joint rule holds for them; a
+break there leaves units stuck on a piece and siege towers short of the walk, user 2026-11-12). Vanilla palisades (western_city_a/b/c/small,
+western_port_b/small: `western_fort_small_wall_*`, 1460 to 2092 joints each): 0 breaks; TDD's middle_men_city_b/medium: 8. **Bridges**: the tile's bridges
 (`bridge` buildings and the roads' generated bridges) as the game's nav graph links them (docs/re/platforms_and_bridges.md, "The editor's
 check"): lists the ones units cannot get onto and the ones that reach one bank only (a click selects the bridge's pieces and frames them),
 and draws their edges in the viewport (*show edges*): green ground links, cyan joints, blue ways onto other buildings, red ramp feet the

@@ -5,6 +5,8 @@
 //! "tower" in their name) and of the procedural walls join where two of their platforms have an edge with the same two corners, run the
 //! other way (the joint rule below). Two buildings whose platforms come close along an edge (facing each other within [`WALL_NEAR`] across,
 //! [`WALL_RISE`] in height, along at least [`WALL_OVERLAP`]) but join nowhere are a break in the wall walk: units on the walls stop there.
+//! A palisade's walk is a ground platform (`flag_2`, green): it is taken the same way (ASSUMPTION: the joint rule holds for them too; the
+//! game gives them no region of their own, and how it links them was not traced).
 //!
 //! A bridge is the platforms of the buildings whose `battlefield_buildings` category is `bridge`, and of the procedural roads' generated
 //! bridges, joined to each other. In the game:
@@ -158,8 +160,10 @@ struct Gathered {
     platforms: Vec<Platform>,
     outlines: Vec<[Float3; 2]>,
 
-    /// The ground platforms (`flag_2`, or a `ground_platform` building's): the ground units walk there.
+    /// The ground platforms (`flag_2`, or a `ground_platform` building's): the ground units walk there. With their owners, for the wall
+    /// walks (a palisade's walk is one).
     grounds: Vec<Vec<Float3>>,
+    owned_grounds: Vec<Platform>,
     unread: Vec<String>,
 }
 
@@ -182,6 +186,7 @@ impl Gathered {
                 }
 
                 if ground || all_ground {
+                    self.owned_grounds.push(Platform { elem: e, key: s.key.clone(), corners: corners.clone(), bridge, snap });
                     self.grounds.push(corners);
                 } else {
                     self.platforms.push(Platform { elem: e, key: s.key.clone(), corners, bridge, snap });
@@ -436,9 +441,12 @@ impl Tile {
             report.walls += 1;
         }
 
-        let platforms = g.platforms;
+        // A palisade's walk is a ground platform (`flag_2`): units walk it as the ground, and two of them that do not meet are a break as
+        // well (units stuck on a piece, siege towers that do not reach the walk).
+        let grounds = g.owned_grounds.len();
+        let mut platforms = g.platforms;
+        platforms.extend(g.owned_grounds);
         report.unread = g.unread;
-        let grounds = g.grounds.len();
 
         // The platforms' edges, by the cells of a coarse grid (WALL_NEAR) their corners are in.
         let coarse = |p: Float3| ((p.x / WALL_NEAR).floor() as i64, (p.z / WALL_NEAR).floor() as i64);

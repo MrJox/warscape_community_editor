@@ -324,7 +324,9 @@ the kit's `bridge_wood_2_end` (1 of 1 foot edges along its outline). So the gene
 The wall walks (docs/editor.md, "Check platforms") use rule 6 (joints) only: a pair of fort buildings whose platforms face each other within
 0.75 m but join nowhere is a break. Found on TDD's middle_men_city_hornburg (1: `hd_deepingwall_stairs_left_2` to `hd_deepingwall_15`, 0.49
 m across, 0.39 m in height) and middle_men_city_dale (84, mostly consecutive `roman_fort_straight` 0.1 to 0.45 m apart); none on the vanilla
-Roman forts. Not checked in game.
+Roman forts. The palisades' walks (ground platforms, `flag_2`) are taken too: TDD's middle_men_city_b/medium has 8 breaks between
+`western_fort_small_wall_*` pieces (0.04 to 0.12 m; the user's known broken siege map: units stuck, siege towers not working), the vanilla
+tiles with the same pieces none. Not checked in game.
 
 Bridges, as before:
 
