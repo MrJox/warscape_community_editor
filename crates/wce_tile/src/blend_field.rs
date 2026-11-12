@@ -305,6 +305,11 @@ impl BlendField {
         self.layer.changed()
     }
 
+    /// How many changes were made: equal while the weights are.
+    pub fn changes(&self) -> u64 {
+        self.layer.changes()
+    }
+
     /// The rectangle changed since the last call (exclusive end), `None` when nothing changed.
     pub fn take_changed(&mut self) -> Option<(u32, u32, u32, u32)> {
         self.layer.take_changed()

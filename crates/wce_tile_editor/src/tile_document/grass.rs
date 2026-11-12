@@ -1,7 +1,8 @@
 //! The tile's grass, drawn by the renderer's grass pass near the camera: generated as BOB would (`wce_tile::vegetation::grass`) from the
 //! tile as it is: its `<Grass generation_seed>`, the saved blend map and the kit's `max_grass.xml`. The packed tile's
 //! `default.grass_list.bin` (BOB's from before) is not drawn: a decompiled tile's came from a seed it does not have, and it goes stale with
-//! the first edit of the heights or the painting. Each key (`grass/2`, `forest/0`...) is a model of the climate, `terrain/vegetation/battle/grass/<climate>/<key>.rigid_model_v2`
+//! the first edit of the heights or the painting; it is drawn only when the grass can't be generated (no kit `max_grass.xml`, as Rome 2's; a
+//! tile outside a kit's raw_data; no seed). The grass is generated again when what it is made from changes (`follow_vegetation_inputs`). Each key (`grass/2`, `forest/0`...) is a model of the climate, `terrain/vegetation/battle/grass/<climate>/<key>.rigid_model_v2`
 //! (a key the climate has no model for is not drawn, as in the game).
 //!
 //! How the game places a patch (empire.retail.dll "Grass Display" FUN_105103e0 and its job FUN_10515960, docs/re/vegetation.md): at the stored
@@ -14,12 +15,20 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use rpfm_lib::files::Decodeable;
+use rpfm_lib::files::fastbin_lists::{GRASS_LIST_EXTENSION, GrassListFile};
+use wce_formats::old_lists::{OldList, OldListKind};
 use wce_foundation::log;
 use wce_foundation::math::{Float3, rotation_y, scaling, translation};
 use wce_scene::render_scene::{EntityId, Grass, LayerId, Payload, RenderScene};
 use wce_tile::vegetation::{self, grass::{GrassParams, generate_grass}};
 
 use super::vegetation::tilt;
+
+/// The packed list's name.
+const LIST: &str = "default";
+
+/// The older grass list's extension.
+const OLD_GRASS_LIST_EXTENSION: &str = ".grass_list";
 use super::{TERRAIN, Tile};
 
 const SEED: u32 = 0x4971_0ae3;
@@ -45,6 +54,16 @@ pub(crate) struct GrassState {
 
 impl Tile {
 
+    /// What the grass drawn is, for the ground chip: the reason it is not generated, and whether the packed list is drawn instead.
+    pub fn grass_note(&mut self) -> Option<String> {
+        let why = self.grass_unavailable()?;
+        Some(if self.grass_list().is_empty() {
+            format!("not generated: {why}; the tile has no packed list either")
+        } else {
+            format!("not generated: {why}; the packed default list is drawn (BOB's, as shipped)")
+        })
+    }
+
     /// Why the grass can't be generated; None when it can.
     pub fn grass_unavailable(&self) -> Option<&'static str> {
         if vegetation::grass_params_path(&self.project).is_none() {
@@ -55,6 +74,38 @@ impl Tile {
             Some("tile.ted has no <Grass> seed")
         } else {
             None
+        }
+    }
+
+    /// The packed `default.grass_list.bin` (or the older list): in the tile's folder, the game files, then carried by a decompiled project;
+    /// mirrored as the tile was flipped since. None without one.
+    fn read_grass_list(&self) -> Option<Vec<(String, Vec<(f32, f32)>)>> {
+        let carried = Some(self.project.dir.join(super::vegetation::CARRIED_DIR));
+        let read = |file: &str| {
+            std::fs::read(self.project.dir.join(file))
+                .ok()
+                .or_else(|| self.packed_folder().and_then(|folder| self.files.as_deref()?.read(&format!("{folder}{file}")).ok()))
+                .or_else(|| std::fs::read(carried.as_ref()?.join(file)).ok())
+        };
+
+        let file = format!("{LIST}{GRASS_LIST_EXTENSION}");
+        let Some(bytes) = read(&file) else {
+            // Rome 2's tiles have the older list only.
+            let file = format!("{LIST}{OLD_GRASS_LIST_EXTENSION}");
+            return match OldList::parse(OldListKind::Grass, &read(&file)?) {
+                Ok(list) => Some(old_grass(&list)),
+                Err(error) => {
+                    log::warn(format!("{file}: {error}"));
+                    Some(vec![])
+                }
+            };
+        };
+        match GrassListFile::decode(&mut Cursor::new(bytes), &None) {
+            Ok(f) => Some(f.grass_list().grass_list().iter().map(|v| (v.key().replace('\\', "/").to_lowercase(), v.value().iter().map(|i| (*i.x(), *i.z())).collect())).collect()),
+            Err(error) => {
+                log::warn(format!("{file}: {error}"));
+                Some(vec![])
+            }
         }
     }
 
@@ -78,16 +129,31 @@ impl Tile {
         Ok(keys)
     }
 
-    /// The grass generated for the tile, once (until `reload_grass`); empty when it can't be.
+    /// The grass generated for the tile, once (until `reload_grass`); when it can't be, the packed list as shipped (empty without one).
     fn grass_list(&mut self) -> Arc<Vec<(String, Vec<(f32, f32)>)>> {
         if let Some(list) = &self.grass.list {
             return list.clone();
         }
 
         let list = match self.grass_unavailable() {
-            Some(why) => {
-                log::info(format!("grass: {why}"));
-                vec![]
+            // The packed list, as shipped, mirrored as the tile was flipped since.
+            Some(_) => {
+                let (fx, fz) = self.list_flip();
+                let (ex, ez) = (self.project.extent_x() as f32, self.project.extent_z() as f32);
+                let mut list = self.read_grass_list().unwrap_or_default();
+                for (_, patches) in &mut list {
+                    for (x, z) in patches.iter_mut() {
+                        if fx {
+                            *x = ex - *x;
+                        }
+
+                        if fz {
+                            *z = ez - *z;
+                        }
+                    }
+                }
+
+                list
             }
             None => self.generate_grass_list().unwrap_or_else(|error| {
                 log::warn(format!("generating the grass: {error}"));
@@ -218,4 +284,17 @@ impl Tile {
 
         added
     }
+}
+
+/// An older grass list's patches per key (their x and z).
+fn old_grass(list: &OldList) -> Vec<(String, Vec<(f32, f32)>)> {
+    list.types
+        .iter()
+        .enumerate()
+        .map(|(t, (name, first))| {
+            let end = list.types.get(t + 1).map_or(list.len(), |(_, next)| *next as usize).min(list.len());
+            let key = String::from_utf8_lossy(name).replace('\\', "/").to_lowercase();
+            (key, (*first as usize..end).map(|i| list.position(i)).map(|[x, _, z]| (x, z)).collect())
+        })
+        .collect()
 }

@@ -1803,6 +1803,7 @@ impl Tile {
 
         self.update_collapses(scene, layer);
 
+        self.follow_vegetation_inputs();
         self.update_list_trees(scene, layer, false);
         self.update_grass(scene, layer, false);
 
