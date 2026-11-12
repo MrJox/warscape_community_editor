@@ -220,8 +220,14 @@ impl RefUnits {
         let afloat = self.afloat.iter().map(|(elem, [h, p, r])| format!("#{elem} heave {h:.2} pitch {p:.2} roll {r:.2}")).collect::<Vec<_>>().join(", ");
         let headings = self.headings.iter().map(|(elem, h)| format!("#{elem} {h:.1}")).collect::<Vec<_>>().join(", ");
         let ships = format!("{ships}; water under them: {}; afloat: {afloat}; headings: {headings}", water.join(", "));
+        let catalog = self.catalog.as_ref().map_or_else(String::new, |c| {
+            format!(
+                "catalog: {} variant rows, {} land units, {} naval units ({} with a ship), {} unit_variants_ships rows, {} ship logics, {} naval weapons; ",
+                c.entries.len(), c.land_units.len(), c.naval_units.len(), c.naval().len(), c.ships.len(), c.ship_logic.len(), c.naval_weapons.len()
+            )
+        });
         format!(
-            "tables {}, {} loaded, loading {}, {} failed, {} entities, unit size {:?}, update {:.2} ms [{units}]; ships {} loaded, loading {}, {} failed, {} entities [{ships}]: {}",
+            "{catalog}tables {}, {} loaded, loading {}, {} failed, {} entities, unit size {:?}, update {:.2} ms [{units}]; ships {} loaded, loading {}, {} failed, {} entities [{ships}]: {}",
             self.catalog.is_some(), self.models.len(), self.loading.is_some(), self.failed.len(), self.entities.len(), self.size, self.update_ms,
             self.ships.len(), self.ship_loading.is_some(), self.ship_failed.len(), self.ship_entities.len(), self.status
         )
