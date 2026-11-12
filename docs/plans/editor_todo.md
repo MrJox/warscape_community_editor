@@ -60,3 +60,12 @@ User, 2026-11-12, after the Rome 2 reference fixes (feature/rome2_refs):
   (`Tile::water_level`) sees Rome 2's sea at all.
 - Ships placed over the sea should float on the sea's surface by default, not sit freeform or on the ground at the bottom of the sea: a
   way to make a ship reference take the sea water level (0 m, or the tile's sea) when it is over the sea.
+
+## Units stuck on middle_men_city_b/medium's walls (paused)
+
+User, 2026-11-12: a video report of units getting stuck on the barbarian_fort palisade of TDD's middle_men_city_b/medium (the wall around
+(490, 270)), waiting for more information (where exactly they stop: the walk, the inner ramp, a gate, the wall's foot; attackers or
+defenders; which escalation). Checked with the editor (`wall_pairs`, `on_walks`, `siege_check`, docs/editor.md "Check platforms"): every
+pair of its pieces joins (5 edges each), the terrain over the ramps is as on the vanilla tiles, the siege AI graph has no problems. The one
+lead: four `vik_small_rocks_group_06` of category generic (vanilla's rocks there are incidentals) on rampart and gateway walks, at (379,
+485), (368, 482), (667, 307) and (575, 280). Not for this branch.

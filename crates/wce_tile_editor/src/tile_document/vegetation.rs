@@ -68,6 +68,32 @@ pub(crate) struct ListTree {
     pub yaw: f32,
 }
 
+/// A generation running on a thread of its own: what it is for, and where its result lands (shared, so that the state stays `Clone`).
+#[derive(Clone, Debug)]
+pub(crate) struct Job<T> {
+    pub name: String,
+    pub done: Arc<std::sync::Mutex<Option<Result<T, String>>>>,
+}
+
+impl<T: Send + 'static> Job<T> {
+    /// Runs `work` on a thread below normal priority (the editor's frames go first).
+    pub(crate) fn start(name: String, work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Self {
+        let done = Arc::new(std::sync::Mutex::new(None));
+        let slot = done.clone();
+        let _ = std::thread::Builder::new().name("vegetation".to_owned()).spawn(move || {
+            wce_foundation::jobs::lower_thread_priority();
+            let result = work();
+            *slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(result);
+        });
+        Self { name, done }
+    }
+
+    /// Its result, once (None while it runs).
+    pub(crate) fn take(&self) -> Option<Result<T, String>> {
+        self.done.lock().unwrap_or_else(|p| p.into_inner()).take()
+    }
+}
+
 /// A decoded list, kept while the display shows it, and the entities drawing it.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TreeList {
@@ -91,6 +117,9 @@ pub(crate) struct TreeList {
 
     /// The Assembly Kit's vegetation parameters, read once (None without a kit or when they don't read).
     pub params: std::cell::OnceCell<Option<Arc<GenerationParams>>>,
+
+    /// The list being generated (`tree_list`), its trees drawn once it is done; the ones drawn before stay until then.
+    pub job: Option<Job<Vec<ListTree>>>,
 }
 
 impl Tile {
@@ -291,49 +320,49 @@ impl Tile {
 
     /// Drops the decoded or generated list, so the next update reads or generates it again (after editing the seeds, the exclusions...).
     pub fn reload_tree_list(&mut self) {
+        // A generation of the tile as it was is not wanted any more.
+        self.trees.job = None;
         self.trees.name.clear();
         self.trees.shown = None;
     }
 
-    /// BOB's trees for a list (a category) from the tile as it is now.
-    fn generate_tree_list(&self, name: &str) -> Result<Vec<ListTree>, String> {
+    /// BOB's trees for a list (a category) from the tile as it is now, on a thread of its own: what it reads of the tile is taken here
+    /// (the heights, the painting, the seeds, the static trees), the generator runs there.
+    fn start_tree_job(&self, name: &str) -> Result<Job<Vec<ListTree>>, String> {
         let params = self.generation_params().ok_or("no Assembly Kit vegetation parameters")?;
         let category = params.category(name).ok_or_else(|| format!("no vegetation category {name}"))?;
         let seeds = vegetation::seeds(self.tscene()).ok_or("tile.ted has no <Vegetation> seeds")?;
         let inputs = vegetation::tile_inputs(&self.project)?;
-        let files = self.files.clone();
-        let exists = |p: &str| files.as_deref().is_none_or(|f| f.exists(&p.replace('\\', "/").to_lowercase()));
-        let start = std::time::Instant::now();
         let statics = vegetation::static_trees(self.tscene(), &inputs);
-        let generated = vegetation::tree_list(&inputs, &params, category, seeds, &statics, &exists);
-        log::info(format!("{name}: {} trees generated in {:.2} s", generated.len(), start.elapsed().as_secs_f32()));
-
-        // Grouped by path as the list stores them (paths differing only in case are separate lists), in the list's order: the yaws restart
-        // per path.
-        let mut models: Vec<(&str, Vec<&vegetation::ListTree>)> = vec![];
-        for t in &generated {
-            match models.iter_mut().find(|(p, _)| *p == t.path) {
-                Some((_, v)) => v.push(t),
-                None => models.push((&t.path, vec![t])),
-            }
-        }
-
-        let mut trees = vec![];
-        for (path, items) in models {
-            let model = path.replace('\\', "/").to_lowercase();
-            let mut rand = SEED;
-            for t in items {
-                rand = rand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
-                let scale = f32::from(t.scale_byte) / 127.0;
-                trees.push(ListTree { model: model.clone(), x: t.x, y: t.y, z: t.z, scale, freeform: false, yaw: (rand >> 16) as f32 * YAW_STEP });
-            }
-        }
-
-        Ok(trees)
+        let files = self.files.clone();
+        let label = name.to_owned();
+        Ok(Job::start(name.to_owned(), move || {
+            let exists = |p: &str| files.as_deref().is_none_or(|f| f.exists(&p.replace('\\', "/").to_lowercase()));
+            let start = std::time::Instant::now();
+            let generated = vegetation::tree_list(&inputs, &params, category, seeds, &statics, &exists);
+            log::info(format!("{label}: {} trees generated in {:.2} s", generated.len(), start.elapsed().as_secs_f32()));
+            Ok(list_of_generated(&generated))
+        }))
     }
 
-    /// The trees of the display's list, once per list: generated for its category, or the packed list when the trees can't be generated;
-    /// empty when it is off.
+    /// A finished tree generation: its trees are the list's, drawn again at the next update. True when one finished.
+    fn poll_tree_job(&mut self) -> bool {
+        let Some(job) = &self.trees.job else { return false };
+        let Some(result) = job.take() else { return false };
+        let name = job.name.clone();
+        self.trees.job = None;
+        let trees = result.unwrap_or_else(|error| {
+            log::warn(format!("generating the {name} trees: {error}"));
+            vec![]
+        });
+        self.trees.name = name;
+        self.trees.trees = Arc::new(trees);
+        self.trees.shown = None;
+        true
+    }
+
+    /// The trees of the display's list, once per list: generated for its category (on a thread: empty until it is done), or the packed
+    /// list when the trees can't be generated; empty when it is off.
     pub(crate) fn tree_list(&mut self) -> Arc<Vec<ListTree>> {
         let name = self.display.tree_list.clone();
         if name.is_empty() {
@@ -344,17 +373,27 @@ impl Tile {
             return self.trees.trees.clone();
         }
 
-        self.trees.name.clone_from(&name);
-        let trees = match self.trees_unavailable() {
-            Some(_) => self.packed_tree_list(&name),
-            None => self.generate_tree_list(&name).unwrap_or_else(|error| {
-                log::warn(format!("generating the {name} trees: {error}"));
-                vec![]
-            }),
-        };
+        // The packed list (it can't be generated): read now.
+        if self.trees_unavailable().is_some() {
+            self.trees.name.clone_from(&name);
+            let trees = self.packed_tree_list(&name);
+            self.trees.trees = Arc::new(trees);
+            return self.trees.trees.clone();
+        }
 
-        self.trees.trees = Arc::new(trees);
-        self.trees.trees.clone()
+        // Generated on a thread: nothing new until it is done (`poll_tree_job`).
+        if self.trees.job.as_ref().is_none_or(|j| j.name != name) {
+            match self.start_tree_job(&name) {
+                Ok(job) => self.trees.job = Some(job),
+                Err(error) => {
+                    log::warn(format!("generating the {name} trees: {error}"));
+                    self.trees.name.clone_from(&name);
+                    self.trees.trees = Arc::default();
+                }
+            }
+        }
+
+        Arc::default()
     }
 
     /// The trees and the grass made again when what they are made from changed: the heights, the painting, the seeds, the exclusion
@@ -430,9 +469,18 @@ impl Tile {
             self.display.tree_list = list;
         }
 
+        self.poll_tree_job();
         let want = (self.display.tree_list.clone(), self.display.hidden_types.contains("VEGETATION_INSTANCE"));
         if !published && self.trees.shown.as_ref() == Some(&want) {
             return;
+        }
+
+        // A list being generated: the trees drawn stay until it is done (no gap while it works).
+        if !published && !want.0.is_empty() && self.trees.name != want.0 && !want.1 {
+            let _ = self.tree_list();
+            if self.trees.job.as_ref().is_some_and(|j| j.name == want.0) {
+                return;
+            }
         }
 
         if !published {
@@ -617,6 +665,31 @@ impl TileDocument {
     pub fn set_converted_on_open(&mut self) {
         self.tile_mut().converted_on_open = true;
     }
+}
+
+/// The generator's trees as the list draws them: grouped by path as the list stores them (paths differing only in case are separate lists),
+/// in the list's order, with the game's yaws (they restart per path).
+fn list_of_generated(generated: &[vegetation::ListTree]) -> Vec<ListTree> {
+    let mut models: Vec<(&str, Vec<&vegetation::ListTree>)> = vec![];
+    for t in generated {
+        match models.iter_mut().find(|(p, _)| *p == t.path) {
+            Some((_, v)) => v.push(t),
+            None => models.push((&t.path, vec![t])),
+        }
+    }
+
+    let mut trees = vec![];
+    for (path, items) in models {
+        let model = path.replace('\\', "/").to_lowercase();
+        let mut rand = SEED;
+        for t in items {
+            rand = rand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
+            let scale = f32::from(t.scale_byte) / 127.0;
+            trees.push(ListTree { model: model.clone(), x: t.x, y: t.y, z: t.z, scale, freeform: false, yaw: (rand >> 16) as f32 * YAW_STEP });
+        }
+    }
+
+    trees
 }
 
 /// A tree's untilted matrix as its instance's POSITION5..7 (the rows): the tree shaders blend it with the tilted world matrix per vertex
