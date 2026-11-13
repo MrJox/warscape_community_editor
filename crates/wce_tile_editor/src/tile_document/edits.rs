@@ -4656,7 +4656,7 @@ impl Tile {
 }
 
 /// The flags row's tooltip.
-const FLAGS_TIP: &str = "visible: it is shown\nactive: it can be selected\ndraggable: TEd's flag, kept in the file";
+const FLAGS_TIP: &str = "visible: it is shown\nactive: it can be selected\ndraggable: the gizmo and the grab (G) move it; off, it can be selected without moving it by mistake";
 
 /// The tooltips of the surface_mode choices (Landscape: Above, Freeform, Entity: Above).
 pub(super) const SURFACE_TIPS: [&str; 3] =

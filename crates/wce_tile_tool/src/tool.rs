@@ -2147,6 +2147,11 @@ impl TileTool {
         let el = primary(e);
         let Some(d) = document(e) else { return false };
         let Some(el) = el.filter(|_| !self.grabbing) else { return false };
+        if !d.tile().draggable(el) {
+            self.status = "not draggable: its draggable flag (Inspector) is off, so the mouse does not move it".to_owned();
+            return false;
+        }
+
         let p = d.tile().world_position(el);
         self.grab_elem = Some(el);
         self.grab_y_offset = f64::from(p.y - d.tile().terrain_height(p.x, p.z));

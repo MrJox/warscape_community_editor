@@ -1350,6 +1350,10 @@ impl Document for TileDocument {
         self.tile().item_parent_transform(item)
     }
 
+    fn item_locked(&self, item: SourceRef) -> bool {
+        elem_of(item.item).is_some_and(|el| !self.tile().draggable(el))
+    }
+
     fn transform_items(&mut self, items: &[SourceRef], delta: &Float4x4, gesture: u64) {
         self.transform_selected(items, delta, gesture);
     }
