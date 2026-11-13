@@ -171,6 +171,21 @@ impl Inspector for ImGuiInspector {
         self.show_hint();
     }
 
+    fn images(&mut self, field: &str, label: &str, images: &[(u64, f32, f32, &str)]) {
+        self.draw_label(field, label, true);
+        for (i, (id, w, h, caption)) in images.iter().enumerate() {
+            if i > 0 {
+                gui::same_line();
+            }
+
+            gui::begin_group();
+            gui::image(*id, gui::v2(*w, *h));
+            self.show_hint();
+            gui::text_disabled(caption);
+            gui::end_group();
+        }
+    }
+
     fn plot(&mut self, field: &str, label: &str, series: &[([f32; 4], Vec<f32>)], x_end: &str) {
         self.draw_label(field, label, true);
         let w = gui::content_region_avail().x.max(60.0);

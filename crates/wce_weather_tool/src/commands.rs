@@ -182,6 +182,11 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("weather_sky_png", "weather_sky_png <file.png>", "test: write the Inspector's two sky strips side by side", |e, a| {
+        let Some(path) = a.first().cloned() else { return fail("usage: weather_sky_png <file.png>") };
+        with_weather(e, |t, _| t.sky.save_png(std::path::Path::new(&path)).map_or_else(fail, |()| ok("")))
+    });
+
     c.add(
         "weather_gallery",
         "weather_gallery on|off|refresh [filter words]",
