@@ -312,12 +312,13 @@ impl TileDocument {
         let text = self.text_for_export(true)?;
         let (msg, report) = match walls {
             Some(w) if self.tile().has_generated_buildings() => {
-                let (scene, n, notes) = wce_walls::export::walls_for_kit(self.project(), text, w.files, w.schema, &folder, w.data)?;
+                let kit_walls = self.tile_mut().kit_walls_for_export();
+                let (scene, n, notes) = wce_walls::export::walls_for_kit(self.project(), text, w.files, w.schema, &folder, w.data, &kit_walls)?;
                 for line in &notes {
                     wce_foundation::log::info(format!("Save for Assembly Kit: {line}"));
                 }
 
-                let polyfill = format!("{n} procedural wall(s) written as their pieces in the layer '{}' ({})", wce_walls::export::KIT_LAYER, wce_walls::pack::PROC_PACK);
+                let polyfill = format!("{n} wall(s) written as their pieces in the layer '{}' ({})", wce_walls::export::KIT_LAYER, wce_walls::pack::PROC_PACK);
                 let maps = self.tile_mut().project.export_maps()?;
                 self.project().save_for_kit_scene(&target, scene, vec![polyfill], &maps)?
             }

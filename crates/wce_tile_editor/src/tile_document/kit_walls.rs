@@ -141,7 +141,7 @@ impl Tile {
     }
 
     /// A kit wall's procedural stretches laid out (`solver::solve` on each `Stretch::input`, the wall's base and tolerance).
-    fn kit_stretch_plans(&self, elem: usize, layout: &KitLayout) -> Vec<Plan> {
+    pub(super) fn kit_stretch_plans(&self, elem: usize, layout: &KitLayout) -> Vec<Plan> {
         let sc = self.tscene();
         let Some(profile) = wce_walls::scene::wall_profile(sc, elem) else { return vec![] };
         let tolerance = sc.doc().get(elem, "wall_tolerance").and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(0.5).max(0.0);
@@ -169,6 +169,7 @@ impl Tile {
         for n in &layout.notes {
             log::warn(format!("kit wall {}: {n}", self.tscene().name(elem)));
         }
+
 
         // Its height layer: the ground to its pieces' levels (made again only when it or the ground below it changed); the other walls
         // stand on what it changed.
@@ -246,21 +247,33 @@ impl Tile {
         self.spawn_wall_job(elem, signature, profile, plans.into_iter().map(|p| (p, vec![])).collect(), placed);
     }
 
+    /// Every kit wall without a layout kept (its preview not made yet: a republish clears them) laid now and kept, for what reads them
+    /// from `&self` (Generate SiegeAI).
+    pub(crate) fn ensure_kit_layouts(&mut self) {
+        let sc = self.tscene();
+        let walls = wce_walls::scene::all_walls(sc).into_iter().filter(|&e| !wce_walls::scene::is_procedural(sc, e) && !self.wall_preview.kit_layouts.contains_key(&e)).collect::<Vec<_>>();
+        for e in walls {
+            if let Some(l) = self.kit_layout(e) {
+                self.wall_preview.kit_layouts.insert(e, l);
+            }
+        }
+    }
+
     /// A kit wall's last layout (as drawn), for `wall_info`.
     pub fn kit_wall_report(&self, elem: usize) -> Option<&KitLayout> {
         self.wall_preview.kit_layouts.get(&elem)
     }
 
-    /// Per piece of a kit wall's last layout: its key, its levels at its joints, and the ground below the wall's layer and as it shows
-    /// (with the layer) halfway between its joints (scene y), for `wall_levels`.
-    pub fn kit_wall_levels(&self, elem: usize) -> Vec<(String, [f64; 2], f64, f64)> {
+    /// Per piece of a kit wall's last layout: its key, its levels at its joints, the ground below the wall's layer and as it shows (with
+    /// the layer) halfway between its joints (scene y), and its joints (x, z metres), for `wall_levels`.
+    pub fn kit_wall_levels(&self, elem: usize) -> Vec<PieceLevels> {
         let Some(l) = self.wall_preview.kit_layouts.get(&elem) else { return vec![] };
         let key = self.wall_layer_key(elem);
         let below = self.ground_below(key.as_deref());
         let u = self.unit();
         l.placed.iter().map(|p| {
             let m = [(p.joints[0][0] + p.joints[1][0]) / 2.0, (p.joints[0][1] + p.joints[1][1]) / 2.0];
-            (p.key.clone(), p.levels, below(m[0], m[1]), self.project.height_at(m[0] / u, m[1] / u))
+            (p.key.clone(), p.levels, below(m[0], m[1]), self.project.height_at(m[0] / u, m[1] / u), p.joints.map(|j| [j[0] / u, j[1] / u]))
         }).collect()
     }
 
@@ -270,14 +283,25 @@ impl Tile {
         wce_walls::scene::all_walls(sc).into_iter().filter_map(|e| sc.doc().get(e, WALL_ID)?.trim().parse::<u32>().ok()).max().unwrap_or(0) + 1
     }
 
-    /// What a kit wall's height layer is known by: its `wall_id` (a copy of a wall keeps its id: the n-th wall of an id after the first
-    /// is `<id>.<n>`, in the document's order). `None` without an id.
+    /// What a kit wall's height layer is known by (`wce_walls::scene::wall_key`).
     pub(super) fn wall_layer_key(&self, elem: usize) -> Option<String> {
-        let sc = self.tscene();
-        let id_of = |e: usize| sc.doc().get(e, WALL_ID).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&i| i > 0);
-        let id = id_of(elem)?;
-        let n = wce_walls::scene::all_walls(sc).into_iter().take_while(|&e| e != elem).filter(|&e| id_of(e) == Some(id)).count();
-        Some(if n == 0 { id.to_string() } else { format!("{id}.{n}") })
+        wce_walls::scene::wall_key(self.tscene(), elem)
+    }
+
+    /// The kit walls as an export lowers them (`wce_walls::export::KitWall`, phase 5 of docs/plans/kit_walls.md): each laid as the editor
+    /// lays it (on the ground below its own height layer), its game pieces and its stretches' plans. A wall that can't be laid is not in it
+    /// (the export leaves it out, noted).
+    pub fn kit_walls_for_export(&mut self) -> Vec<wce_walls::export::KitWall> {
+        let walls = wce_walls::scene::all_walls(self.tscene()).into_iter().filter(|&e| !wce_walls::scene::is_procedural(self.tscene(), e)).collect::<Vec<_>>();
+        let mut out = vec![];
+        for e in walls {
+            let (Some(key), Some(layout)) = (self.wall_layer_key(e), self.kit_layout(e)) else { continue };
+            let placed = layout.placed.iter().map(|p| (p.key.clone(), Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true })).collect();
+            let stretches = self.kit_stretch_plans(e, &layout);
+            out.push(wce_walls::export::KitWall { key, placed, stretches });
+        }
+
+        out
     }
 
     /// The height stack's layer of a wall's key, if it has one.
@@ -502,6 +526,9 @@ impl Tile {
         self.walls_changed();
     }
 }
+
+/// A kit wall's piece as `wall_levels` reports it: its key, its levels, the ground below the wall's layer and as it shows, its joints.
+pub type PieceLevels = (String, [f64; 2], f64, f64, [[f64; 2]; 2]);
 
 /// A piece's ground in a wall's height layer: its area (x, z, the world), its joints and its levels at them.
 type Pad = (Vec<[f64; 2]>, [[f64; 2]; 2], [f64; 2]);

@@ -186,6 +186,9 @@ pub(crate) struct ExportInputs {
 
     /// A tile with procedural walls: the game files and rpfm's schema (its path).
     walls: Option<(Arc<dyn wce_vfs::files::Files>, PathBuf)>,
+
+    /// Its kit walls as the editor laid them (`TileDocument::kit_walls_for_export`).
+    kit_walls: Vec<wce_walls::export::KitWall>,
 }
 
 impl ExportInputs {
@@ -230,7 +233,7 @@ impl ExportInputs {
         // A tile with procedural walls: lowered to buildings of their own, which go into a pack with the tile.
         if let Some((files, schema)) = &self.walls {
             let schema = rpfm_lib::schema::Schema::load(schema, None).map_err(|err| format!("{}: {err}", schema.display()))?;
-            let (pack, saved, notes) = wce_walls::export::save_exported_walls(&game, files.as_ref(), &schema, &self.project_dir, self.text, out)?;
+            let (pack, saved, notes) = wce_walls::export::save_exported_walls(&game, files.as_ref(), &schema, &self.project_dir, self.text, out, &self.kit_walls)?;
             for n in &notes {
                 log::info(format!("{}: {n}", saved.display()));
             }
@@ -1395,9 +1398,10 @@ impl TileTool {
         let project_dir = d.project().dir.clone();
         let text = d.text_for_export(false)?;
         let generated = d.tile().has_generated_buildings();
+        let kit_walls = d.tile_mut().kit_walls_for_export();
         let walls = if generated { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
-        Ok(ExportInputs { files, kit, game, pending, project_dir, text, walls })
+        Ok(ExportInputs { files, kit, game, pending, project_dir, text, walls, kit_walls })
     }
 
     /// Saves the open tile, then writes it as an exported tile (stages A, B and C) with the tile database's files into a mod pack
@@ -1417,12 +1421,13 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let dir = d.project().dir.clone();
         let text = d.text_for_export(false)?;
+        let kit_walls = d.tile_mut().kit_walls_for_export();
 
         // A tile with procedural walls: lowered to buildings of their own, whose pieces and rows go into the pack with the tile.
         let (folder, notes) = if d.tile().has_generated_buildings() {
             let files = e.files().ok_or("no game files are mounted")?;
             let schema = walls_schema(e)?;
-            wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack)?
+            wce_walls::export::save_walls_to_pack(&game, files.as_ref(), &schema, &dir, text, pack, &kit_walls)?
         } else {
             let (scene, _) = wce_tile::project_files::to_ted(text)?;
             let (folder, notes) = wce_tile_io::attila::workflow::save_exported_to_pack(&game, &dir, Some(scene), pack)?;

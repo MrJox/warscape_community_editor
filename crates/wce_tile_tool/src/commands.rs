@@ -1376,7 +1376,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("{} layer(s){}", l.len(), l.iter().map(|(n, o)| format!("; {n} ({o})")).collect::<String>()))
     });
 
-    c.add("wall_levels", "wall_levels", "log the selected kit wall's pieces with their levels at their joints, and the ground at their middle below the wall's height layer and as it shows (scene y)", |e, _| {
+    c.add("wall_levels", "wall_levels", "log the selected kit wall's pieces with their levels at their joints, the ground at their middle below the wall's height layer and as it shows (scene y), and their joints (metres)", |e, _| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };
         let Some(el) = el else { return fail("no wall selected") };
@@ -1385,7 +1385,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             return fail("no kit wall selected");
         }
 
-        ok(rows.iter().map(|(k, l, below, shown)| format!("{k}: {:.2} -> {:.2}, ground {below:.2} below, {shown:.2} shown", l[0], l[1])).collect::<Vec<_>>().join("\n"))
+        ok(rows.iter().map(|(k, l, below, shown, j)| format!("{k}: {:.2} -> {:.2}, ground {below:.2} below, {shown:.2} shown; joints ({:.2}, {:.2}) -> ({:.2}, {:.2})", l[0], l[1], j[0][0], j[0][1], j[1][0], j[1][1])).collect::<Vec<_>>().join("\n"))
     });
 
     c.add("wall_info", "wall_info", "log the selected wall's layout: base, length, corners, runs, step sections, attached ends, warnings (a kit wall: its pieces, how far it strays from its line, how short of its end it stops)", |e, _| {
