@@ -165,6 +165,7 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
             ("bspline_seed", "1"),
             ("bspline_gap", "0"),
             ("bspline_align", "true"),
+            ("bspline_tilt_across", "false"),
             ("bspline_closed", "false"),
             ("bspline_offset", "0"),
             ("bspline_damage", "0"),

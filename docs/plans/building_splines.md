@@ -16,15 +16,16 @@ A Create panel entry, *Building spline (fences, palisades)*, in the Buildings ca
   line's end is not laid.
 - **Laid as the roads' fences are** (`road_layout`): its long axis along the line, on the chord of its stretch (from where it starts to where it
   ends), so a building whose pivot is at one end (`lowfence_3`) does not stick out of a bend.
-- **Align to ground**: tilted to the slope under it, read end to end and 0.5 m across (`road_layout::ground_tilt`, shared with the
-  roads' fences), its middle on the ground. Off: upright, its pivot on the ground.
+- **Align to ground**: tilted to the slope under it, read end to end (`road_layout::ground_tilt`, shared with the roads' fences), its
+  middle on the ground. Off: upright, its pivot on the ground. **Tilt across slope** (off by default; user, 2026-11-13: fences leaned
+  sideways on hillsides) also leans it with the slope across it, read 0.5 m each way.
 - **Random**: each building picked from the list by the seed, else the list repeats in order.
 - **Extras**: closed loop, damage chance (a random damaged `destruction_level`, as `road_fence_damage`), flip chance (end for end), turn
   and side jitter, side offset (to the right as the line runs from its first point; below 0 to its left).
 - **Joiners** (user, 2026-11-13): an optional second list of buildings (posts, pillars) laid on each joint between two of the others, to
-  hide the gap and make the line less regular. One in the middle of each gap, its middle on the joint, its long axis along the mean of the
-  two buildings' ways, tilted as they are; picked as the buildings are (in order, or by the seed), with the flip, turn and damage chances
-  but no side jitter. They do not change the spacing. A closed line has one on the joint that closes it; *Joiners at the ends* puts one at
+  hide the gap and make the line less regular. One between where the two buildings it joins end and start as they stand (after their turn and
+  side jitter: user, 2026-11-13, a post on the drawn line stood off a turned fence), its long axis along the mean of their ways, tilted
+  as they are, not turned by a jitter of its own; picked as the buildings are (in order, or by the seed), with the flip and damage chances. They do not change the spacing. A closed line has one on the joint that closes it; *Joiners at the ends* puts one at
   each end of an open line too.
 
 ## Where it is
