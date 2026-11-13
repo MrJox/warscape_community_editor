@@ -182,6 +182,46 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "weather_reference",
+        "weather_reference <file.png> [over|corner|off] [opacity]",
+        "load a reference screenshot and show it over the viewport (at the opacity), in its corner, or not",
+        |e, a| {
+            let Some(path) = a.first().cloned() else { return fail("usage: weather_reference <file.png> [over|corner|off] [opacity]") };
+            let show = match a.get(1).map(String::as_str) {
+                None | Some("over") => crate::reference::Show::Over,
+                Some("corner") => crate::reference::Show::Corner,
+                Some("off") => crate::reference::Show::Off,
+                Some(x) => return fail(format!("{x}: over, corner or off")),
+            };
+            let opacity = a.get(2).map(|o| num(o) as f32);
+            with_weather(e, |t, e| {
+                if let Err(m) = t.reference.load(e, std::path::Path::new(&path)) {
+                    return fail(m);
+                }
+
+                t.reference.show = show;
+                if let Some(o) = opacity {
+                    t.reference.opacity = o.clamp(0.0, 1.0);
+                }
+
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "weather_reference_compare",
+        "weather_reference_compare <x> <y>",
+        "compare the reference screenshot and the render at a pixel of the viewport image",
+        |e, a| {
+            let (Some(x), Some(y)) = (a.first().map(|v| int(v) as i32), a.get(1).map(|v| int(v) as i32)) else {
+                return fail("usage: weather_reference_compare <x> <y>");
+            };
+            with_weather(e, |t, e| t.reference.compare_at(e, x, y).map_or_else(fail, |p| ok(crate::reference::describe(&p))))
+        },
+    );
+
     c.add("weather_sky_png", "weather_sky_png <file.png>", "test: write the Inspector's two sky strips side by side", |e, a| {
         let Some(path) = a.first().cloned() else { return fail("usage: weather_sky_png <file.png>") };
         with_weather(e, |t, _| t.sky.save_png(std::path::Path::new(&path)).map_or_else(fail, |()| ok("")))

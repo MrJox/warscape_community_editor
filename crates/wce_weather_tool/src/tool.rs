@@ -146,6 +146,9 @@ pub struct WeatherTool {
     /// The Inspector's sky strips (sky_strip.rs).
     pub(crate) sky: crate::sky_strip::SkyStrips,
 
+    /// The reference screenshot and its colour comparison (reference.rs).
+    pub(crate) reference: crate::reference::Reference,
+
     /// A file to open once the panels are drawn (the mix just saved).
     open_after: Option<String>,
 }
@@ -180,6 +183,7 @@ impl Default for WeatherTool {
             mix: crate::mix::Mix::default(),
             gallery: crate::gallery::Gallery::default(),
             sky: crate::sky_strip::SkyStrips::default(),
+            reference: crate::reference::Reference::default(),
             open_after: None,
         }
     }
@@ -382,6 +386,8 @@ impl WeatherTool {
         if let Some(path) = self.mix.draw(e, self.env_doc) {
             self.open_after = Some(path);
         }
+
+        self.reference.draw_panel(e);
 
         if !errors.is_empty() {
             gui::text_colored(theme::error(), "render errors (hover)");
@@ -806,15 +812,30 @@ impl Tool for WeatherTool {
     fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
         let shown = self.last_params.clone();
         self.visual.overlay(e, self.env_doc, &shown, origin, size);
+        self.reference.draw_overlay(e, origin, size);
+        if self.reference.picking && gui::is_key_pressed(gui::KEY_ESCAPE, false) {
+            self.reference.picking = false;
+        }
     }
 
     fn viewport_input(&mut self, e: &mut Editor, event: &wce_editor::tool::ViewportEvent) -> bool {
+        // A reference comparison armed: the click compares the screenshot and the render there.
+        if self.reference.picking && event.kind == wce_editor::tool::ViewportEventKind::Press && event.button == 0 {
+            self.reference.picking = false;
+            match self.reference.compare_at(e, event.x, event.y) {
+                Ok(p) => e.status(&crate::reference::describe(&p), false),
+                Err(m) => e.status(&m, true),
+            }
+
+            return true;
+        }
+
         let shown = self.last_params.clone();
         self.visual.viewport_input(e, self.env_doc, &shown, event)
     }
 
     fn claims_left_button(&self, _: &Editor) -> bool {
-        self.visual.claims_left_button()
+        self.visual.claims_left_button() || self.reference.picking
     }
 
     /// An environment or lighting file is inspected by effect (sun, fog, exposure, ...) whatever element is selected; the other files by the

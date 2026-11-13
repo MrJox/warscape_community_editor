@@ -32,22 +32,12 @@ weather and particle code: docs/plans/weather_current_state.md.
      (`wce_render` `renderer/decals.rs` ~391, `renderer/terrain.rs` ~1107).
    - The campaign skybox model and cube map.
    - A season cross-fade preview (spring, summer, autumn, winter) as the game does it.
-3. **Visual editing, the rest** (UX pass, 2026-11-13; the first part is done: the sun handle, the focus pick, compare, the tone curve and
-   histogram, `wce_weather_tool` `visual.rs`, docs/editor.md). Raised with the user, not started:
-   - Done 2026-11-13: the wind arrow (direction; the strength comes from the weather definition, not the file) and Mix with another file
-     (`mix.rs`).
-   - Done 2026-11-13: fog rings, where the fog over the ground reaches 25, 50 and 75 % (the formula: docs/re/renderer.md, "Battle fog";
-     fog_distance_start is an offset, not a distance).
-   - A colour eyedropper: not done from the viewport, as a picked pixel is lit and tone-mapped while the files' colours are inputs
-     (scaled, gamma 2.2, then lit), so the picked value would not give back the picked look; worth it with the screenshot overlay below,
-     for matching a reference, with the conversion made explicit.
-   - A sky gradient strip (horizon to zenith) and a fog density curve by distance in the Inspector.
-   - A preview-only switch per section (fog, grading, clouds off) to see what each does; nothing written.
-   - A split wipe between the saved file and the edits (or two files). Compare flips the whole frame instead: the renderer's temporal state
-     (exposure adaptation `tonemap.luma_*`, the environment cube) is the renderer's, not the view's, so two environments in one frame would
-     fight; a wipe needs that state per view first.
-   - A gallery of the game's weather files rendered on the current scene, filtered by climate, season and time of day.
-   - A game screenshot beside or over the viewport, from the same camera, to match a look by eye.
+3. **Visual editing** (UX pass, 2026-11-13): done. The sun handle, the focus pick, the split compare, the tone curve and histogram,
+   Mix with another file, the wind arrow, the fog rings and the Inspector's fog curve, the preview switches, the sky strips, the gallery,
+   the reference screenshot with its colour comparison (`wce_weather_tool` `visual.rs`, `mix.rs`, `preview.rs`, `sky_strip.rs`,
+   `gallery.rs`, `reference.rs`; docs/editor.md). Left as they are: the colour eyedropper writes nothing into the file (the files'
+   colours are lit and tone-mapped inputs; the comparison guides the edit instead); fog_distance_start is an offset, not a distance
+   (docs/re/renderer.md, "Battle fog").
 4. **One panel: everything from the Inspector** (user, 2026-11-13; how to do it is for later). Every edit the Properties panel makes
    reachable from the Inspector, each Inspector section collapsible, so the Properties panel can go. Today only Properties has: the tree
    of `weather_definitions.xml` and VFX files (picking the element the Inspector edits), structural edits (add, duplicate, move, delete
