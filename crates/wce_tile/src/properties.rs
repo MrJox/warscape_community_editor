@@ -293,7 +293,9 @@ pub fn wall_tip(attr: &str) -> Option<&'static str> {
         "wall_access_every" => "The spacing of the door sections along the wall, the first at half of it (scene units: 2 a metre on battle maps, \
             200 = 100 m; 0 = none). Only cultures with a door section (the 15 m walls) have them",
         "wall_defence_every" => "The spacing of the towers and bastions along the wall, the first at half of it (scene units: 2 a metre on \
-            battle maps; 0 = none). They go only where the wall is straight and level",
+            battle maps; 0 = none): a tower and a bastion in turn, the tower first (only bastions for the 8 m walls, which have no towers). \
+            Each tower gets a capture point over the wall behind it, which whoever holds it makes the tower fire for. A procedural wall \
+            puts them only where it is straight and level",
         _ => return None,
     })
 }

@@ -23,5 +23,6 @@ pub mod pieces;
 pub mod profile;
 pub mod scene;
 pub mod solver;
+pub mod towers;
 pub mod warp;
 pub mod zones;

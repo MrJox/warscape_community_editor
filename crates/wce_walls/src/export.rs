@@ -95,6 +95,9 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
     let walls = scene::walls(scene).into_iter().filter(|&e| scene::exported(scene, e)).collect::<Vec<_>>();
     let kit_walls = scene::all_walls(scene).into_iter().filter(|&e| !scene::is_procedural(scene, e) && scene::exported(scene, e)).collect::<Vec<_>>();
     let unexported = scene::all_walls(scene).into_iter().filter(|&e| !scene::exported(scene, e)).collect::<Vec<_>>();
+
+    // Each wall's key (its towers' capture locations are named by it), before any wall goes.
+    let wall_keys = scene::all_walls(scene).into_iter().map(|e| (e, scene::wall_key(scene, e).unwrap_or_else(|| format!("e{e}")))).collect::<HashMap<_, _>>();
     let spans = scene.find_all(crate::bridge::BRIDGE_SPAN);
     if walls.is_empty() && kit_walls.is_empty() && spans.is_empty() && unexported.is_empty() {
         return Ok(out);
@@ -291,9 +294,16 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
 
     // Lower the walls, the last first (an edit only moves the indices of the elements after it).
     lowered.sort_by(|a, b| b.0.cmp(&a.0));
+    let read = |k: &str| files.read(&format!("{}{k}_tech.cs2.parsed", crate::building::folder(k))).ok();
     for (wall, placed) in lowered {
-        // A layer made at the end of the scene graph comes after every wall: removing one does not move it.
-        scene::lower(scene, wall, &placed, into)?;
+        // Its towers' capture locations with it. A layer made at the end of the scene graph comes after every wall: removing one does not
+        // move it.
+        let captures = wall_keys.get(&wall).map(|k| crate::towers::tower_captures(k, &placed, &read)).unwrap_or_default();
+        if !captures.is_empty() {
+            out.notes.push(format!("wall {}: {} tower capture location(s)", scene.name(wall), captures.len()));
+        }
+
+        scene::lower(scene, wall, &placed, into, &captures)?;
     }
 
     // Each bridge's element gives way to its pieces, in its layer, the last first (found again: the walls moved the indices).
