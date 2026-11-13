@@ -25,24 +25,56 @@ pub fn kit_settings_xml(db: &TileDatabase) -> String {
          normal_terrain_scale=\"{}\" blend_contrast=\"{}\" layer_exempt_0=\"{}\" layer_exempt_1=\"{}\" layer_exempt_2=\"{}\" layer_exempt_3=\"{}\" \
          campaign_sea_transparency_scale=\"{}\" campaign_sea_uv_scale=\"{}\" campaign_lake_transparency_scale=\"{}\" near_distance_detail_distance=\"{}\" \
          near_distance_detail_scale=\"{}\" near_distance_detail_strength=\"{}\" mid_distance_detail_near_lq=\"{}\"/>\r\n",
-        f(*r.lf_height()), f(*r.hf_height()), f(*r.blend_pixel_scale()), f(*r.unit_scale()), f(*r.mid_distance_detail_scale()),
-        f(*r.mid_distance_detail_strength()), f(*r.mid_distance_normal_strength()), f(*r.mid_distance_detail_near()), f(*r.mid_distance_detail_far()),
-        f(*r.mid_distance_detail_slope_low()), f(*r.mid_distance_detail_slope_high()), f(*r.vertical_offset()), f(*r.normal_lf_scale()),
-        f(*r.normal_tile_scale()), f(*r.normal_terrain_scale()), f(*r.blend_contrast()), esc(r.layer_exempt_0()), esc(r.layer_exempt_1()),
-        esc(r.layer_exempt_2()), esc(r.layer_exempt_3()), f(*r.campaign_sea_transparency_scale()), f(*r.campaign_sea_uv_scale()),
-        f(*r.campaign_lake_transparency_scale()), f(*r.near_distance_detail_distance()), f(*r.near_distance_detail_scale()),
-        f(*r.near_distance_detail_strength()), f(*r.mid_distance_detail_near_lq())
+        f(*r.lf_height()),
+        f(*r.hf_height()),
+        f(*r.blend_pixel_scale()),
+        f(*r.unit_scale()),
+        f(*r.mid_distance_detail_scale()),
+        f(*r.mid_distance_detail_strength()),
+        f(*r.mid_distance_normal_strength()),
+        f(*r.mid_distance_detail_near()),
+        f(*r.mid_distance_detail_far()),
+        f(*r.mid_distance_detail_slope_low()),
+        f(*r.mid_distance_detail_slope_high()),
+        f(*r.vertical_offset()),
+        f(*r.normal_lf_scale()),
+        f(*r.normal_tile_scale()),
+        f(*r.normal_terrain_scale()),
+        f(*r.blend_contrast()),
+        esc(r.layer_exempt_0()),
+        esc(r.layer_exempt_1()),
+        esc(r.layer_exempt_2()),
+        esc(r.layer_exempt_3()),
+        f(*r.campaign_sea_transparency_scale()),
+        f(*r.campaign_sea_uv_scale()),
+        f(*r.campaign_lake_transparency_scale()),
+        f(*r.near_distance_detail_distance()),
+        f(*r.near_distance_detail_scale()),
+        f(*r.near_distance_detail_strength()),
+        f(*r.mid_distance_detail_near_lq())
     );
 
     let c = db.conversion_params();
-    s += &format!("    <CONVERSION_PARAMS serialise_version=\"1\" triangle_density=\"{}\" max_lf_heights_per_pixel=\"{}\"", c.triangle_density(), c.max_lf_heights_per_pixel());
+    s += &format!(
+        "    <CONVERSION_PARAMS serialise_version=\"1\" triangle_density=\"{}\" max_lf_heights_per_pixel=\"{}\"",
+        c.triangle_density(),
+        c.max_lf_heights_per_pixel()
+    );
     let size = [
-        c.triangle_decimation_size_factors0(), c.triangle_decimation_size_factors1(), c.triangle_decimation_size_factors2(),
-        c.triangle_decimation_size_factors3(), c.triangle_decimation_size_factors4(), c.triangle_decimation_size_factors5(),
+        c.triangle_decimation_size_factors0(),
+        c.triangle_decimation_size_factors1(),
+        c.triangle_decimation_size_factors2(),
+        c.triangle_decimation_size_factors3(),
+        c.triangle_decimation_size_factors4(),
+        c.triangle_decimation_size_factors5(),
     ];
     let angle = [
-        c.triangle_decimation_angle_factors0(), c.triangle_decimation_angle_factors1(), c.triangle_decimation_angle_factors2(),
-        c.triangle_decimation_angle_factors3(), c.triangle_decimation_angle_factors4(), c.triangle_decimation_angle_factors5(),
+        c.triangle_decimation_angle_factors0(),
+        c.triangle_decimation_angle_factors1(),
+        c.triangle_decimation_angle_factors2(),
+        c.triangle_decimation_angle_factors3(),
+        c.triangle_decimation_angle_factors4(),
+        c.triangle_decimation_angle_factors5(),
     ];
     for (k, v) in size.iter().enumerate() {
         s += &format!(" triangle_decimation_size_factors{k}=\"{}\"", f(**v));
@@ -56,15 +88,31 @@ pub fn kit_settings_xml(db: &TileDatabase) -> String {
     for cl in db.climates() {
         s += &format!(
             "        <CLIMATE serialise_version=\"3\" name=\"{}\" texture_set=\"{}\" red=\"{}\" green=\"{}\" blue=\"{}\" grass_alpha_mul=\"{}\" grass_alpha_add=\"{}\" destruction_climate=\"{}\">\r\n            <TEXTURES>\r\n",
-            esc(cl.name()), esc(cl.texture_set()), f(*cl.red()), f(*cl.green()), f(*cl.blue()), f(*cl.grass_alpha_mul()), f(*cl.grass_alpha_add()), esc(cl.destruction_climate())
+            esc(cl.name()),
+            esc(cl.texture_set()),
+            f(*cl.red()),
+            f(*cl.green()),
+            f(*cl.blue()),
+            f(*cl.grass_alpha_mul()),
+            f(*cl.grass_alpha_add()),
+            esc(cl.destruction_climate())
         );
         for t in cl.textures() {
             s += &format!(
                 "                <TEXTURE serialise_version=\"4\" name=\"{}\" mid_distance_strength=\"{}\" lerp_reflectivity0=\"{}\" lerp_smoothness0=\"{}\" lerp_reflectivity1=\"{}\" \
                  lerp_smoothness1=\"{}\" lerp_reflectivity2=\"{}\" lerp_smoothness2=\"{}\" lerp_reflectivity3=\"{}\" lerp_smoothness3=\"{}\" blend_pixel_scale=\"{}\" outfield_blend_pixel_scale=\"{}\"/>\r\n",
-                esc(t.name()), f(*t.mid_distance_strength()), f(*t.lerp_reflectivity0()), f(*t.lerp_smoothness0()), f(*t.lerp_reflectivity1()),
-                f(*t.lerp_smoothness1()), f(*t.lerp_reflectivity2()), f(*t.lerp_smoothness2()), f(*t.lerp_reflectivity3()), f(*t.lerp_smoothness3()),
-                f(*t.blend_pixel_scale()), f(*t.outfield_blend_pixel_scale())
+                esc(t.name()),
+                f(*t.mid_distance_strength()),
+                f(*t.lerp_reflectivity0()),
+                f(*t.lerp_smoothness0()),
+                f(*t.lerp_reflectivity1()),
+                f(*t.lerp_smoothness1()),
+                f(*t.lerp_reflectivity2()),
+                f(*t.lerp_smoothness2()),
+                f(*t.lerp_reflectivity3()),
+                f(*t.lerp_smoothness3()),
+                f(*t.blend_pixel_scale()),
+                f(*t.outfield_blend_pixel_scale())
             );
         }
 
@@ -75,7 +123,14 @@ pub fn kit_settings_xml(db: &TileDatabase) -> String {
     for t in db.tile_sets() {
         s += &format!(
             "        <TILE_SET serialise_version=\"1\" name=\"{}\" linking_tile=\"{}\" shared_geometry=\"{}\" also_place_tile_set=\"{}\" link_as_set=\"{}\" red=\"{}\" green=\"{}\" blue=\"{}\"/>\r\n",
-            esc(t.name()), esc(t.linking_tile()), esc(t.shared_geometry()), esc(t.also_place_tile_set()), esc(t.link_as_set()), f(*t.red()), f(*t.green()), f(*t.blue())
+            esc(t.name()),
+            esc(t.linking_tile()),
+            esc(t.shared_geometry()),
+            esc(t.also_place_tile_set()),
+            esc(t.link_as_set()),
+            f(*t.red()),
+            f(*t.green()),
+            f(*t.blue())
         );
     }
 

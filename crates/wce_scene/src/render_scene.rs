@@ -566,7 +566,9 @@ impl LfSamples {
     pub fn read(&self) -> LfRead<'_> {
         match &self.store {
             LfStore::Own(v) => LfRead::Own(v.read().unwrap_or_else(std::sync::PoisonError::into_inner)),
-            LfStore::Shared { grid, flip } => LfRead::Shared { v: grid.read(), w: grid.width() as usize, h: grid.height() as usize, flip: *flip },
+            LfStore::Shared { grid, flip } => {
+                LfRead::Shared { v: grid.read(), w: grid.width() as usize, h: grid.height() as usize, flip: *flip }
+            }
         }
     }
 
@@ -715,10 +717,16 @@ impl LfMap {
 }
 
 impl Terrain {
-
     /// A flat square of two triangles.
     pub fn flat(half_size: f32, diffuse: &str, tile_metres: f32) -> Self {
-        Self { origin_x: -half_size, origin_z: -half_size, step: half_size * 2.0, diffuse: diffuse.to_owned(), tile_metres, ..Default::default() }
+        Self {
+            origin_x: -half_size,
+            origin_z: -half_size,
+            step: half_size * 2.0,
+            diffuse: diffuse.to_owned(),
+            tile_metres,
+            ..Default::default()
+        }
     }
 
     pub fn height_at(&self, i: i32, j: i32) -> f32 {
@@ -787,7 +795,15 @@ pub fn overlay_slot(slot: usize) -> u32 {
 
 /// An overlay colour from 0..1 channels.
 pub fn overlay_colour(r: f32, g: f32, b: f32, a: f32) -> u32 {
-    let q = |v: f32| if v <= 0.0 { 0 } else if v >= 1.0 { 255 } else { (v * 255.0 + 0.5) as u32 };
+    let q = |v: f32| {
+        if v <= 0.0 {
+            0
+        } else if v >= 1.0 {
+            255
+        } else {
+            (v * 255.0 + 0.5) as u32
+        }
+    };
     q(r) | (q(g) << 8) | (q(b) << 16) | (q(a) << 24)
 }
 
@@ -819,7 +835,6 @@ impl Default for Overlay {
 }
 
 impl Overlay {
-
     pub fn line(&mut self, a: Float3, b: Float3, rgba: u32) {
         self.lines.push(OverlayVertex { p: a, rgba });
         self.lines.push(OverlayVertex { p: b, rgba });
@@ -836,7 +851,9 @@ impl Overlay {
 
     /// A box's six faces as triangles.
     pub fn box_solid(&mut self, lo: Float3, hi: Float3, rgba: u32) {
-        let c = |i: usize| Float3::new(if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.y } else { hi.y }, if i & 4 == 0 { lo.z } else { hi.z });
+        let c = |i: usize| {
+            Float3::new(if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.y } else { hi.y }, if i & 4 == 0 { lo.z } else { hi.z })
+        };
         for [a, b, d, e] in [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]] {
             self.triangle(c(a), c(b), c(d), rgba);
             self.triangle(c(a), c(d), c(e), rgba);
@@ -850,9 +867,16 @@ impl Overlay {
     /// An oriented box: its corners go through `m`.
     pub fn box_wire_transformed(&mut self, m: &Float4x4, lo: Float3, hi: Float3, rgba: u32) {
         let c = [
-            Float3::new(lo.x, lo.y, lo.z), Float3::new(hi.x, lo.y, lo.z), Float3::new(hi.x, lo.y, hi.z), Float3::new(lo.x, lo.y, hi.z),
-            Float3::new(lo.x, hi.y, lo.z), Float3::new(hi.x, hi.y, lo.z), Float3::new(hi.x, hi.y, hi.z), Float3::new(lo.x, hi.y, hi.z),
-        ].map(|p| m.transform_point(p));
+            Float3::new(lo.x, lo.y, lo.z),
+            Float3::new(hi.x, lo.y, lo.z),
+            Float3::new(hi.x, lo.y, hi.z),
+            Float3::new(lo.x, lo.y, hi.z),
+            Float3::new(lo.x, hi.y, lo.z),
+            Float3::new(hi.x, hi.y, lo.z),
+            Float3::new(hi.x, hi.y, hi.z),
+            Float3::new(lo.x, hi.y, hi.z),
+        ]
+        .map(|p| m.transform_point(p));
 
         for i in 0..4 {
             self.line(c[i], c[(i + 1) % 4], rgba);
@@ -1010,7 +1034,6 @@ pub struct EnvironmentSlot {
 }
 
 impl EnvironmentSlot {
-
     /// The active environment (or the defaults), cross-faded with the blend partner when blend_t > 0.
     pub fn resolved(&self) -> EnvironmentParams {
         let a = self.active.clone().unwrap_or_default();
@@ -1163,7 +1186,12 @@ pub struct GroundOverlay {
 impl GroundOverlay {
     /// The same picture where it was, as strong (the texels are not compared: the id says).
     fn same(&self, o: &Self) -> bool {
-        self.id == o.id && self.w == o.w && self.h == o.h && self.to_texel == o.to_texel && self.opacity == o.opacity && self.layer == o.layer
+        self.id == o.id
+            && self.w == o.w
+            && self.h == o.h
+            && self.to_texel == o.to_texel
+            && self.opacity == o.opacity
+            && self.layer == o.layer
     }
 }
 
@@ -1225,7 +1253,6 @@ impl Default for RenderScene {
 }
 
 impl RenderScene {
-
     pub fn add_layer(&mut self, doc: DocumentId, name: &str) -> LayerId {
         let id = self.next_layer;
         self.next_layer += 1;

@@ -81,7 +81,6 @@ impl<H> Default for CommandRegistry<H> {
 }
 
 impl<H: CommandHost> CommandRegistry<H> {
-
     /// Replaces an earlier registration of the same name.
     /// Registers a command. A name registered before keeps its first command: a second one is an error in the log (two tools' commands
     /// of the same name would otherwise silently replace one another).
@@ -92,7 +91,8 @@ impl<H: CommandHost> CommandRegistry<H> {
             return;
         }
 
-        self.entries.insert(name.to_owned(), Entry { name: name.to_owned(), usage: usage.to_owned(), help: help.to_owned(), run: Rc::new(run) });
+        self.entries
+            .insert(name.to_owned(), Entry { name: name.to_owned(), usage: usage.to_owned(), help: help.to_owned(), run: Rc::new(run) });
     }
 
     pub fn find(&self, name: &str) -> Option<&Entry<H>> {
@@ -117,11 +117,17 @@ impl<H: CommandHost> CommandRegistry<H> {
 
     /// Runs a command on the host. A panic in the command becomes a failed result.
     pub fn run_args(host: &mut H, name: &str, args: &[String]) -> CommandResult {
-        let Some(run) = host.commands().find(name).map(|e| e.run.clone()) else { return CommandResult::fail(format!("unknown command '{name}'")) };
+        let Some(run) = host.commands().find(name).map(|e| e.run.clone()) else {
+            return CommandResult::fail(format!("unknown command '{name}'"));
+        };
         match catch_unwind(AssertUnwindSafe(|| run(host, args))) {
             Ok(result) => result,
             Err(panic) => {
-                let what = panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_default();
+                let what = panic
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                    .unwrap_or_default();
                 CommandResult::fail(format!("{name}: {what}"))
             }
         }

@@ -87,7 +87,13 @@ pub fn warp_logic(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts) -> Result<(Vec<u8>
 /// # Errors
 ///
 /// A file doesn't read, or the result doesn't write back.
-pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Option<((f32, f32), (f32, f32))>, splices: &[Splice]) -> Result<(Vec<u8>, LogicNotes), String> {
+pub fn warp_logic_with(
+    bytes: &[u8],
+    warp: &dyn Warp,
+    cuts: &Cuts,
+    drop_zy: Option<((f32, f32), (f32, f32))>,
+    splices: &[Splice],
+) -> Result<(Vec<u8>, LogicNotes), String> {
     warp_logic_framed(bytes, warp, cuts, drop_zy, splices, None)
 }
 
@@ -97,7 +103,14 @@ pub fn warp_logic_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Opti
 /// # Errors
 ///
 /// The file doesn't read, or doesn't write back.
-pub fn warp_logic_framed(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Option<((f32, f32), (f32, f32))>, splices: &[Splice], frame: Option<(f32, f32)>) -> Result<(Vec<u8>, LogicNotes), String> {
+pub fn warp_logic_framed(
+    bytes: &[u8],
+    warp: &dyn Warp,
+    cuts: &Cuts,
+    drop_zy: Option<((f32, f32), (f32, f32))>,
+    splices: &[Splice],
+    frame: Option<(f32, f32)>,
+) -> Result<(Vec<u8>, LogicNotes), String> {
     let step = cuts.step;
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
     let mut v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
@@ -110,7 +123,14 @@ pub fn warp_logic_framed(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Op
     for sp in splices {
         let parsed = Cs2Parsed::decode(&mut Cursor::new(sp.logic), &None).map_err(|e| format!("cs2.parsed (step section): {e}"))?;
         let pv = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
-        parts.push(pv["pieces"].as_array().into_iter().flatten().map(|p| p["destructs"].as_array().cloned().unwrap_or_default()).collect::<Vec<_>>());
+        parts.push(
+            pv["pieces"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|p| p["destructs"].as_array().cloned().unwrap_or_default())
+                .collect::<Vec<_>>(),
+        );
     }
 
     let mut piece_index = 0;
@@ -119,19 +139,27 @@ pub fn warp_logic_framed(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Op
         for (k, d) in array_mut(piece, "destructs").enumerate() {
             let name = d["name"].as_str().unwrap_or(&piece_name).to_owned();
             // The splices brought into this level: the ones that have it.
-            let here = splices.iter().zip(&parts).filter_map(|(sp, pieces)| {
-                let levels = match (sp.per_piece, piece_index) {
-                    (true, i) => pieces.get(i),
-                    (false, 0) => pieces.first(),
-                    _ => None,
-                };
+            let here = splices
+                .iter()
+                .zip(&parts)
+                .filter_map(|(sp, pieces)| {
+                    let levels = match (sp.per_piece, piece_index) {
+                        (true, i) => pieces.get(i),
+                        (false, 0) => pieces.first(),
+                        _ => None,
+                    };
 
-                levels.and_then(|l| l.get(k)).map(|sd| (sp, sd))
-            }).collect::<Vec<_>>();
+                    levels.and_then(|l| l.get(k)).map(|sd| (sp, sd))
+                })
+                .collect::<Vec<_>>();
             // What a step replaces goes from every piece of the base (its end caps' platforms are pieces of their own), not only from the
             // one its own platforms go into; at the levels the step has (a level it lacks keeps the base whole).
-            let drop = splices.iter().zip(&parts).filter(|(sp, pieces)| !sp.per_piece && pieces.first().is_some_and(|l| l.get(k).is_some()))
-                .filter_map(|(sp, _)| sp.replaces).collect::<Vec<_>>();
+            let drop = splices
+                .iter()
+                .zip(&parts)
+                .filter(|(sp, pieces)| !sp.per_piece && pieces.first().is_some_and(|l| l.get(k).is_some()))
+                .filter_map(|(sp, _)| sp.replaces)
+                .collect::<Vec<_>>();
             let kept = |p: [f32; 3]| inside(&planes, p) && !(in_box(p) && drop.iter().any(|&(a, b)| p[0] > a + 1e-3 && p[0] < b - 1e-3));
             // The base's platforms less what the steps replace: cut out of them (a platform wider than the step's cross-section keeps the
             // rest of its width), so the walkway and a step never lie one over the other.
@@ -164,7 +192,14 @@ pub fn warp_logic_framed(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Op
                 let theirs = sp.platforms.as_ref().map_or(theirs, |ps| ps.iter().map(|p| vec![p.clone()]).collect());
                 let (more, s2) = platform_strips(&theirs, sp.warp, &part_cuts, &holds, platforms.len(), &mut notes);
                 platforms.extend(more);
-                ef.extend(place_lines(sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice), sp.warp, &part_cuts, &s2, &holds, &mut notes));
+                ef.extend(place_lines(
+                    sd["ef_lines"].as_array().map_or(&[][..], Vec::as_slice),
+                    sp.warp,
+                    &part_cuts,
+                    &s2,
+                    &holds,
+                    &mut notes,
+                ));
             }
 
             d["platforms"] = Value::Array(platforms);
@@ -237,7 +272,13 @@ pub fn warp_logic_framed(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Op
 
                 let kept = |v: &Value, min: usize| v.as_array().is_some_and(|a| a.len() >= min);
                 for (key, inner) in [("collision_outlines", true), ("orange_thingies", false)] {
-                    let more = sd[key].as_array().into_iter().flatten().filter(|o| if inner { kept(&o["vertices"]["outline"], 2) } else { kept(o, 3) }).cloned().collect::<Vec<_>>();
+                    let more = sd[key]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|o| if inner { kept(&o["vertices"]["outline"], 2) } else { kept(o, 3) })
+                        .cloned()
+                        .collect::<Vec<_>>();
                     if let Some(list) = d.get_mut(key).and_then(Value::as_array_mut) {
                         list.extend(more);
                     }
@@ -315,11 +356,17 @@ pub fn warp_logic_framed(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop_zy: Op
     }
 
     warp_box(&mut v["bounding_box"], warp, step);
-    let corners = v["pieces"].as_array().into_iter().flatten().flat_map(|p| p["destructs"].as_array().into_iter().flatten()).flat_map(|d| {
-        let b = &d["bounding_box"];
-        let f = |k: &str| b[k].as_f64().unwrap_or(0.0) as f32;
-        [[f("min_x"), f("min_y"), f("min_z")], [f("max_x"), f("max_y"), f("max_z")]]
-    }).collect::<Vec<_>>();
+    let corners = v["pieces"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|p| p["destructs"].as_array().into_iter().flatten())
+        .flat_map(|d| {
+            let b = &d["bounding_box"];
+            let f = |k: &str| b[k].as_f64().unwrap_or(0.0) as f32;
+            [[f("min_x"), f("min_y"), f("min_z")], [f("max_x"), f("max_y"), f("max_z")]]
+        })
+        .collect::<Vec<_>>();
     grow_box(&mut v["bounding_box"], &corners);
     warp_transforms(&mut v, warp);
 
@@ -345,7 +392,11 @@ pub fn extent_x(bytes: &[u8]) -> Result<(f32, f32), String> {
 pub fn walkway_z(bytes: &[u8], height: f32) -> Option<(f32, f32)> {
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).ok()?;
     let v = serde_json::to_value(&parsed).ok()?;
-    let zs = v["pieces"].as_array().into_iter().flatten().filter_map(|p| p["destructs"].as_array().and_then(|d| d.first()))
+    let zs = v["pieces"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p["destructs"].as_array().and_then(|d| d.first()))
         .flat_map(|d| d["platforms"].as_array().into_iter().flatten().map(|q| outline(&q["vertices"])).collect::<Vec<_>>())
         .filter(|o| !o.is_empty() && o.iter().all(|q| (q[1] - height).abs() < 0.05))
         .flat_map(|o| o.into_iter().map(|q| q[2]))
@@ -364,8 +415,14 @@ pub fn joint_extent_x(bytes: &[u8]) -> Result<(f32, f32), String> {
     let (lo, hi) = extent_x(bytes)?;
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
     let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
-    let xs = v["pieces"].as_array().into_iter().flatten().filter_map(|p| p["destructs"].as_array().and_then(|d| d.first()))
-        .flat_map(|d| d["platforms"].as_array().into_iter().flatten().flat_map(|q| outline(&q["vertices"])).map(|q| q[0]).collect::<Vec<_>>())
+    let xs = v["pieces"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p["destructs"].as_array().and_then(|d| d.first()))
+        .flat_map(|d| {
+            d["platforms"].as_array().into_iter().flatten().flat_map(|q| outline(&q["vertices"])).map(|q| q[0]).collect::<Vec<_>>()
+        })
         .collect::<Vec<_>>();
     let (wlo, whi) = xs.iter().fold((f32::MAX, f32::MIN), |(a, b), &x| (a.min(x), b.max(x)));
     let near = |w: f32, b: f32| (w - b).abs() <= 0.5;
@@ -394,14 +451,17 @@ pub struct PieceEnd {
 pub fn ends(bytes: &[u8]) -> Result<Vec<PieceEnd>, String> {
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
     let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
-    let pt = |p: &Value| [p["x"].as_f64().unwrap_or(0.0) as f32, p["y"].as_f64().unwrap_or(0.0) as f32, p["z"].as_f64().unwrap_or(0.0) as f32];
+    let pt =
+        |p: &Value| [p["x"].as_f64().unwrap_or(0.0) as f32, p["y"].as_f64().unwrap_or(0.0) as f32, p["z"].as_f64().unwrap_or(0.0) as f32];
     // The intact level: index 0 (a piece's levels are not always listed in order).
     let level0 = |piece: &Value| {
         let levels = piece["destructs"].as_array().cloned().unwrap_or_default();
         levels.iter().find(|d| d["index"].as_u64() == Some(0)).or(levels.first()).cloned().unwrap_or(Value::Null)
     };
     let platforms = |level: &Value| -> Vec<Vec<[f32; 3]>> {
-        level["platforms"].as_array().map_or(vec![], |ps| ps.iter().map(|p| p["vertices"]["outline"].as_array().map_or(vec![], |o| o.iter().map(pt).collect())).collect())
+        level["platforms"].as_array().map_or(vec![], |ps| {
+            ps.iter().map(|p| p["vertices"]["outline"].as_array().map_or(vec![], |o| o.iter().map(pt).collect())).collect()
+        })
     };
 
     let pieces = v["pieces"].as_array().cloned().unwrap_or_default();
@@ -413,7 +473,10 @@ pub fn ends(bytes: &[u8]) -> Result<Vec<PieceEnd>, String> {
 
     let centre = body.iter().fold([0.0f32; 2], |c, p| [c[0] + p[0], c[1] + p[2]]).map(|c| c / body.len() as f32);
     let flat: Vec<[f32; 2]> = body.iter().map(|p| [p[0], p[2]]).collect();
-    let edges = platforms(&level0(main)).iter().flat_map(|r| (0..r.len()).map(|i| ([r[i][0], r[i][2]], [r[(i + 1) % r.len()][0], r[(i + 1) % r.len()][2]])).collect::<Vec<_>>()).collect::<Vec<_>>();
+    let edges = platforms(&level0(main))
+        .iter()
+        .flat_map(|r| (0..r.len()).map(|i| ([r[i][0], r[i][2]], [r[(i + 1) % r.len()][0], r[(i + 1) % r.len()][2]])).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
     // Every platform's corners (the caps' too): what a joint's line has on one side.
     let caps = pieces.iter().skip(1).flat_map(|piece| platforms(&level0(piece))).collect::<Vec<_>>();
     let all = flat.iter().copied().chain(caps.iter().flatten().map(|p| [p[0], p[2]])).collect::<Vec<_>>();
@@ -432,14 +495,22 @@ pub fn ends(bytes: &[u8]) -> Result<Vec<PieceEnd>, String> {
             let sides = cap_candidates(c, &all);
             let lens = sides.iter().map(|s| continued_by(s.0, s.1, &edges)).collect::<Vec<_>>();
             let shortest = lens.iter().flatten().copied().fold(f32::MAX, f32::min);
-            sides.into_iter().zip(lens).filter_map(|(s, l)| {
-                let walk_end = shortest < f32::MAX && l.is_some_and(|x| x <= shortest + 0.5);
-                cap_end(c, centre, &flat, &edges, &all, Some(s)).map(|e| (e, walk_end))
-            }).collect::<Vec<_>>()
+            sides
+                .into_iter()
+                .zip(lens)
+                .filter_map(|(s, l)| {
+                    let walk_end = shortest < f32::MAX && l.is_some_and(|x| x <= shortest + 0.5);
+                    cap_end(c, centre, &flat, &edges, &all, Some(s)).map(|e| (e, walk_end))
+                })
+                .collect::<Vec<_>>()
         };
         let (e1, e2) = (ends(c1), ends(c2));
         let span = |p: &(&(PieceEnd, bool), &(PieceEnd, bool))| (p.0.0.at[0] - p.1.0.at[0]).hypot(p.0.0.at[2] - p.1.0.at[2]);
-        let pairs = e1.iter().flat_map(|a| e2.iter().map(move |b| (a, b))).filter(|(a, b)| a.0.out[0] * b.0.out[0] + a.0.out[1] * b.0.out[1] < 0.5).collect::<Vec<_>>();
+        let pairs = e1
+            .iter()
+            .flat_map(|a| e2.iter().map(move |b| (a, b)))
+            .filter(|(a, b)| a.0.out[0] * b.0.out[0] + a.0.out[1] * b.0.out[1] < 0.5)
+            .collect::<Vec<_>>();
         let far = pairs.iter().map(span).fold(0.0f32, f32::max);
         let best = pairs.into_iter().filter(|p| span(p) >= far * PAIR_NEAR).max_by(|x, y| {
             let walk_ends = |p: &(&(PieceEnd, bool), &(PieceEnd, bool))| u8::from(p.0.1) + u8::from(p.1.1);
@@ -472,7 +543,10 @@ fn cap_candidates(cap: &[[f32; 3]], all: &[[f32; 2]]) -> Vec<([f32; 3], [f32; 3]
     let supporting = |a: [f32; 3], b: [f32; 3]| {
         let l = len(a, b).max(1e-6);
         let n = [(b[2] - a[2]) / l, -(b[0] - a[0]) / l];
-        let (lo, hi) = all.iter().map(|q| (q[0] - a[0]) * n[0] + (q[1] - a[2]) * n[1]).fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
+        let (lo, hi) = all
+            .iter()
+            .map(|q| (q[0] - a[0]) * n[0] + (q[1] - a[2]) * n[1])
+            .fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
         lo >= -0.05 || hi <= 0.05
     };
     let on = sides.iter().copied().filter(|&(a, b)| supporting(a, b)).collect::<Vec<_>>();
@@ -489,15 +563,26 @@ fn continued_by(a: [f32; 3], b: [f32; 3], body_edges: &[([f32; 2], [f32; 2])]) -
     let l = ux.hypot(uz).max(1e-6);
     let n = [uz / l, -ux / l];
     let along = |q: [f32; 2]| ((q[0] - a[0]) * ux + (q[1] - a[2]) * uz) / l;
-    body_edges.iter().filter(|(c, e)| {
-        let on = |q: &[f32; 2]| ((q[0] - a[0]) * n[0] + (q[1] - a[2]) * n[1]).abs() < 0.05;
-        let (tc, te) = (along(*c), along(*e));
-        on(c) && on(e) && tc.min(te) <= l + 0.05 && tc.max(te) >= -0.05
-    }).map(|(c, e)| (e[0] - c[0]).hypot(e[1] - c[1])).fold(None, |m: Option<f32>, x| Some(m.map_or(x, |m| m.max(x))))
+    body_edges
+        .iter()
+        .filter(|(c, e)| {
+            let on = |q: &[f32; 2]| ((q[0] - a[0]) * n[0] + (q[1] - a[2]) * n[1]).abs() < 0.05;
+            let (tc, te) = (along(*c), along(*e));
+            on(c) && on(e) && tc.min(te) <= l + 0.05 && tc.max(te) >= -0.05
+        })
+        .map(|(c, e)| (e[0] - c[0]).hypot(e[1] - c[1]))
+        .fold(None, |m: Option<f32>, x| Some(m.map_or(x, |m| m.max(x))))
 }
 
 /// `joint`: the side to take as the joint (the pair of a two-capped piece's, `ends`), else chosen here.
-fn cap_end(cap: &[[f32; 3]], centre: [f32; 2], body: &[[f32; 2]], body_edges: &[([f32; 2], [f32; 2])], all: &[[f32; 2]], joint: Option<([f32; 3], [f32; 3])>) -> Option<PieceEnd> {
+fn cap_end(
+    cap: &[[f32; 3]],
+    centre: [f32; 2],
+    body: &[[f32; 2]],
+    body_edges: &[([f32; 2], [f32; 2])],
+    all: &[[f32; 2]],
+    joint: Option<([f32; 3], [f32; 3])>,
+) -> Option<PieceEnd> {
     let len = |a: [f32; 3], b: [f32; 3]| (b[0] - a[0]).hypot(b[2] - a[2]);
     let mid = |a: [f32; 3], b: [f32; 3]| [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5, (a[2] + b[2]) * 0.5];
     let d = |m: [f32; 3]| (m[0] - centre[0]).hypot(m[2] - centre[1]);
@@ -539,7 +624,9 @@ fn cap_end(cap: &[[f32; 3]], centre: [f32; 2], body: &[[f32; 2]], body_edges: &[
 
     let joint = match joint {
         Some(j) => j,
-        None => cands.into_iter().filter(|s| shortest == f32::MAX || continued(s.0, s.1).is_some_and(|x| x <= shortest + 0.5))
+        None => cands
+            .into_iter()
+            .filter(|s| shortest == f32::MAX || continued(s.0, s.1).is_some_and(|x| x <= shortest + 0.5))
             .max_by(|x, y| d(mid(x.0, x.1)).total_cmp(&d(mid(y.0, y.1))))?,
     };
     let outer = mid(joint.0, joint.1);
@@ -566,7 +653,13 @@ fn cap_end(cap: &[[f32; 3]], centre: [f32; 2], body: &[[f32; 2]], body_edges: &[
         let (lo, hi) = near.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &c| (lo.min(c), hi.max(c)));
         cross(cap_mid) - (lo + hi) * 0.5
     };
-    let side = if k.abs() < 0.25 { [0.0, 0.0] } else if k > 0.0 { across } else { [-across[0], -across[1]] };
+    let side = if k.abs() < 0.25 {
+        [0.0, 0.0]
+    } else if k > 0.0 {
+        across
+    } else {
+        [-across[0], -across[1]]
+    };
     Some(PieceEnd { at: outer, out, side })
 }
 
@@ -610,17 +703,27 @@ fn carve_platforms(old: &[Value], drops: &[(f32, f32)], zy: Option<((f32, f32), 
                 }
 
                 let mid = half_plane(&half_plane(&poly, 0, a, false), 0, b, true);
-                next.extend([half_plane(&poly, 0, a, true), half_plane(&poly, 0, b, false), half_plane(&mid, 2, z0, true), half_plane(&mid, 2, z1, false)]);
+                next.extend([
+                    half_plane(&poly, 0, a, true),
+                    half_plane(&poly, 0, b, false),
+                    half_plane(&mid, 2, z0, true),
+                    half_plane(&mid, 2, z1, false),
+                ]);
             }
 
             pieces = next.into_iter().filter(|q| q.len() >= 3 && area_xz(q) > 1e-4).collect();
         }
 
-        out.push(pieces.into_iter().map(|poly| {
-            let mut q = p.clone();
-            q["vertices"] = json!({ "outline": poly.iter().map(|&v| point3(v)).collect::<Vec<_>>() });
-            q
-        }).collect());
+        out.push(
+            pieces
+                .into_iter()
+                .map(|poly| {
+                    let mut q = p.clone();
+                    q["vertices"] = json!({ "outline": poly.iter().map(|&v| point3(v)).collect::<Vec<_>>() });
+                    q
+                })
+                .collect(),
+        );
     }
 
     out
@@ -647,15 +750,26 @@ fn half_plane(poly: &[[f32; 3]], axis: usize, at: f32, below: bool) -> Vec<[f32;
 
 /// A polygon's area on the ground (x, z).
 fn area_xz(poly: &[[f32; 3]]) -> f32 {
-    (0..poly.len()).map(|i| {
-        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
-        a[0] * b[2] - b[0] * a[2]
-    }).sum::<f32>().abs() / 2.0
+    (0..poly.len())
+        .map(|i| {
+            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+            a[0] * b[2] - b[0] * a[2]
+        })
+        .sum::<f32>()
+        .abs()
+        / 2.0
 }
 
 /// Platforms (each given as its pieces) cut along x and warped, the strips whose middle `keep` refuses left out; per original platform,
 /// the strips of all its pieces (indices from `offset`).
-fn platform_strips(old: &[Vec<Value>], warp: &dyn Warp, cuts: &Cuts, keep: &dyn Fn([f32; 3]) -> bool, offset: usize, notes: &mut LogicNotes) -> (Vec<Value>, Vec<Vec<Strip>>) {
+fn platform_strips(
+    old: &[Vec<Value>],
+    warp: &dyn Warp,
+    cuts: &Cuts,
+    keep: &dyn Fn([f32; 3]) -> bool,
+    offset: usize,
+    notes: &mut LogicNotes,
+) -> (Vec<Value>, Vec<Vec<Strip>>) {
     let mut new = vec![];
     let mut strips = vec![];
     for group in old {
@@ -670,7 +784,7 @@ fn platform_strips(old: &[Vec<Value>], warp: &dyn Warp, cuts: &Cuts, keep: &dyn 
             }
 
             let faces = warp.corner_faces();
-        let slabs = slabs.into_iter().map(|s| clip_to(&s, &planes, true)).filter(|s| s.len() >= 3).collect::<Vec<_>>();
+            let slabs = slabs.into_iter().map(|s| clip_to(&s, &planes, true)).filter(|s| s.len() >= 3).collect::<Vec<_>>();
 
             for s in slabs {
                 let n = s.len() as f32;
@@ -767,7 +881,14 @@ fn on_face_grid(s: &[[f32; 3]], w: &[[f32; 3]], faces: &[CornerFace]) -> Vec<[f3
 /// Firing lines cut where the platforms are (a line along the wall, the length of the piece, would be a chord of a curve: off the
 /// walkway; user 2026-11-04), moved and turned, each part on the strip of its platform that is under it; those whose middle `keep`
 /// refuses, or whose platform kept no strip, left out.
-fn place_lines(old: &[Value], warp: &dyn Warp, cuts: &Cuts, strips: &[Vec<Strip>], keep: &dyn Fn([f32; 3]) -> bool, notes: &mut LogicNotes) -> Vec<Value> {
+fn place_lines(
+    old: &[Value],
+    warp: &dyn Warp,
+    cuts: &Cuts,
+    strips: &[Vec<Strip>],
+    keep: &dyn Fn([f32; 3]) -> bool,
+    notes: &mut LogicNotes,
+) -> Vec<Value> {
     let mut parts = vec![];
     for l in old {
         let (s, e) = (p3(&l["start"]), p3(&l["end"]));
@@ -798,29 +919,32 @@ fn place_lines(old: &[Value], warp: &dyn Warp, cuts: &Cuts, strips: &[Vec<Strip>
     // Each part cut to the piece's faces (a corner's mitre, an attached end): a part kept by its middle reached past the bisector over
     // the other side's walkway, and units sent there stuck at the corner's inner side (user 2026-11-05).
     let planes = warp.clip_planes();
-    let parts = parts.into_iter().filter_map(|mut l| {
-        let (mut s, mut e) = (p3(&l["start"]), p3(&l["end"]));
-        for &[a, b, c] in &planes {
-            let (fs, fe) = (a * s[0] + b * s[2] - c, a * e[0] + b * e[2] - c);
-            if fs > 1e-4 && fe > 1e-4 {
+    let parts = parts
+        .into_iter()
+        .filter_map(|mut l| {
+            let (mut s, mut e) = (p3(&l["start"]), p3(&l["end"]));
+            for &[a, b, c] in &planes {
+                let (fs, fe) = (a * s[0] + b * s[2] - c, a * e[0] + b * e[2] - c);
+                if fs > 1e-4 && fe > 1e-4 {
+                    return None;
+                }
+
+                if fs > 1e-4 || fe > 1e-4 {
+                    let t = fs / (fs - fe);
+                    let m = [s[0] + (e[0] - s[0]) * t, s[1] + (e[1] - s[1]) * t, s[2] + (e[2] - s[2]) * t];
+                    if fs > 1e-4 { s = m } else { e = m }
+                }
+            }
+
+            if (e[0] - s[0]).hypot(e[2] - s[2]) < 0.05 {
                 return None;
             }
 
-            if fs > 1e-4 || fe > 1e-4 {
-                let t = fs / (fs - fe);
-                let m = [s[0] + (e[0] - s[0]) * t, s[1] + (e[1] - s[1]) * t, s[2] + (e[2] - s[2]) * t];
-                if fs > 1e-4 { s = m } else { e = m }
-            }
-        }
-
-        if (e[0] - s[0]).hypot(e[2] - s[2]) < 0.05 {
-            return None;
-        }
-
-        set_p3(&mut l["start"], s);
-        set_p3(&mut l["end"], e);
-        Some(l)
-    }).collect::<Vec<_>>();
+            set_p3(&mut l["start"], s);
+            set_p3(&mut l["end"], e);
+            Some(l)
+        })
+        .collect::<Vec<_>>();
 
     let mut out = vec![];
     for l in &parts {
@@ -837,7 +961,10 @@ fn place_lines(old: &[Value], warp: &dyn Warp, cuts: &Cuts, strips: &[Vec<Strip>
         };
 
         // The strip under it (a carved platform has several over the same x: its sides of a step), else one over its x.
-        let inside = mine.iter().find(|s| in_ring(&s.ground, [mid[0], mid[2]])).or_else(|| mine.iter().find(|s| s.x.0 - 1e-3 <= mid[0] && mid[0] <= s.x.1 + 1e-3));
+        let inside = mine
+            .iter()
+            .find(|s| in_ring(&s.ground, [mid[0], mid[2]]))
+            .or_else(|| mine.iter().find(|s| s.x.0 - 1e-3 <= mid[0] && mid[0] <= s.x.1 + 1e-3));
         let strip = inside.unwrap_or_else(|| {
             notes.orphan_lines += 1;
             mine.iter().min_by(|a, b| gap(a, mid[0]).total_cmp(&gap(b, mid[0]))).expect("not empty")
@@ -894,15 +1021,24 @@ fn warp_outline(o: &mut Value, warp: &dyn Warp, step: f32, planes: &[[f32; 3]]) 
 /// of the point that starts its edge.
 fn warp_footprint(ring: &mut Value, warp: &dyn Warp, step: f32, planes: &[[f32; 3]]) {
     let Some(old) = ring.as_array().cloned() else { return };
-    let points = old.iter().map(|v| { let p = p2(&v["vertex"]); [p[0], 0.0, p[1]] }).collect::<Vec<_>>();
+    let points = old
+        .iter()
+        .map(|v| {
+            let p = p2(&v["vertex"]);
+            [p[0], 0.0, p[1]]
+        })
+        .collect::<Vec<_>>();
     let points = clip_to(&points, planes, points.len() > 2);
     let kind = old.first().cloned().unwrap_or(Value::Null);
-    let out = subdivide(&points, points.len() > 2, step).into_iter().map(|(p, from)| {
-        let q = warp.point(p);
-        let mut v = old.get(from).cloned().unwrap_or_else(|| kind.clone());
-        v["vertex"] = json!({ "x": q[0], "y": q[2] });
-        v
-    }).collect();
+    let out = subdivide(&points, points.len() > 2, step)
+        .into_iter()
+        .map(|(p, from)| {
+            let q = warp.point(p);
+            let mut v = old.get(from).cloned().unwrap_or_else(|| kind.clone());
+            v["vertex"] = json!({ "x": q[0], "y": q[2] });
+            v
+        })
+        .collect();
     *ring = Value::Array(out);
 }
 
@@ -940,12 +1076,15 @@ fn weld_platforms(platforms: &mut [Value]) {
                 continue;
             }
 
-            let mut on = others.iter().filter_map(|&p| {
-                let t = ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / len2;
-                let off = [a[0] + d[0] * t - p[0], a[1] + d[1] * t - p[1], a[2] + d[2] * t - p[2]];
-                let dist = (off[0] * off[0] + off[1] * off[1] + off[2] * off[2]).sqrt();
-                (t > 1e-4 && t < 1.0 - 1e-4 && dist <= WELD).then_some((t, p))
-            }).collect::<Vec<_>>();
+            let mut on = others
+                .iter()
+                .filter_map(|&p| {
+                    let t = ((p[0] - a[0]) * d[0] + (p[1] - a[1]) * d[1] + (p[2] - a[2]) * d[2]) / len2;
+                    let off = [a[0] + d[0] * t - p[0], a[1] + d[1] * t - p[1], a[2] + d[2] * t - p[2]];
+                    let dist = (off[0] * off[0] + off[1] * off[1] + off[2] * off[2]).sqrt();
+                    (t > 1e-4 && t < 1.0 - 1e-4 && dist <= WELD).then_some((t, p))
+                })
+                .collect::<Vec<_>>();
             on.sort_by(|x, y| x.0.total_cmp(&y.0));
             out.extend(on.into_iter().map(|(_, p)| p));
         }
@@ -977,7 +1116,12 @@ fn merge_platforms(d: &mut Value) {
     let mut alive = vec![true; n0];
     let flags = |p: &Value| (p["flag_1"].as_bool(), p["flag_2"].as_bool(), p["flag_3"].as_bool());
     let width = |o: &[[f32; 3]]| {
-        let per = (0..o.len()).map(|i| { let (a, b) = (o[i], o[(i + 1) % o.len()]); (b[0] - a[0]).hypot(b[2] - a[2]) }).sum::<f32>();
+        let per = (0..o.len())
+            .map(|i| {
+                let (a, b) = (o[i], o[(i + 1) % o.len()]);
+                (b[0] - a[0]).hypot(b[2] - a[2])
+            })
+            .sum::<f32>();
         2.0 * area_xz(o) / per.max(1e-6)
     };
 
@@ -1030,12 +1174,19 @@ fn merged_outline(a: &[[f32; 3]], b: &[[f32; 3]]) -> Option<Vec<[f32; 3]>> {
 
     // In one plane: b's points on a's.
     let n = normalised(newell(a));
-    if n.iter().all(|v| v.abs() < 1e-6) || b.iter().any(|q| ((q[0] - a[0][0]) * n[0] + (q[1] - a[0][1]) * n[1] + (q[2] - a[0][2]) * n[2]).abs() > 2e-3) {
+    if n.iter().all(|v| v.abs() < 1e-6)
+        || b.iter().any(|q| ((q[0] - a[0][0]) * n[0] + (q[1] - a[0][1]) * n[1] + (q[2] - a[0][2]) * n[2]).abs() > 2e-3)
+    {
         return None;
     }
 
     // The directed edges of both less those that meet their reverse; what is left must be one loop.
-    let edges = a.iter().enumerate().map(|(i, &p)| (p, a[(i + 1) % a.len()])).chain(b.iter().enumerate().map(|(i, &p)| (p, b[(i + 1) % b.len()]))).collect::<Vec<_>>();
+    let edges = a
+        .iter()
+        .enumerate()
+        .map(|(i, &p)| (p, a[(i + 1) % a.len()]))
+        .chain(b.iter().enumerate().map(|(i, &p)| (p, b[(i + 1) % b.len()])))
+        .collect::<Vec<_>>();
     let open = edges.iter().copied().filter(|&(p, q)| !edges.iter().any(|&(u, v)| same(p, v) && same(q, u))).collect::<Vec<_>>();
     if open.len() == edges.len() || open.len() < 3 {
         return None;
@@ -1057,11 +1208,13 @@ fn merged_outline(a: &[[f32; 3]], b: &[[f32; 3]]) -> Option<Vec<[f32; 3]>> {
     }
 
     // Convex, either way round, with corners in a straight line allowed; going round once.
-    let turns = (0..out.len()).map(|i| {
-        let (p, q, r) = (out[(i + out.len() - 1) % out.len()], out[i], out[(i + 1) % out.len()]);
-        let (u, v) = ([q[0] - p[0], q[2] - p[2]], [r[0] - q[0], r[2] - q[2]]);
-        (u[0] * v[1] - u[1] * v[0]) / (u[0].hypot(u[1]) * v[0].hypot(v[1])).max(1e-9)
-    }).collect::<Vec<_>>();
+    let turns = (0..out.len())
+        .map(|i| {
+            let (p, q, r) = (out[(i + out.len() - 1) % out.len()], out[i], out[(i + 1) % out.len()]);
+            let (u, v) = ([q[0] - p[0], q[2] - p[2]], [r[0] - q[0], r[2] - q[2]]);
+            (u[0] * v[1] - u[1] * v[0]) / (u[0].hypot(u[1]) * v[0].hypot(v[1])).max(1e-9)
+        })
+        .collect::<Vec<_>>();
     let convex = turns.iter().all(|&t| t <= CONVEX) || turns.iter().all(|&t| t >= -CONVEX);
     convex.then_some(out)
 }
@@ -1074,10 +1227,12 @@ const CONVEX: f32 = 2e-3;
 /// were the only platforms that did not, and units never stepped onto them (user 2026-11-05).
 pub(crate) fn wind_as_the_game(p: &mut Value) {
     let o = outline(&p["vertices"]);
-    let area = (0..o.len()).map(|i| {
-        let (a, b) = (o[(i + o.len() - 1) % o.len()], o[i]);
-        a[0] * b[2] - b[0] * a[2]
-    }).sum::<f32>();
+    let area = (0..o.len())
+        .map(|i| {
+            let (a, b) = (o[(i + o.len() - 1) % o.len()], o[i]);
+            a[0] * b[2] - b[0] * a[2]
+        })
+        .sum::<f32>();
     if area > 0.0 {
         p["vertices"] = json!({ "outline": o.into_iter().rev().map(point3).collect::<Vec<_>>() });
     }
@@ -1128,12 +1283,26 @@ fn drop_folded(d: &mut Value) {
 /// A collision hull (`collision_3d`: vertices, triangles) as polygons cut along x at `cuts`, cut to the half-planes, warped. A cut through
 /// an edge gives the same point to both triangles on it (worked out from the edge's ends in one order), so the hull stays closed. Under
 /// each `sinks` stair (its x range, the heights lowered) inside `sink_z`, the hull goes down by `SINK` from `SINK_IN` in from its ends.
-fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3]], sinks: &[((f32, f32), (f32, f32))], sink_z: Option<(f32, f32)>) -> Vec<(usize, Vec<[f32; 3]>)> {
+fn collision_polygons(
+    c: &Value,
+    warp: &dyn Warp,
+    cuts: &Cuts,
+    planes: &[[f32; 3]],
+    sinks: &[((f32, f32), (f32, f32))],
+    sink_z: Option<(f32, f32)>,
+) -> Vec<(usize, Vec<[f32; 3]>)> {
     let verts = c["vertices"].as_array().map(|a| a.iter().map(p3).collect::<Vec<_>>()).unwrap_or_default();
-    let tris = c["triangles"].as_array().map(|a| a.iter().filter_map(|t| {
-        let i = |k: &str| t[k].as_u64().map(|v| v as usize).filter(|&v| v < verts.len());
-        Some([verts[i("vertex_1")?], verts[i("vertex_2")?], verts[i("vertex_3")?]])
-    }).collect::<Vec<_>>()).unwrap_or_default();
+    let tris = c["triangles"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| {
+                    let i = |k: &str| t[k].as_u64().map(|v| v as usize).filter(|&v| v < verts.len());
+                    Some([verts[i("vertex_1")?], verts[i("vertex_2")?], verts[i("vertex_3")?]])
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     if tris.is_empty() {
         return vec![];
     }
@@ -1172,7 +1341,11 @@ fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3
     // Each polygon with the triangle it was cut from.
     let mut polys: Vec<(usize, Vec<[f32; 3]>)> = tris.iter().enumerate().map(|(i, t)| (i, t.to_vec())).collect();
     for &x in &bounds[1..bounds.len().saturating_sub(1)] {
-        polys = polys.into_iter().flat_map(|(i, p)| [(i, cut(&p, &|q| q[0] - x)), (i, cut(&p, &|q| x - q[0]))]).filter(|p| p.1.len() >= 3).collect();
+        polys = polys
+            .into_iter()
+            .flat_map(|(i, p)| [(i, cut(&p, &|q| q[0] - x)), (i, cut(&p, &|q| x - q[0]))])
+            .filter(|p| p.1.len() >= 3)
+            .collect();
     }
 
     for &[a, b, c] in planes {
@@ -1186,7 +1359,9 @@ fn collision_polygons(c: &Value, warp: &dyn Warp, cuts: &Cuts, planes: &[[f32; 3
 
     let sunk = |q: [f32; 3]| {
         let (z0, z1) = sink_z.unwrap_or((f32::MIN, f32::MAX));
-        let under = sinks.iter().any(|&((a, b), (y0, y1))| q[0] > a + SINK_IN - 1e-3 && q[0] < b - SINK_IN + 1e-3 && b - a > 2.0 * SINK_IN && q[1] >= y0 && q[1] <= y1);
+        let under = sinks.iter().any(|&((a, b), (y0, y1))| {
+            q[0] > a + SINK_IN - 1e-3 && q[0] < b - SINK_IN + 1e-3 && b - a > 2.0 * SINK_IN && q[1] >= y0 && q[1] <= y1
+        });
         if under && q[2] >= z0 && q[2] <= z1 { [q[0], q[1] - SINK, q[2]] } else { q }
     };
 
@@ -1233,7 +1408,9 @@ fn hull_caps(polys: &[(usize, Vec<[f32; 3]>)], planes: &[[f32; 3]]) -> Vec<(usiz
             let mut lp = vec![first];
             while key(at) != key(first) {
                 lp.push(at);
-                let Some(n) = (0..open.len()).find(|&j| !used[j] && (key(open[j].0) == key(at) || key(open[j].1) == key(at))) else { break };
+                let Some(n) = (0..open.len()).find(|&j| !used[j] && (key(open[j].0) == key(at) || key(open[j].1) == key(at))) else {
+                    break;
+                };
                 used[n] = true;
                 at = if key(open[n].0) == key(at) { open[n].1 } else { open[n].0 };
             }
@@ -1264,7 +1441,13 @@ fn hull_caps(polys: &[(usize, Vec<[f32; 3]>)], planes: &[[f32; 3]]) -> Vec<(usiz
                     continue;
                 }
 
-                let Some((ti, e)) = tris.iter().enumerate().find_map(|(ti, t)| (0..3).find(|&e| on_seg(flat[p], flat[t[e]], flat[t[(e + 1) % 3]])).map(|e| (ti, e))) else { continue };
+                let Some((ti, e)) = tris
+                    .iter()
+                    .enumerate()
+                    .find_map(|(ti, t)| (0..3).find(|&e| on_seg(flat[p], flat[t[e]], flat[t[(e + 1) % 3]])).map(|e| (ti, e)))
+                else {
+                    continue;
+                };
                 let t = tris.remove(ti);
                 let (u, v, w) = (t[e], t[(e + 1) % 3], t[(e + 2) % 3]);
                 tris.push([u, p, w]);
@@ -1284,7 +1467,12 @@ fn hull_caps(polys: &[(usize, Vec<[f32; 3]>)], planes: &[[f32; 3]]) -> Vec<(usiz
 fn ear_clip_indices(points: &[[f32; 2]]) -> Vec<[usize; 3]> {
     let cross = |a: [f32; 2], b: [f32; 2], c: [f32; 2]| (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
     let mut idx = (0..points.len()).collect::<Vec<_>>();
-    let area = (0..points.len()).map(|i| { let (p, q) = (points[i], points[(i + 1) % points.len()]); p[0] * q[1] - q[0] * p[1] }).sum::<f32>();
+    let area = (0..points.len())
+        .map(|i| {
+            let (p, q) = (points[i], points[(i + 1) % points.len()]);
+            p[0] * q[1] - q[0] * p[1]
+        })
+        .sum::<f32>();
     let sign = if area >= 0.0 { 1.0 } else { -1.0 };
     let mut out = vec![];
     let (mut k, mut stuck) = (0, 0);
@@ -1300,10 +1488,17 @@ fn ear_clip_indices(points: &[[f32; 2]]) -> Vec<[usize; 3]> {
             continue;
         }
 
-        let empty = turn > 0.0 && idx.iter().all(|&j| {
-            let p = points[j];
-            j == ia || j == ib || j == ic || p == a || p == b || p == c || !(cross(a, b, p) * sign >= 0.0 && cross(b, c, p) * sign >= 0.0 && cross(c, a, p) * sign >= 0.0)
-        });
+        let empty = turn > 0.0
+            && idx.iter().all(|&j| {
+                let p = points[j];
+                j == ia
+                    || j == ib
+                    || j == ic
+                    || p == a
+                    || p == b
+                    || p == c
+                    || !(cross(a, b, p) * sign >= 0.0 && cross(b, c, p) * sign >= 0.0 && cross(c, a, p) * sign >= 0.0)
+            });
         if empty {
             out.push([ia, ib, ic]);
             idx.remove(k % n);
@@ -1339,7 +1534,10 @@ fn write_collision(c: &mut Value, polys: &[Vec<[f32; 3]>]) -> Vec<usize> {
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
-                    if let Some(&found) = index.get(&[c[0] + dx, c[1] + dy, c[2] + dz]).and_then(|l| l.iter().find(|&&i| (0..3).all(|k| (verts[i][k] - p[k]).abs() <= HULL_WELD))) {
+                    if let Some(&found) = index
+                        .get(&[c[0] + dx, c[1] + dy, c[2] + dz])
+                        .and_then(|l| l.iter().find(|&&i| (0..3).all(|k| (verts[i][k] - p[k]).abs() <= HULL_WELD)))
+                    {
                         return found;
                     }
                 }
@@ -1371,25 +1569,31 @@ fn write_collision(c: &mut Value, polys: &[Vec<[f32; 3]>]) -> Vec<usize> {
         }
     }
 
-    let triangles = tris.iter().enumerate().map(|(f, t)| {
-        let mut o = json!({ "face_index": f, "padding": 0, "vertex_1": t[0], "vertex_2": t[1], "vertex_3": t[2], "zero_4": 0 });
-        for k in 0..3 {
-            let (a, b) = (t[k], t[(k + 1) % 3]);
-            let across = edges.get(&(a.min(b), a.max(b))).and_then(|fs| fs.iter().find(|&&g| g != f)).map_or(-1, |&g| g as i64);
-            o[format!("edge_{}_vertex_1", k + 1)] = json!(a);
-            o[format!("edge_{}_vertex_2", k + 1)] = json!(b);
-            o[format!("face_index_{}", k + 1)] = json!(f);
-            o[format!("zero_{}", k + 1)] = json!(k);
-            o[format!("across_face_index_{}", k + 1)] = json!(across);
-        }
+    let triangles = tris
+        .iter()
+        .enumerate()
+        .map(|(f, t)| {
+            let mut o = json!({ "face_index": f, "padding": 0, "vertex_1": t[0], "vertex_2": t[1], "vertex_3": t[2], "zero_4": 0 });
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                let across = edges.get(&(a.min(b), a.max(b))).and_then(|fs| fs.iter().find(|&&g| g != f)).map_or(-1, |&g| g as i64);
+                o[format!("edge_{}_vertex_1", k + 1)] = json!(a);
+                o[format!("edge_{}_vertex_2", k + 1)] = json!(b);
+                o[format!("face_index_{}", k + 1)] = json!(f);
+                o[format!("zero_{}", k + 1)] = json!(k);
+                o[format!("across_face_index_{}", k + 1)] = json!(across);
+            }
 
-        o
-    }).collect::<Vec<_>>();
+            o
+        })
+        .collect::<Vec<_>>();
 
     // The box: kept empty when the game's is (a hull's box is all zero in the files seen), else around the hull.
     let empty = ["min_x", "min_y", "min_z", "max_x", "max_y", "max_z"].iter().all(|k| c["bounding_box"][*k].as_f64().unwrap_or(0.0) == 0.0);
     if !empty && !verts.is_empty() {
-        let (lo, hi) = verts.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1]), lo[2].min(p[2])], [hi[0].max(p[0]), hi[1].max(p[1]), hi[2].max(p[2])]));
+        let (lo, hi) = verts.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| {
+            ([lo[0].min(p[0]), lo[1].min(p[1]), lo[2].min(p[2])], [hi[0].max(p[0]), hi[1].max(p[1]), hi[2].max(p[2])])
+        });
         c["bounding_box"] = json!({ "min_x": lo[0], "min_y": lo[1], "min_z": lo[2], "max_x": hi[0], "max_y": hi[1], "max_z": hi[2] });
     }
 
@@ -1401,7 +1605,9 @@ fn write_collision(c: &mut Value, polys: &[Vec<[f32; 3]>]) -> Vec<usize> {
 /// A box (`min_x` .. `max_z`) grown to hold these points.
 fn grow_box(b: &mut Value, pts: &[[f32; 3]]) {
     for (i, (lo, hi)) in [("min_x", "max_x"), ("min_y", "max_y"), ("min_z", "max_z")].into_iter().enumerate() {
-        let (a, z) = pts.iter().fold((b[lo].as_f64().unwrap_or(0.0) as f32, b[hi].as_f64().unwrap_or(0.0) as f32), |(a, z), p| (a.min(p[i]), z.max(p[i])));
+        let (a, z) = pts
+            .iter()
+            .fold((b[lo].as_f64().unwrap_or(0.0) as f32, b[hi].as_f64().unwrap_or(0.0) as f32), |(a, z), p| (a.min(p[i]), z.max(p[i])));
         b[lo] = json!(a);
         b[hi] = json!(z);
     }
@@ -1505,9 +1711,18 @@ mod tests {
     /// keeps its outer and inner edges there and all of itself elsewhere; a platform under the box's heights is left whole.
     #[test]
     fn a_step_cuts_its_box_out_of_the_walkway() {
-        let quad = |x0: f32, x1: f32, z0: f32, z1: f32, y: f32| json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
-            { "x": x0, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z1 }, { "x": x0, "y": y, "z": z1 } ] } });
-        let out = carve_platforms(&[quad(0.0, 20.0, 3.0, 9.0, 15.0), quad(0.0, 20.0, 3.0, 9.0, 2.0)], &[(5.0, 10.0)], Some(((5.1, 8.9), (14.0, 26.5)))).into_iter().flatten().collect::<Vec<_>>();
+        let quad = |x0: f32, x1: f32, z0: f32, z1: f32, y: f32| {
+            json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
+            { "x": x0, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z1 }, { "x": x0, "y": y, "z": z1 } ] } })
+        };
+        let out = carve_platforms(
+            &[quad(0.0, 20.0, 3.0, 9.0, 15.0), quad(0.0, 20.0, 3.0, 9.0, 2.0)],
+            &[(5.0, 10.0)],
+            Some(((5.1, 8.9), (14.0, 26.5))),
+        )
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
         let area = |ps: &[Value]| ps.iter().map(|p| area_xz(&outline(&p["vertices"]))).sum::<f32>();
         let (walkway, low): (Vec<Value>, Vec<Value>) = out.into_iter().partition(|p| outline(&p["vertices"])[0][1] > 10.0);
         assert!((area(&walkway) - (120.0 - 5.0 * 3.8)).abs() < 1e-3, "{}", area(&walkway));
@@ -1520,15 +1735,30 @@ mod tests {
     /// the line stays on the parapet's strip, and lines on the walkway's sides by the step on their own side's piece.
     #[test]
     fn firing_lines_keep_their_platform_when_one_before_is_carved() {
-        let quad = |x0: f32, x1: f32, z0: f32, z1: f32, y: f32| json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
-            { "x": x0, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z1 }, { "x": x0, "y": y, "z": z1 } ] } });
-        let line = |x: f32, z: f32, parent: usize| json!({ "start": { "x": x - 0.25, "y": 15.0, "z": z }, "end": { "x": x + 0.25, "y": 15.0, "z": z },
-            "direction": { "x": 0.0, "y": 0.0, "z": -1.0 }, "parent_index": parent });
-        let carved = carve_platforms(&[quad(0.0, 20.0, 3.0, 9.0, 15.0), quad(0.0, 20.0, 1.0, 3.0, 15.0)], &[(5.0, 10.0)], Some(((5.1, 8.9), (14.0, 26.5))));
+        let quad = |x0: f32, x1: f32, z0: f32, z1: f32, y: f32| {
+            json!({ "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "vertices": { "outline": [
+            { "x": x0, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z0 }, { "x": x1, "y": y, "z": z1 }, { "x": x0, "y": y, "z": z1 } ] } })
+        };
+        let line = |x: f32, z: f32, parent: usize| {
+            json!({ "start": { "x": x - 0.25, "y": 15.0, "z": z }, "end": { "x": x + 0.25, "y": 15.0, "z": z },
+            "direction": { "x": 0.0, "y": 0.0, "z": -1.0 }, "parent_index": parent })
+        };
+        let carved = carve_platforms(
+            &[quad(0.0, 20.0, 3.0, 9.0, 15.0), quad(0.0, 20.0, 1.0, 3.0, 15.0)],
+            &[(5.0, 10.0)],
+            Some(((5.1, 8.9), (14.0, 26.5))),
+        );
         let mut notes = LogicNotes::default();
         let cuts = Cuts { step: 100.0, at: vec![] };
         let (platforms, strips) = platform_strips(&carved, &crate::warp::Identity, &cuts, &|_| true, 0, &mut notes);
-        let lines = place_lines(&[line(15.0, 2.0, 1), line(7.0, 4.0, 0), line(7.0, 8.95, 0)], &crate::warp::Identity, &cuts, &strips, &|_| true, &mut notes);
+        let lines = place_lines(
+            &[line(15.0, 2.0, 1), line(7.0, 4.0, 0), line(7.0, 8.95, 0)],
+            &crate::warp::Identity,
+            &cuts,
+            &strips,
+            &|_| true,
+            &mut notes,
+        );
         let under = |l: &Value| outline(&platforms[l["parent_index"].as_u64().unwrap() as usize]["vertices"]);
         let parapet = under(&lines[0]);
         assert!(parapet.iter().all(|q| q[2] <= 3.0 + 1e-3), "the parapet's line on {parapet:?}");
@@ -1569,8 +1799,30 @@ mod tests {
     /// triangles, each naming the other), its points where the bend puts them (the middle of its top on the bend, not on a chord).
     #[test]
     fn a_collision_hull_is_bent_and_stays_closed() {
-        let corners = [[-10.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 0.0, 9.0], [-10.0, 0.0, 9.0], [-10.0, 15.0, 0.0], [10.0, 15.0, 0.0], [10.0, 15.0, 9.0], [-10.0, 15.0, 9.0]];
-        let faces = [[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7], [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7]];
+        let corners = [
+            [-10.0, 0.0, 0.0],
+            [10.0, 0.0, 0.0],
+            [10.0, 0.0, 9.0],
+            [-10.0, 0.0, 9.0],
+            [-10.0, 15.0, 0.0],
+            [10.0, 15.0, 0.0],
+            [10.0, 15.0, 9.0],
+            [-10.0, 15.0, 9.0],
+        ];
+        let faces = [
+            [0, 2, 1],
+            [0, 3, 2],
+            [4, 5, 6],
+            [4, 6, 7],
+            [0, 1, 5],
+            [0, 5, 4],
+            [1, 2, 6],
+            [1, 6, 5],
+            [2, 3, 7],
+            [2, 7, 6],
+            [3, 0, 4],
+            [3, 4, 7],
+        ];
         let mut hull = json!({
             "name": "piece01_destruct01_collision3d", "uk_1": 1, "uk_2": 0, "zero_4": 0,
             "bounding_box": { "min_x": 0.0, "min_y": 0.0, "min_z": 0.0, "max_x": 0.0, "max_y": 0.0, "max_z": 0.0 },
@@ -1579,7 +1831,8 @@ mod tests {
         });
         let bend = crate::warp::Bend::turning(-10.0, 10.0, 0.6);
         let flat = hull.clone();
-        let polys = collision_polygons(&hull, &bend, &Cuts { step: 5.0, at: vec![] }, &[], &[], None).into_iter().map(|p| p.1).collect::<Vec<_>>();
+        let polys =
+            collision_polygons(&hull, &bend, &Cuts { step: 5.0, at: vec![] }, &[], &[], None).into_iter().map(|p| p.1).collect::<Vec<_>>();
         write_collision(&mut hull, &polys);
 
         let tris = hull["triangles"].as_array().unwrap();
@@ -1605,10 +1858,27 @@ mod tests {
 
         // Under a stair over x 2..6 the top goes down, from SINK_IN in from its ends; the bottom and the top elsewhere stay (the sides'
         // points at the cuts are in between).
-        let polys = collision_polygons(&flat, &crate::warp::Identity, &Cuts { step: 5.0, at: vec![] }, &[], &[((2.0, 6.0), (14.5, 15.5))], Some((0.0, 9.0)));
+        let polys = collision_polygons(
+            &flat,
+            &crate::warp::Identity,
+            &Cuts { step: 5.0, at: vec![] },
+            &[],
+            &[((2.0, 6.0), (14.5, 15.5))],
+            Some((0.0, 9.0)),
+        );
         let pts = polys.iter().flat_map(|p| p.1.iter().copied()).collect::<Vec<_>>();
         assert!(pts.iter().any(|p| (p[0] - 4.0).abs() < 1.8 && (p[1] - (15.0 - SINK)).abs() < 1e-4), "nothing sunk");
-        let wrong = pts.iter().filter(|p| p[1] > 14.0).filter(|p| !(if p[0] > 2.0 + SINK_IN - 1e-3 && p[0] < 6.0 - SINK_IN + 1e-3 { (p[1] - (15.0 - SINK)).abs() < 1e-4 } else { (p[1] - 15.0).abs() < 1e-4 })).collect::<Vec<_>>();
+        let wrong = pts
+            .iter()
+            .filter(|p| p[1] > 14.0)
+            .filter(|p| {
+                !(if p[0] > 2.0 + SINK_IN - 1e-3 && p[0] < 6.0 - SINK_IN + 1e-3 {
+                    (p[1] - (15.0 - SINK)).abs() < 1e-4
+                } else {
+                    (p[1] - 15.0).abs() < 1e-4
+                })
+            })
+            .collect::<Vec<_>>();
         assert!(wrong.is_empty(), "{wrong:?}");
         assert!(pts.iter().filter(|p| p[1] < 1.0).all(|p| p[1] == 0.0));
     }
@@ -1635,7 +1905,15 @@ mod tests {
     #[test]
     fn platforms_go_round_the_games_way() {
         let quad = |pts: [[f32; 3]; 4]| json!({ "vertices": { "outline": pts.iter().map(|&p| point3(p)).collect::<Vec<_>>() } });
-        let area = |p: &Value| { let o = outline(&p["vertices"]); (0..o.len()).map(|i| { let (a, b) = (o[(i + o.len() - 1) % o.len()], o[i]); a[0] * b[2] - b[0] * a[2] }).sum::<f32>() };
+        let area = |p: &Value| {
+            let o = outline(&p["vertices"]);
+            (0..o.len())
+                .map(|i| {
+                    let (a, b) = (o[(i + o.len() - 1) % o.len()], o[i]);
+                    a[0] * b[2] - b[0] * a[2]
+                })
+                .sum::<f32>()
+        };
         // The stepped bastion's stair, as the game has it.
         let mut game = quad([[5.8, 15.0, 9.0], [5.8, 15.0, 5.0], [-6.2, 25.0, 5.0], [-6.2, 25.0, 9.0]]);
         let before = game.clone();
@@ -1667,7 +1945,12 @@ mod tests {
             vec![quad(&[[-8.005, 15.0, 3.25], [-10.5, 15.0, 3.25], [-10.5, 15.0, 8.5]])],
         ];
         for (tip, turn) in [([80.0, 40.0], "left"), ([80.0, -40.0], "right"), ([60.0, 70.0], "sharp")] {
-            let input = WallInput { points: vec![[0.0, 0.0], tip, [160.0, 0.0]], sharp: vec![false, true, false], tolerance: 0.5, ..Default::default() };
+            let input = WallInput {
+                points: vec![[0.0, 0.0], tip, [160.0, 0.0]],
+                sharp: vec![false, true, false],
+                tolerance: 0.5,
+                ..Default::default()
+            };
             let plan = solve(&input, p, &ground);
             let s = plan.corners[0].0;
             let ps = pieces(&plan, p);
@@ -1683,8 +1966,17 @@ mod tests {
                     platforms.extend(platform_strips(&base, &copy, &cuts, &|_| true, 0, &mut notes).0);
                 }
                 let (sn, cs) = ps[k].yaw.sin_cos();
-                let scene = |q: [f32; 3]| { let (x, z) = (f64::from(q[0]), f64::from(q[2])); [ps[k].origin[0] + x * cs - z * sn, ps[k].origin[2] + x * sn + z * cs] };
-                platforms.iter().flat_map(|pl| { let o = outline(&pl["vertices"]).into_iter().map(scene).collect::<Vec<_>>(); (0..o.len()).map(move |j| (o[j], o[(j + 1) % o.len()])).collect::<Vec<_>>() }).collect::<Vec<_>>()
+                let scene = |q: [f32; 3]| {
+                    let (x, z) = (f64::from(q[0]), f64::from(q[2]));
+                    [ps[k].origin[0] + x * cs - z * sn, ps[k].origin[2] + x * sn + z * cs]
+                };
+                platforms
+                    .iter()
+                    .flat_map(|pl| {
+                        let o = outline(&pl["vertices"]).into_iter().map(scene).collect::<Vec<_>>();
+                        (0..o.len()).map(move |j| (o[j], o[(j + 1) % o.len()])).collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
             };
             let (ea, eb) = (edges(i), edges(i + 1));
             let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 0.005;
@@ -1692,14 +1984,19 @@ mod tests {
             let face = ea.iter().filter(|&&(x, y)| on_b(x) && on_b(y) && (x[0] - y[0]).hypot(x[1] - y[1]) > 0.05).collect::<Vec<_>>();
             assert!(face.len() >= 4, "{turn}: only {} edges on the face", face.len());
             for &&(x, y) in &face {
-                assert!(eb.iter().any(|&(u, v)| (near(x, u) && near(y, v)) || (near(x, v) && near(y, u))), "{turn}: the edge {x:?} {y:?} is not the other side's");
+                assert!(
+                    eb.iter().any(|&(u, v)| (near(x, u) && near(y, v)) || (near(x, v) && near(y, u))),
+                    "{turn}: the edge {x:?} {y:?} is not the other side's"
+                );
             }
 
             // The firing lines along the inner side (LowWall, Overflow: the length of the piece) stay on their own side of the bisector,
             // nothing reaching over the other side's walkway.
             let c = crate::pieces::sample_at(&plan, s).centre;
-            let lines = [8.5f32, 7.5, 6.5].map(|z| json!({ "start": { "x": 10.34, "y": 15.0, "z": z }, "end": { "x": -10.34, "y": 15.0, "z": z },
-                "direction": { "x": 0.0, "y": 0.0, "z": 0.38 }, "parent_index": 0 }));
+            let lines = [8.5f32, 7.5, 6.5].map(|z| {
+                json!({ "start": { "x": 10.34, "y": 15.0, "z": z }, "end": { "x": -10.34, "y": 15.0, "z": z },
+                "direction": { "x": 0.0, "y": 0.0, "z": 0.38 }, "parent_index": 0 })
+            });
             for (k, sign) in [(i, -1.0), (i + 1, 1.0)] {
                 let w = PieceWarp::new(&plan, p, ps[k], &ground);
                 let cuts = cuts_of(&plan, &ps[k], p);
@@ -1714,7 +2011,10 @@ mod tests {
                 }
 
                 let (sn, cs) = ps[k].yaw.sin_cos();
-                let scene = |q: [f32; 3]| { let (x, z) = (f64::from(q[0]), f64::from(q[2])); [ps[k].origin[0] + x * cs - z * sn, ps[k].origin[2] + x * sn + z * cs] };
+                let scene = |q: [f32; 3]| {
+                    let (x, z) = (f64::from(q[0]), f64::from(q[2]));
+                    [ps[k].origin[0] + x * cs - z * sn, ps[k].origin[2] + x * sn + z * cs]
+                };
                 let (da, db) = crate::pieces::section_end_dirs(&plan, s);
                 let m = [da[0] + db[0], da[1] + db[1]];
                 for l in &out {
@@ -1758,10 +2058,20 @@ mod tests {
 
         let volume = |c: &Value| {
             let v = c["vertices"].as_array().unwrap().iter().map(p3).collect::<Vec<_>>();
-            c["triangles"].as_array().unwrap().iter().map(|t| {
-                let (a, b, d) = (v[t["vertex_1"].as_u64().unwrap() as usize], v[t["vertex_2"].as_u64().unwrap() as usize], v[t["vertex_3"].as_u64().unwrap() as usize]);
-                a[0] * (b[1] * d[2] - b[2] * d[1]) - a[1] * (b[0] * d[2] - b[2] * d[0]) + a[2] * (b[0] * d[1] - b[1] * d[0])
-            }).sum::<f32>() / 6.0
+            c["triangles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| {
+                    let (a, b, d) = (
+                        v[t["vertex_1"].as_u64().unwrap() as usize],
+                        v[t["vertex_2"].as_u64().unwrap() as usize],
+                        v[t["vertex_3"].as_u64().unwrap() as usize],
+                    );
+                    a[0] * (b[1] * d[2] - b[2] * d[1]) - a[1] * (b[0] * d[2] - b[2] * d[0]) + a[2] * (b[0] * d[1] - b[1] * d[0])
+                })
+                .sum::<f32>()
+                / 6.0
         };
         let mut hull = json!({ "bounding_box": { "min_x": 0.0, "max_x": 0.0, "min_y": 0.0, "max_y": 0.0, "min_z": 0.0, "max_z": 0.0 },
             "vertices": verts.iter().map(|&p| point3(p)).collect::<Vec<_>>(),
@@ -1771,10 +2081,19 @@ mod tests {
         assert!(volume(&hull) > 0.0, "the test hull is wound out");
 
         for plane in [[1.0f32, 0.0, 2.0], [1.0, 0.6, 3.0], [-1.0, 0.8, 4.0]] {
-            let polys = collision_polygons(&flat_hull, &crate::warp::Identity, &Cuts { step: 5.0, at: vec![] }, &[plane], &[], None).into_iter().map(|p| p.1).collect::<Vec<_>>();
+            let polys = collision_polygons(&flat_hull, &crate::warp::Identity, &Cuts { step: 5.0, at: vec![] }, &[plane], &[], None)
+                .into_iter()
+                .map(|p| p.1)
+                .collect::<Vec<_>>();
             let mut cut = flat_hull.clone();
             write_collision(&mut cut, &polys);
-            let open = cut["triangles"].as_array().unwrap().iter().flat_map(|t| (1..=3).map(move |k| t[format!("across_face_index_{k}")].as_i64().unwrap())).filter(|&a| a < 0).count();
+            let open = cut["triangles"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|t| (1..=3).map(move |k| t[format!("across_face_index_{k}")].as_i64().unwrap()))
+                .filter(|&a| a < 0)
+                .count();
             assert_eq!(open, 0, "{plane:?}: open edges");
             assert!(volume(&cut) > 0.0 && volume(&cut) < volume(&hull), "{plane:?}: volume {} of {}", volume(&cut), volume(&hull));
         }
@@ -1840,6 +2159,9 @@ mod tests {
         let walk = [[6.2, 1.95], [10.0, 1.95], [10.0, 9.0], [6.2, 9.0], [-5.0, -5.0], [8.0, -5.0], [8.0, 4.5]];
         assert_eq!(cap_end(&cap, [0.0, -1.0], &walk, &[], &[], None).expect("a cap").side, [0.0, -1.0]);
 
-        assert!(cap_end(&[[-10.0, 15.0, 3.0], [10.0, 15.0, 3.0], [10.0, 15.0, 9.0], [-10.0, 15.0, 9.0]], [0.0, 5.0], &[], &[], &[], None).is_none());
+        assert!(
+            cap_end(&[[-10.0, 15.0, 3.0], [10.0, 15.0, 3.0], [10.0, 15.0, 9.0], [-10.0, 15.0, 9.0]], [0.0, 5.0], &[], &[], &[], None)
+                .is_none()
+        );
     }
 }

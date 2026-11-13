@@ -103,7 +103,6 @@ fn view_reach(cam: &wce_scene::camera::Camera, height: f64, aspect: f64) -> (f64
 }
 
 impl MapView {
-
     /// The document whose layer the view is on (0: none yet).
     pub fn doc(&self) -> DocumentId {
         self.doc
@@ -120,7 +119,14 @@ impl MapView {
 
     /// A new streamer on the scene: the layer (emptied), the scene's sea level, the sea and what `extra` adds next to it (with the sea, so
     /// it stays when the chunks come and go; the tile's floor).
-    pub fn begin(&mut self, e: &mut Editor, id: DocumentId, s: Box<Streamer>, rings: &Rings, extra: impl FnOnce(&Frame) -> Vec<(Float4x4, Payload)>) {
+    pub fn begin(
+        &mut self,
+        e: &mut Editor,
+        id: DocumentId,
+        s: Box<Streamer>,
+        rings: &Rings,
+        extra: impl FnOnce(&Frame) -> Vec<(Float4x4, Payload)>,
+    ) {
         if self.layer == 0 || self.doc != id || e.scene.layer(self.layer).is_none() {
             if self.layer != 0 {
                 e.scene.remove_layer(self.layer);
@@ -146,7 +152,8 @@ impl MapView {
         self.streamer = Some(s);
         let at = self.focus(e, rings.follow).unwrap_or_default();
         let frame = self.streamer.as_ref().expect("set").frame().clone();
-        let sea = add_range(&mut e.scene, self.layer, id, std::iter::once(frame.sea(at, self.sea_reach(rings))).chain(extra(&frame)).collect());
+        let sea =
+            add_range(&mut e.scene, self.layer, id, std::iter::once(frame.sea(at, self.sea_reach(rings))).chain(extra(&frame)).collect());
         (self.sea, self.sea_at) = (Some(sea.start), at);
     }
 
@@ -227,7 +234,13 @@ impl MapView {
                 }
 
                 let to_cell = s.frame().to_map.m.map(|row| row.map(|v| v as f32));
-                self.snow_map.as_ref().and_then(|(_, _, c)| c.clone()).map(|c| SnowRegions { to_cell, w: c.0, h: c.1, cells: Arc::new(c.2.clone()), amount })
+                self.snow_map.as_ref().and_then(|(_, _, c)| c.clone()).map(|c| SnowRegions {
+                    to_cell,
+                    w: c.0,
+                    h: c.1,
+                    cells: Arc::new(c.2.clone()),
+                    amount,
+                })
             }
 
             _ => None,
@@ -308,14 +321,17 @@ impl MapView {
     pub fn apply(&mut self, e: &mut Editor, budget: Option<std::time::Duration>) -> bool {
         wce_prof!("context.apply");
         let t0 = std::time::Instant::now();
-        let mut gone: Vec<std::ops::Range<EntityId>> = std::mem::take(&mut self.gone).into_iter().filter_map(|k| self.chunks.remove(&k)).collect();
+        let mut gone: Vec<std::ops::Range<EntityId>> =
+            std::mem::take(&mut self.gone).into_iter().filter_map(|k| self.chunks.remove(&k)).collect();
         let mut ready = vec![];
         let mut k = 0;
         while k < self.waiting.len() {
-            let terrains_ready = e.renderer.as_mut().is_none_or(|r| self.waiting[k].1.iter().all(|(_, p)| match p {
-                Payload::Terrain(t) => r.terrain_ready(t),
-                _ => true,
-            }));
+            let terrains_ready = e.renderer.as_mut().is_none_or(|r| {
+                self.waiting[k].1.iter().all(|(_, p)| match p {
+                    Payload::Terrain(t) => r.terrain_ready(t),
+                    _ => true,
+                })
+            });
 
             if terrains_ready {
                 let (key, entities) = self.waiting.remove(k);
@@ -386,7 +402,15 @@ impl MapView {
 
     /// The overview map over the viewport (top right, under the camera chips): the map's LF, a highlighted rectangle of cells (the open
     /// tile's placement), the camera and where it looks; a click (or a drag) moves the camera there, keeping its height and angle.
-    pub fn draw_overview(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2, name: &str, map: &PlacedMap, highlight: Option<[i32; 4]>) {
+    pub fn draw_overview(
+        &mut self,
+        e: &mut Editor,
+        origin: gui::Vec2,
+        size: gui::Vec2,
+        name: &str,
+        map: &PlacedMap,
+        highlight: Option<[i32; 4]>,
+    ) {
         let Some(frame) = self.streamer.as_ref().map(|s| s.frame().clone()) else { return };
         let Some(lf) = map.lf.as_ref().filter(|f| f.w > 1 && f.h > 1) else { return };
         if self.overview_of != name {
@@ -412,7 +436,14 @@ impl MapView {
         if gui::begin_child("##minimap", gui::v2(mw, mh), 0, gui::WINDOW_NO_SCROLLBAR) {
             let dl = gui::window_draw_list();
             let (x0, y0) = (pos.x, pos.y);
-            dl.image(img.id, gui::v2(x0, y0), gui::v2(x0 + mw, y0 + mh), gui::v2(0.0, 0.0), gui::v2(1.0, 1.0), gui::col32(255, 255, 255, 255));
+            dl.image(
+                img.id,
+                gui::v2(x0, y0),
+                gui::v2(x0 + mw, y0 + mh),
+                gui::v2(0.0, 0.0),
+                gui::v2(1.0, 1.0),
+                gui::col32(255, 255, 255, 255),
+            );
             dl.rect(gui::v2(x0, y0), gui::v2(x0 + mw, y0 + mh), gui::col32(0, 0, 0, 200), 0.0, 1.0);
 
             // Map cells to the picture.
@@ -421,7 +452,13 @@ impl MapView {
 
             if let Some(o) = highlight {
                 let (a, b) = (at(f64::from(o[0]), f64::from(o[1])), at(f64::from(o[2]), f64::from(o[3])));
-                dl.rect(gui::v2(a.x - 1.0, a.y - 1.0), gui::v2(b.x.max(a.x + 2.0) + 1.0, b.y.max(a.y + 2.0) + 1.0), gui::col32(255, 210, 60, 255), 0.0, 2.0);
+                dl.rect(
+                    gui::v2(a.x - 1.0, a.y - 1.0),
+                    gui::v2(b.x.max(a.x + 2.0) + 1.0, b.y.max(a.y + 2.0) + 1.0),
+                    gui::col32(255, 210, 60, 255),
+                    0.0,
+                    2.0,
+                );
             }
 
             // The camera and where it looks (the view distance's reach).

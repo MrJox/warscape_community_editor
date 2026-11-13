@@ -61,13 +61,17 @@ impl TileTool {
         gui::set_next_item_width(120.0);
         gui::drag_float("black (m)", &mut d.low, 0.1, -10_000.0, 10_000.0, "%.2f");
         if gui::is_item_hovered() {
-            gui::set_tooltip("The height of the picture's black, in metres as the editor shows them (it starts at the tile's lowest point).");
+            gui::set_tooltip(
+                "The height of the picture's black, in metres as the editor shows them (it starts at the tile's lowest point).",
+            );
         }
 
         gui::set_next_item_width(120.0);
         gui::drag_float("white (m)", &mut d.high, 0.1, -10_000.0, 10_000.0, "%.2f");
         if gui::is_item_hovered() {
-            gui::set_tooltip("The height of the picture's white (it starts at the tile's highest point); between the two, the grey's share.");
+            gui::set_tooltip(
+                "The height of the picture's white (it starts at the tile's highest point); between the two, the grey's share.",
+            );
         }
 
         gui::checkbox("add to the heights", &mut d.add);
@@ -84,7 +88,9 @@ impl TileTool {
         gui::same_line();
         let cancel = gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true);
         if import {
-            let result = document(e).ok_or_else(|| "no tile open".to_owned()).and_then(|t| t.import_height_map(Path::new(&d.path), d.low, d.high, d.add));
+            let result = document(e)
+                .ok_or_else(|| "no tile open".to_owned())
+                .and_then(|t| t.import_height_map(Path::new(&d.path), d.low, d.high, d.add));
             match result {
                 Ok(n) => {
                     e.status(&format!("height map imported: {n} samples changed (one undo step)"), false);

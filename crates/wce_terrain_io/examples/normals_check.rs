@@ -39,7 +39,12 @@ fn main() {
     let files = MapFiles::from_dir(&dir).expect("the map's folder");
     let mut m = attila::read("map", MapKind::Battle, &files).expect("the map");
     let cells = m.cells().expect("a tile map");
-    let base = m.carried.iter().find(|(k, _)| k.eq_ignore_ascii_case("normal.dds")).and_then(|(_, b)| b.bytes().ok()).and_then(|b| NormalImage::from_dds(&b));
+    let base = m
+        .carried
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("normal.dds"))
+        .and_then(|(_, b)| b.bytes().ok())
+        .and_then(|b| NormalImage::from_dds(&b));
     let item = m.lf_mut(LfRole::Land).expect("an LF");
     let original = tiff_samples(&item.origin.bytes().expect("the LF")).expect("a 16-bit LF");
     let mut bad = 0;
@@ -64,8 +69,12 @@ fn main() {
         ox < ex + side + 1 && ex - 1 < ox + SIDE && oy < ey + side + 1 && ey - 1 < oy + SIDE
     };
     let want: Vec<i64> = (0..cols * ((h + STEP - 1) / STEP)).filter(|&k| reaches(k)).collect();
-    let got: Vec<i64> = made.iter().map(|(p, _)| p.trim_start_matches("normals/normal_").trim_end_matches(".dds").parse().unwrap()).collect();
-    println!("edit {side} x {side} at ({ex}, {ey}): chunks {got:?} (the edit reaches {want:?}), {} bytes each", made.first().map_or(0, |c| c.1.len()));
+    let got: Vec<i64> =
+        made.iter().map(|(p, _)| p.trim_start_matches("normals/normal_").trim_end_matches(".dds").parse().unwrap()).collect();
+    println!(
+        "edit {side} x {side} at ({ex}, {ey}): chunks {got:?} (the edit reaches {want:?}), {} bytes each",
+        made.first().map_or(0, |c| c.1.len())
+    );
     if got != want {
         bad += 1;
     }

@@ -21,7 +21,8 @@ use crate::instance_templates::template;
 pub const EXPORT_AS_PROP_ATTR: &str = "wce_export_as_prop";
 
 /// Why the Inspector greys out the checkbox of a building with a capture location.
-pub const CAPTURE_LOCATION_TIP: &str = "A capture location links this building, so it has to stay a building: clear its capture_location to export it as a prop.";
+pub const CAPTURE_LOCATION_TIP: &str =
+    "A capture location links this building, so it has to stay a building: clear its capture_location to export it as a prop.";
 
 /// Why the Inspector greys out the scale of a building that does not export as a prop.
 pub const SCALE_TIP: &str = "The game ignores the scale of a building: it only applies to a building exported as a prop. Kept here for when Export as prop is on again.";
@@ -110,7 +111,8 @@ impl PropExport {
 pub fn pieces_at(files: &[String], level: i64) -> Result<Vec<String>, String> {
     let name = |p: &str| p[p.rfind('/').map_or(0, |s| s + 1)..].to_owned();
     let files = files.iter().filter(|p| !piece_copy(p, |q| files.iter().any(|f| f == q))).collect::<Vec<_>>();
-    let intact = files.iter().filter(|p| static_piece(&name(p)) && (!p.contains("destruct") || p.contains("destruct01"))).collect::<Vec<_>>();
+    let intact =
+        files.iter().filter(|p| static_piece(&name(p)) && (!p.contains("destruct") || p.contains("destruct01"))).collect::<Vec<_>>();
     if intact.is_empty() && files.iter().all(|p| !working_anim(&name(p))) {
         return Err("no model in the game's files".to_owned());
     }
@@ -204,7 +206,9 @@ pub fn apply(text: Vec<u8>, models_in: Option<ModelsIn>) -> Result<(Vec<u8>, Pro
     }
 
     if let Some(first) = first {
-        let water = |e: usize| doc.elements()[e].name == "SIMPLE_MESH_INSTANCE" && doc.get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane"));
+        let water = |e: usize| {
+            doc.elements()[e].name == "SIMPLE_MESH_INSTANCE" && doc.get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane"))
+        };
         report.water_after = (first..doc.elements().len()).filter(|&e| water(e)).count();
     }
 
@@ -268,14 +272,20 @@ mod tests {
     /// A folder per building.
     fn models_in(prefix: &str) -> Vec<String> {
         match prefix {
-            "rigidmodels/buildings/house/" => vec![format!("{prefix}house_piece01_destruct01.rigid_model_v2"), format!("{prefix}house_piece01_destruct02.rigid_model_v2"), format!("{prefix}house_piece02_destruct01.rigid_model_v2")],
+            "rigidmodels/buildings/house/" => vec![
+                format!("{prefix}house_piece01_destruct01.rigid_model_v2"),
+                format!("{prefix}house_piece01_destruct02.rigid_model_v2"),
+                format!("{prefix}house_piece02_destruct01.rigid_model_v2"),
+            ],
             "rigidmodels/buildings/ram/" => vec![format!("{prefix}ram_piece01_destruct01_weighted_anim.rigid_model_v2")],
             _ => vec![],
         }
     }
 
     fn scene(attrs: &str) -> String {
-        format!("<project version=\"16\">\n    <BUILDING_INSTANCE name=\"a&amp;b\" key=\"house\" position=\"vector(1,2,3)\" orientation=\"euler(0,1,0)\" surface_mode=\"MSM_LANDSCAPE\" {attrs}/>\n    {WATER}\n</project>\n")
+        format!(
+            "<project version=\"16\">\n    <BUILDING_INSTANCE name=\"a&amp;b\" key=\"house\" position=\"vector(1,2,3)\" orientation=\"euler(0,1,0)\" surface_mode=\"MSM_LANDSCAPE\" {attrs}/>\n    {WATER}\n</project>\n"
+        )
     }
 
     fn folder(names: &[&str]) -> Vec<String> {
@@ -284,7 +294,8 @@ mod tests {
 
     #[test]
     fn a_piece_goes_as_far_as_it_has_levels() {
-        let f = folder(&["piece01_destruct01", "piece01_destruct02", "piece01_destruct01_anim", "piece02_destruct01", "piece01_destruct01_0"]);
+        let f =
+            folder(&["piece01_destruct01", "piece01_destruct02", "piece01_destruct01_anim", "piece02_destruct01", "piece01_destruct01_0"]);
         assert_eq!(pieces_at(&f, 0).unwrap(), folder(&["piece01_destruct01", "piece02_destruct01"]));
         assert_eq!(pieces_at(&f, 1).unwrap(), folder(&["piece01_destruct02", "piece02_destruct01"]), "piece02 has one level");
         assert_eq!(pieces_at(&f, 9).unwrap(), folder(&["piece01_destruct02", "piece02_destruct01"]));
@@ -314,7 +325,13 @@ mod tests {
         assert_eq!(out.matches("<SIMPLE_MESH_INSTANCE").count(), 3, "two pieces and the water: {out}");
         assert!(out.contains("key=\"rigidmodels/buildings/house/house_piece01_destruct01.rigid_model_v2\""), "{out}");
         assert!(out.contains("name=\"a&amp;b_1__wce_prop\""), "the name's encoding is kept: {out}");
-        assert!(out.contains("position=\"vector(1,2,3)\"") && out.contains("orientation=\"euler(0,1,0)\"") && out.contains("surface_mode=\"MSM_LANDSCAPE\"") && out.contains("scale=\"vector(1,1,1)\""), "{out}");
+        assert!(
+            out.contains("position=\"vector(1,2,3)\"")
+                && out.contains("orientation=\"euler(0,1,0)\"")
+                && out.contains("surface_mode=\"MSM_LANDSCAPE\"")
+                && out.contains("scale=\"vector(1,1,1)\""),
+            "{out}"
+        );
         assert!(out.contains(">\n    <SIMPLE_MESH_INSTANCE"), "each on its line at the building's indent: {out}");
         assert!(XmlDoc::parse(out.into_bytes()).is_ok());
         assert_eq!(report, PropExport { buildings: 1, pieces: 2, kept: vec![], water_after: 1 });
@@ -330,7 +347,12 @@ mod tests {
     fn the_destruction_level_picks_the_piece_files() {
         let (out, _) = apply(scene("destruction_level=\"1\" wce_export_as_prop=\"true\"").into_bytes(), Some(&models_in)).unwrap();
         let out = String::from_utf8(out).unwrap();
-        assert!(out.contains("house_piece01_destruct02") && out.contains("house_piece02_destruct01") && !out.contains("house_piece01_destruct01"), "{out}");
+        assert!(
+            out.contains("house_piece01_destruct02")
+                && out.contains("house_piece02_destruct01")
+                && !out.contains("house_piece01_destruct01"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -358,7 +380,11 @@ mod tests {
 
     #[test]
     fn water_before_the_first_prop_is_safe_from_teds_export() {
-        let text = scene("wce_export_as_prop=\"true\"").replacen(&format!("    {WATER}\n"), "", 1).replacen("    <BUILDING", &format!("    {WATER}\n    <BUILDING"), 1);
+        let text = scene("wce_export_as_prop=\"true\"").replacen(&format!("    {WATER}\n"), "", 1).replacen(
+            "    <BUILDING",
+            &format!("    {WATER}\n    <BUILDING"),
+            1,
+        );
         let (_, report) = apply(text.into_bytes(), Some(&models_in)).unwrap();
         assert_eq!(report.water_after, 0);
         assert!(report.kit_notes().iter().all(|n| !n.contains("water")));

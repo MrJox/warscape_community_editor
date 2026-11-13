@@ -7,7 +7,7 @@
 //! Nothing here changes the XML: a `Prop` points at a field of the tree and says how to show and edit it.
 
 use crate::dom::{Element, Node};
-use crate::model::{color_of, UiModel};
+use crate::model::{UiModel, color_of};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Control {
@@ -21,7 +21,10 @@ pub enum Control {
     /// Text with common values to pick from.
     Suggest(&'static [&'static str]),
     /// One bit (or byte) of an integer word: `byte` fields are 0 or 1 in their own byte, the others are bits of a mask.
-    Bit { mask: u32, byte: bool },
+    Bit {
+        mask: u32,
+        byte: bool,
+    },
     /// A `<color>` element.
     Colour,
     /// Shown but not edited here.
@@ -56,7 +59,11 @@ pub enum PropEdit {
     Value(String),
     /// A value being dragged: the same as `Value`, but consecutive drags are one undo step.
     Drag(String),
-    Bit { mask: u32, byte: bool, on: bool },
+    Bit {
+        mask: u32,
+        byte: bool,
+        on: bool,
+    },
     Colour([u8; 4]),
 }
 
@@ -110,7 +117,16 @@ const MOUSE_WHEN: &[(i64, &str)] = &[
     (12, "Mouse wheel pushed"),
 ];
 
-pub const SHADERS: &[&str] = &["normal_t0", "brighten_t0", "set_greyscale_t0", "glow_pulse_t0", "border_alpha_blend", "red_pulse_t0", "grey_over_time_t0", "drop_shadow_t0"];
+pub const SHADERS: &[&str] = &[
+    "normal_t0",
+    "brighten_t0",
+    "set_greyscale_t0",
+    "glow_pulse_t0",
+    "border_alpha_blend",
+    "red_pulse_t0",
+    "grey_over_time_t0",
+    "drop_shadow_t0",
+];
 pub const FONTS: &[&str] = &["la_gioconda", "la_gioconda_uppercase", "georgia_italic", "arialunicode", "candara_italic"];
 pub const FONT_CATEGORIES: &[&str] = &[
     "Default Font Category",
@@ -329,14 +345,24 @@ impl UiModel {
                     }
 
                     // a state id is unsigned; a field that stores it as a signed integer shows it as one
-                    control = Control::Choice(list.into_iter().map(|(n, s)| (if signed { n as u32 as i32 as i64 } else { n }, s)).collect());
+                    control =
+                        Control::Choice(list.into_iter().map(|(n, s)| (if signed { n as u32 as i32 as i64 } else { n }, s)).collect());
                 }
             }
 
             // Several check boxes over one word: one prop per bit.
             if let Some(bits) = bits_for(kind, &it, v) {
                 for (mask, byte, nm, hp) in bits {
-                    out.push(Prop { idx: it.idx, name: nm.to_string(), help: hp, group: bits_group(kind), control: Control::Bit { mask, byte }, value: it.value.clone(), label: it.label.clone(), advanced: false });
+                    out.push(Prop {
+                        idx: it.idx,
+                        name: nm.to_string(),
+                        help: hp,
+                        group: bits_group(kind),
+                        control: Control::Bit { mask, byte },
+                        value: it.value.clone(),
+                        label: it.label.clone(),
+                        advanced: false,
+                    });
                 }
                 continue;
             }
@@ -358,10 +384,23 @@ impl UiModel {
                     let [r, g, b, a] = color_of(c);
                     let (name, help, group): (&str, &'static str, &'static str) = match kind {
                         "state" => ("Text colour", "The colour the state's text is drawn in.", "Font"),
-                        "picture" => ("Tint colour", "Multiplied with the picture; white leaves it as it is, the alpha is its opacity.", "Appearance"),
+                        "picture" => (
+                            "Tint colour",
+                            "Multiplied with the picture; white leaves it as it is, the alpha is its opacity.",
+                            "Appearance",
+                        ),
                         _ => ("Colour", "", groups[0]),
                     };
-                    out.push(Prop { idx: i, name: name.into(), help, group, control: Control::Colour, value: format!("#{r:02x}{g:02x}{b:02x}{a:02x}"), label: "color".into(), advanced: false });
+                    out.push(Prop {
+                        idx: i,
+                        name: name.into(),
+                        help,
+                        group,
+                        control: Control::Colour,
+                        value: format!("#{r:02x}{g:02x}{b:02x}{a:02x}"),
+                        label: "color".into(),
+                        advanced: false,
+                    });
                 }
             }
         }
@@ -470,7 +509,8 @@ impl UiModel {
     /// A short name for a picture use: the picture it draws.
     pub fn picture_label(&self, use_path: &[usize]) -> String {
         let id = self.dom.at(use_path).and_then(|e| e.find("u")).and_then(|u| u.text().trim().parse::<i64>().ok());
-        let path = id.and_then(|id| self.picture_choices_of_use(use_path).into_iter().find(|(n, _)| *n == id)).map(|(_, p)| p).unwrap_or_default();
+        let path =
+            id.and_then(|id| self.picture_choices_of_use(use_path).into_iter().find(|(n, _)| *n == id)).map(|(_, p)| p).unwrap_or_default();
         if path.is_empty() { "(no picture)".into() } else { path.rsplit('/').next().unwrap_or(&path).to_string() }
     }
 
@@ -582,10 +622,20 @@ pub(crate) fn bits_for(kind: &str, it: &Item, v: u32) -> Option<Vec<(u32, bool, 
             let mut b = vec![
                 (0x1, true, "Interactive", "The state reacts to the mouse."),
                 (0x100, true, "Disabled", "Drawn as disabled; ignores clicks."),
-                (0x1_0000, true, "Pixel-accurate hit test", "A click counts only where the picture is not transparent, instead of anywhere in the rectangle."),
+                (
+                    0x1_0000,
+                    true,
+                    "Pixel-accurate hit test",
+                    "A click counts only where the picture is not transparent, instead of anywhere in the rectangle.",
+                ),
             ];
             if v >= 80 {
-                b.push((0x100_0000, true, "Dock pictures as a nine-patch", "Pictures dock to the neighbouring pictures (corners, edges, middle) instead of to the state's rectangle."));
+                b.push((
+                    0x100_0000,
+                    true,
+                    "Dock pictures as a nine-patch",
+                    "Pictures dock to the neighbouring pictures (corners, edges, middle) instead of to the state's rectangle.",
+                ));
             }
 
             Some(b)
@@ -612,10 +662,15 @@ fn bits_group(kind: &str) -> &'static str {
 fn hidden(kind: &str, it: &Item, v: u32) -> bool {
     match kind {
         // Before version 90 the converter's flag 7 is the extra flag (the visible one is its flag 8, see `component_def`).
-        "component" => matches!(it.label.as_str(), "uientry flag 4" | "uientry flag 5" | "uientry flag 6")
-            || (v < 90 && it.label == "uientry flag 7")
-            || (it.tag == "u" && it.label.is_empty() && it.after.is_empty() && it.since == 0),
-        "state" => v < 116 && matches!(it.label.as_str(), "text label?" | "state stuff 3?") || (it.tag == "u" && it.label.is_empty() && it.since == 0 && it.after.is_empty()),
+        "component" => {
+            matches!(it.label.as_str(), "uientry flag 4" | "uientry flag 5" | "uientry flag 6")
+                || (v < 90 && it.label == "uientry flag 7")
+                || (it.tag == "u" && it.label.is_empty() && it.after.is_empty() && it.since == 0)
+        }
+        "state" => {
+            v < 116 && matches!(it.label.as_str(), "text label?" | "state stuff 3?")
+                || (it.tag == "u" && it.label.is_empty() && it.since == 0 && it.after.is_empty())
+        }
         _ => false,
     }
 }
@@ -626,10 +681,15 @@ pub(crate) fn component_def(it: &Item, v: u32) -> Option<Def> {
     if v < 90 {
         let shifted = match (it.label.as_str(), it.after.as_str(), it.since, it.tag.as_str()) {
             ("", "uientry flag 12", 0, "yes" | "no") => Some("uientry flag 12".to_owned()),
-            (label, ..) => label.strip_prefix("uientry flag ").and_then(|n| n.parse::<u32>().ok()).filter(|n| (8..=12).contains(n)).map(|n| format!("uientry flag {}", n - 1)),
+            (label, ..) => label
+                .strip_prefix("uientry flag ")
+                .and_then(|n| n.parse::<u32>().ok())
+                .filter(|n| (8..=12).contains(n))
+                .map(|n| format!("uientry flag {}", n - 1)),
         };
         if let Some(label) = shifted {
-            let item = Item { idx: it.idx, tag: it.tag.clone(), value: it.value.clone(), label, after: String::new(), since: 0, nth: it.nth };
+            let item =
+                Item { idx: it.idx, tag: it.tag.clone(), value: it.value.clone(), label, after: String::new(), since: 0, nth: it.nth };
             return component_def(&item, 90);
         }
     }
@@ -640,43 +700,114 @@ pub(crate) fn component_def(it: &Item, v: u32) -> Option<Def> {
             ("docking y?", 0, "yes" | "no") | ("docking?", 0, "yes" | "no") if v < 77 || it.after == "docking y?" => {
                 d("Render last when focused", "Behaviour", Control::Check, "Drawn on top of everything when it has the focus.")
             }
-            ("mask image?", 0, "i") if v < 110 => d("Picture draw mode", "Behaviour", choice(DRAW_MODE), "How the component's pictures are scaled."),
-            ("end of uientry flag 6B?", 0, "yes" | "no") | ("end of uientry flag 5A?", 0, "yes" | "no") if v >= 94 => {
-                d("Relative resize", "Behaviour", Control::Check, "When this component is resized, its children grow or shrink by the same amount instead of being scaled.")
+            ("mask image?", 0, "i") if v < 110 => {
+                d("Picture draw mode", "Behaviour", choice(DRAW_MODE), "How the component's pictures are scaled.")
             }
-            ("end of uientry flag 6B?" | "end of uientry flag 5A?", _, "flt") if v >= 113 => adv("Unknown (extra values)", "Advanced", Control::Float, ""),
+            ("end of uientry flag 6B?", 0, "yes" | "no") | ("end of uientry flag 5A?", 0, "yes" | "no") if v >= 94 => d(
+                "Relative resize",
+                "Behaviour",
+                Control::Check,
+                "When this component is resized, its children grow or shrink by the same amount instead of being scaled.",
+            ),
+            ("end of uientry flag 6B?" | "end of uientry flag 5A?", _, "flt") if v >= 113 => {
+                adv("Unknown (extra values)", "Advanced", Control::Float, "")
+            }
             _ => None,
         };
     }
 
     match it.label.as_str() {
         "title" => d("Name", "Identity", Control::Text, "The component's name. Scripts and templates find it by this."),
-        "title2" => d("Callback name", "Identity", Control::Text, "Names the code that drives the component (it falls back to the name). The tree shows it as the class."),
-        "x offset" => d("Offset X", "Position & size", Control::Int, "Distance from the parent's left edge. The game ignores it for a docked component and uses the dock point and dock offset."),
-        "y offset" => d("Offset Y", "Position & size", Control::Int, "Distance from the parent's top edge. The game ignores it for a docked component."),
-        "uientry flag 1" => d("Can resize horizontally", "Position & size", Control::Check, "The layout may change this component's width (screen resizing, resizing its parent)."),
+        "title2" => d(
+            "Callback name",
+            "Identity",
+            Control::Text,
+            "Names the code that drives the component (it falls back to the name). The tree shows it as the class.",
+        ),
+        "x offset" => d(
+            "Offset X",
+            "Position & size",
+            Control::Int,
+            "Distance from the parent's left edge. The game ignores it for a docked component and uses the dock point and dock offset.",
+        ),
+        "y offset" => d(
+            "Offset Y",
+            "Position & size",
+            Control::Int,
+            "Distance from the parent's top edge. The game ignores it for a docked component.",
+        ),
+        "uientry flag 1" => d(
+            "Can resize horizontally",
+            "Position & size",
+            Control::Check,
+            "The layout may change this component's width (screen resizing, resizing its parent).",
+        ),
         "uientry flag 2" => d("Can resize vertically", "Position & size", Control::Check, "The layout may change this component's height."),
-        "uientry flag 3" => d("Moveable", "Behaviour", choice(MOVEABLE), "Whether the player can drag the component, and with which drag style."),
-        "uientry flag 7" => d("Visible", "Behaviour", Control::Check, "Shown when the layout loads (scripts and states can show and hide it later)."),
-        "uientry flag 8" => d("Clip children", "Behaviour", Control::Check, "Children are cut off at this component's edges; lists and scrolling panels need it."),
+        "uientry flag 3" => {
+            d("Moveable", "Behaviour", choice(MOVEABLE), "Whether the player can drag the component, and with which drag style.")
+        }
+        "uientry flag 7" => {
+            d("Visible", "Behaviour", Control::Check, "Shown when the layout loads (scripts and states can show and hide it later).")
+        }
+        "uientry flag 8" => d(
+            "Clip children",
+            "Behaviour",
+            Control::Check,
+            "Children are cut off at this component's edges; lists and scrolling panels need it.",
+        ),
         "uientry flag 9" => d("Clip pictures", "Behaviour", Control::Check, "The component's own pictures are cut off at its edges."),
-        "uientry flag 10" => d("Use global clicks", "Behaviour", Control::Check, "Also receives mouse clicks that land outside the component."),
+        "uientry flag 10" => {
+            d("Use global clicks", "Behaviour", Control::Check, "Also receives mouse clicks that land outside the component.")
+        }
         "uientry flag 11" => d("Render while dragged", "Behaviour", Control::Check, "Keeps drawing while the player drags it."),
-        "uientry flag 12" => d("Tooltips are localised", "Tooltip", Control::Check, "The tooltip label is a localisation key and the text is looked up."),
+        "uientry flag 12" => {
+            d("Tooltips are localised", "Tooltip", Control::Check, "The tooltip label is a localisation key and the text is looked up.")
+        }
         "tooltip text" => d("Tooltip text", "Tooltip", Control::Text, "Shown when the mouse rests on the component."),
         "tooltip id" => d("Tooltip label", "Tooltip", Control::Text, "Localisation key of the tooltip."),
-        "docking?" => d("Dock point", "Docking", choice(DOCK_POINTS), "The point of the parent the component sticks to. The \"Outside\" points sit just outside the parent."),
+        "docking?" => d(
+            "Dock point",
+            "Docking",
+            choice(DOCK_POINTS),
+            "The point of the parent the component sticks to. The \"Outside\" points sit just outside the parent.",
+        ),
         "docking x?" => d("Dock offset X", "Docking", Control::Int, "Distance from the dock point, to the right."),
         "docking y?" => d("Dock offset Y", "Docking", Control::Int, "Distance from the dock point, downwards."),
         "default state id" => d("Default state", "Behaviour", Control::Choice(vec![]), "The state the component starts in."),
-        "mask image?" => d("Mask picture", "Behaviour", Control::Int, "A picture (by its id in the component's picture list) that masks what is drawn; 0 for none."),
+        "mask image?" => d(
+            "Mask picture",
+            "Behaviour",
+            Control::Int,
+            "A picture (by its id in the component's picture list) that masks what is drawn; 0 for none.",
+        ),
         "priority?" => d("Draw priority", "Behaviour", Control::Int, "Higher draws on top of lower among siblings."),
-        "end of uientry 1?" => d("Sound category", "Sound & transitions", Control::Suggest(SOUND_CATEGORIES), "The group of interface sounds the component plays on mouse events."),
-        "end of uientry 2?" => d("Layout transition", "Sound & transitions", Control::Text, "Name of the layout transition the component takes part in."),
-        "end of uientry flag 5B?" | "end of uientry flag 5A?" => d("Update when hidden", "Behaviour", Control::Check, "Keeps updating (scripts, animations) while the component is not visible."),
-        "end of uientry flag 6B?" => d("Lock aspect ratio", "Position & size", Control::Check, "Resizing keeps the width to height ratio (both axes must be resizable)."),
-        l if l.starts_with("has some extra data") => adv("Has text group", "Advanced", Control::Info, "Whether the component belongs to a group of components that share one font size."),
-        l if l.starts_with("has some extra v97") => adv("Has focus group data", "Advanced", Control::Info, "Controller focus group data follows."),
+        "end of uientry 1?" => d(
+            "Sound category",
+            "Sound & transitions",
+            Control::Suggest(SOUND_CATEGORIES),
+            "The group of interface sounds the component plays on mouse events.",
+        ),
+        "end of uientry 2?" => {
+            d("Layout transition", "Sound & transitions", Control::Text, "Name of the layout transition the component takes part in.")
+        }
+        "end of uientry flag 5B?" | "end of uientry flag 5A?" => {
+            d("Update when hidden", "Behaviour", Control::Check, "Keeps updating (scripts, animations) while the component is not visible.")
+        }
+        "end of uientry flag 6B?" => d(
+            "Lock aspect ratio",
+            "Position & size",
+            Control::Check,
+            "Resizing keeps the width to height ratio (both axes must be resizable).",
+        ),
+        l if l.starts_with("has some extra data") => adv(
+            "Has text group",
+            "Advanced",
+            Control::Info,
+            "Whether the component belongs to a group of components that share one font size.",
+        ),
+        l if l.starts_with("has some extra v97") => {
+            adv("Has focus group data", "Advanced", Control::Info, "Controller focus group data follows.")
+        }
         l if l.starts_with("has model") => adv("Has 3D model", "Advanced", Control::Info, "A 3D model is attached to the component."),
         "uientry id reference maybe?" | "extra int 1?" | "v100+ extra string?" => adv("Unknown", "Advanced", Control::Int, ""),
         _ => None,
@@ -685,16 +816,24 @@ pub(crate) fn component_def(it: &Item, v: u32) -> Option<Def> {
 
 pub(crate) fn state_def(it: &Item, v: u32) -> Option<Def> {
     if it.label.is_empty() {
-        let editor_pos = it.tag == "i" && matches!(it.after.as_str(), "text shader vars" | "text shader name") && it.since < 2 && it.nth == 0;
+        let editor_pos =
+            it.tag == "i" && matches!(it.after.as_str(), "text shader vars" | "text shader name") && it.since < 2 && it.nth == 0;
         if editor_pos {
-            return adv(if it.since == 0 { "Editor position X" } else { "Editor position Y" }, "Advanced", Control::Int, "Only the layout editor uses this (where the state sits on its canvas).");
+            return adv(
+                if it.since == 0 { "Editor position X" } else { "Editor position Y" },
+                "Advanced",
+                Control::Int,
+                "Only the layout editor uses this (where the state sits on its canvas).",
+            );
         }
 
         return None;
     }
 
     match it.label.as_str() {
-        "title - NewState" => d("State name", "State", Control::Text, "Scripts, animations and mouse actions switch the component to a state by this name."),
+        "title - NewState" => {
+            d("State name", "State", Control::Text, "Scripts, animations and mouse actions switch the component to a state by this name.")
+        }
         "x size" => d("Width", "State", Control::Int, "The component's width while in this state."),
         "y size" => d("Height", "State", Control::Int, "The component's height while in this state."),
         "state text" => d("Text", "Text", Control::Text, "The text the component shows."),
@@ -703,24 +842,50 @@ pub(crate) fn state_def(it: &Item, v: u32) -> Option<Def> {
         "text ysize?" => d("Vertical alignment", "Text", choice(V_ALIGN), "Where the text sits down the component."),
         "text xalign?" => d("Focus type", "Behaviour", choice(FOCUS), "Whether the state can take the keyboard focus (text boxes do)."),
         "text yalign?" => d("Text wrapping", "Text", choice(WRAP), "How long lines are broken."),
-        "text behavior?" if v < 116 => d("Shrink font to fit", "Text", Control::Check, "When the text is too tall the font shrinks; otherwise the text gets a scroll bar."),
-        "state stuff 4?" if v < 116 => d("Text is localised", "Text", Control::Check, "The text is looked up from the localisation key below."),
-        "localization id" if v < 116 => d("Text localisation key", "Text", Control::Text, "Key in the localisation files that gives this state's text."),
+        "text behavior?" if v < 116 => d(
+            "Shrink font to fit",
+            "Text",
+            Control::Check,
+            "When the text is too tall the font shrinks; otherwise the text gets a scroll bar.",
+        ),
+        "state stuff 4?" if v < 116 => {
+            d("Text is localised", "Text", Control::Check, "The text is looked up from the localisation key below.")
+        }
+        "localization id" if v < 116 => {
+            d("Text localisation key", "Text", Control::Text, "Key in the localisation files that gives this state's text.")
+        }
         "tooltip id" if v < 116 => d("Tooltip localisation key", "Text", Control::Text, "Key that gives this state's tooltip."),
-        "state stuff before font?" => d("Blocked animations", "Behaviour", Control::Text, "Animations that must not play while the component is in this state."),
+        "state stuff before font?" => {
+            d("Blocked animations", "Behaviour", Control::Text, "Animations that must not play while the component is in this state.")
+        }
         "font" => d("Font", "Font", Control::Suggest(FONTS), "The game font the text is drawn with."),
         "font size? line height?" => d("Font size", "Font", Control::Int, "Size of the text in pixels."),
         "font leading?" => d("Line spacing", "Font", Control::Int, "Extra space between lines."),
         "font tracking?" => d("Letter spacing", "Font", Control::Int, "Extra space between letters."),
-        "font category / twui" => d("Font category", "Font", Control::Suggest(FONT_CATEGORIES), "A named font style from the font category list; it can override the font above."),
+        "font category / twui" => d(
+            "Font category",
+            "Font",
+            Control::Suggest(FONT_CATEGORIES),
+            "A named font style from the font category list; it can override the font above.",
+        ),
         "left ?" | "x ?" => d("Text margin left", "Text", Control::Int, "Space between the left edge and the text."),
         "right ?" | "y ?" => d("Text margin right", "Text", Control::Int, "Space between the right edge and the text."),
         "top ?" => d("Text margin top", "Text", Control::Int, "Space between the top edge and the text."),
         "bottom ?" => d("Text margin bottom", "Text", Control::Int, "Space between the bottom edge and the text."),
         "shader name" => d("Shader", "Shader", Control::Suggest(SHADERS), "The shader pictures are drawn with."),
-        "shader vars" => d(["Shader value 1", "Shader value 2", "Shader value 3", "Shader value 4"][it.nth.min(3)], "Shader", Control::Float, "Parameter the shader reads (glow speed, brightness, ...)."),
+        "shader vars" => d(
+            ["Shader value 1", "Shader value 2", "Shader value 3", "Shader value 4"][it.nth.min(3)],
+            "Shader",
+            Control::Float,
+            "Parameter the shader reads (glow speed, brightness, ...).",
+        ),
         "text shader name" => d("Text shader", "Shader", Control::Suggest(SHADERS), "The shader the text is drawn with."),
-        "text shader vars" => d(["Text shader value 1", "Text shader value 2", "Text shader value 3", "Text shader value 4"][it.nth.min(3)], "Shader", Control::Float, "Parameter the text shader reads."),
+        "text shader vars" => d(
+            ["Text shader value 1", "Text shader value 2", "Text shader value 3", "Text shader value 4"][it.nth.min(3)],
+            "Shader",
+            Control::Float,
+            "Parameter the text shader reads.",
+        ),
         _ => None,
     }
 }
@@ -754,8 +919,15 @@ pub(crate) fn picture_def(it: &Item, v: u32) -> Option<Def> {
         "rotation axis y?" => adv("Rotation axis Y", "Rotation", Control::Float, ""),
         "rotation axis z?" => adv("Rotation axis Z", "Rotation", Control::Float, ""),
         "shader name" => d("Shader", "Appearance", Control::Suggest(SHADERS), "The shader this picture is drawn with."),
-        "shader var?" => d(["Shader value 1", "Shader value 2", "Shader value 3", "Shader value 4"][it.nth.min(3)], "Appearance", Control::Float, ""),
-        "margin top?" => d("Margin top", "Nine-patch", Control::Float, "Border kept unstretched when the picture is stretched; all four 0 means a plain stretch."),
+        "shader var?" => {
+            d(["Shader value 1", "Shader value 2", "Shader value 3", "Shader value 4"][it.nth.min(3)], "Appearance", Control::Float, "")
+        }
+        "margin top?" => d(
+            "Margin top",
+            "Nine-patch",
+            Control::Float,
+            "Border kept unstretched when the picture is stretched; all four 0 means a plain stretch.",
+        ),
         "margin right?" => d("Margin right", "Nine-patch", Control::Float, ""),
         "margin bottom?" => d("Margin bottom", "Nine-patch", Control::Float, ""),
         "margin left?" => d("Margin left", "Nine-patch", Control::Float, ""),

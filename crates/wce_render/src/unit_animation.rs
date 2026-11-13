@@ -40,8 +40,15 @@ use crate::unit_catalog::{UnitCatalog, variant_path};
 
 /// The `HAND_POSE_*` slots, by the number a clip's metadata gives.
 const HAND_POSES: [&str; 9] = [
-    "HAND_POSE_RELAX", "HAND_POSE_FLAX", "HAND_POSE_FLAT", "HAND_POSE_SHIELD", "HAND_POSE_SPEAR_CLENCH", "HAND_POSE_SWORD_ANGLED", "HAND_POSE_SWORD_STAND",
-    "HAND_POSE_SWORD_STRAIGHT", "HAND_POSE_POINT",
+    "HAND_POSE_RELAX",
+    "HAND_POSE_FLAX",
+    "HAND_POSE_FLAT",
+    "HAND_POSE_SHIELD",
+    "HAND_POSE_SPEAR_CLENCH",
+    "HAND_POSE_SWORD_ANGLED",
+    "HAND_POSE_SWORD_STAND",
+    "HAND_POSE_SWORD_STRAIGHT",
+    "HAND_POSE_POINT",
 ];
 
 /// A table's clips, by slot.
@@ -181,7 +188,9 @@ fn hand_side(bone: &str) -> Option<bool> {
 fn region(bone: &str) -> Option<usize> {
     let name = bone.strip_prefix("bn_")?;
     let limb = |side: &str| name.strip_prefix(side).map(|rest| ["arm", "forearm", "shoulder", "hand"].iter().any(|p| rest.starts_with(p)));
-    let leg = ["upleg", "leg", "foot", "toe"].iter().any(|p| name.strip_prefix("left").or_else(|| name.strip_prefix("right")).is_some_and(|r| r.starts_with(p)));
+    let leg = ["upleg", "leg", "foot", "toe"]
+        .iter()
+        .any(|p| name.strip_prefix("left").or_else(|| name.strip_prefix("right")).is_some_and(|r| r.starts_with(p)));
     if leg {
         Some(3)
     } else if limb("left") == Some(true) {
@@ -214,12 +223,15 @@ impl Rig {
         let stem = format!("animations/skeletons/{name}");
         let skeleton = Animation::decode(&read(&format!("{stem}.anim"))?, 1)?;
         let binds = inverse_binds(&read(&format!("{stem}.bone_inv_trans_mats"))?)?;
-        let hands = HAND_POSES.iter().map(|slot| {
-            let path = &set.slots.get(*slot)?.first()?.filename;
-            let mut clip = Animation::decode(&read(&wce_vfs::normalize(path))?, 1)?;
-            clip.on_skeleton(&skeleton);
-            clip.frames.into_iter().next()
-        }).collect();
+        let hands = HAND_POSES
+            .iter()
+            .map(|slot| {
+                let path = &set.slots.get(*slot)?.first()?.filename;
+                let mut clip = Animation::decode(&read(&wce_vfs::normalize(path))?, 1)?;
+                clip.on_skeleton(&skeleton);
+                clip.frames.into_iter().next()
+            })
+            .collect();
         Some(Self { skeleton, binds, hands })
     }
 
@@ -230,7 +242,8 @@ impl Rig {
     pub fn clip(&self, read: &Reader, entry: &FragmentEntry) -> Option<Clip> {
         let mut anim = Animation::decode(&read(&wce_vfs::normalize(&entry.filename))?, usize::MAX)?;
         anim.on_skeleton(&self.skeleton);
-        let meta = (!entry.metadata.is_empty()).then(|| read(&wce_vfs::normalize(&entry.metadata)).and_then(|b| Meta::decode(&b))).flatten();
+        let meta =
+            (!entry.metadata.is_empty()).then(|| read(&wce_vfs::normalize(&entry.metadata)).and_then(|b| Meta::decode(&b))).flatten();
         let entries = || meta.iter().flat_map(|m| &m.entries);
         let props = entries().filter(|e| matches!(e.kind.as_str(), "PROP" | "ANIMATED_PROP")).filter_map(|e| Self::prop(read, e)).collect();
         let splices = entries().filter(|e| e.kind == "SPLICE").filter_map(|e| self.splice(read, e)).collect();
@@ -252,7 +265,11 @@ impl Rig {
         };
 
         let anim = on_skeleton(e.str(0)?)?;
-        let reference = if additive { Some(on_skeleton(e.str(1).filter(|r| !r.is_empty()).unwrap_or_else(|| e.str(0).unwrap_or_default()))?.sample(0.0)) } else { None };
+        let reference = if additive {
+            Some(on_skeleton(e.str(1).filter(|r| !r.is_empty()).unwrap_or_else(|| e.str(0).unwrap_or_default()))?.sample(0.0))
+        } else {
+            None
+        };
         Some(Splice { anim, reference, weights, blend_in, blend_out, additive, start: e.start, end: e.end })
     }
 
@@ -308,7 +325,9 @@ impl Rig {
         let (left, right) = (Self::hand_at(clip, "LHAND_POSE", t), Self::hand_at(clip, "RHAND_POSE", t));
         for (i, name) in clip.anim.bones.iter().enumerate() {
             let Some(is_left) = hand_side(name) else { continue };
-            let Some(pose) = (if is_left { left } else { right }).and_then(|n| self.hands.get(n)).and_then(Option::as_ref) else { continue };
+            let Some(pose) = (if is_left { left } else { right }).and_then(|n| self.hands.get(n)).and_then(Option::as_ref) else {
+                continue;
+            };
             if let (Some(l), Some(p)) = (locals.get_mut(i), pose.get(i)) {
                 *l = *p;
             }
@@ -381,7 +400,9 @@ impl Figure {
         let entry = pick(self.set.slots.get(slot)?, rng)?.clone();
         let mut clip = self.rig.clip(read, &entry)?;
         let own = clip.anim.skeleton.clone();
-        if own != self.rig.skeleton.skeleton && let Some(other) = Rig::of_skeleton(read, &self.set, &own) {
+        if own != self.rig.skeleton.skeleton
+            && let Some(other) = Rig::of_skeleton(read, &self.set, &own)
+        {
             self.rig = other;
             clip = self.rig.clip(read, &entry)?;
         }
@@ -400,12 +421,15 @@ impl Figure {
             return vec![slot.to_owned()];
         }
 
-        (0..SCHEDULE_CLIPS).map(|k| if k == 0 || rng.below(3) != 0 { slot.to_owned() } else { idles[rng.below(idles.len())].clone() }).collect()
+        (0..SCHEDULE_CLIPS)
+            .map(|k| if k == 0 || rng.below(3) != 0 { slot.to_owned() } else { idles[rng.below(idles.len())].clone() })
+            .collect()
     }
 
     /// Plays `slots` in a loop, at `lengths` where given; false when none of them is there.
     fn play(&mut self, read: &Reader, slots: &[String], lengths: &[f32], rng: &mut Rng) -> bool {
-        let segments: Vec<Segment> = slots.iter().enumerate().filter_map(|(k, s)| self.segment(read, s, rng, lengths.get(k).copied().unwrap_or(0.0))).collect();
+        let segments: Vec<Segment> =
+            slots.iter().enumerate().filter_map(|(k, s)| self.segment(read, s, rng, lengths.get(k).copied().unwrap_or(0.0))).collect();
         let done = !segments.is_empty();
         if done {
             self.segments = segments;
@@ -473,18 +497,29 @@ impl Figure {
             (ons.peek().is_some() || Some(bone) == ammunition) && !ons.any(|e| e.start <= inside)
         };
 
-        let parts = self.parts.parts.iter().filter_map(|p| {
-            let (bone, offset) = match &p.attach {
-                Attach::None => (None, SKINNED_NO_OFFSET),
-                Attach::Bone(name) => (self.rig.bone(name), SKINNED_NO_OFFSET),
-                Attach::Point { bone, matrix } => (Some(*bone), *matrix),
-            };
+        let parts = self
+            .parts
+            .parts
+            .iter()
+            .filter_map(|p| {
+                let (bone, offset) = match &p.attach {
+                    Attach::None => (None, SKINNED_NO_OFFSET),
+                    Attach::Bone(name) => (self.rig.bone(name), SKINNED_NO_OFFSET),
+                    Attach::Point { bone, matrix } => (Some(*bone), *matrix),
+                };
 
-            // A prop takes the bone's place.
-            (bone.is_none() || !(held.iter().any(|h| Some(h.bone) == bone) || bone.is_some_and(hidden))).then(|| {
-                SkinnedPart { model: p.model.clone(), tint: p.tint, decal_diffuse: p.decal_diffuse.clone(), decal_normal: p.decal_normal.clone(), masks: p.masks, bone, offset }
+                // A prop takes the bone's place.
+                (bone.is_none() || !(held.iter().any(|h| Some(h.bone) == bone) || bone.is_some_and(hidden))).then(|| SkinnedPart {
+                    model: p.model.clone(),
+                    tint: p.tint,
+                    decal_diffuse: p.decal_diffuse.clone(),
+                    decal_normal: p.decal_normal.clone(),
+                    masks: p.masks,
+                    bone,
+                    offset,
+                })
             })
-        }).collect();
+            .collect();
         let body = SkinnedInstance { parts, palette: body_palette, bones: body_bones, casts_shadow, faction_colours, faction_scale: 0.0 };
         let mut out = vec![UnitInstance { scale, local: Float4x4::IDENTITY, instance: body }];
         for prop in held {
@@ -493,12 +528,25 @@ impl Figure {
                 None => (Arc::new(palette(&[Float4x4::IDENTITY])), Arc::new(vec![])),
             };
 
-            let part = SkinnedPart { model: prop.model.clone(), tint: [0.0; 4], decal_diffuse: None, decal_normal: None, masks: [0, 1, 2], bone: None, offset: SKINNED_NO_OFFSET };
+            let part = SkinnedPart {
+                model: prop.model.clone(),
+                tint: [0.0; 4],
+                decal_diffuse: None,
+                decal_normal: None,
+                masks: [0, 1, 2],
+                bone: None,
+                offset: SKINNED_NO_OFFSET,
+            };
 
             // A clip of its own is authored in the figure's space, as the figure's are: the bone only says what it replaces.
             let [x, z] = clip.travel(inside);
-            let carrier = if prop.anim.is_some() { translation(Float3::new(-x, 0.0, -z)) } else { world.get(prop.bone as usize).copied().unwrap_or(Float4x4::IDENTITY) };
-            let instance = SkinnedInstance { parts: vec![part], palette: prop_palette, bones, casts_shadow, faction_colours, faction_scale: 0.0 };
+            let carrier = if prop.anim.is_some() {
+                translation(Float3::new(-x, 0.0, -z))
+            } else {
+                world.get(prop.bone as usize).copied().unwrap_or(Float4x4::IDENTITY)
+            };
+            let instance =
+                SkinnedInstance { parts: vec![part], palette: prop_palette, bones, casts_shadow, faction_colours, faction_scale: 0.0 };
             out.push(UnitInstance { scale, local: carrier * prop.offset, instance });
         }
 
@@ -538,7 +586,8 @@ impl UnitModel {
         let spread = ((seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as f32 / (1u64 << 24) as f32).mul_add(2.0, -1.0);
         let scale = entry.height_scale.max(0.01) * (1.0 + entry.height_variation * spread);
         let white = [[1.0; 3], [1.0; 3], [1.0; 3], [0.0; 3]];
-        let mut model = Self { man, mount: figure, scale, faction_colours: catalog.colours.get(faction).copied().unwrap_or(white), phase: 0.0, seed };
+        let mut model =
+            Self { man, mount: figure, scale, faction_colours: catalog.colours.get(faction).copied().unwrap_or(white), phase: 0.0, seed };
         let slots: &[&str] = if model.mount.is_some() { &["RIDER_STAND", "STAND", "MISSING_ANIM"] } else { &["STAND", "MISSING_ANIM"] };
         if !slots.iter().any(|s| model.play(read, s)) {
             return Err(format!("none of the slots {slots:?} in table '{}'", land.man_animation));
@@ -550,7 +599,15 @@ impl UnitModel {
     /// The models, for waiting on them.
     pub fn models(&self) -> Vec<String> {
         let figures = std::iter::once(&self.man).chain(self.mount.as_ref());
-        figures.flat_map(|f| f.parts.parts.iter().map(|p| p.model.clone()).chain(f.segments.iter().flat_map(|s| s.clip.props.iter().map(|p| p.model.clone())))).collect()
+        figures
+            .flat_map(|f| {
+                f.parts
+                    .parts
+                    .iter()
+                    .map(|p| p.model.clone())
+                    .chain(f.segments.iter().flat_map(|s| s.clip.props.iter().map(|p| p.model.clone())))
+            })
+            .collect()
     }
 
     /// The slots the man can play, sorted.
@@ -571,10 +628,18 @@ impl UnitModel {
 
         let lengths: Vec<f32> = self.man.segments.iter().map(|s| s.length).collect();
         if let Some(mount) = &mut self.mount {
-            let of_mount: Vec<String> = self.man.segments.iter().map(|s| {
-                let own = s.slot.strip_prefix("RIDER_").unwrap_or(&s.slot);
-                [own.to_owned(), format!("{own}_1")].into_iter().find(|o| mount.set.slots.contains_key(o)).unwrap_or_else(|| "STAND".to_owned())
-            }).collect();
+            let of_mount: Vec<String> = self
+                .man
+                .segments
+                .iter()
+                .map(|s| {
+                    let own = s.slot.strip_prefix("RIDER_").unwrap_or(&s.slot);
+                    [own.to_owned(), format!("{own}_1")]
+                        .into_iter()
+                        .find(|o| mount.set.slots.contains_key(o))
+                        .unwrap_or_else(|| "STAND".to_owned())
+                })
+                .collect();
             mount.play(read, &of_mount, &lengths, &mut rng);
         }
 
@@ -620,7 +685,15 @@ mod tests {
     #[test]
     fn a_clip_travels_evenly() {
         let bone = |z: f32| ([0.0, 1.0, z], [0.0, 0.0, 0.0, 1.0]);
-        let clip = Clip { anim: wce_formats::anim::Animation { fps: 10.0, end: 2.0, frames: vec![vec![bone(1.0)], vec![bone(3.0)]], ..Default::default() }, ..Clip::default() };
+        let clip = Clip {
+            anim: wce_formats::anim::Animation {
+                fps: 10.0,
+                end: 2.0,
+                frames: vec![vec![bone(1.0)], vec![bone(3.0)]],
+                ..Default::default()
+            },
+            ..Clip::default()
+        };
         assert_eq!((clip.travel(0.0), clip.travel(1.0), clip.travel(2.0)), ([0.0, 0.0], [0.0, 1.0], [0.0, 2.0]));
     }
 
@@ -646,7 +719,11 @@ mod tests {
 
     #[test]
     fn a_line_is_picked_by_its_weight() {
-        let line = |name: &str, flags: &[(&str, &str)]| FragmentEntry { filename: name.to_owned(), flags: flags.iter().map(|(a, b)| ((*a).to_owned(), (*b).to_owned())).collect(), ..FragmentEntry::default() };
+        let line = |name: &str, flags: &[(&str, &str)]| FragmentEntry {
+            filename: name.to_owned(),
+            flags: flags.iter().map(|(a, b)| ((*a).to_owned(), (*b).to_owned())).collect(),
+            ..FragmentEntry::default()
+        };
         let lines = [line("never", &[("selection_weight", "0.00")]), line("pose", &[("single_frame_variant", "true")]), line("yes", &[])];
         let mut rng = Rng(7);
         assert!((0..50).all(|_| pick(&lines, &mut rng).is_some_and(|e| e.filename == "yes")));
@@ -666,7 +743,14 @@ mod tests {
 
     #[test]
     fn the_hand_pose_is_the_last_one_started() {
-        let entry = |start: f32, pose: u32| MetaEntry { kind: "LHAND_POSE".to_owned(), version: Some(2), start, end: start, tag: String::new(), fields: vec![MetaField::U32(pose), MetaField::F32(1.0)] };
+        let entry = |start: f32, pose: u32| MetaEntry {
+            kind: "LHAND_POSE".to_owned(),
+            version: Some(2),
+            start,
+            end: start,
+            tag: String::new(),
+            fields: vec![MetaField::U32(pose), MetaField::F32(1.0)],
+        };
         let clip = Clip { meta: Some(Meta { version: 2, entries: vec![entry(0.0, 3), entry(0.5, 6)] }), ..Clip::default() };
         assert_eq!((Rig::hand_at(&clip, "LHAND_POSE", 0.2), Rig::hand_at(&clip, "LHAND_POSE", 0.7)), (Some(3), Some(6)));
         assert_eq!(Rig::hand_at(&clip, "RHAND_POSE", 0.7), None);

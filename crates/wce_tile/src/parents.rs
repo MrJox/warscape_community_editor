@@ -106,7 +106,10 @@ mod tests {
         assert!(fits("BUILDING_INSTANCE", "CaptureLocationInstance").is_err());
         assert!(fits("BUILDING_INSTANCE", "LayerInstance").is_ok());
         assert!(fits("DeploymentZonePolygonInstanceGroup", "UserInstanceGroup").is_ok());
-        assert_eq!(fits("SIEGE_AI_POLYGON_INSTANCE", "LayerInstance").unwrap_err(), "a siege AI shape goes only inside a siege AI node or edge");
+        assert_eq!(
+            fits("SIEGE_AI_POLYGON_INSTANCE", "LayerInstance").unwrap_err(),
+            "a siege AI shape goes only inside a siege AI node or edge"
+        );
         assert_eq!(roles("SiegeAIEdgeInstance", "SAET_WALL").len(), 1);
         assert_eq!(roles("SiegeAIEdgeInstance", "SAET_STREET")[1].most, 2);
     }

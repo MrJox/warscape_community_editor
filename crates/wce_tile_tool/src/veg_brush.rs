@@ -77,7 +77,9 @@ impl TileTool {
 
     /// Whether a tree is being placed with the brush on.
     pub(crate) fn painting_trees(&mut self, e: &Editor) -> bool {
-        self.placing == Some(crate::tool::Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE") && self.veg_brush(e).on
+        self.placing == Some(crate::tool::Placing::Draft)
+            && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE")
+            && self.veg_brush(e).on
     }
 
     /// A stroke begins at the mouse (`erase`: Ctrl held).
@@ -97,7 +99,8 @@ impl TileTool {
         }
 
         // Entity: Above: on whatever is topmost at each point (the trees left out), seen straight down over the circle.
-        let below = if !stroke.erase && self.placement_modes(e).0 == SurfaceMode::Entity { self.surfaces_in_circle(e, at, b.radius) } else { None };
+        let below =
+            if !stroke.erase && self.placement_modes(e).0 == SurfaceMode::Entity { self.surfaces_in_circle(e, at, b.radius) } else { None };
         let set = self.set_in_use(e);
         let Some(stroke) = self.stroke.as_mut() else { return };
 
@@ -122,7 +125,12 @@ impl TileTool {
 
         // As many tries as trees would fit at that spacing, times the fill.
         let tries = ((std::f32::consts::PI * r2 / (spacing * spacing)) * b.fill.clamp(0.0, 1.0)).ceil().min(256.0) as usize;
-        let near = stroke.footprints.iter().filter(|f| (f.x - at.x).hypot(f.z - at.z) <= b.radius + f.radius + b.clearance.max(spacing)).copied().collect::<Vec<_>>();
+        let near = stroke
+            .footprints
+            .iter()
+            .filter(|f| (f.x - at.x).hypot(f.z - at.z) <= b.radius + f.radius + b.clearance.max(spacing))
+            .copied()
+            .collect::<Vec<_>>();
         for _ in 0..tries {
             let (a, r) = (self.random.unit() * std::f32::consts::TAU, b.radius * self.random.unit().sqrt());
             let (x, z) = (at.x + a.cos() * r, at.z + a.sin() * r);
@@ -156,7 +164,10 @@ impl TileTool {
         let text = d.draft_text(&draft)?;
         let text = with_root_attr(&text, "scale", &wce_tile::ted_scene::format_number(f64::from(p.scale)));
         // Tilted (Follow surface) to what it stands on at its own point: the mouse has moved on since.
-        let normal = p.normal.map_or_else(|| crate::placement_modes::terrain_normal(d, p.at.x, p.at.z), |n| Double3::new(f64::from(n.x), f64::from(n.y), f64::from(n.z)));
+        let normal = p.normal.map_or_else(
+            || crate::placement_modes::terrain_normal(d, p.at.x, p.at.z),
+            |n| Double3::new(f64::from(n.x), f64::from(n.y), f64::from(n.z)),
+        );
         Some(turned(&self.apply_placement_modes_on(text, Some(normal)), p.yaw))
     }
 
@@ -168,9 +179,17 @@ impl TileTool {
 
         // About 10 cm a pixel.
         let res = ((size / 0.1).ceil() as u32).clamp(64, 512);
-        let skip = |en: &wce_scene::render_scene::Entity| en.source.doc == doc && elem_of(en.source.item).is_some_and(|el| trees.contains(&el));
+        let skip =
+            |en: &wce_scene::render_scene::Entity| en.source.doc == doc && elem_of(en.source.item).is_some_and(|el| trees.contains(&el));
         let grid = wce_editor::viewport::surfaces_below(e, at, size, res, &skip)?;
-        let terrain = grid.ids.iter().copied().collect::<HashSet<_>>().into_iter().filter(|&id| e.scene.find(id).is_some_and(|en| en.kind() == Kind::Terrain)).collect();
+        let terrain = grid
+            .ids
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .filter(|&id| e.scene.find(id).is_some_and(|en| en.kind() == Kind::Terrain))
+            .collect();
         Some((grid, terrain))
     }
 
@@ -205,7 +224,8 @@ impl TileTool {
         let d = document(e)?;
         let unit = d.tile().unit();
         let landscape = self.modes.unwrap_or_default().0 == SurfaceMode::Landscape;
-        let mut out = b"<UserInstanceGroup name=\"stroke\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n    <children>\n".to_vec();
+        let mut out =
+            b"<UserInstanceGroup name=\"stroke\" position=\"vector(0,0,0)\" orientation=\"euler(0,0,0)\">\n    <children>\n".to_vec();
         for p in &stroke.planted {
             let Some(text) = self.planted_text(d, p) else { continue };
             // Landscape ones are put on the terrain by the preview; the others are at their height.

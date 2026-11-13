@@ -32,7 +32,11 @@ pub fn winding(l: &[P; 2], town: P) -> f64 {
 /// from each other, across the direction from the town; turned like CA's (the town on the other side from the approach lines').
 pub fn deployment_lines(g: &Grid, lobe: &Mask, to_land: &[f64], town: P) -> Vec<[P; 2]> {
     let in_lobe = |p: P| g.at(p).is_some_and(|k| lobe[k]);
-    let mut candidates: Vec<(f64, P)> = (0..g.len()).step_by(3).filter(|&k| lobe[k] && to_land[k] >= 30.0).map(|k| (to_land[k].min(DEPLOY_OFFSHORE), g.centre(k))).collect();
+    let mut candidates: Vec<(f64, P)> = (0..g.len())
+        .step_by(3)
+        .filter(|&k| lobe[k] && to_land[k] >= 30.0)
+        .map(|k| (to_land[k].min(DEPLOY_OFFSHORE), g.centre(k)))
+        .collect();
     candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
     let mut out: Vec<[P; 2]> = vec![];
     let mut taken: Vec<P> = vec![];

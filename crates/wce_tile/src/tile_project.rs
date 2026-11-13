@@ -49,8 +49,16 @@ pub struct TileInfo {
 impl Default for TileInfo {
     fn default() -> Self {
         Self {
-            location: String::new(), variation: String::new(), cells_x: 0, cells_y: 0, min_height: 0.0, scale: 100.0, normal_strength: 0.0,
-            overlap_border_size: 0.0, raw_data_tri_density: 0, found: false,
+            location: String::new(),
+            variation: String::new(),
+            cells_x: 0,
+            cells_y: 0,
+            min_height: 0.0,
+            scale: 100.0,
+            normal_strength: 0.0,
+            overlap_border_size: 0.0,
+            raw_data_tri_density: 0,
+            found: false,
         }
     }
 }
@@ -279,7 +287,6 @@ struct Side {
 }
 
 impl TileProject {
-
     /// A variation folder, a tile.ted or a tile folder: the entry is resolved from the path (warning when there is none).
     ///
     /// # Errors
@@ -287,14 +294,19 @@ impl TileProject {
     /// No tile.ted, or a file that does not read.
     pub fn open(path: &Path) -> Result<Self> {
         let named = |n: &std::ffi::OsStr| n == TED_FILE || n == WCE_FILE;
-        let dir = if path.is_file() && path.file_name().is_some_and(named) { path.parent().unwrap_or(path).to_path_buf() } else { path.to_path_buf() };
+        let dir = if path.is_file() && path.file_name().is_some_and(named) {
+            path.parent().unwrap_or(path).to_path_buf()
+        } else {
+            path.to_path_buf()
+        };
         if !has_tile(&dir) {
             // A tile folder that holds its variations: the first one (the entry lists them in order).
             if let Some(root) = kit_raw_root(&dir) {
                 let index = TileIndex::shared(&root);
                 let r = index.resolve(&dir);
                 if let Some(indexed) = r.entry
-                    && r.variation.is_none() && !indexed.variations.is_empty()
+                    && r.variation.is_none()
+                    && !indexed.variations.is_empty()
                 {
                     let entry = TileEntry::load(&indexed.xml).map_err(|error| error.to_string())?;
                     return Self::open_entry_resolved(entry, 0, root);
@@ -312,7 +324,9 @@ impl TileProject {
     /// The entry does not read, is not inside a kit, or has no such variation.
     pub fn open_entry(entry_xml: &Path, variation: Option<usize>) -> Result<Self> {
         let entry = TileEntry::load(entry_xml).map_err(|error| error.to_string())?;
-        let root = entry.raw_root().ok_or_else(|| format!("{} is not inside <kit>/raw_data/terrain/tiles/<kind>/_tile_database/TILES", entry_xml.display()))?;
+        let root = entry
+            .raw_root()
+            .ok_or_else(|| format!("{} is not inside <kit>/raw_data/terrain/tiles/<kind>/_tile_database/TILES", entry_xml.display()))?;
         Self::open_entry_resolved(entry, variation.unwrap_or(0), root)
     }
 
@@ -381,7 +395,9 @@ impl TileProject {
         let found = side.found.unwrap_or_default();
         let (height_png, height) = side.height.map_or((None, None), |(png, field)| (Some(png), Some(field)));
         let warning = match &found.entry {
-            None => format!("no tile database entry for {}: the tile opens without its height scale, size, colour and links", dir.display()),
+            None => {
+                format!("no tile database entry for {}: the tile opens without its height scale, size, colour and links", dir.display())
+            }
             Some(entry) if !found.info.found => format!(
                 "the folder '{}' is not a variation of the tile database entry {}",
                 dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -392,13 +408,38 @@ impl TileProject {
         };
 
         let mut project = Self {
-            dir, info: found.info, entry: found.entry, variation: found.variation, raw_root: found.raw_root, warning, scene, height_png, height,
-            layers: None, height_dirty: false, blend: None, blend_dirty: false, ground: None, ground_dirty: false, ground_file: String::new(), unit_scale: 2.0, height_calibration: String::new(), river_texts: vec![], prefab_base: None, prefab_ground: None, prefab_notes: vec![], game_kit: None,
+            dir,
+            info: found.info,
+            entry: found.entry,
+            variation: found.variation,
+            raw_root: found.raw_root,
+            warning,
+            scene,
+            height_png,
+            height,
+            layers: None,
+            height_dirty: false,
+            blend: None,
+            blend_dirty: false,
+            ground: None,
+            ground_dirty: false,
+            ground_file: String::new(),
+            unit_scale: 2.0,
+            height_calibration: String::new(),
+            river_texts: vec![],
+            prefab_base: None,
+            prefab_ground: None,
+            prefab_notes: vec![],
+            game_kit: None,
         };
 
         let layers_file = project.dir.join(crate::terrain_layers::FILE);
         if layers_file.exists() {
-            project.layers = Some(std::fs::read(&layers_file).map_err(|error| format!("{}: {error}", layers_file.display())).and_then(|b| crate::terrain_layers::TerrainLayers::from_bytes(&b))?);
+            project.layers = Some(
+                std::fs::read(&layers_file)
+                    .map_err(|error| format!("{}: {error}", layers_file.display()))
+                    .and_then(|b| crate::terrain_layers::TerrainLayers::from_bytes(&b))?,
+            );
         }
 
         project.river_texts = project.current_river_texts();
@@ -432,10 +473,14 @@ impl TileProject {
 
         let all = (0..els.len()).filter(|&e| landscape(e)).collect::<Vec<_>>();
         let stride = (all.len() / 20_000).max(1);
-        let pairs = all.iter().step_by(stride).map(|&e| {
-            let w = world_transform(sc, e);
-            (field.sample(self.pixel_x(w.position.x / self.unit_scale), self.pixel_z(w.position.z / self.unit_scale)), w.position.y)
-        }).collect::<Vec<_>>();
+        let pairs = all
+            .iter()
+            .step_by(stride)
+            .map(|&e| {
+                let w = world_transform(sc, e);
+                (field.sample(self.pixel_x(w.position.x / self.unit_scale), self.pixel_z(w.position.z / self.unit_scale)), w.position.y)
+            })
+            .collect::<Vec<_>>();
 
         let (min, scale) = (field.min_height(), field.scale());
         let Some((a, b, inliers)) = fit_baked_heights(&pairs) else { return };
@@ -445,7 +490,8 @@ impl TileProject {
         }
 
         self.height_calibration = format!(
-            "height scale from the placed landscape instances: min {new_min:.3} scale {new_scale:.3} (the entry says min {min:.3} scale {scale:.3}; {inliers} of {} instances sit on it within 5 cm)", pairs.len()
+            "height scale from the placed landscape instances: min {new_min:.3} scale {new_scale:.3} (the entry says min {min:.3} scale {scale:.3}; {inliers} of {} instances sit on it within 5 cm)",
+            pairs.len()
         );
         wce_foundation::log::info(format!("{}: {}", self.dir.display(), self.height_calibration));
         if let Some(field) = self.height.as_mut() {
@@ -468,11 +514,25 @@ impl TileProject {
 
         // "DDS ", the header size, D3DFMT_R32F as the pixel format's FourCC.
         let (fw, fh) = (word(16) as usize, word(12) as usize);
-        if bytes.len() < 128 || &bytes[..4] != b"DDS " || word(4) != 124 || word(84) != 114 || fw < 2 || fh < 2 || bytes.len() < 128 + fw * fh * 4 {
+        if bytes.len() < 128
+            || &bytes[..4] != b"DDS "
+            || word(4) != 124
+            || word(84) != 114
+            || fw < 2
+            || fh < 2
+            || bytes.len() < 128 + fw * fh * 4
+        {
             return;
         }
 
-        let sample = |i: usize, j: usize| f64::from(f32::from_le_bytes([bytes[128 + (j * fw + i) * 4], bytes[129 + (j * fw + i) * 4], bytes[130 + (j * fw + i) * 4], bytes[131 + (j * fw + i) * 4]]));
+        let sample = |i: usize, j: usize| {
+            f64::from(f32::from_le_bytes([
+                bytes[128 + (j * fw + i) * 4],
+                bytes[129 + (j * fw + i) * 4],
+                bytes[130 + (j * fw + i) * 4],
+                bytes[131 + (j * fw + i) * 4],
+            ]))
+        };
         let (si, sj) = ((fw / 100).max(1), (fh / 100).max(1));
         let mut pairs = vec![];
         for j in (0..fh).step_by(sj) {
@@ -498,7 +558,11 @@ impl TileProject {
             return;
         }
 
-        self.height_calibration = format!("height scale from final_heights.dds: min {new_min:.3} scale {new_scale:.3} (the entry says min {min:.3} scale {scale:.3}; {} of {} samples fit to 0.05 m)", inliers, pairs.len());
+        self.height_calibration = format!(
+            "height scale from final_heights.dds: min {new_min:.3} scale {new_scale:.3} (the entry says min {min:.3} scale {scale:.3}; {} of {} samples fit to 0.05 m)",
+            inliers,
+            pairs.len()
+        );
         wce_foundation::log::info(format!("{}: {}", self.dir.display(), self.height_calibration));
         if let Some(field) = self.height.as_mut() {
             field.recalibrate(new_min, new_scale);
@@ -543,11 +607,16 @@ impl TileProject {
         std::fs::create_dir_all(out_dir).map_err(|error| error.to_string())?;
         if self.scene.modified() || force_scene || elsewhere || !out_dir.join(WCE_FILE).exists() {
             let base = self.prefab_base.clone();
-            let (text, kept) = strip_prefab_contents_with(self.scene.save(), base.as_ref().map(|b| &*b.0 as crate::project_files::PrefabContents<'_>));
+            let (text, kept) =
+                strip_prefab_contents_with(self.scene.save(), base.as_ref().map(|b| &*b.0 as crate::project_files::PrefabContents<'_>));
             write(WCE_FILE, &mark_wce_text(text))?;
             msg += &format!("{WCE_FILE} saved. ");
             if !kept.is_empty() {
-                msg += &format!("{} prefab reference(s) differ from their prefab by more than values: they keep their own contents ({}). ", kept.len(), kept.join("; "));
+                msg += &format!(
+                    "{} prefab reference(s) differ from their prefab by more than values: they keep their own contents ({}). ",
+                    kept.len(),
+                    kept.join("; ")
+                );
             }
 
             self.prefab_notes = kept;
@@ -559,7 +628,8 @@ impl TileProject {
         // Saved elsewhere ("Save as"): every river's file, with the factors of the tile's own files.
         let rivers = self.current_river_texts();
         if rivers != self.river_texts || elsewhere {
-            let campaign = self.entry.as_ref().is_some_and(|e| e.kind() == "campaign") || self.dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/");
+            let campaign = self.entry.as_ref().is_some_and(|e| e.kind() == "campaign")
+                || self.dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/");
             let files = crate::river_files::river_files(&self.scene, Some(&self.dir), campaign);
             for (n, (name, text)) in files.iter().enumerate() {
                 let changed = elsewhere || self.river_texts.get(n) != rivers.get(n);
@@ -584,14 +654,24 @@ impl TileProject {
             // The range follows the heights, as TEd saves them; the entry gets it.
             let (min, scale) = field.fit_range();
             if (min, scale) != (field.min_height(), field.scale()) {
-                msg += &format!("height range {:.3} .. {:.3} (was {:.3} .. {:.3}). ", min, min + scale, field.min_height(), field.min_height() + field.scale());
+                msg += &format!(
+                    "height range {:.3} .. {:.3} (was {:.3} .. {:.3}). ",
+                    min,
+                    min + scale,
+                    field.min_height(),
+                    field.min_height() + field.scale()
+                );
                 field.set_range(min, scale);
             }
 
             let png = field.to_png(base);
             let bytes = if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?;
             write("height_map_0.png", &bytes)?;
-            msg += if png.has_ancillary { "height_map_0.png saved (source had extra chunks: re-encoded). " } else { "height_map_0.png saved. " };
+            msg += if png.has_ancillary {
+                "height_map_0.png saved (source had extra chunks: re-encoded). "
+            } else {
+                "height_map_0.png saved. "
+            };
             wrote = true;
             msg += &self.save_height_range(out_dir, min, scale)?;
         }
@@ -656,9 +736,12 @@ impl TileProject {
     /// The ground type map's file name in the variation folder: `ground_type_map.png` in any case (BOB's own tiles have
     /// `ground_type_map.PNG`).
     fn ground_file_name(&self) -> String {
-        std::fs::read_dir(&self.dir).ok().and_then(|read| {
-            read.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| n.eq_ignore_ascii_case("ground_type_map.png"))
-        }).unwrap_or_else(|| "ground_type_map.png".to_owned())
+        std::fs::read_dir(&self.dir)
+            .ok()
+            .and_then(|read| {
+                read.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| n.eq_ignore_ascii_case("ground_type_map.png"))
+            })
+            .unwrap_or_else(|| "ground_type_map.png".to_owned())
     }
 
     /// The ground type map, read from the variation folder the first time.
@@ -764,7 +847,8 @@ impl TileProject {
     /// The tile properties the editor edits (`TileDocument::set_entry_attr`: the colour, the mask, the flags, the variation's normal
     /// strength) into the entry file next to a tile saved into `out_dir`, when they differ there; the message says what was written.
     fn save_properties(&mut self, out_dir: &Path) -> Result<String> {
-        const TILE_ATTRS: [&str; 8] = ["red", "green", "blue", "mask", "requires_infield_lodding", "random_rotatable", "scalable", "encampable"];
+        const TILE_ATTRS: [&str; 8] =
+            ["red", "green", "blue", "mask", "requires_infield_lodding", "random_rotatable", "scalable", "encampable"];
         let (Some(entry), Some(target)) = (self.entry.as_ref(), self.entry_file_for(out_dir)) else { return Ok(String::new()) };
         if !target.is_file() {
             return Ok(String::new());
@@ -867,8 +951,14 @@ impl TileProject {
         let mut n = 0;
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let skip = name == TED_FILE || name == WCE_FILE || name == crate::terrain_layers::FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some())
-                || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some()) || name.ends_with(".bak") || !entry.path().is_file();
+            let skip = name == TED_FILE
+                || name == WCE_FILE
+                || name == crate::terrain_layers::FILE
+                || name == "height_map_0.png"
+                || (name == "blend_map.tif" && self.blend.is_some())
+                || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some())
+                || name.ends_with(".bak")
+                || !entry.path().is_file();
             if !skip {
                 std::fs::copy(entry.path(), out_dir.join(&name)).map_err(|error| format!("{}: {error}", entry.path().display()))?;
                 n += 1;
@@ -940,7 +1030,12 @@ impl TileProject {
             layers.height.as_ref().map(|s| s.layers.iter().map(|l| l.depends.clone()).collect::<Vec<_>>()),
             layers.blend.as_ref().map(|s| s.layers.iter().map(|l| l.depends.clone()).collect()),
             layers.ground.as_ref().map(|s| s.layers.iter().map(|l| l.depends.clone()).collect()),
-        ].into_iter().flatten().flatten().filter(|k| !k.is_empty()).collect();
+        ]
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|k| !k.is_empty())
+        .collect();
         let off: std::collections::HashSet<String> = keys.into_iter().filter(|k| !self.key_exported(k)).collect();
         if off.is_empty() {
             return Ok(vec![]);
@@ -969,7 +1064,10 @@ impl TileProject {
             let mut f = f.clone();
             s.export_into(&mut f, &|l| keep(&l.depends));
             let png = f.to_png(base);
-            out.push(("height_map_0.png".to_owned(), if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?));
+            out.push((
+                "height_map_0.png".to_owned(),
+                if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?,
+            ));
         }
 
         if let (true, Some(s), Some(f)) = (blend, &layers.blend, &self.blend) {
@@ -987,7 +1085,13 @@ impl TileProject {
         Ok(out)
     }
 
-    pub fn save_for_kit_scene(&self, kit_dir: &Path, scene: Vec<u8>, polyfilled: Vec<String>, maps: &[(String, Vec<u8>)]) -> Result<(String, TedReport)> {
+    pub fn save_for_kit_scene(
+        &self,
+        kit_dir: &Path,
+        scene: Vec<u8>,
+        polyfilled: Vec<String>,
+        maps: &[(String, Vec<u8>)],
+    ) -> Result<(String, TedReport)> {
         std::fs::create_dir_all(kit_dir).map_err(|error| format!("{}: {error}", kit_dir.display()))?;
         // A file the kit has the same bytes of is left alone; one it has otherwise keeps a `.bak`.
         let write = |name: &str, bytes: &[u8]| -> Result<bool> {
@@ -1010,7 +1114,8 @@ impl TileProject {
         write(TED_FILE, &ted)?;
 
         // Every river's file, with the factors of the project's (`river_files`); the files past the last river become empty.
-        let campaign = self.entry.as_ref().is_some_and(|e| e.kind() == "campaign") || self.dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/");
+        let campaign = self.entry.as_ref().is_some_and(|e| e.kind() == "campaign")
+            || self.dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/");
         let files = crate::river_files::river_files(&self.scene, Some(&self.dir), campaign);
         for (name, text) in &files {
             write(name, text)?;
@@ -1029,7 +1134,10 @@ impl TileProject {
                 Some(b) => write("height_map_0.png", b)?,
                 None => {
                     let png = field.to_png(base);
-                    write("height_map_0.png", &if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?)?
+                    write(
+                        "height_map_0.png",
+                        &if png.has_ancillary { png.encode() } else { png.write() }.map_err(|error| error.to_string())?,
+                    )?
                 }
             };
         }
@@ -1053,15 +1161,29 @@ impl TileProject {
         if let Ok(read) = std::fs::read_dir(&self.dir) {
             for entry in read.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
-                let ours = name == TED_FILE || name == WCE_FILE || name == crate::terrain_layers::FILE || name == "height_map_0.png" || (name == "blend_map.tif" && self.blend.is_some())
-                    || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some()) || name.starts_with("river_spline") || name.ends_with(".bak");
+                let ours = name == TED_FILE
+                    || name == WCE_FILE
+                    || name == crate::terrain_layers::FILE
+                    || name == "height_map_0.png"
+                    || (name == "blend_map.tif" && self.blend.is_some())
+                    || (name.eq_ignore_ascii_case("ground_type_map.png") && self.ground.is_some())
+                    || name.starts_with("river_spline")
+                    || name.ends_with(".bak");
                 if !ours && entry.path().is_file() && write(&name, &std::fs::read(entry.path()).map_err(|error| error.to_string())?)? {
                     others += 1;
                 }
             }
         }
 
-        Ok((format!("saved for the Assembly Kit in {} ({TED_FILE}, {} river file(s), {others} other file(s) changed); {}", kit_dir.display(), files.len(), report.summary()), report))
+        Ok((
+            format!(
+                "saved for the Assembly Kit in {} ({TED_FILE}, {} river file(s), {others} other file(s) changed); {}",
+                kit_dir.display(),
+                files.len(),
+                report.summary()
+            ),
+            report,
+        ))
     }
 
     pub fn has_entry(&self) -> bool {
@@ -1097,7 +1219,12 @@ impl TileProject {
     pub fn bordered(&self) -> bool {
         let Some(h) = &self.height else { return false };
         let (cx, cy) = (self.info.cells_x + 2, self.info.cells_y + 2);
-        self.info.found && self.info.cells_x != 0 && self.info.cells_y != 0 && h.width() % cx == 0 && h.height() % cy == 0 && h.width() / cx == h.height() / cy
+        self.info.found
+            && self.info.cells_x != 0
+            && self.info.cells_y != 0
+            && h.width() % cx == 0
+            && h.height() % cy == 0
+            && h.width() / cx == h.height() / cy
     }
 
     pub fn border_m(&self) -> f64 {
@@ -1131,7 +1258,9 @@ impl TileProject {
     /// `HeightField::region_hash` of the heights `height_at` reads in the rectangle `lo`..`hi` (x, z, as `height_at` takes them); 0 without
     /// a height map.
     pub fn height_region_hash(&self, lo: [f64; 2], hi: [f64; 2]) -> u64 {
-        self.height.as_ref().map_or(0, |h| h.region_hash(self.pixel_x(lo[0]), self.pixel_z(lo[1]), self.pixel_x(hi[0]), self.pixel_z(hi[1])))
+        self.height
+            .as_ref()
+            .map_or(0, |h| h.region_hash(self.pixel_x(lo[0]), self.pixel_z(lo[1]), self.pixel_x(hi[0]), self.pixel_z(hi[1])))
     }
 
     pub fn height_at(&self, x_m: f64, z_m: f64) -> f64 {
@@ -1176,7 +1305,8 @@ impl TileProject {
 /// the product of its two edges' weights; BOB's corners fade more (0.10 against 0.38 at (32, 32)), its rule not found. Edges linked to the
 /// sea (kept at -20 by the export) are not told apart.
 pub fn edge_fade(d: f64) -> f64 {
-    const KNOTS: [(f64, f64); 8] = [(16.0, 0.1912), (24.0, 0.4087), (32.0, 0.6253), (40.0, 0.7959), (48.0, 0.9067), (56.0, 0.9674), (63.0, 0.9933), (64.0, 1.0)];
+    const KNOTS: [(f64, f64); 8] =
+        [(16.0, 0.1912), (24.0, 0.4087), (32.0, 0.6253), (40.0, 0.7959), (48.0, 0.9067), (56.0, 0.9674), (63.0, 0.9933), (64.0, 1.0)];
     if d <= 2.0 {
         return 0.0;
     }
@@ -1203,7 +1333,14 @@ impl FinalHeights {
     pub fn parse(bytes: &[u8], extent_x: f64, extent_z: f64) -> Option<Self> {
         let word = |at: usize| bytes.get(at..at + 4).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
         let (w, h) = (word(16) as usize, word(12) as usize);
-        if bytes.len() < 128 || &bytes[..4] != b"DDS " || word(4) != 124 || word(84) != 114 || w < 2 || h < 2 || bytes.len() < 128 + w * h * 4 {
+        if bytes.len() < 128
+            || &bytes[..4] != b"DDS "
+            || word(4) != 124
+            || word(84) != 114
+            || w < 2
+            || h < 2
+            || bytes.len() < 128 + w * h * 4
+        {
             return None;
         }
 
@@ -1230,12 +1367,14 @@ mod tests {
     /// Samples of `baked = -14 + 17.75 / 24.55 * (map - -12.26 ...)`: the map in metres with the entry's numbers, the baked heights with
     /// the numbers the map was baked with, a third of them overwritten (blended neighbours, carved rivers).
     fn samples(entry: (f64, f64), baked: (f64, f64)) -> Vec<(f64, f64)> {
-        (0..4000).map(|i| {
-            let raw = f64::from((i * 7919) % 65536);
-            let on_map = entry.0 + raw / 65535.0 * entry.1;
-            let truth = baked.0 + raw / 65535.0 * baked.1;
-            (on_map, if i % 3 == 0 { truth + 3.0 + f64::from(i % 17) } else { truth })
-        }).collect()
+        (0..4000)
+            .map(|i| {
+                let raw = f64::from((i * 7919) % 65536);
+                let on_map = entry.0 + raw / 65535.0 * entry.1;
+                let truth = baked.0 + raw / 65535.0 * baked.1;
+                (on_map, if i % 3 == 0 { truth + 3.0 + f64::from(i % 17) } else { truth })
+            })
+            .collect()
     }
 
     #[test]

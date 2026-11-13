@@ -99,7 +99,6 @@ impl Reader<'_> {
 }
 
 impl TileList {
-
     /// # Errors
     ///
     /// Fails on a truncated file.
@@ -220,11 +219,20 @@ mod tests {
 
     fn list(version: u32) -> TileList {
         TileList {
-            version, lf_position: [0.5, 0.5], lf_scale: [1.0, 1.0], unknown: [500.0, 1.333], strings: ["a".to_owned(), String::new()],
-            battle_size: [64, 64], battle_centre: [32, 32], origin_offset: [-32.0, -32.0], bounds: [26, 26, 34, 34], is_campaign: false,
+            version,
+            lf_position: [0.5, 0.5],
+            lf_scale: [1.0, 1.0],
+            unknown: [500.0, 1.333],
+            strings: ["a".to_owned(), String::new()],
+            battle_size: [64, 64],
+            battle_centre: [32, 32],
+            origin_offset: [-32.0, -32.0],
+            bounds: [26, 26, 34, 34],
+            is_campaign: false,
             names: vec![r"terrain\tiles\battle\plains\8x8".to_owned()],
             placements: vec![TileListPlacement { name: 0, x: 30, y: 30, flags: 0xb710, climate: 2, lf: [0.0; 2], old: [1, 2, 3] }],
-            rects: vec![[-8, -8, 72, 72]], tail: if version == 9 { vec![9, 9, 9] } else { vec![] },
+            rects: vec![[-8, -8, 72, 72]],
+            tail: if version == 9 { vec![9, 9, 9] } else { vec![] },
         }
     }
 

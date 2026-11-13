@@ -22,7 +22,12 @@ pub struct Camera {
 impl Default for Camera {
     fn default() -> Self {
         Self {
-            eye: Float3::new(0.0, 30.0, -80.0), target: Float3::new(0.0, 5.0, 0.0), up: Float3::new(0.0, 1.0, 0.0), fov_y: 1.13446, znear: 1.0, zfar: 13000.0,
+            eye: Float3::new(0.0, 30.0, -80.0),
+            target: Float3::new(0.0, 5.0, 0.0),
+            up: Float3::new(0.0, 1.0, 0.0),
+            fov_y: 1.13446,
+            znear: 1.0,
+            zfar: 13000.0,
             ortho_height: None,
         }
     }

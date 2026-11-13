@@ -62,7 +62,9 @@ pub enum Kind {
     Colour,
 
     /// Names joined by `|`, after a space when `leading_space` (TEd: ` OIF_VISIBLE|OIF_ACTIVE`; none set is a single space).
-    Flags { leading_space: bool },
+    Flags {
+        leading_space: bool,
+    },
 }
 
 fn numbers<const N: usize>(text: &str) -> Option<[f64; N]> {
@@ -89,7 +91,6 @@ fn colour_number(v: f64) -> String {
 }
 
 impl Kind {
-
     /// The value of the text (`Str` when the text is not of this kind).
     pub fn parse(self, text: &str, syms: &mut SymCache) -> Value {
         let typed = match self {

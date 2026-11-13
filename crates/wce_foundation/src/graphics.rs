@@ -77,7 +77,11 @@ impl GraphicsCatalogue {
     /// The texture quality the presets give a card with this much video memory (bytes).
     pub fn texture_quality_for(&self, video_memory: u64) -> i32 {
         let mb = video_memory >> 20;
-        self.texture_quality_by_memory.iter().find(|(bound, _)| mb <= *bound).or(self.texture_quality_by_memory.last()).map_or(0, |(_, q)| *q)
+        self.texture_quality_by_memory
+            .iter()
+            .find(|(bound, _)| mb <= *bound)
+            .or(self.texture_quality_by_memory.last())
+            .map_or(0, |(_, q)| *q)
     }
 
     /// A preset's values as preferences text, for a card with this much video memory.
@@ -145,7 +149,8 @@ const REFLECTIONS: &[&str] = &["Off", "Half resolution", "Full resolution"];
 /// synchronisation, `g_IntelExt`).
 const ALPHA_BLEND_OIT: &[&str] = &["Alpha test", "Standard OIT", "Accelerated AOIT (drawn as standard OIT)"];
 /// Rome 2's: its engine's OIT test returns false (fn 0x100d31d0), so every level draws alpha-tested foliage.
-const ALPHA_BLEND_ROME_2: &[&str] = &["Alpha test", "Standard OIT (the game draws alpha test)", "Accelerated AOIT (the game draws alpha test)"];
+const ALPHA_BLEND_ROME_2: &[&str] =
+    &["Alpha test", "Standard OIT (the game draws alpha test)", "Accelerated AOIT (the game draws alpha test)"];
 /// Rome 2's: its MSAA path (fewer `_ms` techniques than Attila's) is not ported; MLAA is Attila's.
 const AA_ROME_2: &[&str] = &["Off", "MLAA", "MSAA 2x (drawn without)", "MSAA 4x (drawn without)", "MSAA 8x (drawn without)"];
 
@@ -241,13 +246,28 @@ use PresetValue::{ByVideoMemory as Vram, Fixed as F};
 
 /// The quality options a preset sets to its level.
 const QUALITIES: [&str; 9] = [
-    "gfx_shadow_quality", "gfx_water_quality", "gfx_tree_quality", "gfx_grass_quality", "gfx_terrain_quality", "gfx_sky_quality", "gfx_building_quality",
-    "gfx_effects_quality", "gfx_unit_quality",
+    "gfx_shadow_quality",
+    "gfx_water_quality",
+    "gfx_tree_quality",
+    "gfx_grass_quality",
+    "gfx_terrain_quality",
+    "gfx_sky_quality",
+    "gfx_building_quality",
+    "gfx_effects_quality",
+    "gfx_unit_quality",
 ];
 
 /// An Attila preset (fn 0x1175c2f0 fills them; docs/re/graphics_options.md): anti-aliasing, filtering, the level of every quality option,
 /// SSAO, depth of field, distortion, reflections; the texture quality by video memory, the vignette off.
-const fn attila_preset(aa: i32, filtering: i32, level: i32, ssao: i32, dof: i32, distortion: i32, reflections: i32) -> [(&'static str, PresetValue); 17] {
+const fn attila_preset(
+    aa: i32,
+    filtering: i32,
+    level: i32,
+    ssao: i32,
+    dof: i32,
+    distortion: i32,
+    reflections: i32,
+) -> [(&'static str, PresetValue); 17] {
     [
         ("gfx_aa", F(aa)),
         ("gfx_texture_filtering", F(filtering)),
@@ -316,7 +336,8 @@ const THRONES_PRESETS: &[GfxPreset] = &[
 const TEXTURE_BY_MEMORY: &[(u64, i32)] = &[(800, 0), (1600, 1), (2600, 2), (u64::MAX, 3)];
 
 /// Attila's options and presets.
-pub const ATTILA: GraphicsCatalogue = GraphicsCatalogue { options: ATTILA_OPTIONS, presets: ATTILA_PRESETS, texture_quality_by_memory: TEXTURE_BY_MEMORY };
+pub const ATTILA: GraphicsCatalogue =
+    GraphicsCatalogue { options: ATTILA_OPTIONS, presets: ATTILA_PRESETS, texture_quality_by_memory: TEXTURE_BY_MEMORY };
 
 /// Thrones of Britannia's.
 pub const THRONES_OF_BRITANNIA: GraphicsCatalogue =
@@ -326,7 +347,15 @@ pub const THRONES_OF_BRITANNIA: GraphicsCatalogue =
 /// shadows' level, SSAO, distortion, cloud shadows, god rays, the texture quality; depth of field, grain and the vignette off.
 #[allow(clippy::too_many_arguments)]
 const fn rome2_preset(
-    aa: i32, filtering: i32, level: i32, shadows: i32, ssao: i32, distortion: i32, cloud_shadows: i32, god_rays: i32, texture: PresetValue,
+    aa: i32,
+    filtering: i32,
+    level: i32,
+    shadows: i32,
+    ssao: i32,
+    distortion: i32,
+    cloud_shadows: i32,
+    god_rays: i32,
+    texture: PresetValue,
 ) -> [(&'static str, PresetValue); 21] {
     [
         ("gfx_aa", F(aa)),
@@ -374,4 +403,5 @@ const ROME_2_PRESETS: &[GfxPreset] = &[
 const ROME_2_TEXTURE_BY_MEMORY: &[(u64, i32)] = &[(600, 0), (800, 1), (1200, 2), (u64::MAX, 3)];
 
 /// Rome 2's.
-pub const ROME_2: GraphicsCatalogue = GraphicsCatalogue { options: ROME_2_OPTIONS, presets: ROME_2_PRESETS, texture_quality_by_memory: ROME_2_TEXTURE_BY_MEMORY };
+pub const ROME_2: GraphicsCatalogue =
+    GraphicsCatalogue { options: ROME_2_OPTIONS, presets: ROME_2_PRESETS, texture_quality_by_memory: ROME_2_TEXTURE_BY_MEMORY };

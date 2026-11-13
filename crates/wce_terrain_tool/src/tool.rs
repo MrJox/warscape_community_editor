@@ -18,16 +18,16 @@ use wce_foundation::math::Float3;
 use wce_map_view::maps::{GAME_FAR_PLANE, PacksTree, game_map_folder, game_maps, load_map};
 use wce_map_view::{MapView, Rings};
 use wce_scene::render_scene::DocumentId;
+use wce_terrain::LfRole;
 use wce_terrain::MapKind;
 use wce_terrain::lf_edit::{LfBrush, LfOp, LfStroke};
 use wce_terrain::lf_patch;
 use wce_terrain::pyramid::HeightPyramid;
-use wce_terrain::LfRole;
 use wce_terrain_editor::lf::{LfMirror, LfStrokeCommand};
 use wce_terrain_editor::{MapDocument, MapSource};
 use wce_tile::battle_map::context::{CELL, LfField, Spot};
-use wce_tile::battle_map::{kit_maps, l16_dds_heights};
 use wce_tile::battle_map::tile_db::TileDatabase;
+use wce_tile::battle_map::{kit_maps, l16_dds_heights};
 use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::context::{ContextRequest, Streamer, TileProvider, cache};
 use wce_vfs::files::Files;
@@ -61,7 +61,11 @@ impl Loaded {
         let mut d = MapDocument::new(self.name, self.source, self.model, self.placed, self.locations, self.db);
         d.fill_messages = self.messages;
         d.view_roads = self.roads;
-        d.terry_frame = if map_kind(&d.name).0 == MapKind::Campaign { wce_terrain_editor::document::TerryFrame::campaign(d.placed.width, d.placed.height) } else { wce_terrain_editor::document::TerryFrame::BATTLE };
+        d.terry_frame = if map_kind(&d.name).0 == MapKind::Campaign {
+            wce_terrain_editor::document::TerryFrame::campaign(d.placed.width, d.placed.height)
+        } else {
+            wce_terrain_editor::document::TerryFrame::BATTLE
+        };
         Box::new(d)
     }
 }
@@ -122,7 +126,19 @@ struct LfPaint {
 
 impl Default for LfPaint {
     fn default() -> Self {
-        Self { on: false, sea: false, op: 0, radius_m: 300.0, amount_m: 2.0, share: 0.2, falloff: 1.0, aspect: 1.0, rotation_deg: 0.0, noise_scale_m: 400.0, spacing: 0.25 }
+        Self {
+            on: false,
+            sea: false,
+            op: 0,
+            radius_m: 300.0,
+            amount_m: 2.0,
+            share: 0.2,
+            falloff: 1.0,
+            aspect: 1.0,
+            rotation_deg: 0.0,
+            noise_scale_m: 400.0,
+            spacing: 0.25,
+        }
     }
 }
 
@@ -176,9 +192,14 @@ fn campaign_snow(e: &Editor, id: DocumentId, s: &Streamer, season: &str) -> Opti
     // peaks, as the game shows them), else the season's own (`snow_mask_wi`).
     let stage = d.view_roads.as_ref().and_then(|r| r.climate_stage).unwrap_or(0);
     let files = e.files()?;
-    let mask = [format!("terrain/campaigns/{name}/snow_mask_{season}{}.dds", stage + 1), format!("terrain/campaigns/{name}/snow_mask_{season}.dds")]
-        .into_iter().find(|m| files.exists(m))?;
-    let pixel_scale = kit_roots(e).iter()
+    let mask = [
+        format!("terrain/campaigns/{name}/snow_mask_{season}{}.dds", stage + 1),
+        format!("terrain/campaigns/{name}/snow_mask_{season}.dds"),
+    ]
+    .into_iter()
+    .find(|m| files.exists(m))?;
+    let pixel_scale = kit_roots(e)
+        .iter()
         .find_map(|r| wce_formats::tile_climate::ClimateList::load(&r.join(database_dir(MapKind::Campaign)).join("_settings.xml")).ok())
         .and_then(|c| c.find("default").and_then(|d| d.find("snow")).map(|t| t.blend_pixel_scale as f32))
         .filter(|&v| v > 0.0)
@@ -188,7 +209,12 @@ fn campaign_snow(e: &Editor, id: DocumentId, s: &Streamer, season: &str) -> Opti
     let (sw, ne) = (f.from_map.apply(0.0, h), f.from_map.apply(w, 0.0));
     let size = [(ne.0 - sw.0) as f32, (ne.1 - sw.1) as f32];
     (size[0] > 0.0 && size[1] > 0.0).then(|| wce_scene::render_scene::CampaignSnow {
-        mask, corner: [sw.0 as f32, sw.1 as f32], size, group: "terrain/textures/campaign/default/snow".to_owned(), season: season.to_owned(), pixel_scale,
+        mask,
+        corner: [sw.0 as f32, sw.1 as f32],
+        size,
+        group: "terrain/textures/campaign/default/snow".to_owned(),
+        season: season.to_owned(),
+        pixel_scale,
     })
 }
 
@@ -225,10 +251,7 @@ fn campaign_render_lf(roots: &[PathBuf], kind: MapKind) -> Option<(f64, f64)> {
     if kind != MapKind::Campaign {
         return None;
     }
-    let settings = roots
-        .iter()
-        .map(|r| r.join(database_dir(kind)).join("_settings.xml"))
-        .find(|p| p.is_file())?;
+    let settings = roots.iter().map(|r| r.join(database_dir(kind)).join("_settings.xml")).find(|p| p.is_file())?;
     render_lf(&settings)
 }
 
@@ -241,53 +264,30 @@ mod campaign_metadata_tests {
         let scratch = std::env::temp_dir().join(format!(
             "wce-campaign-metadata-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         ));
-        let roots: Vec<_> = ["project", "kit-first", "kit-second"]
-            .iter()
-            .map(|s| scratch.join(s))
-            .collect();
-        let settings: Vec<_> = roots
-            .iter()
-            .map(|r| {
-                r.join(database_dir(MapKind::Campaign))
-                    .join("_settings.xml")
-            })
-            .collect();
+        let roots: Vec<_> = ["project", "kit-first", "kit-second"].iter().map(|s| scratch.join(s)).collect();
+        let settings: Vec<_> = roots.iter().map(|r| r.join(database_dir(MapKind::Campaign)).join("_settings.xml")).collect();
         for p in &settings {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         }
         let write = |i: usize, height: f64, offset: f64| {
-            let xml = format!(
-                r#"<ROOT><RENDER_PARAMS lf_height="{height}" vertical_offset="{offset}"/></ROOT>"#
-            );
+            let xml = format!(r#"<ROOT><RENDER_PARAMS lf_height="{height}" vertical_offset="{offset}"/></ROOT>"#);
             std::fs::write(&settings[i], xml).unwrap()
         };
         write(1, 810., 42.);
         write(2, 920., 16.);
         // A saved map and even an incomplete project database directory must not hide the kit's metadata.
         std::fs::create_dir_all(kit_map_dir(&roots[0], "campaigns/test")).unwrap();
-        assert_eq!(
-            campaign_render_lf(&roots, MapKind::Campaign),
-            Some((810., 42.))
-        );
+        assert_eq!(campaign_render_lf(&roots, MapKind::Campaign), Some((810., 42.)));
         // The project's complete settings file is authoritative over both kits.
         write(0, 1234., 56.);
-        assert_eq!(
-            campaign_render_lf(&roots, MapKind::Campaign),
-            Some((1234., 56.))
-        );
+        assert_eq!(campaign_render_lf(&roots, MapKind::Campaign), Some((1234., 56.)));
         // As with TileDatabase::load_layered, a first settings file lacking a value does not borrow it from a later file.
         std::fs::write(&settings[0], b"<ROOT/>").unwrap();
         assert_eq!(campaign_render_lf(&roots, MapKind::Campaign), None);
         // The native-map adapter's single packs database and battle-map defaults keep their existing behavior.
-        assert_eq!(
-            campaign_render_lf(&roots[1..2], MapKind::Campaign),
-            Some((810., 42.))
-        );
+        assert_eq!(campaign_render_lf(&roots[1..2], MapKind::Campaign), Some((810., 42.)));
         assert_eq!(campaign_render_lf(&roots, MapKind::Battle), None);
         for p in settings {
             if p.is_file() {
@@ -303,7 +303,10 @@ mod campaign_metadata_native_tests;
 
 /// A kit's campaign maps (folders with a `tile_map.png`), as the map list names them.
 fn kit_campaign_maps(raw: &std::path::Path) -> Vec<String> {
-    let mut out: Vec<String> = std::fs::read_dir(raw.join("terrain/campaigns")).into_iter().flatten().flatten()
+    let mut out: Vec<String> = std::fs::read_dir(raw.join("terrain/campaigns"))
+        .into_iter()
+        .flatten()
+        .flatten()
         .filter(|e| e.path().join("tile_map.png").is_file())
         .map(|e| format!("{CAMPAIGN}{}", e.file_name().to_string_lossy()))
         .collect();
@@ -409,8 +412,47 @@ pub struct TerrainTool {
 impl Default for TerrainTool {
     fn default() -> Self {
         Self {
-            maps: vec![], map: 0, maps_for: vec![], rings: Rings::default(), overview: true, season: "su".to_owned(), weather: None, map_panel: crate::map_panel::MapPanel::new(), paint: LfPaint::default(), cells: crate::cell_paint::CellPaint::default(), explicit: Default::default(), terry: Default::default(), layout: Default::default(), placements: Default::default(), props: Default::default(), findings: vec![], refill: Default::default(), refill_wanted: false, painting: None, mirror: None, sea_mirror: None, sea_lf: None, ring: (0, 0), pick: None, cursor: None, view: MapView::default(), shown: 0, building: 0, cameras: std::collections::HashMap::new(), rx: None, busy: String::new(), busy_since: None,
-            status: String::new(), packs: None, provider: None, db: None, campaign_db: None, export: None, exported: None, launch_after_export: None, launched: None,
+            maps: vec![],
+            map: 0,
+            maps_for: vec![],
+            rings: Rings::default(),
+            overview: true,
+            season: "su".to_owned(),
+            weather: None,
+            map_panel: crate::map_panel::MapPanel::new(),
+            paint: LfPaint::default(),
+            cells: crate::cell_paint::CellPaint::default(),
+            explicit: Default::default(),
+            terry: Default::default(),
+            layout: Default::default(),
+            placements: Default::default(),
+            props: Default::default(),
+            findings: vec![],
+            refill: Default::default(),
+            refill_wanted: false,
+            painting: None,
+            mirror: None,
+            sea_mirror: None,
+            sea_lf: None,
+            ring: (0, 0),
+            pick: None,
+            cursor: None,
+            view: MapView::default(),
+            shown: 0,
+            building: 0,
+            cameras: std::collections::HashMap::new(),
+            rx: None,
+            busy: String::new(),
+            busy_since: None,
+            status: String::new(),
+            packs: None,
+            provider: None,
+            db: None,
+            campaign_db: None,
+            export: None,
+            exported: None,
+            launch_after_export: None,
+            launched: None,
         }
     }
 }
@@ -485,7 +527,8 @@ fn land_near_centre(lf: &wce_scene::render_scene::LfMap) -> Option<Float3> {
     let v = lf.values.read();
     let stride = (lf.nx.max(lf.nz) / 256).max(1);
     let (ci, cj) = (-lf.x0 / lf.step, -lf.z0 / lf.step);
-    (0..lf.nz).step_by(stride as usize)
+    (0..lf.nz)
+        .step_by(stride as usize)
         .flat_map(|j| (0..lf.nx).step_by(stride as usize).map(move |i| (i, j)))
         .map(|(i, j)| (lf.x0 + i as f32 * lf.step, lf.z0 + j as f32 * lf.step, (i as f32 - ci).powi(2) + (j as f32 - cj).powi(2)))
         .map(|(x, z, d)| (x, z, d, lf.height_in(&v, x, z)))
@@ -507,21 +550,32 @@ fn campaign_roads(i: &OpenInputs) -> Option<Arc<wce_terrain_io::attila::roads::C
     let campaign = name.strip_suffix("_map").unwrap_or(name);
     let r = (|| {
         let files = i.files.as_ref().ok_or("no game files")?;
-        let schema = rpfm_lib::schema::Schema::load(&wce_foundation::settings::rpfm_schema_path(i.game).ok_or("no rpfm schema")?, None).map_err(|e| e.to_string())?;
+        let schema = rpfm_lib::schema::Schema::load(&wce_foundation::settings::rpfm_schema_path(i.game).ok_or("no rpfm schema")?, None)
+            .map_err(|e| e.to_string())?;
         let list = |p: &str| files.list(p, "");
         let read = |p: &str| files.read(p).ok().map(|b| b.to_vec());
         let tables = wce_terrain_io::attila::roads::RoadTables::read(&schema, campaign, &list, &read);
         let map_data = files.read(&format!("campaign_maps/{name}/map_data.esf")).map_err(|e| format!("map_data.esf: {e}"))?;
-        let startpos = std::fs::read(i.install.as_ref().ok_or("no game folder")?.join(format!("data/campaigns/{campaign}/startpos.esf"))).map_err(|e| format!("startpos.esf: {e}"))?;
+        let startpos = std::fs::read(i.install.as_ref().ok_or("no game folder")?.join(format!("data/campaigns/{campaign}/startpos.esf")))
+            .map_err(|e| format!("startpos.esf: {e}"))?;
         const UPGRADES: &str = "terrain/tiles/campaign/tile_upgrades.xml";
-        let upgrades = std::fs::read(i.raw.join(UPGRADES)).ok().or_else(|| files.read(UPGRADES).ok().map(|b| b.to_vec())).ok_or("no tile_upgrades.xml")?;
+        let upgrades = std::fs::read(i.raw.join(UPGRADES))
+            .ok()
+            .or_else(|| files.read(UPGRADES).ok().map(|b| b.to_vec()))
+            .ok_or("no tile_upgrades.xml")?;
         let dynamic = files.read(&format!("campaign_maps/{name}/dynamic_resources.esf")).ok();
         wce_terrain_io::attila::roads::read(&map_data, &startpos, &upgrades, &tables, dynamic.as_deref())
     })();
     match r {
         Ok(roads) => {
-            log::info(format!("terrain open {}: roads at the start, regions a level {:?}; farmland areas {} of {} ({:.1} s)", i.name, roads.level_counts(),
-                roads.areas_on, roads.areas_on + roads.areas_off, started.elapsed().as_secs_f64()));
+            log::info(format!(
+                "terrain open {}: roads at the start, regions a level {:?}; farmland areas {} of {} ({:.1} s)",
+                i.name,
+                roads.level_counts(),
+                roads.areas_on,
+                roads.areas_on + roads.areas_off,
+                started.elapsed().as_secs_f64()
+            ));
             Some(Arc::new(roads))
         }
 
@@ -537,14 +591,19 @@ fn open_map(i: &OpenInputs) -> Result<Loaded, String> {
     let packs_folder = game_map_folder(&i.name, i.game_dir);
     let db = match (&packs_folder, &i.packs) {
         // A map of the packs names the packs' tiles (a mod's among them): read with their database.
-        (Some(_), Some(p)) => p.raw().ok().and_then(|r| TileDatabase::load(&r.join(database_dir(map_kind(&i.name).0))).ok()).map_or_else(|| i.db.clone(), Arc::new),
+        (Some(_), Some(p)) => p
+            .raw()
+            .ok()
+            .and_then(|r| TileDatabase::load(&r.join(database_dir(map_kind(&i.name).0))).ok())
+            .map_or_else(|| i.db.clone(), Arc::new),
         _ => i.db.clone(),
     };
 
     let (mut placed, locations, source, model, sea, messages) = match packs_folder {
         Some(folder) => {
             let (mut placed, locations) = load_map(&i.name, i.game_dir, &i.raw, &db, i.files.as_deref())?;
-            let sea = i.files.as_ref().and_then(|f| f.read(&format!("{folder}/lf_sea_height_map.dds")).ok()).and_then(|b| l16_dds_heights(&b));
+            let sea =
+                i.files.as_ref().and_then(|f| f.read(&format!("{folder}/lf_sea_height_map.dds")).ok()).and_then(|b| l16_dds_heights(&b));
             // A game without kit maps: the built files are the model (its LF the one shown: a saved copy's edits).
             let model = match &i.built {
                 Some(_) => {
@@ -666,10 +725,7 @@ impl TerrainTool {
         // A game without kit maps (Rome 2): the maps of its packs, with the packs' tile database (`PacksTree::raw`).
         if !e.game().features.kit_tiles {
             if game_map_folder(name, e.game().campaign_battle_map).is_none() {
-                return Err(format!(
-                    "{}: no kit maps; open one of the packs' (game files)",
-                    e.game().display_name
-                ));
+                return Err(format!("{}: no kit maps; open one of the packs' (game files)", e.game().display_name));
             }
 
             let raw = self.packs.as_ref().ok_or("no game files")?.raw()?;
@@ -765,14 +821,25 @@ impl TerrainTool {
         let m = &d.shown_placed();
         let roots = kit_roots(e);
         Some(ContextRequest {
-            map: m.clone(), spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 }, cells: (0, 0),
+            map: m.clone(),
+            spot: Spot { x: (m.width / 2) as i32, y: (m.height / 2) as i32, rotation: 0x10 },
+            cells: (0, 0),
             // A campaign map's heights: its database's `unit_scale` (`wce_tile::tile_project::height_unit`).
             unit: if map_kind(&d.name).0 == MapKind::Campaign { 0.2 } else { UNIT },
-            near: self.rings.near, mid: self.rings.mid, ground: self.rings.ground, far: self.view.far_ring(self.rings.far),
+            near: self.rings.near,
+            mid: self.rings.mid,
+            ground: self.rings.ground,
+            far: self.view.far_ring(self.rings.far),
             bake_ground: e.game().key != wce_vfs::GameProfile::ROME_2.key,
-            raw_root: database_root(e).or_else(|| self.packs.as_ref().and_then(|p| p.raw().ok()))?, tile_roots: roots,
-            game_kit: whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)), look: TerrainLook { season: self.season.clone(), ..TerrainLook::default() }, trees: true, plain: None,
-            groups: None, cache: Some(cache::cache_dir()), provider: self.provider.clone(),
+            raw_root: database_root(e).or_else(|| self.packs.as_ref().and_then(|p| p.raw().ok()))?,
+            tile_roots: roots,
+            game_kit: whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)),
+            look: TerrainLook { season: self.season.clone(), ..TerrainLook::default() },
+            trees: true,
+            plain: None,
+            groups: None,
+            cache: Some(cache::cache_dir()),
+            provider: self.provider.clone(),
         })
     }
 
@@ -787,7 +854,9 @@ impl TerrainTool {
             let retry = Box::new(move |e: &mut Editor| {
                 let Some(d) = waiting.borrow_mut().take() else { return Err("the map was opened already".to_owned()) };
                 let name = d.name.clone();
-                e.with_tool::<Self, _>(|t, e| t.adopt(e, d)).map(|()| format!("opened {name}")).ok_or_else(|| "the Terrain tool is busy".to_owned())
+                e.with_tool::<Self, _>(|t, e| t.adopt(e, d))
+                    .map(|()| format!("opened {name}"))
+                    .ok_or_else(|| "the Terrain tool is busy".to_owned())
             });
 
             match e.clear_to_replace(TERRAIN_TOOL_ID, retry) {
@@ -848,8 +917,16 @@ impl TerrainTool {
             // (`environment/summer.lighting`; ASSUMPTION: the game's choice there; `default.environment` hazed the view), else the
             // folder's `default.environment`.
             let seasonal = global.as_ref().and_then(|g| g.rsplit_once("_sp.").map(|(a, b)| format!("{a}_{}.{b}", self.season)));
-            let season_name = match self.season.as_str() { "sp" => "spring", "au" => "autumn", "wi" => "winter", _ => "summer" };
-            let file = self.weather.clone().filter(|f| files.exists(f))
+            let season_name = match self.season.as_str() {
+                "sp" => "spring",
+                "au" => "autumn",
+                "wi" => "winter",
+                _ => "summer",
+            };
+            let file = self
+                .weather
+                .clone()
+                .filter(|f| files.exists(f))
                 .or_else(|| seasonal.filter(|f| files.exists(f)))
                 .or_else(|| global.filter(|f| files.exists(f)))
                 .or_else(|| Some(format!("{dir}/environment/{season_name}.lighting")).filter(|f| files.exists(f)))
@@ -867,7 +944,15 @@ impl TerrainTool {
         let Some(d) = e.docs.find_as::<MapDocument>(id) else { return };
         let m = &d.placed;
         let (cx, cy) = ((m.width / 2) as i32, (m.height / 2) as i32);
-        let climate = m.placements.iter().find(|p| { let r = p.rect(); r[0] <= cx && cx < r[2] && r[1] <= cy && cy < r[3] }).and_then(|p| m.climate_of(p)).map(str::to_lowercase);
+        let climate = m
+            .placements
+            .iter()
+            .find(|p| {
+                let r = p.rect();
+                r[0] <= cx && cx < r[2] && r[1] <= cy && cy < r[3]
+            })
+            .and_then(|p| m.climate_of(p))
+            .map(str::to_lowercase);
         let Some(files) = e.files() else { return };
         let pick = |folder: &str| {
             let mut v: Vec<String> = files.list(&format!("weather/{folder}/"), ".environment");
@@ -898,10 +983,12 @@ impl TerrainTool {
         self.painting = None;
         self.sea_lf = s.frame().sea_lf.clone();
         let doc = e.docs.find_as::<MapDocument>(id);
-        let mirror = |role: LfRole, lf: Option<&Arc<wce_scene::render_scene::LfMap>>| doc.and_then(|d| d.lf_field(role))
-            .zip(lf)
-            .and_then(|(field, lf)| LfMirror::of(field, lf.values.clone(), lf.nx, lf.nz))
-            .map(Arc::new);
+        let mirror = |role: LfRole, lf: Option<&Arc<wce_scene::render_scene::LfMap>>| {
+            doc.and_then(|d| d.lf_field(role))
+                .zip(lf)
+                .and_then(|(field, lf)| LfMirror::of(field, lf.values.clone(), lf.nx, lf.nz))
+                .map(Arc::new)
+        };
         self.mirror = mirror(LfRole::Land, self.pick.as_ref().map(|p| &p.lf));
         self.sea_mirror = mirror(LfRole::Sea, self.sea_lf.as_ref());
         self.view.begin(e, id, s, &self.rings, |_| vec![]);
@@ -921,7 +1008,11 @@ impl TerrainTool {
         let (MapKind::Campaign, name) = map_kind(&d.name) else { return vec![] };
         let Some(files) = e.files() else { return vec![] };
         let dir = format!("terrain/campaigns/{name}");
-        let mut v: Vec<String> = ["lighting", "environment"].iter().flat_map(|f| files.list(&format!("{dir}/{f}/"), ".lighting")).map(|s| s.to_owned()).collect();
+        let mut v: Vec<String> = ["lighting", "environment"]
+            .iter()
+            .flat_map(|f| files.list(&format!("{dir}/{f}/"), ".lighting"))
+            .map(|s| s.to_owned())
+            .collect();
         v.sort();
         v.extend(Some(format!("{dir}/default.environment")).filter(|f| files.exists(f)));
         v
@@ -968,7 +1059,9 @@ impl TerrainTool {
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip("The campaign map's season in the view: the ground's textures of that season and the map's snow mask of the season and climate stage (snow_mask_<season><stage + 1>.dds, the terrain resolve's snow layer). The view only.");
+                gui::set_tooltip(
+                    "The campaign map's season in the view: the ground's textures of that season and the map's snow mask of the season and climate stage (snow_mask_<season><stage + 1>.dds, the terrain resolve's snow layer). The view only.",
+                );
             }
 
             let weathers = e.docs.find_as::<MapDocument>(id).map(|d| Self::campaign_weathers(e, d)).unwrap_or_default();
@@ -981,7 +1074,9 @@ impl TerrainTool {
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip("The campaign map's weather: its lighting files (lighting/<climate>_<season>[n], environment/<season>) or default.environment. Automatic: the global lighting (environment_collection.xml) of the view's season, as the game lights the campaign.");
+                gui::set_tooltip(
+                    "The campaign map's weather: its lighting files (lighting/<climate>_<season>[n], environment/<season>) or default.environment. Automatic: the global lighting (environment_collection.xml) of the view's season, as the game lights the campaign.",
+                );
             }
         }
 
@@ -993,8 +1088,10 @@ impl TerrainTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("The road tiles as the game shows them on the first turn: each region's road level from its buildings in the startpos \
-                (campaign_map_roads, tile_upgrades.xml). Off: the kit's roads_climate tiles, as BOB places them. The view only: the map's files keep the kit's tiles.");
+            gui::set_tooltip(
+                "The road tiles as the game shows them on the first turn: each region's road level from its buildings in the startpos \
+                (campaign_map_roads, tile_upgrades.xml). Off: the kit's roads_climate tiles, as BOB places them. The view only: the map's files keep the kit's tiles.",
+            );
         }
     }
 
@@ -1029,7 +1126,9 @@ impl TerrainTool {
     /// Opens a map and waits for its view (scripts).
     fn open_now(&mut self, e: &mut Editor, name: &str) -> Result<String, String> {
         let again = name.to_owned();
-        let retry = Box::new(move |e: &mut Editor| e.with_tool::<Self, _>(|t, e| t.open_now(e, &again)).unwrap_or_else(|| Err("the Terrain tool is busy".to_owned())));
+        let retry = Box::new(move |e: &mut Editor| {
+            e.with_tool::<Self, _>(|t, e| t.open_now(e, &again)).unwrap_or_else(|| Err("the Terrain tool is busy".to_owned()))
+        });
         if !e.clear_to_replace(TERRAIN_TOOL_ID, retry)? {
             return Ok(format!("asking about the map's unsaved changes before opening {name}"));
         }
@@ -1082,7 +1181,10 @@ impl TerrainTool {
             gui::text_disabled(&format!("LF ground to the camera's view: {} cells", self.view.far_view()));
         }
 
-        let whole = e.docs.find_as::<MapDocument>(self.shown).map_or(GAME_FAR_PLANE * 4.0, |d| (d.placed.width.max(d.placed.height) as f32 * CELL as f32).max(GAME_FAR_PLANE));
+        let whole = e
+            .docs
+            .find_as::<MapDocument>(self.shown)
+            .map_or(GAME_FAR_PLANE * 4.0, |d| (d.placed.width.max(d.placed.height) as f32 * CELL as f32).max(GAME_FAR_PLANE));
         gui::slider_float("view distance", &mut self.rings.view_distance, GAME_FAR_PLANE, whole, "%.0f");
         gui::checkbox("follow the camera", &mut self.rings.follow);
         gui::checkbox("overview map", &mut self.overview);
@@ -1189,7 +1291,15 @@ impl TerrainTool {
     fn brush_at(&self, cx: f64, cy: f64) -> LfBrush {
         let r = f64::from(self.paint.radius_m) / self.sample_metres();
         let strength = if matches!(self.paint.op, 2 | 3) { f64::from(self.paint.share) } else { 1.0 };
-        let brush = wce_tile::height_field::Brush { cx, cy, radius: r.max(1.0), strength, falloff: f64::from(self.paint.falloff), curve: None, image: None };
+        let brush = wce_tile::height_field::Brush {
+            cx,
+            cy,
+            radius: r.max(1.0),
+            strength,
+            falloff: f64::from(self.paint.falloff),
+            curve: None,
+            image: None,
+        };
         LfBrush { brush, aspect: f64::from(self.paint.aspect).max(0.05), rotation: f64::from(self.paint.rotation_deg).to_radians() }
     }
 
@@ -1212,13 +1322,19 @@ impl TerrainTool {
         let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return false };
         let role = self.role();
         let Some(field) = d.lf_field(role) else {
-            let why = if d.model().is_none() { "this map is from the game's packs: open the kit's map to paint its LF" } else { "this map has no lf_sea_heights.tif" };
+            let why = if d.model().is_none() {
+                "this map is from the game's packs: open the kit's map to paint its LF"
+            } else {
+                "this map has no lf_sea_heights.tif"
+            };
             e.status(why, true);
             return false;
         };
 
         let mirror = self.target_mirror();
-        let target = at.map_or(0.0, |(x, y)| f64::from(field.at((x.round().max(0.0) as u32).min(field.width() - 1), (y.round().max(0.0) as u32).min(field.height() - 1))));
+        let target = at.map_or(0.0, |(x, y)| {
+            f64::from(field.at((x.round().max(0.0) as u32).min(field.width() - 1), (y.round().max(0.0) as u32).min(field.height() - 1)))
+        });
         self.painting = Some(Painting { doc: self.shown, role, stroke: LfStroke::default(), mirror, target, last: None });
         true
     }
@@ -1265,8 +1381,10 @@ impl TerrainTool {
             let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
             let (sx, sy) = (f64::from(m.w) / f64::from(d.placed.width.max(1)), f64::from(m.h) / f64::from(d.placed.height.max(1)));
             let cells = [
-                (f64::from(rect[0]) / sx).floor() as i32 - 1, (f64::from(rect[1]) / sy).floor() as i32 - 1,
-                (f64::from(rect[2]) / sx).ceil() as i32 + 1, (f64::from(rect[3]) / sy).ceil() as i32 + 1,
+                (f64::from(rect[0]) / sx).floor() as i32 - 1,
+                (f64::from(rect[1]) / sy).floor() as i32 - 1,
+                (f64::from(rect[2]) / sx).ceil() as i32 + 1,
+                (f64::from(rect[3]) / sy).ceil() as i32 + 1,
             ];
 
             if let Some(s) = self.view.streamer.as_mut() {
@@ -1319,10 +1437,16 @@ impl TerrainTool {
         for p in &placed.placements {
             let mask = masks.entry((p.location.clone(), p.variation.clone())).or_insert_with(|| {
                 let rel = format!("{}/{}/lf_mask.tif", p.location.replace('\\', "/"), p.variation);
-                roots.iter().find_map(|r| std::fs::read(r.join(&rel)).ok())
+                roots
+                    .iter()
+                    .find_map(|r| std::fs::read(r.join(&rel)).ok())
                     .and_then(|b| wce_formats::image_containers::TiffFile::parse(&b).ok())
                     .filter(|t| t.bits_per_sample == 16 && t.samples_per_pixel == 1)
-                    .map(|t| lf_patch::LfPatch { w: t.width, h: t.height, values: t.pixels.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect() })
+                    .map(|t| lf_patch::LfPatch {
+                        w: t.width,
+                        h: t.height,
+                        values: t.pixels.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect(),
+                    })
             });
 
             let Some(mask) = mask else { continue };
@@ -1343,7 +1467,9 @@ impl TerrainTool {
 
         let kb = record.bytes() / 1024;
         d.push_stroke(LfStrokeCommand { role: LfRole::Land, record: Arc::new(record), mirror });
-        Ok(format!("{laid} placements of {tiles} tiles with an lf_mask.tif patched ({outside} off the map): {changed} of their {written} low samples changed, the record keeps {kb} KB"))
+        Ok(format!(
+            "{laid} placements of {tiles} tiles with an lf_mask.tif patched ({outside} off the map): {changed} of their {written} low samples changed, the record keeps {kb} KB"
+        ))
     }
 
     /// The checks of the shown map, again.
@@ -1427,8 +1553,13 @@ impl TerrainTool {
     fn follow_cell_edits(&mut self, e: &mut Editor) {
         let Some(d) = e.docs.find_as::<MapDocument>(self.shown) else { return };
         let touched = d.cells.take();
-        let fill_reads = |k: usize| k == wce_terrain_editor::cells::EXPLICIT || k == wce_terrain_editor::cells::TILE_LIST
-            || d.model().and_then(|m| m.layers.get(k)).is_some_and(|(r, _)| matches!(r, wce_terrain::LayerRole::TileMap | wce_terrain::LayerRole::Climate));
+        let fill_reads = |k: usize| {
+            k == wce_terrain_editor::cells::EXPLICIT
+                || k == wce_terrain_editor::cells::TILE_LIST
+                || d.model()
+                    .and_then(|m| m.layers.get(k))
+                    .is_some_and(|(r, _)| matches!(r, wce_terrain::LayerRole::TileMap | wce_terrain::LayerRole::Climate))
+        };
         self.refill_wanted |= touched.iter().any(|(k, _)| fill_reads(*k));
         let drape = !self.cells.painting();
         for (k, rect) in touched {
@@ -1436,7 +1567,8 @@ impl TerrainTool {
         }
 
         // The fill again once the stroke is done.
-        if self.refill_wanted && !self.cells.painting()
+        if self.refill_wanted
+            && !self.cells.painting()
             && let Some(frame) = self.view.frame()
             && let Some(d) = e.docs.find_as::<MapDocument>(self.shown)
         {
@@ -1460,8 +1592,14 @@ impl TerrainTool {
             }
 
             self.map_panel.placements_changed();
-            let failed = if done.messages.is_empty() { String::new() } else { format!(", {} cells with no tile that fits", done.messages.len()) };
-            let m = format!("Terrain: filled again in {:.1} s: {} placements, {} chunks changed{failed}", done.secs, done.map.placements.len(), done.changed.len());
+            let failed =
+                if done.messages.is_empty() { String::new() } else { format!(", {} cells with no tile that fits", done.messages.len()) };
+            let m = format!(
+                "Terrain: filled again in {:.1} s: {} placements, {} chunks changed{failed}",
+                done.secs,
+                done.map.placements.len(),
+                done.changed.len()
+            );
             self.status = m.clone();
             e.status(&m, false);
         }
@@ -1508,7 +1646,8 @@ impl TerrainTool {
             }
 
             let col = 0xFF40_D0FFu32;
-            let lines = pts.windows(2).flat_map(|w| [w[0], w[1]]).map(|p| wce_scene::render_scene::OverlayVertex { p, rgba: col }).collect();
+            let lines =
+                pts.windows(2).flat_map(|w| [w[0], w[1]]).map(|p| wce_scene::render_scene::OverlayVertex { p, rgba: col }).collect();
             Some(wce_scene::render_scene::Overlay { lines, depth_test: false, ..Default::default() })
         })();
 
@@ -1524,7 +1663,12 @@ impl TerrainTool {
                     e.scene.update_payload(self.ring.1, wce_scene::render_scene::Payload::Overlay(o));
                 } else {
                     let src = wce_scene::render_scene::SourceRef { doc: self.shown, item: u64::MAX };
-                    self.ring.1 = e.scene.add(self.ring.0, wce_foundation::math::Float4x4::IDENTITY, wce_scene::render_scene::Payload::Overlay(o), src);
+                    self.ring.1 = e.scene.add(
+                        self.ring.0,
+                        wce_foundation::math::Float4x4::IDENTITY,
+                        wce_scene::render_scene::Payload::Overlay(o),
+                        src,
+                    );
                 }
             }
 
@@ -1565,7 +1709,10 @@ impl TerrainTool {
 
         let spot = crate::launch::spot(e, self.shown, id)?;
         let d = e.docs.find_as::<MapDocument>(self.shown).ok_or("no map shown")?;
-        let fresh = self.exported.as_ref().is_some_and(|x| x.map == d.name && x.revision == wce_editor_core::document::Document::history(d).version());
+        let fresh = self
+            .exported
+            .as_ref()
+            .is_some_and(|x| x.map == d.name && x.revision == wce_editor_core::document::Document::history(d).version());
         if !fresh {
             let m = self.start_export(e, e.build_dir().join("terrain_export"))?;
             self.launch_after_export = Some((spot, dry_run, ignore_movie_packs));
@@ -1575,7 +1722,13 @@ impl TerrainTool {
         self.launch_now(e, &spot, dry_run, ignore_movie_packs)
     }
 
-    fn launch_now(&mut self, e: &mut Editor, spot: &crate::launch::Spot, dry_run: bool, ignore_movie_packs: bool) -> Result<String, String> {
+    fn launch_now(
+        &mut self,
+        e: &mut Editor,
+        spot: &crate::launch::Spot,
+        dry_run: bool,
+        ignore_movie_packs: bool,
+    ) -> Result<String, String> {
         let x = self.exported.clone().ok_or("no export")?;
         let d = e.docs.find_as::<MapDocument>(self.shown).ok_or("no map shown")?;
         let (w, h) = (d.placed.width, d.placed.height);
@@ -1584,7 +1737,13 @@ impl TerrainTool {
         if dry_run {
             let xml = e.build_dir().join("dry_wce_launch.xml");
             let _ = std::fs::write(&xml, &p.xml);
-            return Ok(format!("dry run: {} at {at}: the pack {}, the battle {}; command line: {}", x.map, p.pack.display(), xml.display(), p.command));
+            return Ok(format!(
+                "dry run: {} at {at}: the pack {}, the battle {}; command line: {}",
+                x.map,
+                p.pack.display(),
+                xml.display(),
+                p.command
+            ));
         }
 
         let (running, started) = crate::launch::start(e, &p)?;
@@ -1660,7 +1819,9 @@ impl TerrainTool {
 
         gui::end_disabled();
         if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("The export in the launch pack, a battle at the selected battle catchment area (else the first): one unit a side");
+            gui::set_tooltip(
+                "The export in the launch pack, a battle at the selected battle catchment area (else the first): one unit a side",
+            );
         }
 
         if !can {
@@ -1763,7 +1924,11 @@ impl Tool for TerrainTool {
         self.draw_map_panel(e);
         self.map_panel.paint = self.cells.on || self.explicit.placing || self.terry.claims_left_button() || self.placements.claims();
         self.map_panel.outline = self.cells.dragging;
-        self.map_panel.marks = e.docs.find_as::<MapDocument>(self.shown).map(|d| [self.explicit.marks(d), self.placements.marks(d)].concat()).unwrap_or_default();
+        self.map_panel.marks = e
+            .docs
+            .find_as::<MapDocument>(self.shown)
+            .map(|d| [self.explicit.marks(d), self.placements.marks(d)].concat())
+            .unwrap_or_default();
         self.map_panel.draw(e, self.shown, &self.view);
 
         // A `.terry` creation click in the Map panel (the cell's centre).
@@ -1815,7 +1980,9 @@ impl Tool for TerrainTool {
                 self.cells.press(e, self.shown, i.cell);
             } else if i.down && self.cells.painting() {
                 self.cells.drag(e, i.cell);
-            } else if i.released && let Some(m) = self.cells.release(e) {
+            } else if i.released
+                && let Some(m) = self.cells.release(e)
+            {
                 e.status(&m, false);
             }
         }
@@ -2005,42 +2172,63 @@ impl Tool for TerrainTool {
     }
 
     fn register_commands(&self, c: &mut CommandRegistry<Editor>) {
-        c.add("terrain_open", "terrain_open <map | campaign>", "the Terrain tool: open a battle map (the map list's name; `campaign`: the game's campaign battle map) and show it", |e, a| {
-            let Some(name) = a.first() else { return CommandResult::fail("usage: terrain_open <map | campaign>") };
-            let want = if name == "campaign" { wce_map_view::maps::GAME_MAP.to_owned() } else { name.clone() };
-            with_terrain(e, |t, e| {
-                t.refresh_maps(e);
-                let want = if t.maps.contains(&want) { want } else { format!("{want}{}", wce_map_view::maps::GAME_FILES) };
-                match t.open_now(e, &want) {
-                    Ok(s) => CommandResult::success(s),
-                    Err(err) => CommandResult::fail(err),
-                }
-            })
-        });
+        c.add(
+            "terrain_open",
+            "terrain_open <map | campaign>",
+            "the Terrain tool: open a battle map (the map list's name; `campaign`: the game's campaign battle map) and show it",
+            |e, a| {
+                let Some(name) = a.first() else { return CommandResult::fail("usage: terrain_open <map | campaign>") };
+                let want = if name == "campaign" { wce_map_view::maps::GAME_MAP.to_owned() } else { name.clone() };
+                with_terrain(e, |t, e| {
+                    t.refresh_maps(e);
+                    let want = if t.maps.contains(&want) { want } else { format!("{want}{}", wce_map_view::maps::GAME_FILES) };
+                    match t.open_now(e, &want) {
+                        Ok(s) => CommandResult::success(s),
+                        Err(err) => CommandResult::fail(err),
+                    }
+                })
+            },
+        );
 
-        c.add("terrain_start", "terrain_start <map | campaign>", "the Terrain tool: what its Open button does (the map read on a worker); `terrain_wait` for the view", |e, a| {
-            let Some(name) = a.first() else { return CommandResult::fail("usage: terrain_start <map | campaign>") };
-            let want = if name == "campaign" { wce_map_view::maps::GAME_MAP.to_owned() } else { name.clone() };
-            with_terrain(e, |t, e| {
-                t.refresh_maps(e);
-                let want = if t.maps.contains(&want) { want } else { format!("{want}{}", wce_map_view::maps::GAME_FILES) };
-                t.start_open(e, &want);
-                CommandResult::success(format!("{}{}", t.busy, t.status))
-            })
-        });
+        c.add(
+            "terrain_start",
+            "terrain_start <map | campaign>",
+            "the Terrain tool: what its Open button does (the map read on a worker); `terrain_wait` for the view",
+            |e, a| {
+                let Some(name) = a.first() else { return CommandResult::fail("usage: terrain_start <map | campaign>") };
+                let want = if name == "campaign" { wce_map_view::maps::GAME_MAP.to_owned() } else { name.clone() };
+                with_terrain(e, |t, e| {
+                    t.refresh_maps(e);
+                    let want = if t.maps.contains(&want) { want } else { format!("{want}{}", wce_map_view::maps::GAME_FILES) };
+                    t.start_open(e, &want);
+                    CommandResult::success(format!("{}{}", t.busy, t.status))
+                })
+            },
+        );
 
-        c.add("terrain_wait", "terrain_wait [seconds]", "the Terrain tool: waits until what Open started is shown (the workers polled as the frames would)", |e, a| {
-            let limit = a.first().and_then(|v| v.parse::<f64>().ok()).unwrap_or(600.0);
-            with_terrain(e, |t, e| {
-                let t0 = std::time::Instant::now();
-                while t.rx.is_some() && t0.elapsed().as_secs_f64() < limit {
-                    t.poll(e);
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
+        c.add(
+            "terrain_wait",
+            "terrain_wait [seconds]",
+            "the Terrain tool: waits until what Open started is shown (the workers polled as the frames would)",
+            |e, a| {
+                let limit = a.first().and_then(|v| v.parse::<f64>().ok()).unwrap_or(600.0);
+                with_terrain(e, |t, e| {
+                    let t0 = std::time::Instant::now();
+                    while t.rx.is_some() && t0.elapsed().as_secs_f64() < limit {
+                        t.poll(e);
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
 
-                CommandResult::success(format!("after {:.1} s: shown {}, busy '{}', status '{}'", t0.elapsed().as_secs_f64(), t.shown, t.busy, t.status))
-            })
-        });
+                    CommandResult::success(format!(
+                        "after {:.1} s: shown {}, busy '{}', status '{}'",
+                        t0.elapsed().as_secs_f64(),
+                        t.shown,
+                        t.busy,
+                        t.status
+                    ))
+                })
+            },
+        );
 
         c.add("terrain_settle", "terrain_settle [all]", "the Terrain tool: wait until the map's chunks around the camera are on the scene; says what it has (all: every tile it could not open)", |e, a| {
             let all = a.first().is_some_and(|v| v == "all");
@@ -2056,29 +2244,37 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_pick", "terrain_pick <x> <y>", "the Terrain tool: where the ray of a viewport pixel meets the shown map's LF", |e, a| {
-            let (Some(x), Some(y)) = (a.first().and_then(|v| v.parse().ok()), a.get(1).and_then(|v| v.parse().ok())) else {
-                return CommandResult::fail("usage: terrain_pick <x> <y>");
-            };
+        c.add(
+            "terrain_pick",
+            "terrain_pick <x> <y>",
+            "the Terrain tool: where the ray of a viewport pixel meets the shown map's LF",
+            |e, a| {
+                let (Some(x), Some(y)) = (a.first().and_then(|v| v.parse().ok()), a.get(1).and_then(|v| v.parse().ok())) else {
+                    return CommandResult::fail("usage: terrain_pick <x> <y>");
+                };
 
-            with_terrain(e, |t, e| {
-                t.cursor = t.pick_at(e, x, y);
-                match (t.cursor, t.cursor_line()) {
-                    (Some((p, _)), Some(line)) => CommandResult::success(format!("{line}; at {:.2} {:.2} {:.2}", p.x, p.y, p.z)),
-                    _ => {
-                        // What a march along the ray over the LF finds (to tell a miss of the pyramid from a ray off the map).
-                        let ray = e.viewport.ray(x, y);
-                        let march = ray.zip(t.pick.as_ref()).and_then(|((o, d), p)| {
-                            (0..200_000).map(|k| k as f32 * 0.5).find(|&k| {
-                                let q = o + d * k;
-                                q.y <= p.lf.height_at(q.x, q.z)
-                            }).map(|k| o + d * k)
-                        });
-                        CommandResult::fail(format!("no LF under that pixel (ray {ray:?}; a march finds {march:?})"))
+                with_terrain(e, |t, e| {
+                    t.cursor = t.pick_at(e, x, y);
+                    match (t.cursor, t.cursor_line()) {
+                        (Some((p, _)), Some(line)) => CommandResult::success(format!("{line}; at {:.2} {:.2} {:.2}", p.x, p.y, p.z)),
+                        _ => {
+                            // What a march along the ray over the LF finds (to tell a miss of the pyramid from a ray off the map).
+                            let ray = e.viewport.ray(x, y);
+                            let march = ray.zip(t.pick.as_ref()).and_then(|((o, d), p)| {
+                                (0..200_000)
+                                    .map(|k| k as f32 * 0.5)
+                                    .find(|&k| {
+                                        let q = o + d * k;
+                                        q.y <= p.lf.height_at(q.x, q.z)
+                                    })
+                                    .map(|k| o + d * k)
+                            });
+                            CommandResult::fail(format!("no LF under that pixel (ray {ray:?}; a march finds {march:?})"))
+                        }
                     }
-                }
-            })
-        });
+                })
+            },
+        );
 
         c.add("terrain_map_layer", "terrain_map_layer <n> [ground|off] [opacity]", "the Terrain tool: the Map panel shows its n-th layer (0 the LF, 1 the placements, then the kit map's cell layers), on the ground or not", |e, a| {
             let Some(k) = a.first().and_then(|v| v.parse::<usize>().ok()) else { return CommandResult::fail("usage: terrain_map_layer <n>") };
@@ -2169,12 +2365,17 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_lf_patches", "terrain_lf_patches", "the Terrain tool: Terry's Apply Per-Tile LF Patches on the shown map (the custom-mesh tiles' lf_mask.tif into the land LF)", |e, _| {
-            with_terrain(e, |t, e| match t.apply_lf_patches(e) {
-                Ok(m) => CommandResult::success(m),
-                Err(err) => CommandResult::fail(err),
-            })
-        });
+        c.add(
+            "terrain_lf_patches",
+            "terrain_lf_patches",
+            "the Terrain tool: Terry's Apply Per-Tile LF Patches on the shown map (the custom-mesh tiles' lf_mask.tif into the land LF)",
+            |e, _| {
+                with_terrain(e, |t, e| match t.apply_lf_patches(e) {
+                    Ok(m) => CommandResult::success(m),
+                    Err(err) => CommandResult::fail(err),
+                })
+            },
+        );
 
         c.add("terrain_cells", "terrain_cells <layer index | tile_map | climate> brush <x> <y> <radius> <r> <g> <b> | rect <x0> <y0> <x1> <y1> <r> <g> <b> | fill <x> <y> <r> <g> <b>", "the Terrain tool: one cell stroke on a kit map's layer (its index in the Cell layers list; rect corners inclusive), onto the history", |e, a| {
             let usage = "usage: terrain_cells <layer> brush <x> <y> <radius> <r> <g> <b> | rect <x0> <y0> <x1> <y1> <r> <g> <b> | fill <x> <y> <r> <g> <b>";
@@ -2272,28 +2473,33 @@ impl Tool for TerrainTool {
             }
         });
 
-        c.add("terrain_refill_wait", "terrain_refill_wait [seconds]", "the Terrain tool: waits for the fill run again after a cell edit (scripts)", |e, a| {
-            let limit = a.first().and_then(|v| v.parse::<f64>().ok()).unwrap_or(600.0);
-            let started = std::time::Instant::now();
-            loop {
-                let busy = with_terrain(e, |t, e| {
-                    t.follow_cell_edits(e);
-                    t.follow_refill(e);
-                    CommandResult::success(if t.refill.busy() || t.refill_wanted { "busy" } else { "idle" })
-                });
+        c.add(
+            "terrain_refill_wait",
+            "terrain_refill_wait [seconds]",
+            "the Terrain tool: waits for the fill run again after a cell edit (scripts)",
+            |e, a| {
+                let limit = a.first().and_then(|v| v.parse::<f64>().ok()).unwrap_or(600.0);
+                let started = std::time::Instant::now();
+                loop {
+                    let busy = with_terrain(e, |t, e| {
+                        t.follow_cell_edits(e);
+                        t.follow_refill(e);
+                        CommandResult::success(if t.refill.busy() || t.refill_wanted { "busy" } else { "idle" })
+                    });
 
-                if busy.message != "busy" {
-                    let status = with_terrain(e, |t, _| CommandResult::success(t.status.clone()));
-                    return CommandResult::success(format!("after {:.1} s: {}", started.elapsed().as_secs_f64(), status.message));
+                    if busy.message != "busy" {
+                        let status = with_terrain(e, |t, _| CommandResult::success(t.status.clone()));
+                        return CommandResult::success(format!("after {:.1} s: {}", started.elapsed().as_secs_f64(), status.message));
+                    }
+
+                    if started.elapsed().as_secs_f64() > limit {
+                        return CommandResult::fail("the fill is still running");
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
-
-                if started.elapsed().as_secs_f64() > limit {
-                    return CommandResult::fail("the fill is still running");
-                }
-
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-        });
+            },
+        );
 
         c.add("terrain_placements", "terrain_placements count | select <x> <y> | place <x> <y> <tile> [variation] [degrees] | move <x> <y> | turn | remove | variation <k>", "the Terrain tool: a built map's placements (Rome 2's pack maps; cells; on the selected one; one step on the history each)", |e, a| {
             use crate::placements::{Mode, PlacementsPanel};
@@ -2344,37 +2550,48 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_explicit", "terrain_explicit add <x> <y> <tile or variation path> <degrees> | remove <i> | list", "the Terrain tool: the shown kit map's explicit tiles (one step on the history each)", |e, a| {
-            let usage = "usage: terrain_explicit add <x> <y> <path> <degrees> | remove <i> | list";
-            with_terrain(e, |t, e| {
-                let shown = t.shown;
-                match (a.first().map(String::as_str), &a.get(1..).unwrap_or_default()) {
-                    (Some("add"), [x, y, path, deg]) => {
-                        let (Ok(x), Ok(y), Ok(deg)) = (x.parse::<i64>(), y.parse::<i64>(), deg.parse::<i32>()) else { return CommandResult::fail(usage) };
-                        t.explicit.choose(path, deg);
-                        match t.explicit.place(e, shown, (x, y)) {
-                            Ok(m) => CommandResult::success(m),
-                            Err(err) => CommandResult::fail(err),
+        c.add(
+            "terrain_explicit",
+            "terrain_explicit add <x> <y> <tile or variation path> <degrees> | remove <i> | list",
+            "the Terrain tool: the shown kit map's explicit tiles (one step on the history each)",
+            |e, a| {
+                let usage = "usage: terrain_explicit add <x> <y> <path> <degrees> | remove <i> | list";
+                with_terrain(e, |t, e| {
+                    let shown = t.shown;
+                    match (a.first().map(String::as_str), &a.get(1..).unwrap_or_default()) {
+                        (Some("add"), [x, y, path, deg]) => {
+                            let (Ok(x), Ok(y), Ok(deg)) = (x.parse::<i64>(), y.parse::<i64>(), deg.parse::<i32>()) else {
+                                return CommandResult::fail(usage);
+                            };
+                            t.explicit.choose(path, deg);
+                            match t.explicit.place(e, shown, (x, y)) {
+                                Ok(m) => CommandResult::success(m),
+                                Err(err) => CommandResult::fail(err),
+                            }
                         }
+
+                        (Some("remove"), [i]) => match i.parse::<usize>() {
+                            Ok(i) if crate::explicit_tiles::ExplicitPanel::remove(e, shown, i) => {
+                                CommandResult::success(format!("explicit tile {i} removed"))
+                            }
+                            _ => CommandResult::fail("no such explicit tile"),
+                        },
+
+                        (Some("list"), []) => {
+                            let d = e.docs.find_as::<MapDocument>(shown);
+                            let lines: Vec<String> = d
+                                .and_then(|d| d.model())
+                                .and_then(|m| m.explicit.as_ref())
+                                .map(|x| x.get().tiles().map(|t| format!("{},{},{},{}", t.x, t.y, t.path, t.rotation)).collect())
+                                .unwrap_or_default();
+                            CommandResult::success(format!("{} explicit tiles: {}", lines.len(), lines.join("; ")))
+                        }
+
+                        _ => CommandResult::fail(usage),
                     }
-
-                    (Some("remove"), [i]) => match i.parse::<usize>() {
-                        Ok(i) if crate::explicit_tiles::ExplicitPanel::remove(e, shown, i) => CommandResult::success(format!("explicit tile {i} removed")),
-                        _ => CommandResult::fail("no such explicit tile"),
-                    },
-
-                    (Some("list"), []) => {
-                        let d = e.docs.find_as::<MapDocument>(shown);
-                        let lines: Vec<String> = d.and_then(|d| d.model()).and_then(|m| m.explicit.as_ref())
-                            .map(|x| x.get().tiles().map(|t| format!("{},{},{},{}", t.x, t.y, t.path, t.rotation)).collect())
-                            .unwrap_or_default();
-                        CommandResult::success(format!("{} explicit tiles: {}", lines.len(), lines.join("; ")))
-                    }
-
-                    _ => CommandResult::fail(usage),
-                }
-            })
-        });
+                })
+            },
+        );
 
         c.add("terrain_roads", "terrain_roads [on|off]", "the Terrain tool: a campaign's roads drawn at its start's levels (its regions' buildings: on) or as the kit paints them (off); then what they are", |e, a| {
             with_terrain(e, |t, e| {
@@ -2408,36 +2625,49 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_season", "terrain_season [sp|su|au|wi]", "the Terrain tool: a campaign map's season in the view (its ground textures and snow mask); then which", |e, a| {
-            with_terrain(e, |t, e| {
-                match a.first().map(String::as_str) {
-                    Some(v @ ("sp" | "su" | "au" | "wi")) => t.set_season(e, v),
-                    None => {}
-                    Some(_) => return CommandResult::fail("usage: terrain_season [sp|su|au|wi]"),
-                }
+        c.add(
+            "terrain_season",
+            "terrain_season [sp|su|au|wi]",
+            "the Terrain tool: a campaign map's season in the view (its ground textures and snow mask); then which",
+            |e, a| {
+                with_terrain(e, |t, e| {
+                    match a.first().map(String::as_str) {
+                        Some(v @ ("sp" | "su" | "au" | "wi")) => t.set_season(e, v),
+                        None => {}
+                        Some(_) => return CommandResult::fail("usage: terrain_season [sp|su|au|wi]"),
+                    }
 
-                let snow = e.scene.campaign_snow.as_ref().map_or("no snow mask".to_owned(), |s| format!("snow {}", s.mask));
-                CommandResult::success(format!("season {} ({snow}, as of the last view)", t.season))
-            })
-        });
+                    let snow = e.scene.campaign_snow.as_ref().map_or("no snow mask".to_owned(), |s| format!("snow {}", s.mask));
+                    CommandResult::success(format!("season {} ({snow}, as of the last view)", t.season))
+                })
+            },
+        );
 
-        c.add("terrain_weather", "terrain_weather [list | auto | <file or file name>]", "the Terrain tool: a campaign map's weather in the view (its lighting files; auto: the season's global lighting); then which", |e, a| {
-            with_terrain(e, |t, e| {
-                let Some(d) = e.docs.find_as::<MapDocument>(t.shown) else { return CommandResult::fail("no map shown") };
-                let weathers = TerrainTool::campaign_weathers(e, d);
-                match a.first().map(String::as_str) {
-                    None => {}
-                    Some("list") => return CommandResult::success(weathers.join("; ")),
-                    Some("auto") => t.set_weather(e, None),
-                    Some(w) => match weathers.iter().find(|x| x.as_str() == w || x.ends_with(&format!("/{w}"))) {
-                        Some(f) => t.set_weather(e, Some(f.clone())),
-                        None => return CommandResult::fail(format!("no weather {w} (terrain_weather list)")),
-                    },
-                }
+        c.add(
+            "terrain_weather",
+            "terrain_weather [list | auto | <file or file name>]",
+            "the Terrain tool: a campaign map's weather in the view (its lighting files; auto: the season's global lighting); then which",
+            |e, a| {
+                with_terrain(e, |t, e| {
+                    let Some(d) = e.docs.find_as::<MapDocument>(t.shown) else { return CommandResult::fail("no map shown") };
+                    let weathers = TerrainTool::campaign_weathers(e, d);
+                    match a.first().map(String::as_str) {
+                        None => {}
+                        Some("list") => return CommandResult::success(weathers.join("; ")),
+                        Some("auto") => t.set_weather(e, None),
+                        Some(w) => match weathers.iter().find(|x| x.as_str() == w || x.ends_with(&format!("/{w}"))) {
+                            Some(f) => t.set_weather(e, Some(f.clone())),
+                            None => return CommandResult::fail(format!("no weather {w} (terrain_weather list)")),
+                        },
+                    }
 
-                CommandResult::success(format!("weather {}", t.weather.as_deref().unwrap_or("automatic (the season's global lighting)")))
-            })
-        });
+                    CommandResult::success(format!(
+                        "weather {}",
+                        t.weather.as_deref().unwrap_or("automatic (the season's global lighting)")
+                    ))
+                })
+            },
+        );
 
         c.add("terrain_layout", "terrain_layout [on|off] [radius cells]", "the Terrain tool: the campaign layout guide (layout_map.png's legend colours outlined near the camera): set, then how many cells it drew", |e, a| {
             with_terrain(e, |t, _| {
@@ -2485,13 +2715,18 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_validate", "terrain_validate", "the Terrain tool: the shown map's checks (the Validation section): a count, then each finding", |e, _| {
-            with_terrain(e, |t, e| {
-                let m = t.validate(e);
-                let lines: Vec<String> = t.findings.iter().map(|f| format!("{:?}: {}", f.severity, f.text)).collect();
-                CommandResult::success(format!("{m}{}{}", if lines.is_empty() { "" } else { "\n" }, lines.join("\n")))
-            })
-        });
+        c.add(
+            "terrain_validate",
+            "terrain_validate",
+            "the Terrain tool: the shown map's checks (the Validation section): a count, then each finding",
+            |e, _| {
+                with_terrain(e, |t, e| {
+                    let m = t.validate(e);
+                    let lines: Vec<String> = t.findings.iter().map(|f| format!("{:?}: {}", f.severity, f.text)).collect();
+                    CommandResult::success(format!("{m}{}{}", if lines.is_empty() { "" } else { "\n" }, lines.join("\n")))
+                })
+            },
+        );
 
         c.add("terrain_terry", "terrain_terry count | bca <x> <z> | prop <x> <z> <model> [scale] | vfx <x> <z> <effect> | ev <x> <z> <lighting> <inner> <outer> | generate | points <id> <x> <z> ... | zone <x> <z> <x> <z> <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>", "the Terrain tool: the shown kit map's .terry entities (metres from the map's centre, ids in hex; one step on the history each)", |e, a| {
             let usage = "usage: terrain_terry count | bca <x> <z> | prop <x> <z> <model> [scale] | vfx <x> <z> <effect> | ev <x> <z> <lighting> <inner> <outer> | generate | points <id> <x> <z> ... | zone <x> <z> ... | delete <id> | duplicate <id> | set <id> <component> <attr> <value> | move <id> <dx> <dz> | get <id>";
@@ -2591,23 +2826,33 @@ impl Tool for TerrainTool {
             })
         });
 
-        c.add("terrain_view", "terrain_view <distance> [near mid far [ground]]", "the Terrain tool: the camera's view distance (scene units) and the rings (cells)", |e, a| {
-            let Some(d) = a.first().and_then(|v| v.parse::<f32>().ok()) else { return CommandResult::fail("usage: terrain_view <distance> [near mid far [ground]]") };
-            let rings: Vec<i32> = a[1..].iter().filter_map(|v| v.parse().ok()).collect();
-            with_terrain(e, |t, _| {
-                t.rings.view_distance = d.max(GAME_FAR_PLANE);
-                if let [near, mid, far, ..] = rings[..] {
-                    (t.rings.near, t.rings.mid, t.rings.far) = (near, mid, far);
-                }
+        c.add(
+            "terrain_view",
+            "terrain_view <distance> [near mid far [ground]]",
+            "the Terrain tool: the camera's view distance (scene units) and the rings (cells)",
+            |e, a| {
+                let Some(d) = a.first().and_then(|v| v.parse::<f32>().ok()) else {
+                    return CommandResult::fail("usage: terrain_view <distance> [near mid far [ground]]");
+                };
+                let rings: Vec<i32> = a[1..].iter().filter_map(|v| v.parse().ok()).collect();
+                with_terrain(e, |t, _| {
+                    t.rings.view_distance = d.max(GAME_FAR_PLANE);
+                    if let [near, mid, far, ..] = rings[..] {
+                        (t.rings.near, t.rings.mid, t.rings.far) = (near, mid, far);
+                    }
 
-                if let Some(&ground) = rings.get(3) {
-                    t.rings.ground = ground;
-                }
+                    if let Some(&ground) = rings.get(3) {
+                        t.rings.ground = ground;
+                    }
 
-                t.view.set_rings(&t.rings);
-                CommandResult::success(format!("view distance {}, rings {} / {} / {} / {}", t.rings.view_distance, t.rings.near, t.rings.mid, t.rings.ground, t.rings.far))
-            })
-        });
+                    t.view.set_rings(&t.rings);
+                    CommandResult::success(format!(
+                        "view distance {}, rings {} / {} / {} / {}",
+                        t.rings.view_distance, t.rings.near, t.rings.mid, t.rings.ground, t.rings.far
+                    ))
+                })
+            },
+        );
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

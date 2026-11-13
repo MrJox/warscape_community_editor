@@ -48,8 +48,12 @@ fn main() {
         println!(
             "#{e} {} at ({:.1} {:.1} {:.1}) x {} y {} z {} | {path}",
             key.rsplit('\\').next().unwrap_or_default(),
-            w.position.x, w.position.y, w.position.z,
-            axis(0, s.x), axis(1, s.y), axis(2, s.z),
+            w.position.x,
+            w.position.y,
+            w.position.z,
+            axis(0, s.x),
+            axis(1, s.y),
+            axis(2, s.z),
         );
     }
 }

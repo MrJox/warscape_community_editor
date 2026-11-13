@@ -90,7 +90,8 @@ fn map_lf(path: &std::path::Path) -> Option<PagedU16> {
     f.read_exact(&mut entries).ok()?;
     let mut tag = std::collections::HashMap::new();
     for e in entries.chunks_exact(12) {
-        let (id, kind, n) = (u16::from_le_bytes([e[0], e[1]]), u16::from_le_bytes([e[2], e[3]]), u32::from_le_bytes([e[4], e[5], e[6], e[7]]));
+        let (id, kind, n) =
+            (u16::from_le_bytes([e[0], e[1]]), u16::from_le_bytes([e[2], e[3]]), u32::from_le_bytes([e[4], e[5], e[6], e[7]]));
         // One value in the entry (a short in its first two bytes).
         let value = if kind == 3 { u32::from(u16::from_le_bytes([e[8], e[9]])) } else { u32::from_le_bytes([e[8], e[9], e[10], e[11]]) };
         if n == 1 {
@@ -184,7 +185,13 @@ pub fn read(name: &str, kind: MapKind, files: &MapFiles) -> Result<MapModel> {
 
 fn write_layer(item: &Item<CellLayer>) -> Result<Vec<u8>> {
     let l = item.get();
-    let mut p = item.origin.bytes().ok().and_then(|b| PngFile::parse(&b).ok()).filter(|p| p.width == l.width() && p.height == l.height()).unwrap_or_default();
+    let mut p = item
+        .origin
+        .bytes()
+        .ok()
+        .and_then(|b| PngFile::parse(&b).ok())
+        .filter(|p| p.width == l.width() && p.height == l.height())
+        .unwrap_or_default();
     let keep = !p.original.is_empty() && p.bit_depth == 8 && p.color_type == if l.alpha { 6 } else { 2 };
     if !keep {
         p = PngFile { width: l.width(), height: l.height(), bit_depth: 8, color_type: if l.alpha { 6 } else { 2 }, ..Default::default() };
@@ -258,7 +265,8 @@ mod tests {
         // minimal little-endian TIFF does.
         let mut o = b"II*\0".to_vec();
         o.extend_from_slice(&8u32.to_le_bytes());
-        let entries: [(u16, u16, u32, u32); 6] = [(256, 3, 1, w), (257, 3, 1, h), (258, 3, 1, 16), (259, 3, 1, 1), (273, 4, 1, 8 + 2 + 6 * 12 + 4), (277, 3, 1, 1)];
+        let entries: [(u16, u16, u32, u32); 6] =
+            [(256, 3, 1, w), (257, 3, 1, h), (258, 3, 1, 16), (259, 3, 1, 1), (273, 4, 1, 8 + 2 + 6 * 12 + 4), (277, 3, 1, 1)];
         o.extend_from_slice(&(entries.len() as u16).to_le_bytes());
         for (t, k, c, v) in entries {
             o.extend_from_slice(&t.to_le_bytes());

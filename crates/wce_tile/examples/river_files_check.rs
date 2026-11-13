@@ -65,7 +65,9 @@ fn main() {
         let Ok(scene) = TedScene::parse(std::fs::read(&ted).expect("tile.ted")) else { continue };
         tiles += 1;
         let modern = wce_tile::river_files::rivers(&scene).iter().map(|&r| scene.doc().get(r, "flatten").is_some()).collect::<Vec<_>>();
-        for (n, (name, text)) in river_files(&scene, Some(dir), dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/")).into_iter().enumerate() {
+        for (n, (name, text)) in
+            river_files(&scene, Some(dir), dir.to_string_lossy().replace('\\', "/").contains("/tiles/campaign/")).into_iter().enumerate()
+        {
             let today = modern.get(n).copied().unwrap_or(false);
             match std::fs::read(dir.join(&name)) {
                 Ok(ted_text) if ted_text == text => {
@@ -100,5 +102,7 @@ fn main() {
     }
 
     println!("rivers of today's TEd (with flatten): {today_ok} as TEd wrote them, {today_bad} different");
-    println!("{tiles} tiles with river files: {same} the same, {close} the same but for last digits (largest difference {max_diff:.6}), {differ} different, {missing} not written by TEd");
+    println!(
+        "{tiles} tiles with river files: {same} the same, {close} the same but for last digits (largest difference {max_diff:.6}), {differ} different, {missing} not written by TEd"
+    );
 }

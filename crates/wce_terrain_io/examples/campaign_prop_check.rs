@@ -16,14 +16,9 @@ fn main() {
         header.class_name,
         header.version,
         header.records.len(),
-        header
-            .groups
-            .as_ref()
-            .and_then(|g| g.first())
-            .map(|g| (g.key.len(), g.indices.len()))
+        header.groups.as_ref().and_then(|g| g.first()).map(|g| (g.key.len(), g.indices.len()))
     );
-    let mut props =
-        CampaignProps::parse(bytes.clone().into()).expect("supported native marker profile");
+    let mut props = CampaignProps::parse(bytes.clone().into()).expect("supported native marker profile");
     assert_eq!(props.write().as_ref(), &bytes[..]);
     let original = props.position(0).expect("record 0");
     let mut moved = original;
@@ -35,15 +30,8 @@ fn main() {
     let b = wce_formats::markers::MarkersFile::parse(&written).unwrap();
     a.records[0][48..60].copy_from_slice(&b.records[0][48..60]);
     assert_eq!(a, b, "only record 0 translation may change");
-    assert_eq!(
-        CampaignProps::parse(written).unwrap().position(0).unwrap(),
-        moved
-    );
+    assert_eq!(CampaignProps::parse(written).unwrap().position(0).unwrap(), moved);
     props.translate(0, original).unwrap();
     assert_eq!(props.write().as_ref(), &bytes[..]);
-    println!(
-        "{path}: {} records, no-op/position-only/reopen/revert exact; model {}",
-        props.len(),
-        props.model(0).unwrap()
-    );
+    println!("{path}: {} records, no-op/position-only/reopen/revert exact; model {}", props.len(), props.model(0).unwrap());
 }

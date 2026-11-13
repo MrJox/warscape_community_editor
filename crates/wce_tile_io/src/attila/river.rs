@@ -77,7 +77,11 @@ pub fn ca_parse_f32(text: &str) -> Option<f32> {
 /// An attribute as BOB reads it: its text (as the file had it, else `%g`) through [`ca_parse_f32`]; 0 when that fails.
 fn f32_attr(n: &Node, k: &str) -> f32 {
     let Some(p) = n.props().iter().find(|p| p.name == k) else { return 0.0 };
-    let text = n.verbatim(p.name).map(str::to_owned).or_else(|| p.value.as_f64().map(wce_formats::c_num::printf_g)).or_else(|| p.value.as_str().map(str::to_owned));
+    let text = n
+        .verbatim(p.name)
+        .map(str::to_owned)
+        .or_else(|| p.value.as_f64().map(wce_formats::c_num::printf_g))
+        .or_else(|| p.value.as_str().map(str::to_owned));
     text.and_then(|t| ca_parse_f32(&t)).unwrap_or(0.0)
 }
 
@@ -658,9 +662,13 @@ pub fn read_river_block(b: &[u8]) -> Option<RiverMesh> {
     let blocks = mesh_blocks(b)?;
     let &(at, kind, _) = blocks.iter().find(|(_, kind, _)| RiverFormat::of_block(*kind).is_some())?;
     let u32_at = |a: usize| b.get(a..a + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]));
-    let (voff, vcount, ioff, icount) = (u32_at(at + 8)? as usize, u32_at(at + 12)? as usize, u32_at(at + 16)? as usize, u32_at(at + 20)? as usize);
+    let (voff, vcount, ioff, icount) =
+        (u32_at(at + 8)? as usize, u32_at(at + 12)? as usize, u32_at(at + 16)? as usize, u32_at(at + 20)? as usize);
     let vb = b.get(at + voff..at + voff + vcount * 32)?;
-    let vertices = vb.chunks_exact(32).map(|c| std::array::from_fn(|k| f32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]]))).collect();
+    let vertices = vb
+        .chunks_exact(32)
+        .map(|c| std::array::from_fn(|k| f32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]])))
+        .collect();
     let ib = b.get(at + ioff..at + ioff + icount * 2)?;
     let indices = ib.chunks_exact(2).map(|c| u32::from(u16::from_le_bytes([c[0], c[1]]))).collect::<Vec<_>>();
     let triangles = indices.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect();
@@ -732,7 +740,13 @@ fn f16(bits: u16) -> f32 {
     let (sign, exp, frac) = (u32::from(bits >> 15), u32::from((bits >> 10) & 0x1f), u32::from(bits & 0x3ff));
     let v = match exp {
         0 => frac as f32 * (1.0 / 16_777_216.0),
-        31 => if frac == 0 { f32::INFINITY } else { f32::NAN },
+        31 => {
+            if frac == 0 {
+                f32::INFINITY
+            } else {
+                f32::NAN
+            }
+        }
         _ => f32::from_bits(((exp + 112) << 23) | (frac << 13)),
     };
     if sign == 1 { -v } else { v }
@@ -763,7 +777,14 @@ fn crossing(x: i32, z: i32, a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> bool {
 /// row), each vertex `((r0 x + r1 y) + r2 z) + t w` per row, x and z halved into metres. Per triangle (idx1, idx2, idx0 as a, b, c),
 /// every whole sample of its truncated box widened by one that [`crossing`] keeps takes the height interpolated by the areas
 /// (`FUN_100140b0`'s sub-triangle cross products; a's weight rounded to f32, the sum on the x87), overwriting.
-pub fn rasterise_water_planes(field: &mut [f32], w: usize, h: usize, density: usize, planes: &[(String, [f32; 16])], model: &dyn Fn(&str) -> Option<Vec<u8>>) {
+pub fn rasterise_water_planes(
+    field: &mut [f32],
+    w: usize,
+    h: usize,
+    density: usize,
+    planes: &[(String, [f32; 16])],
+    model: &dyn Fn(&str) -> Option<Vec<u8>>,
+) {
     // The sample of a metre: `(1 / (128 / density)) x m`, truncated.
     let per_metre = 1.0f32 / (128.0f32 / density as f32);
     let u32_at = |b: &[u8], o: usize| b.get(o..o + 4).map(|s| u32::from_le_bytes(s.try_into().expect("4 bytes")) as usize);
@@ -789,8 +810,14 @@ pub fn rasterise_water_planes(field: &mut [f32], w: usize, h: usize, density: us
             return;
         }
 
-        let (Some(px), Some(py), Some(pz)) = (f32_at(&b, block + pivot_at), f32_at(&b, block + pivot_at + 4), f32_at(&b, block + pivot_at + 8)) else { return };
-        let (Some(verts), Some(indices), Some(count)) = (u32_at(&b, block + 8), u32_at(&b, block + 0x10), u32_at(&b, block + 0x14)) else { return };
+        let (Some(px), Some(py), Some(pz)) =
+            (f32_at(&b, block + pivot_at), f32_at(&b, block + pivot_at + 4), f32_at(&b, block + pivot_at + 8))
+        else {
+            return;
+        };
+        let (Some(verts), Some(indices), Some(count)) = (u32_at(&b, block + 8), u32_at(&b, block + 0x10), u32_at(&b, block + 0x14)) else {
+            return;
+        };
         let t = [0, 1, 2, 3].map(|k| ((m[4 * k] * px + m[4 * k + 1] * py) + m[4 * k + 2] * pz) + m[4 * k + 3]);
         let vertex = |i: usize| -> Option<[f32; 3]> {
             let o = block + verts + i * 12;
@@ -799,7 +826,8 @@ pub fn rasterise_water_planes(field: &mut [f32], w: usize, h: usize, density: us
             let row = |k: usize| ((m[4 * k] * x + m[4 * k + 1] * y) + m[4 * k + 2] * z) + t[k] * wv;
             Some([row(0) * 0.5, row(1), row(2) * 0.5])
         };
-        let index = |k: usize| b.get(block + indices + 2 * k..block + indices + 2 * k + 2).map(|s| usize::from(u16::from_le_bytes([s[0], s[1]])));
+        let index =
+            |k: usize| b.get(block + indices + 2 * k..block + indices + 2 * k + 2).map(|s| usize::from(u16::from_le_bytes([s[0], s[1]])));
         if count == 0 {
             continue;
         }
@@ -826,7 +854,8 @@ pub fn rasterise_water_planes(field: &mut [f32], w: usize, h: usize, density: us
                     let (dz, dx) = (fz - c[2], fx - c[0]);
                     let ua = (cross(e1z * 0.0 - dz * 0.0, dz * e1x - dx * e1z, dx * 0.0 - e1x * 0.0) * f64::from(inv)) as f32;
                     let ub = cross(e0z * 0.0 - dz * 0.0, dz * e0x - dx * e0z, dx * 0.0 - e0x * 0.0) * f64::from(inv);
-                    let height = ((f64::from(a[1]) * f64::from(ua) + f64::from(bv[1]) * ub) + f64::from(c[1]) * ((1.0 - f64::from(ua)) - ub)) as f32;
+                    let height =
+                        ((f64::from(a[1]) * f64::from(ua) + f64::from(bv[1]) * ub) + f64::from(c[1]) * ((1.0 - f64::from(ua)) - ub)) as f32;
                     let (sx, sz) = (per_metre * fx, per_metre * fz);
                     if sx < 0.0 || sx >= w as f32 || sz < 0.0 || sz >= h as f32 {
                         continue;
@@ -864,7 +893,13 @@ mod tests {
     fn a_straight_river() {
         // One straight segment 10 m long along x, 4 m wide (across from the left bank, z + 2): samples at 0, 1/8 .. 6/8 and 1 (twice: BOB's unique keeps the tail).
         let p = |x: f32| [x, 0.0, 50.0];
-        let seg = RiverSegment { points: [p(0.0), p(10.0 / 3.0), p(20.0 / 3.0), p(10.0)], foam: [0.0; 2], alpha: [1.0; 2], flow: [0.5; 2], width: [4.0; 2] };
+        let seg = RiverSegment {
+            points: [p(0.0), p(10.0 / 3.0), p(20.0 / 3.0), p(10.0)],
+            foam: [0.0; 2],
+            alpha: [1.0; 2],
+            flow: [0.5; 2],
+            width: [4.0; 2],
+        };
         let mesh = tessellate(&[vec![seg]], RiverFormat::Attila);
         assert_eq!(mesh.vertices.len(), 9 * 5);
         assert_eq!(mesh.triangles.len(), 8 * 4 * 2);
@@ -919,7 +954,8 @@ mod tests {
             assert_eq!(again.len(), 1);
 
             // The rows lie on the fitted curve (sampled densely: to the polyline of the samples).
-            let curve = fitted.iter().flat_map(|s| (0..=400).map(|i| weigh(&s.points, position_powers(i as f32 / 400.0)))).collect::<Vec<_>>();
+            let curve =
+                fitted.iter().flat_map(|s| (0..=400).map(|i| weigh(&s.points, position_powers(i as f32 / 400.0)))).collect::<Vec<_>>();
             for r in &rows[0] {
                 let to = |a: [f32; 3], b: [f32; 3]| {
                     let (dx, dz) = (b[0] - a[0], b[2] - a[2]);

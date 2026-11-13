@@ -39,7 +39,11 @@ fn parse_u64(s: &str) -> Option<u64> {
 /// C's atoi: the leading integer, 0 when there is none.
 fn atoi(s: &str) -> i32 {
     let s = s.trim_start();
-    let digits = s.char_indices().take_while(|&(i, c)| c.is_ascii_digit() || (i == 0 && (c == '-' || c == '+'))).last().map_or(0, |(i, c)| i + c.len_utf8());
+    let digits = s
+        .char_indices()
+        .take_while(|&(i, c)| c.is_ascii_digit() || (i == 0 && (c == '-' || c == '+')))
+        .last()
+        .map_or(0, |(i, c)| i + c.len_utf8());
     s[..digits].parse::<i64>().map_or(0, |v| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
 }
 
@@ -150,19 +154,24 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok(r)
     });
 
-    c.add("wait_loaded", "wait_loaded [timeout seconds]", "script: wait until every model and texture the scene needs has loaded (reports how long that took)", |e, a| {
-        let now = Instant::now();
-        let start = *e.wait_loaded_start.get_or_insert(now);
-        let timeout = a.first().map_or(60.0, |t| atof(t));
-        let elapsed = now.duration_since(start).as_secs_f64();
-        let busy = e.renderer().is_some_and(|r| r.models().pending() > 0 || r.textures().upgrades_pending() > 0);
-        if busy && elapsed < timeout {
-            return ok("").again();
-        }
+    c.add(
+        "wait_loaded",
+        "wait_loaded [timeout seconds]",
+        "script: wait until every model and texture the scene needs has loaded (reports how long that took)",
+        |e, a| {
+            let now = Instant::now();
+            let start = *e.wait_loaded_start.get_or_insert(now);
+            let timeout = a.first().map_or(60.0, |t| atof(t));
+            let elapsed = now.duration_since(start).as_secs_f64();
+            let busy = e.renderer().is_some_and(|r| r.models().pending() > 0 || r.textures().upgrades_pending() > 0);
+            if busy && elapsed < timeout {
+                return ok("").again();
+            }
 
-        e.wait_loaded_start = None;
-        ok(format!("{} after {elapsed:.2} s", if busy { "still loading" } else { "loaded" }))
-    });
+            e.wait_loaded_start = None;
+            ok(format!("{} after {elapsed:.2} s", if busy { "still loading" } else { "loaded" }))
+        },
+    );
 
     c.add(
         "gfx", "gfx <shadows|ssao|fog|clouds|lens_flare|vignette|depth_of_field|distortion|god_rays> on|off | gfx lod_scale <x> | gfx min_pixels <x> | gfx <shadow_quality|water_quality|sky_quality|effects_quality|building_quality|aa|texture_filtering> <level> | gfx view <final|hdr|albedo|normal|specular|depth|ao>",
@@ -222,8 +231,11 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("frame_cap", "frame_cap [fps | 0]", "the frame rate cap of interactive sessions (0: none), kept in the settings; no argument: log it", |e, a| {
-        match a.first() {
+    c.add(
+        "frame_cap",
+        "frame_cap [fps | 0]",
+        "the frame rate cap of interactive sessions (0: none), kept in the settings; no argument: log it",
+        |e, a| match a.first() {
             None => ok(format!("frame cap {}", e.frame_cap())),
             Some(v) => match v.parse::<u32>() {
                 Ok(fps) => {
@@ -233,17 +245,22 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
 
                 Err(_) => fail("usage: frame_cap [fps | 0]"),
             },
-        }
-    });
+        },
+    );
 
-    c.add("vsync", "vsync on|off", "present with or without waiting for the monitor (off: frame rate is the real cost of a frame)", |e, a| {
-        if a.len() != 1 {
-            return fail("usage: vsync on|off");
-        }
+    c.add(
+        "vsync",
+        "vsync on|off",
+        "present with or without waiting for the monitor (off: frame rate is the real cost of a frame)",
+        |e, a| {
+            if a.len() != 1 {
+                return fail("usage: vsync on|off");
+            }
 
-        e.vsync = a[0] != "off" && a[0] != "0";
-        ok(if e.vsync { "vsync on" } else { "vsync off" })
-    });
+            e.vsync = a[0] != "off" && a[0] != "0";
+            ok(if e.vsync { "vsync on" } else { "vsync off" })
+        },
+    );
 
     c.add("frames", "frames N", "script: wait N rendered frames", |_, a| match a.first().and_then(|x| parse_u64(x)) {
         Some(n) => ok("").wait(n.min(100_000) as i32),
@@ -270,7 +287,11 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     c.add("assert_tool", "assert_tool <id>", "test: the active tool is <id> (after a frame)", |e, a| {
         let Some(id) = a.first() else { return fail("usage: assert_tool <id>") };
         let active = e.active_tool_id();
-        if !active.is_empty() && active == id { ok("") } else { fail(format!("active tool is {}", if active.is_empty() { "none" } else { active })) }
+        if !active.is_empty() && active == id {
+            ok("")
+        } else {
+            fail(format!("active tool is {}", if active.is_empty() { "none" } else { active }))
+        }
     });
 
     // A tool has one document: opening another file in it closes the open one, which needs `save` or `discard` when it has unsaved changes.
@@ -291,44 +312,54 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("open_prompt", "open_prompt <path> [disk]", "what an open does in the menus: opens at once, or asks about the unsaved changes of the tool's document first", |e, a| {
-        let Some(path) = a.first() else { return fail("usage: open_prompt <path> [disk]") };
-        let packs = !(a.len() > 1 && a[1] == "disk");
-        let script = std::mem::replace(&mut e.in_script, false);
-        let r = e.open_path(path, packs, true);
-        e.in_script = script;
-        r.map_or_else(fail, ok)
-    });
+    c.add(
+        "open_prompt",
+        "open_prompt <path> [disk]",
+        "what an open does in the menus: opens at once, or asks about the unsaved changes of the tool's document first",
+        |e, a| {
+            let Some(path) = a.first() else { return fail("usage: open_prompt <path> [disk]") };
+            let packs = !(a.len() > 1 && a[1] == "disk");
+            let script = std::mem::replace(&mut e.in_script, false);
+            let r = e.open_path(path, packs, true);
+            e.in_script = script;
+            r.map_or_else(fail, ok)
+        },
+    );
 
     // Closing asks about unsaved changes (the menu opens a prompt; a script says what to do with them).
-    c.add("close", "close [document] [save|discard]", "close a document (default the active one); with unsaved changes it needs `save` or `discard`", |e, a| {
-        let mut how = "";
-        let mut spec = "";
-        for w in a {
-            if w == "save" || w == "discard" {
-                how = w;
-            } else {
-                spec = w;
-            }
-        }
-
-        let Some(id) = resolve_doc(e, spec) else { return fail("no document") };
-        let d = e.docs.find(id).expect("resolved");
-        if d.modified() {
-            if how.is_empty() {
-                return fail(format!("{} has unsaved changes: close save | close discard", d.title()));
+    c.add(
+        "close",
+        "close [document] [save|discard]",
+        "close a document (default the active one); with unsaved changes it needs `save` or `discard`",
+        |e, a| {
+            let mut how = "";
+            let mut spec = "";
+            for w in a {
+                if w == "save" || w == "discard" {
+                    how = w;
+                } else {
+                    spec = w;
+                }
             }
 
-            if how == "save"
-                && let Err(msg) = e.docs.save_one(id)
-            {
-                return fail(msg);
-            }
-        }
+            let Some(id) = resolve_doc(e, spec) else { return fail("no document") };
+            let d = e.docs.find(id).expect("resolved");
+            if d.modified() {
+                if how.is_empty() {
+                    return fail(format!("{} has unsaved changes: close save | close discard", d.title()));
+                }
 
-        e.close_document(id);
-        ok("")
-    });
+                if how == "save"
+                    && let Err(msg) = e.docs.save_one(id)
+                {
+                    return fail(msg);
+                }
+            }
+
+            e.close_document(id);
+            ok("")
+        },
+    );
 
     c.add("close_all", "close_all [save|discard]", "close every document; with unsaved changes it needs `save` or `discard`", |e, a| {
         let unsaved = e.docs.unsaved();
@@ -350,16 +381,26 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("close_prompt", "close_prompt [document]", "what File > Close document does: closes at once, or opens the unsaved-changes prompt", |e, a| {
-        let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
-        e.ask_close(id);
-        ok("")
-    });
+    c.add(
+        "close_prompt",
+        "close_prompt [document]",
+        "what File > Close document does: closes at once, or opens the unsaved-changes prompt",
+        |e, a| {
+            let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
+            e.ask_close(id);
+            ok("")
+        },
+    );
 
-    c.add("quit_prompt", "quit_prompt", "what File > Quit and the window's close button do: quits at once, or opens the unsaved-changes prompt", |e, _| {
-        e.ask_quit();
-        ok("")
-    });
+    c.add(
+        "quit_prompt",
+        "quit_prompt",
+        "what File > Quit and the window's close button do: quits at once, or opens the unsaved-changes prompt",
+        |e, _| {
+            e.ask_quit();
+            ok("")
+        },
+    );
 
     c.add("answer", "answer save|discard|cancel", "answer the unsaved-changes prompt", |e, a| {
         let answer = match a.first().map(String::as_str) {
@@ -373,8 +414,10 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "assert_prompt", "assert_prompt none|close|quit|replace [N]",
-        "test: the unsaved-changes prompt is closed / asking about closing / quitting / opening another file in a tool (about N documents)", |e, a| {
+        "assert_prompt",
+        "assert_prompt none|close|quit|replace [N]",
+        "test: the unsaved-changes prompt is closed / asking about closing / quitting / opening another file in a tool (about N documents)",
+        |e, a| {
             let Some(want) = a.first() else { return fail("usage: assert_prompt none|close|quit|replace [N]") };
             let want = match want.as_str() {
                 "close" => PromptKind::Close,
@@ -410,31 +453,45 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         if r.ok { fail(format!("'{name}' succeeded: {}", r.message)) } else { ok(r.message) }
     });
 
-    c.add("game_file", "game_file <path in the packs> <file> [--packs]", "test: write a game file as the editor reads it (a loose folder's copy first; --packs: as the packs have it) to a file on disk", |e, a| {
-        let (Some(path), Some(to)) = (a.first(), a.get(1)) else { return fail("usage: game_file <path in the packs> <file> [--packs]") };
-        let packs_only = a.iter().skip(2).any(|x| x == "--packs");
-        let Some(vfs) = e.vfs() else { return fail("the game packs are not mounted") };
-        let Some(&pack) = vfs.owners(path).iter().find(|&&i| !packs_only || !vfs.packs()[i].loose) else { return fail(format!("no pack or folder has {path}")) };
-        let bytes = match vfs.read_from(pack, path) {
-            Ok(b) => b,
-            Err(err) => return fail(err.to_string()),
-        };
+    c.add(
+        "game_file",
+        "game_file <path in the packs> <file> [--packs]",
+        "test: write a game file as the editor reads it (a loose folder's copy first; --packs: as the packs have it) to a file on disk",
+        |e, a| {
+            let (Some(path), Some(to)) = (a.first(), a.get(1)) else {
+                return fail("usage: game_file <path in the packs> <file> [--packs]");
+            };
+            let packs_only = a.iter().skip(2).any(|x| x == "--packs");
+            let Some(vfs) = e.vfs() else { return fail("the game packs are not mounted") };
+            let Some(&pack) = vfs.owners(path).iter().find(|&&i| !packs_only || !vfs.packs()[i].loose) else {
+                return fail(format!("no pack or folder has {path}"));
+            };
+            let bytes = match vfs.read_from(pack, path) {
+                Ok(b) => b,
+                Err(err) => return fail(err.to_string()),
+            };
 
-        let to = std::path::PathBuf::from(to);
-        if let Some(p) = to.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
+            let to = std::path::PathBuf::from(to);
+            if let Some(p) = to.parent() {
+                let _ = std::fs::create_dir_all(p);
+            }
 
-        std::fs::write(&to, bytes).map_or_else(|err| fail(format!("{}: {err}", to.display())), |()| ok(""))
-    });
+            std::fs::write(&to, bytes).map_or_else(|err| fail(format!("{}: {err}", to.display())), |()| ok(""))
+        },
+    );
 
     c.add("documents", "documents", "list the open documents (id, tool, kind, title, unsaved, visible)", |e, _| {
         let mut s = String::new();
         for &id in e.docs.order() {
             let Some(d) = e.docs.find(id) else { continue };
             s += &format!(
-                "{id}  {}  {}  {}{}{}{}{}\n", e.docs.tool_of(id), d.kind(), d.title(), if d.modified() { "  *" } else { "" },
-                if e.docs.visible(&e.scene, id) { "" } else { "  (hidden)" }, if id == e.docs.active_id() { "  <active>" } else { "" },
+                "{id}  {}  {}  {}{}{}{}{}\n",
+                e.docs.tool_of(id),
+                d.kind(),
+                d.title(),
+                if d.modified() { "  *" } else { "" },
+                if e.docs.visible(&e.scene, id) { "" } else { "  (hidden)" },
+                if id == e.docs.active_id() { "  <active>" } else { "" },
                 if Some(id) == e.weather_preview_document() { "  <weather preview>" } else { "" },
             );
         }
@@ -490,17 +547,31 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         r.map_or_else(fail, ok)
     });
 
-    c.add("save_as_start", "save_as_start [document]", "where File > Save as starts for a document (default the active one), and the folder its dialog opens", |e, a| {
-        let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
-        let start = e.save_as_start(id);
-        let (dir, name) = crate::steam_detect::dialog_start(&start);
-        ok(format!("{} (opens {}, name '{name}')", start.display(), dir.map_or_else(|| "nowhere in particular".to_owned(), |d| d.display().to_string())))
-    });
+    c.add(
+        "save_as_start",
+        "save_as_start [document]",
+        "where File > Save as starts for a document (default the active one), and the folder its dialog opens",
+        |e, a| {
+            let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
+            let start = e.save_as_start(id);
+            let (dir, name) = crate::steam_detect::dialog_start(&start);
+            ok(format!(
+                "{} (opens {}, name '{name}')",
+                start.display(),
+                dir.map_or_else(|| "nowhere in particular".to_owned(), |d| d.display().to_string())
+            ))
+        },
+    );
 
-    c.add("revert_to_game", "revert_to_game [document]", "delete the project's copy of a game file and open the packs' file in its place (unsaved changes are lost)", |e, a| {
-        let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
-        e.revert_to_game(id).map_or_else(fail, ok)
-    });
+    c.add(
+        "revert_to_game",
+        "revert_to_game [document]",
+        "delete the project's copy of a game file and open the packs' file in its place (unsaved changes are lost)",
+        |e, a| {
+            let Some(id) = resolve_doc(e, a.first().map_or("", String::as_str)) else { return fail("no document") };
+            e.revert_to_game(id).map_or_else(fail, ok)
+        },
+    );
 
     c.add("save_all", "save_all", "save every modified document", |e, _| {
         let mut msgs = vec![];
@@ -560,7 +631,8 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add("move", "move <item> dx dy dz", "move an item of the active document by a world-space offset (one undo entry)", |e, a| {
-        let parsed = (a.len() >= 4).then(|| Some((parse_u64(&a[0])?, parse_float(&a[1])?, parse_float(&a[2])?, parse_float(&a[3])?))).flatten();
+        let parsed =
+            (a.len() >= 4).then(|| Some((parse_u64(&a[0])?, parse_float(&a[1])?, parse_float(&a[2])?, parse_float(&a[3])?))).flatten();
         let (Some(d), Some((item, x, y, z))) = (e.docs.active_mut(), parsed) else { return fail("usage: move <item> dx dy dz") };
         thread_local!(static GESTURE: std::cell::Cell<u64> = const { std::cell::Cell::new(1 << 40) });
         let gesture = GESTURE.with(|g| {
@@ -587,13 +659,19 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "assert_history", "assert_history size position [document]", "test: the document's (default the active one's) undo stack has `size` entries, `position` applied",
+        "assert_history",
+        "assert_history size position [document]",
+        "test: the document's (default the active one's) undo stack has `size` entries, `position` applied",
         |e, a| {
             let want = (a.len() >= 2).then(|| Some((parse_u64(&a[0])?, parse_u64(&a[1])?))).flatten();
             let d = resolve_doc(e, a.get(2).map_or("", String::as_str)).and_then(|id| e.docs.find(id));
             let (Some(d), Some((s, p))) = (d, want) else { return fail("usage: assert_history size position [document]") };
             let h = d.history();
-            if h.size() as u64 == s && h.position() as u64 == p { ok("") } else { fail(format!("history is {}/{}", h.size(), h.position())) }
+            if h.size() as u64 == s && h.position() as u64 == p {
+                ok("")
+            } else {
+                fail(format!("history is {}/{}", h.size(), h.position()))
+            }
         },
     );
 
@@ -613,55 +691,73 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("cam_look", "cam_look <x> <y> <z> | cam_look eye_x eye_y eye_z target_x target_y target_z", "orbit camera: move its target (metres), keeping its angles and distance; or from an eye to a target", |e, a| {
-        let v: Vec<f32> = a.iter().filter_map(|x| parse_float(x)).collect();
-        if v.len() != a.len() || !(v.len() == 3 || v.len() == 6) {
-            return fail("usage: cam_look x y z | cam_look eye_x eye_y eye_z target_x target_y target_z");
-        }
+    c.add(
+        "cam_look",
+        "cam_look <x> <y> <z> | cam_look eye_x eye_y eye_z target_x target_y target_z",
+        "orbit camera: move its target (metres), keeping its angles and distance; or from an eye to a target",
+        |e, a| {
+            let v: Vec<f32> = a.iter().filter_map(|x| parse_float(x)).collect();
+            if v.len() != a.len() || !(v.len() == 3 || v.len() == 6) {
+                return fail("usage: cam_look x y z | cam_look eye_x eye_y eye_z target_x target_y target_z");
+            }
 
-        e.viewport.set_mode(CameraMode::Orbit);
-        if v.len() == 3 {
-            let cam = e.viewport.camera();
-            let d = Float3::new(v[0], v[1], v[2]) - cam.target;
-            e.viewport.controller().set_camera(&Camera { eye: cam.eye + d, target: cam.target + d, ..cam });
-        } else {
-            let cam = Camera { eye: Float3::new(v[0], v[1], v[2]), target: Float3::new(v[3], v[4], v[5]), ..e.viewport.camera() };
-            e.viewport.controller().set_camera(&cam);
-        }
+            e.viewport.set_mode(CameraMode::Orbit);
+            if v.len() == 3 {
+                let cam = e.viewport.camera();
+                let d = Float3::new(v[0], v[1], v[2]) - cam.target;
+                e.viewport.controller().set_camera(&Camera { eye: cam.eye + d, target: cam.target + d, ..cam });
+            } else {
+                let cam = Camera { eye: Float3::new(v[0], v[1], v[2]), target: Float3::new(v[3], v[4], v[5]), ..e.viewport.camera() };
+                e.viewport.controller().set_camera(&cam);
+            }
 
-        ok("")
-    });
+            ok("")
+        },
+    );
 
-    c.add("cam_info", "cam_info", "test: log the camera, the first selected item's position and the active document's history (for repro scripts)", |e, _| {
-        let c = e.viewport.camera();
-        let mut s = format!("camera eye {:.2} {:.2} {:.2} target {:.2} {:.2} {:.2}", c.eye.x, c.eye.y, c.eye.z, c.target.x, c.target.y, c.target.z);
-        if let Some((first, w)) = first_selected_transform(e) {
-            s += &format!("; item {} at {:.3} {:.3} {:.3}", first.item, w.m[0][3], w.m[1][3], w.m[2][3]);
-        }
+    c.add(
+        "cam_info",
+        "cam_info",
+        "test: log the camera, the first selected item's position and the active document's history (for repro scripts)",
+        |e, _| {
+            let c = e.viewport.camera();
+            let mut s = format!(
+                "camera eye {:.2} {:.2} {:.2} target {:.2} {:.2} {:.2}",
+                c.eye.x, c.eye.y, c.eye.z, c.target.x, c.target.y, c.target.z
+            );
+            if let Some((first, w)) = first_selected_transform(e) {
+                s += &format!("; item {} at {:.3} {:.3} {:.3}", first.item, w.m[0][3], w.m[1][3], w.m[2][3]);
+            }
 
-        if let Some(d) = e.docs.active() {
-            s += &format!("; history {}/{}", d.history().size(), d.history().position());
-        }
+            if let Some(d) = e.docs.active() {
+                s += &format!("; history {}/{}", d.history().size(), d.history().position());
+            }
 
-        ok(s)
-    });
+            ok(s)
+        },
+    );
 
     c.add("cam_mark", "cam_mark", "test: remember the camera (see assert_cam_same)", |e, _| {
         e.cam_mark = Some(e.viewport.camera());
         ok("")
     });
 
-    c.add("assert_cam_same", "assert_cam_same", "test: the camera is where cam_mark left it (a gizmo drag must not orbit the view)", |e, _| {
-        let c = e.viewport.camera();
-        match e.cam_mark {
-            Some(m) => {
-                let d = length(c.eye - m.eye) + length(c.target - m.target);
-                if d < 1e-4 { ok("") } else { fail(format!("the camera moved by {d:.6}")) }
-            }
+    c.add(
+        "assert_cam_same",
+        "assert_cam_same",
+        "test: the camera is where cam_mark left it (a gizmo drag must not orbit the view)",
+        |e, _| {
+            let c = e.viewport.camera();
+            match e.cam_mark {
+                Some(m) => {
+                    let d = length(c.eye - m.eye) + length(c.target - m.target);
+                    if d < 1e-4 { ok("") } else { fail(format!("the camera moved by {d:.6}")) }
+                }
 
-            None => fail("no cam_mark"),
-        }
-    });
+                None => fail("no cam_mark"),
+            }
+        },
+    );
 
     c.add("assert_cam_moved", "assert_cam_moved", "test: the camera is not where cam_mark left it", |e, _| {
         let c = e.viewport.camera();
@@ -671,61 +767,82 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         }
     });
 
-    c.add("camera", "camera total_war|top_down|walk|fly|orbit | ground|collisions|limits|edge on|off | smoothing <0..1> | clearance <m>", "the viewport camera's mode and options", |e, a| {
-        const USAGE: &str = "usage: camera total_war|top_down|walk|fly|orbit | ground|collisions|limits|edge on|off | smoothing <0..1> | clearance <m>";
-        let Some(which) = a.first() else { return fail(USAGE) };
-        if let Some(mode) = CameraMode::from_key(which) {
-            e.viewport.set_mode(mode);
-            return ok("");
-        }
+    c.add(
+        "camera",
+        "camera total_war|top_down|walk|fly|orbit | ground|collisions|limits|edge on|off | smoothing <0..1> | clearance <m>",
+        "the viewport camera's mode and options",
+        |e, a| {
+            const USAGE: &str =
+                "usage: camera total_war|top_down|walk|fly|orbit | ground|collisions|limits|edge on|off | smoothing <0..1> | clearance <m>";
+            let Some(which) = a.first() else { return fail(USAGE) };
+            if let Some(mode) = CameraMode::from_key(which) {
+                e.viewport.set_mode(mode);
+                return ok("");
+            }
 
-        let on = match a.get(1).map(String::as_str) {
-            Some("on") => Some(true),
-            Some("off") => Some(false),
-            _ => None,
-        };
+            let on = match a.get(1).map(String::as_str) {
+                Some("on") => Some(true),
+                Some("off") => Some(false),
+                _ => None,
+            };
 
-        let value = a.get(1).and_then(|x| parse_float(x));
-        let o = &mut e.viewport.camera_options;
-        match (which.as_str(), on, value) {
-            ("ground", Some(v), _) => o.respect_ground = v,
-            ("collisions", Some(v), _) => o.respect_collisions = v,
-            ("limits", Some(v), _) => o.game_limits = v,
-            ("edge", Some(v), _) => e.viewport.edge_scroll = v,
-            ("smoothing", _, Some(v)) => o.smoothing = v.clamp(0.0, 1.0),
-            ("clearance", _, Some(v)) => o.ground_clearance = v.max(0.0),
-            _ => return fail(USAGE),
-        }
+            let value = a.get(1).and_then(|x| parse_float(x));
+            let o = &mut e.viewport.camera_options;
+            match (which.as_str(), on, value) {
+                ("ground", Some(v), _) => o.respect_ground = v,
+                ("collisions", Some(v), _) => o.respect_collisions = v,
+                ("limits", Some(v), _) => o.game_limits = v,
+                ("edge", Some(v), _) => e.viewport.edge_scroll = v,
+                ("smoothing", _, Some(v)) => o.smoothing = v.clamp(0.0, 1.0),
+                ("clearance", _, Some(v)) => o.ground_clearance = v.max(0.0),
+                _ => return fail(USAGE),
+            }
 
-        e.sync_camera_settings();
-        ok("")
-    });
+            e.sync_camera_settings();
+            ok("")
+        },
+    );
 
-    c.add("coordinates", "coordinates global|local", "the coordinate system of the gizmo and the Inspector (the toolbar's Global / Local): the world's, or the selected item's parent's", |e, a| {
-        match a.first().map(String::as_str) {
-            Some("global") => e.viewport.local_coordinates = false,
-            Some("local") => e.viewport.local_coordinates = true,
-            _ => return fail("usage: coordinates global|local"),
-        }
+    c.add(
+        "coordinates",
+        "coordinates global|local",
+        "the coordinate system of the gizmo and the Inspector (the toolbar's Global / Local): the world's, or the selected item's parent's",
+        |e, a| {
+            match a.first().map(String::as_str) {
+                Some("global") => e.viewport.local_coordinates = false,
+                Some("local") => e.viewport.local_coordinates = true,
+                _ => return fail("usage: coordinates global|local"),
+            }
 
-        ok("")
-    });
+            ok("")
+        },
+    );
 
-    c.add("view_mode", "view_mode editor|game", "the viewport's view: the editor's (markers, polygons, gizmo) or the game's (as the game shows the scene)", |e, a| {
-        match a.first().map(String::as_str) {
-            Some("editor") => e.viewport.game_view = false,
-            Some("game") => e.viewport.game_view = true,
-            _ => return fail("usage: view_mode editor|game"),
-        }
+    c.add(
+        "view_mode",
+        "view_mode editor|game",
+        "the viewport's view: the editor's (markers, polygons, gizmo) or the game's (as the game shows the scene)",
+        |e, a| {
+            match a.first().map(String::as_str) {
+                Some("editor") => e.viewport.game_view = false,
+                Some("game") => e.viewport.game_view = true,
+                _ => return fail("usage: view_mode editor|game"),
+            }
 
-        ok("")
-    });
+            ok("")
+        },
+    );
 
-    c.add("view_fog", "view_fog <0..1>", "the editor view's fog: the share of the weather's fog it draws (1: as the game does; the game view always has it)", |e, a| {
-        let Some(k) = a.first().and_then(|v| v.parse::<f32>().ok()) else { return fail("usage: view_fog <0..1>") };
-        e.viewport.fog = k.clamp(0.0, 1.0);
-        ok(format!("editor view fog {:.2}", e.viewport.fog))
-    });
+    c.add(
+        "view_fog",
+        "view_fog <0..1>",
+        "the editor view's fog: the share of the weather's fog it draws (1: as the game does; the game view always has it)",
+        |e, a| {
+            let Some(k) = a.first().and_then(|v| v.parse::<f32>().ok()) else { return fail("usage: view_fog <0..1>") };
+            e.viewport.fog = k.clamp(0.0, 1.0);
+            ok(format!("editor view fog {:.2}", e.viewport.fog))
+        },
+    );
 
     c.add("focus", "focus", "frame the selection in the viewport", |e, _| {
         viewport::focus_selection(e);
@@ -744,8 +861,11 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("gizmo_size", "gizmo_size [points]", "the gizmo's handles' length on screen, in points (kept in the settings); no argument: log it", |e, a| {
-        match a.first() {
+    c.add(
+        "gizmo_size",
+        "gizmo_size [points]",
+        "the gizmo's handles' length on screen, in points (kept in the settings); no argument: log it",
+        |e, a| match a.first() {
             None => ok(format!("{} points", e.settings_ref().appearance.gizmo_size)),
             Some(x) => match x.parse::<f32>() {
                 Ok(v) if v > 0.0 => {
@@ -755,48 +875,64 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
 
                 _ => fail("usage: gizmo_size [points]"),
             },
-        }
-    });
+        },
+    );
 
     c.add("grid", "grid on|off", "viewport grid", |e, a| {
         e.viewport.show_grid = a.first().is_some_and(|x| x == "on");
         ok("")
     });
 
-    c.add("compass", "compass [on|off]", "the compass at the top of the viewport; no argument: log the camera's heading (degrees from north, east 90)", |e, a| {
-        match a.first().map(String::as_str) {
+    c.add(
+        "compass",
+        "compass [on|off]",
+        "the compass at the top of the viewport; no argument: log the camera's heading (degrees from north, east 90)",
+        |e, a| match a.first().map(String::as_str) {
             Some("on") | Some("off") => {
                 e.viewport.show_compass = a[0] == "on";
                 ok("")
             }
 
             Some(_) => fail("usage: compass [on|off]"),
-            None => ok(crate::viewport::heading(&e.viewport.camera(), e.viewport.north).map_or("looking straight down".to_owned(), |h| format!("heading {h:.1}"))),
-        }
-    });
+            None => ok(crate::viewport::heading(&e.viewport.camera(), e.viewport.north)
+                .map_or("looking straight down".to_owned(), |h| format!("heading {h:.1}"))),
+        },
+    );
 
-    c.add("cb", "cb <buffer> [variable]", "log a game constant buffer's variables as the last frame set them (floats; the values scripts/re/dump_cbs.py reads from the game)", |e, a| {
-        let Some(name) = a.first() else { return fail("usage: cb <buffer> [variable]") };
-        let Some(r) = e.renderer() else { return fail("no renderer") };
-        let Some(b) = r.constant_buffers().buffers().find(|b| &b.name == name) else { return fail(format!("no constant buffer {name}")) };
-        let mut lines = vec![];
-        for (var, v) in &b.vars {
-            if a.get(1).is_some_and(|w| w != var) {
-                continue;
+    c.add(
+        "cb",
+        "cb <buffer> [variable]",
+        "log a game constant buffer's variables as the last frame set them (floats; the values scripts/re/dump_cbs.py reads from the game)",
+        |e, a| {
+            let Some(name) = a.first() else { return fail("usage: cb <buffer> [variable]") };
+            let Some(r) = e.renderer() else { return fail("no renderer") };
+            let Some(b) = r.constant_buffers().buffers().find(|b| &b.name == name) else {
+                return fail(format!("no constant buffer {name}"));
+            };
+            let mut lines = vec![];
+            for (var, v) in &b.vars {
+                if a.get(1).is_some_and(|w| w != var) {
+                    continue;
+                }
+
+                let bytes = &b.cpu[(v.offset as usize).min(b.cpu.len())..((v.offset + v.size) as usize).min(b.cpu.len())];
+                let vals = bytes.chunks_exact(4).map(|c| format!("{}", f32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect::<Vec<_>>();
+                lines.push(format!("{name}.{var} {}", vals.join(" ")));
             }
 
-            let bytes = &b.cpu[(v.offset as usize).min(b.cpu.len())..((v.offset + v.size) as usize).min(b.cpu.len())];
-            let vals = bytes.chunks_exact(4).map(|c| format!("{}", f32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect::<Vec<_>>();
-            lines.push(format!("{name}.{var} {}", vals.join(" ")));
-        }
+            ok(lines.join("\n"))
+        },
+    );
 
-        ok(lines.join("\n"))
-    });
-
-    c.add("luma", "luma", "log the auto exposure's black and white points as the GPU last computed them (the game's: its 1x1 points target)", |e, _| {
-        let Some(r) = e.renderer() else { return fail("no renderer") };
-        ok(format!("luma black {} white {}", r.luma_black(), r.luma_white()))
-    });
+    c.add(
+        "luma",
+        "luma",
+        "log the auto exposure's black and white points as the GPU last computed them (the game's: its 1x1 points target)",
+        |e, _| {
+            let Some(r) = e.renderer() else { return fail("no renderer") };
+            ok(format!("luma black {} white {}", r.luma_black(), r.luma_white()))
+        },
+    );
 
     c.add("where", "where [x y | on | off]", "the camera's and the cursor's coordinates (scene and game units; map cell and height above the sea in a map context); x y: the ground under that pixel of the viewport image (or 50%); on / off: the readout in the viewport", |e, a| {
         match a.first().map(String::as_str) {
@@ -823,11 +959,16 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok(e.viewport.coords_lines(&e.scene).join("\n"))
     });
 
-    c.add("window_focus", "window_focus <window>", "bring a window to the front (a docked one: its tab is selected), by its title", |e, a| {
-        let Some(name) = a.first() else { return fail("usage: window_focus <window>") };
-        e.pending_focus = Some(name.clone());
-        ok("")
-    });
+    c.add(
+        "window_focus",
+        "window_focus <window>",
+        "bring a window to the front (a docked one: its tab is selected), by its title",
+        |e, a| {
+            let Some(name) = a.first() else { return fail("usage: window_focus <window>") };
+            e.pending_focus = Some(name.clone());
+            ok("")
+        },
+    );
 
     c.add("panel", "panel <name> on|off", "show or hide a panel (viewport inspector assets log history commands)", |e, a| {
         if a.len() < 2 {
@@ -891,7 +1032,9 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         }
 
         let id = viewport::pick(e, atoi(&a[0]), atoi(&a[1]));
-        ok(e.scene.find(id).map_or_else(|| "nothing".to_owned(), |ent| format!("entity {id} doc {} item {}", ent.source.doc, ent.source.item)))
+        ok(e.scene
+            .find(id)
+            .map_or_else(|| "nothing".to_owned(), |ent| format!("entity {id} doc {} item {}", ent.source.doc, ent.source.item)))
     });
 
     c.add("click", "click x y [ctrl]", "select what is under a viewport pixel, as a click would", |e, a| {
@@ -921,18 +1064,27 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("click_item", "click_item <item> [ctrl]", "click the viewport pixel where an item of the active document is (its pivot), as the mouse would", |e, a| {
-        let world = e.docs.active().zip(a.first().and_then(|x| parse_u64(x))).and_then(|(d, item)| d.item_transform(SourceRef { doc: d.id(), item }));
-        let Some(world) = world else { return fail("usage: click_item <item> [ctrl] (the item needs a transform)") };
-        let vp = &e.viewport;
-        let p = Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]);
-        let Some((px, py)) = vp.target().valid().then(|| Renderer::project(&vp.camera(), vp.width(), vp.height(), p)).flatten() else {
-            return fail("the item is not in view");
-        };
+    c.add(
+        "click_item",
+        "click_item <item> [ctrl]",
+        "click the viewport pixel where an item of the active document is (its pivot), as the mouse would",
+        |e, a| {
+            let world = e
+                .docs
+                .active()
+                .zip(a.first().and_then(|x| parse_u64(x)))
+                .and_then(|(d, item)| d.item_transform(SourceRef { doc: d.id(), item }));
+            let Some(world) = world else { return fail("usage: click_item <item> [ctrl] (the item needs a transform)") };
+            let vp = &e.viewport;
+            let p = Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]);
+            let Some((px, py)) = vp.target().valid().then(|| Renderer::project(&vp.camera(), vp.width(), vp.height(), p)).flatten() else {
+                return fail("the item is not in view");
+            };
 
-        let args = [(px as i32).to_string(), (py as i32).to_string(), a.get(1).cloned().unwrap_or_default()];
-        CommandRegistry::run_args(e, "click", &args)
-    });
+            let args = [(px as i32).to_string(), (py as i32).to_string(), a.get(1).cloned().unwrap_or_default()];
+            CommandRegistry::run_args(e, "click", &args)
+        },
+    );
 
     c.add(
         "gizmo_drag", "gizmo_drag <x|y|z> <pixels> [steps]",
@@ -984,18 +1136,25 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("assert_selected_item", "assert_selected_item <item>", "test: the first selected item of the active document is <item>", |e, a| {
-        let Some(item) = a.first().and_then(|x| parse_u64(x)) else { return fail("usage: assert_selected_item <item>") };
-        match e.selection.items().first() {
-            None => fail("nothing is selected"),
-            Some(s) if s.item == item => ok(""),
-            Some(s) => fail(format!("selected item is {}", s.item)),
-        }
-    });
+    c.add(
+        "assert_selected_item",
+        "assert_selected_item <item>",
+        "test: the first selected item of the active document is <item>",
+        |e, a| {
+            let Some(item) = a.first().and_then(|x| parse_u64(x)) else { return fail("usage: assert_selected_item <item>") };
+            match e.selection.items().first() {
+                None => fail("nothing is selected"),
+                Some(s) if s.item == item => ok(""),
+                Some(s) => fail(format!("selected item is {}", s.item)),
+            }
+        },
+    );
 
     c.add(
-        "mouse", "mouse move x y | click x y [left|right|middle] | drag x0 y0 x1 y1 [steps] [button] | wheel n | off",
-        "drive the viewport with a scripted mouse (pixels of the viewport image), as the real one would; every step takes a rendered frame", mouse,
+        "mouse",
+        "mouse move x y | click x y [left|right|middle] | drag x0 y0 x1 y1 [steps] [button] | wheel n | off",
+        "drive the viewport with a scripted mouse (pixels of the viewport image), as the real one would; every step takes a rendered frame",
+        mouse,
     );
 
     c.add(
@@ -1030,16 +1189,25 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("assert_shortcut_clashes", "assert_shortcut_clashes <n>", "test: the Settings window's copy (else the settings) has n shortcut clashes", |e, a| {
-        let Some(n) = a.first().and_then(|n| n.parse::<usize>().ok()) else { return fail("usage: assert_shortcut_clashes <n>") };
-        let table = e.settings_window.draft.as_ref().map_or_else(|| e.settings_ref().shortcuts.clone(), |d| d.shortcuts.clone());
-        let found = crate::shortcuts::clashes(&table);
-        if found.len() == n {
-            ok("")
-        } else {
-            fail(format!("{} clashes: {}", found.len(), found.iter().map(|(x, y, k)| format!("{} / {} ({})", x.id, y.id, k.text())).collect::<Vec<_>>().join(", ")))
-        }
-    });
+    c.add(
+        "assert_shortcut_clashes",
+        "assert_shortcut_clashes <n>",
+        "test: the Settings window's copy (else the settings) has n shortcut clashes",
+        |e, a| {
+            let Some(n) = a.first().and_then(|n| n.parse::<usize>().ok()) else { return fail("usage: assert_shortcut_clashes <n>") };
+            let table = e.settings_window.draft.as_ref().map_or_else(|| e.settings_ref().shortcuts.clone(), |d| d.shortcuts.clone());
+            let found = crate::shortcuts::clashes(&table);
+            if found.len() == n {
+                ok("")
+            } else {
+                fail(format!(
+                    "{} clashes: {}",
+                    found.len(),
+                    found.iter().map(|(x, y, k)| format!("{} / {} ({})", x.id, y.id, k.text())).collect::<Vec<_>>().join(", ")
+                ))
+            }
+        },
+    );
 
     c.add("type", "type <text>", "type text into the focused text field, as the keyboard would", |_, a| {
         let Some(text) = a.first() else { return fail("usage: type <text>") };
@@ -1048,7 +1216,10 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "key", "key [Ctrl+][Shift+][Alt+]<A-Z|0-9|F1-F12|Delete|Escape|Enter|Space|Tab|Up|Down|PageUp|PageDown>", "press a key combination (held for two frames), as the keyboard would", |e, a| {
+        "key",
+        "key [Ctrl+][Shift+][Alt+]<A-Z|0-9|F1-F12|Delete|Escape|Enter|Space|Tab|Up|Down|PageUp|PageDown>",
+        "press a key combination (held for two frames), as the keyboard would",
+        |e, a| {
             let Some(combo) = a.first() else { return fail("usage: key Ctrl+1") };
             let mut rest = combo.as_str();
             let mut mods = vec![];
@@ -1111,14 +1282,19 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("gui_open_header", "gui_open_header <label>", "open a panel's collapsing header (its label, words joined by spaces) the next time it is drawn: for captures of its sections", |_, a| {
-        if a.is_empty() {
-            return fail("usage: gui_open_header <label>");
-        }
+    c.add(
+        "gui_open_header",
+        "gui_open_header <label>",
+        "open a panel's collapsing header (its label, words joined by spaces) the next time it is drawn: for captures of its sections",
+        |_, a| {
+            if a.is_empty() {
+                return fail("usage: gui_open_header <label>");
+            }
 
-        gui::open_header(&a.join(" "));
-        ok("")
-    });
+            gui::open_header(&a.join(" "));
+            ok("")
+        },
+    );
 
     c.add("show_panel", "show_panel <name>", "show a panel and bring it to the front of its tab group", |e, a| {
         let Some(name) = a.first() else { return fail("usage: show_panel <viewport|inspector|assets|log|history|commands>") };
@@ -1165,15 +1341,25 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     },
     );
 
-    c.add("check_updates", "check_updates", "Help > Update Manager: looks for a newer release and newer rpfm schemas on GitHub and shows the Update Manager", |e, _| {
-        e.check_for_updates(true);
-        ok("")
-    });
+    c.add(
+        "check_updates",
+        "check_updates",
+        "Help > Update Manager: looks for a newer release and newer rpfm schemas on GitHub and shows the Update Manager",
+        |e, _| {
+            e.check_for_updates(true);
+            ok("")
+        },
+    );
 
-    c.add("setup", "setup <game folder>", "what the first-run dialog's button does: store the game folder in the settings and mount", |e, a| {
-        let Some(dir) = a.first() else { return fail("usage: setup <game folder>") };
-        e.setup(dir).map_or_else(fail, ok)
-    });
+    c.add(
+        "setup",
+        "setup <game folder>",
+        "what the first-run dialog's button does: store the game folder in the settings and mount",
+        |e, a| {
+            let Some(dir) = a.first() else { return fail("usage: setup <game folder>") };
+            e.setup(dir).map_or_else(fail, ok)
+        },
+    );
 
     c.add("game", "game [key]", "switch to another game (the toolbar's game combo: the documents close, asking about unsaved ones); no key: the current game and the others", |e, a| {
         let Some(key) = a.first() else {

@@ -130,7 +130,17 @@ pub fn shown_placed(placed: &Arc<PlacedMap>, roads: Option<&wce_terrain_io::atti
 
 fn choices_of(attr: &str) -> &'static [&'static str] {
     match attr {
-        "catchment_type" => &["land_normal", "land_ambush", "land_bridge", "coastal_battle", "naval_normal", "settlement_standard", "settlement_unfortified", "port_assault", "unfortified_port"],
+        "catchment_type" => &[
+            "land_normal",
+            "land_ambush",
+            "land_bridge",
+            "coastal_battle",
+            "naval_normal",
+            "settlement_standard",
+            "settlement_unfortified",
+            "port_assault",
+            "unfortified_port",
+        ],
         "deployment_category" => &["DZC_RIVER", "DZC_COAST"],
         "deployment_type" => &["DZT_1V1"],
         "region_type" => &["DZRT_ADDITIVE", "DZRT_SUBTRACTIVE"],
@@ -139,9 +149,31 @@ fn choices_of(attr: &str) -> &'static [&'static str] {
 }
 
 impl MapDocument {
-    pub fn new(name: String, source: MapSource, model: Option<MapModel>, placed: Arc<PlacedMap>, locations: Option<BattleLocations>, db: Arc<TileDatabase>) -> Self {
-        Self { core: DocumentCore::new(), history: CommandStack::new(model), name, source, placed, locations, db, save_dir: None, message: None, cells: Arc::default(), fill_messages: vec![],
-            terry_revision: Arc::default(), terry_frame: TerryFrame::BATTLE, gesture: None, view_roads: None, roads_at_start: true,
+    pub fn new(
+        name: String,
+        source: MapSource,
+        model: Option<MapModel>,
+        placed: Arc<PlacedMap>,
+        locations: Option<BattleLocations>,
+        db: Arc<TileDatabase>,
+    ) -> Self {
+        Self {
+            core: DocumentCore::new(),
+            history: CommandStack::new(model),
+            name,
+            source,
+            placed,
+            locations,
+            db,
+            save_dir: None,
+            message: None,
+            cells: Arc::default(),
+            fill_messages: vec![],
+            terry_revision: Arc::default(),
+            terry_frame: TerryFrame::BATTLE,
+            gesture: None,
+            view_roads: None,
+            roads_at_start: true,
         }
     }
 
@@ -313,9 +345,14 @@ impl Document for MapDocument {
     /// The map's folder into the projects' kit layout: the files made again from the model where they were edited (the others as they
     /// were: copied the first time, then left when the folder has them at the same size).
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
-        let dir = if target.path.as_os_str().is_empty() { self.save_dir.clone().ok_or("no projects folder to save into")? } else { target.path.clone() };
+        let dir = if target.path.as_os_str().is_empty() {
+            self.save_dir.clone().ok_or("no projects folder to save into")?
+        } else {
+            target.path.clone()
+        };
         let model = self.model().ok_or("a map of the game's packs is read-only")?;
-        let files = if model.built { wce_terrain_io::built::write(model, Some(&self.db)) } else { wce_terrain_io::attila::write(model) }.map_err(|e| e.to_string())?;
+        let files = if model.built { wce_terrain_io::built::write(model, Some(&self.db)) } else { wce_terrain_io::attila::write(model) }
+            .map_err(|e| e.to_string())?;
         let (mut written, mut kept) = (0, 0);
         for (rel, blob) in &files.folder {
             let to = dir.join(rel);
@@ -459,11 +496,22 @@ impl Document for MapDocument {
                 key = (key ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
             }
 
-            let edits = ents.iter().filter_map(|e| {
-                let c = p.component(e, &component)?;
-                let before = p.doc.get(c, &attr)?;
-                Some(TerryAttrCommand { id: e.id, component: component.clone(), attr: attr.clone(), before, after: after.clone(), key: 0, revision: revision.clone() })
-            }).collect();
+            let edits = ents
+                .iter()
+                .filter_map(|e| {
+                    let c = p.component(e, &component)?;
+                    let before = p.doc.get(c, &attr)?;
+                    Some(TerryAttrCommand {
+                        id: e.id,
+                        component: component.clone(),
+                        attr: attr.clone(),
+                        before,
+                        after: after.clone(),
+                        key: 0,
+                        revision: revision.clone(),
+                    })
+                })
+                .collect();
             self.push_terry(Box::new(TerryAttrsCommand { edits, key: key | 1 }));
         }
 
@@ -492,7 +540,15 @@ impl Document for MapDocument {
         ins.section(&format!("{} ({})", e.name, p.kind(&e).name()));
         let mut name = e.name.clone();
         if ins.edit_string("name", "name", &mut name) {
-            edits.push(TerryAttrCommand { id: e.id, component: String::new(), attr: "name".to_owned(), before: e.name.clone(), after: name, key: key_of("", "name"), revision: revision.clone() });
+            edits.push(TerryAttrCommand {
+                id: e.id,
+                component: String::new(),
+                attr: "name".to_owned(),
+                before: e.name.clone(),
+                after: name,
+                key: key_of("", "name"),
+                revision: revision.clone(),
+            });
         }
 
         ins.text("id", "id", &format!("{:x}", e.id));
@@ -500,10 +556,21 @@ impl Document for MapDocument {
         ins.text("world", "on the map (m)", &format!("{:.1}, {:.1}, {:.1}", w[0], w[1], w[2]));
         for (cname, c) in &e.components {
             ins.section(cname);
-            let attrs: Vec<(String, String)> = p.doc.elements()[*c].attrs.iter().map(|a| (a.name.clone(), p.doc.get(*c, &a.name).unwrap_or_default())).collect();
+            let attrs: Vec<(String, String)> =
+                p.doc.elements()[*c].attrs.iter().map(|a| (a.name.clone(), p.doc.get(*c, &a.name).unwrap_or_default())).collect();
             for (a, v) in attrs {
                 let field = format!("{cname}.{a}");
-                let mut push = |after: String| edits.push(TerryAttrCommand { id: e.id, component: cname.clone(), attr: a.clone(), before: v.clone(), after, key: key_of(cname, &a), revision: revision.clone() });
+                let mut push = |after: String| {
+                    edits.push(TerryAttrCommand {
+                        id: e.id,
+                        component: cname.clone(),
+                        attr: a.clone(),
+                        before: v.clone(),
+                        after,
+                        key: key_of(cname, &a),
+                        revision: revision.clone(),
+                    })
+                };
                 let nums: Vec<f64> = v.split_whitespace().filter_map(|t| t.parse().ok()).collect();
                 let all_numbers = !v.is_empty() && nums.len() == v.split_whitespace().count();
                 if v == "true" || v == "false" {
@@ -570,7 +637,10 @@ impl Document for MapDocument {
         let u = self.terry_frame.unit;
         let d = [f64::from(delta.m[0][3]) * u, f64::from(delta.m[1][3]) * u, f64::from(delta.m[2][3]) * u];
         if self.gesture.as_ref().is_none_or(|g| g.0 != gesture) {
-            let starts = self.project().map(|p| items.iter().filter_map(|i| Some((i.item, p.local_position(p.entity(i.item)?)?))).collect()).unwrap_or_default();
+            let starts = self
+                .project()
+                .map(|p| items.iter().filter_map(|i| Some((i.item, p.local_position(p.entity(i.item)?)?))).collect())
+                .unwrap_or_default();
             self.gesture = Some((gesture, starts, [0.0; 3]));
         }
 
@@ -597,7 +667,15 @@ impl Document for MapDocument {
             let before = p.doc.get(t, "position").unwrap_or_default();
             let after = l.iter().map(|&v| wce_terrain::terry::number_text(v)).collect::<Vec<_>>().join(" ");
             if after != before {
-                cmds.push(TerryAttrCommand { id, component: "ECTransform".to_owned(), attr: "position".to_owned(), before, after, key: gesture ^ id.rotate_left(17) | 1, revision: self.terry_revision.clone() });
+                cmds.push(TerryAttrCommand {
+                    id,
+                    component: "ECTransform".to_owned(),
+                    attr: "position".to_owned(),
+                    before,
+                    after,
+                    key: gesture ^ id.rotate_left(17) | 1,
+                    revision: self.terry_revision.clone(),
+                });
             }
         }
 

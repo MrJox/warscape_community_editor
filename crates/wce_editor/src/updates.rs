@@ -25,12 +25,18 @@ enum State {
     Idle,
 
     /// Asking GitHub.
-    Checking { rx: Receiver<Result<Option<Release>, String>> },
+    Checking {
+        rx: Receiver<Result<Option<Release>, String>>,
+    },
     Available(Release),
     UpToDate,
 
     /// Downloading, then installing.
-    Downloading { release: Release, progress: Arc<Progress>, rx: Receiver<Result<(), String>> },
+    Downloading {
+        release: Release,
+        progress: Arc<Progress>,
+        rx: Receiver<Result<(), String>>,
+    },
     Installed(Release),
     Failed(String),
 }
@@ -42,13 +48,19 @@ enum SchemaState {
     Idle,
 
     /// Asking GitHub for the repository's newest commit.
-    Checking { rx: Receiver<Result<String, String>> },
+    Checking {
+        rx: Receiver<Result<String, String>>,
+    },
 
     /// The newest commit is known.
     Known(String),
 
     /// Downloading the schemas of a commit (the progress counts files).
-    Downloading { commit: String, progress: Arc<Progress>, rx: Receiver<Result<usize, String>> },
+    Downloading {
+        commit: String,
+        progress: Arc<Progress>,
+        rx: Receiver<Result<usize, String>>,
+    },
 
     /// Downloaded: the commit, the files written.
     Done(String, usize),
@@ -72,7 +84,8 @@ pub(crate) struct Updates {
 
 impl Updates {
     fn busy(&self) -> bool {
-        matches!(self.state, State::Checking { .. } | State::Downloading { .. }) || matches!(self.schemas, SchemaState::Checking { .. } | SchemaState::Downloading { .. })
+        matches!(self.state, State::Checking { .. } | State::Downloading { .. })
+            || matches!(self.schemas, SchemaState::Checking { .. } | SchemaState::Downloading { .. })
     }
 }
 
@@ -113,7 +126,8 @@ fn schema_in_use(game: &GameProfile) -> SchemaInUse {
     let own = downloaded_schemas_dir();
     let dir = path.as_deref().and_then(Path::parent);
     let commit = dir.and_then(schemas::installed);
-    let from_settings = path.is_some() && (std::env::var_os("WCE_RPFM_SCHEMA").is_some() || dir.is_some_and(|d| db_schemas_dir().as_deref() == Some(d)));
+    let from_settings =
+        path.is_some() && (std::env::var_os("WCE_RPFM_SCHEMA").is_some() || dir.is_some_and(|d| db_schemas_dir().as_deref() == Some(d)));
     SchemaInUse { overridden: from_settings && dir != own.as_deref(), path, commit }
 }
 
@@ -496,12 +510,19 @@ impl Editor {
 
             None => gui::text_colored(
                 theme::warning(),
-                &format!("{}  No {} schema ({}): the buildings' data, the weather's climate phases and the procedural walls need it. Download the schemas.", icons::TRIANGLE_ALERT, game.display_name, game.rpfm_schema),
+                &format!(
+                    "{}  No {} schema ({}): the buildings' data, the weather's climate phases and the procedural walls need it. Download the schemas.",
+                    icons::TRIANGLE_ALERT,
+                    game.display_name,
+                    game.rpfm_schema
+                ),
             ),
         }
 
         if used.overridden {
-            gui::text_disabled("The schema in use comes from Settings > General > DB schemas (or $WCE_RPFM_SCHEMA): a download goes to the editor's own folder, read only for the games missing there.");
+            gui::text_disabled(
+                "The schema in use comes from Settings > General > DB schemas (or $WCE_RPFM_SCHEMA): a download goes to the editor's own folder, read only for the games missing there.",
+            );
         }
 
         let mut download = None;
@@ -517,13 +538,21 @@ impl Editor {
                     gui::text(&format!("These are the newest schemas ({}).", schemas::short(&latest)));
                 } else {
                     gui::text(&format!("The newest schemas are {}.", schemas::short(&latest)));
-                    if gui::button(&format!("{}  {}", icons::DOWNLOAD, if used.path.is_some() { "Update the schemas" } else { "Download the schemas" })) {
+                    if gui::button(&format!(
+                        "{}  {}",
+                        icons::DOWNLOAD,
+                        if used.path.is_some() { "Update the schemas" } else { "Download the schemas" }
+                    )) {
                         download = Some(latest.clone());
                     }
 
                     if gui::is_item_hovered() {
                         let dir = downloaded_schemas_dir().map_or_else(String::new, |d| d.display().to_string());
-                        gui::set_tooltip(&format!("Every supported game's schema ({}), from github.com/{}, into {dir}", schema_files().join(", "), schemas::REPO));
+                        gui::set_tooltip(&format!(
+                            "Every supported game's schema ({}), from github.com/{}, into {dir}",
+                            schema_files().join(", "),
+                            schemas::REPO
+                        ));
                     }
                 }
 

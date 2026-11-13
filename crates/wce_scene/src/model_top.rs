@@ -24,7 +24,6 @@ pub struct ModelTop {
 }
 
 impl ModelTop {
-
     /// From triangles (three points each, model space). `None` when there are none.
     pub fn from_triangles(tris: &[[Float3; 3]]) -> Option<Self> {
         let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);

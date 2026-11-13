@@ -3,7 +3,10 @@
 
 use std::any::Any;
 
-use wce_editor_core::camera_controller::{CameraController, CameraInput, CameraOptions, CameraWorld, FlyCamera, GAME_MAX_HEIGHT, NoWorld, OrbitCamera, TopDownCamera, TotalWarCamera, WalkCamera};
+use wce_editor_core::camera_controller::{
+    CameraController, CameraInput, CameraOptions, CameraWorld, FlyCamera, GAME_MAX_HEIGHT, NoWorld, OrbitCamera, TopDownCamera,
+    TotalWarCamera, WalkCamera,
+};
 use wce_editor_core::command::{Command, CommandStack, History};
 use wce_editor_core::command_registry::{CommandHost, CommandRegistry, CommandResult, ScriptRunner};
 use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
@@ -11,8 +14,8 @@ use wce_editor_core::document_manager::DocumentManager;
 use wce_editor_core::inspector::{InspectTarget, Inspector, PropertyPath};
 use wce_editor_core::selection::Selection;
 use wce_foundation::math::{Float3, Float4x4, length, normalize, translation};
-use wce_scene::render_scene::{LayerId, Overlay, Payload, RenderScene, SourceRef};
 use wce_scene::camera::Camera;
+use wce_scene::render_scene::{LayerId, Overlay, Payload, RenderScene, SourceRef};
 
 /// An inspector that records what the document asks for and plays back scripted edits.
 #[derive(Default)]
@@ -229,7 +232,12 @@ impl Document for NumberDoc {
         self.publishes += 1;
         scene.clear_layer(layer);
         for (i, &v) in self.values().iter().enumerate() {
-            scene.add(layer, translation(Float3::new(v, 0.0, 0.0)), Payload::Overlay(Overlay::default()), SourceRef { doc: self.id(), item: i as u64 });
+            scene.add(
+                layer,
+                translation(Float3::new(v, 0.0, 0.0)),
+                Payload::Overlay(Overlay::default()),
+                SourceRef { doc: self.id(), item: i as u64 },
+            );
         }
     }
 
@@ -340,9 +348,15 @@ fn documents_and_the_scene() {
     let mut docs = DocumentManager::default();
     docs.set_active_tool("u");
     let ia = docs.add(&mut scene, Box::new(NumberDoc::new(3)), "t").unwrap();
-    assert!(docs.add(&mut scene, Box::new(NumberDoc::new(1)), "t").is_err_and(|m| m.contains("one document")), "a tool has one document at a time");
+    assert!(
+        docs.add(&mut scene, Box::new(NumberDoc::new(1)), "t").is_err_and(|m| m.contains("one document")),
+        "a tool has one document at a time"
+    );
     let ib = docs.add(&mut scene, Box::new(NumberDoc::new(2)), "u").unwrap();
-    assert!(docs.order().len() == 2 && docs.active_id() == ib && docs.of_tool("t") == Some(ia), "two tools' documents, the active tool's is active");
+    assert!(
+        docs.order().len() == 2 && docs.active_id() == ib && docs.of_tool("t") == Some(ia),
+        "two tools' documents, the active tool's is active"
+    );
     docs.set_active_tool("t");
     assert!(docs.active_id() == ia, "the active document follows the active tool");
     docs.set_active_tool("none");
@@ -361,8 +375,14 @@ fn documents_and_the_scene() {
     let mut msgs = vec![];
     assert!(docs.save_all(&mut msgs) && number_doc(&docs, ia).saves == 1 && !docs.any_modified(), "save_all saves what changed");
     docs.set_visible(&mut scene, ia, false);
-    assert!(!scene.drawable(scene.find(scene.entities_of(SourceRef { doc: ia, item: 0 })[0]).unwrap()), "a hidden document's entities are not drawable");
-    assert!(docs.close(&mut scene, ia) && scene.entities().len() == 2 && docs.active_id() == ib, "closing removes the layer and its entities");
+    assert!(
+        !scene.drawable(scene.find(scene.entities_of(SourceRef { doc: ia, item: 0 })[0]).unwrap()),
+        "a hidden document's entities are not drawable"
+    );
+    assert!(
+        docs.close(&mut scene, ia) && scene.entities().len() == 2 && docs.active_id() == ib,
+        "closing removes the layer and its entities"
+    );
 }
 
 #[test]
@@ -388,11 +408,17 @@ fn cross_tool_composition() {
     number_doc_mut(&mut docs, ig).set(0, 1.0, 0);
     number_doc_mut(&mut docs, io).set(0, 2.0, 0);
     assert!(docs.unsaved() == [ig, io], "unsaved lists the modified documents in opening order");
-    assert!(docs.save_one(io).is_ok() && number_doc(&docs, io).saves == 1 && number_doc(&docs, ig).saves == 0 && docs.unsaved() == [ig], "save_one saves one document and marks it saved");
+    assert!(
+        docs.save_one(io).is_ok() && number_doc(&docs, io).saves == 1 && number_doc(&docs, ig).saves == 0 && docs.unsaved() == [ig],
+        "save_one saves one document and marks it saved"
+    );
     assert!(docs.save_one(is).is_err_and(|m| m.contains("cannot be saved")), "a document that cannot be saved says so");
     assert!(docs.save_one(9999).is_err(), "no such document");
     assert!(docs.close(&mut scene, ig), "close the tile");
-    assert!(!docs.shows_scene() && docs.visible(&scene, is) && docs.visible(&scene, is2), "closing the last tile shows the stand-in scenes again");
+    assert!(
+        !docs.shows_scene() && docs.visible(&scene, is) && docs.visible(&scene, is2),
+        "closing the last tile shows the stand-in scenes again"
+    );
 }
 
 #[test]
@@ -505,7 +531,8 @@ impl CameraWorld for FlatWorld {
 
     fn push_out(&mut self, p: Float3, r: f32) -> Float3 {
         let (lo, hi) = (Float3::new(45.0, 0.0, -5.0), Float3::new(55.0, 10.0, 5.0));
-        let inside = |p: Float3, m: f32| p.x > lo.x - m && p.x < hi.x + m && p.y > lo.y - m && p.y < hi.y + m && p.z > lo.z - m && p.z < hi.z + m;
+        let inside =
+            |p: Float3, m: f32| p.x > lo.x - m && p.x < hi.x + m && p.y > lo.y - m && p.y < hi.y + m && p.z > lo.z - m && p.z < hi.z + m;
         if !inside(p, r) {
             return p;
         }
@@ -523,10 +550,16 @@ fn cameras() {
     let c = o.camera();
     let (yaw, pitch, dist) = (0.6f32, 0.35f32, 120.0f32);
     let eye = Float3::new(0.0, 5.0, 0.0) + Float3::new(yaw.sin() * pitch.cos(), pitch.sin(), -yaw.cos() * pitch.cos()) * dist;
-    assert!(length(c.eye - eye) < 1e-3 && length(c.target - Float3::new(0.0, 5.0, 0.0)) < 1e-3, "the orbit convention (`cam`) still means the same view");
+    assert!(
+        length(c.eye - eye) < 1e-3 && length(c.target - Float3::new(0.0, 5.0, 0.0)) < 1e-3,
+        "the orbit convention (`cam`) still means the same view"
+    );
     let mut o2 = TotalWarCamera::default();
     o2.set_camera(&c);
-    assert!(length(o2.camera().eye - c.eye) < 1e-3 && length(o2.camera().target - c.target) < 1e-2, "Total War camera round trip through a Camera");
+    assert!(
+        length(o2.camera().eye - c.eye) < 1e-3 && length(o2.camera().target - c.target) < 1e-2,
+        "Total War camera round trip through a Camera"
+    );
 
     let e0 = o.camera().eye;
     o.update(&CameraInput { forward: true, dt: 1.0, ..Default::default() }, &opts, &mut FlatWorld);
@@ -567,7 +600,11 @@ fn cameras() {
         for _ in 0..120 {
             b.update(&CameraInput { dt: 1.0 / 60.0, ..Default::default() }, &solid, &mut FlatWorld);
             let c = b.camera();
-            assert!(length(normalize(c.target - c.eye) - want) < 1e-3, "yaw {yaw}: the view turned: {:?} for {want:?}", normalize(c.target - c.eye));
+            assert!(
+                length(normalize(c.target - c.eye) - want) < 1e-3,
+                "yaw {yaw}: the view turned: {:?} for {want:?}",
+                normalize(c.target - c.eye)
+            );
             largest = largest.max(length(c.eye - last));
             last = c.eye;
         }
@@ -588,12 +625,22 @@ fn cameras() {
     let mut t = TopDownCamera::default();
     t.set_camera(&c);
     let tc = t.camera();
-    assert!(tc.is_ortho() && (tc.target - tc.eye).y < 0.0 && (tc.target.x - tc.eye.x).abs() < 1e-4, "the top-down view looks straight down");
+    assert!(
+        tc.is_ortho() && (tc.target - tc.eye).y < 0.0 && (tc.target.x - tc.eye.x).abs() < 1e-4,
+        "the top-down view looks straight down"
+    );
     let under = |t: &TopDownCamera| t.camera().ray(0.5, 0.5, 1.0).0;
     let before = under(&t);
-    t.update(&CameraInput { wheel: 2.0, cursor: Some([0.5, 0.5]), aspect: 1.0, view_h: 500.0, dt: 0.01, ..Default::default() }, &opts, &mut FlatWorld);
+    t.update(
+        &CameraInput { wheel: 2.0, cursor: Some([0.5, 0.5]), aspect: 1.0, view_h: 500.0, dt: 0.01, ..Default::default() },
+        &opts,
+        &mut FlatWorld,
+    );
     let after = under(&t);
-    assert!(t.height < length(c.target - c.eye) * 2.0 && (before.x - after.x).abs() < 1e-2 && (before.z - after.z).abs() < 1e-2, "zoom keeps the point under the mouse");
+    assert!(
+        t.height < length(c.target - c.eye) * 2.0 && (before.x - after.x).abs() < 1e-2 && (before.z - after.z).abs() < 1e-2,
+        "zoom keeps the point under the mouse"
+    );
     let back = t.handoff();
     assert!(!back.is_ortho(), "the top-down view hands over a perspective view");
 
@@ -609,7 +656,10 @@ fn cameras() {
     assert!(length(r.camera().eye - c.eye) < 1e-3, "the orbit camera and the Total War camera agree on `cam`");
     let mut r2 = OrbitCamera::default();
     r2.set_camera(&r.camera());
-    assert!((r2.yaw - 0.6).abs() < 1e-4 && (r2.pitch - 0.35).abs() < 1e-4 && (r2.dist - 120.0).abs() < 1e-2, "orbit round trip through a Camera");
+    assert!(
+        (r2.yaw - 0.6).abs() < 1e-4 && (r2.pitch - 0.35).abs() < 1e-4 && (r2.dist - 120.0).abs() < 1e-2,
+        "orbit round trip through a Camera"
+    );
     r.update(&CameraInput { wheel: 1.0, dt: 0.01, ..Default::default() }, &opts, &mut NoWorld);
     assert!(r.dist < 120.0, "the wheel zooms in");
     let t0 = r.target;
@@ -631,7 +681,10 @@ fn inspector_edits_become_merged_commands() {
     let mut ins = RecordingInspector::default();
     ins.begin(d.id(), 1);
     d.inspect(r, &mut ins);
-    assert!(ins.calls.len() == 2 && ins.calls[0] == "section Number" && ins.calls[1] == format!("float {}/1/value", d.id()), "the document describes its item through the inspector");
+    assert!(
+        ins.calls.len() == 2 && ins.calls[0] == "section Number" && ins.calls[1] == format!("float {}/1/value", d.id()),
+        "the document describes its item through the inspector"
+    );
     ins.edit_next = true;
     for v in [1.0, 2.0, 3.0] {
         ins.value_to_set = v;

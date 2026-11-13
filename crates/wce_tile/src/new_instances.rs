@@ -63,8 +63,16 @@ pub const REF_TOOL_ATTRS: [&str; 6] = ["unit", "faction", "seed", "slot", "colou
 
 /// `unit`, `faction`, `slot` empty: the game's default unit, standing. `colours`: three faction colours, nine numbers, over the faction's.
 const REF_ATTRS: &[(&str, &str)] = &[
-    ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("surface_mode", "MSM_LANDSCAPE"), ("position", "vector(0,0,0)"), ("orientation", "euler(0,0,0)"),
-    ("name", "Reference"), ("unit", ""), ("faction", ""), ("seed", "0"), ("slot", ""), ("colours", ""),
+    ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+    ("surface_mode", "MSM_LANDSCAPE"),
+    ("position", "vector(0,0,0)"),
+    ("orientation", "euler(0,0,0)"),
+    ("name", "Reference"),
+    ("unit", ""),
+    ("faction", ""),
+    ("seed", "0"),
+    ("slot", ""),
+    ("colours", ""),
 ];
 
 /// The defaults of the editor's own types, which the kit has none of (`instance_templates` is generated from its tiles): a procedural
@@ -74,56 +82,112 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
     InstanceTemplate { kind: REF_UNIT, attrs: REF_ATTRS, wrappers: &[], point_attrs: &[] },
     InstanceTemplate { kind: REF_SHIP, attrs: REF_ATTRS, wrappers: &[], point_attrs: &[] },
     InstanceTemplate {
-    kind: WALL_SPLINE,
-    attrs: &[
-        ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("recenter_polygon", "0"), ("lf_offset", "0"), ("line_colour", "argb(1.0,0.8,0.0,1.0)"),
-        ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("name", "Wall"),
-        ("polygon_shape", "PS_POLYGON"), ("area", "0"), ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
-        (WALL_PROCEDURAL, "false"), (WALL_ID, "0"), ("wall_base", "barbarian_fort_straight"), ("wall_tolerance", "0.5"), ("wall_flip", "false"), ("wall_access_every", "200"),
-        ("wall_defence_every", "0"),
-    ],
-    wrappers: &["points"],
-    point_attrs: &[("position", "0,0,0")],
+        kind: WALL_SPLINE,
+        attrs: &[
+            ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+            ("recenter_polygon", "0"),
+            ("lf_offset", "0"),
+            ("line_colour", "argb(1.0,0.8,0.0,1.0)"),
+            ("polygon_closed", "0"),
+            ("position", "vector(0,0,0)"),
+            ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"),
+            ("name", "Wall"),
+            ("polygon_shape", "PS_POLYGON"),
+            ("area", "0"),
+            ("surface_mode", "MSM_LANDSCAPE"),
+            ("orientation", "euler(0,0,0)"),
+            (WALL_PROCEDURAL, "false"),
+            (WALL_ID, "0"),
+            ("wall_base", "barbarian_fort_straight"),
+            ("wall_tolerance", "0.5"),
+            ("wall_flip", "false"),
+            ("wall_access_every", "200"),
+            ("wall_defence_every", "0"),
+        ],
+        wrappers: &["points"],
+        point_attrs: &[("position", "0,0,0")],
     },
     InstanceTemplate {
-    kind: ROAD_SPLINE,
-    attrs: &[
-        ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("recenter_polygon", "0"), ("lf_offset", "0"), ("line_colour", "argb(1.0,0.8,0.62,0.4)"),
-        ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("name", "Road"),
-        ("polygon_shape", "PS_POLYGON"), ("area", "0"), ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
-        ("road_id", "0"), ("road_width", "6"), ("road_shoulder", "3"), ("road_bump", "0.25"), ("road_max_grade", "10"), ("road_max_side", "30"),
-        ("road_group", "0"), ("road_variation", "0"), ("road_ground", "road"), ("road_feather", "2"), ("road_seed", "1"), ("road_type", "dirt"), ("road_bridges", "true"), ("road_bridge_clearance", "2"), ("road_bridge", "wood"), ("road_fences", "none"), ("road_fence_damage", "0"),
-    ],
-    wrappers: &["points"],
-    point_attrs: &[("position", "0,0,0")],
+        kind: ROAD_SPLINE,
+        attrs: &[
+            ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+            ("recenter_polygon", "0"),
+            ("lf_offset", "0"),
+            ("line_colour", "argb(1.0,0.8,0.62,0.4)"),
+            ("polygon_closed", "0"),
+            ("position", "vector(0,0,0)"),
+            ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"),
+            ("name", "Road"),
+            ("polygon_shape", "PS_POLYGON"),
+            ("area", "0"),
+            ("surface_mode", "MSM_LANDSCAPE"),
+            ("orientation", "euler(0,0,0)"),
+            ("road_id", "0"),
+            ("road_width", "6"),
+            ("road_shoulder", "3"),
+            ("road_bump", "0.25"),
+            ("road_max_grade", "10"),
+            ("road_max_side", "30"),
+            ("road_group", "0"),
+            ("road_variation", "0"),
+            ("road_ground", "road"),
+            ("road_feather", "2"),
+            ("road_seed", "1"),
+            ("road_type", "dirt"),
+            ("road_bridges", "true"),
+            ("road_bridge_clearance", "2"),
+            ("road_bridge", "wood"),
+            ("road_fences", "none"),
+            ("road_fence_damage", "0"),
+        ],
+        wrappers: &["points"],
+        point_attrs: &[("position", "0,0,0")],
     },
     InstanceTemplate {
-    kind: MEASURE_LINE,
-    attrs: &[
-        ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("name", "Tape measure"),
-        ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
-    ],
-    wrappers: &["points"],
-    point_attrs: &[("position", "0,0,0")],
+        kind: MEASURE_LINE,
+        attrs: &[
+            ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+            ("polygon_closed", "0"),
+            ("position", "vector(0,0,0)"),
+            ("name", "Tape measure"),
+            ("surface_mode", "MSM_LANDSCAPE"),
+            ("orientation", "euler(0,0,0)"),
+        ],
+        wrappers: &["points"],
+        point_attrs: &[("position", "0,0,0")],
     },
     InstanceTemplate {
-    kind: ANGLE_FINDER,
-    attrs: &[
-        ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("name", "Angle finder"),
-        ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"),
-    ],
-    wrappers: &["points"],
-    point_attrs: &[("position", "0,0,0")],
+        kind: ANGLE_FINDER,
+        attrs: &[
+            ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+            ("polygon_closed", "0"),
+            ("position", "vector(0,0,0)"),
+            ("name", "Angle finder"),
+            ("surface_mode", "MSM_LANDSCAPE"),
+            ("orientation", "euler(0,0,0)"),
+        ],
+        wrappers: &["points"],
+        point_attrs: &[("position", "0,0,0")],
     },
     InstanceTemplate {
-    kind: ROAD_GUIDE,
-    attrs: &[
-        ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("recenter_polygon", "0"), ("lf_offset", "0"), ("line_colour", "argb(1.0,1.0,0.3,0.8)"),
-        ("polygon_closed", "0"), ("position", "vector(0,0,0)"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("name", "Guide"),
-        ("polygon_shape", "PS_POLYGON"), ("area", "0"), ("surface_mode", "MSM_LANDSCAPE"), ("orientation", "euler(0,0,0)"), ("guide_role", "centre"),
-    ],
-    wrappers: &["points"],
-    point_attrs: &[("position", "0,0,0")],
+        kind: ROAD_GUIDE,
+        attrs: &[
+            ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+            ("recenter_polygon", "0"),
+            ("lf_offset", "0"),
+            ("line_colour", "argb(1.0,1.0,0.3,0.8)"),
+            ("polygon_closed", "0"),
+            ("position", "vector(0,0,0)"),
+            ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"),
+            ("name", "Guide"),
+            ("polygon_shape", "PS_POLYGON"),
+            ("area", "0"),
+            ("surface_mode", "MSM_LANDSCAPE"),
+            ("orientation", "euler(0,0,0)"),
+            ("guide_role", "centre"),
+        ],
+        wrappers: &["points"],
+        point_attrs: &[("position", "0,0,0")],
     },
 ];
 
@@ -194,10 +258,12 @@ pub fn polygon_area(points: &[Double3]) -> f64 {
 /// A circle as TEd makes one (`PS_CIRCLE`, a capture location's boundary): 20 points every 18 degrees, the first on +z, clockwise seen
 /// from above.
 pub fn circle_points(radius: f64) -> Vec<Double3> {
-    (0..20).map(|i| {
-        let a = f64::from(i) * std::f64::consts::TAU / 20.0;
-        Double3::new(radius * a.sin(), 0.0, radius * a.cos())
-    }).collect()
+    (0..20)
+        .map(|i| {
+            let a = f64::from(i) * std::f64::consts::TAU / 20.0;
+            Double3::new(radius * a.sin(), 0.0, radius * a.cos())
+        })
+        .collect()
 }
 
 fn attr_text(out: &mut Vec<u8>, name: &str, value: &str) {
@@ -240,7 +306,11 @@ pub fn element_text(n: &NewInstance) -> Result<Vec<u8>, String> {
                 for p in &n.points {
                     out.extend_from_slice(b"        <point");
                     for (k, v) in t.point_attrs {
-                        let v = if *k == "position" { point_text(p.position) } else { p.attrs.get(*k).cloned().unwrap_or_else(|| (*v).to_owned()) };
+                        let v = if *k == "position" {
+                            point_text(p.position)
+                        } else {
+                            p.attrs.get(*k).cloned().unwrap_or_else(|| (*v).to_owned())
+                        };
                         attr_text(&mut out, k, &v);
                     }
 
@@ -274,24 +344,46 @@ mod tests {
         let mut n = NewInstance::new(WALL_SPLINE).position(Double3::new(1.0, 0.0, 2.0)).attr("wall_base", "roman_fort_straight");
         n.points = vec![NewPoint::at(Double3::new(-5.0, 0.0, 0.0)), NewPoint::at(Double3::new(5.0, 0.0, 0.0))];
         let text = String::from_utf8(element_text(&n).unwrap()).unwrap();
-        assert!(text.starts_with("<WceWallSpline flags=") && text.contains("wall_base=\"roman_fort_straight\"") && text.contains("wall_tolerance=\"0.5\""), "{text}");
+        assert!(
+            text.starts_with("<WceWallSpline flags=")
+                && text.contains("wall_base=\"roman_fort_straight\"")
+                && text.contains("wall_tolerance=\"0.5\""),
+            "{text}"
+        );
         assert!(text.contains("<points>") && text.matches("<point ").count() == 2 && text.ends_with("</WceWallSpline>\n"), "{text}");
     }
 
     #[test]
     fn a_new_instance_is_written_in_teds_layout() {
-        let light = element_text(&NewInstance::new("POINT_LIGHT_INSTANCE").position(Double3::new(1.0, 2.0, 3.0)).attr("name", "Torch")).unwrap();
+        let light =
+            element_text(&NewInstance::new("POINT_LIGHT_INSTANCE").position(Double3::new(1.0, 2.0, 3.0)).attr("name", "Torch")).unwrap();
         let text = String::from_utf8(light).unwrap();
         assert!(text.starts_with("<POINT_LIGHT_INSTANCE random_offset=\"0\" flags=\" OIF_VISIBLE|OIF_ACTIVE\""), "{text}");
         assert!(text.contains("position=\"vector(1,2,3)\"") && text.contains("name=\"Torch\"") && text.ends_with("/>\n"), "{text}");
 
         let mut zone = NewInstance::new("ZONE_POLYGON_INSTANCE");
-        zone.points = [Double3::new(0.0, 0.0, 0.0), Double3::new(10.0, 0.0, 0.0), Double3::new(0.0, 0.0, 10.0)].into_iter().map(NewPoint::at).collect();
+        zone.points = [Double3::new(0.0, 0.0, 0.0), Double3::new(10.0, 0.0, 0.0), Double3::new(0.0, 0.0, 10.0)]
+            .into_iter()
+            .map(NewPoint::at)
+            .collect();
         let text = String::from_utf8(element_text(&zone).unwrap()).unwrap();
         let lines = text.lines().collect::<Vec<_>>();
-        assert_eq!(&lines[1..], ["    <children>", "    </children>", "    <points>", "        <point position=\"0,0,0\"/>", "        <point position=\"10,0,0\"/>",
-            "        <point position=\"0,0,10\"/>", "    </points>", "</ZONE_POLYGON_INSTANCE>"]);
-        assert!((polygon_area(&[Double3::new(0.0, 0.0, 0.0), Double3::new(10.0, 0.0, 0.0), Double3::new(0.0, 0.0, 10.0)]) - 50.0).abs() < 1e-9);
+        assert_eq!(
+            &lines[1..],
+            [
+                "    <children>",
+                "    </children>",
+                "    <points>",
+                "        <point position=\"0,0,0\"/>",
+                "        <point position=\"10,0,0\"/>",
+                "        <point position=\"0,0,10\"/>",
+                "    </points>",
+                "</ZONE_POLYGON_INSTANCE>"
+            ]
+        );
+        assert!(
+            (polygon_area(&[Double3::new(0.0, 0.0, 0.0), Double3::new(10.0, 0.0, 0.0), Double3::new(0.0, 0.0, 10.0)]) - 50.0).abs() < 1e-9
+        );
         let c = circle_points(15.0);
         assert!((c[1].x - 4.63531).abs() < 1e-4 && (c[1].z - 14.2659).abs() < 1e-4, "TEd's second point of a 15 m circle");
     }

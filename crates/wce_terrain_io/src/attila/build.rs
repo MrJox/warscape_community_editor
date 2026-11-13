@@ -32,17 +32,24 @@ pub struct Built {
 }
 
 fn rgb(l: &wce_terrain::cells::CellLayer) -> Vec<[u8; 3]> {
-    l.cells().iter().map(|&i| {
-        let c = l.palette()[usize::from(i)];
-        [c[0], c[1], c[2]]
-    }).collect()
+    l.cells()
+        .iter()
+        .map(|&i| {
+            let c = l.palette()[usize::from(i)];
+            [c[0], c[1], c[2]]
+        })
+        .collect()
 }
 
 fn rgba(l: &wce_terrain::cells::CellLayer) -> (u32, u32, Vec<[u8; 4]>) {
-    let px = l.cells().iter().map(|&i| {
-        let c = l.palette()[usize::from(i)];
-        if l.alpha { c } else { [c[0], c[1], c[2], 255] }
-    }).collect();
+    let px = l
+        .cells()
+        .iter()
+        .map(|&i| {
+            let c = l.palette()[usize::from(i)];
+            if l.alpha { c } else { [c[0], c[1], c[2], 255] }
+        })
+        .collect();
     (l.width(), l.height(), px)
 }
 
@@ -70,10 +77,17 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
     let climate = m.layer(&LayerRole::Climate).map(|l| l.get()).filter(|l| l.width() == w && l.height() == h).map(rgb);
     let explicit: Option<String> = m.explicit.as_ref().map(|x| x.get().write().iter().map(|&c| char::from(c)).collect());
     let land = m.lf(LfRole::Land).map(|f| f.get());
-    let lf: Option<(Vec<u16>, u32, u32)> = land.map(|f| (f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect(), f.width(), f.height()));
+    let lf: Option<(Vec<u16>, u32, u32)> =
+        land.map(|f| (f.to_le_rows().as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect(), f.width(), f.height()));
     let images = MapImages {
-        width: w, height: h, tile_map: &tile_rgb, climate_map: climate.as_deref(), explicit_tiles: explicit.as_deref(), lf: None,
-        lf_u16: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)), campaign: m.kind == wce_terrain::MapKind::Campaign,
+        width: w,
+        height: h,
+        tile_map: &tile_rgb,
+        climate_map: climate.as_deref(),
+        explicit_tiles: explicit.as_deref(),
+        lf: None,
+        lf_u16: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)),
+        campaign: m.kind == wce_terrain::MapKind::Campaign,
     };
 
     let (tile_map, tile_list, mut messages) = wce_tile::battle_map::build_images(inputs.db, &images);
@@ -97,7 +111,11 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
     // The LF normal chunks an LF edit reaches (none for an LF as the map's file has it: the game's stay).
     if let Some(item) = m.lf(LfRole::Land).filter(|i| i.edited()) {
         let original = item.origin.bytes().ok().and_then(|b| super::normals::tiff_samples(&b)).unwrap_or_default();
-        let base = m.carried.iter().find(|(k, _)| k.eq_ignore_ascii_case("normal.dds")).and_then(|(_, b)| b.bytes().ok())
+        let base = m
+            .carried
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("normal.dds"))
+            .and_then(|(_, b)| b.bytes().ok())
             .and_then(|b| super::normals::NormalImage::from_dds(&b));
         files.extend(super::normals::chunks(item.get(), &original, base.as_ref(), (w, h)));
     }
@@ -120,7 +138,10 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
         if let Some(p) = m.project.as_ref().map(|p| p.get()) {
             let err = |e: String| crate::file_error("markers", e);
             files.push(("prop_marker.markers".to_owned(), super::campaign::prop_markers(p).map_err(err)?));
-            files.push(("particle_emitter_marker.markers".to_owned(), super::campaign::particle_markers(p).map_err(|e| crate::file_error("markers", e))?));
+            files.push((
+                "particle_emitter_marker.markers".to_owned(),
+                super::campaign::particle_markers(p).map_err(|e| crate::file_error("markers", e))?,
+            ));
             files.push(("environment_collection.xml".to_owned(), super::campaign::environment_collection(p)));
         }
 
@@ -144,13 +165,17 @@ pub fn build(m: &MapModel, inputs: &BuildInputs) -> crate::Result<Built> {
         let snow = layer(LayerRole::Snow(String::new()));
         let seasons: Vec<_> = ["sp", "su", "au", "wi"].iter().map(|s| layer(LayerRole::Snow((*s).to_owned()))).collect();
         let culture = layer(LayerRole::Culture);
-        let nogo = m.carried.iter().find(|(k, _)| k.eq_ignore_ascii_case("nogo.dds")).and_then(|(_, b)| b.bytes().ok()).and_then(|b| dds32(&b));
+        let nogo =
+            m.carried.iter().find(|(k, _)| k.eq_ignore_ascii_case("nogo.dds")).and_then(|(_, b)| b.bytes().ok()).and_then(|b| dds32(&b));
         fn img(i: &Option<(u32, u32, Vec<[u8; 4]>)>) -> Option<Image<'_>> {
             i.as_ref().map(|(w, h, px)| Image { width: *w, height: *h, pixels: px })
         }
 
         let mask_inputs = MaskInputs {
-            snow: img(&snow), culture: img(&culture), culture_colours: wce_terrain::locations::culture_colours(inputs.tile_upgrades), nogo: img(&nogo),
+            snow: img(&snow),
+            culture: img(&culture),
+            culture_colours: wce_terrain::locations::culture_colours(inputs.tile_upgrades),
+            nogo: img(&nogo),
             seasons: [img(&seasons[0]), img(&seasons[1]), img(&seasons[2]), img(&seasons[3])],
         };
         let (m0, m1) = wce_terrain::locations::masks(inputs.db, &tile_map, &mask_inputs);

@@ -2,7 +2,6 @@
 
 use wce_d3d11::*;
 
-
 /// A texture with its render target and shader resource views.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Target {
@@ -26,8 +25,16 @@ pub(crate) fn make_target(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT) 
 /// A target of a size, format and sample count (its SRV a Texture2DMS above 1).
 pub(crate) fn make_target_ms(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT, samples: u32) -> Target {
     let td = D3D11_TEXTURE2D_DESC {
-        Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: samples.max(1), Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
-        BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: w,
+        Height: h,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: fmt,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: samples.max(1), Quality: 0 },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     let Ok(tex) = dev.create_texture_2d(&td, None) else { return Target::default() };
@@ -58,14 +65,24 @@ impl DepthStencil {
     pub fn new(dev: &ID3D11Device, w: u32, h: u32, samples: u32) -> Self {
         let samples = samples.max(1);
         let td = D3D11_TEXTURE2D_DESC {
-            Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R24G8_TYPELESS, SampleDesc: DXGI_SAMPLE_DESC { Count: samples, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: w,
+            Height: h,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R24G8_TYPELESS,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: samples, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         let Ok(tex) = dev.create_texture_2d(&td, None) else { return Self::default() };
         let ms = samples > 1;
         let dd = D3D11_DEPTH_STENCIL_VIEW_DESC {
-            Format: DXGI_FORMAT_D24_UNORM_S8_UINT, ViewDimension: if ms { D3D11_DSV_DIMENSION_TEXTURE2DMS } else { D3D11_DSV_DIMENSION_TEXTURE2D }, ..Default::default()
+            Format: DXGI_FORMAT_D24_UNORM_S8_UINT,
+            ViewDimension: if ms { D3D11_DSV_DIMENSION_TEXTURE2DMS } else { D3D11_DSV_DIMENSION_TEXTURE2D },
+            ..Default::default()
         };
         let srv = |format| {
             let dim = if ms { D3D11_SRV_DIMENSION_TEXTURE2DMS } else { D3D11_SRV_DIMENSION_TEXTURE2D };
@@ -78,7 +95,9 @@ impl DepthStencil {
 
         Self {
             dsv: dev.create_depth_stencil_view(&tex, Some(&dd)).ok(),
-            dsv_read_depth: dev.create_depth_stencil_view(&tex, Some(&D3D11_DEPTH_STENCIL_VIEW_DESC { Flags: DSV_READ_ONLY_DEPTH, ..dd })).ok(),
+            dsv_read_depth: dev
+                .create_depth_stencil_view(&tex, Some(&D3D11_DEPTH_STENCIL_VIEW_DESC { Flags: DSV_READ_ONLY_DEPTH, ..dd }))
+                .ok(),
             depth_srv: srv(DXGI_FORMAT_R24_UNORM_X8_TYPELESS),
             stencil_srv: srv(DXGI_FORMAT_X24_TYPELESS_G8_UINT),
             tex: Some(tex),
@@ -104,8 +123,16 @@ pub(crate) struct MsTargets {
 /// A depth-stencil texture's view.
 pub(crate) fn depth_target(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT) -> Option<ID3D11DepthStencilView> {
     let td = D3D11_TEXTURE2D_DESC {
-        Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_DEFAULT,
-        BindFlags: D3D11_BIND_DEPTH_STENCIL as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: w,
+        Height: h,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: fmt,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: D3D11_BIND_DEPTH_STENCIL as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     dev.create_texture_2d(&td, None).and_then(|tex| dev.create_depth_stencil_view(&tex, None)).ok()
@@ -131,7 +158,6 @@ pub(crate) struct GBuffer {
 }
 
 impl GBuffer {
-
     /// Verified formats (the engine's TTF_* enum = the order of its name strings): G-buffer channels 1-3 TTF_A8R8G8B8 (fn 0x118f4b90), the
     /// depth channel TTF_R32F (R16F on low settings, fn 0x118f62b0), HDR light accumulation TTF_A16B16G16R16F (fns 0x118f4a80, 0x117659b0).
     /// The id channel is editor-only.
@@ -143,23 +169,29 @@ impl GBuffer {
     pub fn with_samples(dev: &ID3D11Device, w: u32, h: u32, samples: u32) -> Self {
         let depth = DepthStencil::new(dev, w, h, 1);
         // A device that refuses a count draws without MSAA.
-        let ms = (samples > 1).then(|| MsTargets {
-            samples,
-            channels: std::array::from_fn(|_| make_target_ms(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, samples)),
-            hdr: make_target_ms(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, samples),
-            depth: DepthStencil::new(dev, w, h, samples),
-            stencil: make_target_ms(dev, w, h, DXGI_FORMAT_R8G8_UINT, samples),
-        }).filter(|m| m.channels.iter().chain([&m.hdr]).all(|t| t.rtv.is_some() && t.srv.is_some()) && m.depth.dsv.is_some() && m.depth.depth_srv.is_some());
+        let ms = (samples > 1)
+            .then(|| MsTargets {
+                samples,
+                channels: std::array::from_fn(|_| make_target_ms(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, samples)),
+                hdr: make_target_ms(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT, samples),
+                depth: DepthStencil::new(dev, w, h, samples),
+                stencil: make_target_ms(dev, w, h, DXGI_FORMAT_R8G8_UINT, samples),
+            })
+            .filter(|m| {
+                m.channels.iter().chain([&m.hdr]).all(|t| t.rtv.is_some() && t.srv.is_some())
+                    && m.depth.dsv.is_some()
+                    && m.depth.depth_srv.is_some()
+            });
 
         Self {
             w,
             h,
             channels: [
-                make_target(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM),  // normal (cube-normalised, *0.5+0.5), gloss
-                make_target(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM),  // sqrt(albedo), .w mask
-                make_target(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM),  // specular colour, .w material id / 255
-                make_target(dev, w, h, DXGI_FORMAT_R32_FLOAT),       // z / w
-                make_target(dev, w, h, DXGI_FORMAT_R32_UINT),        // per-instance value (uint output, debug layer)
+                make_target(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM), // normal (cube-normalised, *0.5+0.5), gloss
+                make_target(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM), // sqrt(albedo), .w mask
+                make_target(dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM), // specular colour, .w material id / 255
+                make_target(dev, w, h, DXGI_FORMAT_R32_FLOAT),      // z / w
+                make_target(dev, w, h, DXGI_FORMAT_R32_UINT),       // per-instance value (uint output, debug layer)
             ],
             hdr: make_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT),
             dsv: depth.dsv.clone(),
@@ -261,7 +293,6 @@ pub(crate) struct PostTargets {
 pub(crate) const TONEMAP_SIZE: u32 = 256;
 
 impl PostTargets {
-
     /// (Re)creates the reflection targets at the view size divided by `div`.
     pub fn resize_reflection(&mut self, dev: &ID3D11Device, w: u32, h: u32, div: u32) {
         let (w, h) = (w.div_ceil(div).max(1), h.div_ceil(div).max(1));
@@ -284,10 +315,10 @@ impl PostTargets {
         // halved down to 1 x 1 by the statistics, whose four point taps at +-1/4 of an output texel cover a 2 x 2 block: a pyramid that
         // shrank faster skipped texels and missed the highlights (the white point stayed at the environment's minimum).
         let (qw, qh) = (TONEMAP_SIZE, TONEMAP_SIZE);
-        self.quarter = sized_target(dev, qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);  // rgb + luma in .w
+        self.quarter = sized_target(dev, qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT); // rgb + luma in .w
         self.bloom_a = sized_target(dev, qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);
         self.bloom_b = sized_target(dev, qw, qh, DXGI_FORMAT_R16G16B16A16_FLOAT);
-        self.ldr = sized_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT);        // tone-mapped, linear
+        self.ldr = sized_target(dev, w, h, DXGI_FORMAT_R16G16B16A16_FLOAT); // tone-mapped, linear
 
         // The game's: R11G11B10 reflection and x blur, R8G8 parameters (a RenderDoc capture, docs/re/renderer.md).
         self.resize_reflection(dev, w, h, self.reflection_div.max(1));
@@ -297,7 +328,7 @@ impl PostTargets {
         loop {
             sw = sw.div_ceil(2);
             sh = sh.div_ceil(2);
-            self.stats.push(sized_target(dev, sw, sh, DXGI_FORMAT_R32G32B32A32_FLOAT));  // min, max, avg, max
+            self.stats.push(sized_target(dev, sw, sh, DXGI_FORMAT_R32G32B32A32_FLOAT)); // min, max, avg, max
             if sw <= 1 && sh <= 1 {
                 break;
             }
@@ -319,13 +350,29 @@ pub(crate) struct ShadowMap {
 impl ShadowMap {
     pub fn new(dev: &ID3D11Device, size: u32) -> Self {
         let td = D3D11_TEXTURE2D_DESC {
-            Width: size, Height: size, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_TYPELESS, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: size,
+            Height: size,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R32_TYPELESS,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         let Ok(tex) = dev.create_texture_2d(&td, None) else { return Self::default() };
-        let dd = D3D11_DEPTH_STENCIL_VIEW_DESC { Format: DXGI_FORMAT_D32_FLOAT, ViewDimension: D3D11_DSV_DIMENSION_TEXTURE2D, ..Default::default() };
-        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: DXGI_FORMAT_R32_FLOAT, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2D), ..Default::default() };
+        let dd = D3D11_DEPTH_STENCIL_VIEW_DESC {
+            Format: DXGI_FORMAT_D32_FLOAT,
+            ViewDimension: D3D11_DSV_DIMENSION_TEXTURE2D,
+            ..Default::default()
+        };
+        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC {
+            Format: DXGI_FORMAT_R32_FLOAT,
+            ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2D),
+            ..Default::default()
+        };
         sd.Anonymous.Texture2D.MipLevels = 1;
         Self { dsv: dev.create_depth_stencil_view(&tex, Some(&dd)).ok(), srv: dev.create_shader_resource_view(&tex, Some(&sd)).ok(), size }
     }
@@ -354,23 +401,43 @@ impl OitBuffers {
     pub fn new(dev: &ID3D11Device, w: u32, h: u32, per_pixel: u32) -> Self {
         let pixels = w * h;
         let bind = (D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE) as u32;
-        let head = dev.create_buffer(&D3D11_BUFFER_DESC {
-            ByteWidth: pixels * 4, Usage: D3D11_USAGE_DEFAULT, BindFlags: bind, MiscFlags: D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS as u32, ..Default::default()
-        }, None);
-        let fragments = dev.create_buffer(&D3D11_BUFFER_DESC {
-            ByteWidth: pixels * per_pixel * FRAGMENT_STRIDE, Usage: D3D11_USAGE_DEFAULT, BindFlags: bind,
-            MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED as u32, StructureByteStride: FRAGMENT_STRIDE, ..Default::default()
-        }, None);
+        let head = dev.create_buffer(
+            &D3D11_BUFFER_DESC {
+                ByteWidth: pixels * 4,
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: bind,
+                MiscFlags: D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS as u32,
+                ..Default::default()
+            },
+            None,
+        );
+        let fragments = dev.create_buffer(
+            &D3D11_BUFFER_DESC {
+                ByteWidth: pixels * per_pixel * FRAGMENT_STRIDE,
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: bind,
+                MiscFlags: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED as u32,
+                StructureByteStride: FRAGMENT_STRIDE,
+                ..Default::default()
+            },
+            None,
+        );
         // Without them the size is kept (not asked for again every frame) and `ready` is false.
         let (Ok(head), Ok(fragments)) = (head, fragments) else { return Self { w, h, ..Self::default() } };
 
         let uav = |format, n, flags| D3D11_UNORDERED_ACCESS_VIEW_DESC {
-            Format: format, ViewDimension: D3D11_UAV_DIMENSION_BUFFER,
+            Format: format,
+            ViewDimension: D3D11_UAV_DIMENSION_BUFFER,
             Anonymous: D3D11_UNORDERED_ACCESS_VIEW_DESC_0 { Buffer: D3D11_BUFFER_UAV { FirstElement: 0, NumElements: n, Flags: flags } },
         };
         let srv = |format, n| {
-            let mut d = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: format, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_BUFFER), ..Default::default() };
-            d.Anonymous.Buffer = D3D11_BUFFER_SRV { Anonymous: D3D11_BUFFER_SRV_0 { FirstElement: 0 }, Anonymous2: D3D11_BUFFER_SRV_1 { NumElements: n } };
+            let mut d = D3D11_SHADER_RESOURCE_VIEW_DESC {
+                Format: format,
+                ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_BUFFER),
+                ..Default::default()
+            };
+            d.Anonymous.Buffer =
+                D3D11_BUFFER_SRV { Anonymous: D3D11_BUFFER_SRV_0 { FirstElement: 0 }, Anonymous2: D3D11_BUFFER_SRV_1 { NumElements: n } };
             d
         };
 
@@ -378,7 +445,9 @@ impl OitBuffers {
         Self {
             head_uav: dev.create_unordered_access_view(&head, Some(&uav(DXGI_FORMAT_R32_TYPELESS, pixels, UAV_FLAG_RAW))).ok(),
             head_srv: dev.create_shader_resource_view(&head, Some(&srv(DXGI_FORMAT_R32_UINT, pixels))).ok(),
-            fragments_uav: dev.create_unordered_access_view(&fragments, Some(&uav(DXGI_FORMAT_UNKNOWN, pixels * per_pixel, UAV_FLAG_COUNTER))).ok(),
+            fragments_uav: dev
+                .create_unordered_access_view(&fragments, Some(&uav(DXGI_FORMAT_UNKNOWN, pixels * per_pixel, UAV_FLAG_COUNTER)))
+                .ok(),
             fragments_srv: dev.create_shader_resource_view(&fragments, Some(&srv(DXGI_FORMAT_UNKNOWN, pixels * per_pixel))).ok(),
             w,
             h,

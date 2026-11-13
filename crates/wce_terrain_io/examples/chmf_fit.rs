@@ -27,8 +27,10 @@ fn main() {
         // Candidates: LF (x0 + sx * i, y0 + sy * j) for strides and origins in level-0 samples.
         for (name, sx, sy) in [("x 8 y 1", 8, 1), ("x 1 y 1", 1, 1), ("x 8 y 8", 8, 8), ("x 1 y 8", 1, 8)] {
             let (x0, y0) = (r[0] as usize * 8, r[1] as usize * 8);
-            let hits = (0..sh as usize).flat_map(|j| (0..sw as usize).map(move |i| (i, j)))
-                .filter(|&(i, j)| l0.get((y0 + j * sy) * w0 + x0 + i * sx) == Some(&s[j * sw as usize + i])).count();
+            let hits = (0..sh as usize)
+                .flat_map(|j| (0..sw as usize).map(move |i| (i, j)))
+                .filter(|&(i, j)| l0.get((y0 + j * sy) * w0 + x0 + i * sx) == Some(&s[j * sw as usize + i]))
+                .count();
             println!("  {name}: {hits} of {} samples", sw * sh);
         }
     }
@@ -43,8 +45,10 @@ fn main() {
                 for oy in 0..(16 * stride * 8) {
                     for ox in 0..(stride * 8).min(64) {
                         let (x0, y0) = (r[0] as usize * 8 + ox, r[1] as usize * 8 + oy);
-                        let hits = (0..16usize).flat_map(|j| (0..16usize).map(move |i| (i, j)))
-                            .filter(|&(i, j)| l0.get((y0 + j * stride) * w0 + x0 + i * stride) == Some(&s[(16 * b + j) * sw as usize + i])).count();
+                        let hits = (0..16usize)
+                            .flat_map(|j| (0..16usize).map(move |i| (i, j)))
+                            .filter(|&(i, j)| l0.get((y0 + j * stride) * w0 + x0 + i * stride) == Some(&s[(16 * b + j) * sw as usize + i]))
+                            .count();
                         if hits > best.0 {
                             best = (hits, stride, ox, oy);
                         }

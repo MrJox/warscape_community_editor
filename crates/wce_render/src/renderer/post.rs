@@ -7,14 +7,24 @@ use wce_foundation::math::Float3;
 use wce_scene::camera::Camera;
 use wce_scene::environment::{EnvironmentParams, build_scurve};
 
-use super::*;
 use super::targets::{SizedTarget, make_target};
+use super::*;
 use crate::render_target::RenderTarget;
 use crate::shader_lib::{bind_sampler, bind_srv};
 
 // The lens flare (LENSE_FLARE_SHADER, fn 0x116de600): four sun sprites and a vignette, drawn after hdr_to_screen.
-const FLARE_VS: [&str; 4] = ["dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_0", "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_1", "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_2", "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_3"];
-const FLARE_PS: [&str; 4] = ["dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_0", "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_1", "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_2", "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_3"];
+const FLARE_VS: [&str; 4] = [
+    "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_0",
+    "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_1",
+    "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_2",
+    "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_flare_3",
+];
+const FLARE_PS: [&str; 4] = [
+    "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_0",
+    "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_1",
+    "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_2",
+    "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_flare_3",
+];
 const FLARE_MAIN_VS: &str = "dx11_sm_3_0_lenseflare.hlsl_vs_vs30_main";
 const VIGNETTE_PS: &str = "dx11_sm_3_0_lenseflare.hlsl_ps_ps30_vignette";
 
@@ -42,13 +52,29 @@ impl ToneMap {
 
     pub fn new(dev: &ID3D11Device) -> Self {
         let staging = D3D11_TEXTURE2D_DESC {
-            Width: 1, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32G32B32A32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_STAGING, BindFlags: 0, CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32, MiscFlags: 0,
+            Width: 1,
+            Height: 1,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_STAGING,
+            BindFlags: 0,
+            CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32,
+            MiscFlags: 0,
         };
 
         let sd = D3D11_TEXTURE2D_DESC {
-            Width: 256, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R16G16B16A16_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: 256,
+            Height: 1,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R16G16B16A16_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         let scurve_tex = dev.create_texture_2d(&sd, None).ok();
@@ -90,7 +116,6 @@ impl Default for DepthRange {
 }
 
 impl Renderer {
-
     /// Unbinds the outputs (D3D11 drops an input whose resource is a bound render target), binds a shader and gives every sampler slot one state.
     fn bind_post(&self, s: &GameShader, smp: &Option<ID3D11SamplerState>) {
         self.ctx.set_render_targets(&[], None);
@@ -136,7 +161,11 @@ impl Renderer {
         }
 
         // 2. The luma statistics pyramid down to 1x1 (min, max, average), clamped by the absolute points.
-        let (first_in, next_in) = if rome2 { ("g_hdr_logYxy_texture_sampler", "g_logY_values_texture_sampler") } else { ("g_luma_values_texture_sampler", "g_luma_stats_texture_sampler") };
+        let (first_in, next_in) = if rome2 {
+            ("g_hdr_logYxy_texture_sampler", "g_logY_values_texture_sampler")
+        } else {
+            ("g_luma_values_texture_sampler", "g_luma_stats_texture_sampler")
+        };
         for i in 0..self.post.stats.len() {
             let s = if i == 0 { &stats } else { &stats_down };
             self.bind_post(s, &self.states.s_clamp_point.clone());
@@ -151,14 +180,21 @@ impl Renderer {
         self.cbs.set_f("auto_exposure_buffer", "g_auto_exposure_dt", &[if self.clock.frame == 0 { 1000.0 } else { dt }]);
         self.bind_post(&points, &self.states.s_clamp_point.clone());
         bind_srv(&self.ctx, &points, "g_prev_black_and_white_points_sampler", self.tonemap.points[prev].t.srv.as_ref());
-        bind_srv(&self.ctx, &points, if rome2 { "g_logY_values_texture_sampler" } else { "g_luma_stats_texture_sampler" }, self.post.stats.last().and_then(|s| s.t.srv.as_ref()));
+        bind_srv(
+            &self.ctx,
+            &points,
+            if rome2 { "g_logY_values_texture_sampler" } else { "g_luma_stats_texture_sampler" },
+            self.post.stats.last().and_then(|s| s.t.srv.as_ref()),
+        );
         let point_rtv = self.tonemap.points[cur].t.rtv.clone();
         self.fullscreen_to(&point_rtv, 1, 1, &points);
         self.tonemap.cur = cur;
 
         // The constant tone mapper takes the points from a cbuffer: the previous frames' result is read back through a ring of staging copies;
         // the oldest one (READBACK_RING - 1 frames back) is finished on the GPU.
-        if let (Some(staging), Some(tex)) = (&self.tonemap.staging[(self.clock.frame % READBACK_RING as u64) as usize], &self.tonemap.points[cur].t.tex) {
+        if let (Some(staging), Some(tex)) =
+            (&self.tonemap.staging[(self.clock.frame % READBACK_RING as u64) as usize], &self.tonemap.points[cur].t.tex)
+        {
             self.ctx.copy_resource(staging, tex);
         }
 
@@ -244,7 +280,8 @@ impl Renderer {
     pub(crate) fn pass_to_screen(&mut self, env: &EnvironmentParams) {
         let mut distortion = if self.settings.distortion { self.particles.distortion().cloned() } else { None };
         // Rome 2's depth of field is a pass of its own (dof.rs), always on in battle with gfx_depth_of_field; hdr_to_screen reads its image.
-        let rome2_dof = (self.game == super::game::RenderGame::Rome2 && self.settings.depth_of_field).then(|| self.pass_dof_rome2(env)).flatten();
+        let rome2_dof =
+            (self.game == super::game::RenderGame::Rome2 && self.settings.depth_of_field).then(|| self.pass_dof_rome2(env)).flatten();
         let dof = env.use_dof && self.settings.depth_of_field && self.game != super::game::RenderGame::Rome2;
         let mut ps = None;
 
@@ -254,7 +291,8 @@ impl Renderer {
         if grain {
             let name = format!(
                 "dx11_{}{}enable_grain_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high",
-                if distortion.is_some() { "enable_distortion_" } else { "" }, if dof { "enable_depth_of_field_" } else { "" },
+                if distortion.is_some() { "enable_distortion_" } else { "" },
+                if dof { "enable_depth_of_field_" } else { "" },
             );
             ps = self.shader(&name);
             grain = ps.is_some();
@@ -278,7 +316,8 @@ impl Renderer {
         // With MSAA the game's `ps50_main_high_ms` of the same variant (the depth of field and distortion read the MS depth); the
         // one-sample shader if there is none.
         let ps = if self.gbuffer.ms.is_some() {
-            let ms_name = ps.name.replace("_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high", "_sm_5_0_hdr_to_screen.hlsl_ps_ps50_main_high_ms");
+            let ms_name =
+                ps.name.replace("_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high", "_sm_5_0_hdr_to_screen.hlsl_ps_ps50_main_high_ms");
             self.shader(&ms_name).unwrap_or(ps)
         } else {
             ps
@@ -364,7 +403,8 @@ impl Renderer {
     /// 0x1174a3f0, 0x11745a90, 0x1174b440): `depth_sampler` point clamp, the blurs' `s_input_sampler` point wrap,
     /// `god_rays_sampler` linear clamp (pass_to_screen).
     fn pass_god_rays(&mut self, env: &EnvironmentParams) -> Option<ID3D11ShaderResourceView> {
-        let (Some(rays), Some(bx), Some(by)) = (self.shader(GOD_RAYS_PS), self.shader(GOD_RAYS_BLUR_X_PS), self.shader(GOD_RAYS_BLUR_Y_PS)) else {
+        let (Some(rays), Some(bx), Some(by)) = (self.shader(GOD_RAYS_PS), self.shader(GOD_RAYS_BLUR_X_PS), self.shader(GOD_RAYS_BLUR_Y_PS))
+        else {
             return None;
         };
         wce_prof!("render.god_rays");
@@ -379,7 +419,8 @@ impl Renderer {
         }
 
         let to_sun = env.to_sun();
-        let dir = if to_sun.x * to_sun.x + to_sun.y * to_sun.y + to_sun.z * to_sun.z < 0.01 * 0.01 { Float3::new(1.0, 0.0, 0.0) } else { to_sun };
+        let dir =
+            if to_sun.x * to_sun.x + to_sun.y * to_sun.y + to_sun.z * to_sun.z < 0.01 * 0.01 { Float3::new(1.0, 0.0, 0.0) } else { to_sun };
         let p = self.camera.cb_view_proj.transform_point(self.camera.cb_eye + dir);
         self.cbs.set_f("hdr_god_rays_PS", "sun_position", &[(p.x + 1.0) * 0.5, 0.5 - p.y * 0.5, p.z]);
         self.ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
@@ -430,7 +471,9 @@ impl Renderer {
     }
 
     pub(crate) fn pass_mlaa(&mut self) {
-        let (Some(edges_ps), Some(length_ps), Some(blend_ps)) = (self.shader(MLAA_EDGES_PS), self.shader(MLAA_LINE_LENGTH_PS), self.shader(MLAA_BLEND_PS)) else {
+        let (Some(edges_ps), Some(length_ps), Some(blend_ps)) =
+            (self.shader(MLAA_EDGES_PS), self.shader(MLAA_LINE_LENGTH_PS), self.shader(MLAA_BLEND_PS))
+        else {
             return;
         };
         wce_prof!("render.mlaa");
@@ -537,7 +580,12 @@ impl Renderer {
         self.ctx.set_topology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         if flare > 0.0 && self.sun.visibility > 0.0 {
-            let textures = ["commontextures/green_dot_flare.dds", "commontextures/streaks_flare.dds", "commontextures/green_dot_flare.dds", "commontextures/rays_flare.dds"];
+            let textures = [
+                "commontextures/green_dot_flare.dds",
+                "commontextures/streaks_flare.dds",
+                "commontextures/green_dot_flare.dds",
+                "commontextures/rays_flare.dds",
+            ];
             let samplers = ["lense_flare_1_sampler", "lense_flare_2_sampler", "lense_flare_1_sampler", "lense_flare_3_sampler"];
             self.ctx.set_blend_state(self.states.bs_add_one.as_ref());
             for (i, (vs, ps)) in flares.into_iter().enumerate() {
@@ -580,11 +628,23 @@ impl Renderer {
     pub(crate) fn analyse_depth(&mut self, cam: &Camera) {
         // With MSAA the scene's depth is the resolved D24S8 one (no R32F channel 4 is drawn).
         let d24 = self.gbuffer.ms.is_some();
-        if self.depth_range.staging[0].is_none() || self.depth_range.w != self.gbuffer.w || self.depth_range.h != self.gbuffer.h || self.depth_range.d24 != d24 {
+        if self.depth_range.staging[0].is_none()
+            || self.depth_range.w != self.gbuffer.w
+            || self.depth_range.h != self.gbuffer.h
+            || self.depth_range.d24 != d24
+        {
             let format = if d24 { DXGI_FORMAT_R24G8_TYPELESS } else { DXGI_FORMAT_R32_FLOAT };
             let sd = D3D11_TEXTURE2D_DESC {
-                Width: self.gbuffer.w, Height: self.gbuffer.h, MipLevels: 1, ArraySize: 1, Format: format, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_STAGING, BindFlags: 0, CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32, MiscFlags: 0,
+                Width: self.gbuffer.w,
+                Height: self.gbuffer.h,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: format,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32,
+                MiscFlags: 0,
             };
 
             for t in &mut self.depth_range.staging {

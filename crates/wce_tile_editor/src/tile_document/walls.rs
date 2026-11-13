@@ -87,7 +87,6 @@ struct WallJob {
 }
 
 impl WallPreview {
-
     /// How many times walls' pieces were made, and how many sets of them are kept.
     pub fn stats(&self) -> (u64, usize) {
         (self.made_count, self.made.len())
@@ -142,8 +141,10 @@ impl Tile {
         }
 
         let logic = self.files.as_deref().and_then(|f| f.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok());
-        let from_logic = logic.and_then(|b| wce_walls::logic::joint_extent_x(&b).ok()).map(|(a, b)| (f64::from(a), f64::from(b))).filter(|(a, b)| b > a);
-        let from_model = || self.building_model(key).filter(|m| m.ok && m.bmax.x > m.bmin.x).map(|m| (f64::from(m.bmin.x), f64::from(m.bmax.x)));
+        let from_logic =
+            logic.and_then(|b| wce_walls::logic::joint_extent_x(&b).ok()).map(|(a, b)| (f64::from(a), f64::from(b))).filter(|(a, b)| b > a);
+        let from_model =
+            || self.building_model(key).filter(|m| m.ok && m.bmax.x > m.bmin.x).map(|m| (f64::from(m.bmin.x), f64::from(m.bmax.x)));
         let v = from_logic.or_else(from_model);
 
         // A model still loading is asked again later; a logic file's answer is kept.
@@ -200,7 +201,11 @@ impl Tile {
         let heading = |x: f64, z: f64| x.atan2(z);
         let mut best: Option<(f64, WorldTransform)> = None;
         for other in sc.find_all("BUILDING_INSTANCE").into_iter().filter(|&o| o != elem && self.shown(o)) {
-            let Some(other_key) = sc.doc().get(other, "key").filter(|k| k.to_lowercase().contains("_fort_") && !k.to_lowercase().starts_with("wce_")) else { continue };
+            let Some(other_key) =
+                sc.doc().get(other, "key").filter(|k| k.to_lowercase().contains("_fort_") && !k.to_lowercase().starts_with("wce_"))
+            else {
+                continue;
+            };
             let ow = wce_tile::world_transform::world_transform(sc, other);
             for t in self.piece_ends(&other_key) {
                 let t_at = ow.position + ow.rotation * Double3::new(f64::from(t.at[0]), f64::from(t.at[1]), f64::from(t.at[2]));
@@ -250,7 +255,12 @@ impl Tile {
     pub fn snap_wall_end(&self, world: Float3) -> Float3 {
         let u = self.unit();
         let (x, z) = (f64::from(world.x) * u, f64::from(world.z) * u);
-        let best = self.wall_anchors().into_iter().map(|a| ((a.at[0] - x).hypot(a.at[2] - z), a)).filter(|(d, _)| *d <= SNAP).min_by(|a, b| a.0.total_cmp(&b.0));
+        let best = self
+            .wall_anchors()
+            .into_iter()
+            .map(|a| ((a.at[0] - x).hypot(a.at[2] - z), a))
+            .filter(|(d, _)| *d <= SNAP)
+            .min_by(|a, b| a.0.total_cmp(&b.0));
         match best {
             Some((_, a)) => Float3::new((a.at[0] / u) as f32, world.y, (a.at[2] / u) as f32),
             None => world,
@@ -262,10 +272,12 @@ impl Tile {
         let ps = all.iter().copied().filter(|p| !p.rigid).collect::<Vec<_>>();
         let u = self.unit();
         let ground = |x: f64, z: f64| self.project.height_at(x / u, z / u);
-        let radius = |k: &str| self.building_model(k).filter(|m| m.ok).map_or(4.0, |m| {
-            let e = m.bmax - m.bmin;
-            0.5 * f64::from(e.x.max(e.z))
-        });
+        let radius = |k: &str| {
+            self.building_model(k).filter(|m| m.ok).map_or(4.0, |m| {
+                let e = m.bmax - m.bmin;
+                0.5 * f64::from(e.x.max(e.z))
+            })
+        };
         wce_walls::scene::doors(self.tscene(), layout, &ps, &ground, &radius)
     }
 
@@ -277,7 +289,15 @@ impl Tile {
 
         if !wce_walls::scene::is_procedural(self.tscene(), elem) {
             return self.wall_preview.kit_layouts.get(&elem).map_or_else(Vec::new, |l| {
-                l.placed.iter().map(|p| (p.key.clone(), wce_walls::pieces::Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true })).collect()
+                l.placed
+                    .iter()
+                    .map(|p| {
+                        (
+                            p.key.clone(),
+                            wce_walls::pieces::Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true },
+                        )
+                    })
+                    .collect()
             });
         }
 
@@ -315,7 +335,9 @@ impl Tile {
         // straight from end to end.
         if self.is_wall(elem) && !wce_walls::scene::is_procedural(self.tscene(), elem) {
             let Some(l) = self.wall_preview.kit_layouts.get(&elem) else { return };
-            let upright = |o: &mut Overlay, p: [f64; 2], level: f64, rgba: u32| o.line(w(p[0], level, p[1]), w(p[0], level + l.walk + 2.0, p[1]), rgba);
+            let upright = |o: &mut Overlay, p: [f64; 2], level: f64, rgba: u32| {
+                o.line(w(p[0], level, p[1]), w(p[0], level + l.walk + 2.0, p[1]), rgba)
+            };
             for p in l.placed.iter().filter(|p| p.joints[0] != p.joints[1]) {
                 let (a, b) = (p.joints[0], p.joints[1]);
                 o.line(w(a[0], p.levels[0] + 0.2, a[1]), w(b[0], p.levels[1] + 0.2, b[1]), foot);
@@ -351,7 +373,11 @@ impl Tile {
         for p in s.windows(2) {
             let (a, b) = (p[0], p[1]);
             o.line(w(a.foot[0], a.ground + 0.2, a.foot[1]), w(b.foot[0], b.ground + 0.2, b.foot[1]), foot);
-            o.line(w(a.centre[0], a.level + l.profile.walkway, a.centre[1]), w(b.centre[0], b.level + l.profile.walkway, b.centre[1]), walk);
+            o.line(
+                w(a.centre[0], a.level + l.profile.walkway, a.centre[1]),
+                w(b.centre[0], b.level + l.profile.walkway, b.centre[1]),
+                walk,
+            );
         }
 
         let at = |d: f64| s.iter().min_by(|a, b| (a.s - d).abs().total_cmp(&(b.s - d).abs())).copied();
@@ -478,7 +504,8 @@ impl Tile {
         }
 
         let now = Instant::now();
-        let due = self.wall_preview.pending.iter().filter(|(_, t)| now.duration_since(**t) >= PREVIEW_DELAY).map(|(e, _)| *e).collect::<Vec<_>>();
+        let due =
+            self.wall_preview.pending.iter().filter(|(_, t)| now.duration_since(**t) >= PREVIEW_DELAY).map(|(e, _)| *e).collect::<Vec<_>>();
         for e in due {
             self.wall_preview.pending.remove(&e);
             self.make_wall_preview(scene, e);
@@ -574,7 +601,14 @@ impl Tile {
     /// A wall's pieces made off the editor's thread (`take_wall_jobs` puts them on the scene under `signature`): those of each plan (with
     /// its door sections, by index among its warped pieces), made from the profile's base and warped; the game's pieces placed as they are
     /// (the plans' caps, towers and bastions, and `rigid`: a kit wall's pieces) drawn whole.
-    pub(super) fn spawn_wall_job(&mut self, elem: usize, signature: u64, profile: &'static wce_walls::profile::Profile, plans: Vec<(wce_walls::solver::Plan, Vec<usize>)>, rigid: Vec<(String, wce_walls::pieces::Piece)>) {
+    pub(super) fn spawn_wall_job(
+        &mut self,
+        elem: usize,
+        signature: u64,
+        profile: &'static wce_walls::profile::Profile,
+        plans: Vec<(wce_walls::solver::Plan, Vec<usize>)>,
+        rigid: Vec<(String, wce_walls::pieces::Piece)>,
+    ) {
         // Already being made.
         if let Some((e, job)) = self.wall_preview.parked.take()
             && e == elem
@@ -600,8 +634,16 @@ impl Tile {
         }
 
         let mut own: HashMap<String, Arc<BuildingFiles>> = HashMap::new();
-        for k in jobs.iter().flat_map(|j| j.2.iter().filter_map(|p| p.base)).chain(caps.iter().map(|c| c.0.as_str())).map(str::to_owned).collect::<Vec<_>>() {
-            if !own.contains_key(&k) && let Some(b) = self.wall_base(&k) {
+        for k in jobs
+            .iter()
+            .flat_map(|j| j.2.iter().filter_map(|p| p.base))
+            .chain(caps.iter().map(|c| c.0.as_str()))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+        {
+            if !own.contains_key(&k)
+                && let Some(b) = self.wall_base(&k)
+            {
                 own.insert(k, b);
             }
         }
@@ -620,7 +662,11 @@ impl Tile {
             let mut made = vec![];
             for (k, (plan, doors, ps)) in jobs.into_iter().enumerate() {
                 for (i, piece) in ps.into_iter().enumerate() {
-                    let key = if k == 0 { format!("wce_preview_{elem}_{revision}_{i}") } else { format!("wce_preview_{elem}_{revision}_{k}_{i}") };
+                    let key = if k == 0 {
+                        format!("wce_preview_{elem}_{revision}_{i}")
+                    } else {
+                        format!("wce_preview_{elem}_{revision}_{k}_{i}")
+                    };
                     let warp = PieceWarp::new(&plan, profile, piece, &ground);
                     let from = match (piece.base.and_then(|b| job_own.get(b)), &job_door) {
                         (Some(b), _) => b,
@@ -643,11 +689,16 @@ impl Tile {
 
     /// The walls' pieces made off the editor's thread, put on the scene in place of the old ones.
     fn take_wall_jobs(&mut self, scene: &mut RenderScene) {
-        let done = self.wall_preview.jobs.iter().filter_map(|(&e, j)| match j.job.poll() {
-            super::jobs::Poll::Running => None,
-            super::jobs::Poll::Done(made) => Some((e, Some(made))),
-            super::jobs::Poll::Failed => Some((e, None)),
-        }).collect::<Vec<_>>();
+        let done = self
+            .wall_preview
+            .jobs
+            .iter()
+            .filter_map(|(&e, j)| match j.job.poll() {
+                super::jobs::Poll::Running => None,
+                super::jobs::Poll::Done(made) => Some((e, Some(made))),
+                super::jobs::Poll::Failed => Some((e, None)),
+            })
+            .collect::<Vec<_>>();
         for (elem, made) in done {
             let Some(job) = self.wall_preview.jobs.remove(&elem) else { continue };
             let Some(made) = made else {
@@ -676,7 +727,13 @@ impl Tile {
         }
 
         let source = self.source(super::item_of(elem));
-        let ids = made.models.into_iter().map(|(world, model)| scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source)).collect();
+        let ids = made
+            .models
+            .into_iter()
+            .map(|(world, model)| {
+                scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model, lod: true, ..Default::default() }), source)
+            })
+            .collect();
         self.wall_preview.entities.insert(elem, ids);
         self.wall_preview.shown_as.insert(elem, signature);
         self.drop_unused_wall_pieces();
@@ -684,7 +741,15 @@ impl Tile {
     }
 
     /// A wall's pieces put on the scene, and kept by their signature: those made, and its caps as they are.
-    pub(super) fn show_wall_pieces(&mut self, scene: &mut RenderScene, elem: usize, signature: u64, made: Vec<(String, wce_walls::pieces::Piece, BuildingFiles)>, caps: &[(String, wce_walls::pieces::Piece)], own: &HashMap<String, Arc<BuildingFiles>>) {
+    pub(super) fn show_wall_pieces(
+        &mut self,
+        scene: &mut RenderScene,
+        elem: usize,
+        signature: u64,
+        made: Vec<(String, wce_walls::pieces::Piece, BuildingFiles)>,
+        caps: &[(String, wce_walls::pieces::Piece)],
+        own: &HashMap<String, Arc<BuildingFiles>>,
+    ) {
         let u = self.unit();
         let source = self.source(super::item_of(elem));
         let mut ids = vec![];
@@ -692,13 +757,21 @@ impl Tile {
         let mut models = vec![];
         let mut buildings = vec![];
         for (key, piece, files) in made {
-            let wt = WorldTransform { position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]), rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)) };
+            let wt = WorldTransform {
+                position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]),
+                rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)),
+            };
             let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));
             for (path, bytes) in files.into_pack_files() {
                 let model = path.ends_with(".rigid_model_v2").then(|| path.clone());
                 wce_vfs::generated::put(&path, bytes);
                 if let Some(model) = model {
-                    ids.push(scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model: model.clone(), lod: true, ..Default::default() }), source));
+                    ids.push(scene.add(
+                        self.layer,
+                        world,
+                        Payload::MeshInstance(MeshInstance { model: model.clone(), lod: true, ..Default::default() }),
+                        source,
+                    ));
                     models.push((world, model));
                 }
             }
@@ -711,12 +784,20 @@ impl Tile {
         for (key, piece) in caps {
             let (key, piece) = (key.as_str(), *piece);
             let Some(files) = own.get(key) else { continue };
-            let wt = WorldTransform { position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]), rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)) };
+            let wt = WorldTransform {
+                position: Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]),
+                rotation: euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)),
+            };
             let world = matrix_of(&wt, u, Some(Double3::new(1.0 / u, 1.0 / u, 1.0 / u)));
             buildings.push((world, key.to_owned()));
             for name in files.files.keys().filter(|n| wce_walls::building::is_piece_mesh(n) && wce_walls::pieces::level_of(n) == 1) {
                 let model = format!("{}{name}", folder(key));
-                ids.push(scene.add(self.layer, world, Payload::MeshInstance(MeshInstance { model: model.clone(), lod: true, ..Default::default() }), source));
+                ids.push(scene.add(
+                    self.layer,
+                    world,
+                    Payload::MeshInstance(MeshInstance { model: model.clone(), lod: true, ..Default::default() }),
+                    source,
+                ));
                 models.push((world, model));
             }
         }

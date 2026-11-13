@@ -38,7 +38,8 @@ fn main() {
         tiles.entry(folder.to_owned()).or_default().push(file.trim_end_matches(".tree_list.bin").to_owned());
     }
 
-    let mut folders: Vec<(String, Vec<String>)> = tiles.into_iter().filter(|(f, _)| f.contains(&filter) && raw.join(f).join("tile.ted").is_file()).collect();
+    let mut folders: Vec<(String, Vec<String>)> =
+        tiles.into_iter().filter(|(f, _)| f.contains(&filter) && raw.join(f).join("tile.ted").is_file()).collect();
     folders.sort();
     let results: Vec<String> = folders
         .par_iter()
@@ -61,7 +62,13 @@ fn main() {
                 for x in 0..w {
                     for y in 0..h {
                         let raw = b.get((y * w + x) as usize).copied();
-                        let ok = b.is_empty() || match m { "zero" => raw == Some(b'0'), "one_noflip" | "one" => raw == Some(b'1'), "zero_noflip" => raw == Some(b'0'), _ => true };
+                        let ok = b.is_empty()
+                            || match m {
+                                "zero" => raw == Some(b'0'),
+                                "one_noflip" | "one" => raw == Some(b'1'),
+                                "zero_noflip" => raw == Some(b'0'),
+                                _ => true,
+                            };
                         if ok {
                             let yy = if m.ends_with("noflip") { y } else { h - 1 - y };
                             cells.insert((x as i32, yy as i32));
@@ -77,7 +84,13 @@ fn main() {
                 Some("visible") => {
                     let scene = &project.scene;
                     let doc = scene.doc();
-                    let vis: Vec<usize> = doc.elements().iter().enumerate().filter(|(_, e)| e.name == "VegetationExclusionPolygonInstance").map(|(i, _)| i).collect();
+                    let vis: Vec<usize> = doc
+                        .elements()
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, e)| e.name == "VegetationExclusionPolygonInstance")
+                        .map(|(i, _)| i)
+                        .collect();
                     let keep: Vec<bool> = vis.iter().map(|&i| scene.visible(i)).collect();
                     let polys = std::mem::take(&mut inputs.exclusions);
                     inputs.exclusions = polys.into_iter().zip(keep).filter(|(_, k)| *k).map(|(p, _)| p).collect();
@@ -98,7 +111,9 @@ fn main() {
                 // --oracle-dir: BOB's fresh output (a kit's working_data) instead of the packs; file names keep the category's case.
                 let bytes = match oracle_dir.as_ref() {
                     Some(dir) => std::fs::read_dir(dir.join(&folder)).ok().and_then(|rd| {
-                        rd.flatten().find(|e| e.file_name().to_string_lossy().to_lowercase() == format!("{name}.tree_list.bin")).and_then(|e| std::fs::read(e.path()).ok())
+                        rd.flatten()
+                            .find(|e| e.file_name().to_string_lossy().to_lowercase() == format!("{name}.tree_list.bin"))
+                            .and_then(|e| std::fs::read(e.path()).ok())
                     }),
                     None => vfs.read(&format!("{folder}/{name}.tree_list.bin")).ok(),
                 };
@@ -114,7 +129,10 @@ fn main() {
                             (g - g.round()).abs() < 1e-4
                         };
                         if on_grid(*t.x()) && on_grid(*t.z()) {
-                            theirs.insert(((t.x() * 2.0) as i64, (t.z() * 2.0) as i64), (model.clone(), (t.scale() * 127.0).round() as u8, *t.y()));
+                            theirs.insert(
+                                ((t.x() * 2.0) as i64, (t.z() * 2.0) as i64),
+                                (model.clone(), (t.scale() * 127.0).round() as u8, *t.y()),
+                            );
                         }
                     }
                 }
@@ -140,12 +158,22 @@ fn main() {
                 if let Some(i) = args.iter().position(|a| a == "--at") {
                     let v: Vec<f32> = args[i + 1].split(',').map(|x| x.parse().unwrap()).collect();
                     let density = params.densities[category].trees;
-                    let chosen = vegetation::generate::generate(&params, &inputs, category, vegetation::params::TREE | vegetation::params::PROP, seeds.trees, density);
+                    let chosen = vegetation::generate::generate(
+                        &params,
+                        &inputs,
+                        category,
+                        vegetation::params::TREE | vegetation::params::PROP,
+                        seeds.trees,
+                        density,
+                    );
                     let h_m = inputs.cells_y as f32 * 128.0 * inputs.render_scale;
                     for c in &chosen {
                         let (lx, lz) = (c.x / inputs.render_scale, (h_m - c.y) / inputs.render_scale);
                         if (lx - v[0]).abs() <= v[2] && (lz - v[1]).abs() <= v[2] {
-                            lines.push(format!("  chosen ({lx}, {lz}) {} group {} minsep {} width {} size {}", c.model, c.group, c.min_separation, c.width, c.size));
+                            lines.push(format!(
+                                "  chosen ({lx}, {lz}) {} group {} minsep {} width {} size {}",
+                                c.model, c.group, c.min_separation, c.width, c.size
+                            ));
                         }
                     }
                 }
@@ -169,13 +197,24 @@ fn main() {
                     lines.push(format!("  theirs inside my exclusions: {inside} {ex:?}"));
                     let scene = &project.scene;
                     let doc = scene.doc();
-                    let polys: Vec<usize> = doc.elements().iter().enumerate().filter(|(_, e)| e.name == "VegetationExclusionPolygonInstance").map(|(i, _)| i).collect();
+                    let polys: Vec<usize> = doc
+                        .elements()
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, e)| e.name == "VegetationExclusionPolygonInstance")
+                        .map(|(i, _)| i)
+                        .collect();
                     for &(x, z) in &ex {
                         let (gx, gy) = (x * inputs.render_scale, h_m - z * inputs.render_scale);
                         for (k, poly) in inputs.exclusions.iter().enumerate() {
                             if vegetation::generate::point_in(poly, gx, gy) {
                                 let e = polys.get(k).copied().unwrap_or(0);
-                                lines.push(format!("    in polygon {k} (elem {e}) visible {} points {} attrs {:?}", scene.visible(e), poly.len(), doc.elements()[e].attrs.iter().map(|a| format!("{:?}", a)).collect::<Vec<_>>()));
+                                lines.push(format!(
+                                    "    in polygon {k} (elem {e}) visible {} points {} attrs {:?}",
+                                    scene.visible(e),
+                                    poly.len(),
+                                    doc.elements()[e].attrs.iter().map(|a| format!("{:?}", a)).collect::<Vec<_>>()
+                                ));
                             }
                         }
                     }
@@ -188,12 +227,20 @@ fn main() {
                     for v in list.tree_list().tree_list() {
                         let model = v.key().replace('\\', "/").to_lowercase();
                         let listed: Vec<(i64, i64)> = v.value().iter().map(|t| ((t.x() * 2.0) as i64, (t.z() * 2.0) as i64)).collect();
-                        let ours: Vec<(i64, i64)> = sorted.iter().filter(|t| t.path.replace('\\', "/").to_lowercase() == model).map(|t| ((t.x * 2.0) as i64, (t.z * 2.0) as i64)).collect();
+                        let ours: Vec<(i64, i64)> = sorted
+                            .iter()
+                            .filter(|t| t.path.replace('\\', "/").to_lowercase() == model)
+                            .map(|t| ((t.x * 2.0) as i64, (t.z * 2.0) as i64))
+                            .collect();
                         total += 1;
                         if listed == ours {
                             ok += 1;
                         } else {
-                            lines.push(format!("  {model}: list {:?} ours {:?}", &listed[..listed.len().min(5)], &ours[..ours.len().min(5)]));
+                            lines.push(format!(
+                                "  {model}: list {:?} ours {:?}",
+                                &listed[..listed.len().min(5)],
+                                &ours[..ours.len().min(5)]
+                            ));
                         }
                     }
                     lines.push(format!("  order: {ok} of {total} models"));
@@ -203,14 +250,21 @@ fn main() {
                 if args.iter().any(|a| a == "--full") {
                     let statics = vegetation::static_trees(&project.scene, &inputs);
                     let full = vegetation::tree_list(&inputs, &params, category, seeds, &statics, &exists);
-                    let entry = |p: &str, x: f32, y: f32, z: f32, s: u8, f: u8| format!("{p} {:08x} {:08x} {:08x} {s} {f}", (x + 0.0).to_bits(), (y + 0.0).to_bits(), (z + 0.0).to_bits());
+                    let entry = |p: &str, x: f32, y: f32, z: f32, s: u8, f: u8| {
+                        format!("{p} {:08x} {:08x} {:08x} {s} {f}", (x + 0.0).to_bits(), (y + 0.0).to_bits(), (z + 0.0).to_bits())
+                    };
                     let theirs_all: Vec<String> = list
                         .tree_list()
                         .tree_list()
                         .iter()
-                        .flat_map(|v| v.value().iter().map(move |t| entry(v.key(), *t.x(), *t.y(), *t.z(), (t.scale() * 127.0).round() as u8, *t.flags())))
+                        .flat_map(|v| {
+                            v.value()
+                                .iter()
+                                .map(move |t| entry(v.key(), *t.x(), *t.y(), *t.z(), (t.scale() * 127.0).round() as u8, *t.flags()))
+                        })
                         .collect();
-                    let mine_all: Vec<String> = full.iter().map(|t| entry(&t.path, t.x, t.y, t.z, t.scale_byte, u8::from(t.freeform))).collect();
+                    let mine_all: Vec<String> =
+                        full.iter().map(|t| entry(&t.path, t.x, t.y, t.z, t.scale_byte, u8::from(t.freeform))).collect();
                     let mut pool: HashMap<&String, usize> = HashMap::new();
                     for t in &theirs_all {
                         *pool.entry(t).or_default() += 1;
@@ -235,7 +289,12 @@ fn main() {
                         m
                     };
                     let order = if per_path(&theirs_all) == per_path(&mine_all) { "same" } else { "differs" };
-                    lines.push(format!("{folder}\t{name}\tfull\ttheirs {}\tmine {}\tsame {same_all}\tstatic {}\torder {order}", theirs_all.len(), mine_all.len(), statics.len()));
+                    lines.push(format!(
+                        "{folder}\t{name}\tfull\ttheirs {}\tmine {}\tsame {same_all}\tstatic {}\torder {order}",
+                        theirs_all.len(),
+                        mine_all.len(),
+                        statics.len()
+                    ));
                     if diff {
                         let mut pool: Vec<&String> = mine_all.iter().collect();
                         let mut only_theirs = vec![];
@@ -254,10 +313,18 @@ fn main() {
                         };
                         for t in only_theirs.iter().take(6) {
                             let (tp, tx, ty, tz) = parse(t);
-                            let near = pool.iter().map(|m| parse(m)).filter(|m| m.0 == tp).min_by(|a, b| ((a.1 - tx).abs() + (a.3 - tz).abs()).total_cmp(&((b.1 - tx).abs() + (b.3 - tz).abs())));
+                            let near = pool
+                                .iter()
+                                .map(|m| parse(m))
+                                .filter(|m| m.0 == tp)
+                                .min_by(|a, b| ((a.1 - tx).abs() + (a.3 - tz).abs()).total_cmp(&((b.1 - tx).abs() + (b.3 - tz).abs())));
                             lines.push(format!("  only theirs {tp} ({tx}, {ty}, {tz}) nearest mine {:?}", near.map(|n| (n.1, n.2, n.3))));
                         }
-                        lines.push(format!("  only mine {} e.g. {:?}", pool.len(), pool.iter().take(2).map(|m| parse(m)).collect::<Vec<_>>()));
+                        lines.push(format!(
+                            "  only mine {} e.g. {:?}",
+                            pool.len(),
+                            pool.iter().take(2).map(|m| parse(m)).collect::<Vec<_>>()
+                        ));
                     }
                 }
 
@@ -273,7 +340,12 @@ fn main() {
                     }
                 }
 
-                lines.push(format!("{folder}\t{name}\ttheirs {}\tmine {}\tsame {same}\tmax dy {}", theirs.len(), mine.len(), if std::env::var_os("WCE_DY_EXACT").is_some() { format!("{dy:e}") } else { format!("{dy:.3}") }));
+                lines.push(format!(
+                    "{folder}\t{name}\ttheirs {}\tmine {}\tsame {same}\tmax dy {}",
+                    theirs.len(),
+                    mine.len(),
+                    if std::env::var_os("WCE_DY_EXACT").is_some() { format!("{dy:e}") } else { format!("{dy:.3}") }
+                ));
                 vegetation::generate::probe::REPORT.with_borrow_mut(|r| {
                     for l in r.drain(..) {
                         lines.push(format!("  {l}"));
@@ -281,7 +353,10 @@ fn main() {
                 });
                 vegetation::generate::probe::ORACLE.with_borrow_mut(|o| *o = None);
                 if diff {
-                    let mine_keys: HashMap<(i64, i64), (String, u8)> = mine.iter().map(|t| (((t.x * 2.0) as i64, (t.z * 2.0) as i64), (t.path.replace('\\', "/").to_lowercase(), t.scale_byte))).collect();
+                    let mine_keys: HashMap<(i64, i64), (String, u8)> = mine
+                        .iter()
+                        .map(|t| (((t.x * 2.0) as i64, (t.z * 2.0) as i64), (t.path.replace('\\', "/").to_lowercase(), t.scale_byte)))
+                        .collect();
                     let mut keys: Vec<(i64, i64)> = theirs.keys().chain(mine_keys.keys()).copied().collect();
                     keys.sort();
                     keys.dedup();

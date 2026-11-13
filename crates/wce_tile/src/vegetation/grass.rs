@@ -125,7 +125,11 @@ pub fn generate_grass(inputs: &TileInputs, params: &GrassParams, seed: u32) -> V
 
     let groups: Vec<GrassGroup> = groups
         .iter()
-        .map(|(name, textures)| GrassGroup { name, textures: textures.iter().copied().collect(), thresholds: [0, 1, 2, 3].map(|i| params.threshold_of(name, i)) })
+        .map(|(name, textures)| GrassGroup {
+            name,
+            textures: textures.iter().copied().collect(),
+            thresholds: [0, 1, 2, 3].map(|i| params.threshold_of(name, i)),
+        })
         .collect();
 
     let mut rand = Rand(seed);

@@ -84,7 +84,8 @@ impl Part {
 /// from as far out as the end piece is long to the deck's end, level with it: the end piece's own slope takes it down).
 #[must_use]
 pub fn parts(deck: &Deck, base: &Prepared, end: Option<&Prepared>) -> Vec<Part> {
-    let mut out = piece_stretches(deck, base).into_iter().map(|(s, origin)| Part { end: false, deck: deck.clone(), s, origin }).collect::<Vec<_>>();
+    let mut out =
+        piece_stretches(deck, base).into_iter().map(|(s, origin)| Part { end: false, deck: deck.clone(), s, origin }).collect::<Vec<_>>();
     if let Some(e) = end {
         let l = (e.x.1 - e.x.0).max(1e-6);
         for (at, away) in [(0.0, -1.0), (deck.length(), 1.0)] {
@@ -229,7 +230,8 @@ pub fn prepare(base: &BuildingFiles) -> Result<Prepared, String> {
     }
 
     // The intact meshes' extent.
-    let intact = files.files.iter().filter(|(n, _)| is_piece_mesh(n) && crate::pieces::level_of(n) <= 1).map(|(_, b)| b.clone()).collect::<Vec<_>>();
+    let intact =
+        files.files.iter().filter(|(n, _)| is_piece_mesh(n) && crate::pieces::level_of(n) <= 1).map(|(_, b)| b.clone()).collect::<Vec<_>>();
     if intact.is_empty() {
         return Err(format!("{}: no intact mesh", base.key));
     }
@@ -259,7 +261,11 @@ pub fn prepare(base: &BuildingFiles) -> Result<Prepared, String> {
             let half = (z.1 - z.0) * 0.4;
             let mid = (z.0 + z.1) * 0.5;
             // On the first piece's intact level.
-            let first = v["pieces"].as_array_mut().and_then(|p| p.first_mut()).and_then(|piece| piece["destructs"].as_array_mut()).and_then(|d| d.first_mut());
+            let first = v["pieces"]
+                .as_array_mut()
+                .and_then(|p| p.first_mut())
+                .and_then(|piece| piece["destructs"].as_array_mut())
+                .and_then(|d| d.first_mut());
             if let Some(d) = first {
                 if !d["platforms"].is_array() {
                     d["platforms"] = Value::Array(vec![]);
@@ -384,10 +390,12 @@ pub fn piece_stretches(deck: &Deck, base: &Prepared) -> Vec<((f64, f64), [f64; 3
     let len = deck.length();
     let own = (base.x.1 - base.x.0).max(1e-6);
     let n = ((len / own).round() as usize).max(1);
-    (0..n).map(|k| {
-        let s = (len * k as f64 / n as f64, len * (k + 1) as f64 / n as f64);
-        (s, deck.at((s.0 + s.1) * 0.5).0)
-    }).collect()
+    (0..n)
+        .map(|k| {
+            let s = (len * k as f64 / n as f64, len * (k + 1) as f64 / n as f64);
+            (s, deck.at((s.0 + s.1) * 0.5).0)
+        })
+        .collect()
 }
 
 /// A piece made from a prepared base under a new key, bent by its warp: its meshes (every level), its logic file and its zones.
@@ -434,14 +442,19 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode:
         return Ok(logic.to_vec());
     }
 
-
     // Across: the base's own platforms', else its meshes'.
     let base_logic = base.files.files.get(&base.files.logic_name()).map(|b| decode(b)).transpose()?;
     let zs = base_logic.as_ref().map(intact_platform_points).unwrap_or_default().iter().map(|p| p[2]).collect::<Vec<_>>();
-    let (z0, z1) = if zs.is_empty() { base.z } else { (zs.iter().copied().fold(f64::MAX, f64::min), zs.iter().copied().fold(f64::MIN, f64::max)) };
+    let (z0, z1) =
+        if zs.is_empty() { base.z } else { (zs.iter().copied().fold(f64::MAX, f64::min), zs.iter().copied().fold(f64::MIN, f64::max)) };
 
     let mut v = decode(logic)?;
-    let Some(d) = v["pieces"].as_array_mut().and_then(|p| p.first_mut()).and_then(|piece| piece["destructs"].as_array_mut()).and_then(|d| d.first_mut()) else {
+    let Some(d) = v["pieces"]
+        .as_array_mut()
+        .and_then(|p| p.first_mut())
+        .and_then(|piece| piece["destructs"].as_array_mut())
+        .and_then(|d| d.first_mut())
+    else {
         return Ok(logic.to_vec());
     };
 
@@ -500,10 +513,17 @@ fn with_ground_platforms(logic: &[u8], base: &Prepared, warp: &BridgeWarp, mode:
             }
         }
 
-        let segments: &[((f64, f64), bool)] = if ramps { &[((0.0, END_RAMP), false), ((END_RAMP, END_RAMP + GROUND_PLATFORM), true)] } else { &[((0.0, GROUND_PLATFORM), true)] };
+        let segments: &[((f64, f64), bool)] = if ramps {
+            &[((0.0, END_RAMP), false), ((END_RAMP, END_RAMP + GROUND_PLATFORM), true)]
+        } else {
+            &[((0.0, GROUND_PLATFORM), true)]
+        };
         for &((from, to), ground) in segments {
             let pts = [corner(z0, from), corner(z1, from), corner(z1, to), corner(z0, to)];
-            let (a, b) = ([pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]], [pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]]);
+            let (a, b) = (
+                [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]],
+                [pts[3][0] - pts[0][0], pts[3][1] - pts[0][1], pts[3][2] - pts[0][2]],
+            );
             let mut nrm = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
             let l = (nrm[0] * nrm[0] + nrm[1] * nrm[1] + nrm[2] * nrm[2]).sqrt().max(1e-12);
             let up = if nrm[1] < 0.0 { -1.0 } else { 1.0 };
@@ -583,17 +603,28 @@ fn footprint_from_platform(logic: &[u8]) -> Result<Vec<u8>, String> {
     let mut v = decode(logic)?;
     for piece in v["pieces"].as_array_mut().into_iter().flatten() {
         for d in piece["destructs"].as_array_mut().into_iter().flatten() {
-            let Some(corners) = d["platforms"].as_array().and_then(|p| p.iter().find(|p| p["flag_2"].as_bool() != Some(true)))
-                .and_then(|p| p["vertices"]["outline"].as_array().cloned()) else { continue };
+            let Some(corners) = d["platforms"]
+                .as_array()
+                .and_then(|p| p.iter().find(|p| p["flag_2"].as_bool() != Some(true)))
+                .and_then(|p| p["vertices"]["outline"].as_array().cloned())
+            else {
+                continue;
+            };
             let xz = corners.iter().rev().map(|q| (q["x"].as_f64().unwrap_or(0.0), q["z"].as_f64().unwrap_or(0.0))).collect::<Vec<_>>();
             for o in d["collision_outlines"].as_array_mut().into_iter().flatten() {
                 let y = o["vertices"]["outline"].as_array().and_then(|a| a.first()).and_then(|q| q["y"].as_f64()).unwrap_or(0.0);
-                o["vertices"]["outline"] = serde_json::Value::Array(xz.iter().map(|&(x, z)| serde_json::json!({ "x": x as f32, "y": y as f32, "z": z as f32 })).collect());
+                o["vertices"]["outline"] = serde_json::Value::Array(
+                    xz.iter().map(|&(x, z)| serde_json::json!({ "x": x as f32, "y": y as f32, "z": z as f32 })).collect(),
+                );
             }
 
             for ring in d["orange_thingies"].as_array_mut().into_iter().flatten() {
                 let kind = ring.as_array().and_then(|a| a.first()).map_or(serde_json::json!(2), |q| q["vertex_type"].clone());
-                *ring = serde_json::Value::Array(xz.iter().map(|&(x, z)| serde_json::json!({ "vertex": { "x": x as f32, "y": z as f32 }, "vertex_type": kind })).collect());
+                *ring = serde_json::Value::Array(
+                    xz.iter()
+                        .map(|&(x, z)| serde_json::json!({ "vertex": { "x": x as f32, "y": z as f32 }, "vertex_type": kind }))
+                        .collect(),
+                );
             }
         }
     }
@@ -608,10 +639,15 @@ pub fn span_of(scene: &wce_tile::ted_scene::TedScene, elem: usize) -> Option<(St
     let key = base(&doc.get(elem, BASE_ATTR)?)?.key.to_owned();
     let width = doc.get(elem, WIDTH_ATTR).and_then(|w| w.parse::<f64>().ok())?;
     let w = wce_tile::world_transform::world_transform(scene, elem);
-    let path = scene.polygon_points(elem).iter().filter_map(|&p| scene.point_position(p)).map(|p| {
-        let q = w.position + w.rotation * p;
-        [q.x, q.y, q.z]
-    }).collect::<Vec<_>>();
+    let path = scene
+        .polygon_points(elem)
+        .iter()
+        .filter_map(|&p| scene.point_position(p))
+        .map(|p| {
+            let q = w.position + w.rotation * p;
+            [q.x, q.y, q.z]
+        })
+        .collect::<Vec<_>>();
     (path.len() >= 2).then(|| (key, Deck::new(path), width))
 }
 
@@ -643,16 +679,25 @@ mod tests {
     }
 
     fn prepared() -> Prepared {
-        Prepared { files: BuildingFiles { key: "b".into(), files: Default::default() }, x: (-10.0, 10.0), z: (-5.0, 5.0), bottom: -6.0, deck: 1.0, made_platform: false }
+        Prepared {
+            files: BuildingFiles { key: "b".into(), files: Default::default() },
+            x: (-10.0, 10.0),
+            z: (-5.0, 5.0),
+            bottom: -6.0,
+            deck: 1.0,
+            made_platform: false,
+        }
     }
 
     #[test]
     fn a_bridge_follows_its_deck_and_its_posts_reach_the_ground() {
         // A quarter circle of radius 40, rising 4 over it.
-        let path = (0..=90).map(|i| {
-            let a = f64::from(i).to_radians();
-            [40.0 * a.sin(), 4.0 * f64::from(i) / 90.0, 40.0 - 40.0 * a.cos()]
-        }).collect::<Vec<_>>();
+        let path = (0..=90)
+            .map(|i| {
+                let a = f64::from(i).to_radians();
+                [40.0 * a.sin(), 4.0 * f64::from(i) / 90.0, 40.0 - 40.0 * a.cos()]
+            })
+            .collect::<Vec<_>>();
         let deck = Deck::new(path);
         let base = prepared();
         let pieces = piece_stretches(&deck, &base);
@@ -664,7 +709,12 @@ mod tests {
         // The walked-on height goes onto the deck's surface, its middle onto the curve.
         let mid = w.point([0.0, 1.0, 0.0]).map(f64::from);
         let (c, _) = deck.at((s.0 + s.1) * 0.5);
-        assert!((mid[0] + origin[0] - c[0]).abs() < 1e-3 && (mid[1] + origin[1] - c[1]).abs() < 1e-3 && (mid[2] + origin[2] - c[2]).abs() < 1e-3, "{mid:?} {c:?}");
+        assert!(
+            (mid[0] + origin[0] - c[0]).abs() < 1e-3
+                && (mid[1] + origin[1] - c[1]).abs() < 1e-3
+                && (mid[2] + origin[2] - c[2]).abs() < 1e-3,
+            "{mid:?} {c:?}"
+        );
 
         // Across, widened, square to the way.
         let side = w.point([0.0, 1.0, 5.0]).map(f64::from);

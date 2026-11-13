@@ -108,8 +108,12 @@ impl Progress {
 
 /// An HTTP client; `whole` bounds the whole request (the release list), else only connecting is (a download takes what it takes).
 fn agent(whole: Option<Duration>) -> ureq::Agent {
-    ureq::Agent::config_builder().user_agent(format!("wce/{}", env!("CARGO_PKG_VERSION"))).timeout_connect(Some(Duration::from_secs(15)))
-        .timeout_global(whole).build().into()
+    ureq::Agent::config_builder()
+        .user_agent(format!("wce/{}", env!("CARGO_PKG_VERSION")))
+        .timeout_connect(Some(Duration::from_secs(15)))
+        .timeout_global(whole)
+        .build()
+        .into()
 }
 
 /// Asks GitHub for the releases and returns the newest one above `current`, if any. Pre-releases count only with `prereleases`.
@@ -119,7 +123,10 @@ fn agent(whole: Option<Duration>) -> ureq::Agent {
 /// GitHub can't be reached or answers with something that isn't its release list.
 pub fn check(current: &Version, prereleases: bool) -> Result<Option<Release>, String> {
     let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=30");
-    let text = agent(Some(Duration::from_secs(30))).get(&url).header("Accept", "application/vnd.github+json").call()
+    let text = agent(Some(Duration::from_secs(30)))
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .call()
         .and_then(|mut r| r.body_mut().read_to_string())
         .map_err(|e| format!("cannot reach GitHub: {e}"))?;
     newest(&text, current, prereleases, asset_name)
@@ -131,7 +138,12 @@ pub fn check(current: &Version, prereleases: bool) -> Result<Option<Release>, St
 /// # Errors
 ///
 /// `json` isn't a release list.
-pub fn newest(json: &str, current: &Version, prereleases: bool, asset_for: fn(&Version) -> Option<String>) -> Result<Option<Release>, String> {
+pub fn newest(
+    json: &str,
+    current: &Version,
+    prereleases: bool,
+    asset_for: fn(&Version) -> Option<String>,
+) -> Result<Option<Release>, String> {
     let list: Vec<GhRelease> = serde_json::from_str(json).map_err(|e| format!("GitHub's release list can't be read: {e}"))?;
     let mut best: Option<Release> = None;
     for r in list {
@@ -364,10 +376,13 @@ pub fn remove_leftovers(dir: &Path) {
         return;
     }
 
-    let kept: Vec<PathBuf> = files.into_iter().filter(|f| {
-        let path = dir.join(f);
-        path.exists() && std::fs::remove_file(&path).is_err()
-    }).collect();
+    let kept: Vec<PathBuf> = files
+        .into_iter()
+        .filter(|f| {
+            let path = dir.join(f);
+            path.exists() && std::fs::remove_file(&path).is_err()
+        })
+        .collect();
 
     write_leftovers(dir, &kept);
 }

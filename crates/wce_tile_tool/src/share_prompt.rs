@@ -100,7 +100,9 @@ impl TileTool {
             Some(out) => out.to_path_buf(),
             None => {
                 let start = dirs_start(e).join(format!("{name}.zip"));
-                let Some(out) = file_dialog(true, &start, &[("Shared project".to_owned(), "*.zip".to_owned())]) else { return Ok("share cancelled".to_owned()) };
+                let Some(out) = file_dialog(true, &start, &[("Shared project".to_owned(), "*.zip".to_owned())]) else {
+                    return Ok("share cancelled".to_owned());
+                };
                 out
             }
         };
@@ -115,7 +117,11 @@ impl TileTool {
 
         if !m.missing_prefabs.is_empty() {
             msg += &format!("; prefabs found nowhere: {}", m.missing_prefabs.join(", "));
-            log::warn(format!("share: {} prefab(s) the tile uses were found nowhere and are not in the zip: {}", m.missing_prefabs.len(), m.missing_prefabs.join(", ")));
+            log::warn(format!(
+                "share: {} prefab(s) the tile uses were found nowhere and are not in the zip: {}",
+                m.missing_prefabs.len(),
+                m.missing_prefabs.join(", ")
+            ));
             let mut lists = vec![("Found nowhere (not in the zip)".to_owned(), m.missing_prefabs.clone())];
             if !m.kit_prefabs.is_empty() {
                 lists.push(("The Assembly Kit's (not in the zip: the other user needs that kit)".to_owned(), m.kit_prefabs.clone()));
@@ -169,11 +175,20 @@ impl TileTool {
         self.prefabs = None;
         let mut msg = format!(
             "imported {}: {} new, {} replaced, {} the same, {} moved aside.{}",
-            plan.manifest.location, report.written, report.replaced, report.skipped, report.moved_aside, lacking(plan)
+            plan.manifest.location,
+            report.written,
+            report.replaced,
+            report.skipped,
+            report.moved_aside,
+            lacking(plan)
         );
 
         if !plan.lacking_prefabs.is_empty() {
-            log::warn(format!("import: {} prefab(s) the shared tile uses are not here: {}", plan.lacking_prefabs.len(), plan.lacking_prefabs.join(", ")));
+            log::warn(format!(
+                "import: {} prefab(s) the shared tile uses are not here: {}",
+                plan.lacking_prefabs.len(),
+                plan.lacking_prefabs.join(", ")
+            ));
             self.share_notice(ShareNotice {
                 title: "Import shared project".to_owned(),
                 error: None,
@@ -313,7 +328,11 @@ impl TileTool {
         let Some(n) = self.share_notice.clone() else { return };
         gui::set_next_window_size_max(gui::v2(720.0, 600.0));
         let vp = gui::main_viewport();
-        gui::set_next_window_pos(gui::v2(vp.WorkPos.x + vp.WorkSize.x * 0.5, vp.WorkPos.y + vp.WorkSize.y * 0.5), gui::COND_APPEARING, gui::v2(0.5, 0.5));
+        gui::set_next_window_pos(
+            gui::v2(vp.WorkPos.x + vp.WorkSize.x * 0.5, vp.WorkPos.y + vp.WorkSize.y * 0.5),
+            gui::COND_APPEARING,
+            gui::v2(0.5, 0.5),
+        );
         if !gui::begin_popup_modal(ID, None, gui::WINDOW_ALWAYS_AUTO_RESIZE | gui::WINDOW_NO_TITLE_BAR) {
             return;
         }

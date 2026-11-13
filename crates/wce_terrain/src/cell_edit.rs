@@ -120,7 +120,9 @@ impl CellStroke {
     pub fn brush(&mut self, l: &mut CellLayer, cx: i64, cy: i64, radius: u32, round: bool, colour: Rgba) -> Option<[u32; 4]> {
         let r = i64::from(radius);
         let r2 = (r * r) as f64 + r as f64;
-        self.paint_where(l, [cx - r, cy - r, cx + r + 1, cy + r + 1], colour, |x, y| !round || ((x - cx) * (x - cx) + (y - cy) * (y - cy)) as f64 <= r2)
+        self.paint_where(l, [cx - r, cy - r, cx + r + 1, cy + r + 1], colour, |x, y| {
+            !round || ((x - cx) * (x - cx) + (y - cy) * (y - cy)) as f64 <= r2
+        })
     }
 
     /// A rectangle of cells (x0, y0, x1, y1; end exclusive). The cells it changed.
@@ -184,7 +186,9 @@ impl CellStroke {
     /// The stroke's undo record: the chunks it touched that changed (none when nothing did).
     pub fn finish(self, l: &CellLayer) -> Option<CellRecord> {
         let rect = self.rect?;
-        let chunks: Vec<(u32, ChunkCells, ChunkCells)> = self.before.into_iter()
+        let chunks: Vec<(u32, ChunkCells, ChunkCells)> = self
+            .before
+            .into_iter()
             .filter_map(|(c, before)| {
                 let after = read_chunk(l, c);
                 (before != after).then_some((c, before, after))

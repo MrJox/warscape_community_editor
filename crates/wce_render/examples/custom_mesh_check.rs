@@ -25,13 +25,15 @@ fn main() {
     };
 
     let kit = Cas2File::parse(&std::fs::read(cs2).expect("the CS2")).expect("a CS2");
-    let model = RigidModel::decode(&mut Cursor::new(&std::fs::read(rmv).expect("the model")), &Some(DecodeableExtraData::default())).expect("a model");
+    let model = RigidModel::decode(&mut Cursor::new(&std::fs::read(rmv).expect("the model")), &Some(DecodeableExtraData::default()))
+        .expect("a model");
     for (l, lod) in model.lods().iter().enumerate() {
         let Some(m) = kit.meshes.get(l) else { break };
         let at: HashMap<[i64; 3], usize> = m.positions.iter().enumerate().map(|(i, p)| (key(*p), i)).collect();
         for block in lod.mesh_blocks() {
             let mesh = block.mesh();
-            let (mut found, mut du, mut dv, mut dfu, mut dfv, mut dn, mut uk) = (0, 0f32, 0f32, 0f32, 0f32, 0f32, HashMap::<[u8; 4], usize>::new());
+            let (mut found, mut du, mut dv, mut dfu, mut dfv, mut dn, mut uk) =
+                (0, 0f32, 0f32, 0f32, 0f32, 0f32, HashMap::<[u8; 4], usize>::new());
             for v in mesh.vertices() {
                 let p = v.position();
                 let Some(&i) = at.get(&key([p.x, p.y, p.z])) else { continue };
@@ -59,7 +61,10 @@ fn main() {
             let (mut same_pos, mut ru, mut rv, mut rfv, mut rn, mut swaps) = (0, 0f32, 0f32, 0f32, 0f32, 0);
             for tri in 0..idx.len() / 3 {
                 let corners: Vec<usize> = (0..3).map(|c| usize::from(idx[tri * 3 + c])).collect();
-                let pos = |k: usize| { let p = verts[k].position(); key([p.x, p.y, p.z]) };
+                let pos = |k: usize| {
+                    let p = verts[k].position();
+                    key([p.x, p.y, p.z])
+                };
                 let mut c = [pos(corners[0]), pos(corners[1]), pos(corners[2])];
                 c.sort_unstable();
                 let Some(&ft) = faces.get(&c) else { continue };
@@ -80,7 +85,19 @@ fn main() {
                         let (n, g, u) = (v.normal(), v.tangent(), v.uk_1());
                         println!(
                             "    model uv ({:.4}, {:.4}) n ({:.3}, {:.3}, {:.3}, {:.3}) t ({:.3}, {:.3}, {:.3}, {:.3}) uk {:?} | kit uv {:?} n {:?}",
-                            t.x, t.y, n.x, n.y, n.z, n.w, g.x, g.y, g.z, g.w, [u.x, u.y, u.z, u.w], m.uvs[kc], m.normals[kc]
+                            t.x,
+                            t.y,
+                            n.x,
+                            n.y,
+                            n.z,
+                            n.w,
+                            g.x,
+                            g.y,
+                            g.z,
+                            g.w,
+                            [u.x, u.y, u.z, u.w],
+                            m.uvs[kc],
+                            m.normals[kc]
                         );
                     }
 
@@ -92,14 +109,21 @@ fn main() {
                 }
             }
 
-            println!("  by triangle: {same_pos} of {} model triangles are CS2 faces ({swaps} wound the other way); uv |du| {ru:.4} |dv| {rv:.4} |1-v| {rfv:.4}; normal {rn:.3}", idx.len() / 3);
+            println!(
+                "  by triangle: {same_pos} of {} model triangles are CS2 faces ({swaps} wound the other way); uv |du| {ru:.4} |dv| {rv:.4} |1-v| {rfv:.4}; normal {rn:.3}",
+                idx.len() / 3
+            );
             let mut uks: Vec<_> = uk.into_iter().collect();
             uks.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
             uks.truncate(4);
             println!(
                 "lod {l} ({}): model {} vertices {} indices, kit {} vertices {} triangles; {found} found by position; uv max |du| {du:.4} |dv| {dv:.4}, \
                  |1-v| {dfv:.4}, |1-u| {dfu:.4}; normal max diff {dn:.3}; uk_1 most {uks:?}",
-                m.name, mesh.vertices().len(), mesh.indices().len(), m.positions.len(), m.faces.len()
+                m.name,
+                mesh.vertices().len(),
+                mesh.indices().len(),
+                m.positions.len(),
+                m.faces.len()
             );
         }
     }

@@ -68,7 +68,6 @@ pub struct ShaderLibrary {
 }
 
 impl ShaderLibrary {
-
     pub fn new(dev: &ID3D11Device) -> Self {
         Self { dev: dev.clone(), cache: BTreeMap::new(), layouts: BTreeMap::new() }
     }
@@ -94,7 +93,12 @@ impl ShaderLibrary {
     /// # Errors
     ///
     /// Fails if it can't be compiled, reflected, or created.
-    pub fn own(&mut self, cbs: &mut ConstantBuffers, name: &str, compile: impl FnOnce() -> Result<Vec<u8>, RenderError>) -> Result<Rc<GameShader>, RenderError> {
+    pub fn own(
+        &mut self,
+        cbs: &mut ConstantBuffers,
+        name: &str,
+        compile: impl FnOnce() -> Result<Vec<u8>, RenderError>,
+    ) -> Result<Rc<GameShader>, RenderError> {
         if let Some(shader) = self.cache.get(name) {
             return Ok(shader.clone());
         }

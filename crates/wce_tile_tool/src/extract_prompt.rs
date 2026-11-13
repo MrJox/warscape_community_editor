@@ -21,7 +21,11 @@ pub(crate) struct ExtractPrompt {
 
 impl ExtractPrompt {
     pub(crate) fn new(target: &str, project: &Path) -> Self {
-        Self { target: target.to_owned(), project: project.display().to_string(), extracted: wce_tile::project_files::is_extracted_dir(project) }
+        Self {
+            target: target.to_owned(),
+            project: project.display().to_string(),
+            extracted: wce_tile::project_files::is_extracted_dir(project),
+        }
     }
 }
 

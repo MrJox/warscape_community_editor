@@ -30,7 +30,6 @@ pub(crate) struct BlendDraw<'a> {
 }
 
 impl Renderer {
-
     /// Draws the terrain-blend meshes among the visible batches of `sets` (the instances are already in the ring: `firsts`).
     pub(crate) fn draw_blend_meshes(&mut self, sets: [&DrawSet; 2], viss: [&Visible; 2], firsts: [u32; 2], d: &BlendDraw) {
         if !sets.iter().zip(viss).any(|(s, v)| v.active.iter().any(|&b| s.batch_mesh(b).kind == MeshKind::TerrainBlend)) {

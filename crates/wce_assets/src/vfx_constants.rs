@@ -339,7 +339,8 @@ pub fn build_emitter_constants(em: &VfxEmitterDef, chain: Option<&VfxChain>) -> 
                 k.ps_lighting_legacy_params[3] = m.f("directionality", 0.0);
 
                 // Verified (rain and snow dumps): the scattering path divides by small + large, so these must be set.
-                k.ps_lighting_params = [m.f("average_size", 0.0), m.f("additive_blend_mul", 0.0), m.f("small_particles", 0.0), m.f("large_particles", 0.0)];
+                k.ps_lighting_params =
+                    [m.f("average_size", 0.0), m.f("additive_blend_mul", 0.0), m.f("small_particles", 0.0), m.f("large_particles", 0.0)];
                 k.additive = m.b("additive_blend", false);
             }
 

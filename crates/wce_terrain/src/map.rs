@@ -129,6 +129,7 @@ impl MapModel {
 
     /// The memory the decoded samples take (bytes, about): the LF fields and the cell layers.
     pub fn decoded_bytes(&self) -> usize {
-        self.lf.iter().map(|(_, f)| f.get().bytes()).sum::<usize>() + self.layers.iter().map(|(_, l)| l.get().cells().len() * 2).sum::<usize>()
+        self.lf.iter().map(|(_, f)| f.get().bytes()).sum::<usize>()
+            + self.layers.iter().map(|(_, l)| l.get().cells().len() * 2).sum::<usize>()
     }
 }

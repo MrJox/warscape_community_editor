@@ -90,7 +90,6 @@ pub(crate) struct SceneDraws {
 }
 
 impl Renderer {
-
     /// Places the placed effects' debris rigids (particles::effect_rigids, a frame behind the simulation) as items of the draw set: the
     /// pool of a model grows as needed, its items are moved each frame, the unused ones out of sight. Drawn as the scene's rigid models.
     pub(crate) fn place_effect_rigids(&mut self) {
@@ -133,17 +132,35 @@ impl Renderer {
     }
 
     /// Draws the visible batches of both sets with the bound shaders (the G-buffer and the shadow cascades share this).
-    pub(crate) fn draw_batches(&mut self, sets: [&DrawSet; 2], viss: [&Visible; 2], firsts: [u32; 2], mut each: impl FnMut(&mut Self, &GpuMesh) -> bool) -> (u64, u64) {
+    pub(crate) fn draw_batches(
+        &mut self,
+        sets: [&DrawSet; 2],
+        viss: [&Visible; 2],
+        firsts: [u32; 2],
+        mut each: impl FnMut(&mut Self, &GpuMesh) -> bool,
+    ) -> (u64, u64) {
         self.draw_batches_burning(sets, viss, firsts, |r, m, _| each(r, m))
     }
 
     /// `draw_batches`, telling `each` whether the batch's instances are burning (`DrawSet::batch_burning`).
-    pub(crate) fn draw_batches_burning(&mut self, sets: [&DrawSet; 2], viss: [&Visible; 2], firsts: [u32; 2], mut each: impl FnMut(&mut Self, &GpuMesh, bool) -> bool) -> (u64, u64) {
+    pub(crate) fn draw_batches_burning(
+        &mut self,
+        sets: [&DrawSet; 2],
+        viss: [&Visible; 2],
+        firsts: [u32; 2],
+        mut each: impl FnMut(&mut Self, &GpuMesh, bool) -> bool,
+    ) -> (u64, u64) {
         self.draw_batches_flags(sets, viss, firsts, |r, m, burning, _| each(r, m, burning))
     }
 
     /// `draw_batches`, telling `each` whether the batch's instances are burning and whether they are faded (`DrawSet::batch_faded`).
-    pub(crate) fn draw_batches_flags(&mut self, sets: [&DrawSet; 2], viss: [&Visible; 2], firsts: [u32; 2], mut each: impl FnMut(&mut Self, &GpuMesh, bool, bool) -> bool) -> (u64, u64) {
+    pub(crate) fn draw_batches_flags(
+        &mut self,
+        sets: [&DrawSet; 2],
+        viss: [&Visible; 2],
+        firsts: [u32; 2],
+        mut each: impl FnMut(&mut Self, &GpuMesh, bool, bool) -> bool,
+    ) -> (u64, u64) {
         let (mut instances, mut triangles) = (0u64, 0u64);
         for k in 0..2 {
             let (set, vis) = (sets[k], viss[k]);
@@ -169,10 +186,12 @@ impl Renderer {
 }
 
 impl Renderer {
-
     /// The texture slots of a pixel shader's material textures.
     pub(crate) fn slots_of(&mut self, ps: &Rc<GameShader>) -> [Option<u32>; TEX_SLOTS] {
-        *self.ps_slots.entry(Rc::as_ptr(ps) as usize).or_insert_with(|| std::array::from_fn(|i| ps.textures.get(gpu_texture_name(i)).copied()))
+        *self
+            .ps_slots
+            .entry(Rc::as_ptr(ps) as usize)
+            .or_insert_with(|| std::array::from_fn(|i| ps.textures.get(gpu_texture_name(i)).copied()))
     }
 
     /// Writes the instances of both sets into the ring with one Map (growing or wrapping the ring must not lose what the first set wrote);
@@ -187,7 +206,8 @@ impl Renderer {
 
         if n > self.draw_lists.ring.capacity {
             self.draw_lists.ring.capacity = (n * 2).max(1 << 16);
-            self.draw_lists.ring.buffer = dynamic_buffer(&self.dev, self.draw_lists.ring.capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
+            self.draw_lists.ring.buffer =
+                dynamic_buffer(&self.dev, self.draw_lists.ring.capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
             if self.draw_lists.ring.buffer.is_none() {
                 self.error("cannot create the instance buffer".to_owned());
                 self.draw_lists.ring.capacity = 0;
@@ -205,9 +225,16 @@ impl Renderer {
         }
 
         let Some(ring) = self.draw_lists.ring.buffer.clone() else { return [0, 0] };
-        let Ok(mut ms) = self.ctx.map(&ring, 0, if discard { D3D11_MAP_WRITE_DISCARD } else { D3D11_MAP_WRITE_NO_OVERWRITE }, 0) else { return [0, 0] };
+        let Ok(mut ms) = self.ctx.map(&ring, 0, if discard { D3D11_MAP_WRITE_DISCARD } else { D3D11_MAP_WRITE_NO_OVERWRITE }, 0) else {
+            return [0, 0];
+        };
         let size = size_of::<RigidInstance>();
-        let Some(Ok(dst)) = ms.get_mut(self.draw_lists.ring.cursor * size..(self.draw_lists.ring.cursor + n) * size).map(bytemuck::try_cast_slice_mut::<u8, RigidInstance>) else { return [0, 0] };
+        let Some(Ok(dst)) = ms
+            .get_mut(self.draw_lists.ring.cursor * size..(self.draw_lists.ring.cursor + n) * size)
+            .map(bytemuck::try_cast_slice_mut::<u8, RigidInstance>)
+        else {
+            return [0, 0];
+        };
         let (first, second) = dst.split_at_mut(n0);
         let (units, o) = (self.camera.units, self.camera.origin);
         let origin = [o.x * units, o.y * units, o.z * units];
@@ -374,7 +401,8 @@ impl Renderer {
         for c in &log {
             match c {
                 StructureChange::Removed(r) => gone.push(r.clone()),
-                StructureChange::Payload(id) if !item(&self.draw_lists, *id) && !scene.find(*id).is_some_and(|e| matches!(e.payload, Payload::MeshInstance(_))) => {}
+                StructureChange::Payload(id)
+                    if !item(&self.draw_lists, *id) && !scene.find(*id).is_some_and(|e| matches!(e.payload, Payload::MeshInstance(_))) => {}
                 _ => return false,
             }
         }
@@ -472,10 +500,13 @@ impl Renderer {
     fn add_draws(&mut self, scene: &RenderScene, entities: &[wce_scene::render_scene::Entity], eye: Float3) {
         let mut resolved = HashMap::<String, Option<Arc<GpuModel>>>::new();
         let mut resolve = |r: &mut Self, path: &str, e: &wce_scene::render_scene::Entity| {
-            resolved.entry(path.to_owned()).or_insert_with(|| {
-                let d = Float3::new(e.world.m[0][3] - eye.x, e.world.m[1][3] - eye.y, e.world.m[2][3] - eye.z);
-                r.models.try_get(path, length(d))
-            }).clone()
+            resolved
+                .entry(path.to_owned())
+                .or_insert_with(|| {
+                    let d = Float3::new(e.world.m[0][3] - eye.x, e.world.m[1][3] - eye.y, e.world.m[2][3] - eye.z);
+                    r.models.try_get(path, length(d))
+                })
+                .clone()
         };
 
         for e in entities {

@@ -29,9 +29,28 @@ fn wind_run(tag: &str, def: Option<&WeatherDefinition>) {
         t += dt;
         w.update(def, (i % 720) as f32 * 0.5, t, dt);
         if i % 150 == 0 {
-            println!("{tag} {i} dir={},{} s={} ge={} sm={},{} off={},{} vel={},{},{} var={},{},{} g={},{},{},{} al={}", b(w.direction.x), b(w.direction.y), b(w.strength),
-                b(w.gust_end), b(w.smoothed.x), b(w.smoothed.y), b(w.offset.x), b(w.offset.y), b(w.vfx_velocity.x), b(w.vfx_velocity.y), b(w.vfx_velocity.z),
-                b(w.vfx_variance.x), b(w.vfx_variance.y), b(w.vfx_variance.z), b(w.gust_size), b(w.gust_duration), b(w.gust_start), b(w.cooldown), b(w.alignment()));
+            println!(
+                "{tag} {i} dir={},{} s={} ge={} sm={},{} off={},{} vel={},{},{} var={},{},{} g={},{},{},{} al={}",
+                b(w.direction.x),
+                b(w.direction.y),
+                b(w.strength),
+                b(w.gust_end),
+                b(w.smoothed.x),
+                b(w.smoothed.y),
+                b(w.offset.x),
+                b(w.offset.y),
+                b(w.vfx_velocity.x),
+                b(w.vfx_velocity.y),
+                b(w.vfx_velocity.z),
+                b(w.vfx_variance.x),
+                b(w.vfx_variance.y),
+                b(w.vfx_variance.z),
+                b(w.gust_size),
+                b(w.gust_duration),
+                b(w.gust_start),
+                b(w.cooldown),
+                b(w.alignment())
+            );
         }
     }
 }
@@ -76,7 +95,11 @@ fn main() {
     for path in std::fs::read_to_string(&args[2]).unwrap().lines() {
         let Ok(doc) = XmlDoc::parse(std::fs::read(path).unwrap()) else { continue };
         apply_environment(&read_environment(&doc), &mut cbs);
-        let buffers = cbs.all().iter().map(|(name, buf)| format!(" {name}={}/{:016x}/{}", buf.cpu.len(), fnv(&buf.cpu), i32::from(buf.dirty))).collect::<String>();
+        let buffers = cbs
+            .all()
+            .iter()
+            .map(|(name, buf)| format!(" {name}={}/{:016x}/{}", buf.cpu.len(), fnv(&buf.cpu), i32::from(buf.dirty)))
+            .collect::<String>();
         println!("== {path}{buffers}");
         let names = cbs.all().keys().cloned().collect::<Vec<_>>();
         for name in names {

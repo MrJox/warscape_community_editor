@@ -1,7 +1,6 @@
 //! The weather tool's commands: everything the menus and panels do, plus the test commands (assert_*) the scripted checks use, and the old
 //! weather_editor command-line flags (--view, --blend, --pick, --picker, --vdb-script, --no-flare), which the app forwards as commands.
 
-
 use wce_editor::editor::Editor;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_editor_core::document::Document;
@@ -61,7 +60,13 @@ pub fn weather_diagnostics(e: &mut Editor, tool: &WeatherTool) -> String {
     {
         let p = r.particles();
         let fx = p.effect();
-        d += &format!("weather vfx: '{}' -> {}, {} emitters, {} particles\n", fx.definition.name, fx.definition.vfx1, fx.emitters.len(), p.alive());
+        d += &format!(
+            "weather vfx: '{}' -> {}, {} emitters, {} particles\n",
+            fx.definition.name,
+            fx.definition.vfx1,
+            fx.emitters.len(),
+            p.alive()
+        );
         for (i, em) in fx.emitters.iter().enumerate() {
             d += &format!("  emitter: {} / {} / {}: {} particles\n", em.library, em.instance, em.name, p.alive_of(i));
         }
@@ -69,8 +74,13 @@ pub fn weather_diagnostics(e: &mut Editor, tool: &WeatherTool) -> String {
 
     let w = r.wind().clone();
     d += &format!(
-        "wind: dir {} deg, strength {}, vfx ({} {}), g_wind ({} {})\n", f(r.wind_direction_degrees(&tool.last_params)), f(w.strength), f(w.vfx_velocity.x),
-        f(w.vfx_velocity.z), f(w.smoothed.x), f(w.smoothed.y),
+        "wind: dir {} deg, strength {}, vfx ({} {}), g_wind ({} {})\n",
+        f(r.wind_direction_degrees(&tool.last_params)),
+        f(w.strength),
+        f(w.vfx_velocity.x),
+        f(w.vfx_velocity.z),
+        f(w.smoothed.x),
+        f(w.smoothed.y),
     );
     {
         let p = r.particles();
@@ -129,7 +139,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("assert_offset", "assert_offset <item> dx dy dz [yaw_degrees]", "test: a sample map building has this placement", |e, a| {
         let doc = e.docs.order().iter().rev().copied().find(|&id| e.docs.find_as::<SampleMapDocument>(id).is_some());
-        let (Some(id), true) = (doc, a.len() >= 4) else { return fail("usage: assert_offset <item> dx dy dz [yaw_degrees] (needs a sample map)") };
+        let (Some(id), true) = (doc, a.len() >= 4) else {
+            return fail("usage: assert_offset <item> dx dy dz [yaw_degrees] (needs a sample map)");
+        };
         let p = e.docs.find_as::<SampleMapDocument>(id).expect("found").placement(a[0].parse().unwrap_or(0));
         let want = [num(&a[1]) as f32, num(&a[2]) as f32, num(&a[3]) as f32];
         let degrees = p.yaw * 57.295_78;
@@ -137,12 +149,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             && (p.offset.y - want[1]).abs() < 1e-3
             && (p.offset.z - want[2]).abs() < 1e-3
             && a.get(4).is_none_or(|y| (degrees - num(y) as f32).abs() < 1e-2);
-        if same { ok("") } else { fail(format!("placement is ({}, {}, {}) yaw {}", f(p.offset.x), f(p.offset.y), f(p.offset.z), f(degrees))) }
+        if same {
+            ok("")
+        } else {
+            fail(format!("placement is ({}, {}, {}) yaw {}", f(p.offset.x), f(p.offset.y), f(p.offset.z), f(degrees)))
+        }
     });
 
     // ---- the old command-line flags
     c.add(
-        "view", "view <n>", "renderer view: 0 final, 1 HDR raw, 2 albedo, 3 normal, 4 specular, 5 depth, 6 sky cube, 7 bloom, 8 quarter, 9 tone mapped, 10 AO",
+        "view",
+        "view <n>",
+        "renderer view: 0 final, 1 HDR raw, 2 albedo, 3 normal, 4 specular, 5 depth, 6 sky cube, 7 bloom, 8 quarter, 9 tone mapped, 10 AO",
         |e, a| {
             let (Some(n), Some(r)) = (a.first(), e.renderer()) else { return fail("usage: view <n> (needs the renderer)") };
             r.settings.view = view_of(int(n).clamp(0, 10) as i32);
@@ -178,49 +196,59 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("vdb-script", "vdb-script \"add-value:climate=X;save:both\"", "edit and save the weather database (for tests; see docs/re/variation_db.md)", |e, a| {
-        let Some(script) = a.first() else { return fail("usage: vdb-script \"<commands>\"") };
-        if !e.game().features.variation_db {
-            return fail(&crate::picker::no_database(e.game()));
-        }
-
-        with_weather(e, |t, e| {
-            t.picker.open = true;
-            t.picker.set_script(script);
-            let loaded = t.picker.ensure_loaded(e, &e.loose_dir());
-            for path in t.picker.take_changed() {
-                e.loose_changed(&path);
+    c.add(
+        "vdb-script",
+        "vdb-script \"add-value:climate=X;save:both\"",
+        "edit and save the weather database (for tests; see docs/re/variation_db.md)",
+        |e, a| {
+            let Some(script) = a.first() else { return fail("usage: vdb-script \"<commands>\"") };
+            if !e.game().features.variation_db {
+                return fail(&crate::picker::no_database(e.game()));
             }
 
-            if !loaded {
-                return fail("the database did not load");
-            }
+            with_weather(e, |t, e| {
+                t.picker.open = true;
+                t.picker.set_script(script);
+                let loaded = t.picker.ensure_loaded(e, &e.loose_dir());
+                for path in t.picker.take_changed() {
+                    e.loose_changed(&path);
+                }
 
-            ok(t.picker.message())
-        })
-    });
+                if !loaded {
+                    return fail("the database did not load");
+                }
 
-    c.add("assert_candidates", "assert_candidates <n> [file]", "test: the picker finds n environment files for its conditions, optionally including <file>", |e, a| {
-        let Some(n) = a.first() else { return fail("usage: assert_candidates <n> [file]") };
-        with_weather(e, |t, e| {
-            if !t.picker.ensure_loaded(e, &e.loose_dir()) {
-                return fail("the database did not load");
-            }
+                ok(t.picker.message())
+            })
+        },
+    );
 
-            let r = t.picker.candidates();
-            if r.candidates.len() as u64 != n.parse::<u64>().unwrap_or(0) {
-                return fail(format!("{} candidates", r.candidates.len()));
-            }
+    c.add(
+        "assert_candidates",
+        "assert_candidates <n> [file]",
+        "test: the picker finds n environment files for its conditions, optionally including <file>",
+        |e, a| {
+            let Some(n) = a.first() else { return fail("usage: assert_candidates <n> [file]") };
+            with_weather(e, |t, e| {
+                if !t.picker.ensure_loaded(e, &e.loose_dir()) {
+                    return fail("the database did not load");
+                }
 
-            if let Some(file) = a.get(1)
-                && !r.candidates.iter().any(|c| normalize(&c.filename) == normalize(file))
-            {
-                return fail(format!("{file} is not a candidate"));
-            }
+                let r = t.picker.candidates();
+                if r.candidates.len() as u64 != n.parse::<u64>().unwrap_or(0) {
+                    return fail(format!("{} candidates", r.candidates.len()));
+                }
 
-            ok("")
-        })
-    });
+                if let Some(file) = a.get(1)
+                    && !r.candidates.iter().any(|c| normalize(&c.filename) == normalize(file))
+                {
+                    return fail(format!("{file} is not a candidate"));
+                }
+
+                ok("")
+            })
+        },
+    );
 
     c.add("no-flare", "no-flare", "lens flare off (the old --no-flare flag)", |e, _| {
         if let Some(r) = e.renderer() {
@@ -232,9 +260,13 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     // ---- XML documents
     c.add(
-        "edit_attr", "edit_attr <element index|name> <attribute> <value>", "set an attribute of the active weather file (one undo entry), the value as it is shown",
+        "edit_attr",
+        "edit_attr <element index|name> <attribute> <value>",
+        "set an attribute of the active weather file (one undo entry), the value as it is shown",
         |e, a| {
-            let (Some(d), true) = (active_xml(e), a.len() >= 3) else { return fail("usage: edit_attr <element> <attribute> <value> (needs an open weather file)") };
+            let (Some(d), true) = (active_xml(e), a.len() >= 3) else {
+                return fail("usage: edit_attr <element> <attribute> <value> (needs an open weather file)");
+            };
             let Some(el) = resolve_element(d.xml(), &a[0]) else { return fail(format!("no element '{}'", a[0])) };
             let Some(attr) = resolve_attr(d.xml(), el, &a[1]) else { return fail(format!("no attribute '{}' on {}", a[1], a[0])) };
             d.set_attr_text(el, attr, &a[2], 0);
@@ -243,7 +275,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "xml_op", "xml_op duplicate|remove|up|down|add_child|add_attr|remove_attr <element> [name] [value]", "structural edit of the active weather file (one undo entry)",
+        "xml_op",
+        "xml_op duplicate|remove|up|down|add_child|add_attr|remove_attr <element> [name] [value]",
+        "structural edit of the active weather file (one undo entry)",
         |e, a| {
             let (Some(d), true) = (active_xml(e), a.len() >= 2) else { return fail("usage: xml_op <op> <element> [name] [value]") };
             let Some(el) = resolve_element(d.xml(), &a[1]) else { return fail(format!("no element '{}'", a[1])) };
@@ -289,13 +323,20 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("assert_xml_attr", "assert_xml_attr <element index|name> <attribute> <value>", "test: an attribute of the active weather file shows this value", |e, a| {
-        let (Some(d), true) = (active_xml(e), a.len() >= 3) else { return fail("usage: assert_xml_attr <element> <attribute> <value>") };
-        let Some(el) = resolve_element(d.xml(), &a[0]) else { return fail(format!("no element '{}'", a[0])) };
-        let Some(attr) = resolve_attr(d.xml(), el, &a[1]) else { return fail(format!("no attribute '{}'", a[1])) };
-        let now = String::from_utf8_lossy(&decode_entities(d.xml().attr_raw(el, attr))).into_owned();
-        if now == a[2] { ok("") } else { fail(format!("value is '{now}'")) }
-    });
+    c.add(
+        "assert_xml_attr",
+        "assert_xml_attr <element index|name> <attribute> <value>",
+        "test: an attribute of the active weather file shows this value",
+        |e, a| {
+            let (Some(d), true) = (active_xml(e), a.len() >= 3) else {
+                return fail("usage: assert_xml_attr <element> <attribute> <value>");
+            };
+            let Some(el) = resolve_element(d.xml(), &a[0]) else { return fail(format!("no element '{}'", a[0])) };
+            let Some(attr) = resolve_attr(d.xml(), el, &a[1]) else { return fail(format!("no attribute '{}'", a[1])) };
+            let now = String::from_utf8_lossy(&decode_entities(d.xml().attr_raw(el, attr))).into_owned();
+            if now == a[2] { ok("") } else { fail(format!("value is '{now}'")) }
+        },
+    );
 
     c.add("assert_xml_elements", "assert_xml_elements N", "test: the active weather file has N elements", |e, a| {
         let (Some(d), Some(n)) = (active_xml(e), a.first()) else { return fail("usage: assert_xml_elements N") };
@@ -303,19 +344,29 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if have as u64 == n.parse::<u64>().unwrap_or(0) { ok("") } else { fail(format!("{have} elements")) }
     });
 
-    c.add("diagnostics", "diagnostics <file.txt>", "write the renderer, wind and particle state (what weather_editor wrote next to every shot)", |e, a| {
-        let Some(path) = a.first() else { return fail("usage: diagnostics <file.txt>") };
-        with_weather(e, |t, e| {
-            let text = weather_diagnostics(e, t);
-            match std::fs::write(path, text) {
-                Ok(()) => ok(""),
-                Err(_) => fail(format!("cannot write {path}")),
-            }
-        })
-    });
+    c.add(
+        "diagnostics",
+        "diagnostics <file.txt>",
+        "write the renderer, wind and particle state (what weather_editor wrote next to every shot)",
+        |e, a| {
+            let Some(path) = a.first() else { return fail("usage: diagnostics <file.txt>") };
+            with_weather(e, |t, e| {
+                let text = weather_diagnostics(e, t);
+                match std::fs::write(path, text) {
+                    Ok(()) => ok(""),
+                    Err(_) => fail(format!("cannot write {path}")),
+                }
+            })
+        },
+    );
 
-    c.add("assert_saved", "assert_saved <path in the packs>", "test: the project has a loose copy of a game file (Save wrote it)", |e, a| {
-        let Some(rel) = a.first() else { return fail("usage: assert_saved <path in the packs>") };
-        if e.loose_copy(rel).is_some() { ok("") } else { fail("no such file") }
-    });
+    c.add(
+        "assert_saved",
+        "assert_saved <path in the packs>",
+        "test: the project has a loose copy of a game file (Save wrote it)",
+        |e, a| {
+            let Some(rel) = a.first() else { return fail("usage: assert_saved <path in the packs>") };
+            if e.loose_copy(rel).is_some() { ok("") } else { fail("no such file") }
+        },
+    );
 }

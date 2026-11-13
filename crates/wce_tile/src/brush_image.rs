@@ -21,7 +21,6 @@ pub struct BrushImage {
 }
 
 impl BrushImage {
-
     /// # Errors
     ///
     /// The file does not read, or is not a PNG or DDS the decoders read.
@@ -34,7 +33,13 @@ impl BrushImage {
 
     fn from_dds(bytes: &[u8]) -> Result<Self> {
         let im = dds_decode_mip(bytes, 0).map_err(str::to_owned)?;
-        let v = im.px.as_chunks::<4>().0.iter().map(|p| luminance(f32::from(p[0]), f32::from(p[1]), f32::from(p[2])) / 255.0 * f32::from(p[3]) / 255.0).collect();
+        let v = im
+            .px
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| luminance(f32::from(p[0]), f32::from(p[1]), f32::from(p[2])) / 255.0 * f32::from(p[3]) / 255.0)
+            .collect();
         Ok(Self { path: String::new(), w: im.w, h: im.h, v })
     }
 
@@ -59,18 +64,24 @@ impl BrushImage {
         }
 
         let sample = |i: usize| -> f32 {
-            if deep { f32::from(u16::from_be_bytes([png.pixels[i * 2], png.pixels[i * 2 + 1]])) / 65535.0 } else { f32::from(png.pixels[i]) / 255.0 }
+            if deep {
+                f32::from(u16::from_be_bytes([png.pixels[i * 2], png.pixels[i * 2 + 1]])) / 65535.0
+            } else {
+                f32::from(png.pixels[i]) / 255.0
+            }
         };
 
-        let v = (0..n).map(|p| {
-            let at = p * channels;
-            match channels {
-                1 => sample(at),
-                2 => sample(at) * sample(at + 1),
-                3 => luminance(sample(at), sample(at + 1), sample(at + 2)),
-                _ => luminance(sample(at), sample(at + 1), sample(at + 2)) * sample(at + 3),
-            }
-        }).collect();
+        let v = (0..n)
+            .map(|p| {
+                let at = p * channels;
+                match channels {
+                    1 => sample(at),
+                    2 => sample(at) * sample(at + 1),
+                    3 => luminance(sample(at), sample(at + 1), sample(at + 2)),
+                    _ => luminance(sample(at), sample(at + 1), sample(at + 2)) * sample(at + 3),
+                }
+            })
+            .collect();
 
         Ok(Self { path: String::new(), w: png.width, h: png.height, v })
     }
@@ -115,7 +126,8 @@ mod tests {
     #[test]
     fn a_png_reads_as_weights_and_samples_turned() {
         // 2 x 1 grey: black, white.
-        let png = PngFile { width: 2, height: 1, bit_depth: 8, color_type: 0, pixels: vec![0, 255], pixels_edited: true, ..Default::default() };
+        let png =
+            PngFile { width: 2, height: 1, bit_depth: 8, color_type: 0, pixels: vec![0, 255], pixels_edited: true, ..Default::default() };
         let im = BrushImage::from_png(&png.encode().unwrap()).unwrap();
         assert_eq!(im.v, vec![0.0, 1.0]);
         assert!(im.at(0.9, 0.0, 1.0, 0.0) > 0.99, "the right half is white");

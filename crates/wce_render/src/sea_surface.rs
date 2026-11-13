@@ -123,8 +123,14 @@ pub fn parse_sea_surfaces(bytes: &[u8]) -> Option<Vec<SeaRow>> {
         // spray_cut_off_value, spray_speed, spray_duration, sea_shininess, sea_decay, reflection_flattening_factor, wave_trough_y_value,
         // the four detail normal columns.
         rows.push(SeaRow {
-            key, foam_enabled, foam_decay_rate: f[0], froth_distortion_speed: f[4], froth_distortion_amount: f[5], sea_decay: f[10],
-            wave_trough_y_value: f[12], detail_normal: [f[13], f[14], f[15], f[16]],
+            key,
+            foam_enabled,
+            foam_decay_rate: f[0],
+            froth_distortion_speed: f[4],
+            froth_distortion_amount: f[5],
+            sea_decay: f[10],
+            wave_trough_y_value: f[12],
+            detail_normal: [f[13], f[14], f[15], f[16]],
         });
     }
 
@@ -190,7 +196,6 @@ pub struct FrameAt {
 }
 
 impl SeaSurface {
-
     /// Reads a surface file; `None` when it isn't one.
     pub fn parse(bytes: &[u8]) -> Option<Self> {
         let mut r = Reader { b: bytes, p: 0 };
@@ -254,11 +259,15 @@ impl SeaSurface {
     pub fn angle_texels(&self, at: FrameAt) -> Vec<u16> {
         let (a, b) = (&self.frames[at.frame].angles, &self.frames[at.next].angles);
         let scale = [0, 1].map(|c| (f32::from(self.angle_max[c]) - f32::from(self.angle_min[c])) / 255.0);
-        a.par_iter().zip(b.par_iter()).enumerate().map(|(i, (&x, &y))| {
-            let c = i & 1;
-            let v = f32::from(self.angle_min[c]) + (f32::from(x) + (f32::from(y) - f32::from(x)) * at.blend) * scale[c];
-            v.round().clamp(0.0, 65535.0) as u16
-        }).collect()
+        a.par_iter()
+            .zip(b.par_iter())
+            .enumerate()
+            .map(|(i, (&x, &y))| {
+                let c = i & 1;
+                let v = f32::from(self.angle_min[c]) + (f32::from(x) + (f32::from(y) - f32::from(x)) * at.blend) * scale[c];
+                v.round().clamp(0.0, 65535.0) as u16
+            })
+            .collect()
     }
 
     /// The height at a world point (bilinear, the patch tiled), blended between the frame pair.
@@ -274,7 +283,8 @@ impl SeaSurface {
             f32::from(a[k]) + (f32::from(b[k]) - f32::from(a[k])) * at.blend
         };
 
-        let byte = (at_cell(i0, j0) * (1.0 - u) + at_cell(i1, j0) * u) * (1.0 - v) + (at_cell(i0, j1) * (1.0 - u) + at_cell(i1, j1) * u) * v;
+        let byte =
+            (at_cell(i0, j0) * (1.0 - u) + at_cell(i1, j0) * u) * (1.0 - v) + (at_cell(i0, j1) * (1.0 - u) + at_cell(i1, j1) * u) * v;
         self.height_min + byte * (self.height_max - self.height_min) / 255.0
     }
 
@@ -288,7 +298,11 @@ impl SeaSurface {
         for i in 0..count * 3 {
             let at = self.frame_at(i as f32 * step);
             for r in &self.frames[at.frame].foam {
-                let Some(cell) = (r.x >= 0 && r.y >= 0 && (r.x as usize) < n && (r.y as usize) < n).then(|| r.y as usize * n + r.x as usize) else { continue };
+                let Some(cell) =
+                    (r.x >= 0 && r.y >= 0 && (r.x as usize) < n && (r.y as usize) < n).then(|| r.y as usize * n + r.x as usize)
+                else {
+                    continue;
+                };
                 let v = r.a + (r.b - r.a) * at.blend;
                 foam[cell] = foam[cell].max(v);
             }
@@ -316,7 +330,15 @@ mod tests {
     use super::*;
 
     fn surface(frames: usize, loop_seconds: f32) -> SeaSurface {
-        SeaSurface { n: 2, patch: 1.0, loop_seconds, height_min: -1.0, height_max: 1.0, frames: vec![SurfaceFrame::default(); frames], ..Default::default() }
+        SeaSurface {
+            n: 2,
+            patch: 1.0,
+            loop_seconds,
+            height_min: -1.0,
+            height_max: 1.0,
+            frames: vec![SurfaceFrame::default(); frames],
+            ..Default::default()
+        }
     }
 
     #[test]

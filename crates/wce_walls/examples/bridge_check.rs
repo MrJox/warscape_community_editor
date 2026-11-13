@@ -23,15 +23,30 @@ fn outlines(bytes: &[u8]) -> Vec<(Vec<[f64; 3]>, bool)> {
     for piece in v["pieces"].as_array().into_iter().flatten() {
         let Some(d) = piece["destructs"].as_array().and_then(|d| d.first()) else { continue };
         for o in d["collision_outlines"].as_array().into_iter().flatten() {
-            out.push((o["vertices"]["outline"].as_array().into_iter().flatten().map(|q| {
-                let f = |k: &str| q[k].as_f64().unwrap_or(0.0);
-                [f("x"), f("y"), f("z")]
-            }).collect(), true));
+            out.push((
+                o["vertices"]["outline"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|q| {
+                        let f = |k: &str| q[k].as_f64().unwrap_or(0.0);
+                        [f("x"), f("y"), f("z")]
+                    })
+                    .collect(),
+                true,
+            ));
         }
 
         // The footprint ring beside it, as points on the ground (y 0).
         for ring in d["orange_thingies"].as_array().into_iter().flatten() {
-            out.push((ring.as_array().into_iter().flatten().map(|q| [q["vertex"]["x"].as_f64().unwrap_or(0.0), 0.0, q["vertex"]["y"].as_f64().unwrap_or(0.0)]).collect(), false));
+            out.push((
+                ring.as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|q| [q["vertex"]["x"].as_f64().unwrap_or(0.0), 0.0, q["vertex"]["y"].as_f64().unwrap_or(0.0)])
+                    .collect(),
+                false,
+            ));
         }
     }
 
@@ -46,10 +61,15 @@ fn platforms(bytes: &[u8]) -> Vec<(Vec<[f64; 3]>, bool)> {
     for piece in v["pieces"].as_array().into_iter().flatten() {
         let Some(d) = piece["destructs"].as_array().and_then(|d| d.first()) else { continue };
         for p in d["platforms"].as_array().into_iter().flatten() {
-            let pts = p["vertices"]["outline"].as_array().into_iter().flatten().map(|q| {
-                let f = |k: &str| q[k].as_f64().unwrap_or(0.0);
-                [f("x"), f("y"), f("z")]
-            }).collect::<Vec<_>>();
+            let pts = p["vertices"]["outline"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|q| {
+                    let f = |k: &str| q[k].as_f64().unwrap_or(0.0);
+                    [f("x"), f("y"), f("z")]
+                })
+                .collect::<Vec<_>>();
             out.push((pts, p["flag_2"].as_bool() == Some(true)));
         }
     }
@@ -81,10 +101,12 @@ fn foot_edges(bytes: &[u8]) -> (usize, usize) {
             }
 
             feet += 1;
-            if rings.iter().any(|r| (0..r.len()).any(|k| {
-                let (c, d) = (&r[k], &r[(k + 1) % r.len()]);
-                (near(a, c) && near(b, d)) || (near(a, d) && near(b, c))
-            })) {
+            if rings.iter().any(|r| {
+                (0..r.len()).any(|k| {
+                    let (c, d) = (&r[k], &r[(k + 1) % r.len()]);
+                    (near(a, c) && near(b, d)) || (near(a, d) && near(b, c))
+                })
+            }) {
                 along += 1;
             }
         }
@@ -98,7 +120,8 @@ fn slope(p: &[[f64; 3]]) -> f64 {
     let mut best = ([0.0, 1.0, 0.0], 0.0);
     for i in 1..p.len() {
         for j in i + 1..p.len() {
-            let (u, v) = ([p[i][0] - p[0][0], p[i][1] - p[0][1], p[i][2] - p[0][2]], [p[j][0] - p[0][0], p[j][1] - p[0][1], p[j][2] - p[0][2]]);
+            let (u, v) =
+                ([p[i][0] - p[0][0], p[i][1] - p[0][1], p[i][2] - p[0][2]], [p[j][0] - p[0][0], p[j][1] - p[0][1], p[j][2] - p[0][2]]);
             let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
             let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
             if len > best.1 {
@@ -124,7 +147,13 @@ fn ramps_reach_the_ground<'a>(files: impl Iterator<Item = (&'a str, &'a [u8])>) 
         // One foot edge, along the outline: the game links one edge per platform and ground region (docs/re/platforms_and_bridges.md), so
         // a foot split in two is crossed by one half only.
         let good = along == feet && feet == 1;
-        let why = if along != feet { ": the ground cannot link to the rest, FAIL" } else if feet > 1 { ": split, the game links one of them only, FAIL" } else { "" };
+        let why = if along != feet {
+            ": the ground cannot link to the rest, FAIL"
+        } else if feet > 1 {
+            ": split, the game links one of them only, FAIL"
+        } else {
+            ""
+        };
         println!("  {name}: {along} of its ramps' {feet} foot edge(s) along its collision outline{why}");
         ok &= good;
     }
@@ -152,7 +181,15 @@ fn seg_dist(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
 
 /// The area two rings share on the ground (the second convex).
 fn overlap_area(a: &[[f64; 2]], b: &[[f64; 2]]) -> f64 {
-    let signed = |r: &[[f64; 2]]| (0..r.len()).map(|i| { let (p, q) = (r[i], r[(i + 1) % r.len()]); p[0] * q[1] - q[0] * p[1] }).sum::<f64>() / 2.0;
+    let signed = |r: &[[f64; 2]]| {
+        (0..r.len())
+            .map(|i| {
+                let (p, q) = (r[i], r[(i + 1) % r.len()]);
+                p[0] * q[1] - q[0] * p[1]
+            })
+            .sum::<f64>()
+            / 2.0
+    };
     let turn = signed(b).signum();
     let mut out = a.to_vec();
     for i in 0..b.len() {
@@ -187,10 +224,12 @@ fn main() {
     let mut failed = false;
 
     // A quarter circle rising `rise` over it, scene units; the ground far under it.
-    let path = (0..=90).map(|i| {
-        let t = f64::from(i).to_radians();
-        [radius * t.sin(), rise * f64::from(i) / 90.0, radius - radius * t.cos()]
-    }).collect::<Vec<_>>();
+    let path = (0..=90)
+        .map(|i| {
+            let t = f64::from(i).to_radians();
+            [radius * t.sin(), rise * f64::from(i) / 90.0, radius - radius * t.cos()]
+        })
+        .collect::<Vec<_>>();
     let deck = Deck::new(path);
     let ground = |_: f64, _: f64| -20.0;
     for b in BASES {
@@ -202,18 +241,37 @@ fn main() {
         let base = prepare(&files).expect("the base prepared");
         let width = 12.0;
         let across = width / (base.z.1 - base.z.0).max(1e-6);
-        println!("== {} ({}): x {:.2}..{:.2}, z {:.2}..{:.2}, bottom {:.2}, deck {:.2}{}", b.name, b.key, base.x.0, base.x.1, base.z.0, base.z.1, base.bottom, base.deck,
-            if base.made_platform { ", its platform made" } else { "" });
+        println!(
+            "== {} ({}): x {:.2}..{:.2}, z {:.2}..{:.2}, bottom {:.2}, deck {:.2}{}",
+            b.name,
+            b.key,
+            base.x.0,
+            base.x.1,
+            base.z.0,
+            base.z.1,
+            base.bottom,
+            base.deck,
+            if base.made_platform { ", its platform made" } else { "" }
+        );
 
         // Its end piece, when the base has one.
         let end = b.end.and_then(|k| BuildingFiles::read(&vfs, k).ok()).map(|f| prepare(&f).expect("the end piece prepared"));
         if let Some(kit) = b.end.and_then(|k| BuildingFiles::read(&vfs, k).ok()) {
             println!("  the kit's end piece, as a reference:");
-            ramps_reach_the_ground([(kit.logic_name().as_str(), kit.files.get(&kit.logic_name()).expect("its logic file").as_slice())].into_iter());
+            ramps_reach_the_ground(
+                [(kit.logic_name().as_str(), kit.files.get(&kit.logic_name()).expect("its logic file").as_slice())].into_iter(),
+            );
         }
         let parts = wce_walls::bridge::parts(&deck, &base, end.as_ref());
         if let (Some(e), true) = (&end, std::env::var("BRIDGE_CHECK_DEBUG").is_ok()) {
-            println!("    end piece: x {:.2?} z {:.2?} deck {:.2} bottom {:.2}; its platforms {:.2?}", e.x, e.z, e.deck, e.bottom, platforms(e.files.files.get(&e.files.logic_name()).unwrap()));
+            println!(
+                "    end piece: x {:.2?} z {:.2?} deck {:.2} bottom {:.2}; its platforms {:.2?}",
+                e.x,
+                e.z,
+                e.deck,
+                e.bottom,
+                platforms(e.files.files.get(&e.files.logic_name()).unwrap())
+            );
         }
         let deck_pieces = parts.iter().filter(|p| !p.end).count();
         let mut all: Vec<(usize, Vec<[f64; 3]>)> = vec![];
@@ -227,7 +285,13 @@ fn main() {
             let key = format!("wce_check_bridge_{}_{k:02}", b.name);
             let made = make_piece(pb, &key, &warp, part.ends(end.is_some())).expect("a piece made");
             for (name, bytes) in &made.files {
-                let ok = if is_piece_mesh(name) { wce_walls::mesh::round_trips(bytes) } else if name.ends_with(".cs2.parsed") { wce_walls::logic::round_trips(bytes) } else { Ok(true) };
+                let ok = if is_piece_mesh(name) {
+                    wce_walls::mesh::round_trips(bytes)
+                } else if name.ends_with(".cs2.parsed") {
+                    wce_walls::logic::round_trips(bytes)
+                } else {
+                    Ok(true)
+                };
                 if !ok.unwrap_or(false) {
                     println!("  {name}: does not read back");
                     failed = true;
@@ -248,7 +312,12 @@ fn main() {
                 }
             }
 
-            footprints.push(outlines(logic).into_iter().map(|(o, c)| (o.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect(), c)).collect());
+            footprints.push(
+                outlines(logic)
+                    .into_iter()
+                    .map(|(o, c)| (o.iter().map(|q| [q[0] + origin[0], q[1] + origin[1], q[2] + origin[2]]).collect(), c))
+                    .collect(),
+            );
             if !part.end {
                 ends.push((s, origin));
             }
@@ -272,7 +341,9 @@ fn main() {
             let on = all.iter().any(|(_, r)| {
                 let g = xz(r);
                 let ys = r.iter().fold((f64::MAX, f64::MIN), |(lo, hi), q| (lo.min(q[1]), hi.max(q[1])));
-                c[1] >= ys.0 - 0.3 && c[1] <= ys.1 + 0.3 && (inside([c[0], c[2]], &g) || (0..g.len()).any(|i| seg_dist([c[0], c[2]], g[i], g[(i + 1) % g.len()]) < 0.05))
+                c[1] >= ys.0 - 0.3
+                    && c[1] <= ys.1 + 0.3
+                    && (inside([c[0], c[2]], &g) || (0..g.len()).any(|i| seg_dist([c[0], c[2]], g[i], g[(i + 1) % g.len()]) < 0.05))
             });
             if !on {
                 gaps += 1;
@@ -301,8 +372,12 @@ fn main() {
             let mine = all.iter().filter(|(p, _)| *p == k).flat_map(|(_, r)| r.iter().copied()).filter(near_joint).collect::<Vec<_>>();
             let next = all.iter().filter(|(p, _)| *p == k + 1).flat_map(|(_, r)| r.iter().copied()).filter(near_joint).collect::<Vec<_>>();
             for q in &mine {
-                let on_joint = { let (c, t) = deck.at(ends[k].0.1); ((q[0] - c[0]) * t[0] + (q[2] - c[2]) * t[1]).abs() < 0.05 };
-                if on_joint && !next.iter().any(|n| (n[0] - q[0]).abs() < 0.01 && (n[1] - q[1]).abs() < 0.01 && (n[2] - q[2]).abs() < 0.01) {
+                let on_joint = {
+                    let (c, t) = deck.at(ends[k].0.1);
+                    ((q[0] - c[0]) * t[0] + (q[2] - c[2]) * t[1]).abs() < 0.05
+                };
+                if on_joint && !next.iter().any(|n| (n[0] - q[0]).abs() < 0.01 && (n[1] - q[1]).abs() < 0.01 && (n[2] - q[2]).abs() < 0.01)
+                {
                     loose += 1;
                 }
             }
@@ -342,10 +417,12 @@ fn main() {
                 // edge of the deck, run the other way, and only one link per pair: that edge must span the deck's whole end (its corners the
                 // ramp's two corners on the deck's side, nothing between).
                 let edges = |r: &[[f64; 3]]| (0..r.len()).map(|i| (r[i], r[(i + 1) % r.len()])).collect::<Vec<_>>();
-                let joined = ramps.iter().any(|r| all.iter().filter(|(p, _)| !parts[*p].end).any(|(_, d)| {
-                    let on_deck = r.iter().filter(|q| d.iter().any(|n| same(n, q))).count();
-                    on_deck == 2 && edges(r).iter().any(|(a, b)| edges(d).iter().any(|(c, e)| same(a, e) && same(b, c)))
-                }));
+                let joined = ramps.iter().any(|r| {
+                    all.iter().filter(|(p, _)| !parts[*p].end).any(|(_, d)| {
+                        let on_deck = r.iter().filter(|q| d.iter().any(|n| same(n, q))).count();
+                        on_deck == 2 && edges(r).iter().any(|(a, b)| edges(d).iter().any(|(c, e)| same(a, e) && same(b, c)))
+                    })
+                });
                 let top = part.deck.at(part.s.1).0[1];
                 let drop = ramps.iter().flat_map(|r| r.iter()).map(|q| top - q[1]).fold(f64::MIN, f64::max);
                 if !joined || (drop - 1.0).abs() > 0.05 {
@@ -360,11 +437,16 @@ fn main() {
                 let past = |q: &[f64; 3]| ((q[0] - c[0]) * tt[0] + (q[2] - c[2]) * tt[1]) * away;
                 let near = |r: &[[f64; 3]]| r.iter().any(|q| (q[0] - c[0]).hypot(q[2] - c[2]) < width + 8.0);
                 let gs = grounds.iter().filter(|(_, r)| near(r)).collect::<Vec<_>>();
-                let ok = gs.len() == 1 && all.iter().find(|(_, r)| shared(&gs[0].1, r) >= 2).is_some_and(|(piece, ramp)| {
-                    let buried = gs[0].1.iter().filter(|q| (q[1] + 20.0 + wce_walls::bridge::GROUND_PLATFORM_BURY).abs() < 0.01).count() == 2;
-                    let ramp_out = ramp.iter().map(&past).fold(f64::MIN, f64::max);
-                    buried && footprints[*piece].iter().all(|(r, _)| (r.iter().map(&past).fold(f64::MIN, f64::max) - ramp_out).abs() < 0.05)
-                });
+                let ok = gs.len() == 1
+                    && all.iter().find(|(_, r)| shared(&gs[0].1, r) >= 2).is_some_and(|(piece, ramp)| {
+                        let buried =
+                            gs[0].1.iter().filter(|q| (q[1] + 20.0 + wce_walls::bridge::GROUND_PLATFORM_BURY).abs() < 0.01).count() == 2;
+                        let ramp_out = ramp.iter().map(&past).fold(f64::MIN, f64::max);
+                        buried
+                            && footprints[*piece]
+                                .iter()
+                                .all(|(r, _)| (r.iter().map(&past).fold(f64::MIN, f64::max) - ramp_out).abs() < 0.05)
+                    });
                 if !ok {
                     println!("  end at {at:.1}: no ramp and ground platform as made");
                     bad_ends += 1;
@@ -372,7 +454,9 @@ fn main() {
             }
         }
 
-        println!("  gaps along the deck: {gaps}; platforms stacked: {stacked}; joint corners unmatched: {loose}; corners off the deck: {off}; ends not as the kit's: {bad_ends}");
+        println!(
+            "  gaps along the deck: {gaps}; platforms stacked: {stacked}; joint corners unmatched: {loose}; corners off the deck: {off}; ends not as the kit's: {bad_ends}"
+        );
         if gaps + stacked + loose + off + bad_ends > 0 {
             failed = true;
         }
@@ -396,14 +480,24 @@ fn main() {
         let mut scene = wce_tile::ted_scene::TedScene::parse_any(text.into_bytes()).expect("the scene");
         let lowered = wce_walls::export::lower_walls(&mut scene, &ground, &vfs, &schema, "wce_check", None, &[]).expect("lowered");
         let left = scene.find_all(wce_walls::bridge::BRIDGE_SPAN).len();
-        let instances = scene.find_all("BUILDING_INSTANCE").into_iter().map(|e| scene.doc().get(e, "key").unwrap_or_default()).collect::<Vec<_>>();
-        let rows = |k: &str| lowered.tables.values().any(|t| {
-            let id = t.column_position_by_name("key").unwrap_or(0);
-            t.data().iter().any(|r| r[id].data_to_string().eq_ignore_ascii_case(k))
-        });
-        let missing_files = instances.iter().filter(|k| !lowered.files.iter().any(|(p, _)| p.ends_with(&format!("{k}_tech.cs2.parsed")))).count();
+        let instances =
+            scene.find_all("BUILDING_INSTANCE").into_iter().map(|e| scene.doc().get(e, "key").unwrap_or_default()).collect::<Vec<_>>();
+        let rows = |k: &str| {
+            lowered.tables.values().any(|t| {
+                let id = t.column_position_by_name("key").unwrap_or(0);
+                t.data().iter().any(|r| r[id].data_to_string().eq_ignore_ascii_case(k))
+            })
+        };
+        let missing_files =
+            instances.iter().filter(|k| !lowered.files.iter().any(|(p, _)| p.ends_with(&format!("{k}_tech.cs2.parsed")))).count();
         let missing_rows = instances.iter().filter(|k| !rows(k)).count();
-        println!("== lowered: {} span(s) left, {} piece(s): {:?}; without files {missing_files}, without rows {missing_rows}; notes {:?}", left, instances.len(), instances, lowered.notes);
+        println!(
+            "== lowered: {} span(s) left, {} piece(s): {:?}; without files {missing_files}, without rows {missing_rows}; notes {:?}",
+            left,
+            instances.len(),
+            instances,
+            lowered.notes
+        );
         if left > 0 || instances.is_empty() || missing_files > 0 || missing_rows > 0 {
             failed = true;
         }
@@ -414,9 +508,16 @@ fn main() {
     // An exported pack (a tile's launch or export pack): its bridge pieces' ramps.
     if let Some(path) = a.iter().find(|x| x.ends_with(".pack")) {
         let games = rpfm_lib::games::supported_games::SupportedGames::default();
-        let mut pack = rpfm_lib::files::pack::Pack::read_and_merge(&[path.into()], games.game("attila").expect("attila"), true, false, false).expect("the pack");
+        let mut pack =
+            rpfm_lib::files::pack::Pack::read_and_merge(&[path.into()], games.game("attila").expect("attila"), true, false, false)
+                .expect("the pack");
         let names = pack.files().keys().filter(|n| n.ends_with(".cs2.parsed")).cloned().collect::<Vec<_>>();
-        let files = names.iter().filter_map(|n| pack.files_mut().get_mut(n).and_then(|f| f.encode(&None, false, false, true).ok().flatten()).map(|b| (n.clone(), b))).collect::<Vec<_>>();
+        let files = names
+            .iter()
+            .filter_map(|n| {
+                pack.files_mut().get_mut(n).and_then(|f| f.encode(&None, false, false, true).ok().flatten()).map(|b| (n.clone(), b))
+            })
+            .collect::<Vec<_>>();
         println!("== {path}");
         failed |= !ramps_reach_the_ground(files.iter().map(|(p, b)| (p.as_str(), b.as_slice())));
     }

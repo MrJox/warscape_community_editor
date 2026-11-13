@@ -139,7 +139,9 @@ impl TileTool {
 
         let note = match &dependency {
             Dependency::Gone => Some("Its scene layer is gone: it always exports.".to_owned()),
-            Dependency::On { name, export, .. } if export == "Off" => Some(format!("Left out of exports: '{name}' is set to Don't Export.")),
+            Dependency::On { name, export, .. } if export == "Off" => {
+                Some(format!("Left out of exports: '{name}' is set to Don't Export."))
+            }
             Dependency::On { export, .. } if export.starts_with("Escalation") => {
                 Some("Escalation layers have no terrain of their own: this exports with the tile at every escalation level.".to_owned())
             }

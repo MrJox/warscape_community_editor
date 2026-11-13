@@ -80,11 +80,14 @@ fn main() {
     };
     let local = |e: usize| {
         let v = |a: &str, p: &str| -> [f32; 3] {
-            sc.doc().get(e, a).and_then(|t| {
-                let i = t.trim().strip_prefix(p)?.strip_prefix('(')?.strip_suffix(')')?.to_owned();
-                let mut it = i.split(',').map(|x| x.trim().parse::<f32>().ok());
-                Some([it.next()??, it.next()??, it.next()??])
-            }).unwrap_or([0.0; 3])
+            sc.doc()
+                .get(e, a)
+                .and_then(|t| {
+                    let i = t.trim().strip_prefix(p)?.strip_prefix('(')?.strip_suffix(')')?.to_owned();
+                    let mut it = i.split(',').map(|x| x.trim().parse::<f32>().ok());
+                    Some([it.next()??, it.next()??, it.next()??])
+                })
+                .unwrap_or([0.0; 3])
         };
         let mut m = wce_tile::world_transform::ted_rotation_f32(v("orientation", "euler"));
         let p = v("position", "vector");
@@ -131,7 +134,13 @@ fn main() {
         let f = [m[3] * 0.5, m[7], extent_z as f32 - m[11] * 0.5];
         for k in 0..3 {
             let ulps = (i64::from(f[k].to_bits() as i32) - i64::from(b.position[k].to_bits() as i32)).unsigned_abs();
-            hist[k][match ulps { 0 => 0, 1 => 1, 2..=4 => 2, 5..=100 => 3, _ => 4 }] += 1;
+            hist[k][match ulps {
+                0 => 0,
+                1 => 1,
+                2..=4 => 2,
+                5..=100 => 3,
+                _ => 4,
+            }] += 1;
         }
     }
 
@@ -140,10 +149,18 @@ fn main() {
     let qmul = |a: [f32; 4], b: [f32; 4]| -> [f32; 4] {
         let (x1, y1, z1, w1) = (a[0], a[1], a[2], a[3]);
         let (x2, y2, z2, w2) = (b[0], b[1], b[2], b[3]);
-        [w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2, w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2, w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2, w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2]
+        [
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        ]
     };
     let qeuler = |e: [f32; 3]| -> [f32; 4] {
-        let h = |v: f32| { let t = f64::from(v) * 0.5; (t.sin() as f32, t.cos() as f32) };
+        let h = |v: f32| {
+            let t = f64::from(v) * 0.5;
+            (t.sin() as f32, t.cos() as f32)
+        };
         let (sa, ca) = h(e[0]);
         let (sb, cb) = h(-e[1]);
         let (sc_, cc) = h(e[2]);
@@ -166,11 +183,14 @@ fn main() {
         std::array::from_fn(|k| v[k] + q[3] * t[k] + ut[k])
     };
     let attr3 = |e: usize, a: &str, p: &str| -> [f32; 3] {
-        sc.doc().get(e, a).and_then(|t| {
-            let i = t.trim().strip_prefix(p)?.strip_prefix('(')?.strip_suffix(')')?.to_owned();
-            let mut it = i.split(',').map(|x| x.trim().parse::<f32>().ok());
-            Some([it.next()??, it.next()??, it.next()??])
-        }).unwrap_or([0.0; 3])
+        sc.doc()
+            .get(e, a)
+            .and_then(|t| {
+                let i = t.trim().strip_prefix(p)?.strip_prefix('(')?.strip_suffix(')')?.to_owned();
+                let mut it = i.split(',').map(|x| x.trim().parse::<f32>().ok());
+                Some([it.next()??, it.next()??, it.next()??])
+            })
+            .unwrap_or([0.0; 3])
     };
     let mut exq = [[0usize; 3]; 2];
     for (e, i, _) in &pairs {
@@ -217,7 +237,13 @@ fn main() {
 
         shown += 1;
         let xs = c.iter().map(|&x| attr3(x, "position", "vector")[0]).collect::<Vec<_>>();
-        println!("  untwisted chain x {:?} -> list x {:?} (z {:?} -> {:?})", xs, buildings[*i].position[0], c.iter().map(|&x| attr3(x, "position", "vector")[2]).collect::<Vec<_>>(), buildings[*i].position[2]);
+        println!(
+            "  untwisted chain x {:?} -> list x {:?} (z {:?} -> {:?})",
+            xs,
+            buildings[*i].position[0],
+            c.iter().map(|&x| attr3(x, "position", "vector")[2]).collect::<Vec<_>>(),
+            buildings[*i].position[2]
+        );
     }
 
     for (k, (a, n)) in &by {
@@ -230,7 +256,14 @@ fn main() {
         .filter(|&e| sc.type_of(e) == "LiteBuildingZone")
         .map(|e| {
             let w = world_transform(sc, e);
-            sc.polygon_points(e).iter().filter_map(|&p| sc.point_position(p)).map(|q| { let v = w.position + w.rotation * q; (v.x, v.z) }).collect::<Vec<_>>()
+            sc.polygon_points(e)
+                .iter()
+                .filter_map(|&p| sc.point_position(p))
+                .map(|q| {
+                    let v = w.position + w.rotation * q;
+                    (v.x, v.z)
+                })
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
     let inside = |x: f64, z: f64| {
@@ -247,7 +280,9 @@ fn main() {
     };
     let mut lite_table: BTreeMap<String, usize> = BTreeMap::new();
     for (_, i, w) in &pairs {
-        *lite_table.entry(format!("lite {:?}, inside a kit zone {}", buildings[*i].lite, inside(w.position.x, w.position.z))).or_default() += 1;
+        *lite_table
+            .entry(format!("lite {:?}, inside a kit zone {}", buildings[*i].lite, inside(w.position.x, w.position.z)))
+            .or_default() += 1;
     }
     println!("{} lite building zones: {lite_table:?}", zones.len());
     let mut table: BTreeMap<String, BTreeMap<String, usize>> = BTreeMap::new();
@@ -260,7 +295,10 @@ fn main() {
         add("starting_damage / destruction_level", format!("{} / {}", b.starting_damage, attr("destruction_level")));
         // WCE_KEYS=key,key: the same per building key.
         if std::env::var("WCE_KEYS").is_ok_and(|k| k.split(',').any(|k| k == b.key)) {
-            add(&format!("{}: starting_damage / destruction_level", b.key), format!("{} / {}", b.starting_damage, attr("destruction_level")));
+            add(
+                &format!("{}: starting_damage / destruction_level", b.key),
+                format!("{} / {}", b.starting_damage, attr("destruction_level")),
+            );
         }
         add("indestructible / indestructible", format!("{} / {}", b.indestructible, attr("indestructible")));
         add("toggleable / toggleable", format!("{:?} / {}", b.toggleable, attr("toggleable")));
@@ -270,7 +308,17 @@ fn main() {
         add("dockable / dockable", format!("{} / {}", b.dockable, attr("dockable")));
         add("lite", format!("{:?}", b.lite));
         add("scale", format!("{:?}", b.scale));
-        add("tile.ted opacity / dirt / glow / burn_amount / tech", format!("{} / {} / {} / {} / {}", attr("opacity"), attr("dirt_level"), attr("glow_amount"), attr("burn_amount"), attr("building_tech_level")));
+        add(
+            "tile.ted opacity / dirt / glow / burn_amount / tech",
+            format!(
+                "{} / {} / {} / {} / {}",
+                attr("opacity"),
+                attr("dirt_level"),
+                attr("glow_amount"),
+                attr("burn_amount"),
+                attr("building_tech_level")
+            ),
+        );
         // The quaternion as the euler of the world rotation.
         let q = b.orientation.map(f64::from);
         let (x, y, z, wq) = (q[0], q[1], q[2], q[3]);

@@ -221,10 +221,20 @@ impl Cas2File {
             Ok((faces, material))
         })?;
         r.u32()?;
-        let (positions, normals, colours) = (vertices.iter().map(|v| v.0).collect(), vertices.iter().map(|v| v.1).collect(), vertices.iter().map(|v| v.2).collect());
+        let (positions, normals, colours) =
+            (vertices.iter().map(|v| v.0).collect(), vertices.iter().map(|v| v.1).collect(), vertices.iter().map(|v| v.2).collect());
         let uvs = vertices.into_iter().map(|v| v.3).collect();
         let counts = groups.iter().map(|(f, m)| (f.len(), *m)).collect();
-        Ok(Cas2Mesh { name, strings, positions, normals, colours, uvs, faces: groups.into_iter().flat_map(|(f, _)| f).collect(), groups: counts })
+        Ok(Cas2Mesh {
+            name,
+            strings,
+            positions,
+            normals,
+            colours,
+            uvs,
+            faces: groups.into_iter().flat_map(|(f, _)| f).collect(),
+            groups: counts,
+        })
     }
 
     fn scene(r: &mut Reader, v: f32) -> Result<Vec<Cas2Node>> {

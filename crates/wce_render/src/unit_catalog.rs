@@ -142,7 +142,10 @@ fn rows_with(vfs: &Vfs, schema: &Schema, table: &str, columns: &[&str], optional
         extra.set_schema(Some(schema));
         extra.set_table_name(Some(&name));
         let db = DB::decode(&mut Cursor::new(bytes), &Some(extra)).map_err(|e| format!("{path}: {e}"))?;
-        let at = columns.iter().map(|c| db.column_position_by_name(c).ok_or(format!("{path}: no column '{c}'"))).collect::<Result<Vec<_>, _>>()?;
+        let at = columns
+            .iter()
+            .map(|c| db.column_position_by_name(c).ok_or(format!("{path}: no column '{c}'")))
+            .collect::<Result<Vec<_>, _>>()?;
         let maybe: Vec<Option<usize>> = optional.iter().map(|c| db.column_position_by_name(c)).collect();
         out.extend(db.data().iter().map(|row| {
             let cell = |k: usize| row[k].data_to_string().to_string();
@@ -161,7 +164,9 @@ fn srgb_to_linear(byte: f32) -> f32 {
 /// `RRGGBB`, with or without its `#`, as linear colour; black when it isn't one.
 fn hex_colour(text: &str) -> [f32; 3] {
     let text = text.trim().trim_start_matches('#');
-    std::array::from_fn(|i| text.get(i * 2..i * 2 + 2).and_then(|h| u8::from_str_radix(h, 16).ok()).map_or(0.0, |b| srgb_to_linear(f32::from(b))))
+    std::array::from_fn(|i| {
+        text.get(i * 2..i * 2 + 2).and_then(|h| u8::from_str_radix(h, 16).ok()).map_or(0.0, |b| srgb_to_linear(f32::from(b)))
+    })
 }
 
 impl UnitCatalog {
@@ -174,24 +179,44 @@ impl UnitCatalog {
         let mut c = Self::default();
         for r in rows(vfs, schema, "unit_variants", &["unit", "faction", "variant", "height_scale", "height_variation"])? {
             let number = |s: &String| s.trim().parse().unwrap_or(0.0);
-            c.entries.push(UnitEntry { height_scale: number(&r[3]), height_variation: number(&r[4]), unit: r[0].clone(), faction: r[1].clone(), variant: r[2].clone() });
+            c.entries.push(UnitEntry {
+                height_scale: number(&r[3]),
+                height_variation: number(&r[4]),
+                unit: r[0].clone(),
+                faction: r[1].clone(),
+                variant: r[2].clone(),
+            });
         }
 
         let number = |s: &String| s.trim().parse::<f32>().unwrap_or(0.0);
-        let spacings: HashMap<String, [f32; 2]> = rows(vfs, schema, "unit_spacings", &["key", "close_formation_spacing_horizontal", "close_formation_spacing_vertical"])?
-            .into_iter().map(|r| (r[0].clone(), [number(&r[1]), number(&r[2])])).collect();
-        let land: HashMap<String, LandUnit> = rows(vfs, schema, "land_units", &["key", "man_animation", "mount", "rank_depth", "spacing"])?.into_iter()
-            .map(|r| (r[0].clone(), LandUnit {
-                man_animation: r[1].clone(),
-                mount: r[2].clone(),
-                rank_depth: number(&r[3]) as u32,
-                spacing: spacings.get(&r[4]).copied().unwrap_or_default(),
-                ..LandUnit::default()
-            })).collect();
+        let spacings: HashMap<String, [f32; 2]> =
+            rows(vfs, schema, "unit_spacings", &["key", "close_formation_spacing_horizontal", "close_formation_spacing_vertical"])?
+                .into_iter()
+                .map(|r| (r[0].clone(), [number(&r[1]), number(&r[2])]))
+                .collect();
+        let land: HashMap<String, LandUnit> = rows(vfs, schema, "land_units", &["key", "man_animation", "mount", "rank_depth", "spacing"])?
+            .into_iter()
+            .map(|r| {
+                (
+                    r[0].clone(),
+                    LandUnit {
+                        man_animation: r[1].clone(),
+                        mount: r[2].clone(),
+                        rank_depth: number(&r[3]) as u32,
+                        spacing: spacings.get(&r[4]).copied().unwrap_or_default(),
+                        ..LandUnit::default()
+                    },
+                )
+            })
+            .collect();
         // `naval_units` (key, ship, category, primary and secondary weapon) and `ship_dbs` (key, model).
-        let naval: HashMap<String, Vec<String>> = rows(vfs, schema, "naval_units", &["key", "ship", "category", "primary_naval_weapon", "secondary_naval_weapon"])?
-            .into_iter().map(|r| (r[0].clone(), r)).collect();
-        let ship_models: HashMap<String, String> = rows(vfs, schema, "ship_dbs", &["key", "model"])?.into_iter().map(|r| (r[0].clone(), r[1].clone())).collect();
+        let naval: HashMap<String, Vec<String>> =
+            rows(vfs, schema, "naval_units", &["key", "ship", "category", "primary_naval_weapon", "secondary_naval_weapon"])?
+                .into_iter()
+                .map(|r| (r[0].clone(), r))
+                .collect();
+        let ship_models: HashMap<String, String> =
+            rows(vfs, schema, "ship_dbs", &["key", "model"])?.into_iter().map(|r| (r[0].clone(), r[1].clone())).collect();
 
         // Attila's table has no `unit_scaling`: there, everything scales.
         let truth = |s: &str| matches!(s.trim(), "true" | "1");
@@ -206,7 +231,9 @@ impl UnitCatalog {
                 }
             }
 
-            if truth(&r[4]) && let Some(n) = naval.get(&r[5]) {
+            if truth(&r[4])
+                && let Some(n) = naval.get(&r[5])
+            {
                 c.naval_units.entry(r[0].clone()).or_insert_with(|| NavalUnit {
                     land_unit: r[1].clone(),
                     naval_unit: r[5].clone(),
@@ -249,11 +276,14 @@ impl UnitCatalog {
         }
 
         // `logic_file` is `<folder>/<model>.meta_data`; the model's pieces beside it, `<model>_piece01_destruct01_lod01.rigid_model_v2`.
-        let weapon_models: HashMap<String, String> = rows(vfs, schema, "models_entity_weapons", &["key", "logic_file", "model_file"])?.into_iter().map(|r| {
-            let logic = normalize(&r[1]);
-            let folder = logic.rsplit_once('/').map_or("", |(f, _)| f);
-            (r[0].clone(), format!("{folder}/{}_piece01_destruct01_lod01.rigid_model_v2", r[2].to_lowercase()))
-        }).collect();
+        let weapon_models: HashMap<String, String> = rows(vfs, schema, "models_entity_weapons", &["key", "logic_file", "model_file"])?
+            .into_iter()
+            .map(|r| {
+                let logic = normalize(&r[1]);
+                let folder = logic.rsplit_once('/').map_or("", |(f, _)| f);
+                (r[0].clone(), format!("{folder}/{}_piece01_destruct01_lod01.rigid_model_v2", r[2].to_lowercase()))
+            })
+            .collect();
         for r in rows(vfs, schema, "naval_weapons", &["key", "models_entity_weaponry"])? {
             if let Some(model) = weapon_models.get(&r[1]) {
                 c.naval_weapons.entry(r[0].clone()).or_insert_with(|| model.clone());
@@ -293,7 +323,8 @@ impl UnitCatalog {
 
     /// The naval units with a ship to show, sorted.
     pub fn naval(&self) -> Vec<&str> {
-        let mut units: Vec<&str> = self.naval_units.iter().filter(|(_, n)| self.ship_entry(&n.naval_unit, "").is_some()).map(|(k, _)| k.as_str()).collect();
+        let mut units: Vec<&str> =
+            self.naval_units.iter().filter(|(_, n)| self.ship_entry(&n.naval_unit, "").is_some()).map(|(k, _)| k.as_str()).collect();
         units.sort_unstable();
         units
     }
@@ -350,7 +381,8 @@ mod tests {
 
     #[test]
     fn a_faction_has_its_own_row_or_the_general_one() {
-        let c = UnitCatalog { entries: vec![entry("a", "x", "ax"), entry("a", "", "any"), entry("b", "y", "by")], ..UnitCatalog::default() };
+        let c =
+            UnitCatalog { entries: vec![entry("a", "x", "ax"), entry("a", "", "any"), entry("b", "y", "by")], ..UnitCatalog::default() };
         assert_eq!(c.entry("a", "x").map(|e| e.variant.as_str()), Some("ax"));
         assert_eq!(c.entry("a", "z").map(|e| e.variant.as_str()), Some("any"));
         assert_eq!(c.entry("b", "z").map(|e| e.variant.as_str()), Some("by"));

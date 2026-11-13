@@ -37,7 +37,8 @@ fn split_fxc_name(name: &str) -> Option<FxcName> {
     let l = lower.as_bytes();
     for i in 0..b.len() {
         // The prefix ends with "_sm_" digit "_" digit at i, then '_'.
-        if i < 7 || &l[i - 7..i - 3] != b"_sm_" || !is_digit(b[i - 3]) || b[i - 2] != b'_' || !is_digit(b[i - 1]) || b.get(i) != Some(&b'_') {
+        if i < 7 || &l[i - 7..i - 3] != b"_sm_" || !is_digit(b[i - 3]) || b[i - 2] != b'_' || !is_digit(b[i - 1]) || b.get(i) != Some(&b'_')
+        {
             continue;
         }
 
@@ -138,14 +139,22 @@ fn type_string(t: &ID3D11ShaderReflectionType) -> String {
 /// # Safety
 ///
 /// `dev` is a live device.
-unsafe fn shader_row(dev: &ID3D11Device, path: &Path, asm_dir: Option<&Path>, source: &str, layouts: &mut BTreeMap<String, BTreeSet<String>>) -> Result<(String, &'static str, bool), String> {
+unsafe fn shader_row(
+    dev: &ID3D11Device,
+    path: &Path,
+    asm_dir: Option<&Path>,
+    source: &str,
+    layouts: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<(String, &'static str, bool), String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let fxc = Fxc::decode(&mut Cursor::new(&bytes), &None).map_err(|e| e.to_string())?;
     let code = fxc.shader();
     // SAFETY: the reflection reads `code`, alive during the block; descriptions are locals.
     unsafe {
         let mut raw: *mut c_void = std::ptr::null_mut();
-        D3DReflect(code.as_ptr().cast(), code.len(), &ID3D11ShaderReflection::IID, &mut raw).ok().map_err(|_| "D3DReflect failed".to_owned())?;
+        D3DReflect(code.as_ptr().cast(), code.len(), &ID3D11ShaderReflection::IID, &mut raw)
+            .ok()
+            .map_err(|_| "D3DReflect failed".to_owned())?;
         let refl = ID3D11ShaderReflection::from_raw(raw);
         let mut sd = D3D11_SHADER_DESC::default();
         refl.GetDesc(&mut sd).ok().map_err(|e| e.to_string())?;
@@ -195,7 +204,11 @@ unsafe fn shader_row(dev: &ID3D11Device, path: &Path, asm_dir: Option<&Path>, so
         }
 
         let version = format!("{}.{}", (sd.Version >> 4) & 0xF, sd.Version & 0xF);
-        Ok((format!("{version}\t{}\t{}\t{}\t{}", if created { "ok" } else { "FAIL" }, cbs.join(","), res.join(","), inputs.join(",")), stage_name(ty), created))
+        Ok((
+            format!("{version}\t{}\t{}\t{}\t{}", if created { "ok" } else { "FAIL" }, cbs.join(","), res.join(","), inputs.join(",")),
+            stage_name(ty),
+            created,
+        ))
     }
 }
 
@@ -217,7 +230,19 @@ fn main() {
     let dev = unsafe {
         init_platform();
         let mut dev = None;
-        match D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), 0, Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION as u32, Some(&mut dev), None, None).ok() {
+        match D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            0,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION as u32,
+            Some(&mut dev),
+            None,
+            None,
+        )
+        .ok()
+        {
             Ok(()) if dev.is_some() => dev.expect("checked"),
             _ => {
                 println!("no D3D11 hardware device");

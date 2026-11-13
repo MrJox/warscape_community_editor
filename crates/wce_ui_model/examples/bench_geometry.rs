@@ -32,6 +32,9 @@ fn main() {
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0));
     for r in rows.iter().take(8) {
-        println!("{:>8.1?} frame (entries {:.1?} geometry {:.1?} draw {:.1?}), parse {:.1?}, {} entries  {}", r.0, r.2, r.3, r.4, r.1, r.5, r.6);
+        println!(
+            "{:>8.1?} frame (entries {:.1?} geometry {:.1?} draw {:.1?}), parse {:.1?}, {} entries  {}",
+            r.0, r.2, r.3, r.4, r.1, r.5, r.6
+        );
     }
 }

@@ -134,13 +134,23 @@ pub fn overrides(current: &[u8], base: &[u8]) -> Result<Vec<Override>, String> {
     while let Some((c, b)) = stack.pop() {
         if ce[c].name != be[b].name || ce[c].children.len() != be[b].children.len() {
             let path = path_of(&cur, c).iter().map(usize::to_string).collect::<Vec<_>>().join(".");
-            return Err(format!("the contents differ at {} ({} instead of {})", if path.is_empty() { "the top".to_owned() } else { path }, ce[c].name, be[b].name));
+            return Err(format!(
+                "the contents differ at {} ({} instead of {})",
+                if path.is_empty() { "the top".to_owned() } else { path },
+                ce[c].name,
+                be[b].name
+            ));
         }
 
         for (i, a) in ce[c].attrs.iter().enumerate() {
             let raw = cur.attr_raw(c, i);
             if base.find_attr(b, &a.name).is_none_or(|j| !same_value(&a.name, on_terrain[b], base.attr_raw(b, j), raw)) {
-                out.push(Override { path: path_of(&cur, c), element: ce[c].name.clone(), attr: a.name.clone(), value: String::from_utf8_lossy(&decode_entities(raw)).into_owned() });
+                out.push(Override {
+                    path: path_of(&cur, c),
+                    element: ce[c].name.clone(),
+                    attr: a.name.clone(),
+                    value: String::from_utf8_lossy(&decode_entities(raw)).into_owned(),
+                });
             }
         }
 
@@ -184,7 +194,9 @@ pub fn overrides_text(ovs: &[Override]) -> Vec<u8> {
     for o in ovs {
         let path = o.path.iter().map(usize::to_string).collect::<Vec<_>>().join(".");
         let value = encode_entities(o.value.as_bytes(), b'"');
-        out.extend_from_slice(format!("    <{OVERRIDE_ELEMENT} path=\"{path}\" element=\"{}\" attr=\"{}\" value=\"", o.element, o.attr).as_bytes());
+        out.extend_from_slice(
+            format!("    <{OVERRIDE_ELEMENT} path=\"{path}\" element=\"{}\" attr=\"{}\" value=\"", o.element, o.attr).as_bytes(),
+        );
         out.extend_from_slice(&value);
         out.extend_from_slice(b"\"/>\n");
     }
@@ -197,11 +209,16 @@ pub fn overrides_text(ovs: &[Override]) -> Vec<u8> {
 pub fn read_overrides(doc: &XmlDoc, reference: usize) -> Vec<Override> {
     let els = doc.elements();
     let Some(&holder) = els[reference].children.iter().find(|&&c| els[c].name == OVERRIDES_ELEMENT) else { return vec![] };
-    els[holder].children.iter().filter(|&&c| els[c].name == OVERRIDE_ELEMENT).filter_map(|&c| {
-        let path = doc.get(c, "path")?;
-        let path = if path.is_empty() { vec![] } else { path.split('.').map(|p| p.parse().ok()).collect::<Option<Vec<usize>>>()? };
-        Some(Override { path, element: doc.get(c, "element")?, attr: doc.get(c, "attr")?, value: doc.get(c, "value")? })
-    }).collect()
+    els[holder]
+        .children
+        .iter()
+        .filter(|&&c| els[c].name == OVERRIDE_ELEMENT)
+        .filter_map(|&c| {
+            let path = doc.get(c, "path")?;
+            let path = if path.is_empty() { vec![] } else { path.split('.').map(|p| p.parse().ok()).collect::<Option<Vec<usize>>>()? };
+            Some(Override { path, element: doc.get(c, "element")?, attr: doc.get(c, "attr")?, value: doc.get(c, "value")? })
+        })
+        .collect()
 }
 
 /// The attributes an item of a reference overrides, each with the prefab's value (`None`: the prefab's item has no such attribute).
@@ -234,14 +251,20 @@ impl BaseContents {
             return None;
         }
 
-        Some(c.attrs.iter().enumerate().filter_map(|(i, a)| {
-            let base = self.doc.find_attr(b, &a.name);
-            if base.is_some_and(|j| same_value(&a.name, self.on_terrain[b], self.doc.attr_raw(b, j), current.attr_raw(elem, i))) {
-                return None;
-            }
+        Some(
+            c.attrs
+                .iter()
+                .enumerate()
+                .filter_map(|(i, a)| {
+                    let base = self.doc.find_attr(b, &a.name);
+                    if base.is_some_and(|j| same_value(&a.name, self.on_terrain[b], self.doc.attr_raw(b, j), current.attr_raw(elem, i))) {
+                        return None;
+                    }
 
-            Some((a.name.clone(), base.map(|j| String::from_utf8_lossy(&decode_entities(self.doc.attr_raw(b, j))).into_owned())))
-        }).collect())
+                    Some((a.name.clone(), base.map(|j| String::from_utf8_lossy(&decode_entities(self.doc.attr_raw(b, j))).into_owned())))
+                })
+                .collect(),
+        )
     }
 }
 
@@ -321,7 +344,9 @@ impl BaseContents {
                 }
 
                 let same = ce[c].attrs.iter().enumerate().all(|(i, a)| {
-                    self.doc.find_attr(b, &a.name).is_some_and(|j| same_value(&a.name, self.on_terrain[b], self.doc.attr_raw(b, j), current.attr_raw(c, i)))
+                    self.doc
+                        .find_attr(b, &a.name)
+                        .is_some_and(|j| same_value(&a.name, self.on_terrain[b], self.doc.attr_raw(b, j), current.attr_raw(c, i)))
                 });
                 if !same {
                     return false;
@@ -398,10 +423,18 @@ mod tests {
     fn overrides_are_the_values_that_differ_and_apply_back() {
         let current = BASE.replace("scale=\"1\"", "scale=\"1.5\"").replace("vector(2,0,0)", "vector(2,0,3)");
         let ovs = overrides(current.as_bytes(), BASE.as_bytes()).unwrap();
-        assert_eq!(ovs, vec![
-            Override { path: vec![0], element: "BUILDING_INSTANCE".into(), attr: "scale".into(), value: "1.5".into() },
-            Override { path: vec![1, 0, 0], element: "BUILDING_INSTANCE".into(), attr: "position".into(), value: "vector(2,0,3)".into() },
-        ]);
+        assert_eq!(
+            ovs,
+            vec![
+                Override { path: vec![0], element: "BUILDING_INSTANCE".into(), attr: "scale".into(), value: "1.5".into() },
+                Override {
+                    path: vec![1, 0, 0],
+                    element: "BUILDING_INSTANCE".into(),
+                    attr: "position".into(),
+                    value: "vector(2,0,3)".into()
+                },
+            ]
+        );
 
         let (back, lost) = apply(BASE.as_bytes(), &ovs).unwrap();
         assert!(lost.is_empty());
@@ -426,28 +459,45 @@ mod tests {
         assert_eq!(overrides(copy.as_bytes(), base.as_bytes()).unwrap(), vec![], "landscape heights are the terrain's");
 
         let moved = copy.replace("vector(1,7,2)", "vector(1.5,7,2)").replace("vector(3,0.5,4)", "vector(3,0.6,4)");
-        assert_eq!(overrides(moved.as_bytes(), base.as_bytes()).unwrap().iter().map(|o| o.path.clone()).collect::<Vec<_>>(), vec![vec![0], vec![1]], "x/z, and a freeform height, count");
+        assert_eq!(
+            overrides(moved.as_bytes(), base.as_bytes()).unwrap().iter().map(|o| o.path.clone()).collect::<Vec<_>>(),
+            vec![vec![0], vec![1]],
+            "x/z, and a freeform height, count"
+        );
 
         let drift = copy.replace("vector(3,0.5,4)", "vector(3.02,0.5,3.97)").replace("area=\"12\"", "area=\"12.0001\"");
         assert!(drift.contains("12.0001"));
-        assert_eq!(overrides(drift.as_bytes(), base.as_bytes()).unwrap(), vec![], "a drift of hundredths across (and the area it changes) is no override");
+        assert_eq!(
+            overrides(drift.as_bytes(), base.as_bytes()).unwrap(),
+            vec![],
+            "a drift of hundredths across (and the area it changes) is no override"
+        );
 
         let index = ContentIndex::new([("p", base.as_bytes().to_vec())]);
-        let tile = format!("<project><SCENE_GRAPH><children>\n<UserInstanceGroup name=\"p\">\n<children>\n{copy}</children>\n</UserInstanceGroup>\n</children></SCENE_GRAPH></project>\n");
+        let tile = format!(
+            "<project><SCENE_GRAPH><children>\n<UserInstanceGroup name=\"p\">\n<children>\n{copy}</children>\n</UserInstanceGroup>\n</children></SCENE_GRAPH></project>\n"
+        );
         let scene = TedScene::parse_any(tile.into_bytes()).unwrap();
         assert_eq!(recognise(&scene, &index, &|_| true).copies.len(), 1);
     }
 
     #[test]
     fn exact_copies_are_found_outermost_first() {
-        let index = ContentIndex::new([("rocks", BASE.as_bytes().to_vec()), ("inner", b"<BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"rock\"/>\n".to_vec())]);
+        let index = ContentIndex::new([
+            ("rocks", BASE.as_bytes().to_vec()),
+            ("inner", b"<BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"rock\"/>\n".to_vec()),
+        ]);
         let indented = BASE.lines().map(|l| format!("                {l}\n")).collect::<String>();
         let tile = format!(
             "<project><SCENE_GRAPH><children>\n<UserInstanceGroup name=\"ROCKS\" position=\"vector(9,9,9)\">\n<children>\n{indented}</children>\n</UserInstanceGroup>\n<UserInstanceGroup name=\"other\" position=\"vector(9,9,9)\">\n<children>\n{indented}</children>\n</UserInstanceGroup>\n<UserInstanceGroup name=\"rocks\">\n<children>\n<BUILDING_INSTANCE position=\"vector(5,0,0)\" key=\"rock\"/>\n</children>\n</UserInstanceGroup>\n</children></SCENE_GRAPH></project>\n"
         );
         let scene = TedScene::parse_any(tile.into_bytes()).unwrap();
         let found = recognise(&scene, &index, &|n| n == "rocks");
-        assert_eq!(found.copies.len(), 1, "the inner group is part of the copy, and the same contents under another name are not one: {found:?}");
+        assert_eq!(
+            found.copies.len(),
+            1,
+            "the inner group is part of the copy, and the same contents under another name are not one: {found:?}"
+        );
         assert_eq!(found.copies[0].1, "rocks");
         assert_eq!(scene.name(found.copies[0].0), "ROCKS");
         assert_eq!(found.named_but_different, 1);

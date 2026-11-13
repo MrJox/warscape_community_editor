@@ -19,7 +19,11 @@ use crate::tool::{PAINT_WATER_TIP, TileTool, WATER_VIEW_TIP, document_id, set_se
 pub(crate) const GROUND_VIEWS: [(TerrainView, &str, &str); 5] = [
     (TerrainView::Colour, "colour", "The ground's colour: the tile's blend map mixed from the climate's textures, by the game's shaders."),
     (TerrainView::BlendGroups, "blend groups", "TEd's debug view of the blend map: each texture group in a colour of its own."),
-    (TerrainView::GroundTypes, "ground types", "The ground type map as stored (ground_type_map.png): what the units walk on. The Ground brush shows it while it paints."),
+    (
+        TerrainView::GroundTypes,
+        "ground types",
+        "The ground type map as stored (ground_type_map.png): what the units walk on. The Ground brush shows it while it paints.",
+    ),
     (TerrainView::Protection, "protection", "The protection map (protection_map.dds): where nothing is placed by the map's generation."),
     (TerrainView::WaterDepth, "water depth", WATER_VIEW_TIP),
 ];
@@ -99,7 +103,9 @@ impl TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("The tile's blend map mixed from the climate's textures, by the game's terrain shaders. Off: a plain tiled texture.");
+            gui::set_tooltip(
+                "The tile's blend map mixed from the climate's textures, by the game's terrain shaders. Off: a plain tiled texture.",
+            );
         }
 
         // A view needs the blend: picking one turns it on (as `tile_ground_view`).
@@ -140,13 +146,17 @@ impl TileTool {
             gui::set_next_item_width(120.0);
             gui::drag_float("shallow from (m)##water", &mut self.water_shallow_m, 0.05, 0.0, 20.0, "%.2f");
             if gui::is_item_hovered() {
-                gui::set_tooltip("Water shallower than this is left unpainted (the water at a river's banks, which lies under the ground or barely over it).");
+                gui::set_tooltip(
+                    "Water shallower than this is left unpainted (the water at a river's banks, which lies under the ground or barely over it).",
+                );
             }
 
             gui::set_next_item_width(120.0);
             gui::drag_float("deep from (m)##water", &mut self.water_deep_m, 0.05, 0.0, 50.0, "%.2f");
             if gui::is_item_hovered() {
-                gui::set_tooltip("Water at least this deep is painted deep water (units cannot cross it); shallower water is shallow water (units wade).");
+                gui::set_tooltip(
+                    "Water at least this deep is painted deep water (units cannot cross it); shallower water is shallow water (units wade).",
+                );
             }
 
             self.water_deep_m = self.water_deep_m.max(self.water_shallow_m);
@@ -206,7 +216,9 @@ impl TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("The procedural trees, generated as BOB would from the tile as it is (its seeds, heights, saved blend map, exclusion polygons and static trees) for the ground's climate. The static trees are the tile's own instances, drawn either way.");
+            gui::set_tooltip(
+                "The procedural trees, generated as BOB would from the tile as it is (its seeds, heights, saved blend map, exclusion polygons and static trees) for the ground's climate. The static trees are the tile's own instances, drawn either way.",
+            );
         }
 
         if trees && unavailable.is_none() {
@@ -229,7 +241,9 @@ impl TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("The grass near the camera, generated as BOB would from the tile as it is (its seed, the saved blend map, the kit's max_grass.xml).");
+            gui::set_tooltip(
+                "The grass near the camera, generated as BOB would from the tile as it is (its seed, the saved blend map, the kit's max_grass.xml).",
+            );
         }
 
         let unavailable = d.tile().grass_unavailable();
@@ -285,4 +299,3 @@ pub(crate) fn season_name(season: &str) -> &'static str {
         _ => "summer",
     }
 }
-

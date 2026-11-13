@@ -28,9 +28,21 @@ fn main() {
         let (i2, t2) = again.write();
         let same = i2 == index && t2 == tiles;
         let cells = m.layers[0].iter().zip(&again.layers[0]).filter(|(x, y)| x != y).count();
-        let first = m.layers[0].iter().zip(&again.layers[0]).position(|(x, y)| x != y)
-            .map(|i| format!(" first cell {} {}: shipped {:?} / made {:?}", i as u32 % m.width, i as u32 / m.width, m.layers[0][i], again.layers[0][i]));
-        println!("{folder}: {} placements; {}{}", m.placements().placements.len(), if same { "the same".to_owned() } else { format!("DIFFERS: {cells} cells") }, first.unwrap_or_default());
+        let first = m.layers[0].iter().zip(&again.layers[0]).position(|(x, y)| x != y).map(|i| {
+            format!(
+                " first cell {} {}: shipped {:?} / made {:?}",
+                i as u32 % m.width,
+                i as u32 / m.width,
+                m.layers[0][i],
+                again.layers[0][i]
+            )
+        });
+        println!(
+            "{folder}: {} placements; {}{}",
+            m.placements().placements.len(),
+            if same { "the same".to_owned() } else { format!("DIFFERS: {cells} cells") },
+            first.unwrap_or_default()
+        );
         if !same {
             bad += 1;
         }

@@ -45,7 +45,8 @@ fn tables(key: &str, dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
 
 fn kit_xmls(dir: &Path) -> Vec<PathBuf> {
     let ships = dir.join("assembly_kit/raw_data/art/battle/naval/models/ships");
-    let mut out: Vec<PathBuf> = std::fs::read_dir(ships).into_iter().flatten().flatten().map(|e| e.path().join("logic.xml")).filter(|p| p.is_file()).collect();
+    let mut out: Vec<PathBuf> =
+        std::fs::read_dir(ships).into_iter().flatten().flatten().map(|e| e.path().join("logic.xml")).filter(|p| p.is_file()).collect();
     out.sort();
     out
 }
@@ -120,11 +121,15 @@ fn compare(ship: &ShipLogic, x: &Xml, root: usize) -> Vec<String> {
             let corners: Vec<usize> = x.children(pe, "corner").collect();
             let same = p.id == x.num(pe, "id") as u32
                 && p.corners.len() == corners.len()
-                && p.corners.iter().zip(&corners).all(|(c, &ce)| close(&c.position, &x.point(ce), TOLERANCE) && c.hard == (x.text(ce, "type") == "hard"));
+                && p.corners
+                    .iter()
+                    .zip(&corners)
+                    .all(|(c, &ce)| close(&c.position, &x.point(ce), TOLERANCE) && c.hard == (x.text(ce, "type") == "hard"));
             if !same {
                 fail("decks", format!("deck {} piece {} differs", d.name, p.id));
             }
-            let off_plane = p.corners.iter().any(|c| (c.position.iter().zip(&p.plane).map(|(a, b)| a * b).sum::<f32>() + p.plane[3]).abs() > TOLERANCE);
+            let off_plane =
+                p.corners.iter().any(|c| (c.position.iter().zip(&p.plane).map(|(a, b)| a * b).sum::<f32>() + p.plane[3]).abs() > TOLERANCE);
             if off_plane {
                 fail("decks", format!("deck {} piece {}: a corner is off the plane", d.name, p.id));
             }
@@ -160,7 +165,16 @@ fn compare(ship: &ShipLogic, x: &Xml, root: usize) -> Vec<String> {
                 panel.len() == vertices.len() && panel.iter().zip(&vertices).all(|(v, &ve)| close(v, &x.point(ve), TOLERANCE))
             });
         if !same {
-            fail("damage", format!("part {} ({} panels) differs from the XML's {} ({} panels)", part.name, part.panels.len(), x.text(e, "name"), panels.len()));
+            fail(
+                "damage",
+                format!(
+                    "part {} ({} panels) differs from the XML's {} ({} panels)",
+                    part.name,
+                    part.panels.len(),
+                    x.text(e, "name"),
+                    panels.len()
+                ),
+            );
         }
     }
 
@@ -193,7 +207,10 @@ fn compare(ship: &ShipLogic, x: &Xml, root: usize) -> Vec<String> {
             && close(&l.ends.concat(), &ends.concat(), TOLERANCE)
             && close(&l.direction, &d.map(|v| v / len), 3e-3);
         if !same {
-            fail("ef_lines", format!("{} ({:?}) differs from the XML's {} ({})", l.name, l.purpose_name(), x.text(e, "name"), x.text(e, "action")));
+            fail(
+                "ef_lines",
+                format!("{} ({:?}) differs from the XML's {} ({})", l.name, l.purpose_name(), x.text(e, "name"), x.text(e, "action")),
+            );
         }
     }
 
@@ -279,7 +296,12 @@ fn main() -> ExitCode {
             match models_naval::decode(&bytes) {
                 Ok(table) => {
                     let same = models_naval::encode(&table).is_ok_and(|b| b == bytes);
-                    println!("{key} {path} ({} bytes): {}; round trip {}", bytes.len(), summary(&table), if same { "identical" } else { "DIFFERS" });
+                    println!(
+                        "{key} {path} ({} bytes): {}; round trip {}",
+                        bytes.len(),
+                        summary(&table),
+                        if same { "identical" } else { "DIFFERS" }
+                    );
                     failures += usize::from(!same);
                     decoded.push((key.clone(), table));
                 }

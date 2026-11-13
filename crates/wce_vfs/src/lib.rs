@@ -13,8 +13,8 @@
 //! forward slashes; each pack keeps its own spelling for reading.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use rpfm_lib::files::pack::Pack as RpfmPack;
@@ -67,7 +67,6 @@ pub struct Config {
 }
 
 impl Config {
-
     /// The packs of a game in its folder, with its enabled mods and no overlay folders.
     pub fn new(game_dir: impl Into<PathBuf>, profile: GameProfile) -> Self {
         Self { game_dir: game_dir.into(), profile, use_mods: true, mod_packs: None, overlay_folders: vec![] }
@@ -121,7 +120,6 @@ pub struct Vfs {
 }
 
 impl Vfs {
-
     /// Mounts the packs and overlay folders of a configuration.
     ///
     /// # Errors
@@ -160,10 +158,19 @@ impl Vfs {
         for pack_ref in order.packs {
             let pack = RpfmPack::read_and_merge(std::slice::from_ref(&pack_ref.path), game, true, false, false)
                 .map_err(|error| VfsError::Pack(pack_ref.path.clone(), error.to_string()))?;
-            let (paths, removed) = pack.files().iter().map(|(path, file)| (path.clone(), file.stored_size() == Some(0))).partition::<Vec<_>, _>(|(_, empty)| !empty);
+            let (paths, removed) = pack
+                .files()
+                .iter()
+                .map(|(path, file)| (path.clone(), file.stored_size() == Some(0)))
+                .partition::<Vec<_>, _>(|(_, empty)| !empty);
             let paths = paths.into_iter().map(|(path, _)| path).collect();
             let removed = removed.into_iter().map(|(path, _)| path).collect();
-            vfs.add(Pack { name: pack_ref.name, path: pack_ref.path, is_mod: pack_ref.is_mod, loose: false }, Source::Pack(Box::new(Mutex::new(pack))), paths, removed);
+            vfs.add(
+                Pack { name: pack_ref.name, path: pack_ref.path, is_mod: pack_ref.is_mod, loose: false },
+                Source::Pack(Box::new(Mutex::new(pack))),
+                paths,
+                removed,
+            );
         }
 
         vfs.files.retain(|_, pack| *pack != REMOVED);
@@ -249,7 +256,8 @@ impl Vfs {
     pub fn list(&self, prefix: &str, extension: &str) -> Vec<&str> {
         let prefix = normalize(prefix);
         let extension = normalize(extension);
-        self.files.range(prefix.clone()..)
+        self.files
+            .range(prefix.clone()..)
             .take_while(|(path, _)| path.starts_with(&prefix))
             .filter(|(path, _)| path.ends_with(&extension))
             .map(|(path, _)| path.as_str())

@@ -26,7 +26,9 @@ fn fnv(bytes: impl IntoIterator<Item = u8>) -> u64 {
 }
 
 fn clouds_hash(instances: &[CloudInstance]) -> u64 {
-    fnv(instances.iter().flat_map(|c| c.t1.iter().chain(&c.t2).chain(&c.t3).chain(&c.t4).chain(&c.t5).flat_map(|f| f.to_le_bytes()).collect::<Vec<_>>()))
+    fnv(instances
+        .iter()
+        .flat_map(|c| c.t1.iter().chain(&c.t2).chain(&c.t3).chain(&c.t4).chain(&c.t5).flat_map(|f| f.to_le_bytes()).collect::<Vec<_>>()))
 }
 
 fn env(tag: &str, e: &EnvironmentParams) {
@@ -106,12 +108,44 @@ fn env(tag: &str, e: &EnvironmentParams) {
 
     println!("  scurve {:016x}", fnv(build_scurve(e).iter().flat_map(|v| v.to_le_bytes())));
     for p in &e.cloud_planes {
-        println!("  plane far={} grid={} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} n={}", i32::from(p.far_plane), p.grid_size, b(p.height_scale), b(p.velocity),
-            b(p.density), b(p.flatten), arr(&p.transmitted), arr(&p.reflected), arr(&p.shadow), b(p.transmit_falloff), b(p.shadow_gradient), b(p.shadow_falloff),
-            b(p.horizon_alpha_start), b(p.horizon_alpha_end), b(p.height_variation), b(p.rotation), p.cloudset, cloud_texture(p, 1), p.clouds.len());
+        println!(
+            "  plane far={} grid={} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} n={}",
+            i32::from(p.far_plane),
+            p.grid_size,
+            b(p.height_scale),
+            b(p.velocity),
+            b(p.density),
+            b(p.flatten),
+            arr(&p.transmitted),
+            arr(&p.reflected),
+            arr(&p.shadow),
+            b(p.transmit_falloff),
+            b(p.shadow_gradient),
+            b(p.shadow_falloff),
+            b(p.horizon_alpha_start),
+            b(p.horizon_alpha_end),
+            b(p.height_variation),
+            b(p.rotation),
+            p.cloudset,
+            cloud_texture(p, 1),
+            p.clouds.len()
+        );
         for t in &p.clouds {
-            let elements = t.elements.iter().map(|el| format!(" [{} {} {} {} {} {}]", i32::from(el.enabled), b(el.scale), arr(&el.offset), el.texture_index,
-                el.texture_row, el.texture_column)).collect::<String>();
+            let elements = t
+                .elements
+                .iter()
+                .map(|el| {
+                    format!(
+                        " [{} {} {} {} {} {}]",
+                        i32::from(el.enabled),
+                        b(el.scale),
+                        arr(&el.offset),
+                        el.texture_index,
+                        el.texture_row,
+                        el.texture_column
+                    )
+                })
+                .collect::<String>();
             println!("   cloud {} {}{elements}", i32::from(t.this_cloud_only), b(t.probability));
         }
 
@@ -148,6 +182,15 @@ fn main() {
     }
 
     let o = read_graphics_options(&wce_foundation::game::GameProfile::ATTILA);
-    println!("options {} {} {} {} {} {} {}", b(o.gamma), b(o.brightness), i32::from(o.vignette), i32::from(o.ssao), i32::from(o.distortion), o.depth_of_field, o.shadow_quality);
+    println!(
+        "options {} {} {} {} {} {} {}",
+        b(o.gamma),
+        b(o.brightness),
+        i32::from(o.vignette),
+        i32::from(o.ssao),
+        i32::from(o.distortion),
+        o.depth_of_field,
+        o.shadow_quality
+    );
     println!("overlay {:08x} {:08x}", overlay_colour(0.25, 0.5, 1.2, 1.0), overlay_colour(-1.0, 0.999, 0.5, 0.5));
 }

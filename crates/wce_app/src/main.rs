@@ -159,8 +159,15 @@ fn parse_args(argv: &[String]) -> Options {
 
                 // The old Tile Studio flags whose names are taken by generic commands or use hyphens.
                 const ALIAS: [(&str, &str); 9] = [
-                    ("select", "tile_select"), ("move", "tile_move"), ("delete", "delete_item"), ("add", "add_building"), ("add-polygon", "add_polygon"),
-                    ("polygon-point", "polygon_point"), ("new-layer", "new_layer"), ("move-to-layer", "move_to_layer"), ("save-to", "save_to"),
+                    ("select", "tile_select"),
+                    ("move", "tile_move"),
+                    ("delete", "delete_item"),
+                    ("add", "add_building"),
+                    ("add-polygon", "add_polygon"),
+                    ("polygon-point", "polygon_point"),
+                    ("new-layer", "new_layer"),
+                    ("move-to-layer", "move_to_layer"),
+                    ("save-to", "save_to"),
                 ];
                 if let Some((_, to)) = ALIAS.iter().find(|(from, _)| *from == line) {
                     line = (*to).to_owned();
@@ -234,8 +241,13 @@ unsafe fn output_window(window: *mut SDL_Window) -> HWND {
 /// After `init_platform`; `window` is live.
 unsafe fn create_device(window: HWND) -> Option<(IDXGISwapChain, ID3D11Device, ID3D11DeviceContext)> {
     let sd = DXGI_SWAP_CHAIN_DESC {
-        BufferDesc: DXGI_MODE_DESC { Format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() }, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        BufferUsage: DXGI_USAGE(DXGI_USAGE_RENDER_TARGET_OUTPUT), BufferCount: 2, OutputWindow: window, Windowed: true.into(), SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
+        BufferDesc: DXGI_MODE_DESC { Format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() },
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        BufferUsage: DXGI_USAGE(DXGI_USAGE_RENDER_TARGET_OUTPUT),
+        BufferCount: 2,
+        OutputWindow: window,
+        Windowed: true.into(),
+        SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
         Flags: 0,
     };
 
@@ -258,8 +270,17 @@ unsafe fn create_device(window: HWND) -> Option<(IDXGISwapChain, ID3D11Device, I
     // SAFETY: valid descriptions and out pointers.
     unsafe {
         D3D11CreateDeviceAndSwapChain(
-            adapter.as_ref(), driver, HMODULE::default(), flags, Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION as u32, Some(&sd), Some(&mut swap),
-            Some(&mut dev), None, Some(&mut ctx),
+            adapter.as_ref(),
+            driver,
+            HMODULE::default(),
+            flags,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION as u32,
+            Some(&sd),
+            Some(&mut swap),
+            Some(&mut dev),
+            None,
+            Some(&mut ctx),
         )
         .ok()
         .ok()?;
@@ -288,7 +309,14 @@ struct WindowEvents {
 }
 
 /// One SDL event: Dear ImGui gets it (not the real mouse in a scripted run), and resize / close requests are noted. True to quit.
-fn handle_event(window: *mut SDL_Window, e: &SDL_Event, editor: &mut Editor, imgui: &mut Context, platform: &mut Sdl3Platform, state: &mut WindowEvents) -> bool {
+fn handle_event(
+    window: *mut SDL_Window,
+    e: &SDL_Event,
+    editor: &mut Editor,
+    imgui: &mut Context,
+    platform: &mut Sdl3Platform,
+    state: &mut WindowEvents,
+) -> bool {
     platform.process_event(imgui, e, !editor.scripted_input());
     // SAFETY: the event type selects the union member read.
     unsafe {
@@ -312,7 +340,15 @@ fn handle_event(window: *mut SDL_Window, e: &SDL_Event, editor: &mut Editor, img
 /// # Safety
 ///
 /// `window` is live; the device presents to it.
-unsafe fn run_editor(opt: &Options, window: *mut SDL_Window, swap: &IDXGISwapChain, dev: &ID3D11Device, ctx: &ID3D11DeviceContext, imgui: &mut Context, dpi: f32) -> (i32, Option<std::path::PathBuf>) {
+unsafe fn run_editor(
+    opt: &Options,
+    window: *mut SDL_Window,
+    swap: &IDXGISwapChain,
+    dev: &ID3D11Device,
+    ctx: &ID3D11DeviceContext,
+    imgui: &mut Context,
+    dpi: f32,
+) -> (i32, Option<std::path::PathBuf>) {
     let mut exit_code = 0;
     // SAFETY: the window outlives the backend (the caller's contract).
     let mut platform = unsafe { Sdl3Platform::new(imgui, window) };
@@ -533,9 +569,11 @@ fn main() {
         // with a framebuffer scale, and rasterizes its fonts at that density), instead of the compositor stretching a logical-size image.
         // Under X11 the content scale sizes the UI like the Windows DPI scale does.
         // Scripted runs keep one pixel per unit: their mouse positions and shots must not depend on the display's scale.
-        let scripted = opt.fixed_step > 0.0 || (!opt.live && (!opt.shot.is_empty() || !opt.capture_path.is_empty() || !opt.script_text.is_empty()));
+        let scripted =
+            opt.fixed_step > 0.0 || (!opt.live && (!opt.shot.is_empty() || !opt.capture_path.is_empty() || !opt.script_text.is_empty()));
         let density = if scripted { SDL_WindowFlags(0) } else { SDL_WINDOW_HIGH_PIXEL_DENSITY };
-        let wflags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | density | if take_focus { SDL_WindowFlags(0) } else { SDL_WINDOW_NOT_FOCUSABLE };
+        let wflags =
+            SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | density | if take_focus { SDL_WindowFlags(0) } else { SDL_WINDOW_NOT_FOCUSABLE };
         let window = SDL_CreateWindow(c"Warscape Community Editor".as_ptr(), 1600, 960, wflags);
         if window.is_null() {
             eprintln!("SDL_CreateWindow failed: {}", std::ffi::CStr::from_ptr(sdl3_sys::error::SDL_GetError()).to_string_lossy());
@@ -544,7 +582,12 @@ fn main() {
         }
 
         let Some((swap, dev, ctx)) = create_device(output_window(window)) else {
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, c"Warscape Community Editor".as_ptr(), c"Could not create a Direct3D 11 device (DXVK needs a Vulkan driver).".as_ptr(), window);
+            SDL_ShowSimpleMessageBox(
+                SDL_MESSAGEBOX_ERROR,
+                c"Warscape Community Editor".as_ptr(),
+                c"Could not create a Direct3D 11 device (DXVK needs a Vulkan driver).".as_ptr(),
+                window,
+            );
             SDL_DestroyWindow(window);
             SDL_Quit();
             std::process::exit(1);

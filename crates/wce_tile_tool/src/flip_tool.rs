@@ -116,7 +116,8 @@ impl TileTool {
         let flip = self.flip.ok_or("not in Flip mode")?;
         let sel = selected(e);
         let id = document_id(e).ok_or("no tile is open")?;
-        let into = if flip.copy { Some(document(e).and_then(|d| self.new_items_layer(d)).ok_or("this tile has no scene graph")?) } else { None };
+        let into =
+            if flip.copy { Some(document(e).and_then(|d| self.new_items_layer(d)).ok_or("this tile has no scene graph")?) } else { None };
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?;
         let went = d.flip(&sel, flip.plane, into)?;
         if flip.copy {
@@ -193,12 +194,22 @@ impl TileTool {
         gui::set_next_item_width(-1.0);
         gui::drag_float("##flipangle", &mut flip.plane.angle, 0.5, -360.0, 360.0, "%.1f deg");
         row("Align to");
-        if choice("X axis##flip", flip.plane.angle == 0.0, two, "The plane across the x axis: the selection goes to the other side along x.") {
+        if choice(
+            "X axis##flip",
+            flip.plane.angle == 0.0,
+            two,
+            "The plane across the x axis: the selection goes to the other side along x.",
+        ) {
             flip.plane.angle = 0.0;
         }
 
         gui::same_line();
-        if choice("Z axis##flip", flip.plane.angle == 90.0, two, "The plane across the z axis: the selection goes to the other side along z.") {
+        if choice(
+            "Z axis##flip",
+            flip.plane.angle == 90.0,
+            two,
+            "The plane across the z axis: the selection goes to the other side along z.",
+        ) {
             flip.plane.angle = 90.0;
         }
 

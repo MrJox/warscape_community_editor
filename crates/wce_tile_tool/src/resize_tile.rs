@@ -47,7 +47,14 @@ impl TileTool {
         };
 
         let old = (en.width(), en.height());
-        self.resize = Some(ResizeUi { opening: true, old, size: [old.0 as i32, old.1 as i32], centre: [true, true], extend: true, ..Default::default() });
+        self.resize = Some(ResizeUi {
+            opening: true,
+            old,
+            size: [old.0 as i32, old.1 as i32],
+            centre: [true, true],
+            extend: true,
+            ..Default::default()
+        });
     }
 
     /// Resizes the open tile and opens it again; what was done.
@@ -94,14 +101,23 @@ impl TileTool {
 
         gui::checkbox("carry the edges out", &mut ui.extend);
         if gui::is_item_hovered() {
-            gui::set_tooltip("What the new area gets: the old edge's heights, paint and ground types carried out (no cliff at the old border); off, as TEd: a new terrain (the base height, the first texture group, no ground type).");
+            gui::set_tooltip(
+                "What the new area gets: the old edge's heights, paint and ground types carried out (no cliff at the old border); off, as TEd: a new terrain (the base height, the first texture group, no ground type).",
+            );
         }
 
         let r = ui.resize();
-        let shrinks = r.cells.0 < ui.old.0 || r.cells.1 < ui.old.1 || r.offset.0 < 0 || r.offset.1 < 0
-            || r.offset.0 + ui.old.0 as i32 > r.cells.0 as i32 || r.offset.1 + ui.old.1 as i32 > r.cells.1 as i32;
+        let shrinks = r.cells.0 < ui.old.0
+            || r.cells.1 < ui.old.1
+            || r.offset.0 < 0
+            || r.offset.1 < 0
+            || r.offset.0 + ui.old.0 as i32 > r.cells.0 as i32
+            || r.offset.1 + ui.old.1 as i32 > r.cells.1 as i32;
         if shrinks {
-            gui::text_colored(wce_editor::theme::palette().warning, "Part of the tile's ground is cut off (TEd: \"data loss\"); the things standing there stay, outside the tile.");
+            gui::text_colored(
+                wce_editor::theme::palette().warning,
+                "Part of the tile's ground is cut off (TEd: \"data loss\"); the things standing there stay, outside the tile.",
+            );
         }
 
         gui::text_disabled("The tile is saved, resized on disk and opened again: no undo (each map keeps a .resize.bak).");

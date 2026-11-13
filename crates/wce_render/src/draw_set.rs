@@ -26,7 +26,6 @@ pub struct Frustum {
 }
 
 impl Frustum {
-
     /// The planes of a D3D clip volume (x, y in -w..w, z in 0..w) from a view-projection matrix in this code base's convention
     /// (clip = M * p).
     pub fn from_view_projection(vp: &Float4x4) -> Self {
@@ -38,12 +37,12 @@ impl Frustum {
 
         let mut f = Self {
             p: [
-                row(3, 1.0, Some(0)),   // left: w + x >= 0
-                row(3, -1.0, Some(0)),  // right: w - x >= 0
-                row(3, 1.0, Some(1)),   // bottom: w + y >= 0
-                row(3, -1.0, Some(1)),  // top: w - y >= 0
-                row(2, 0.0, None),      // near: z >= 0 (D3D)
-                row(3, -1.0, Some(2)),  // far: w - z >= 0
+                row(3, 1.0, Some(0)),  // left: w + x >= 0
+                row(3, -1.0, Some(0)), // right: w - x >= 0
+                row(3, 1.0, Some(1)),  // bottom: w + y >= 0
+                row(3, -1.0, Some(1)), // top: w - y >= 0
+                row(2, 0.0, None),     // near: z >= 0 (D3D)
+                row(3, -1.0, Some(2)), // far: w - z >= 0
             ],
         };
 
@@ -175,7 +174,15 @@ impl LodQuality {
         // The level a model's type takes (fn 0x11841280, battle) and the pass's numbers for it: (first kept when spared, end of the run,
         // start of the run) as uVar6, uVar5, uVar3 of fn 0x1180c370.
         let (spare, end, start) = match material {
-            0x47 | 0x48 => (0, match building { 0 => 2, 1 => 1, _ => 0 }, 0),
+            0x47 | 0x48 => (
+                0,
+                match building {
+                    0 => 2,
+                    1 => 1,
+                    _ => 0,
+                },
+                0,
+            ),
             0x49 | 0x4a | 0x4b | 0x6c => (0, usize::from(unit == 0), 0),
             0x5b | 0x5c | 0x6e | 0x6f => (0, usize::from(tree == 0), 0),
             0x6b if building == 0 => (0, 1, 0),
@@ -203,12 +210,19 @@ impl LodQuality {
 }
 
 impl Default for View {
-
     /// As the C++ default: LOD distances unscaled.
     fn default() -> Self {
         Self {
-            frustum: Frustum::default(), eye: Float3::default(), shadow: false, lod_scale: 1.0, coarser: 0, min_ratio: 0.0, min_radius: 0.0, max_distance: 0.0,
-            quality: LodQuality::default(), no_context: false,
+            frustum: Frustum::default(),
+            eye: Float3::default(),
+            shadow: false,
+            lod_scale: 1.0,
+            coarser: 0,
+            min_ratio: 0.0,
+            min_radius: 0.0,
+            max_distance: 0.0,
+            quality: LodQuality::default(),
+            no_context: false,
         }
     }
 }
@@ -267,11 +281,12 @@ pub fn faded(params: &[f32; 16]) -> bool {
 
 /// The largest squared length of the rotation-scale columns of a world matrix.
 fn max_scale2(world: &Float4x4) -> f32 {
-    (0..3).fold(0.0f32, |s2, col| s2.max(world.m[0][col] * world.m[0][col] + world.m[1][col] * world.m[1][col] + world.m[2][col] * world.m[2][col]))
+    (0..3).fold(0.0f32, |s2, col| {
+        s2.max(world.m[0][col] * world.m[0][col] + world.m[1][col] * world.m[1][col] + world.m[2][col] * world.m[2][col])
+    })
 }
 
 impl DrawSet {
-
     pub fn clear(&mut self) {
         *self = Self::default();
     }
@@ -384,13 +399,30 @@ impl DrawSet {
     }
 
     /// Adds an item; `params` are POSITION4..7, `None` for the engine's defaults. Returns the item's index.
-    pub fn add(&mut self, model: &Arc<GpuModel>, world: &Float4x4, params: Option<&[f32; 16]>, casts_shadow: bool, lod: bool, entity: EntityId) -> u32 {
+    pub fn add(
+        &mut self,
+        model: &Arc<GpuModel>,
+        world: &Float4x4,
+        params: Option<&[f32; 16]>,
+        casts_shadow: bool,
+        lod: bool,
+        entity: EntityId,
+    ) -> u32 {
         self.add_burning(model, world, params, casts_shadow, lod, false, entity)
     }
 
     /// `add`, burning or not (the fire shaders).
     #[allow(clippy::too_many_arguments)]
-    pub fn add_burning(&mut self, model: &Arc<GpuModel>, world: &Float4x4, params: Option<&[f32; 16]>, casts_shadow: bool, lod: bool, burning: bool, entity: EntityId) -> u32 {
+    pub fn add_burning(
+        &mut self,
+        model: &Arc<GpuModel>,
+        world: &Float4x4,
+        params: Option<&[f32; 16]>,
+        casts_shadow: bool,
+        lod: bool,
+        burning: bool,
+        entity: EntityId,
+    ) -> u32 {
         // A rope reads its POSITION4.w as its burn (`MODEL_ROPES_SUFFIX`), not as an opacity: never faded.
         let ropes = model.meshes.iter().all(|m| m.kind == MeshKind::Rope);
         let mi = self.model_index(model, burning, !ropes && params.is_some_and(faded));
@@ -538,67 +570,70 @@ impl DrawSet {
         let range = near.as_ref().map(|n| n.1);
         let (n, nb) = (self.slots(), self.batches());
         let inv_scale = 1.0 / v.lod_scale.max(1e-3);
-        let chunk_pairs = (0..n.div_ceil(GRAIN)).into_par_iter().map(|chunk| {
-            let mut pairs = vec![];
-            for i in chunk * GRAIN..((chunk + 1) * GRAIN).min(n) {
-                let f = self.flags[i];
-                if f & DEAD != 0 || (v.shadow && f & CASTS_SHADOW == 0) || (v.no_context && f & CONTEXT != 0) {
-                    continue;
-                }
-
-                let s = &self.sphere[i * 4..i * 4 + 4];
-                if v.frustum.outside(s, s[3]) {
-                    continue;
-                }
-
-                if v.max_distance > 0.0 {
-                    let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
-                    let reach = v.max_distance + s[3];
-                    if dx * dx + dy * dy + dz * dz > reach * reach {
-                        continue;
-                    }
-                }
-
-                let me = &self.models[self.model[i] as usize];
-                let mut lod = 0usize;
-                if f & LOD != 0 {
-                    let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
-                    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-                    if s[3] < dist * v.min_ratio || s[3] < v.min_radius {
+        let chunk_pairs = (0..n.div_ceil(GRAIN))
+            .into_par_iter()
+            .map(|chunk| {
+                let mut pairs = vec![];
+                for i in chunk * GRAIN..((chunk + 1) * GRAIN).min(n) {
+                    let f = self.flags[i];
+                    if f & DEAD != 0 || (v.shadow && f & CASTS_SHADOW == 0) || (v.no_context && f & CONTEXT != 0) {
                         continue;
                     }
 
-                    // LOD distances are the model's own units: a model drawn at another scale (tiles: 1 / unit) switches at the scaled
-                    // distances.
-                    let item_scale = if me.radius > 0.0 { s[3] / me.radius } else { 1.0 };
-                    let d = dist * inv_scale / item_scale.max(1e-3);
-                    let last = me.lod_distance.len() - 1;
-
-                    // A LOD the quality options switched off is passed over (its distance 0, not enabled: the engine's selection).
-                    let off = v.quality.off(me.material, last + 1);
-                    while lod < last && (off.contains(&lod) || d > v.quality.distance(lod, &me.lod_distance)) {
-                        lod += 1;
+                    let s = &self.sphere[i * 4..i * 4 + 4];
+                    if v.frustum.outside(s, s[3]) {
+                        continue;
                     }
 
-                    lod = (lod as i32 + v.coarser).min(last as i32) as usize;
+                    if v.max_distance > 0.0 {
+                        let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
+                        let reach = v.max_distance + s[3];
+                        if dx * dx + dy * dy + dz * dz > reach * reach {
+                            continue;
+                        }
+                    }
+
+                    let me = &self.models[self.model[i] as usize];
+                    let mut lod = 0usize;
+                    if f & LOD != 0 {
+                        let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
+                        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+                        if s[3] < dist * v.min_ratio || s[3] < v.min_radius {
+                            continue;
+                        }
+
+                        // LOD distances are the model's own units: a model drawn at another scale (tiles: 1 / unit) switches at the scaled
+                        // distances.
+                        let item_scale = if me.radius > 0.0 { s[3] / me.radius } else { 1.0 };
+                        let d = dist * inv_scale / item_scale.max(1e-3);
+                        let last = me.lod_distance.len() - 1;
+
+                        // A LOD the quality options switched off is passed over (its distance 0, not enabled: the engine's selection).
+                        let off = v.quality.off(me.material, last + 1);
+                        while lod < last && (off.contains(&lod) || d > v.quality.distance(lod, &me.lod_distance)) {
+                            lod += 1;
+                        }
+
+                        lod = (lod as i32 + v.coarser).min(last as i32) as usize;
+                    }
+
+                    // Bit 63 files the pair under `near`.
+                    let close = range.is_some_and(|(lo, hi)| {
+                        let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
+                        let d = dx * dx + dy * dy + dz * dz;
+                        lo <= d && d <= hi
+                    });
+
+                    for k in me.lod_first[lod]..me.lod_first[lod + 1] {
+                        let b = me.lod_batch[k as usize];
+                        let to_near = close && self.batch_mesh(b).kind == MeshKind::TreeLeaf;
+                        pairs.push((u64::from(to_near) << 63) | (u64::from(b) << 32) | i as u64);
+                    }
                 }
 
-                // Bit 63 files the pair under `near`.
-                let close = range.is_some_and(|(lo, hi)| {
-                    let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
-                    let d = dx * dx + dy * dy + dz * dz;
-                    lo <= d && d <= hi
-                });
-
-                for k in me.lod_first[lod]..me.lod_first[lod + 1] {
-                    let b = me.lod_batch[k as usize];
-                    let to_near = close && self.batch_mesh(b).kind == MeshKind::TreeLeaf;
-                    pairs.push((u64::from(to_near) << 63) | (u64::from(b) << 32) | i as u64);
-                }
-            }
-
-            pairs
-        }).collect::<Vec<_>>();
+                pairs
+            })
+            .collect::<Vec<_>>();
 
         Self::group(&chunk_pairs, nb, out, false);
         if let Some((near, _)) = near.as_mut() {
@@ -742,7 +777,6 @@ impl DrawSet {
         vis.active.retain(|&b| count[b as usize] != 0);
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -136,7 +136,9 @@ pub fn dds_decode_mip(f: &[u8], mip: u32) -> Result<Rgba8Image, &'static str> {
     let mip = mip.min(info.mips - 1);
     let block = info.format.starts_with('D');
     let blk_bytes = if info.format == "DXT1" { 8 } else { 16 };
-    let size = |w: u32, h: u32| if block { w.div_ceil(4).max(1) as usize * h.div_ceil(4).max(1) as usize * blk_bytes } else { w as usize * h as usize * 4 };
+    let size = |w: u32, h: u32| {
+        if block { w.div_ceil(4).max(1) as usize * h.div_ceil(4).max(1) as usize * blk_bytes } else { w as usize * h as usize * 4 }
+    };
     let mut off = 128;
     let (mut w, mut h) = (info.width, info.height);
     for _ in 0..mip {

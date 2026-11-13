@@ -42,7 +42,8 @@ pub fn movable_old_output_files(dir: &Path, in_packs: impl Fn(&str) -> bool) -> 
 
             let Ok(rel) = path.strip_prefix(dir) else { continue };
             let rel = normalize(&rel.to_string_lossy());
-            let skipped = rel.starts_with("launch/") || rel.starts_with("dry_") || rel.starts_with("ui_xml/") || rel.starts_with("terrain/");
+            let skipped =
+                rel.starts_with("launch/") || rel.starts_with("dry_") || rel.starts_with("ui_xml/") || rel.starts_with("terrain/");
             if !skipped && in_packs(&rel) {
                 out.push(rel);
             }
@@ -123,7 +124,10 @@ impl Editor {
             log::warn(format!("old output folder: {k} stays in {}", dir.display()));
         }
 
-        Ok(format!("{moved} file(s) of the old output folder moved into the project's loose folder{}", if kept.is_empty() { String::new() } else { format!(", {} stayed (see the log)", kept.len()) }))
+        Ok(format!(
+            "{moved} file(s) of the old output folder moved into the project's loose folder{}",
+            if kept.is_empty() { String::new() } else { format!(", {} stayed (see the log)", kept.len()) }
+        ))
     }
 
     pub(crate) fn draw_project_prompts(&mut self) {

@@ -55,7 +55,11 @@ fn main() {
     let db = TileDatabase::load(&raw.join("terrain/tiles/battle/_tile_database")).expect("tile database");
     let env = std::fs::read(raw.join("warscape_asset_variation_db/environment_map.xml")).unwrap_or_default();
     let climates = wce_terrain::locations::climate_environments(&db, &env);
-    let tm = TileMap::parse(&std::fs::read(out.join("tile_map.index")).expect("index"), &std::fs::read(out.join("tile_map.tiles")).expect("tiles")).expect("tile map");
+    let tm = TileMap::parse(
+        &std::fs::read(out.join("tile_map.index")).expect("index"),
+        &std::fs::read(out.join("tile_map.tiles")).expect("tiles"),
+    )
+    .expect("tile map");
     let want = std::fs::read(out.join("locations.blm")).expect("locations.blm");
     let blm = wce_terrain::locations::build(&p, tm.width, tm.height, &climates);
     if blm.write().expect("representable locations.blm") == want {
@@ -63,7 +67,9 @@ fn main() {
     } else {
         failed = true;
         let bob = wce_tile::battle_map::locations::BattleLocations::parse(&want).expect("blm");
-        let order = |b: &wce_tile::battle_map::locations::BattleLocations| b.types.iter().map(|t| format!("{} {}", t.0, t.1.len())).collect::<Vec<_>>();
+        let order = |b: &wce_tile::battle_map::locations::BattleLocations| {
+            b.types.iter().map(|t| format!("{} {}", t.0, t.1.len())).collect::<Vec<_>>()
+        };
         println!("locations.blm differs:\n  types ours  {:?}\n  types BOB's {:?}", order(&blm), order(&bob));
         println!("  records the same: {}", blm.types == bob.types);
         println!("  tail ours  {:?}\n  tail BOB's {:?}", &blm.tail, &bob.tail);
@@ -80,11 +86,19 @@ fn main() {
 
     let seasons: Vec<_> = ["sp", "su", "au", "wi"].iter().map(|s| png(&folder.join(format!("snow_map_{s}.png")))).collect();
     let inputs = MaskInputs {
-        snow: img(&snow), culture: img(&culture), culture_colours: wce_terrain::locations::culture_colours(&upgrades), nogo: img(&nogo),
+        snow: img(&snow),
+        culture: img(&culture),
+        culture_colours: wce_terrain::locations::culture_colours(&upgrades),
+        nogo: img(&nogo),
         seasons: [img(&seasons[0]), img(&seasons[1]), img(&seasons[2]), img(&seasons[3])],
     };
-    println!("mask inputs: snow {:?}, culture {:?} ({} colours), nogo {:?}", snow.as_ref().map(|s| (s.0, s.1)), culture.as_ref().map(|s| (s.0, s.1)),
-        inputs.culture_colours.len(), nogo.as_ref().map(|s| (s.0, s.1)));
+    println!(
+        "mask inputs: snow {:?}, culture {:?} ({} colours), nogo {:?}",
+        snow.as_ref().map(|s| (s.0, s.1)),
+        culture.as_ref().map(|s| (s.0, s.1)),
+        inputs.culture_colours.len(),
+        nogo.as_ref().map(|s| (s.0, s.1))
+    );
     let (m0, m1) = wce_terrain::locations::masks(&db, &tm, &inputs);
     for (name, ours) in [("mask0", m0), ("mask1", m1)] {
         let want = std::fs::read(out.join(format!("locations.blm.{name}"))).unwrap_or_default();
@@ -106,8 +120,17 @@ fn main() {
             }
         }
 
-        println!("{name}: {} of {} cells differ (lengths {} and {}); by bit {bits:?}; first {:?}", diff.len(), ours.len(), ours.len(), theirs.len(),
-            diff.iter().take(4).map(|&i| (i % tm.width as usize, i / tm.width as usize, format!("{:#x}", ours[i]), format!("{:#x}", theirs[i]))).collect::<Vec<_>>());
+        println!(
+            "{name}: {} of {} cells differ (lengths {} and {}); by bit {bits:?}; first {:?}",
+            diff.len(),
+            ours.len(),
+            ours.len(),
+            theirs.len(),
+            diff.iter()
+                .take(4)
+                .map(|&i| (i % tm.width as usize, i / tm.width as usize, format!("{:#x}", ours[i]), format!("{:#x}", theirs[i])))
+                .collect::<Vec<_>>()
+        );
     }
 
     if failed {

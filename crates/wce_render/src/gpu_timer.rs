@@ -62,7 +62,6 @@ fn new_query(dev: &ID3D11Device, kind: D3D11_QUERY, q: &mut Option<ID3D11Query>)
 }
 
 impl GpuTimer {
-
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext) -> Self {
         Self {
             dev: dev.clone(),
@@ -153,7 +152,10 @@ impl GpuTimer {
             }
 
             let Some(disjoint) = self.ring[index].disjoint.clone() else { continue };
-            let Ok(Some(dj)) = self.ctx.get_data::<D3D11_QUERY_DATA_TIMESTAMP_DISJOINT>(&disjoint, D3D11_ASYNC_GETDATA_DONOTFLUSH as u32) else { break };
+            let Ok(Some(dj)) = self.ctx.get_data::<D3D11_QUERY_DATA_TIMESTAMP_DISJOINT>(&disjoint, D3D11_ASYNC_GETDATA_DONOTFLUSH as u32)
+            else {
+                break;
+            };
 
             self.ring[index].pending = false;
             if dj.Disjoint.as_bool() {

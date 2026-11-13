@@ -180,7 +180,22 @@ pub struct ClothRig {
 impl ClothRig {
     /// What was built, for checks: per cloth its particles, pinned ones, links, bones and first bone; then the free ropes and spheres.
     pub fn summary(&self) -> String {
-        let cloths = self.cloths.iter().map(|c| format!("{} particles ({} pinned), {} links, {} bones from {}, {} ropes", c.particles.len(), c.particles.iter().filter(|p| p.pinned).count(), c.links.len(), c.bones.len(), c.palette_base, c.ropes.len())).collect::<Vec<_>>().join("; ");
+        let cloths = self
+            .cloths
+            .iter()
+            .map(|c| {
+                format!(
+                    "{} particles ({} pinned), {} links, {} bones from {}, {} ropes",
+                    c.particles.len(),
+                    c.particles.iter().filter(|p| p.pinned).count(),
+                    c.links.len(),
+                    c.bones.len(),
+                    c.palette_base,
+                    c.ropes.len()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
         format!("{} bones; cloths: {cloths}; {} free ropes, {} spheres", self.bones, self.free.len(), self.spheres.len())
     }
 
@@ -205,8 +220,16 @@ impl ClothRig {
                     let base = rig.bones;
                     rig.bones += material.cloth_bones().len();
                     let wanted = format!("sim_{}_LOD1", name(k).strip_prefix("display_").unwrap_or(&name(k)));
-                    let Some(s) = (0..blocks.len()).find(|&j| *blocks[j].mesh().material_type() == MaterialType::Cloth && name(j) == wanted) else { continue };
-                    let Some(cloth) = cloth_of(&blocks[s], material.cloth_bones().iter().map(|b| *b.vertex_index() as usize).collect(), base) else { continue };
+                    let Some(s) =
+                        (0..blocks.len()).find(|&j| *blocks[j].mesh().material_type() == MaterialType::Cloth && name(j) == wanted)
+                    else {
+                        continue;
+                    };
+                    let Some(cloth) =
+                        cloth_of(&blocks[s], material.cloth_bones().iter().map(|b| *b.vertex_index() as usize).collect(), base)
+                    else {
+                        continue;
+                    };
                     sim_of_block[s] = Some(rig.cloths.len());
                     rig.cloths.push(cloth);
                 }
@@ -224,16 +247,31 @@ impl ClothRig {
             }
 
             if rig.rope_textures[0].is_empty() {
-                let path = |t: TextureType| material.textures().iter().find(|x| *x.tex_type() == t).map(|x| x.path().replace('\\', "/").to_lowercase()).unwrap_or_default();
+                let path = |t: TextureType| {
+                    material
+                        .textures()
+                        .iter()
+                        .find(|x| *x.tex_type() == t)
+                        .map(|x| x.path().replace('\\', "/").to_lowercase())
+                        .unwrap_or_default()
+                };
                 rig.rope_textures = [path(TextureType::Diffuse), path(TextureType::Normal)];
             }
 
             let param = |k: i32, or: f32| material.params_f32().iter().find(|(i, _)| *i == k).map_or(or, |(_, v)| *v);
             let stiffness = ROPE_FLEX * param(3, 1.0);
-            let nodes = rope.nodes().iter().map(|nd| { let p = nd.position(); Particle::at([p.x, p.y, p.z], *nd.weight()) }).collect();
+            let nodes = rope
+                .nodes()
+                .iter()
+                .map(|nd| {
+                    let p = nd.position();
+                    Particle::at([p.x, p.y, p.z], *nd.weight())
+                })
+                .collect();
             let rests = rope.links().iter().map(|l| l.length() * stiffness).collect();
             let v = rope.nodes().iter().map(|nd| *nd.uk_1()).collect();
-            let mut r = RopeRig { nodes, rests, mass: ROPE_MASS * param(2, 1.0), radius: *rope.uk_1(), v, node: usize::MAX, particle: usize::MAX };
+            let mut r =
+                RopeRig { nodes, rests, mass: ROPE_MASS * param(2, 1.0), radius: *rope.uk_1(), v, node: usize::MAX, particle: usize::MAX };
 
             // Tied to a cloth particle: `attachments` = [v0, b0, v1, b1] (node 0 to particle v0 of block b0, the last node to v1 of b1).
             let at = rope.attachments();
@@ -266,13 +304,32 @@ fn cloth_of(block: &rpfm_lib::files::rigidmodel::MeshBlock, bones: Vec<usize>, p
     }
 
     // The weight is the colour's alpha: the vertex's last four bytes (BGRA), which rpfm keeps raw as `uk_1` for this layout.
-    let particles = mesh.vertices()[..n].iter().map(|v| { let p = v.position(); Particle::at([p.x, p.y, p.z], f32::from(v.uk_1().w) / 255.0) }).collect();
-    let links = material.uk_7().iter().filter(|l| (*l.uk1() as usize) < n && (*l.uk2() as usize) < n).map(|l| (*l.uk1() as usize, *l.uk2() as usize, *l.uk3())).collect();
+    let particles = mesh.vertices()[..n]
+        .iter()
+        .map(|v| {
+            let p = v.position();
+            Particle::at([p.x, p.y, p.z], f32::from(v.uk_1().w) / 255.0)
+        })
+        .collect();
+    let links = material
+        .uk_7()
+        .iter()
+        .filter(|l| (*l.uk1() as usize) < n && (*l.uk2() as usize) < n)
+        .map(|l| (*l.uk1() as usize, *l.uk2() as usize, *l.uk3()))
+        .collect();
     let mut fans = Vec::with_capacity(n);
     let mut at = 0;
     for count in material.uk_8() {
         let count = *count.uk1() as usize;
-        fans.push(material.uk_9().get(at..at + count)?.iter().map(|t| [*t.uk1() as usize, *t.uk2() as usize, *t.uk3() as usize]).filter(|t| t.iter().all(|&i| i < n)).collect());
+        fans.push(
+            material
+                .uk_9()
+                .get(at..at + count)?
+                .iter()
+                .map(|t| [*t.uk1() as usize, *t.uk2() as usize, *t.uk3() as usize])
+                .filter(|t| t.iter().all(|&i| i < n))
+                .collect(),
+        );
         at += count;
     }
 
@@ -381,7 +438,15 @@ impl Cloth {
             ((s >> 33) % 1000) as f32
         };
         let phase = [next(), next(), next()];
-        Self { rig: rig.clone(), ropes: rig.ropes.iter().map(|r| r.nodes.clone()).collect(), particles, normals, frames, inverse_rest, phase }
+        Self {
+            rig: rig.clone(),
+            ropes: rig.ropes.iter().map(|r| r.nodes.clone()).collect(),
+            particles,
+            normals,
+            frames,
+            inverse_rest,
+            phase,
+        }
     }
 
     /// The frame's accelerations (`FUN_117fef10`).
@@ -397,7 +462,10 @@ impl Cloth {
                 [w[0], 0.0, w[2]]
             } else {
                 let q = add(p.x, self.phase);
-                let m = 1.0 + PERTURBATION_SCALE * ((k * (dot(side, q) + tau)).sin() + (k * (q[1] + tau)).sin() + (k * (dot(along, q) + tau)).sin()) / 3.0;
+                let m = 1.0
+                    + PERTURBATION_SCALE
+                        * ((k * (dot(side, q) + tau)).sin() + (k * (q[1] + tau)).sin() + (k * (dot(along, q) + tau)).sin())
+                        / 3.0;
                 [w[0] * m, 0.0, w[2] * m]
             };
 
@@ -443,7 +511,10 @@ impl Cloth {
                 }
             }
 
-            if self.rig.rigid && s > 0.5 && let Some(hd) = self.rig.handle {
+            if self.rig.rigid
+                && s > 0.5
+                && let Some(hd) = self.rig.handle
+            {
                 self.handle(hd);
             }
 
@@ -459,7 +530,11 @@ impl Cloth {
                         let other = if a == rig.node { b } else { a };
                         let mut o = rope[other];
                         let (w1, w2) = (tied.w, o.w);
-                        if a == rig.node { relax(&mut tied, &mut o, rest, w1, w2) } else { relax(&mut o, &mut tied, rest, w2, w1) }
+                        if a == rig.node {
+                            relax(&mut tied, &mut o, rest, w1, w2)
+                        } else {
+                            relax(&mut o, &mut tied, rest, w2, w1)
+                        }
                         rope[other] = o;
                     } else if let Some((p1, p2)) = pair(rope, a, b) {
                         let (w1, w2) = (p1.w, p2.w);
@@ -518,32 +593,34 @@ impl Cloth {
 
 /// Per particle, its normal and frame (docs/re/cloth.md, "Skinning").
 fn frames_of(fans: &[Vec<[usize; 3]>], particles: &[Particle]) -> (Vec<V3>, Vec<M3>) {
-    fans.iter().map(|fan| {
-        let mut sum = [0.0; 3];
-        let mut single = None;
-        for &[i0, i1, i2] in fan {
-            let (x0, x1, x2) = (particles[i0].x, particles[i1].x, particles[i2].x);
-            let t = quick_norm(sub(x1, x0));
-            let e = quick_norm(sub(x2, x0));
-            let n = quick_norm(cross(t, e));
-            let b = quick_norm(cross(n, t));
-            sum = add(sum, n);
-            single = Some([t, b, n]);
-        }
-
-        let normal = quick_norm(sum);
-        let frame = match (fan.len(), single) {
-            (1, Some(f)) => f,
-            _ => {
-                let r = if normal[1].abs() > 0.95 { [0.099_503_7, 0.995_037_3, 0.0] } else { [0.0, 1.0, 0.0] };
-                let u = norm(cross(normal, r));
-                let v = norm(cross(normal, u));
-                [u, v, normal]
+    fans.iter()
+        .map(|fan| {
+            let mut sum = [0.0; 3];
+            let mut single = None;
+            for &[i0, i1, i2] in fan {
+                let (x0, x1, x2) = (particles[i0].x, particles[i1].x, particles[i2].x);
+                let t = quick_norm(sub(x1, x0));
+                let e = quick_norm(sub(x2, x0));
+                let n = quick_norm(cross(t, e));
+                let b = quick_norm(cross(n, t));
+                sum = add(sum, n);
+                single = Some([t, b, n]);
             }
-        };
 
-        (normal, frame)
-    }).unzip()
+            let normal = quick_norm(sum);
+            let frame = match (fan.len(), single) {
+                (1, Some(f)) => f,
+                _ => {
+                    let r = if normal[1].abs() > 0.95 { [0.099_503_7, 0.995_037_3, 0.0] } else { [0.0, 1.0, 0.0] };
+                    let u = norm(cross(normal, r));
+                    let v = norm(cross(normal, u));
+                    [u, v, normal]
+                }
+            };
+
+            (normal, frame)
+        })
+        .unzip()
 }
 
 /// One sail model's simulated cloth.
@@ -660,7 +737,10 @@ impl ClothSim {
 
     /// Where every rope is (model space): its nodes, their texture coordinates and its half width; the cloths' ropes first, then the free ones.
     pub fn ropes(&self) -> Vec<(Vec<V3>, Vec<f32>, f32)> {
-        let tied = self.cloths.iter().flat_map(|c| c.ropes.iter().zip(&c.rig.ropes).map(|(r, rig)| (r.iter().map(|p| p.x).collect(), rig.v.clone(), rig.radius)));
+        let tied = self
+            .cloths
+            .iter()
+            .flat_map(|c| c.ropes.iter().zip(&c.rig.ropes).map(|(r, rig)| (r.iter().map(|p| p.x).collect(), rig.v.clone(), rig.radius)));
         tied.chain(self.free.iter().map(|(rig, nodes)| (nodes.iter().map(|p| p.x).collect(), rig.v.clone(), rig.radius))).collect()
     }
 }
@@ -676,7 +756,17 @@ mod tests {
         let tris = [[0, 2, 1], [1, 2, 3]];
         let fans = (0..4).map(|k| tris.iter().filter(|t| t.contains(&k)).copied().collect()).collect();
         let links = vec![(0, 1, 1.0), (0, 2, 1.0), (1, 2, 2f32.sqrt()), (1, 3, 1.0), (2, 3, 1.0), (0, 3, 2f32.sqrt())];
-        let cloth = CloRig { particles, links, fans, mass: 1.0, rigid: false, handle: None, ropes: vec![], bones: vec![0, 1, 2, 3], palette_base: 0 };
+        let cloth = CloRig {
+            particles,
+            links,
+            fans,
+            mass: 1.0,
+            rigid: false,
+            handle: None,
+            ropes: vec![],
+            bones: vec![0, 1, 2, 3],
+            palette_base: 0,
+        };
         ClothRig { cloths: vec![cloth], spheres: vec![], bones: 4, ..ClothRig::default() }
     }
 
@@ -699,14 +789,18 @@ mod tests {
         let c = &sim.cloths[0];
         assert_eq!((c.particles[0].x, c.particles[1].x), ([0.0, 1.0, 0.0], [1.0, 1.0, 0.0]), "pinned");
         assert!(c.particles[2].x[2] > 0.3, "blown along +z: {:?}", c.particles[2].x);
-        let l = |a: usize, b: usize| { let d = super::sub(c.particles[a].x, c.particles[b].x); super::dot(d, d).sqrt() };
+        let l = |a: usize, b: usize| {
+            let d = super::sub(c.particles[a].x, c.particles[b].x);
+            super::dot(d, d).sqrt()
+        };
         assert!((l(0, 2) - 1.0).abs() < 0.05 && (l(2, 3) - 1.0).abs() < 0.05, "{} {}", l(0, 2), l(2, 3));
     }
 
     #[test]
     fn a_free_rope_hangs_between_its_pinned_ends() {
         let nodes: Vec<Particle> = (0..5).map(|k| Particle::at([k as f32, 0.0, 0.0], if k == 0 || k == 4 { 0.0 } else { 1.0 })).collect();
-        let rope = super::RopeRig { nodes, rests: vec![1.1; 4], mass: 5.0, radius: 0.03, v: vec![0.0; 5], node: usize::MAX, particle: usize::MAX };
+        let rope =
+            super::RopeRig { nodes, rests: vec![1.1; 4], mass: 5.0, radius: 0.03, v: vec![0.0; 5], node: usize::MAX, particle: usize::MAX };
         let rig = ClothRig { free: vec![rope], ..ClothRig::default() };
         let mut sim = ClothSim::new(&rig, 1);
         for k in 0..300 {
@@ -747,7 +841,10 @@ mod tests {
         let m = [[2.0, 0.0, 0.0], [0.0, 3.0, 0.0], [1.0, 0.0, 1.0]];
         let i = m3_mul(&m, &m3_inverse(&m));
         assert!((0..3).all(|c| (0..3).all(|r| (i[c][r] - f32::from(u8::from(c == r))).abs() < 1e-5)), "{i:?}");
-        let (n, f) = frames_of(&[vec![[0, 1, 2]]], &[Particle::at([0.0; 3], 1.0), Particle::at([1.0, 0.0, 0.0], 1.0), Particle::at([0.0, 1.0, 0.0], 1.0)]);
+        let (n, f) = frames_of(
+            &[vec![[0, 1, 2]]],
+            &[Particle::at([0.0; 3], 1.0), Particle::at([1.0, 0.0, 0.0], 1.0), Particle::at([0.0, 1.0, 0.0], 1.0)],
+        );
         assert!((n[0][2] - 1.0).abs() < 0.1 && (f[0][0][0] - 1.0).abs() < 0.1, "{n:?} {f:?}");
     }
 }

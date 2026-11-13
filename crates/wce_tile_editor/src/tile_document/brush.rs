@@ -24,21 +24,26 @@ impl TileDocument {
         let t = self.tile();
         let sc = t.tscene();
         let unit = t.unit();
-        t.instances().iter().copied().filter(|&e| !t.is_polygon(e) && sc.doc().elements()[e].children.is_empty()).map(|e| {
-            let p = t.world_position(e);
-            let tree = sc.type_of(e) == "VEGETATION_INSTANCE";
-            let radius = match t.model_of(e).filter(|m| m.ok && m.resolved && !tree) {
-                Some(m) => {
-                    let s = sc.scale(e).unwrap_or(Double3::new(1.0, 1.0, 1.0));
-                    let across = [m.bmin.x.abs(), m.bmax.x.abs(), m.bmin.z.abs(), m.bmax.z.abs()].into_iter().fold(0.0f32, f32::max);
-                    across * (s.x.abs().max(s.z.abs()) / unit) as f32
-                }
+        t.instances()
+            .iter()
+            .copied()
+            .filter(|&e| !t.is_polygon(e) && sc.doc().elements()[e].children.is_empty())
+            .map(|e| {
+                let p = t.world_position(e);
+                let tree = sc.type_of(e) == "VEGETATION_INSTANCE";
+                let radius = match t.model_of(e).filter(|m| m.ok && m.resolved && !tree) {
+                    Some(m) => {
+                        let s = sc.scale(e).unwrap_or(Double3::new(1.0, 1.0, 1.0));
+                        let across = [m.bmin.x.abs(), m.bmax.x.abs(), m.bmin.z.abs(), m.bmax.z.abs()].into_iter().fold(0.0f32, f32::max);
+                        across * (s.x.abs().max(s.z.abs()) / unit) as f32
+                    }
 
-                None => 0.0,
-            };
+                    None => 0.0,
+                };
 
-            Footprint { x: p.x, z: p.z, radius, tree, elem: e }
-        }).collect()
+                Footprint { x: p.x, z: p.z, radius, tree, elem: e }
+            })
+            .collect()
     }
 
     /// Puts painted things into the layer `into`: each element's text at its world point (metres). One undo entry named `what`; the

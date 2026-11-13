@@ -32,7 +32,9 @@ fn round_trip(path: &str, bytes: &[u8]) -> Option<(&'static str, Vec<u8>, String
                 (vec![], "R32F header differs from the generated one".to_owned())
             }
 
-            Ok(d) if d.flags() == 0 && d.fourcc() == 114 && d.pixel_format_flags() == 4 => verdict(DdsFile::make_r32f(d.width(), d.height(), d.payload).write()),
+            Ok(d) if d.flags() == 0 && d.fourcc() == 114 && d.pixel_format_flags() == 4 => {
+                verdict(DdsFile::make_r32f(d.width(), d.height(), d.payload).write())
+            }
             Ok(d) => verdict(d.write()),
         };
 

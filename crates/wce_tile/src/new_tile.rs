@@ -229,7 +229,9 @@ pub fn entry_text(t: &NewTile, colour: [u8; 3]) -> String {
     let [r, g, b] = colour.map(f64::from);
     let variation = format!(
         "\t\t<VARIATION serialise_version='2' location='{VARIATION}' min_height='{:.6}' scale='{:.6}' normal_strength='2.000000' overlap_border_size='1.000000' raw_data_tri_density='{}' blend_common='' index_common='' normal_common='' red='0.000000' green='0.000000' blue='0.000000' barbarian='false'/>",
-        t.height, crate::height_field::FLAT_SCALE, t.density
+        t.height,
+        crate::height_field::FLAT_SCALE,
+        t.density
     );
 
     [
@@ -300,7 +302,9 @@ pub fn create(t: &NewTile, projects_raw: &Path, kit: Option<&Path>) -> Result<Pa
 
     // The tile database's settings, beside the entries (the vegetation generator reads the links' tile sets there).
     let settings = projects_raw.join("terrain/tiles/battle/_tile_database/_settings.xml");
-    if let Some(kit_settings) = kit.map(|k| k.join("raw_data/terrain/tiles/battle/_tile_database/_settings.xml")).filter(|s| !settings.exists() && s.is_file()) {
+    if let Some(kit_settings) =
+        kit.map(|k| k.join("raw_data/terrain/tiles/battle/_tile_database/_settings.xml")).filter(|s| !settings.exists() && s.is_file())
+    {
         std::fs::copy(&kit_settings, &settings).map_err(|e| format!("{}: {e}", kit_settings.display()))?;
     }
 
@@ -311,7 +315,15 @@ pub fn create(t: &NewTile, projects_raw: &Path, kit: Option<&Path>) -> Result<Pa
     write(&dir.join("height_map_0.png"), &png)?;
     write_blend_map(&dir.join("blend_map.tif"), w, h)?;
 
-    let ground = PngFile { width: w, height: h, bit_depth: 8, color_type: 6, pixels: [0, 0, 0, 255].repeat(w as usize * h as usize), pixels_edited: true, ..Default::default() };
+    let ground = PngFile {
+        width: w,
+        height: h,
+        bit_depth: 8,
+        color_type: 6,
+        pixels: [0, 0, 0, 255].repeat(w as usize * h as usize),
+        pixels_edited: true,
+        ..Default::default()
+    };
     write(&dir.join("ground_type_map.png"), &ground.encode().map_err(|e| e.to_string())?)?;
 
     // The editor finds tiles through the kits' indices, which have another entry now.
@@ -364,7 +376,10 @@ mod tests {
         // Measured on the kit's own battlefields: assembly_kit_tesd.xml has 31 107 226.
         let kit = Path::new("D:/Juegos/Steam/steamapps/common/Total War Attila/assembly_kit");
         assert_eq!(colour("tesd", Some(kit), &HashSet::new()), [31, 107, 226]);
-        assert_eq!(colour("hornburg", Some(Path::new("D:\\Juegos\\Steam\\steamapps\\common\\Total War Attila\\assembly_kit\\")), &HashSet::new()), [215, 63, 116]);
+        assert_eq!(
+            colour("hornburg", Some(Path::new("D:\\Juegos\\Steam\\steamapps\\common\\Total War Attila\\assembly_kit\\")), &HashSet::new()),
+            [215, 63, 116]
+        );
         let taken = HashSet::from([[31, 107, 226], [31, 107, 227]]);
         assert_eq!(colour("tesd", Some(kit), &taken), [31, 107, 228]);
     }
@@ -380,7 +395,12 @@ mod tests {
 
         let entry = std::fs::read_to_string(t.entry_file(&raw)).unwrap();
         assert!(entry.starts_with("<TILE serialise_version='3' location='terrain\\tiles\\battle\\assembly_kit\\test_new' tile_set='assembly_kit' mask='' width='2' height='1' "), "{entry}");
-        assert!(entry.contains("min_height='10.000000' scale='50.000000'") && entry.contains("raw_data_tri_density='32'") && entry.ends_with("</TILE>\r\n"), "{entry}");
+        assert!(
+            entry.contains("min_height='10.000000' scale='50.000000'")
+                && entry.contains("raw_data_tri_density='32'")
+                && entry.ends_with("</TILE>\r\n"),
+            "{entry}"
+        );
 
         let blend = TiffFile::parse(&std::fs::read(dir.join("blend_map.tif")).unwrap()).unwrap();
         assert!(blend.header_is_regenerable() && (blend.width, blend.height) == (128, 96));

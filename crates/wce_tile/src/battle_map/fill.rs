@@ -45,7 +45,8 @@ pub struct Cell {
 
 impl Cell {
     /// A cell nothing is placed on (TILE_MAP's constructor: rotation 0x10).
-    pub const EMPTY: Self = Self { index: 0, rotation: 0x10, layer_bits: 0, origin_x: 0, origin_y: 0, climate: 0, flipped: false, lf_min: 0.0, lf_max: 0.0 };
+    pub const EMPTY: Self =
+        Self { index: 0, rotation: 0x10, layer_bits: 0, origin_x: 0, origin_y: 0, climate: 0, flipped: false, lf_min: 0.0, lf_max: 0.0 };
 }
 
 /// The game's random generator, as BOB's map uses it (fn 0x102806a0, seed 0x12344332).
@@ -146,15 +147,24 @@ fn colour_eq(c: [f32; 3], p: [u8; 3]) -> bool {
 }
 
 impl<'a> TileMapFill<'a> {
-
     /// `load_map` (0x1027e4f0): the cell ids and climates, then `scan_tile_areas`.
     pub fn new(db: &'a TileDatabase, m: &MapImages) -> Self {
         let (w, h) = (m.width, m.height);
         let n = (w * h) as usize;
         let mut f = Self {
-            db, w, h, ids: vec![0; n], climates: vec![0; n], areas: vec![[i32::MAX, i32::MAX, i32::MIN + 1, i32::MIN + 1]; db.sets.len()],
-            rng: Rng(0x1234_4332), layers: [vec![Cell::EMPTY; n], vec![Cell::EMPTY; n]], placed: vec![], keys: vec![], firsts: vec![],
-            links: vec![vec![false; db.sets.len() + 1]; n], messages: vec![],
+            db,
+            w,
+            h,
+            ids: vec![0; n],
+            climates: vec![0; n],
+            areas: vec![[i32::MAX, i32::MAX, i32::MIN + 1, i32::MIN + 1]; db.sets.len()],
+            rng: Rng(0x1234_4332),
+            layers: [vec![Cell::EMPTY; n], vec![Cell::EMPTY; n]],
+            placed: vec![],
+            keys: vec![],
+            firsts: vec![],
+            links: vec![vec![false; db.sets.len() + 1]; n],
+            messages: vec![],
         };
 
         // get_tile_id (0x10281b40): a tile set's colour, else a tile's, else a variation's; black is nothing. A pixel equal to the one before
@@ -178,36 +188,44 @@ impl<'a> TileMapFill<'a> {
         }
 
         f.scan_tile_areas();
-        f.keys = f.ids.iter().map(|&id| {
-            if id == 0 {
-                KEY_NONE
-            } else if id & SET_BIT != 0 {
-                db.set_from_id(id).map_or(KEY_NONE, |s| s as u32 | KEY_SET)
-            } else {
-                db.tile_from_id(id).map_or(KEY_NONE, |t| t as u32)
-            }
-        }).collect();
+        f.keys = f
+            .ids
+            .iter()
+            .map(|&id| {
+                if id == 0 {
+                    KEY_NONE
+                } else if id & SET_BIT != 0 {
+                    db.set_from_id(id).map_or(KEY_NONE, |s| s as u32 | KEY_SET)
+                } else {
+                    db.tile_from_id(id).map_or(KEY_NONE, |t| t as u32)
+                }
+            })
+            .collect();
 
-        f.firsts = db.tiles.iter().map(|tile| {
-            let mut out = [None; 4];
-            for (r, &rot) in ROTATIONS.iter().enumerate() {
-                let (mut reach_x, mut reach_y) = (0, 0);
-                'find: for sy in 0..tile.height {
-                    for sx in 0..tile.width {
-                        let (dx, dy) = rotate_in_tile_space(tile.width, tile.height, rot, sx, sy);
-                        (reach_x, reach_y) = (reach_x.max(dx), reach_y.max(dy));
-                        if tile.masked() && !tile.subtile_masked_valid(sx, sy) {
-                            continue;
+        f.firsts = db
+            .tiles
+            .iter()
+            .map(|tile| {
+                let mut out = [None; 4];
+                for (r, &rot) in ROTATIONS.iter().enumerate() {
+                    let (mut reach_x, mut reach_y) = (0, 0);
+                    'find: for sy in 0..tile.height {
+                        for sx in 0..tile.width {
+                            let (dx, dy) = rotate_in_tile_space(tile.width, tile.height, rot, sx, sy);
+                            (reach_x, reach_y) = (reach_x.max(dx), reach_y.max(dy));
+                            if tile.masked() && !tile.subtile_masked_valid(sx, sy) {
+                                continue;
+                            }
+
+                            out[r] = Some(First { dx, dy, reach_x, reach_y });
+                            break 'find;
                         }
-
-                        out[r] = Some(First { dx, dy, reach_x, reach_y });
-                        break 'find;
                     }
                 }
-            }
 
-            out
-        }).collect();
+                out
+            })
+            .collect();
 
         f
     }
@@ -487,7 +505,9 @@ impl<'a> TileMapFill<'a> {
         // The junction pass orders its tiles by link target count (std::sort, FUN_1037d260: not stable, ties as MSVC's introsort leaves them).
         if scan == 7 {
             let db = self.db;
-            crate::vegetation::msvc_sort::sort(&mut candidates, &|a: &usize, b: &usize| db.tiles[*a].link_targets.len() < db.tiles[*b].link_targets.len());
+            crate::vegetation::msvc_sort::sort(&mut candidates, &|a: &usize, b: &usize| {
+                db.tiles[*a].link_targets.len() < db.tiles[*b].link_targets.len()
+            });
         }
 
         let shared = matches!(scan, 1 | 2);
@@ -513,7 +533,8 @@ impl<'a> TileMapFill<'a> {
                         }
                     }
 
-                    if let Some((variation, rotation)) = self.test_final_tile_position(t, x, y, shared, scan == 8, &mut climate, scan == 9) {
+                    if let Some((variation, rotation)) = self.test_final_tile_position(t, x, y, shared, scan == 8, &mut climate, scan == 9)
+                    {
                         self.place_tile(x, y, t, variation, rotation, climate, shared);
                         if !shared {
                             self.add_tile_to_link_map(x, y, t, rotation);
@@ -534,7 +555,16 @@ impl<'a> TileMapFill<'a> {
 
     /// `test_final_tile_position` (0x10280b30): whether the tile fits with its origin at (x, y), in which rotation and variation.
     #[allow(clippy::too_many_arguments)]
-    fn test_final_tile_position(&mut self, t: usize, x: u32, y: u32, shared: bool, resource: bool, climate: &mut u32, exact: bool) -> Option<(usize, u16)> {
+    fn test_final_tile_position(
+        &mut self,
+        t: usize,
+        x: u32,
+        y: u32,
+        shared: bool,
+        resource: bool,
+        climate: &mut u32,
+        exact: bool,
+    ) -> Option<(usize, u16)> {
         let db = self.db;
         let tile = &db.tiles[t];
 
@@ -744,7 +774,13 @@ impl<'a> TileMapFill<'a> {
                 }
 
                 let c = (py as u32 * self.w + px as u32) as usize;
-                let bits = if geometry { 0x100 } else if self.layers[1].get(c).is_some_and(|g| g.index != 0) { 0x600 } else { 0x700 };
+                let bits = if geometry {
+                    0x100
+                } else if self.layers[1].get(c).is_some_and(|g| g.index != 0) {
+                    0x600
+                } else {
+                    0x700
+                };
                 match first {
                     None => {
                         if px as u32 >= self.w {
@@ -753,7 +789,15 @@ impl<'a> TileMapFill<'a> {
 
                         first = Some(c);
                         self.layers[layer][c] = Cell {
-                            index, rotation, layer_bits: bits, origin_x: x as u16, origin_y: y as u16, climate: climate as u8, flipped: false, lf_min: 0.0, lf_max: 0.0,
+                            index,
+                            rotation,
+                            layer_bits: bits,
+                            origin_x: x as u16,
+                            origin_y: y as u16,
+                            climate: climate as u8,
+                            flipped: false,
+                            lf_min: 0.0,
+                            lf_max: 0.0,
                         };
                     }
 
@@ -763,8 +807,15 @@ impl<'a> TileMapFill<'a> {
                         }
 
                         self.layers[layer][c] = Cell {
-                            index: -(f as i32 + 1), rotation: 0x10, layer_bits: bits, origin_x: x as u16, origin_y: y as u16, climate: climate as u8,
-                            flipped: false, lf_min: 0.0, lf_max: 0.0,
+                            index: -(f as i32 + 1),
+                            rotation: 0x10,
+                            layer_bits: bits,
+                            origin_x: x as u16,
+                            origin_y: y as u16,
+                            climate: climate as u8,
+                            flipped: false,
+                            lf_min: 0.0,
+                            lf_max: 0.0,
                         };
                     }
                 }
@@ -907,11 +958,18 @@ impl<'a> TileMapFill<'a> {
                 }
 
                 let (tile, variation) = self.placed[(cell.index - 1) as usize];
-                self.add_tile(&mut out, Placement {
-                    tile, variation, x: cell.origin_x as i16, y: cell.origin_y as i16,
-                    flags: (cell.rotation & 0xf0) | if cell.flipped { 4 } else { 0 } | (cell.layer_bits & 0x700),
-                    climate: cell.climate, lf: [cell.lf_min, cell.lf_max],
-                });
+                self.add_tile(
+                    &mut out,
+                    Placement {
+                        tile,
+                        variation,
+                        x: cell.origin_x as i16,
+                        y: cell.origin_y as i16,
+                        flags: (cell.rotation & 0xf0) | if cell.flipped { 4 } else { 0 } | (cell.layer_bits & 0x700),
+                        climate: cell.climate,
+                        lf: [cell.lf_min, cell.lf_max],
+                    },
+                );
             }
         }
 
@@ -932,7 +990,10 @@ impl<'a> TileMapFill<'a> {
             return;
         }
 
-        let Some(under) = db.tiles.iter().position(|t| t.width == 1 && t.height == 1 && t.set.is_some_and(|s| db.sets[s].name == *also)) else { return };
+        let Some(under) = db.tiles.iter().position(|t| t.width == 1 && t.height == 1 && t.set.is_some_and(|s| db.sets[s].name == *also))
+        else {
+            return;
+        };
         if db.tiles[under].set == tile.set {
             return;
         }
@@ -944,9 +1005,18 @@ impl<'a> TileMapFill<'a> {
                 }
 
                 let (dx, dy) = rotate_in_tile_space(tile.width, tile.height, rotation, sx, sy);
-                self.add_tile(out, Placement {
-                    tile: under, variation: 0, x: p.x + dx as i16, y: p.y + dy as i16, flags: 0x10 | 0x300, climate: p.climate, lf: p.lf,
-                });
+                self.add_tile(
+                    out,
+                    Placement {
+                        tile: under,
+                        variation: 0,
+                        x: p.x + dx as i16,
+                        y: p.y + dy as i16,
+                        flags: 0x10 | 0x300,
+                        climate: p.climate,
+                        lf: p.lf,
+                    },
+                );
             }
         }
     }

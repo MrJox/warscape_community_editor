@@ -26,13 +26,16 @@ fn main() {
     let mut dirs = vec![];
     teds(Path::new(&args[0]), &mut dirs);
     dirs.sort();
-    let rows = dirs.par_iter().map(|d| {
-        let has_final = d.join("final_heights.dds").exists();
-        match TileProject::open(d) {
-            Ok(p) => (d.clone(), has_final, p.height.is_some() && p.info.found, p.height_calibration.clone(), String::new()),
-            Err(e) => (d.clone(), has_final, false, String::new(), e),
-        }
-    }).collect::<Vec<_>>();
+    let rows = dirs
+        .par_iter()
+        .map(|d| {
+            let has_final = d.join("final_heights.dds").exists();
+            match TileProject::open(d) {
+                Ok(p) => (d.clone(), has_final, p.height.is_some() && p.info.found, p.height_calibration.clone(), String::new()),
+                Err(e) => (d.clone(), has_final, false, String::new(), e),
+            }
+        })
+        .collect::<Vec<_>>();
 
     let (mut with_final, mut calibrated, mut failed) = (0, 0, 0);
     for (d, has_final, usable, note, err) in &rows {

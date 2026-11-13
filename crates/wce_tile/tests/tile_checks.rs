@@ -95,7 +95,10 @@ fn structural_edits_and_transforms() {
     // set_world_position keeps the world position.
     set_world_position(&mut sc, b, Double3::new(w0.position.x + 6.0, w0.position.y, w0.position.z - 6.0));
     let w3 = world_transform(&sc, b);
-    assert!((w3.position.x - (w0.position.x + 6.0)).abs() < 1e-3 && (w3.position.z - (w0.position.z - 6.0)).abs() < 1e-3, "set_world_position");
+    assert!(
+        (w3.position.x - (w0.position.x + 6.0)).abs() < 1e-3 && (w3.position.z - (w0.position.z - 6.0)).abs() < 1e-3,
+        "set_world_position"
+    );
     sc.revert_all();
     assert_eq!(sc.save(), bytes);
 
@@ -124,7 +127,10 @@ fn polygons() {
     let mut sc = TedScene::parse(TED.as_bytes().to_vec()).unwrap();
     let orig = sc.save();
     let layer = sc.add_layer(sc.scene_graph(), "Poly layer").unwrap();
-    let extra = [("hint_type", "AIH_FORT_PERIMETER"), ("polygon_closed", "1")].into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect::<BTreeMap<_, _>>();
+    let extra = [("hint_type", "AIH_FORT_PERIMETER"), ("polygon_closed", "1")]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect::<BTreeMap<_, _>>();
     let pts = [[0.0, 1.0, 0.0], [20.0, 1.0, 0.0], [20.0, 1.0, 10.0], [0.0, 1.0, 10.0]].map(Double3::from);
     let poly = sc.add_polygon(Some(layer), "AI_HINT_POLYGON_INSTANCE", "Test hint", &pts, &extra).unwrap();
     assert_eq!(sc.polygon_points(poly).len(), 4, "polygon has 4 points");
@@ -140,7 +146,11 @@ fn polygons() {
     assert!(sc.remove_polygon_point(poly, 1).unwrap(), "remove a point");
     assert_eq!(sc.polygon_points(poly).len(), 4, "remove drops a point");
     let re = TedScene::parse(sc.save()).unwrap();
-    assert_eq!(re.find_all("AI_HINT_POLYGON_INSTANCE").len(), sc.find_all("AI_HINT_POLYGON_INSTANCE").len(), "polygon survives save and parse");
+    assert_eq!(
+        re.find_all("AI_HINT_POLYGON_INSTANCE").len(),
+        sc.find_all("AI_HINT_POLYGON_INSTANCE").len(),
+        "polygon survives save and parse"
+    );
     assert_ne!(sc.save(), orig, "polygon edits change the file");
 }
 
@@ -166,7 +176,14 @@ fn height_field() {
 
     // 3. Strokes change samples only inside the brush.
     let before = hf.samples().to_vec();
-    let b = Brush { cx: f64::from(hf.width()) * 0.4, cy: f64::from(hf.height()) * 0.6, radius: 20.0, strength: 0.8, falloff: 0.7, ..Default::default() };
+    let b = Brush {
+        cx: f64::from(hf.width()) * 0.4,
+        cy: f64::from(hf.height()) * 0.6,
+        radius: 20.0,
+        strength: 0.8,
+        falloff: 0.7,
+        ..Default::default()
+    };
     hf.begin_edit().unwrap();
     hf.raise(&b, 2.5).unwrap();
     hf.end_edit();

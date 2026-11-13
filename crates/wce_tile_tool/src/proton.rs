@@ -182,10 +182,13 @@ impl Tool {
     /// Its command line with the verb: the program (in its folder) and its arguments.
     fn command(&self) -> Vec<String> {
         let line = self.manifest.get("commandline").and_then(Vdf::str).unwrap_or("/proton %verb%");
-        line.split_whitespace().enumerate().map(|(i, part)| {
-            let part = part.replace("%verb%", VERB);
-            if i == 0 { self.dir.join(part.trim_start_matches('/')).to_string_lossy().into_owned() } else { part }
-        }).collect()
+        line.split_whitespace()
+            .enumerate()
+            .map(|(i, part)| {
+                let part = part.replace("%verb%", VERB);
+                if i == 0 { self.dir.join(part.trim_start_matches('/')).to_string_lossy().into_owned() } else { part }
+            })
+            .collect()
     }
 
     fn required_app(&self) -> Option<u32> {
@@ -227,8 +230,14 @@ struct Steam {
 impl Steam {
     fn find(game_dir: &Path) -> Result<Self, String> {
         // The game's library: <library>/steamapps/common/<game>.
-        let library = game_dir.parent().and_then(Path::parent).filter(|s| s.file_name().is_some_and(|n| n.eq_ignore_ascii_case("steamapps"))).and_then(Path::parent)
-            .ok_or_else(|| format!("{} is not in a Steam library (<library>/steamapps/common/<game>): Proton needs Steam's", game_dir.display()))?;
+        let library = game_dir
+            .parent()
+            .and_then(Path::parent)
+            .filter(|s| s.file_name().is_some_and(|n| n.eq_ignore_ascii_case("steamapps")))
+            .and_then(Path::parent)
+            .ok_or_else(|| {
+                format!("{} is not in a Steam library (<library>/steamapps/common/<game>): Proton needs Steam's", game_dir.display())
+            })?;
         let roots = wce_editor::steam_detect::steam_roots();
         let root = roots.first().cloned().ok_or("Steam's folder was not found (~/.local/share/Steam, ~/.steam/steam)")?;
         let mut libraries = vec![library.to_path_buf()];
@@ -246,7 +255,9 @@ impl Steam {
         let text = std::fs::read_to_string(self.root.join("config").join("config.vdf")).ok()?;
         let vdf = Vdf::parse(&text);
         let mapping = vdf.at(&["InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping"])?;
-        [app.to_string(), "0".to_owned()].iter().find_map(|id| mapping.at(&[id, "name"]).and_then(Vdf::str).filter(|n| !n.is_empty()).map(str::to_owned))
+        [app.to_string(), "0".to_owned()]
+            .iter()
+            .find_map(|id| mapping.at(&[id, "name"]).and_then(Vdf::str).filter(|n| !n.is_empty()).map(str::to_owned))
     }
 
     /// A tool by its internal name: a custom one (`compatibilitytools.d`, named by its `compatibilitytool.vdf`), else Valve's (the folder in
@@ -269,13 +280,21 @@ impl Steam {
 
         let common = self.libraries.iter().flat_map(|l| subfolders(&l.join("steamapps").join("common"))).collect::<Vec<_>>();
         let key = |d: &PathBuf| tool_key(&d.file_name().unwrap_or_default().to_string_lossy());
-        common.iter().find(|d| key(d) == name).or_else(|| common.iter().find(|d| key(d).starts_with(&format!("{name}_")))).and_then(|d| Tool::at(d))
+        common
+            .iter()
+            .find(|d| key(d) == name)
+            .or_else(|| common.iter().find(|d| key(d).starts_with(&format!("{name}_"))))
+            .and_then(|d| Tool::at(d))
     }
 
     /// The newest Proton of the libraries (by folder name; Experimental first), when Steam names none.
     fn any_proton(&self) -> Option<Tool> {
-        let mut found = self.libraries.iter().flat_map(|l| subfolders(&l.join("steamapps").join("common")))
-            .filter(|d| d.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Proton")) && d.join("proton").is_file()).collect::<Vec<_>>();
+        let mut found = self
+            .libraries
+            .iter()
+            .flat_map(|l| subfolders(&l.join("steamapps").join("common")))
+            .filter(|d| d.file_name().is_some_and(|n| n.to_string_lossy().starts_with("Proton")) && d.join("proton").is_file())
+            .collect::<Vec<_>>();
         found.sort_by_key(|d| {
             let name = d.file_name().unwrap_or_default().to_string_lossy().into_owned();
             (name.contains("Experimental"), name)
@@ -299,7 +318,8 @@ fn same(a: &Path, b: &Path) -> bool {
 }
 
 fn subfolders(dir: &Path) -> Vec<PathBuf> {
-    let mut out = std::fs::read_dir(dir).map(|d| d.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect::<Vec<_>>()).unwrap_or_default();
+    let mut out =
+        std::fs::read_dir(dir).map(|d| d.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect::<Vec<_>>()).unwrap_or_default();
     out.sort();
     out
 }
@@ -313,16 +333,21 @@ fn subfolders(dir: &Path) -> Vec<PathBuf> {
 pub fn launcher(game_dir: &Path, app: u32, proton: Option<&Path>) -> Result<Launcher, String> {
     let steam = Steam::find(game_dir)?;
     let tool = match proton {
-        Some(dir) => Tool::at(dir).ok_or_else(|| format!("{} is not a Proton folder (no toolmanifest.vdf): Settings > Tile > Launch in game", dir.display()))?,
+        Some(dir) => Tool::at(dir)
+            .ok_or_else(|| format!("{} is not a Proton folder (no toolmanifest.vdf): Settings > Tile > Launch in game", dir.display()))?,
         None => match steam.tool_name(app) {
             Some(name) => steam.tool(&name).ok_or_else(|| format!("Steam runs the game with {name}, which is not installed"))?,
-            None => steam.any_proton().ok_or("no Proton found: install one in Steam, or name its folder in Settings > Tile > Launch in game")?,
+            None => {
+                steam.any_proton().ok_or("no Proton found: install one in Steam, or name its folder in Settings > Tile > Launch in game")?
+            }
         },
     };
 
     let mut command = vec![];
     if let Some(runtime) = tool.required_app() {
-        let rt = steam.app_tool(runtime).ok_or_else(|| format!("{} needs the Steam Linux Runtime (app {runtime}), which is not installed", tool.dir.display()))?;
+        let rt = steam
+            .app_tool(runtime)
+            .ok_or_else(|| format!("{} needs the Steam Linux Runtime (app {runtime}), which is not installed", tool.dir.display()))?;
         command.extend(rt.command());
     }
 
@@ -363,7 +388,14 @@ pub fn batch_file(game_dir: &Path, exe: &str, command_line: &str) -> String {
 /// # Errors
 ///
 /// No launcher (see [`launcher`]), the batch file can't be written, or the runtime can't be started.
-pub fn start(game_dir: &Path, exe: &str, command_line: &str, app: u32, proton: Option<&Path>, scratch: &Path) -> Result<(std::process::Child, Launcher), String> {
+pub fn start(
+    game_dir: &Path,
+    exe: &str,
+    command_line: &str,
+    app: u32,
+    proton: Option<&Path>,
+    scratch: &Path,
+) -> Result<(std::process::Child, Launcher), String> {
     let launcher = launcher(game_dir, app, proton)?;
     let bat = scratch.join("wce_launch.bat");
     std::fs::write(&bat, batch_file(game_dir, exe, command_line)).map_err(|e| format!("{}: {e}", bat.display()))?;
@@ -432,16 +464,26 @@ mod tests {
     #[test]
     fn tool_command_lines_chain() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("toolmanifest.vdf"), "\"manifest\"\n{\n  \"commandline\" \"/_v2-entry-point --verb=%verb% --\"\n}\n").unwrap();
+        std::fs::write(
+            dir.path().join("toolmanifest.vdf"),
+            "\"manifest\"\n{\n  \"commandline\" \"/_v2-entry-point --verb=%verb% --\"\n}\n",
+        )
+        .unwrap();
         let t = Tool::at(dir.path()).unwrap();
-        assert_eq!(t.command(), [dir.path().join("_v2-entry-point").to_string_lossy().into_owned(), "--verb=waitforexitandrun".to_owned(), "--".to_owned()]);
+        assert_eq!(
+            t.command(),
+            [dir.path().join("_v2-entry-point").to_string_lossy().into_owned(), "--verb=waitforexitandrun".to_owned(), "--".to_owned()]
+        );
         assert_eq!(t.required_app(), None);
     }
 
     #[test]
     fn the_batch_file_keeps_the_command_line() {
         let b = batch_file(Path::new("/games/Total War Attila"), "Attila.exe", "mod \"a%b.pack\"; game_startup_mode battle x.xml;");
-        assert_eq!(b, "@echo off\r\ncd /d \"Z:\\games\\Total War Attila\"\r\n\"Attila.exe\" mod \"a%%b.pack\"; game_startup_mode battle x.xml;\r\n");
+        assert_eq!(
+            b,
+            "@echo off\r\ncd /d \"Z:\\games\\Total War Attila\"\r\n\"Attila.exe\" mod \"a%%b.pack\"; game_startup_mode battle x.xml;\r\n"
+        );
     }
 
     #[test]

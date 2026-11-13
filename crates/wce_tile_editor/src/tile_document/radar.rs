@@ -4,8 +4,8 @@
 //! the tile exports), its cliffs (the automatic no-go areas).
 
 use rayon::prelude::*;
-use wce_siege::NodeKind;
 use wce_foundation::math::{Double3, Float3};
+use wce_siege::NodeKind;
 use wce_tile::blend_field::BlendField;
 use wce_tile::world_transform::world_transform;
 
@@ -35,7 +35,10 @@ impl Tile {
             let (w, h) = (((w_m / HEIGHT_CELL_M).ceil() as usize).max(2), ((h_m / HEIGHT_CELL_M).ceil() as usize).max(2));
             let (cx, cz) = (w_m / w as f64, h_m / h as f64);
             let project = &self.project;
-            let v: Vec<f32> = (0..w * h).into_par_iter().map(|k| project.height_at(x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz) as f32).collect();
+            let v: Vec<f32> = (0..w * h)
+                .into_par_iter()
+                .map(|k| project.height_at(x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz) as f32)
+                .collect();
             input.sea = v.iter().any(|&h| h < wce_siege::Sea::WATER as f32);
             input.height = Field { x0, z0, w_m, h_m, w, h, v };
         }
@@ -62,19 +65,31 @@ impl Tile {
             let (cx, cz) = (w_m / w as f64, h_m / h as f64);
             let (project, staged, unit) = (&self.project, input.water.as_ref(), self.unit());
             // The planes' and the rivers' boxes: the water map is asked only inside one (it walks every plane and river segment).
-            let mut boxes: Vec<[f64; 4]> = wm.planes.iter().map(|(c, _)| {
-                c.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])])
-            }).collect();
+            let mut boxes: Vec<[f64; 4]> = wm
+                .planes
+                .iter()
+                .map(|(c, _)| {
+                    c.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| {
+                        [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])]
+                    })
+                })
+                .collect();
             boxes.extend(wm.rivers.iter().map(|r| {
-                r.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| [b[0].min(p[0] - p[3]), b[1].min(p[1] - p[3]), b[2].max(p[0] + p[3]), b[3].max(p[1] + p[3])])
+                r.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |b, p| {
+                    [b[0].min(p[0] - p[3]), b[1].min(p[1] - p[3]), b[2].max(p[0] + p[3]), b[3].max(p[1] + p[3])]
+                })
             }));
-            let v: Vec<f32> = (0..w * h).into_par_iter().map(|k| {
-                let (x, z) = (x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz);
-                let inside = boxes.iter().any(|b| x >= b[0] && x <= b[2] && z >= b[1] && z <= b[3]);
-                // The water map's heights are the scene's (metres over the unit).
-                let own = if inside { wm.level(x, z).map_or(0.0, |l| (l * unit - project.height_at(x, z)).max(0.0)) as f32 } else { 0.0 };
-                own.max(staged.map_or(0.0, |f| f.sample(x, z)))
-            }).collect();
+            let v: Vec<f32> = (0..w * h)
+                .into_par_iter()
+                .map(|k| {
+                    let (x, z) = (x0 + ((k % w) as f64 + 0.5) * cx, z0 + ((k / w) as f64 + 0.5) * cz);
+                    let inside = boxes.iter().any(|b| x >= b[0] && x <= b[2] && z >= b[1] && z <= b[3]);
+                    // The water map's heights are the scene's (metres over the unit).
+                    let own =
+                        if inside { wm.level(x, z).map_or(0.0, |l| (l * unit - project.height_at(x, z)).max(0.0)) as f32 } else { 0.0 };
+                    own.max(staged.map_or(0.0, |f| f.sample(x, z)))
+                })
+                .collect();
             input.water = Some(Field { x0, z0, w_m, h_m, w, h, v });
         }
 
@@ -123,15 +138,24 @@ impl Tile {
         let to_m = |pts: &[P]| -> Vec<P> { pts.iter().map(|p| [p[0] / u, p[1] / u]).collect() };
         let siege = self.siege_input_with(false);
         input.buildings = self.radar_buildings();
-        input.walls = siege.walls.iter().map(|w| {
-            let footprint: Vec<Vec<P>> = w.footprint.iter().map(|r| to_m(r)).collect();
-            let (lo, hi) = bounds(&footprint);
-            let palisade = siege.palisade.iter().any(|p| {
-                let q = [p.at[0] / u, p.at[1] / u];
-                q[0] >= lo[0] - 0.5 && q[0] <= hi[0] + 0.5 && q[1] >= lo[1] - 0.5 && q[1] <= hi[1] + 0.5
-            });
-            Wall { footprint, line: [[w.ends[0][0] / u, w.ends[0][1] / u], [w.ends[1][0] / u, w.ends[1][1] / u]], gate: w.gate, palisade }
-        }).collect();
+        input.walls = siege
+            .walls
+            .iter()
+            .map(|w| {
+                let footprint: Vec<Vec<P>> = w.footprint.iter().map(|r| to_m(r)).collect();
+                let (lo, hi) = bounds(&footprint);
+                let palisade = siege.palisade.iter().any(|p| {
+                    let q = [p.at[0] / u, p.at[1] / u];
+                    q[0] >= lo[0] - 0.5 && q[0] <= hi[0] + 0.5 && q[1] >= lo[1] - 0.5 && q[1] <= hi[1] + 0.5
+                });
+                Wall {
+                    footprint,
+                    line: [[w.ends[0][0] / u, w.ends[0][1] / u], [w.ends[1][0] / u, w.ends[1][1] / u]],
+                    gate: w.gate,
+                    palisade,
+                }
+            })
+            .collect();
 
         let layout = self.current_siege_layout();
         for e in &layout.edges {
@@ -145,7 +169,8 @@ impl Tile {
             };
             input.streets.push((line, (width * 0.6).clamp(4.0, 9.0)));
         }
-        input.plazas = layout.nodes.iter().filter(|n| n.kind == NodeKind::Area && n.boundary.len() > 2).map(|n| to_m(&n.boundary)).collect();
+        input.plazas =
+            layout.nodes.iter().filter(|n| n.kind == NodeKind::Area && n.boundary.len() > 2).map(|n| to_m(&n.boundary)).collect();
 
         if let Some(nogos) = &self.auto_nogos {
             input.cliffs = nogos.iter().map(|o| o.iter().map(|p| [f64::from(p[0]), f64::from(p[1])]).collect()).collect();
@@ -153,7 +178,6 @@ impl Tile {
 
         input
     }
-
 }
 
 impl Tile {
@@ -187,7 +211,8 @@ impl Tile {
             };
 
             // Its hard outlines of a house's size, else its hull from above when that is of a house's size.
-            let rings: Vec<Vec<P>> = l.hard.iter().map(|r| r.iter().map(place).collect::<Vec<P>>()).filter(|r| big_enough(std::slice::from_ref(r))).collect();
+            let rings: Vec<Vec<P>> =
+                l.hard.iter().map(|r| r.iter().map(place).collect::<Vec<P>>()).filter(|r| big_enough(std::slice::from_ref(r))).collect();
             let polys = if rings.is_empty() {
                 let tris: Vec<Vec<P>> = l.hull.iter().map(|t| t.iter().map(place).collect()).collect();
                 if big_enough(&tris) { tris } else { vec![] }
@@ -208,26 +233,31 @@ impl Tile {
     fn radar_water_planes(&self) -> Vec<([[f64; 2]; 4], f64)> {
         let sc = self.tscene();
         let mut read: std::collections::HashMap<String, Option<(Float3, Float3)>> = std::collections::HashMap::new();
-        sc.find_all("SIMPLE_MESH_INSTANCE").into_iter().filter_map(|e| {
-            let key = sc.doc().get(e, "key")?;
-            if !key.to_lowercase().contains("water_plane") {
-                return None;
-            }
-            let (lo, hi) = match self.model_of(e).filter(|m| m.ok && m.resolved) {
-                Some(m) => (m.bmin, m.bmax),
-                None => (*read.entry(key.clone()).or_insert_with(|| {
-                    let path = key.replace('\\', "/").to_lowercase();
-                    self.files.as_deref().and_then(|f| f.read(&path).ok()).and_then(|b| rmv2_bounds(&b))
-                }))?,
-            };
-            let w = self.world_matrix(e);
-            let corner = |x: f32, z: f32| {
-                let p = w.transform_point(Float3::new(x, 0.0, z));
-                [f64::from(p.x), f64::from(p.z)]
-            };
-            let y = f64::from(w.transform_point(Float3::new(0.0, 0.0, 0.0)).y);
-            Some(([corner(lo.x, lo.z), corner(hi.x, lo.z), corner(hi.x, hi.z), corner(lo.x, hi.z)], y))
-        }).collect()
+        sc.find_all("SIMPLE_MESH_INSTANCE")
+            .into_iter()
+            .filter_map(|e| {
+                let key = sc.doc().get(e, "key")?;
+                if !key.to_lowercase().contains("water_plane") {
+                    return None;
+                }
+                let (lo, hi) = match self.model_of(e).filter(|m| m.ok && m.resolved) {
+                    Some(m) => (m.bmin, m.bmax),
+                    None => {
+                        (*read.entry(key.clone()).or_insert_with(|| {
+                            let path = key.replace('\\', "/").to_lowercase();
+                            self.files.as_deref().and_then(|f| f.read(&path).ok()).and_then(|b| rmv2_bounds(&b))
+                        }))?
+                    }
+                };
+                let w = self.world_matrix(e);
+                let corner = |x: f32, z: f32| {
+                    let p = w.transform_point(Float3::new(x, 0.0, z));
+                    [f64::from(p.x), f64::from(p.z)]
+                };
+                let y = f64::from(w.transform_point(Float3::new(0.0, 0.0, 0.0)).y);
+                Some(([corner(lo.x, lo.z), corner(hi.x, lo.z), corner(hi.x, hi.z), corner(lo.x, hi.z)], y))
+            })
+            .collect()
     }
 
     /// How many of the tile's models have their bounds (they come in while the renderer loads them): the water planes' footprints are
@@ -241,8 +271,10 @@ impl Tile {
     fn radar_road_lines(&self) -> Vec<Vec<P>> {
         let sc = self.tscene();
         let u = self.unit();
-        let mut out: Vec<Vec<P>> = (0..sc.doc().elements().len()).filter(|&e| self.is_road(e) && self.shown(e))
-            .map(|e| self.road_world_curve(e).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect()).collect();
+        let mut out: Vec<Vec<P>> = (0..sc.doc().elements().len())
+            .filter(|&e| self.is_road(e) && self.shown(e))
+            .map(|e| self.road_world_curve(e).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect())
+            .collect();
         for e in sc.find_all("ProjectedDecalInstance") {
             if !self.shown(e) || !super::siege::exported(sc, e) {
                 continue;
@@ -305,14 +337,19 @@ const MIN_SIDE_M: f64 = 2.5;
 const MIN_AREA_M2: f64 = 10.0;
 
 fn bounds(rings: &[Vec<P>]) -> (P, P) {
-    rings.iter().flatten().fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]))
+    rings
+        .iter()
+        .flatten()
+        .fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]))
 }
 
 /// How far apart two sides of a street are: the median of each of `a`'s points' distance to `b`.
 fn side_gap(a: &[P], b: &[P]) -> f64 {
-    let mut d: Vec<f64> = a.iter().map(|p| {
-        b.windows(2).map(|s| seg_dist(*p, s[0], s[1])).fold(f64::MAX, f64::min)
-    }).filter(|d| d.is_finite() && *d < 1e6).collect();
+    let mut d: Vec<f64> = a
+        .iter()
+        .map(|p| b.windows(2).map(|s| seg_dist(*p, s[0], s[1])).fold(f64::MAX, f64::min))
+        .filter(|d| d.is_finite() && *d < 1e6)
+        .collect();
     if d.is_empty() {
         return 6.0;
     }

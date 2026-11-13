@@ -313,7 +313,12 @@ pub struct CameraSettings {
 impl Default for CameraSettings {
     fn default() -> Self {
         Self {
-            mode: "orbit".to_owned(), smoothing: 0.25, edge_scroll: false, game_limits: false, respect_ground: true, ground_clearance: 1.0,
+            mode: "orbit".to_owned(),
+            smoothing: 0.25,
+            edge_scroll: false,
+            game_limits: false,
+            respect_ground: true,
+            ground_clearance: 1.0,
             respect_collisions: false,
         }
     }
@@ -386,14 +391,25 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            version: VERSION, game: "attila".to_owned(), frame_cap: DEFAULT_FRAME_CAP, last_tool: String::new(), output_dir: None, db_schemas: None, appearance: Appearance::default(),
-            camera: CameraSettings::default(), updates: UpdateSettings::default(), shortcuts: BTreeMap::new(), games: BTreeMap::new(), tools: BTreeMap::new(), paths: Paths::default(), game_fields: BTreeMap::new(),
+            version: VERSION,
+            game: "attila".to_owned(),
+            frame_cap: DEFAULT_FRAME_CAP,
+            last_tool: String::new(),
+            output_dir: None,
+            db_schemas: None,
+            appearance: Appearance::default(),
+            camera: CameraSettings::default(),
+            updates: UpdateSettings::default(),
+            shortcuts: BTreeMap::new(),
+            games: BTreeMap::new(),
+            tools: BTreeMap::new(),
+            paths: Paths::default(),
+            game_fields: BTreeMap::new(),
         }
     }
 }
 
 impl Settings {
-
     /// The settings in the system's folders ([`Paths::standard`]).
     pub fn load_default() -> Self {
         Self::load(Paths::standard())
@@ -408,7 +424,11 @@ impl Settings {
                 Ok(s) => s,
                 Err(e) => {
                     let bad = file.with_extension("toml.bad");
-                    log::error(format!("{} can't be read, using the defaults (the file is kept as {}): {e}", file.display(), bad.display()));
+                    log::error(format!(
+                        "{} can't be read, using the defaults (the file is kept as {}): {e}",
+                        file.display(),
+                        bad.display()
+                    ));
                     let _ = std::fs::rename(&file, &bad);
                     Self::default()
                 }
@@ -447,7 +467,10 @@ impl Settings {
             if let Some(old) = g.project_dir.take()
                 && !g.overlay_folders.contains(&old)
             {
-                log::info(format!("{game}: the old project folder {} is read as an overlay folder now; the projects folder's loose/ replaces it", old.display()));
+                log::info(format!(
+                    "{game}: the old project folder {} is read as an overlay folder now; the projects folder's loose/ replaces it",
+                    old.display()
+                ));
                 g.overlay_folders.insert(0, old);
             }
         }
@@ -469,7 +492,10 @@ impl Settings {
                 log::info(format!("the Tile settings' rpfm schema {} is read from the DB schemas folder now", old.display()));
                 settings.db_schemas = old.parent().map(Path::to_path_buf);
             } else {
-                log::warn(format!("the Tile settings' rpfm schema {} is not used any more: set the DB schemas folder (Settings > General)", old.display()));
+                log::warn(format!(
+                    "the Tile settings' rpfm schema {} is not used any more: set the DB schemas folder (Settings > General)",
+                    old.display()
+                ));
             }
         }
 
@@ -551,7 +577,8 @@ impl Settings {
     /// The Assembly Kits, the first one wins: `$WCE_ASSEMBLY_KIT` (`;` separated), else the file's, else the kit in the game folder
     /// ([`Self::detected_assembly_kit`]). Empty: no kit.
     pub fn assembly_kit_dirs(&self) -> Vec<PathBuf> {
-        let listed = env_list("WCE_ASSEMBLY_KIT").map_or_else(|| self.game_settings().assembly_kits, |v| v.into_iter().map(PathBuf::from).collect());
+        let listed =
+            env_list("WCE_ASSEMBLY_KIT").map_or_else(|| self.game_settings().assembly_kits, |v| v.into_iter().map(PathBuf::from).collect());
         if listed.is_empty() { self.detected_assembly_kit().into_iter().collect() } else { listed }
     }
 
@@ -560,7 +587,10 @@ impl Settings {
     pub fn assembly_kit_raw_dirs(&self) -> Vec<PathBuf> {
         let mut kits = vec![];
         for kit in self.assembly_kit_dirs() {
-            let campaign = kit.file_name().is_some_and(|n| n == "assembly_kit_battle_tilemap").then(|| kit.with_file_name("assembly_kit_campaign_tilemap"));
+            let campaign = kit
+                .file_name()
+                .is_some_and(|n| n == "assembly_kit_battle_tilemap")
+                .then(|| kit.with_file_name("assembly_kit_campaign_tilemap"));
             kits.push(kit);
             kits.extend(campaign);
         }
@@ -577,7 +607,10 @@ impl Settings {
 
     /// The game's projects folder: `$WCE_PROJECTS`, else the file's, else `<data folder>/projects/<game>`.
     pub fn projects_dir(&self) -> PathBuf {
-        env_value("WCE_PROJECTS").map(PathBuf::from).or_else(|| self.game_settings().projects).unwrap_or_else(|| self.paths.data_dir().join("projects").join(&self.game))
+        env_value("WCE_PROJECTS")
+            .map(PathBuf::from)
+            .or_else(|| self.game_settings().projects)
+            .unwrap_or_else(|| self.paths.data_dir().join("projects").join(&self.game))
     }
 
     /// The projects' loose files, read before every pack.
@@ -659,7 +692,8 @@ impl Settings {
         if !fields.is_empty() {
             // The values from before the fields were per game: every game that has none yet keeps them, once.
             if let Some(shared) = self.tools.get_mut(id) {
-                let old: Vec<(String, toml::Value)> = fields.iter().filter_map(|f| shared.remove(*f).map(|v| ((*f).to_owned(), v))).collect();
+                let old: Vec<(String, toml::Value)> =
+                    fields.iter().filter_map(|f| shared.remove(*f).map(|v| ((*f).to_owned(), v))).collect();
                 if !old.is_empty() {
                     let current = self.game.clone();
                     for (key, g) in &mut self.games {

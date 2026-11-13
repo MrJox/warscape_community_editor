@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use wce_formats::c_num::strtod;
 use wce_formats::env_value::{EnvValue, ValueKind, parse_value};
 use wce_formats::xml_doc::XmlDoc;
-use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::game::GameProfile;
+use wce_foundation::math::{Float3, Float4x4, normalize};
 
 use crate::clouds::{CloudPlane, read_cloud_planes};
 use crate::half::f32_to_f16;
@@ -202,7 +202,6 @@ impl Default for EnvironmentParams {
 }
 
 impl EnvironmentParams {
-
     /// The environment as seen in a scene turned `yaw` degrees about the vertical from the battle's frame (the battle's +z, its north, is
     /// the scene's (sin yaw, cos yaw)): the sun's azimuth turns with it, and the ambient cube's four sides are read again along the turned
     /// directions (exact for quarter turns; between them each side mixes its two neighbours by cos^2 / sin^2). ASSUMPTION: left / right
@@ -224,7 +223,8 @@ impl EnvironmentParams {
             px * (bx * bx) + pz * (bz * bz)
         };
 
-        (e.ambient_right, e.ambient_left, e.ambient_front, e.ambient_back) = (side(1.0, 0.0), side(-1.0, 0.0), side(0.0, 1.0), side(0.0, -1.0));
+        (e.ambient_right, e.ambient_left, e.ambient_front, e.ambient_back) =
+            (side(1.0, 0.0), side(-1.0, 0.0), side(0.0, 1.0), side(0.0, -1.0));
         e
     }
 
@@ -242,7 +242,6 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-
     /// The first element with this name anywhere in the document (each appears once in practice).
     fn new(doc: &'a XmlDoc, name: &str) -> Self {
         Self { doc, elem: doc.elements().iter().position(|el| el.name == name) }
@@ -511,7 +510,27 @@ pub struct GraphicsOptions {
 impl Default for GraphicsOptions {
     fn default() -> Self {
         Self {
-            gamma: 2.2, brightness: 1.0, vignette: true, ssao: true, distortion: true, depth_of_field: 1, shadow_quality: 3, water_quality: 3, building_quality: 3, unit_quality: 3, tree_quality: 3, sky_quality: 3, reflections: 2, effects_quality: 3, grain: false, cloud_shadows: false, god_rays: false, aa: 0, alpha_blend: 0, tessellation: false, texture_filtering: 3,
+            gamma: 2.2,
+            brightness: 1.0,
+            vignette: true,
+            ssao: true,
+            distortion: true,
+            depth_of_field: 1,
+            shadow_quality: 3,
+            water_quality: 3,
+            building_quality: 3,
+            unit_quality: 3,
+            tree_quality: 3,
+            sky_quality: 3,
+            reflections: 2,
+            effects_quality: 3,
+            grain: false,
+            cloud_shadows: false,
+            god_rays: false,
+            aa: 0,
+            alpha_blend: 0,
+            tessellation: false,
+            texture_filtering: 3,
             values: BTreeMap::new(),
         }
     }

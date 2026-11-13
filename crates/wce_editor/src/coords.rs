@@ -62,7 +62,9 @@ impl SeaPlane {
         let first = w.verts.first()?;
         let start = Self { y: first.y, lo: [first.x, first.z], hi: [first.x, first.z] };
         Some(w.verts.iter().fold(start, |s, v| Self {
-            y: s.y.max(v.y), lo: [s.lo[0].min(v.x), s.lo[1].min(v.z)], hi: [s.hi[0].max(v.x), s.hi[1].max(v.z)],
+            y: s.y.max(v.y),
+            lo: [s.lo[0].min(v.x), s.lo[1].min(v.z)],
+            hi: [s.hi[0].max(v.x), s.hi[1].max(v.z)],
         }))
     }
 
@@ -221,7 +223,14 @@ impl GroundProbe {
 }
 
 /// The readout's lines: the camera, its target (orbit) or nothing (fly), the cursor's ground point.
-pub fn lines(cam: &Camera, orbit: bool, cursor: Option<Float3>, game_units: f32, map: Option<&MapFrame>, battle: Option<&BattleFrame>) -> Vec<String> {
+pub fn lines(
+    cam: &Camera,
+    orbit: bool,
+    cursor: Option<Float3>,
+    game_units: f32,
+    map: Option<&MapFrame>,
+    battle: Option<&BattleFrame>,
+) -> Vec<String> {
     let point = |name: &str, p: Float3, height: bool| {
         let g = battle.map_or(p, |b| b.local(p)) * game_units;
         let mut s = format!("{name:<7}{:>10.1} {:>8.1} {:>10.1}   game {:>10.1} {:>8.1} {:>10.1}", p.x, p.y, p.z, g.x, g.y, g.z);
@@ -273,7 +282,12 @@ mod tests {
 
     fn scene_with(river: bool) -> RenderScene {
         let v = |x: f32, z: f32| WaterVertex { x, y: 3.0, z, ..Default::default() };
-        let water = Water { river, verts: vec![v(-10.0, -10.0), v(10.0, -10.0), v(-10.0, 10.0), v(10.0, 10.0)], indices: vec![0, 2, 1, 1, 2, 3], ..Default::default() };
+        let water = Water {
+            river,
+            verts: vec![v(-10.0, -10.0), v(10.0, -10.0), v(-10.0, 10.0), v(10.0, 10.0)],
+            indices: vec![0, 2, 1, 1, 2, 3],
+            ..Default::default()
+        };
         let mut scene = RenderScene::default();
         let layer = scene.add_layer(1, "test");
         scene.add(layer, Float4x4::IDENTITY, Payload::Water(water), SourceRef { doc: 1, item: 1 });

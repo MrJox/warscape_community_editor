@@ -21,7 +21,6 @@ fn table() -> &'static RwLock<Table> {
 }
 
 impl Sym {
-
     /// The name's symbol, added to the table the first time.
     pub fn new(name: &str) -> Self {
         if let Some(&id) = table().read().expect("sym table").ids.get(name) {

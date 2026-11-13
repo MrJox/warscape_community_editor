@@ -125,7 +125,6 @@ pub struct XmlFileDocument {
 }
 
 impl XmlFileDocument {
-
     /// # Errors
     ///
     /// The bytes are not an XML document.

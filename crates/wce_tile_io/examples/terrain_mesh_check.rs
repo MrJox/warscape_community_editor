@@ -18,7 +18,11 @@ fn main() {
     let files = TileFiles::from_kit_dir(raw).expect("the raw tile");
     let (project, _) = TedProject.read(&files).expect("the project");
     let (stamps, missing) = building_stamps(&project, kit);
-    println!("{} building stamps{}", stamps.len(), if missing.is_empty() { String::new() } else { format!("; no mesh file for {missing:?}") });
+    println!(
+        "{} building stamps{}",
+        stamps.len(),
+        if missing.is_empty() { String::new() } else { format!("; no mesh file for {missing:?}") }
+    );
     let t0 = std::time::Instant::now();
     // BOB's VFS for the water planes' models: the game's packs (the kit's `../../data`).
     let models = wce_tile_io::attila::stage_b::pack_models(&kit.join("../../data"));
@@ -38,14 +42,27 @@ fn main() {
             let (o, t) = (ChmfFile::parse(&ours).expect("ours"), ChmfFile::parse(&theirs).expect("BOB's"));
             let ((_, _, os), (_, _, ts)) = (o.region_samples(0).expect("ours"), t.region_samples(0).expect("BOB's"));
             let diff = os.iter().zip(&ts).filter(|(a, b)| a != b).count();
-            println!("{name}: {}; {diff} of {} samples differ, min {} / {}, max {} / {}", if ours == theirs { "identical" } else { "differs" }, os.len(), o.min, t.min, o.max, t.max);
+            println!(
+                "{name}: {}; {diff} of {} samples differ, min {} / {}, max {} / {}",
+                if ours == theirs { "identical" } else { "differs" },
+                os.len(),
+                o.min,
+                t.min,
+                o.max,
+                t.max
+            );
             continue;
         }
 
         if !name.ends_with(".rigid_model_v2") {
             let diff = ours.iter().zip(&theirs).position(|(a, b)| a != b);
-            println!("{name}: {} ({} bytes ours, {} BOB's{})", if ours == theirs { "identical" } else { "differs" }, ours.len(), theirs.len(),
-                diff.map(|i| format!(", first difference at {i}")).unwrap_or_default());
+            println!(
+                "{name}: {} ({} bytes ours, {} BOB's{})",
+                if ours == theirs { "identical" } else { "differs" },
+                ours.len(),
+                theirs.len(),
+                diff.map(|i| format!(", first difference at {i}")).unwrap_or_default()
+            );
             continue;
         }
 
@@ -67,6 +84,12 @@ fn main() {
         };
         let (om, tm) = (masked(&ours), masked(&theirs));
         let diff = om.iter().zip(&tm).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i).collect::<Vec<_>>();
-        println!("{name}: {} bytes ours, {} BOB's; {} bytes differ{}", om.len(), tm.len(), diff.len(), diff.first().map(|i| format!(", first at {i:#x}")).unwrap_or_default());
+        println!(
+            "{name}: {} bytes ours, {} BOB's; {} bytes differ{}",
+            om.len(),
+            tm.len(),
+            diff.len(),
+            diff.first().map(|i| format!(", first at {i:#x}")).unwrap_or_default()
+        );
     }
 }

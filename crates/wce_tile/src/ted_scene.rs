@@ -161,7 +161,6 @@ pub struct TedScene {
 }
 
 impl TedScene {
-
     /// Keeps the bytes as the document's origin.
     ///
     /// # Errors
@@ -201,7 +200,10 @@ impl TedScene {
     /// The SCENE_GRAPH element, if the tile has one.
     pub fn scene_graph(&self) -> Option<usize> {
         let els = self.doc.elements();
-        els[self.doc.roots()[0]].children.iter().filter(|&&c| els[c].name == "scene")
+        els[self.doc.roots()[0]]
+            .children
+            .iter()
+            .filter(|&&c| els[c].name == "scene")
             .flat_map(|&c| els[c].children.iter().copied())
             .find(|&g| els[g].name == "SCENE_GRAPH")
     }
@@ -450,7 +452,9 @@ impl TedScene {
     /// No such layer, or it has no children element.
     pub fn add_group(&mut self, parent_layer: Option<usize>, name: &str, position: Double3) -> Result<usize> {
         let mut open = b"<UserInstanceGroup flags=\" OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE\" lf_offset=\"0\" low_frequency_change_effect=\"GRM_AS_SINGLE\" position=\"".to_vec();
-        open.extend_from_slice(format!("vector({},{},{})", format_number(position.x), format_number(position.y), format_number(position.z)).as_bytes());
+        open.extend_from_slice(
+            format!("vector({},{},{})", format_number(position.x), format_number(position.y), format_number(position.z)).as_bytes(),
+        );
         open.extend_from_slice(b"\" name=\"");
         open.extend(encode_entities(name.as_bytes(), b'"'));
         open.extend_from_slice(b"\" surface_mode=\"MSM_FREEFORM\" orientation=\"euler(0,0,0)\">");
@@ -735,18 +739,22 @@ impl TedScene {
 
         // An element whose ancestor is moved too goes with it.
         let els = self.doc.elements();
-        let top = elems.iter().copied().filter(|&e| {
-            let mut p = els[e].parent;
-            while let Some(q) = p {
-                if elems.binary_search(&q).is_ok() {
-                    return false;
+        let top = elems
+            .iter()
+            .copied()
+            .filter(|&e| {
+                let mut p = els[e].parent;
+                while let Some(q) = p {
+                    if elems.binary_search(&q).is_ok() {
+                        return false;
+                    }
+
+                    p = els[q].parent;
                 }
 
-                p = els[q].parent;
-            }
-
-            true
-        }).collect::<Vec<_>>();
+                true
+            })
+            .collect::<Vec<_>>();
 
         let elems = top;
         if elems.is_empty() {
@@ -820,7 +828,13 @@ impl TedScene {
     /// deployment ...).
     pub fn polygon_points(&self, elem: usize) -> Vec<usize> {
         let els = self.doc.elements();
-        els[elem].children.iter().filter(|&&c| els[c].name == "points").flat_map(|&c| els[c].children.iter().copied()).filter(|&p| els[p].name == "point").collect()
+        els[elem]
+            .children
+            .iter()
+            .filter(|&&c| els[c].name == "points")
+            .flat_map(|&c| els[c].children.iter().copied())
+            .filter(|&p| els[p].name == "point")
+            .collect()
     }
 
     /// Local offset from the instance position (scene units).
@@ -899,7 +913,14 @@ impl TedScene {
     /// # Errors
     ///
     /// No such layer, or fewer than 2 points.
-    pub fn add_polygon(&mut self, layer: Option<usize>, kind: &str, name: &str, world_points: &[Double3], extra: &BTreeMap<String, String>) -> Result<usize> {
+    pub fn add_polygon(
+        &mut self,
+        layer: Option<usize>,
+        kind: &str,
+        name: &str,
+        world_points: &[Double3],
+        extra: &BTreeMap<String, String>,
+    ) -> Result<usize> {
         let layer = self.require_element(layer, "layer")?;
         if world_points.len() < 2 {
             return Err("a polygon needs at least 2 points".to_owned());
@@ -907,17 +928,33 @@ impl TedScene {
 
         // Attribute defaults per type (most common values in the shipped tiles).
         let mut a = [
-            ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), ("lf_offset", "0"), ("line_colour", "argb(1.0,1.0,1.0,1.0)"), ("polygon_closed", "1"),
-            ("recenter_polygon", "0"), ("polygon_shape", "PS_POLYGON"), ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"), ("surface_mode", "MSM_LANDSCAPE"),
+            ("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+            ("lf_offset", "0"),
+            ("line_colour", "argb(1.0,1.0,1.0,1.0)"),
+            ("polygon_closed", "1"),
+            ("recenter_polygon", "0"),
+            ("polygon_shape", "PS_POLYGON"),
+            ("selected_line_colour", "argb(1.0,0.0,0.0,1.0)"),
+            ("surface_mode", "MSM_LANDSCAPE"),
             ("orientation", "euler(0,0,0)"),
-        ].into_iter().map(|(k, v)| (k.to_owned(), v.to_owned())).collect::<BTreeMap<_, _>>();
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v.to_owned()))
+        .collect::<BTreeMap<_, _>>();
         let mut set = |k: &str, v: &str| {
             a.insert(k.to_owned(), v.to_owned());
         };
 
         match kind {
             "AI_HINT_POLYGON_INSTANCE" => {
-                for (k, v) in [("hint_type", "AIH_COVER_LINE"), ("generated", "false"), ("is_generated", "false"), ("max_subdivisions", "100"), ("subdivision_length", "5"), ("polygon_closed", "0")] {
+                for (k, v) in [
+                    ("hint_type", "AIH_COVER_LINE"),
+                    ("generated", "false"),
+                    ("is_generated", "false"),
+                    ("max_subdivisions", "100"),
+                    ("subdivision_length", "5"),
+                    ("polygon_closed", "0"),
+                ] {
                     set(k, v);
                 }
             }
@@ -925,7 +962,11 @@ impl TedScene {
             "NOGO_REGION_POLYGON_INSTANCE" => set("line_colour", "argb(0.65,0.0,0.0,1.0)"),
             "SIEGE_AI_POLYGON_INSTANCE" => set("polygon_closed", "0"),
             // Not TEd's: a procedural wall (docs/plans/procedural_walls.md), with its template's values.
-            crate::new_instances::WALL_SPLINE | crate::new_instances::ROAD_SPLINE | crate::new_instances::ROAD_GUIDE | crate::new_instances::MEASURE_LINE | crate::new_instances::ANGLE_FINDER => {
+            crate::new_instances::WALL_SPLINE
+            | crate::new_instances::ROAD_SPLINE
+            | crate::new_instances::ROAD_GUIDE
+            | crate::new_instances::MEASURE_LINE
+            | crate::new_instances::ANGLE_FINDER => {
                 for (k, v) in crate::new_instances::template(kind).map_or(&[][..], |t| t.attrs) {
                     if !matches!(*k, "position" | "name" | "area") {
                         set(k, v);
@@ -980,8 +1021,23 @@ impl TedScene {
         };
 
         let order = [
-            "flags", "recenter_polygon", "lf_offset", "line_colour", "subdivision_length", "max_subdivisions", "hint_type", "is_generated", "polygon_closed",
-            "position", "selected_line_colour", "name", "polygon_shape", "area", "generated", "surface_mode", "orientation",
+            "flags",
+            "recenter_polygon",
+            "lf_offset",
+            "line_colour",
+            "subdivision_length",
+            "max_subdivisions",
+            "hint_type",
+            "is_generated",
+            "polygon_closed",
+            "position",
+            "selected_line_colour",
+            "name",
+            "polygon_shape",
+            "area",
+            "generated",
+            "surface_mode",
+            "orientation",
         ];
 
         for k in order {

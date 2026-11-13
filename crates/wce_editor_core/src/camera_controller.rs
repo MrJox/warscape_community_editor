@@ -160,7 +160,6 @@ pub struct Lens {
 }
 
 impl Default for Lens {
-
     /// The game's battle camera.
     fn default() -> Self {
         Self { fov_y: 1.13446, znear: 1.0, zfar: 13000.0 }
@@ -312,7 +311,13 @@ pub struct TotalWarCamera {
 impl Default for TotalWarCamera {
     fn default() -> Self {
         let mut c = Self {
-            lens: Lens::default(), eye: Float3::default(), yaw: 0.0, pitch: 0.0, focus_dist: 120.0, shown_eye: Float3::default(), shown_yaw: 0.0,
+            lens: Lens::default(),
+            eye: Float3::default(),
+            yaw: 0.0,
+            pitch: 0.0,
+            focus_dist: 120.0,
+            shown_eye: Float3::default(),
+            shown_yaw: 0.0,
             shown_pitch: 0.0,
         };
 
@@ -397,7 +402,15 @@ impl CameraController for TotalWarCamera {
 
     fn camera(&self) -> Camera {
         let target = self.shown_eye + direction(self.shown_yaw, self.shown_pitch) * self.focus_dist.max(1.0);
-        Camera { eye: self.shown_eye, target, up: Float3::new(0.0, 1.0, 0.0), fov_y: self.lens.fov_y, znear: self.lens.znear, zfar: self.lens.zfar, ortho_height: None }
+        Camera {
+            eye: self.shown_eye,
+            target,
+            up: Float3::new(0.0, 1.0, 0.0),
+            fov_y: self.lens.fov_y,
+            znear: self.lens.znear,
+            zfar: self.lens.zfar,
+            ortho_height: None,
+        }
     }
 
     fn set_camera(&mut self, cam: &Camera) {
@@ -453,7 +466,13 @@ pub struct TopDownCamera {
 impl Default for TopDownCamera {
     fn default() -> Self {
         Self {
-            lens: Lens::default(), centre: Float3::default(), heading: 0.0, height: 400.0, eye_y: 100.0, shown_centre: Float3::default(), shown_heading: 0.0,
+            lens: Lens::default(),
+            centre: Float3::default(),
+            heading: 0.0,
+            height: 400.0,
+            eye_y: 100.0,
+            shown_centre: Float3::default(),
+            shown_heading: 0.0,
             shown_height: 400.0,
         }
     }
@@ -541,8 +560,13 @@ impl CameraController for TopDownCamera {
         let c = self.shown_centre;
         let (_, up) = Self::axes(self.shown_heading);
         Camera {
-            eye: Float3::new(c.x, self.eye_y, c.z), target: Float3::new(c.x, self.eye_y - 100.0, c.z), up, fov_y: self.lens.fov_y, znear: self.lens.znear,
-            zfar: self.lens.zfar, ortho_height: Some(self.shown_height),
+            eye: Float3::new(c.x, self.eye_y, c.z),
+            target: Float3::new(c.x, self.eye_y - 100.0, c.z),
+            up,
+            fov_y: self.lens.fov_y,
+            znear: self.lens.znear,
+            zfar: self.lens.zfar,
+            ortho_height: Some(self.shown_height),
         }
     }
 
@@ -550,7 +574,13 @@ impl CameraController for TopDownCamera {
     fn handoff(&self) -> Camera {
         let dist = self.shown_height * 0.5 / (self.lens.fov_y * 0.5).tan();
         let target = self.shown_centre;
-        Camera { eye: target - direction(self.shown_heading, -1.2) * dist, target, up: Float3::new(0.0, 1.0, 0.0), ortho_height: None, ..self.camera() }
+        Camera {
+            eye: target - direction(self.shown_heading, -1.2) * dist,
+            target,
+            up: Float3::new(0.0, 1.0, 0.0),
+            ortho_height: None,
+            ..self.camera()
+        }
     }
 
     fn set_camera(&mut self, cam: &Camera) {
@@ -618,8 +648,15 @@ pub struct WalkCamera {
 impl Default for WalkCamera {
     fn default() -> Self {
         Self {
-            lens: Lens::default(), eye: Float3::new(0.0, 1.75, 0.0), yaw: 0.0, pitch: 0.0, speed: 5.0, eye_height: 1.75, shown_eye: Float3::new(0.0, 1.75, 0.0),
-            shown_yaw: 0.0, shown_pitch: 0.0,
+            lens: Lens::default(),
+            eye: Float3::new(0.0, 1.75, 0.0),
+            yaw: 0.0,
+            pitch: 0.0,
+            speed: 5.0,
+            eye_height: 1.75,
+            shown_eye: Float3::new(0.0, 1.75, 0.0),
+            shown_yaw: 0.0,
+            shown_pitch: 0.0,
         }
     }
 }
@@ -676,7 +713,15 @@ impl CameraController for WalkCamera {
 
     fn camera(&self) -> Camera {
         let target = self.shown_eye + direction(self.shown_yaw, self.shown_pitch) * 10.0;
-        Camera { eye: self.shown_eye, target, up: Float3::new(0.0, 1.0, 0.0), fov_y: self.lens.fov_y, znear: self.lens.znear, zfar: self.lens.zfar, ortho_height: None }
+        Camera {
+            eye: self.shown_eye,
+            target,
+            up: Float3::new(0.0, 1.0, 0.0),
+            fov_y: self.lens.fov_y,
+            znear: self.lens.znear,
+            zfar: self.lens.zfar,
+            ortho_height: None,
+        }
     }
 
     /// Stands where the view looked (its target), facing the same way, looking ahead.
@@ -760,7 +805,14 @@ impl CameraController for FlyCamera {
         let right = Float3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
         let up = Float3::new(0.0, 1.0, 0.0);
         let mut m = Float3::new(0.0, 0.0, 0.0);
-        for (on, d) in [(input.forward, fwd), (input.back, -fwd), (input.right, right), (input.left, -right), (input.turn_right, up), (input.turn_left, -up)] {
+        for (on, d) in [
+            (input.forward, fwd),
+            (input.back, -fwd),
+            (input.right, right),
+            (input.left, -right),
+            (input.turn_right, up),
+            (input.turn_left, -up),
+        ] {
             if on {
                 m = m + d;
             }
@@ -776,7 +828,15 @@ impl CameraController for FlyCamera {
 
     fn camera(&self) -> Camera {
         let target = self.shown_eye + direction(self.shown_yaw, self.shown_pitch) * 10.0;
-        Camera { eye: self.shown_eye, target, up: Float3::new(0.0, 1.0, 0.0), fov_y: self.lens.fov_y, znear: self.lens.znear, zfar: self.lens.zfar, ortho_height: None }
+        Camera {
+            eye: self.shown_eye,
+            target,
+            up: Float3::new(0.0, 1.0, 0.0),
+            fov_y: self.lens.fov_y,
+            znear: self.lens.znear,
+            zfar: self.lens.zfar,
+            ortho_height: None,
+        }
     }
 
     fn set_camera(&mut self, cam: &Camera) {
@@ -834,7 +894,16 @@ pub struct OrbitCamera {
 impl Default for OrbitCamera {
     fn default() -> Self {
         let target = Float3::new(0.0, 5.0, 0.0);
-        Self { lens: Lens::default(), yaw: 0.6, pitch: 0.35, dist: 120.0, target, shown: (0.6, 0.35, 120.0, target), eye_override: None, clearance: 0.0 }
+        Self {
+            lens: Lens::default(),
+            yaw: 0.6,
+            pitch: 0.35,
+            dist: 120.0,
+            target,
+            shown: (0.6, 0.35, 120.0, target),
+            eye_override: None,
+            clearance: 0.0,
+        }
     }
 }
 
@@ -917,7 +986,15 @@ impl CameraController for OrbitCamera {
     fn camera(&self) -> Camera {
         let (yaw, pitch, dist, target) = self.shown;
         let eye = self.eye_override.unwrap_or_else(|| Self::orbit_eye(yaw, pitch, dist, target));
-        Camera { eye, target, up: Float3::new(0.0, 1.0, 0.0), fov_y: self.lens.fov_y, znear: self.lens.znear, zfar: self.lens.zfar, ortho_height: None }
+        Camera {
+            eye,
+            target,
+            up: Float3::new(0.0, 1.0, 0.0),
+            fov_y: self.lens.fov_y,
+            znear: self.lens.znear,
+            zfar: self.lens.zfar,
+            ortho_height: None,
+        }
     }
 
     fn set_camera(&mut self, cam: &Camera) {

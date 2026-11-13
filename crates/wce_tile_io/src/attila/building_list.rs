@@ -86,7 +86,9 @@ fn building(values: &[NodeType], version: u8) -> Result<BattlefieldBuilding, Str
         return Err(format!("{} values ({expected:?} expected)", values.len()));
     }
 
-    let [key, pos, oi, oj, ok, ow, scale, damage, fire, disabled, weak, breach, indestructible, dock] = &values[..14] else { unreachable!() };
+    let [key, pos, oi, oj, ok, ow, scale, damage, fire, disabled, weak, breach, indestructible, dock] = &values[..14] else {
+        unreachable!()
+    };
     let ptype = values.get(14);
     let (toggle, lite) = if values.len() == 17 { (values.get(15), values.get(16)) } else { (None, None) };
     let burn = if values.len() == 16 { values.get(15) } else { None };

@@ -86,7 +86,6 @@ fn rome2_link_test(test: &str) -> String {
 }
 
 impl Rome2TileDatabase {
-
     /// Reads a database folder's files (by file name: `_settings.xml` and the tile set files; the tile sets come in file name order).
     ///
     /// # Errors
@@ -206,7 +205,8 @@ impl Rome2TileDatabase {
 
             None => {
                 let set = self.database.tile_sets().iter().find(|s| s.name().eq_ignore_ascii_case(tile.tile_set()));
-                let set = set.map_or_else(|| format!("\t<TILE_SET name='{}' red='0' green='0' blue='0'>\r\n", tile.tile_set()), tile_set_open);
+                let set =
+                    set.map_or_else(|| format!("\t<TILE_SET name='{}' red='0' green='0' blue='0'>\r\n", tile.tile_set()), tile_set_open);
                 let text = format!("<TILE_DATABASE>\r\n{set}{element}\t</TILE_SET>\r\n</TILE_DATABASE>\r\n");
                 out.push((format!("{}.xml", tile.tile_set().to_lowercase()), text.into_bytes()));
             }
@@ -398,8 +398,19 @@ fn colour(v: f32) -> String {
 
 /// A tile set's start tag, with its line's indent.
 fn tile_set_open(s: &TileSet) -> String {
-    let mut a = format!("\t<TILE_SET name='{}' red='{}' green='{}' blue='{}'", esc(s.name()), colour(*s.red()), colour(*s.green()), colour(*s.blue()));
-    for (k, v) in [("also_place_tile_set", s.also_place_tile_set()), ("link_as_set", s.link_as_set()), ("linking_tile", s.linking_tile()), ("shared_geometry", s.shared_geometry())] {
+    let mut a = format!(
+        "\t<TILE_SET name='{}' red='{}' green='{}' blue='{}'",
+        esc(s.name()),
+        colour(*s.red()),
+        colour(*s.green()),
+        colour(*s.blue())
+    );
+    for (k, v) in [
+        ("also_place_tile_set", s.also_place_tile_set()),
+        ("link_as_set", s.link_as_set()),
+        ("linking_tile", s.linking_tile()),
+        ("shared_geometry", s.shared_geometry()),
+    ] {
         if !v.is_empty() {
             a += &format!(" {k}='{}'", esc(v));
         }
@@ -456,7 +467,10 @@ pub fn tile_xml(t: &Tile, group: &str) -> String {
 
         s += &format!(
             " scale='{}' min_height='{}' normal_strength='{}' overlap_border_size='{}'",
-            fixed6(*v.scale()), fixed6(*v.min_height()), fixed6(*v.normal_strength()), fixed6(*v.overlap_border_size())
+            fixed6(*v.scale()),
+            fixed6(*v.min_height()),
+            fixed6(*v.normal_strength()),
+            fixed6(*v.overlap_border_size())
         );
         if *v.raw_data_tri_density() != 128 {
             s += &format!(" raw_data_tri_density='{}'", v.raw_data_tri_density());
@@ -508,20 +522,24 @@ fn with_tile_element(bytes: &[u8], set: &str, location: &str, element: &str) -> 
     let text = doc.original_text();
     let root = top(&doc, "TILE_DATABASE").ok_or("no <TILE_DATABASE>")?;
     let sets = children(&doc, root, "TILE_SET").collect::<Vec<_>>();
-    let (start, end) = match sets.iter().flat_map(|&s| children(&doc, s, "TILE")).find(|&t| string(&doc, t, "location").eq_ignore_ascii_case(location)) {
-        Some(t) => {
-            let e = &doc.elements()[t];
-            (line_start(text, e.start_off), line_end(text, e.end_off))
-        }
+    let (start, end) =
+        match sets.iter().flat_map(|&s| children(&doc, s, "TILE")).find(|&t| string(&doc, t, "location").eq_ignore_ascii_case(location)) {
+            Some(t) => {
+                let e = &doc.elements()[t];
+                (line_start(text, e.start_off), line_end(text, e.end_off))
+            }
 
-        None => {
-            let s = *sets.iter().find(|&&s| string(&doc, s, "name").eq_ignore_ascii_case(set)).ok_or_else(|| format!("no tile set {set}"))?;
-            let e = &doc.elements()[s];
-            let close = text[..e.end_off].windows(2).rposition(|w| w == b"</").ok_or("a tile set without its end tag")?;
-            let at = line_start(text, close);
-            (at, at)
-        }
-    };
+            None => {
+                let s = *sets
+                    .iter()
+                    .find(|&&s| string(&doc, s, "name").eq_ignore_ascii_case(set))
+                    .ok_or_else(|| format!("no tile set {set}"))?;
+                let e = &doc.elements()[s];
+                let close = text[..e.end_off].windows(2).rposition(|w| w == b"</").ok_or("a tile set without its end tag")?;
+                let at = line_start(text, close);
+                (at, at)
+            }
+        };
 
     let mut out = text[..start].to_vec();
     out.extend_from_slice(element.as_bytes());
@@ -563,7 +581,9 @@ mod tests {
         \t\t</TILE>\r\n\t</TILE_SET>\r\n</TILE_DATABASE>\r\n";
 
     fn database() -> Rome2TileDatabase {
-        let files = [(SETTINGS_FILE.to_owned(), SETTINGS.as_bytes().to_vec()), ("river_ford.xml".to_owned(), SET.as_bytes().to_vec())].into_iter().collect();
+        let files = [(SETTINGS_FILE.to_owned(), SETTINGS.as_bytes().to_vec()), ("river_ford.xml".to_owned(), SET.as_bytes().to_vec())]
+            .into_iter()
+            .collect();
         Rome2TileDatabase::read(files).unwrap()
     }
 
@@ -615,11 +635,16 @@ mod tests {
         t.set_mask(String::new());
         let files = db.with_tile(&t).unwrap();
         let settings = String::from_utf8(files[0].1.clone()).unwrap();
-        assert!(settings.contains("\t\t<GROUP name='group1' red='sand' green='forest' blue='grass' alpha='rock' />\r\n\t</TEXTURE_GROUPS>"));
+        assert!(
+            settings.contains("\t\t<GROUP name='group1' red='sand' green='forest' blue='grass' alpha='rock' />\r\n\t</TEXTURE_GROUPS>")
+        );
         let set = String::from_utf8(files[1].1.clone()).unwrap();
         assert!(set.starts_with(&SET[..SET.find("\t</TILE_SET>").unwrap()]));
         assert!(set.contains("2x2_b' masked='false' width='2' height='2' texture_group='group1'"));
-        let again = Rome2TileDatabase::read([(SETTINGS_FILE.to_owned(), files[0].1.clone()), ("river_ford.xml".to_owned(), files[1].1.clone())].into_iter().collect()).unwrap();
+        let again = Rome2TileDatabase::read(
+            [(SETTINGS_FILE.to_owned(), files[0].1.clone()), ("river_ford.xml".to_owned(), files[1].1.clone())].into_iter().collect(),
+        )
+        .unwrap();
         assert_eq!(again.database.tiles().len(), 2);
         assert_eq!(again.database.tiles()[1], t);
     }

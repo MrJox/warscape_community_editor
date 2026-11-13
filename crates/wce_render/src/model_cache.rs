@@ -21,7 +21,9 @@ use wce_foundation::log::{self, LogLevel};
 use wce_foundation::math::{Float3, Float4x4, normalize};
 use wce_foundation::wce_prof;
 use wce_scene::model_top::ModelTop;
-use wce_scene::render_scene::{EntityId, MODEL_BONE_SUFFIX, MODEL_ROPES_SUFFIX, MODEL_SKINNED_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain, TerrainSkin};
+use wce_scene::render_scene::{
+    EntityId, MODEL_BONE_SUFFIX, MODEL_ROPES_SUFFIX, MODEL_SKINNED_SUFFIX, MODEL_SNOW_SUFFIX, Payload, RenderScene, Terrain, TerrainSkin,
+};
 
 use crate::texture::{Texture, load_dds, load_dds_tail, make_rgba_texture, make_solid_texture, plan_dds_stream};
 
@@ -40,7 +42,6 @@ pub type SharedTexture = Arc<RwLock<Texture>>;
 pub struct SharedDevice(pub ID3D11Device);
 
 impl SharedDevice {
-
     /// The device. Closures must reach it through this method: a closure that names the field captures the bare device, not this wrapper.
     pub fn device(&self) -> &ID3D11Device {
         &self.0
@@ -70,8 +71,18 @@ pub const TEX_SKIN_MASK: usize = 8;
 pub const TEX_DECAL_MASK: usize = 9;
 pub const TEX_SLOTS: usize = 10;
 
-const TEX_NAMES: [&str; TEX_SLOTS] =
-    ["s_diffuse_map", "s_specular_colour_map", "s_gloss_map", "s_colour_mask_map", "s_normal_map", "s_detail_map", "s_alpha_mask", "s_ambient_map", "s_skin_mask_map", "s_decal_mask"];
+const TEX_NAMES: [&str; TEX_SLOTS] = [
+    "s_diffuse_map",
+    "s_specular_colour_map",
+    "s_gloss_map",
+    "s_colour_mask_map",
+    "s_normal_map",
+    "s_detail_map",
+    "s_alpha_mask",
+    "s_ambient_map",
+    "s_skin_mask_map",
+    "s_decal_mask",
+];
 
 impl MeshKind {
     pub fn is_tree(self) -> bool {
@@ -285,7 +296,9 @@ fn decal_box(corners: &[[f32; 3]]) -> Option<Float4x4> {
     let len = axes.map(|v| dot(v, v).sqrt());
     let square = (0..3).all(|i| (i + 1..3).all(|j| dot(axes[i], axes[j]).abs() <= 1e-2 * len[i] * len[j]));
     if !square || axes[1][1] <= 0.0 || len.contains(&0.0) {
-        let (lo, hi) = corners.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), c| (std::array::from_fn(|k| lo[k].min(c[k])), std::array::from_fn(|k| hi[k].max(c[k]))));
+        let (lo, hi) = corners.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), c| {
+            (std::array::from_fn(|k| lo[k].min(c[k])), std::array::from_fn(|k| hi[k].max(c[k])))
+        });
         axes = [[hi[0] - lo[0], 0.0, 0.0], [0.0, hi[1] - lo[1], 0.0], [0.0, 0.0, hi[2] - lo[2]]];
     }
 
@@ -325,7 +338,14 @@ pub struct RigidInstance {
 
 /// An immutable buffer of some bytes.
 fn immutable_buffer(dev: &ID3D11Device, bytes: &[u8], bind: D3D11_BIND_FLAG) -> Option<ID3D11Buffer> {
-    let desc = D3D11_BUFFER_DESC { ByteWidth: bytes.len() as u32, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: bind as u32, CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0 };
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: bytes.len() as u32,
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: bind as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+        StructureByteStride: 0,
+    };
     dev.create_buffer(&desc, Some(bytes)).ok()
 }
 
@@ -379,7 +399,6 @@ pub struct TextureCache {
 }
 
 impl TextureCache {
-
     pub fn new(dev: &ID3D11Device, read: SharedReader) -> Self {
         let solid = |rgba| Arc::new(RwLock::new(make_solid_texture(dev, rgba)));
         Self {
@@ -454,7 +473,9 @@ impl TextureCache {
 
         let first = (inner.streaming.load(Ordering::Relaxed) && plan.ok)
             .then(|| load_dds_tail(inner.dev.device(), header, &bytes[plan.tail_offset..], &plan, srgb))
-            .and_then(|tail| tail.map_err(|error| inner.error(LogLevel::Warning, format!("{path}: streamed mips: {error} (loaded whole)"))).ok());
+            .and_then(|tail| {
+                tail.map_err(|error| inner.error(LogLevel::Warning, format!("{path}: streamed mips: {error} (loaded whole)"))).ok()
+            });
         if let Some(first) = first {
             let first = Arc::new(RwLock::new(first));
             inner.loaded.fetch_add(1, Ordering::Relaxed);
@@ -462,15 +483,18 @@ impl TextureCache {
             let (job_inner, target, path) = (inner.clone(), first.clone(), path.to_owned());
 
             // After every model load that is queued.
-            let handle = io_pool().post(move || {
-                wce_prof!("texture.upgrade");
-                match load_dds(job_inner.dev.device(), &bytes, srgb) {
-                    Ok(full) => lock(&job_inner.upgrades).push((target, full)),
-                    Err(error) => job_inner.error(LogLevel::Error, format!("{path}: {error} (stays at its small mips)")),
-                }
+            let handle = io_pool().post(
+                move || {
+                    wce_prof!("texture.upgrade");
+                    match load_dds(job_inner.dev.device(), &bytes, srgb) {
+                        Ok(full) => lock(&job_inner.upgrades).push((target, full)),
+                        Err(error) => job_inner.error(LogLevel::Error, format!("{path}: {error} (stays at its small mips)")),
+                    }
 
-                job_inner.upgrades_inflight.fetch_sub(1, Ordering::AcqRel);
-            }, JobPool::current_priority() + 1.0e6);
+                    job_inner.upgrades_inflight.fetch_sub(1, Ordering::AcqRel);
+                },
+                JobPool::current_priority() + 1.0e6,
+            );
 
             lock(&inner.upgrade_jobs).push(handle);
             return Some(first);
@@ -622,13 +646,27 @@ fn engine_default(path: &str, srgb: bool) -> Option<String> {
 }
 
 /// A material texture's path, the engine's stand-in for a placeholder (when it loads) taking its place.
-fn material_path(textures: &TextureCache, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool) -> Option<String> {
+fn material_path(
+    textures: &TextureCache,
+    material: &rpfm_lib::files::rigidmodel::materials::Material,
+    kind: TextureType,
+    srgb: bool,
+) -> Option<String> {
     // Some files root their paths (`/variantmeshes/...`: the naval weapons'); the game finds them all the same.
-    let path = material.textures().iter().find(|t| *t.tex_type() == kind).map(|t| t.path().replace('\\', "/").trim_start_matches('/').to_owned())?;
+    let path = material
+        .textures()
+        .iter()
+        .find(|t| *t.tex_type() == kind)
+        .map(|t| t.path().replace('\\', "/").trim_start_matches('/').to_owned())?;
     Some(engine_default(&path, srgb).filter(|d| textures.get_quiet(d, srgb).is_some()).unwrap_or(path))
 }
 
-fn material_texture_path(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType) -> Option<String> {
+fn material_texture_path(
+    textures: &TextureCache,
+    model: &str,
+    material: &rpfm_lib::files::rigidmodel::materials::Material,
+    kind: TextureType,
+) -> Option<String> {
     let path = material_path(textures, material, kind, true)?;
     if textures.get_quiet(&path, true).is_some() {
         return Some(path);
@@ -653,9 +691,17 @@ fn tree_tint(material: &rpfm_lib::files::rigidmodel::materials::Material) -> [f3
 
 /// A material texture; one that isn't where the material says is looked for under the same name next to the model (the `default` grass
 /// models name the rome_atlantic folder's textures, which are only in their own folder).
-fn material_texture(textures: &TextureCache, model: &str, material: &rpfm_lib::files::rigidmodel::materials::Material, kind: TextureType, srgb: bool, fallback: SharedTexture) -> SharedTexture {
+fn material_texture(
+    textures: &TextureCache,
+    model: &str,
+    material: &rpfm_lib::files::rigidmodel::materials::Material,
+    kind: TextureType,
+    srgb: bool,
+    fallback: SharedTexture,
+) -> SharedTexture {
     let Some(path) = material_path(textures, material, kind, srgb) else { return fallback };
-    textures.get_quiet(&path, srgb)
+    textures
+        .get_quiet(&path, srgb)
         .or_else(|| {
             let (dir, name) = (model.rsplit_once('/')?.0, path.rsplit_once('/').map_or(path.as_str(), |(_, n)| n));
             textures.get_quiet(&format!("{dir}/{name}"), srgb)
@@ -768,11 +814,19 @@ pub(crate) fn rope_geometry(nodes: &[[f32; 3]], vs: &[f32], radius: f32) -> Opti
     let sub = |a: [f32; 3], b: [f32; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 
     // Each segment's direction; (1, 0, 0) for one too short.
-    let dirs: Vec<[f32; 3]> = nodes.windows(2).map(|w| {
-        let d = sub(w[1], w[0]);
-        let l2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
-        if l2 <= 0.001 { [1.0, 0.0, 0.0] } else { let l = l2.sqrt(); [d[0] / l, d[1] / l, d[2] / l] }
-    }).collect();
+    let dirs: Vec<[f32; 3]> = nodes
+        .windows(2)
+        .map(|w| {
+            let d = sub(w[1], w[0]);
+            let l2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            if l2 <= 0.001 {
+                [1.0, 0.0, 0.0]
+            } else {
+                let l = l2.sqrt();
+                [d[0] / l, d[1] / l, d[2] / l]
+            }
+        })
+        .collect();
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
     let mut vertices = Vec::with_capacity(nodes.len() * 2 * ROPE_STRIDE as usize);
     for (k, p) in nodes.iter().enumerate() {
@@ -814,7 +868,11 @@ fn model_top(model: &RigidModel) -> Option<ModelTop> {
         let (mesh, material) = (block.mesh(), block.material());
         let solid = matches!(
             mesh.material_type(),
-            MaterialType::DefaultMaterial | MaterialType::TiledDirtmap | MaterialType::TerrainBlend | MaterialType::Dirtmap | MaterialType::ShipAmbientmap
+            MaterialType::DefaultMaterial
+                | MaterialType::TiledDirtmap
+                | MaterialType::TerrainBlend
+                | MaterialType::Dirtmap
+                | MaterialType::ShipAmbientmap
                 | MaterialType::Weighted
         );
         if !solid {
@@ -822,7 +880,12 @@ fn model_top(model: &RigidModel) -> Option<ModelTop> {
         }
 
         let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
-        let at = |i: usize| mesh.vertices().get(i).map(|v| { let p = v.position(); Float3::new(p.x, p.y, p.z) + pivot });
+        let at = |i: usize| {
+            mesh.vertices().get(i).map(|v| {
+                let p = v.position();
+                Float3::new(p.x, p.y, p.z) + pivot
+            })
+        };
         for t in mesh.indices().chunks_exact(3) {
             if let (Some(a), Some(b), Some(c)) = (at(t[0] as usize), at(t[1] as usize), at(t[2] as usize)) {
                 tris.push([a, b, c]);
@@ -834,7 +897,6 @@ fn model_top(model: &RigidModel) -> Option<ModelTop> {
 }
 
 impl ModelInner {
-
     /// Builds a model on any thread; `None` when it has no drawable standard meshes at LOD 0.
     fn build(&self, path: &str) -> Result<Option<GpuModel>, String> {
         wce_prof!("model.build");
@@ -903,8 +965,13 @@ impl ModelInner {
             let weighted = weighted_material(*mesh.material_type());
             let (dirt, decal) = weighted.map_or((false, false), |(_, dirt, decal)| (dirt, decal));
             let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
-                (_, f @ (VertexFormat::Weighted | VertexFormat::Cinematic | VertexFormat::Static)) if skinned && weighted.is_some() => (weighted?.0, *f),
-                (MaterialType::DefaultMaterial | MaterialType::Dirtmap, VertexFormat::Static) if skinned => (if *mesh.material_type() == MaterialType::Dirtmap { MeshKind::Dirtmap } else { MeshKind::Standard }, VertexFormat::Static),
+                (_, f @ (VertexFormat::Weighted | VertexFormat::Cinematic | VertexFormat::Static)) if skinned && weighted.is_some() => {
+                    (weighted?.0, *f)
+                }
+                (MaterialType::DefaultMaterial | MaterialType::Dirtmap, VertexFormat::Static) if skinned => (
+                    if *mesh.material_type() == MaterialType::Dirtmap { MeshKind::Dirtmap } else { MeshKind::Standard },
+                    VertexFormat::Static,
+                ),
                 _ if skinned => return None,
                 (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
                 (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
@@ -1002,12 +1069,19 @@ impl ModelInner {
 
             // A billboard's normal and displacement map is named after its diffuse.
             let normal = if kind == MeshKind::TreeBillboard {
-                material.textures().iter().find(|t| *t.tex_type() == TextureType::Diffuse)
-                    .and_then(|t| t.path().strip_suffix("_billboard_diffuse.dds").map(|base| format!("{base}_billboard_normal_and_displacement.dds")))
-                    .and_then(|normal| textures.get_quiet(&normal, false).or_else(|| {
-                        textures.report_missing(&normal, &format!("{path}, billboard normal"), "a flat normal");
-                        None
-                    }))
+                material
+                    .textures()
+                    .iter()
+                    .find(|t| *t.tex_type() == TextureType::Diffuse)
+                    .and_then(|t| {
+                        t.path().strip_suffix("_billboard_diffuse.dds").map(|base| format!("{base}_billboard_normal_and_displacement.dds"))
+                    })
+                    .and_then(|normal| {
+                        textures.get_quiet(&normal, false).or_else(|| {
+                            textures.report_missing(&normal, &format!("{path}, billboard normal"), "a flat normal");
+                            None
+                        })
+                    })
                     .unwrap_or_else(|| textures.flat_normal())
             } else {
                 material_texture(textures, path, material, TextureType::Normal, false, textures.flat_normal())
@@ -1023,8 +1097,16 @@ impl ModelInner {
                 dirt,
                 decal,
                 bone: *material.i_matrix_index(),
-                decal_rect: material.params_vector4df32().iter().find(|(id, _)| *id == 0).map_or([0.0, 0.0, 1.0, 1.0], |(_, v)| [v.x, v.y, v.z, v.w]),
-                uv2_tile: if dirt || matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) { [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v)) } else { [0.0; 2] },
+                decal_rect: material
+                    .params_vector4df32()
+                    .iter()
+                    .find(|(id, _)| *id == 0)
+                    .map_or([0.0, 0.0, 1.0, 1.0], |(_, v)| [v.x, v.y, v.z, v.w]),
+                uv2_tile: if dirt || matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
+                    [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v))
+                } else {
+                    [0.0; 2]
+                },
                 tint: tree_tint(material),
                 offset: pivot,
                 has_offset: pivot != Float3::default(),
@@ -1049,12 +1131,28 @@ impl ModelInner {
                         material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white())
                     },
                     material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
-                    if kind == MeshKind::WeightedSkin { material_texture(textures, path, material, TextureType::SkinMask, false, textures.black()) } else { textures.black() },
-                    if decal { material_texture(textures, path, material, TextureType::DecalMask, false, textures.black()) } else { textures.black() },
+                    if kind == MeshKind::WeightedSkin {
+                        material_texture(textures, path, material, TextureType::SkinMask, false, textures.black())
+                    } else {
+                        textures.black()
+                    },
+                    if decal {
+                        material_texture(textures, path, material, TextureType::DecalMask, false, textures.black())
+                    } else {
+                        textures.black()
+                    },
                 ],
                 diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
-                normal_path: material.textures().iter().find(|t| *t.tex_type() == TextureType::Normal).map(|t| t.path().replace('\\', "/")).unwrap_or_default(),
-                displacement: material.textures().iter().any(|t| *t.tex_type() == TextureType::Displacement)
+                normal_path: material
+                    .textures()
+                    .iter()
+                    .find(|t| *t.tex_type() == TextureType::Normal)
+                    .map(|t| t.path().replace('\\', "/"))
+                    .unwrap_or_default(),
+                displacement: material
+                    .textures()
+                    .iter()
+                    .any(|t| *t.tex_type() == TextureType::Displacement)
                     .then(|| material_texture(textures, path, material, TextureType::Displacement, false, textures.black())),
                 bmin: Float3::new(lo[0], lo[1], lo[2]),
                 bmax: Float3::new(hi[0], hi[1], hi[2]),
@@ -1078,13 +1176,24 @@ impl ModelInner {
             for block in lod.mesh_blocks() {
                 let decal = matches!(
                     block.mesh().material_type(),
-                    MaterialType::ProjectedDecal | MaterialType::ProjectedDecalV2 | MaterialType::ProjectedDecalV3 | MaterialType::ProjectedDecalV4
+                    MaterialType::ProjectedDecal
+                        | MaterialType::ProjectedDecalV2
+                        | MaterialType::ProjectedDecalV3
+                        | MaterialType::ProjectedDecalV4
                 );
                 if !decal {
                     continue;
                 }
 
-                let corners: Vec<[f32; 3]> = block.mesh().vertices().iter().map(|v| { let p = v.position(); [p.x, p.y, p.z] }).collect();
+                let corners: Vec<[f32; 3]> = block
+                    .mesh()
+                    .vertices()
+                    .iter()
+                    .map(|v| {
+                        let p = v.position();
+                        [p.x, p.y, p.z]
+                    })
+                    .collect();
                 if let Some(matrix) = decal_box(&corners) {
                     gm.decals.push(ModelDecal { texture: block.material().name().to_owned(), matrix });
                 }
@@ -1139,11 +1248,22 @@ impl ModelInner {
     /// their texture coordinate along it (docs/re/cloth.md, "Rope drawing").
     fn rope_mesh(&self, path: &str, material: &rpfm_lib::files::rigidmodel::materials::Material) -> Option<GpuMesh> {
         let rope = material.rope();
-        let nodes: Vec<[f32; 3]> = rope.nodes().iter().map(|n| { let p = n.position(); [p.x, p.y, p.z] }).collect();
+        let nodes: Vec<[f32; 3]> = rope
+            .nodes()
+            .iter()
+            .map(|n| {
+                let p = n.position();
+                [p.x, p.y, p.z]
+            })
+            .collect();
         let vs: Vec<f32> = rope.nodes().iter().map(|n| *n.uk_1()).collect();
         let (vertices, indices, lo, hi) = rope_geometry(&nodes, &vs, *rope.uk_1())?;
         let vb = immutable_buffer(self.dev.device(), &vertices, D3D11_BIND_VERTEX_BUFFER)?;
-        let ib = immutable_buffer(self.dev.device(), &indices.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER)?;
+        let ib = immutable_buffer(
+            self.dev.device(),
+            &indices.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(),
+            D3D11_BIND_INDEX_BUFFER,
+        )?;
         let textures = &self.textures;
         let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
         Some(GpuMesh {
@@ -1225,7 +1345,6 @@ impl ModelInner {
 }
 
 impl ModelCache {
-
     pub fn new(dev: &ID3D11Device, read: SharedReader, textures: Arc<TextureCache>) -> Self {
         Self {
             inner: Arc::new(ModelInner {
@@ -1305,7 +1424,9 @@ impl ModelCache {
 
     /// The model if it is ready, without queueing anything, and its state (Absent counts as still to come).
     pub fn peek(&self, path: &str) -> (Option<Arc<GpuModel>>, State) {
-        lock(&self.inner.models).get(path).map_or((None, State::Absent), |entry| (entry.model.clone().filter(|_| entry.state == State::Ready), entry.state))
+        lock(&self.inner.models)
+            .get(path)
+            .map_or((None, State::Absent), |entry| (entry.model.clone().filter(|_| entry.state == State::Ready), entry.state))
     }
 
     /// Re-ranks a queued load.
@@ -1356,7 +1477,14 @@ impl ModelCache {
         }
 
         // Another entity with the same heights buffer (the placements of one tile in a map context): its patches.
-        if let Some(same) = self.terrain.values().find(|slot| Arc::ptr_eq(&slot.heights, &t.heights) && slot.layout == layout && slot.version == t.version && slot.skin_id == skin_id).cloned() {
+        if let Some(same) = self
+            .terrain
+            .values()
+            .find(|slot| {
+                Arc::ptr_eq(&slot.heights, &t.heights) && slot.layout == layout && slot.version == t.version && slot.skin_id == skin_id
+            })
+            .cloned()
+        {
             self.terrain.insert(id, same);
             return self.terrain.get(&id);
         }
@@ -1365,7 +1493,16 @@ impl ModelCache {
         let same_layout = self.terrain.get(&id).is_some_and(|slot| slot.layout == layout && slot.patches_x == px && slot.patches_z == pz);
         if !same_layout {
             let count = (px * pz) as usize;
-            self.terrain.insert(id, TerrainGpu { patches_x: px, patches_z: pz, patches: (0..count).map(|_| Arc::new(GpuModel::default())).collect(), skins: vec![None; count], ..Default::default() });
+            self.terrain.insert(
+                id,
+                TerrainGpu {
+                    patches_x: px,
+                    patches_z: pz,
+                    patches: (0..count).map(|_| Arc::new(GpuModel::default())).collect(),
+                    skins: vec![None; count],
+                    ..Default::default()
+                },
+            );
         }
 
         let diffuse = self.inner.textures.get(&t.diffuse, true);
@@ -1379,26 +1516,38 @@ impl ModelCache {
         // The patches that changed: all on a new layout, otherwise the ones whose heights (plus the margin the normals read) differ. The
         // same buffer is the same heights (a paint stroke): the slot holds it, so it cannot have been written or freed since.
         let same_heights = same_layout && Arc::ptr_eq(&tg.heights, &t.heights);
-        let dirty = (0..tg.patches.len()).into_par_iter().map(|p| {
-            if same_heights {
-                return false;
-            }
+        let dirty = (0..tg.patches.len())
+            .into_par_iter()
+            .map(|p| {
+                if same_heights {
+                    return false;
+                }
 
-            if !same_layout || t.heights.is_empty() || tg.heights.len() != t.heights.len() {
-                return true;
-            }
+                if !same_layout || t.heights.is_empty() || tg.heights.len() != t.heights.len() {
+                    return true;
+                }
 
-            let (pi, pj) = ((p % px as usize) as i32, (p / px as usize) as i32);
-            let (i0, i1) = ((pi * CELLS - 1).max(0) as usize, ((pi + 1) * CELLS + 1).min(t.nx - 1) as usize);
-            let (j0, j1) = ((pj * CELLS - 1).max(0) as usize, ((pj + 1) * CELLS + 1).min(t.nz - 1) as usize);
-            let nx = t.nx as usize;
-            (j0..=j1).any(|j| t.heights[j * nx + i0..=j * nx + i1].iter().zip(&tg.heights[j * nx + i0..=j * nx + i1]).any(|(a, b)| a.to_bits() != b.to_bits()))
-        }).collect::<Vec<_>>();
+                let (pi, pj) = ((p % px as usize) as i32, (p / px as usize) as i32);
+                let (i0, i1) = ((pi * CELLS - 1).max(0) as usize, ((pi + 1) * CELLS + 1).min(t.nx - 1) as usize);
+                let (j0, j1) = ((pj * CELLS - 1).max(0) as usize, ((pj + 1) * CELLS + 1).min(t.nz - 1) as usize);
+                let nx = t.nx as usize;
+                (j0..=j1).any(|j| {
+                    t.heights[j * nx + i0..=j * nx + i1]
+                        .iter()
+                        .zip(&tg.heights[j * nx + i0..=j * nx + i1])
+                        .any(|(a, b)| a.to_bits() != b.to_bits())
+                })
+            })
+            .collect::<Vec<_>>();
 
-        let built = (0..tg.patches.len()).into_par_iter().filter(|&p| dirty[p]).map(|p| {
-            let (pi, pj) = ((p % px as usize) as i32, (p / px as usize) as i32);
-            (p, build_patch(dev.device(), t, diffuse.clone(), &textures, pi, pj))
-        }).collect::<Vec<_>>();
+        let built = (0..tg.patches.len())
+            .into_par_iter()
+            .filter(|&p| dirty[p])
+            .map(|p| {
+                let (pi, pj) = ((p % px as usize) as i32, (p / px as usize) as i32);
+                (p, build_patch(dev.device(), t, diffuse.clone(), &textures, pi, pj))
+            })
+            .collect::<Vec<_>>();
 
         // Only the skin's pixels changed (its place and size are the layout): the patches whose piece of it a dab touched get their piece
         // again on the geometry they have (a ground types stroke rebuilt every patch of the tile each dab). Without the dab's rectangle
@@ -1406,22 +1555,26 @@ impl ModelCache {
         let reskinned = match &t.skin {
             Some(s) if same_layout && tg.skin_id != s.id && s.w > 1 && s.h > 1 => {
                 let rect = s.dirty.filter(|(from, _)| *from == tg.skin_id).map(|(_, r)| r);
-                (0..tg.patches.len()).into_par_iter().filter(|&p| !dirty[p]).filter_map(|p| {
-                    let window = skin_window(t, s, (p % px as usize) as i32, (p / px as usize) as i32);
-                    if rect.is_some_and(|r| !skin_window_reads(s, window, r)) {
-                        return None;
-                    }
+                (0..tg.patches.len())
+                    .into_par_iter()
+                    .filter(|&p| !dirty[p])
+                    .filter_map(|p| {
+                        let window = skin_window(t, s, (p % px as usize) as i32, (p / px as usize) as i32);
+                        if rect.is_some_and(|r| !skin_window_reads(s, window, r)) {
+                            return None;
+                        }
 
-                    let texture = make_rgba_texture(dev.device(), window.2 as u32, window.3 as u32, &skin_piece(s, window), true);
-                    let skin = texture.srv.is_some().then(|| Arc::new(RwLock::new(texture)));
-                    let mut model = (*tg.patches[p]).clone();
-                    let diffuse = skin.clone().or_else(|| diffuse.clone()).unwrap_or_else(|| textures.white());
-                    for mesh in model.meshes.iter_mut().chain(model.lods.iter_mut().flat_map(|l| l.meshes.iter_mut())) {
-                        mesh.tex[TEX_DIFFUSE] = diffuse.clone();
-                    }
+                        let texture = make_rgba_texture(dev.device(), window.2 as u32, window.3 as u32, &skin_piece(s, window), true);
+                        let skin = texture.srv.is_some().then(|| Arc::new(RwLock::new(texture)));
+                        let mut model = (*tg.patches[p]).clone();
+                        let diffuse = skin.clone().or_else(|| diffuse.clone()).unwrap_or_else(|| textures.white());
+                        for mesh in model.meshes.iter_mut().chain(model.lods.iter_mut().flat_map(|l| l.meshes.iter_mut())) {
+                            mesh.tex[TEX_DIFFUSE] = diffuse.clone();
+                        }
 
-                    Some((p, model, skin))
-                }).collect::<Vec<_>>()
+                        Some((p, model, skin))
+                    })
+                    .collect::<Vec<_>>()
             }
 
             _ => vec![],
@@ -1623,7 +1776,14 @@ fn axis_positions(cells: i32, stride: i32) -> Vec<i32> {
 }
 
 /// One patch: a vertex buffer of (cells + 1)^2 vertices plus a skirt around it, and an index buffer per LOD (stride 1, 2, 4...).
-fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, tex: &TextureCache, pi: i32, pj: i32) -> Option<(GpuModel, Option<SharedTexture>)> {
+fn build_patch(
+    dev: &ID3D11Device,
+    t: &Terrain,
+    diffuse: Option<SharedTexture>,
+    tex: &TextureCache,
+    pi: i32,
+    pj: i32,
+) -> Option<(GpuModel, Option<SharedTexture>)> {
     let tile = if t.tile_metres > 0.0 { t.tile_metres } else { 8.0 };
     let height = |i: i32, j: i32| t.height_at(i.clamp(0, t.nx - 1), j.clamp(0, t.nz - 1));
     let (ci0, cj0) = (pi * CELLS, pj * CELLS);
@@ -1711,18 +1871,21 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         lowered(j * wu + wu - 1, east as usize + j);
     }
 
-    let bytes = v.iter().flat_map(|vx| {
-        let mut out = [0u8; 32];
-        for (k, p) in vx.pos.iter().chain(&vx.uv).enumerate() {
-            out[k * 2..k * 2 + 2].copy_from_slice(&p.to_le_bytes());
-        }
+    let bytes = v
+        .iter()
+        .flat_map(|vx| {
+            let mut out = [0u8; 32];
+            for (k, p) in vx.pos.iter().chain(&vx.uv).enumerate() {
+                out[k * 2..k * 2 + 2].copy_from_slice(&p.to_le_bytes());
+            }
 
-        out[16..20].copy_from_slice(&vx.normal);
-        out[20..24].copy_from_slice(&vx.tangent);
-        out[24..28].copy_from_slice(&vx.bitangent);
-        out[28..32].copy_from_slice(&vx.colour);
-        out
-    }).collect::<Vec<_>>();
+            out[16..20].copy_from_slice(&vx.normal);
+            out[20..24].copy_from_slice(&vx.tangent);
+            out[24..28].copy_from_slice(&vx.bitangent);
+            out[28..32].copy_from_slice(&vx.colour);
+            out
+        })
+        .collect::<Vec<_>>();
 
     let vb = immutable_buffer(dev, &bytes, D3D11_BIND_VERTEX_BUFFER)?;
     let diffuse = skin_out.clone().or(diffuse).unwrap_or_else(|| tex.white());
@@ -1741,7 +1904,18 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
         tint: [1.0; 12],
         offset: Float3::new(x0, miny, z0),
         has_offset: x0 != 0.0 || miny != 0.0 || z0 != 0.0,
-        tex: [diffuse, tex.black(), tex.black(), tex.black(), tex.flat_normal(), tex.white(), tex.white(), tex.white(), tex.black(), tex.black()],
+        tex: [
+            diffuse,
+            tex.black(),
+            tex.black(),
+            tex.black(),
+            tex.flat_normal(),
+            tex.white(),
+            tex.white(),
+            tex.white(),
+            tex.black(),
+            tex.black(),
+        ],
         diffuse_path: String::new(),
         normal_path: String::new(),
         displacement: None,
@@ -1807,13 +1981,15 @@ fn build_patch(dev: &ID3D11Device, t: &Terrain, diffuse: Option<SharedTexture>, 
     Some((out, skin_out))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{ROPE_STRIDE, rope_geometry};
 
     fn floats(v: &[u8], vertex: usize) -> Vec<f32> {
-        v[vertex * ROPE_STRIDE as usize..(vertex + 1) * ROPE_STRIDE as usize].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+        v[vertex * ROPE_STRIDE as usize..(vertex + 1) * ROPE_STRIDE as usize]
+            .chunks_exact(4)
+            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect()
     }
 
     #[test]

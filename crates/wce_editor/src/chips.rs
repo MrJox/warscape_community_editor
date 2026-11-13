@@ -3,8 +3,8 @@
 //! tool's grid and points). A tool's chips go left of them (`Viewport::chips_width`, `Viewport::chips_top`).
 
 use crate::editor::Editor;
-use wce_editor_core::camera_controller::CameraMode;
 use crate::{gui, icons, theme};
+use wce_editor_core::camera_controller::CameraMode;
 
 const GIZMO_STEP_TIP: &str = "The gizmo's own steps (ImGuizmo's snap): a move, a turn or a scale goes by whole steps from where the drag began. \
 For every tool; a tool's snapping (below) then applies on top of it.";
@@ -130,7 +130,9 @@ fn draw_camera_chip(e: &mut Editor) {
     }
 
     if gui::is_item_hovered() {
-        gui::set_tooltip("How much of the weather's fog the editor view draws (1: as the game does). Thinner fog shows a map from high up; the game view always has the game's fog.");
+        gui::set_tooltip(
+            "How much of the weather's fog the editor view draws (1: as the game does). Thinner fog shows a map from high up; the game view always has the game's fog.",
+        );
     }
 
     gui::separator_text("Camera");

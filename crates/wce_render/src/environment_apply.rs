@@ -28,10 +28,25 @@ pub fn apply_environment(e: &EnvironmentParams, cbs: &mut ConstantBuffers) {
     let sky_light = if e.cubemap_sun_colour_scale != 0.0 { e.cubemap_sun_colour_scale } else { e.sun_colour_scale };
     let sky = sky_light.min(5.0) * SKY_HDR_SCALE;
     set3(cbs, "skydome_PS", "g_linear_sky_colour_scaled", colour_to_linear(e.sky_colour) * (e.sky_colour_scale * sky));
-    set3(cbs, "skydome_PS", "g_linear_circumsolar_color_scaled", colour_to_linear(e.circumsolar_colour) * (e.circumsolar_colour_scale * sky));
+    set3(
+        cbs,
+        "skydome_PS",
+        "g_linear_circumsolar_color_scaled",
+        colour_to_linear(e.circumsolar_colour) * (e.circumsolar_colour_scale * sky),
+    );
     set3(cbs, "skydome_PS", "g_linear_horizon_colour_scaled", colour_to_linear(e.horizon_colour) * (e.horizon_colour_scale * sky));
-    set3(cbs, "skydome_PS", "g_linear_horizon_opposite_colour_scaled", colour_to_linear(e.horizon_opposite_colour) * (e.horizon_opposite_colour_scale * sky));
-    set3(cbs, "skydome_PS", "g_linear_backscatter_colour_scaled", colour_to_linear(e.backscatter_colour) * (e.backscatter_colour_scale * sky));
+    set3(
+        cbs,
+        "skydome_PS",
+        "g_linear_horizon_opposite_colour_scaled",
+        colour_to_linear(e.horizon_opposite_colour) * (e.horizon_opposite_colour_scale * sky),
+    );
+    set3(
+        cbs,
+        "skydome_PS",
+        "g_linear_backscatter_colour_scaled",
+        colour_to_linear(e.backscatter_colour) * (e.backscatter_colour_scale * sky),
+    );
     cbs.set_f("skydome_PS", "g_horizon_decay", &[e.horizon_decay * -0.5]);
     cbs.set_f("skydome_PS", "g_circumsolar_decay", &[e.circumsolar_decay * -10.0]);
     cbs.set_f("skydome_PS", "g_backscatter_decay", &[e.backscatter_decay]);

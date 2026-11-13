@@ -26,15 +26,26 @@ pub fn settings_file(raw: &Path) -> std::path::PathBuf {
 
 /// The tile sets of a `_settings.xml`; empty when it can't be read.
 pub fn read(path: &Path) -> Vec<TileSetInfo> {
-    let Ok(doc) = std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| XmlDoc::parse(b).map_err(|e| e.to_string())) else { return vec![] };
-    doc.elements().iter().enumerate().filter(|(_, e)| e.name == "TILE_SET").map(|(i, _)| {
-        let s = |k: &str| doc.get(i, k).unwrap_or_default();
-        let f = |k: &str| s(k).trim().parse::<f64>().unwrap_or(0.0);
-        TileSetInfo {
-            name: s("name"), colour: [f("red"), f("green"), f("blue")], link_as_set: s("link_as_set"), linking_tile: s("linking_tile"),
-            shared_geometry: s("shared_geometry"), also_place_tile_set: s("also_place_tile_set"),
-        }
-    }).collect()
+    let Ok(doc) = std::fs::read(path).map_err(|e| e.to_string()).and_then(|b| XmlDoc::parse(b).map_err(|e| e.to_string())) else {
+        return vec![];
+    };
+    doc.elements()
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.name == "TILE_SET")
+        .map(|(i, _)| {
+            let s = |k: &str| doc.get(i, k).unwrap_or_default();
+            let f = |k: &str| s(k).trim().parse::<f64>().unwrap_or(0.0);
+            TileSetInfo {
+                name: s("name"),
+                colour: [f("red"), f("green"), f("blue")],
+                link_as_set: s("link_as_set"),
+                linking_tile: s("linking_tile"),
+                shared_geometry: s("shared_geometry"),
+                also_place_tile_set: s("also_place_tile_set"),
+            }
+        })
+        .collect()
 }
 
 /// A colour no set in `sets` has: the first three bytes of the MD5 of the name (as TEd picks a battlefield's), one more while taken.
@@ -72,7 +83,14 @@ pub fn add(path: &Path, set: &TileSetInfo) -> Result<(), String> {
     let indent = String::from_utf8_lossy(&text[child_line..child]).into_owned();
     let line = format!(
         "{indent}<TILE_SET link_as_set=\"{}\" serialise_version=\"1\" linking_tile=\"{}\" shared_geometry=\"{}\" also_place_tile_set=\"{}\" red=\"{:.6}\" blue=\"{:.6}\" name=\"{}\" green=\"{:.6}\"/>{nl}",
-        set.link_as_set, set.linking_tile, set.shared_geometry, set.also_place_tile_set, set.colour[0], set.colour[2], set.name, set.colour[1]
+        set.link_as_set,
+        set.linking_tile,
+        set.shared_geometry,
+        set.also_place_tile_set,
+        set.colour[0],
+        set.colour[2],
+        set.name,
+        set.colour[1]
     );
     doc.splice(line_start, 0, line.as_bytes()).map_err(|e| e.to_string())?;
     std::fs::write(path, doc.save()).map_err(|e| format!("{}: {e}", path.display()))
@@ -86,7 +104,12 @@ pub fn add(path: &Path, set: &TileSetInfo) -> Result<(), String> {
 /// A file can't be read or written.
 pub fn merge_into(from: &Path, into: &Path, names: &[String]) -> Result<Vec<String>, String> {
     let (ours, theirs) = (read(from), read(into));
-    let missing = names.iter().filter(|n| !n.is_empty() && !theirs.iter().any(|s| &s.name == *n)).filter_map(|n| ours.iter().find(|s| &s.name == n)).cloned().collect::<Vec<_>>();
+    let missing = names
+        .iter()
+        .filter(|n| !n.is_empty() && !theirs.iter().any(|s| &s.name == *n))
+        .filter_map(|n| ours.iter().find(|s| &s.name == n))
+        .cloned()
+        .collect::<Vec<_>>();
     if missing.is_empty() {
         return Ok(vec![]);
     }

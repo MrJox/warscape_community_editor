@@ -30,7 +30,6 @@ pub struct DocumentManager {
 }
 
 impl DocumentManager {
-
     /// Takes the document, creates its layer and publishes it (the active one when it is the active tool's).
     ///
     /// # Errors

@@ -394,7 +394,8 @@ fn compress_rgb_block_x(src: &[[f32; 4]], rpt: &[f32], n_unique: usize, n: usize
         done = true;
     }
 
-    let (blk_sh, line0, mdl, small) = if done { ([[0.0f32; 4]; MAX_BLOCK], [0.0; 4], [0.0; 4], false) } else { find_axis(&blk_uv, rpt, n_unique) };
+    let (blk_sh, line0, mdl, small) =
+        if done { ([[0.0f32; 4]; MAX_BLOCK], [0.0; 4], [0.0; 4], false) } else { find_axis(&blk_uv, rpt, n_unique) };
     if !done && small {
         for j in 0..3 {
             rslt[j] = [src[0][j], src[n_unique - 1][j]];
@@ -592,7 +593,18 @@ fn rmp_srch1(blk: &[f32], rpt: &[f32], _max_error: f32, min_ex: f32, max_ex: f32
 }
 
 #[allow(clippy::too_many_arguments)]
-fn refine1(blk: &[f32], rpt: &[f32], max_error: f32, min_ex: &mut f32, max_ex: &mut f32, m_step: f32, min_bnd: f32, max_bnd: f32, n_clrs: usize, n: usize) -> f32 {
+fn refine1(
+    blk: &[f32],
+    rpt: &[f32],
+    max_error: f32,
+    min_ex: &mut f32,
+    max_ex: &mut f32,
+    m_step: f32,
+    min_bnd: f32,
+    max_bnd: f32,
+    n_clrs: usize,
+    n: usize,
+) -> f32 {
     let mut maxerror = max_error;
     let (mut lo, mut hi) = (*min_ex, *max_ex);
     loop {

@@ -218,11 +218,7 @@ const POINT_LIGHT: &[Prop] = base3d![
 const GROUP: &[Prop] = base3d![p("low_frequency_change_effect", Kind::Enum(en::LOW_FREQUENCY_CHANGE))];
 
 /// A layer: only the flags, the position and the export type are in the grid (`LayerInstance::property_flags`).
-const LAYER: &[Prop] = &[
-    p("flags", Kind::Flags),
-    p("position", Kind::Position),
-    p("export_type", Kind::Enum(en::EXPORT_TYPE)),
-];
+const LAYER: &[Prop] = &[p("flags", Kind::Flags), p("position", Kind::Position), p("export_type", Kind::Enum(en::EXPORT_TYPE))];
 
 const CAPTURE_LOCATION: &[Prop] = base3d![
     p("type", Kind::Enum(en::CAPTURE_TYPE)),
@@ -254,7 +250,8 @@ const POLYGON: &[Prop] = polygon![p("subdivision_length", Kind::Slider(0.0, 100.
 /// Not TEd's: a procedural wall (docs/plans/procedural_walls.md), an open polyline whose points may be `sharp` (a corner). TEd does not
 /// know the class; the editor and the wall generator do.
 /// The rest of a reference is the tool's: combos of the game's units, not lines of text.
-const REFERENCE: &[Prop] = &[p("flags", Kind::Flags), p("surface_mode", Kind::Placement), p("position", Kind::Position), p("orientation", Kind::Orientation)];
+const REFERENCE: &[Prop] =
+    &[p("flags", Kind::Flags), p("surface_mode", Kind::Placement), p("position", Kind::Position), p("orientation", Kind::Orientation)];
 
 /// A tape measure (`new_instances::MEASURE_LINE`): its points are edited in the viewport, its lengths shown below the grid.
 const MEASURE: &[Prop] = &[p("flags", Kind::Flags), p("position", Kind::Position)];
@@ -277,25 +274,39 @@ const WALL: &[Prop] = &[
 #[must_use]
 pub fn wall_tip(attr: &str) -> Option<&'static str> {
     Some(match attr {
-        "flags" => "visible: drawn in the editor (a hidden wall has no pieces, and a kit wall's ground goes with them); active: in the game; \
-            draggable: moved with the mouse in the viewport",
+        "flags" => {
+            "visible: drawn in the editor (a hidden wall has no pieces, and a kit wall's ground goes with them); active: in the game; \
+            draggable: moved with the mouse in the viewport"
+        }
         "position" => "Where the wall's line is (its points are relative to it): moving it moves the whole line",
-        crate::new_instances::WALL_PROCEDURAL => "On: the wall is generated from its base piece, bent and stretched along the line, stepped where the \
+        crate::new_instances::WALL_PROCEDURAL => {
+            "On: the wall is generated from its base piece, bent and stretched along the line, stepped where the \
             ground changes level (any shape, any slope). Off: it is laid with its culture's own fort pieces, whole (straights, curves, \
-            steps, towers, caps), with a ground layer of its own under them; an end the pieces can't meet gets a short generated stretch",
+            steps, towers, caps), with a ground layer of its own under them; an end the pieces can't meet gets a short generated stretch"
+        }
         "line_colour" => "The colour of the wall's line in the viewport",
         "selected_line_colour" => "The colour of the wall's line while it is selected",
-        "wall_base" => "The wall's culture: its straight piece (8 m or 15 m high walls). A procedural wall is made from it; a kit wall is laid \
-            with the pieces of the same culture",
-        "wall_tolerance" => "How far the ground may rise or fall under a level stretch of a procedural wall before it steps (scene units). \
-            A kit wall uses it for its generated stretches only",
-        "wall_flip" => "Which side of the line is the wall's outer face: off, the left going from the first point to the last; on, the right",
-        "wall_access_every" => "The spacing of the door sections along the wall, the first at half of it (scene units: 2 a metre on battle maps, \
-            200 = 100 m; 0 = none). Only cultures with a door section (the 15 m walls) have them",
-        "wall_defence_every" => "The spacing of the towers and bastions along the wall, the first at half of it (scene units: 2 a metre on \
+        "wall_base" => {
+            "The wall's culture: its straight piece (8 m or 15 m high walls). A procedural wall is made from it; a kit wall is laid \
+            with the pieces of the same culture"
+        }
+        "wall_tolerance" => {
+            "How far the ground may rise or fall under a level stretch of a procedural wall before it steps (scene units). \
+            A kit wall uses it for its generated stretches only"
+        }
+        "wall_flip" => {
+            "Which side of the line is the wall's outer face: off, the left going from the first point to the last; on, the right"
+        }
+        "wall_access_every" => {
+            "The spacing of the door sections along the wall, the first at half of it (scene units: 2 a metre on battle maps, \
+            200 = 100 m; 0 = none). Only cultures with a door section (the 15 m walls) have them"
+        }
+        "wall_defence_every" => {
+            "The spacing of the towers and bastions along the wall, the first at half of it (scene units: 2 a metre on \
             battle maps; 0 = none): a tower and a bastion in turn, the tower first (only bastions for the 8 m walls, which have no towers). \
             Each tower gets a capture point over the wall behind it, which whoever holds it makes the tower fire for. A procedural wall \
-            puts them only where it is straight and level",
+            puts them only where it is straight and level"
+        }
         _ => return None,
     })
 }
@@ -323,7 +334,8 @@ const ROAD: &[Prop] = &[
     p("road_fence_damage", Kind::Slider(0.0, 1.0)),
 ];
 
-const AI_HINT: &[Prop] = polygon![    p("subdivision_length", Kind::Slider(0.0, 100.0)),
+const AI_HINT: &[Prop] = polygon![
+    p("subdivision_length", Kind::Slider(0.0, 100.0)),
     p("max_subdivisions", Kind::Int(0, 100)),
     Prop { attr: "generated", kind: Kind::Bool, rule: Rule::Normal, twin: Some("is_generated") },
     p("hint_type", Kind::Enum(en::AI_HINT_TYPE)),
@@ -382,8 +394,13 @@ pub fn schema(tag: &str) -> Option<&'static [Prop]> {
 
         // The polygon family that has nothing of its own in TEd (no-go, go region, siege AI, vegetation exclusion, lite building zone, capture
         // location boundaries): `POLYGON_LIST_INSTANCE_SUBDIVIDED_PROJECTED`.
-        "NOGO_REGION_POLYGON_INSTANCE" | "GO_REGION_POLYGON_INSTANCE" | "SIEGE_AI_POLYGON_INSTANCE" | "VegetationExclusionPolygonInstance"
-        | "LiteBuildingZone" | "CaptureLocationPolygonInstance" | "EF_POLYGON_INSTANCE" => POLYGON,
+        "NOGO_REGION_POLYGON_INSTANCE"
+        | "GO_REGION_POLYGON_INSTANCE"
+        | "SIEGE_AI_POLYGON_INSTANCE"
+        | "VegetationExclusionPolygonInstance"
+        | "LiteBuildingZone"
+        | "CaptureLocationPolygonInstance"
+        | "EF_POLYGON_INSTANCE" => POLYGON,
         _ => return None,
     })
 }
@@ -411,13 +428,37 @@ pub fn access(prop: &Prop, ctx: &RuleContext) -> Access {
         Rule::ReadOnly => Access::ReadOnly,
         Rule::Hidden => Access::Hidden,
         Rule::FortWall => match ctx.category {
-            Some(c) => if c == "fort_wall" { Access::Edit } else { Access::Hidden },
-            None => if ctx.present { Access::Edit } else { Access::Hidden },
+            Some(c) => {
+                if c == "fort_wall" {
+                    Access::Edit
+                } else {
+                    Access::Hidden
+                }
+            }
+            None => {
+                if ctx.present {
+                    Access::Edit
+                } else {
+                    Access::Hidden
+                }
+            }
         },
 
         Rule::FortWallOrUnbreachable => match ctx.category {
-            Some(c) => if c == "fort_wall" || c == "unbreachable_fort_wall" { Access::Edit } else { Access::Hidden },
-            None => if ctx.present { Access::Edit } else { Access::Hidden },
+            Some(c) => {
+                if c == "fort_wall" || c == "unbreachable_fort_wall" {
+                    Access::Edit
+                } else {
+                    Access::Hidden
+                }
+            }
+            None => {
+                if ctx.present {
+                    Access::Edit
+                } else {
+                    Access::Hidden
+                }
+            }
         },
 
         Rule::CircleShape => match ctx.shape {
@@ -425,7 +466,13 @@ pub fn access(prop: &Prop, ctx: &RuleContext) -> Access {
             _ => Access::Hidden,
         },
 
-        Rule::NoCaptureLocation => if ctx.capture_location { Access::ReadOnly } else { Access::Edit },
+        Rule::NoCaptureLocation => {
+            if ctx.capture_location {
+                Access::ReadOnly
+            } else {
+                Access::Edit
+            }
+        }
         Rule::WhenExportedAsProp => {
             if ctx.export_as_prop {
                 Access::Edit

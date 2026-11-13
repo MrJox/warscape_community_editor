@@ -30,10 +30,15 @@ pub fn has_handles(kind: &str) -> bool {
 /// The handles written on a spline's points (local; `controlIn`, `controlOut`), `None` where not.
 pub fn written(scene: &TedScene, elem: usize) -> Vec<[Option<Double3>; 2]> {
     let doc = scene.doc();
-    scene.polygon_points(elem).into_iter().filter(|&p| doc.get(p, "position").is_some()).map(|p| {
-        let vec = |name: &str| doc.get(p, name).and_then(|v| parse_vec3(&v, ""));
-        [vec("controlIn"), vec("controlOut")]
-    }).collect()
+    scene
+        .polygon_points(elem)
+        .into_iter()
+        .filter(|&p| doc.get(p, "position").is_some())
+        .map(|p| {
+            let vec = |name: &str| doc.get(p, name).and_then(|v| parse_vec3(&v, ""));
+            [vec("controlIn"), vec("controlOut")]
+        })
+        .collect()
 }
 
 /// The handles of point `i` that make the curve a uniform Catmull-Rom through the points: a sixth of the way from the previous point to
@@ -57,11 +62,19 @@ pub struct SplinePoint {
 /// Catmull-Rom one).
 pub fn read(scene: &TedScene, elem: usize) -> Vec<SplinePoint> {
     let doc = scene.doc();
-    let mut pts = scene.polygon_points(elem).into_iter().filter_map(|p| {
-        let vec = |name: &str| doc.get(p, name).and_then(|v| parse_vec3(&v, ""));
-        let position = vec("position")?;
-        Some(SplinePoint { position, control_in: vec("controlIn").unwrap_or(position), control_out: vec("controlOut").unwrap_or(position) })
-    }).collect::<Vec<_>>();
+    let mut pts = scene
+        .polygon_points(elem)
+        .into_iter()
+        .filter_map(|p| {
+            let vec = |name: &str| doc.get(p, name).and_then(|v| parse_vec3(&v, ""));
+            let position = vec("position")?;
+            Some(SplinePoint {
+                position,
+                control_in: vec("controlIn").unwrap_or(position),
+                control_out: vec("controlOut").unwrap_or(position),
+            })
+        })
+        .collect::<Vec<_>>();
 
     if OWN_KINDS.contains(&scene.type_of(elem)) {
         let positions = pts.iter().map(|p| p.position).collect::<Vec<_>>();
@@ -126,10 +139,12 @@ pub fn auto_handles(positions: &[Double3], i: usize) -> (Double3, Double3) {
 
 /// A new spline's points from its positions, every handle made by [`auto_handles`].
 pub fn new_points(positions: &[Double3]) -> Vec<SplinePoint> {
-    (0..positions.len()).map(|i| {
-        let (control_in, control_out) = auto_handles(positions, i);
-        SplinePoint { position: positions[i], control_in, control_out }
-    }).collect()
+    (0..positions.len())
+        .map(|i| {
+            let (control_in, control_out) = auto_handles(positions, i);
+            SplinePoint { position: positions[i], control_in, control_out }
+        })
+        .collect()
 }
 
 /// The handle mirroring `handle` around `position`.

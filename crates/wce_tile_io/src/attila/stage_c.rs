@@ -63,9 +63,12 @@ fn ted_parts(raw: &Tile) -> Result<(TedScene, TileEntry, usize), String> {
         wce_foundation::wce_prof!("stage_c.inputs.parse_ted");
         TedScene::parse(text)?
     };
-    let entry = TileEntry::parse(crate::xml::write(&entry.root, &super::ted_project::entry_style(), &EntrySchema)).map_err(|e| e.to_string())?;
+    let entry =
+        TileEntry::parse(crate::xml::write(&entry.root, &super::ted_project::entry_style(), &EntrySchema)).map_err(|e| e.to_string())?;
     let variation = match &raw.variation {
-        Some(name) => entry.variations().iter().position(|v| v.location == *name).ok_or_else(|| format!("the entry has no variation {name}"))?,
+        Some(name) => {
+            entry.variations().iter().position(|v| v.location == *name).ok_or_else(|| format!("the entry has no variation {name}"))?
+        }
         None => 0,
     };
     Ok((scene, entry, variation))
@@ -87,7 +90,10 @@ pub fn inputs(raw: &Tile, settings: Option<&Path>) -> Result<(TileInputs, TedSce
     }
 
     if (blend.raster.width, blend.raster.height) != (height.raster.width, height.raster.height) {
-        return Err(format!("the blend map is {}x{}, the height map {}x{}", blend.raster.width, blend.raster.height, height.raster.width, height.raster.height));
+        return Err(format!(
+            "the blend map is {}x{}, the height map {}x{}",
+            blend.raster.width, blend.raster.height, height.raster.width, height.raster.height
+        ));
     }
 
     let blend = b.iter().map(|&v| f32::from(v) * (1.0 / 65535.0)).collect();
@@ -202,12 +208,24 @@ fn grass_list_doc(items: &[vegetation::grass::GrassItem]) -> Document {
 
 /// A category's `_procedural_bmd_data` (`BATTLE_MAP_DEFINITION_DATA` v6, everything but the props and particle emitters empty) and its
 /// XML twin.
-fn procedural_bmd(category: &str, props: &[vegetation::generate::ListProp], vfx: &[vegetation::generate::ListVfx]) -> Result<(Document, Document), String> {
+fn procedural_bmd(
+    category: &str,
+    props: &[vegetation::generate::ListProp],
+    vfx: &[vegetation::generate::ListVfx],
+) -> Result<(Document, Document), String> {
     let props = marker_order(props, |p| &p.key);
     let vfx = marker_order(vfx, |v| &v.key);
     let mut v = serde_json::to_value(rpfm_lib::files::bmd::Bmd::default()).map_err(|e| e.to_string())?;
     v["serialise_version"] = Json::from(6);
-    for section in ["battlefield_building_list", "battlefield_building_list_far", "bmd_outline_list", "capture_location_set", "deployment_list", "prefab_instance_list", "zones_template_list"] {
+    for section in [
+        "battlefield_building_list",
+        "battlefield_building_list_far",
+        "bmd_outline_list",
+        "capture_location_set",
+        "deployment_list",
+        "prefab_instance_list",
+        "zones_template_list",
+    ] {
         v[section]["serialise_version"] = Json::from(1);
     }
 
@@ -371,7 +389,6 @@ pub fn stage_c_documents(raw: &Tile, ctx: &StageC, which: Outputs) -> Result<(St
     Ok((out, notes))
 }
 
-
 // ---- a decompiled project's vegetation: carried while what made it is unchanged
 
 /// The project folder a decompiled tile's vegetation files are carried in (their names as the exported tile's), with
@@ -402,7 +419,10 @@ pub fn kind_of(name: &str) -> Option<Kind> {
         Some(Kind::Trees)
     } else if n.ends_with(".grass_list.bin") || n.ends_with(".grass_list") {
         Some(Kind::Grass)
-    } else if n.ends_with("_procedural_bmd_data.bin") || n.ends_with("_procedural_bmd_data.xml") || (n.ends_with("particle_emitter_marker.markers") && n != "particle_emitter_marker.markers") {
+    } else if n.ends_with("_procedural_bmd_data.bin")
+        || n.ends_with("_procedural_bmd_data.xml")
+        || (n.ends_with("particle_emitter_marker.markers") && n != "particle_emitter_marker.markers")
+    {
         Some(Kind::Procedural)
     } else {
         None
@@ -426,7 +446,8 @@ impl Fingerprints {
     /// The project's generator inputs don't read ([`inputs`]).
     pub fn of(raw: &Tile) -> Result<Self, String> {
         let (inputs, scene) = inputs(raw, None)?;
-        let entry = raw.entry.as_ref().map(|e| crate::xml::write(&e.root, &super::ted_project::entry_style(), &EntrySchema)).unwrap_or_default();
+        let entry =
+            raw.entry.as_ref().map(|e| crate::xml::write(&e.root, &super::ted_project::entry_style(), &EntrySchema)).unwrap_or_default();
         let mut base = Fnv::new();
         base.bytes(&entry).str(raw.variation.as_deref().unwrap_or_default()).u32(inputs.map_w as u32).u32(inputs.map_h as u32);
         for &v in inputs.heights.iter().chain(&inputs.blend) {
@@ -463,7 +484,11 @@ impl Fingerprints {
 
     /// As [`FINGERPRINTS`] holds them.
     pub fn text(&self) -> String {
-        super::carry::text(&std::collections::BTreeMap::from([("trees", self.trees), ("procedural", self.procedural), ("grass", self.grass)]))
+        super::carry::text(&std::collections::BTreeMap::from([
+            ("trees", self.trees),
+            ("procedural", self.procedural),
+            ("grass", self.grass),
+        ]))
     }
 
     pub fn parse(text: &str) -> Option<Self> {
@@ -480,7 +505,8 @@ impl Fingerprints {
 /// Whether a decompiled project's vegetation inputs are as they were decompiled (every kind's stored fingerprint is the project's).
 pub fn unchanged(raw: &Tile) -> bool {
     let (_, prints) = super::carry::carried(raw, CARRIED_DIR);
-    let stored = (|| Some(Fingerprints { trees: *prints.get("trees")?, procedural: *prints.get("procedural")?, grass: *prints.get("grass")? }))();
+    let stored =
+        (|| Some(Fingerprints { trees: *prints.get("trees")?, procedural: *prints.get("procedural")?, grass: *prints.get("grass")? }))();
     matches!((stored, Fingerprints::of(raw)), (Some(s), Ok(c)) if [Kind::Trees, Kind::Procedural, Kind::Grass].iter().all(|&k| s.of_kind(k) == c.of_kind(k)))
 }
 
@@ -499,7 +525,8 @@ pub fn carried_files(raw: &Tile) -> Result<super::stage_b::Files, String> {
 pub fn stage_c_files(raw: &Tile, ctx: &StageC) -> Result<(super::stage_b::Files, CompileNotes), String> {
     let mut notes = CompileNotes::default();
     let (carried, prints) = super::carry::carried(raw, CARRIED_DIR);
-    let stored = (|| Some(Fingerprints { trees: *prints.get("trees")?, procedural: *prints.get("procedural")?, grass: *prints.get("grass")? }))();
+    let stored =
+        (|| Some(Fingerprints { trees: *prints.get("trees")?, procedural: *prints.get("procedural")?, grass: *prints.get("grass")? }))();
     // Only a decompiled project stores fingerprints; without them nothing is kept and the project's aren't needed (they read the whole
     // generator input).
     let current = if stored.is_some() { Fingerprints::of(raw) } else { Err(String::new()) };
@@ -557,7 +584,12 @@ pub fn older_tree_lists(raw: &Tile, model_exists: &dyn Fn(&str) -> bool) -> Resu
     let density = inputs.tri_density.max(1);
     let mut out = vec![];
     for (name, bytes) in carried_files(raw)? {
-        let list = name.to_lowercase().ends_with(".tree_list").then(|| OldList::parse(OldListKind::Tree, &bytes).ok()).flatten().filter(|l| l.version == 2);
+        let list = name
+            .to_lowercase()
+            .ends_with(".tree_list")
+            .then(|| OldList::parse(OldListKind::Tree, &bytes).ok())
+            .flatten()
+            .filter(|l| l.version == 2);
         let Some(list) = list else {
             out.push((name, bytes));
             continue;
@@ -596,7 +628,11 @@ pub fn older_tree_lists(raw: &Tile, model_exists: &dyn Fn(&str) -> bool) -> Resu
             written.records.extend(records.into_iter().flatten());
         }
 
-        notes.notes.push(format!("stage C: {name}: {} generated trees kept, {dropped} static ones replaced by the project's {} (of {before})", before - dropped, statics.len()));
+        notes.notes.push(format!(
+            "stage C: {name}: {} generated trees kept, {dropped} static ones replaced by the project's {} (of {before})",
+            before - dropped,
+            statics.len()
+        ));
         out.push((name, written.write()));
     }
 

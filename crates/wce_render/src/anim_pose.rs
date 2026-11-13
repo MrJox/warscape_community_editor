@@ -68,26 +68,32 @@ pub fn inverse_binds(bytes: &[u8]) -> Option<Vec<Float4x4>> {
     let mut r = Reader { b: bytes, p: 0 };
     r.u32()?;
     let n = r.u32()? as usize;
-    (0..n).map(|_| {
-        let f = (0..12).map(|_| r.f32()).collect::<Option<Vec<_>>>()?;
-        let mut m = Float4x4::IDENTITY;
-        for c in 0..4 {
-            for row in 0..3 {
-                m.m[row][c] = f[c * 3 + row];
+    (0..n)
+        .map(|_| {
+            let f = (0..12).map(|_| r.f32()).collect::<Option<Vec<_>>>()?;
+            let mut m = Float4x4::IDENTITY;
+            for c in 0..4 {
+                for row in 0..3 {
+                    m.m[row][c] = f[c * 3 + row];
+                }
             }
-        }
 
-        Some(m)
-    }).collect()
+            Some(m)
+        })
+        .collect()
 }
 
 /// The skinning matrices of a pose: per bone its world matrix times its inverse bind (the bind pose's inverse from the pose itself when the
 /// mesh has no bind file: a rigid mesh is in its bone's frame, so no bind is applied).
 pub fn skin_matrices(pose: &Pose, binds: Option<&[Float4x4]>) -> Vec<Float4x4> {
-    pose.bones.iter().enumerate().map(|(i, w)| match binds.and_then(|b| b.get(i)) {
-        Some(inv) => *w * *inv,
-        None => *w,
-    }).collect()
+    pose.bones
+        .iter()
+        .enumerate()
+        .map(|(i, w)| match binds.and_then(|b| b.get(i)) {
+            Some(inv) => *w * *inv,
+            None => *w,
+        })
+        .collect()
 }
 
 /// A palette for the weighted shaders: per bone the three rows of its skinning matrix. The same rows of a pose's bones carry the static parts

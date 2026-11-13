@@ -67,10 +67,12 @@ pub fn lf_sea_height_dds(field: &PagedU16) -> Vec<u8> {
     for _ in 1..levels {
         let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
         let at = |x: u32, y: u32| level[(y.min(h - 1) * w + x.min(w - 1)) as usize];
-        let next: Vec<f32> = (0..nw * nh).map(|i| {
-            let (x, y) = (2 * (i % nw), 2 * (i / nw));
-            (((at(x, y) + at(x + 1, y)) + at(x, y + 1)) + at(x + 1, y + 1)) * 0.25
-        }).collect();
+        let next: Vec<f32> = (0..nw * nh)
+            .map(|i| {
+                let (x, y) = (2 * (i % nw), 2 * (i / nw));
+                (((at(x, y) + at(x + 1, y)) + at(x, y + 1)) + at(x + 1, y + 1)) * 0.25
+            })
+            .collect();
 
         put(&mut out, &next);
         (level, w, h) = (next, nw, nh);
@@ -94,17 +96,19 @@ fn campaign_level(field: &PagedU16, k: u32) -> (Vec<u16>, u32, u32) {
     let inv = 1.0f32 / 65535.0;
     let level: Vec<f32> = rows(field).into_iter().map(|a| f32::from(a) * inv).collect();
     let area = (n * n) as f32;
-    let v = (0..nw * nh).map(|i| {
-        let (x, y) = (n * (i % nw), n * (i / nw));
-        let mut sum = 0f32;
-        for dy in 0..n {
-            for dx in 0..n {
-                sum += level[((y + dy).min(h - 1) * w + (x + dx).min(w - 1)) as usize];
+    let v = (0..nw * nh)
+        .map(|i| {
+            let (x, y) = (n * (i % nw), n * (i / nw));
+            let mut sum = 0f32;
+            for dy in 0..n {
+                for dx in 0..n {
+                    sum += level[((y + dy).min(h - 1) * w + (x + dx).min(w - 1)) as usize];
+                }
             }
-        }
 
-        (sum / area * 65535.0) as u16
-    }).collect();
+            (sum / area * 65535.0) as u16
+        })
+        .collect();
 
     (v, nw, nh)
 }
@@ -128,7 +132,17 @@ pub fn campaign_lf_data(field: &PagedU16, cells: (u32, u32)) -> Vec<u8> {
     let (ew, eh) = (w.div_ceil(REGION_CELLS) * REGION_CELLS, h.div_ceil(REGION_CELLS) * REGION_CELLS);
     let all = rows(field);
     let v: Vec<u16> = (0..ew * eh).map(|i| convert(all[(((i / ew) * n).min(fh - 1) * fw + ((i % ew) * n).min(fw - 1)) as usize])).collect();
-    let mut f = ChmfFile::parse(&lf_height_data_of(&v, ew, eh, (ew, eh))).unwrap_or_else(|_| ChmfFile { version: 5, width: w, height: h, cells_x: 1, cells_y: 1, min: 0.0, max: 65535.0, spacing: 1, regions: vec![] });
+    let mut f = ChmfFile::parse(&lf_height_data_of(&v, ew, eh, (ew, eh))).unwrap_or_else(|_| ChmfFile {
+        version: 5,
+        width: w,
+        height: h,
+        cells_x: 1,
+        cells_y: 1,
+        min: 0.0,
+        max: 65535.0,
+        spacing: 1,
+        regions: vec![],
+    });
     (f.width, f.height, f.cells_x, f.cells_y) = (w, h, 1, n);
     f.write()
 }
@@ -148,7 +162,8 @@ fn chmf_of(all: &[u16], w: u32, h: u32, cells: (u32, u32), bob: bool) -> Vec<u8>
     let (cx, cy) = ((w / cells.0.max(1)).max(1), (h / cells.1.max(1)).max(1));
     let min = all.iter().copied().min().unwrap_or(0);
     let max = if bob { 65535.0 } else { f32::from(all.iter().copied().max().unwrap_or(0)) };
-    let mut f = ChmfFile { version: 5, width: w, height: h, cells_x: cx, cells_y: cy, min: f32::from(min), max, spacing: 1, regions: vec![] };
+    let mut f =
+        ChmfFile { version: 5, width: w, height: h, cells_x: cx, cells_y: cy, min: f32::from(min), max, spacing: 1, regions: vec![] };
     let (rw, rh) = (cells.0.div_ceil(REGION_CELLS), cells.1.div_ceil(REGION_CELLS));
     for ry in 0..rh {
         for rx in 0..rw {
@@ -157,7 +172,10 @@ fn chmf_of(all: &[u16], w: u32, h: u32, cells: (u32, u32), bob: bool) -> Vec<u8>
             let rect = [rx * REGION_CELLS, ry * REGION_CELLS, (rx + 1) * REGION_CELLS, (ry + 1) * REGION_CELLS];
             let (sw, sh) = ((rect[2] - rect[0]) * cx, (rect[3] - rect[1]) * cy);
             let (sx, sy) = (rect[0] * cx, rect[1] * cy);
-            let samples: Vec<u16> = (0..sh).flat_map(|y| (0..sw).map(move |x| (x, y))).map(|(x, y)| all[((sy + y).min(h - 1) * w + (sx + x).min(w - 1)) as usize]).collect();
+            let samples: Vec<u16> = (0..sh)
+                .flat_map(|y| (0..sw).map(move |x| (x, y)))
+                .map(|(x, y)| all[((sy + y).min(h - 1) * w + (sx + x).min(w - 1)) as usize])
+                .collect();
             let (tag, offsets, data) = encode_region(sw, sh, &samples);
             f.regions.push(ChmfRegion { rect, tag: if bob { [tag[0], 65535] } else { tag }, offsets, data });
         }

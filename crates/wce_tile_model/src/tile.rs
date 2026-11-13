@@ -84,7 +84,6 @@ pub enum Blob {
 }
 
 impl Blob {
-
     /// # Errors
     ///
     /// The file could not be read.
@@ -161,7 +160,10 @@ impl fmt::Debug for Tile {
         f.debug_struct("Tile")
             .field("scene", &self.scene.as_ref().map(Node::count))
             .field("rivers", &self.rivers.len())
-            .field("maps", &self.maps.iter().map(|m| (m.kind, m.index, m.raster.width, m.raster.height, m.raster.channels)).collect::<Vec<_>>())
+            .field(
+                "maps",
+                &self.maps.iter().map(|m| (m.kind, m.index, m.raster.width, m.raster.height, m.raster.channels)).collect::<Vec<_>>(),
+            )
             .field("entry", &self.entry.as_ref().map(|e| &e.file_name))
             .field("documents", &self.documents.iter().map(|d| &d.name).collect::<Vec<_>>())
             .field("variation", &self.variation)

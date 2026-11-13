@@ -7,7 +7,6 @@ use crate::{GameProfile, Vfs, generated, list_folder, normalize};
 
 /// The game's files, readable from any thread.
 pub trait Files: Send + Sync {
-
     /// The bytes of a file.
     ///
     /// # Errors
@@ -69,7 +68,11 @@ impl Files for FolderFiles {
 
     fn list(&self, prefix: &str, extension: &str) -> Vec<String> {
         let (prefix, extension) = (normalize(prefix), normalize(extension));
-        let mut paths = list_folder(&self.0).into_iter().map(|p| normalize(&p)).filter(|p| p.starts_with(&prefix) && p.ends_with(&extension)).collect::<Vec<_>>();
+        let mut paths = list_folder(&self.0)
+            .into_iter()
+            .map(|p| normalize(&p))
+            .filter(|p| p.starts_with(&prefix) && p.ends_with(&extension))
+            .collect::<Vec<_>>();
         paths.sort();
         paths
     }

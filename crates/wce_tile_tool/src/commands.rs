@@ -27,8 +27,8 @@ use wce_tile_editor::terrain_bake::TerrainView;
 use wce_tile_editor::tile_document::layers::LayerType;
 use wce_tile_editor::tile_document::{BrushKind, GROUND_ERASE, Placement, TileDocument};
 
-use wce_tile::property_enums::WALL_BASE;
 use crate::tool::{HINTS, MODE_NAMES, TileMode, TileTool, document, matches_words, primary, select_elem, selected, with_tile};
+use wce_tile::property_enums::WALL_BASE;
 
 /// An inspector that writes the rows it is given, with their values (for `tile_inspect`).
 #[derive(Default)]
@@ -321,24 +321,32 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "open_exported", "open_exported <exported tile folder | terrain/tiles/... in the packs> [workspace folder] [--fresh]",
+        "open_exported",
+        "open_exported <exported tile folder | terrain/tiles/... in the packs> [workspace folder] [--fresh]",
         "open an exported tile: decompile it into a project at its own folder in the workspace (the projects), its tile.wce marked \
          wce_extracted_tile, and open that; a project there already (extracted before, or the kit's tile saved) opens instead, unless \
          --fresh: extracted over it (the Tiles panel and the menu ask first)",
         |e, a| {
             let fresh = a.iter().any(|x| x == "--fresh");
             let a = a.iter().filter(|x| *x != "--fresh").collect::<Vec<_>>();
-            let Some(target) = a.first() else { return fail("usage: open_exported <exported tile folder | terrain/tiles/...> [workspace folder] [--fresh]") };
+            let Some(target) = a.first() else {
+                return fail("usage: open_exported <exported tile folder | terrain/tiles/...> [workspace folder] [--fresh]");
+            };
             let workspace = a.get(1).map(PathBuf::from);
             with_tile(e, |t, e| t.open_exported(e, target, workspace.as_deref(), fresh).map_or_else(fail, ok))
         },
     );
 
-    c.add("tile_browse", "tile_browse <kit number | packs> [filter words]", "show a source in the Tiles panel (a kit, or the game packs' exported tiles) with a filter", |e, a| {
-        let Some(source) = a.first() else { return fail("usage: tile_browse <kit number | packs> [filter words]") };
-        let filter = a[1..].join(" ");
-        with_tile(e, |t, e| t.browse(e, source, &filter).map_or_else(fail, ok))
-    });
+    c.add(
+        "tile_browse",
+        "tile_browse <kit number | packs> [filter words]",
+        "show a source in the Tiles panel (a kit, or the game packs' exported tiles) with a filter",
+        |e, a| {
+            let Some(source) = a.first() else { return fail("usage: tile_browse <kit number | packs> [filter words]") };
+            let filter = a[1..].join(" ");
+            with_tile(e, |t, e| t.browse(e, source, &filter).map_or_else(fail, ok))
+        },
+    );
 
     c.add(
         "tile_launch_game", "tile_launch_game [--dry-run] [--ignore-movie-packs] [--async]",
@@ -458,69 +466,93 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("map_context_async", "map_context_async <map | campaign>", "test: what the Map context section does when shown with a map (reads and builds on the worker thread)", |e, a| {
-        let Some(name) = a.first() else { return fail("usage: map_context_async <map | campaign>") };
-        with_tile(e, |t, e| {
-            t.prepare_neighbours(e);
-            let Some(raw) = document(e).and_then(|d| t.context.raw_of(d)) else { return fail("the tile is not in a kit") };
-            let files = e.files();
-            let ui = &mut t.context;
-            ui.game_dir = e.game().campaign_battle_map;
-            ui.bake_ground = e.game().key != wce_vfs::GameProfile::ROME_2.key;
-            ui.refresh_maps(&raw, files.as_deref());
-            let want = if name == "campaign" { crate::context_panel::GAME_MAP.to_owned() } else { name.clone() };
-            let want = if ui.maps.contains(&want) { want } else { format!("{want}{}", crate::context_panel::GAME_FILES) };
-            let Some(k) = ui.maps.iter().position(|m| *m == want) else { return fail(format!("no map {name}; maps: {}", ui.maps.join(", "))) };
-            ui.map = k as i32;
-            ui.shown = true;
-            ui.loaded = None;
-            ui.start_map(&raw, files);
-            ok("started")
-        })
-    });
+    c.add(
+        "map_context_async",
+        "map_context_async <map | campaign>",
+        "test: what the Map context section does when shown with a map (reads and builds on the worker thread)",
+        |e, a| {
+            let Some(name) = a.first() else { return fail("usage: map_context_async <map | campaign>") };
+            with_tile(e, |t, e| {
+                t.prepare_neighbours(e);
+                let Some(raw) = document(e).and_then(|d| t.context.raw_of(d)) else { return fail("the tile is not in a kit") };
+                let files = e.files();
+                let ui = &mut t.context;
+                ui.game_dir = e.game().campaign_battle_map;
+                ui.bake_ground = e.game().key != wce_vfs::GameProfile::ROME_2.key;
+                ui.refresh_maps(&raw, files.as_deref());
+                let want = if name == "campaign" { crate::context_panel::GAME_MAP.to_owned() } else { name.clone() };
+                let want = if ui.maps.contains(&want) { want } else { format!("{want}{}", crate::context_panel::GAME_FILES) };
+                let Some(k) = ui.maps.iter().position(|m| *m == want) else {
+                    return fail(format!("no map {name}; maps: {}", ui.maps.join(", ")));
+                };
+                ui.map = k as i32;
+                ui.shown = true;
+                ui.loaded = None;
+                ui.start_map(&raw, files);
+                ok("started")
+            })
+        },
+    );
 
-    c.add("map_context_settle", "map_context_settle", "wait until the map context's chunks around the camera are on the scene; says what it has", |e, _| {
-        with_tile(e, |t, e| {
-            if t.context.view.streamer.is_none() {
-                return fail("no map context");
-            }
+    c.add(
+        "map_context_settle",
+        "map_context_settle",
+        "wait until the map context's chunks around the camera are on the scene; says what it has",
+        |e, _| {
+            with_tile(e, |t, e| {
+                if t.context.view.streamer.is_none() {
+                    return fail("no map context");
+                }
 
-            t.context.settle(e);
-            ok(t.context.status.clone())
-        })
-    });
+                t.context.settle(e);
+                ok(t.context.status.clone())
+            })
+        },
+    );
 
-    c.add("map_context_view", "map_context_view <distance> [minimap on|off]", "the camera's view distance while the map context shows (scene units; the game's is 13000), and the minimap", |e, a| {
-        let Some(d) = a.first().and_then(|v| v.parse::<f32>().ok()) else { return fail("usage: map_context_view <distance> [minimap on|off]") };
-        with_tile(e, |t, e| {
-            t.context.view_distance = d.max(crate::context_panel::GAME_FAR_PLANE);
-            if let Some(m) = a.get(2) {
-                t.context.minimap = m == "on";
-            }
+    c.add(
+        "map_context_view",
+        "map_context_view <distance> [minimap on|off]",
+        "the camera's view distance while the map context shows (scene units; the game's is 13000), and the minimap",
+        |e, a| {
+            let Some(d) = a.first().and_then(|v| v.parse::<f32>().ok()) else {
+                return fail("usage: map_context_view <distance> [minimap on|off]");
+            };
+            with_tile(e, |t, e| {
+                t.context.view_distance = d.max(crate::context_panel::GAME_FAR_PLANE);
+                if let Some(m) = a.get(2) {
+                    t.context.minimap = m == "on";
+                }
 
-            t.context.stream(e);
-            ok(format!("view distance {:.0}", t.context.view_distance))
-        })
-    });
+                t.context.stream(e);
+                ok(format!("view distance {:.0}", t.context.view_distance))
+            })
+        },
+    );
 
-    c.add("map_context_snow", "map_context_snow on|off [amount]", "the season's snow where the map has it (the Map context section's switch and amount)", |e, a| {
-        let on = match a.first().map(String::as_str) {
-            Some("on") => true,
-            Some("off") => false,
-            _ => return fail("usage: map_context_snow on|off [amount]"),
-        };
+    c.add(
+        "map_context_snow",
+        "map_context_snow on|off [amount]",
+        "the season's snow where the map has it (the Map context section's switch and amount)",
+        |e, a| {
+            let on = match a.first().map(String::as_str) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => return fail("usage: map_context_snow on|off [amount]"),
+            };
 
-        let amount = a.get(1).and_then(|v| v.parse::<f32>().ok());
-        with_tile(e, |t, e| {
-            t.context.snow_on = on;
-            if let Some(amount) = amount {
-                t.context.snow_amount = amount.clamp(0.0, 1.0);
-            }
+            let amount = a.get(1).and_then(|v| v.parse::<f32>().ok());
+            with_tile(e, |t, e| {
+                t.context.snow_on = on;
+                if let Some(amount) = amount {
+                    t.context.snow_amount = amount.clamp(0.0, 1.0);
+                }
 
-            t.context.stream(e);
-            ok(format!("snow {}", if e.scene.snow().is_some() { "where the map says" } else { "off (or none on the map this season)" }))
-        })
-    });
+                t.context.stream(e);
+                ok(format!("snow {}", if e.scene.snow().is_some() { "where the map says" } else { "off (or none on the map this season)" }))
+            })
+        },
+    );
 
     c.add("map_context_cache", "map_context_cache clear", "empty the map context's cache of opened tiles", |_, a| {
         if a.first().is_none_or(|v| v != "clear") {
@@ -539,39 +571,53 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("tiles", "tiles [filter words]", "list the tile database entries of the kits (the tile browser's rows), optionally filtered; says how many", |e, a| {
-        with_tile(e, |t, e| {
-            let roots = t.kit_roots(e);
-            if roots.is_empty() {
-                return fail("no assembly kit found");
-            }
+    c.add(
+        "tiles",
+        "tiles [filter words]",
+        "list the tile database entries of the kits (the tile browser's rows), optionally filtered; says how many",
+        |e, a| {
+            with_tile(e, |t, e| {
+                let roots = t.kit_roots(e);
+                if roots.is_empty() {
+                    return fail("no assembly kit found");
+                }
 
-            let words = a.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
-            let (mut out, mut total, mut shown) = (String::new(), 0, 0);
-            for root in &roots {
-                let index = TileIndex::shared(root);
-                total += index.entries().len();
-                for en in index.entries().iter().filter(|en| matches_words(en, &words)) {
-                    shown += 1;
-                    if shown <= 40 {
-                        let kit = root.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-                        out += &format!("{}  {}x{}  [{}]  {kit}\n", en.key, en.width, en.height, en.variations.join(","));
+                let words = a.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
+                let (mut out, mut total, mut shown) = (String::new(), 0, 0);
+                for root in &roots {
+                    let index = TileIndex::shared(root);
+                    total += index.entries().len();
+                    for en in index.entries().iter().filter(|en| matches_words(en, &words)) {
+                        shown += 1;
+                        if shown <= 40 {
+                            let kit = root.parent().and_then(Path::file_name).map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+                            out += &format!("{}  {}x{}  [{}]  {kit}\n", en.key, en.width, en.height, en.variations.join(","));
+                        }
                     }
                 }
-            }
 
-            ok(format!("{shown} of {total} tiles{}", if shown != 0 { format!("\n{out}") } else { String::new() }))
-        })
-    });
+                ok(format!("{shown} of {total} tiles{}", if shown != 0 { format!("\n{out}") } else { String::new() }))
+            })
+        },
+    );
 
-    c.add("assert_tiles", "assert_tiles <n> [filter words]", "test: the tile browser lists n entries for the filter (over all kits)", |e, a| {
-        let Some(n) = a.first() else { return fail("usage: assert_tiles <n> [filter words]") };
-        with_tile(e, |t, e| {
-            let words = a[1..].iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
-            let shown = t.kit_roots(e).iter().map(|root| TileIndex::shared(root).entries().iter().filter(|en| matches_words(en, &words)).count()).sum::<usize>();
-            if shown as i64 == atoi(n) { ok("") } else { fail(format!("{shown} tiles, expected {n}")) }
-        })
-    });
+    c.add(
+        "assert_tiles",
+        "assert_tiles <n> [filter words]",
+        "test: the tile browser lists n entries for the filter (over all kits)",
+        |e, a| {
+            let Some(n) = a.first() else { return fail("usage: assert_tiles <n> [filter words]") };
+            with_tile(e, |t, e| {
+                let words = a[1..].iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
+                let shown = t
+                    .kit_roots(e)
+                    .iter()
+                    .map(|root| TileIndex::shared(root).entries().iter().filter(|en| matches_words(en, &words)).count())
+                    .sum::<usize>();
+                if shown as i64 == atoi(n) { ok("") } else { fail(format!("{shown} tiles, expected {n}")) }
+            })
+        },
+    );
 
     c.add("tile_entry", "tile_entry", "log the active tile's database entry (location, size, colour, ground groups, variations, links)", |e, _| {
         let Some(d) = document(e) else { return no_tile() };
@@ -661,17 +707,24 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("tile_mode", "tile_mode select|raise|lower|smooth|flatten|level|paint|ground", "what the left mouse button does in the viewport", |e, a| {
-        let Some(name) = a.first() else { return fail("usage: tile_mode select|raise|lower|smooth|flatten|level|paint|ground") };
-        let Some(i) = MODE_NAMES.iter().position(|m| m == name) else { return fail(format!("unknown mode '{name}'")) };
-        with_tile(e, |t, _| {
-            t.set_mode(TileMode::from_index(i));
-            ok("")
-        })
-    });
+    c.add(
+        "tile_mode",
+        "tile_mode select|raise|lower|smooth|flatten|level|paint|ground",
+        "what the left mouse button does in the viewport",
+        |e, a| {
+            let Some(name) = a.first() else { return fail("usage: tile_mode select|raise|lower|smooth|flatten|level|paint|ground") };
+            let Some(i) = MODE_NAMES.iter().position(|m| m == name) else { return fail(format!("unknown mode '{name}'")) };
+            with_tile(e, |t, _| {
+                t.set_mode(TileMode::from_index(i));
+                ok("")
+            })
+        },
+    );
 
     c.add("brush", "brush <radius m> [strength] [falloff] [flatten height m] [paint strength 0-1]", "set the terrain brush", |e, a| {
-        let Some(r) = a.first().and_then(|x| number(x)) else { return fail("usage: brush <radius m> [strength] [falloff] [flatten height m] [paint strength 0-1]") };
+        let Some(r) = a.first().and_then(|x| number(x)) else {
+            return fail("usage: brush <radius m> [strength] [falloff] [flatten height m] [paint strength 0-1]");
+        };
         with_tile(e, |t, _| {
             t.brush.radius_m = r.clamp(1.0, 500.0);
             if let Some(v) = a.get(1).and_then(|x| number(x)) {
@@ -761,138 +814,203 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("brush_curve", "brush_curve off | on | <preset> | <distance,weight>...", "the brushes' falloff curve: off (the falloff slider), on, a preset (smooth, linear, plateau, spike, hard) or its points", |e, a| {
-        let Some(first) = a.first() else { return fail("usage: brush_curve off | on | <preset> | <distance,weight>...") };
-        with_tile(e, |t, e| {
-            let mut c = t.brush_curve(e);
-            match first.as_str() {
-                "off" => c.on = false,
-                "on" => c.on = true,
-                name => {
-                    if let Some((_, points)) = wce_tile::falloff::PRESETS.iter().find(|(n, _)| *n == name) {
-                        c.points = points.to_vec();
-                    } else {
-                        let parsed = a.iter().map(|p| p.split_once(',').and_then(|(x, y)| Some([number(x)?, number(y)?]))).collect::<Option<Vec<_>>>();
-                        let Some(points) = parsed else { return fail(format!("not a preset or points: {}", a.join(" "))) };
-                        c.points = wce_tile::falloff::FalloffCurve::from_points(&points).points;
+    c.add(
+        "brush_curve",
+        "brush_curve off | on | <preset> | <distance,weight>...",
+        "the brushes' falloff curve: off (the falloff slider), on, a preset (smooth, linear, plateau, spike, hard) or its points",
+        |e, a| {
+            let Some(first) = a.first() else { return fail("usage: brush_curve off | on | <preset> | <distance,weight>...") };
+            with_tile(e, |t, e| {
+                let mut c = t.brush_curve(e);
+                match first.as_str() {
+                    "off" => c.on = false,
+                    "on" => c.on = true,
+                    name => {
+                        if let Some((_, points)) = wce_tile::falloff::PRESETS.iter().find(|(n, _)| *n == name) {
+                            c.points = points.to_vec();
+                        } else {
+                            let parsed = a
+                                .iter()
+                                .map(|p| p.split_once(',').and_then(|(x, y)| Some([number(x)?, number(y)?])))
+                                .collect::<Option<Vec<_>>>();
+                            let Some(points) = parsed else { return fail(format!("not a preset or points: {}", a.join(" "))) };
+                            c.points = wce_tile::falloff::FalloffCurve::from_points(&points).points;
+                        }
+
+                        c.on = true;
                     }
-
-                    c.on = true;
                 }
-            }
 
-            t.set_brush_curve(e, c, true);
-            ok("")
-        })
-    });
+                t.set_brush_curve(e, c, true);
+                ok("")
+            })
+        },
+    );
 
-    c.add("brush_image", "brush_image off | <image file> [turn degrees | random]", "the height and paint brushes' image brush (a PNG or DDS whose brightness is the weight)", |e, a| {
-        let Some(first) = a.first().cloned() else { return fail("usage: brush_image off | <image file> [turn degrees | random]") };
-        with_tile(e, |t, e| {
-            let mut b = t.image_brush(e);
-            if first == "off" {
-                b.on = false;
-            } else {
-                (b.on, b.path) = (true, first.clone());
-                match a.get(1).map(String::as_str) {
-                    Some("random") => b.random_angle = true,
-                    Some(deg) => (b.random_angle, b.angle) = (false, number(deg).unwrap_or(0.0)),
-                    None => {}
+    c.add(
+        "brush_image",
+        "brush_image off | <image file> [turn degrees | random]",
+        "the height and paint brushes' image brush (a PNG or DDS whose brightness is the weight)",
+        |e, a| {
+            let Some(first) = a.first().cloned() else { return fail("usage: brush_image off | <image file> [turn degrees | random]") };
+            with_tile(e, |t, e| {
+                let mut b = t.image_brush(e);
+                if first == "off" {
+                    b.on = false;
+                } else {
+                    (b.on, b.path) = (true, first.clone());
+                    match a.get(1).map(String::as_str) {
+                        Some("random") => b.random_angle = true,
+                        Some(deg) => (b.random_angle, b.angle) = (false, number(deg).unwrap_or(0.0)),
+                        None => {}
+                    }
                 }
-            }
 
-            match t.set_image_brush(e, b) {
-                Ok(()) => ok(""),
+                match t.set_image_brush(e, b) {
+                    Ok(()) => ok(""),
+                    Err(why) => fail(why),
+                }
+            })
+        },
+    );
+
+    c.add(
+        "brush_paint",
+        "brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock | grouped [variation 0-3] | blur]",
+        "what the paint brush lays (the entry's texture group and its variation) and how (TEd's Auto-Flange, Rock-painting)",
+        |e, a| {
+            let usage =
+                "usage: brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock | grouped [variation 0-3] | blur]";
+            let parsed = (a.len() >= 2)
+                .then(|| Some((number(&a[0])?, number(&a[1])?)))
+                .flatten()
+                .filter(|p| (0.0..4.0).contains(&p.0) && (0.0..4.0).contains(&p.1));
+            let Some((g, v)) = parsed else { return fail(usage) };
+            let value = a.get(3).and_then(|x| number(x));
+            let threshold = value.map(|t| t.clamp(0.0, 0.95));
+            let mode = match a.get(2).map(String::as_str) {
+                None | Some("normal") => wce_tile::blend_field::PaintMode::Normal,
+                Some("flange") => wce_tile::blend_field::PaintMode::AutoFlange { threshold: threshold.unwrap_or(0.0) },
+                Some("rock") => wce_tile::blend_field::PaintMode::Rock,
+                Some("grouped") => wce_tile::blend_field::PaintMode::Grouped { variation: value.map_or(1.5, |v| v.clamp(0.0, 3.0)) },
+                Some("blur") => wce_tile::blend_field::PaintMode::Blur,
+                Some(_) => return fail(usage),
+            };
+
+            with_tile(e, |t, _| {
+                t.paint_channel = g as u8 * 4 + v as u8;
+                t.brush.paint_mode = mode;
+                if let wce_tile::blend_field::PaintMode::AutoFlange { threshold } = mode {
+                    t.flange_threshold = threshold;
+                }
+
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "brush_ground",
+        "brush_ground <ground type | none>",
+        "what the ground types brush paints (a name with spaces in quotes)",
+        |e, a| {
+            let ground = a.first().and_then(|n| {
+                if n == "none" { Some(GROUND_ERASE) } else { GROUND_TYPES.iter().position(|(g, _)| g == n).map(|i| i as u8) }
+            });
+            let Some(ground) = ground else { return fail("usage: brush_ground <ground type | none>") };
+            with_tile(e, |t, _| {
+                t.ground_type = ground;
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "paint_filter",
+        "paint_filter off | height <min m> <max m> | slope <min deg> <max deg> | nogo",
+        "the paint brush's Blendmap Filters (TEd's): where the paint lands",
+        |e, a| {
+            let usage = "usage: paint_filter off | height <min m> <max m> | slope <min deg> <max deg> | nogo";
+            let range = (a.len() >= 3).then(|| Some([number(&a[1])?, number(&a[2])?])).flatten().filter(|r| r[0] <= r[1]);
+            let what = a.first().cloned().unwrap_or_default();
+            with_tile(e, |t, _| {
+                match (what.as_str(), range) {
+                    ("off", _) => (t.filter_height_on, t.filter_slope_on) = (false, false),
+                    ("height", Some(r)) => (t.filter_height_on, t.filter_height) = (true, r),
+                    ("slope", Some(r)) => (t.filter_slope_on, t.filter_slope) = (true, r),
+                    ("nogo", _) => (t.filter_slope_on, t.filter_slope) = (true, [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0]),
+                    _ => return fail(usage),
+                }
+
+                t.sync_paint_filter();
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "paint_water_types",
+        "paint_water_types [shallow from m] [deep from m]",
+        "paint the water ground types from the water depth view's depth (one undo entry; the view must have shown)",
+        |e, a| {
+            let shallow = a.first().and_then(|x| number(x)).unwrap_or(0.3);
+            let deep = a.get(1).and_then(|x| number(x)).unwrap_or(2.5).max(shallow);
+            let Some(d) = document(e) else { return no_tile() };
+            match d.paint_water_ground_types(shallow, deep) {
+                Ok(n) => ok(format!("{n} pixel(s) changed")),
                 Err(why) => fail(why),
             }
-        })
-    });
+        },
+    );
 
-    c.add("brush_paint", "brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock | grouped [variation 0-3] | blur]", "what the paint brush lays (the entry's texture group and its variation) and how (TEd's Auto-Flange, Rock-painting)", |e, a| {
-        let usage = "usage: brush_paint <group 0-3> <variation 0-3> [normal | flange [threshold] | rock | grouped [variation 0-3] | blur]";
-        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten().filter(|p| (0.0..4.0).contains(&p.0) && (0.0..4.0).contains(&p.1));
-        let Some((g, v)) = parsed else { return fail(usage) };
-        let value = a.get(3).and_then(|x| number(x));
-        let threshold = value.map(|t| t.clamp(0.0, 0.95));
-        let mode = match a.get(2).map(String::as_str) {
-            None | Some("normal") => wce_tile::blend_field::PaintMode::Normal,
-            Some("flange") => wce_tile::blend_field::PaintMode::AutoFlange { threshold: threshold.unwrap_or(0.0) },
-            Some("rock") => wce_tile::blend_field::PaintMode::Rock,
-            Some("grouped") => wce_tile::blend_field::PaintMode::Grouped { variation: value.map_or(1.5, |v| v.clamp(0.0, 3.0)) },
-            Some("blur") => wce_tile::blend_field::PaintMode::Blur,
-            Some(_) => return fail(usage),
-        };
-
-        with_tile(e, |t, _| {
-            t.paint_channel = g as u8 * 4 + v as u8;
-            t.brush.paint_mode = mode;
-            if let wce_tile::blend_field::PaintMode::AutoFlange { threshold } = mode {
-                t.flange_threshold = threshold;
+    c.add(
+        "assert_water_depth",
+        "assert_water_depth <x m> <z m> <min m> [max m]",
+        "test: the water depth view's depth at a point of the tile (none: no water)",
+        |e, a| {
+            let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
+            let (Some(d), Some((x, z, lo))) = (document(e), parsed) else {
+                return fail("usage: assert_water_depth <x m> <z m> <min m> [max m]");
+            };
+            let hi = a.get(3).and_then(|v| number(v)).unwrap_or(f32::MAX);
+            let t = d.tile();
+            let Some(w) = t.water_depth() else { return fail("no water depth worked out (show the water view)") };
+            let (ex, ez) = (t.extent_x() as f32, t.extent_z() as f32);
+            let (i, j) = ((x / ex * (w.w - 1) as f32).round() as usize, (z / ez * (w.h - 1) as f32).round() as usize);
+            let Some(&got) = w.depth.get(j.min(w.h - 1) * w.w + i.min(w.w - 1)) else { return fail("outside the tile") };
+            if got.is_finite() && (lo..=hi).contains(&got) {
+                ok(format!("{got:.2} m"))
+            } else {
+                fail(format!("depth {got:.2}, expected {lo} .. {hi}"))
             }
+        },
+    );
 
-            ok("")
-        })
-    });
-
-    c.add("brush_ground", "brush_ground <ground type | none>", "what the ground types brush paints (a name with spaces in quotes)", |e, a| {
-        let ground = a.first().and_then(|n| if n == "none" { Some(GROUND_ERASE) } else { GROUND_TYPES.iter().position(|(g, _)| g == n).map(|i| i as u8) });
-        let Some(ground) = ground else { return fail("usage: brush_ground <ground type | none>") };
-        with_tile(e, |t, _| {
-            t.ground_type = ground;
-            ok("")
-        })
-    });
-
-    c.add("paint_filter", "paint_filter off | height <min m> <max m> | slope <min deg> <max deg> | nogo", "the paint brush's Blendmap Filters (TEd's): where the paint lands", |e, a| {
-        let usage = "usage: paint_filter off | height <min m> <max m> | slope <min deg> <max deg> | nogo";
-        let range = (a.len() >= 3).then(|| Some([number(&a[1])?, number(&a[2])?])).flatten().filter(|r| r[0] <= r[1]);
-        let what = a.first().cloned().unwrap_or_default();
-        with_tile(e, |t, _| {
-            match (what.as_str(), range) {
-                ("off", _) => (t.filter_height_on, t.filter_slope_on) = (false, false),
-                ("height", Some(r)) => (t.filter_height_on, t.filter_height) = (true, r),
-                ("slope", Some(r)) => (t.filter_slope_on, t.filter_slope) = (true, r),
-                ("nogo", _) => (t.filter_slope_on, t.filter_slope) = (true, [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0]),
-                _ => return fail(usage),
-            }
-
-            t.sync_paint_filter();
-            ok("")
-        })
-    });
-
-    c.add("paint_water_types", "paint_water_types [shallow from m] [deep from m]", "paint the water ground types from the water depth view's depth (one undo entry; the view must have shown)", |e, a| {
-        let shallow = a.first().and_then(|x| number(x)).unwrap_or(0.3);
-        let deep = a.get(1).and_then(|x| number(x)).unwrap_or(2.5).max(shallow);
-        let Some(d) = document(e) else { return no_tile() };
-        match d.paint_water_ground_types(shallow, deep) {
-            Ok(n) => ok(format!("{n} pixel(s) changed")),
-            Err(why) => fail(why),
-        }
-    });
-
-    c.add("assert_water_depth", "assert_water_depth <x m> <z m> <min m> [max m]", "test: the water depth view's depth at a point of the tile (none: no water)", |e, a| {
-        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
-        let (Some(d), Some((x, z, lo))) = (document(e), parsed) else { return fail("usage: assert_water_depth <x m> <z m> <min m> [max m]") };
-        let hi = a.get(3).and_then(|v| number(v)).unwrap_or(f32::MAX);
-        let t = d.tile();
-        let Some(w) = t.water_depth() else { return fail("no water depth worked out (show the water view)") };
-        let (ex, ez) = (t.extent_x() as f32, t.extent_z() as f32);
-        let (i, j) = ((x / ex * (w.w - 1) as f32).round() as usize, (z / ez * (w.h - 1) as f32).round() as usize);
-        let Some(&got) = w.depth.get(j.min(w.h - 1) * w.w + i.min(w.w - 1)) else { return fail("outside the tile") };
-        if got.is_finite() && (lo..=hi).contains(&got) { ok(format!("{got:.2} m")) } else { fail(format!("depth {got:.2}, expected {lo} .. {hi}")) }
-    });
-
-    c.add("river_check", "river_check", "the rivers against the tile's river link targets: what does not join (logged, one line each)", |e, _| {
-        let Some(d) = document(e) else { return no_tile() };
-        let p = d.river_link_problems();
-        ok(if p.is_empty() { "the rivers meet their link targets".to_owned() } else { p.into_iter().map(|(_, m)| m).collect::<Vec<_>>().join("\n") })
-    });
+    c.add(
+        "river_check",
+        "river_check",
+        "the rivers against the tile's river link targets: what does not join (logged, one line each)",
+        |e, _| {
+            let Some(d) = document(e) else { return no_tile() };
+            let p = d.river_link_problems();
+            ok(if p.is_empty() {
+                "the rivers meet their link targets".to_owned()
+            } else {
+                p.into_iter().map(|(_, m)| m).collect::<Vec<_>>().join("\n")
+            })
+        },
+    );
 
     c.add("assert_river_problems", "assert_river_problems <count>", "test: how many river link problems the tile has", |e, a| {
-        let (Some(d), Some(n)) = (document(e), a.first().and_then(|x| x.parse::<usize>().ok())) else { return fail("usage: assert_river_problems <count>") };
+        let (Some(d), Some(n)) = (document(e), a.first().and_then(|x| x.parse::<usize>().ok())) else {
+            return fail("usage: assert_river_problems <count>");
+        };
         let p = d.river_link_problems();
-        if p.len() == n { ok("") } else { fail(format!("{} problem(s): {}", p.len(), p.into_iter().map(|(_, m)| m).collect::<Vec<_>>().join("; "))) }
+        if p.len() == n {
+            ok("")
+        } else {
+            fail(format!("{} problem(s): {}", p.len(), p.into_iter().map(|(_, m)| m).collect::<Vec<_>>().join("; ")))
+        }
     });
 
     c.add("river_snap", "river_snap", "snap the river ends at the edge onto their link target cells (one undo entry)", |e, _| {
@@ -912,14 +1030,21 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
     });
 
-    c.add("import_heights", "import_heights <picture> <black m> <white m> [add]", "a picture's brightness as the tile's heights over the whole height map, replacing them (or added); one undo entry", |e, a| {
-        let parsed = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten();
-        let (Some(d), Some((lo, hi))) = (document(e), parsed) else { return fail("usage: import_heights <picture> <black m> <white m> [add]") };
-        match d.import_height_map(Path::new(&a[0]), lo, hi, a.get(3).is_some_and(|x| x == "add")) {
-            Ok(n) => ok(format!("{n} samples changed")),
-            Err(why) => fail(why),
-        }
-    });
+    c.add(
+        "import_heights",
+        "import_heights <picture> <black m> <white m> [add]",
+        "a picture's brightness as the tile's heights over the whole height map, replacing them (or added); one undo entry",
+        |e, a| {
+            let parsed = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten();
+            let (Some(d), Some((lo, hi))) = (document(e), parsed) else {
+                return fail("usage: import_heights <picture> <black m> <white m> [add]");
+            };
+            match d.import_height_map(Path::new(&a[0]), lo, hi, a.get(3).is_some_and(|x| x == "add")) {
+                Ok(n) => ok(format!("{n} samples changed")),
+                Err(why) => fail(why),
+            }
+        },
+    );
 
     c.add("stamp_height", "stamp_height <m>", "the stamp's height at its middle (negative: a hollow)", |e, a| {
         let Some(v) = a.first().and_then(|x| number(x)) else { return fail("usage: stamp_height <m>") };
@@ -999,50 +1124,79 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("{:.2} s", start.elapsed().as_secs_f64()))
     });
 
-    c.add("tile_export_text", "tile_export_text <file>", "write the scene as an export reads it (the roads' pieces, bridge spans and crossing hints in their layer) to a file", |e, a| {
-        let Some(path) = a.first().cloned() else { return fail("usage: tile_export_text <file>") };
-        let Some(d) = document(e) else { return no_tile() };
-        match d.text_for_export(false).and_then(|t| std::fs::write(&path, t).map_err(|err| format!("{path}: {err}"))) {
-            Ok(()) => ok(format!("written to {path}")),
-            Err(why) => fail(why),
-        }
-    });
-
-    c.add("road_items", "road_items", "how many instances stand along the roads (prefab parts and bridge pieces), and the bridges' pieces", |e, _| {
-        let Some(d) = document(e) else { return no_tile() };
-        ok(d.tile().road_items_report())
-    });
-
-    c.add("road_set", "road_set <attribute> <value>", "set an attribute of the selected procedural road (road_width, road_group ...: one undo entry)", |e, a| {
-        let sel = primary(e);
-        let (Some(sel), Some(attr), Some(value)) = (sel, a.first(), a.get(1)) else { return fail("select a road: road_set <attribute> <value>") };
-        let Some(d) = document(e) else { return no_tile() };
-        if d.set_attribute(sel, attr, value) { ok(format!("{attr} = {value}")) } else { fail(format!("{attr} did not change")) }
-    });
-
-    c.add("level_along", "level_along", "TEd's Spline Road: level the ground under the selected line to its height (one undo entry)", |e, _| {
-        let sel = primary(e);
-        with_tile(e, |t, e| {
-            let Some(sel) = sel else { return fail("select a spline, polygon or line") };
+    c.add(
+        "tile_export_text",
+        "tile_export_text <file>",
+        "write the scene as an export reads it (the roads' pieces, bridge spans and crossing hints in their layer) to a file",
+        |e, a| {
+            let Some(path) = a.first().cloned() else { return fail("usage: tile_export_text <file>") };
             let Some(d) = document(e) else { return no_tile() };
-            match d.level_along(sel, &t.brush) {
-                Ok(n) => ok(format!("{n} dabs")),
+            match d.text_for_export(false).and_then(|t| std::fs::write(&path, t).map_err(|err| format!("{path}: {err}"))) {
+                Ok(()) => ok(format!("written to {path}")),
                 Err(why) => fail(why),
             }
-        })
-    });
+        },
+    );
 
-    c.add("stroke_along", "stroke_along", "the active brush (tile_mode) stroked along the selected spline, polygon or line (one undo entry)", |e, _| {
-        let sel = primary(e);
-        with_tile(e, |t, e| {
-            let (Some(sel), Some(kind)) = (sel, t.brush_kind()) else { return fail("select a spline, polygon or line, with a brush mode active") };
+    c.add(
+        "road_items",
+        "road_items",
+        "how many instances stand along the roads (prefab parts and bridge pieces), and the bridges' pieces",
+        |e, _| {
             let Some(d) = document(e) else { return no_tile() };
-            match d.stroke_along(kind, sel, &t.brush) {
-                Ok(n) => ok(format!("{n} dabs")),
-                Err(why) => fail(why),
-            }
-        })
-    });
+            ok(d.tile().road_items_report())
+        },
+    );
+
+    c.add(
+        "road_set",
+        "road_set <attribute> <value>",
+        "set an attribute of the selected procedural road (road_width, road_group ...: one undo entry)",
+        |e, a| {
+            let sel = primary(e);
+            let (Some(sel), Some(attr), Some(value)) = (sel, a.first(), a.get(1)) else {
+                return fail("select a road: road_set <attribute> <value>");
+            };
+            let Some(d) = document(e) else { return no_tile() };
+            if d.set_attribute(sel, attr, value) { ok(format!("{attr} = {value}")) } else { fail(format!("{attr} did not change")) }
+        },
+    );
+
+    c.add(
+        "level_along",
+        "level_along",
+        "TEd's Spline Road: level the ground under the selected line to its height (one undo entry)",
+        |e, _| {
+            let sel = primary(e);
+            with_tile(e, |t, e| {
+                let Some(sel) = sel else { return fail("select a spline, polygon or line") };
+                let Some(d) = document(e) else { return no_tile() };
+                match d.level_along(sel, &t.brush) {
+                    Ok(n) => ok(format!("{n} dabs")),
+                    Err(why) => fail(why),
+                }
+            })
+        },
+    );
+
+    c.add(
+        "stroke_along",
+        "stroke_along",
+        "the active brush (tile_mode) stroked along the selected spline, polygon or line (one undo entry)",
+        |e, _| {
+            let sel = primary(e);
+            with_tile(e, |t, e| {
+                let (Some(sel), Some(kind)) = (sel, t.brush_kind()) else {
+                    return fail("select a spline, polygon or line, with a brush mode active");
+                };
+                let Some(d) = document(e) else { return no_tile() };
+                match d.stroke_along(kind, sel, &t.brush) {
+                    Ok(n) => ok(format!("{n} dabs")),
+                    Err(why) => fail(why),
+                }
+            })
+        },
+    );
 
     c.add("falloff_window", "falloff_window 0|1", "close or open the Brush Falloff window", |e, a| {
         let on = a.first().is_some_and(|x| x == "1");
@@ -1070,35 +1224,48 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("texture_group", "texture_group <0-3> <name>", "set one of the tile entry's four texture groups (red, green, blue, alpha; one undo entry)", |e, a| {
-        let parsed = (a.len() >= 2).then(|| number(&a[0])).flatten();
-        let (Some(d), Some(slot)) = (document(e), parsed) else { return fail("usage: texture_group <0-3> <name>") };
-        if !d.texture_group_names().contains(&a[1]) {
-            return fail(format!("no texture group '{}' in the climates", a[1]));
-        }
+    c.add(
+        "texture_group",
+        "texture_group <0-3> <name>",
+        "set one of the tile entry's four texture groups (red, green, blue, alpha; one undo entry)",
+        |e, a| {
+            let parsed = (a.len() >= 2).then(|| number(&a[0])).flatten();
+            let (Some(d), Some(slot)) = (document(e), parsed) else { return fail("usage: texture_group <0-3> <name>") };
+            if !d.texture_group_names().contains(&a[1]) {
+                return fail(format!("no texture group '{}' in the climates", a[1]));
+            }
 
-        match d.set_texture_group(slot as usize, &a[1]) {
-            Ok(()) => ok(""),
-            Err(m) => fail(m),
-        }
-    });
-
-    c.add("tile_select", "tile_select <type | element index> [add]", "select the first instance of a type, or an element by index", |e, a| {
-        let Some(d) = document(e) else { return no_tile() };
-        let Some(what) = a.first() else { return fail("usage: tile_select <type | element index> [add]") };
-        let add = a.get(1).is_some_and(|x| x == "add");
-        let found = match what.parse::<i64>() {
-            Ok(i) => usize::try_from(i).ok(),
-            Err(_) => d.tile().instances().iter().copied().find(|&el| d.tile().tscene().type_of(el) == what),
-        };
-
-        let Some(found) = found.filter(|&f| f < d.tile().tscene().doc().elements().len()) else { return fail(format!("nothing found for '{what}'")) };
-        select_elem(e, Some(found), add);
-        ok(format!("element {found}"))
-    });
+            match d.set_texture_group(slot as usize, &a[1]) {
+                Ok(()) => ok(""),
+                Err(m) => fail(m),
+            }
+        },
+    );
 
     c.add(
-        "tile_select_all", "tile_select_all <type> [key words]",
+        "tile_select",
+        "tile_select <type | element index> [add]",
+        "select the first instance of a type, or an element by index",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(what) = a.first() else { return fail("usage: tile_select <type | element index> [add]") };
+            let add = a.get(1).is_some_and(|x| x == "add");
+            let found = match what.parse::<i64>() {
+                Ok(i) => usize::try_from(i).ok(),
+                Err(_) => d.tile().instances().iter().copied().find(|&el| d.tile().tscene().type_of(el) == what),
+            };
+
+            let Some(found) = found.filter(|&f| f < d.tile().tscene().doc().elements().len()) else {
+                return fail(format!("nothing found for '{what}'"));
+            };
+            select_elem(e, Some(found), add);
+            ok(format!("element {found}"))
+        },
+    );
+
+    c.add(
+        "tile_select_all",
+        "tile_select_all <type> [key words]",
         "select every instance of a type (BUILDING_INSTANCE, ...) whose key holds the words (and-ed; none: all of them)",
         |e, a| {
             let Some(id) = crate::tool::document_id(e) else { return no_tile() };
@@ -1106,8 +1273,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             let Some(ty) = a.first() else { return fail("usage: tile_select_all <type> [key words]") };
             let words = a[1..].iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
             let sc = d.tile().tscene();
-            let key = |el: usize| sc.doc().find_attr(el, "key").map(|at| String::from_utf8_lossy(sc.doc().attr_raw(el, at)).to_lowercase()).unwrap_or_default();
-            let found = d.tile().instances().iter().copied().filter(|&el| sc.type_of(el) == ty && words.iter().all(|w| key(el).contains(w))).collect::<Vec<_>>();
+            let key = |el: usize| {
+                sc.doc()
+                    .find_attr(el, "key")
+                    .map(|at| String::from_utf8_lossy(sc.doc().attr_raw(el, at)).to_lowercase())
+                    .unwrap_or_default()
+            };
+            let found = d
+                .tile()
+                .instances()
+                .iter()
+                .copied()
+                .filter(|&el| sc.type_of(el) == ty && words.iter().all(|w| key(el).contains(w)))
+                .collect::<Vec<_>>();
             e.selection.clear();
             for &el in &found {
                 e.selection.add(wce_scene::render_scene::SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(el) });
@@ -1117,39 +1295,47 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_move", "tile_move <dx m> <dz m>", "move the selected instance over the ground (keeps its height above the terrain), or the selected group", |e, a| {
-        if primary(e).is_none() && let Some(g) = selected_group_or_layer(e) {
+    c.add(
+        "tile_move",
+        "tile_move <dx m> <dz m>",
+        "move the selected instance over the ground (keeps its height above the terrain), or the selected group",
+        |e, a| {
+            if primary(e).is_none()
+                && let Some(g) = selected_group_or_layer(e)
+            {
+                let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+                let Some((dx, dz)) = parsed else { return fail("usage: tile_move <dx m> <dz m>") };
+                let Some(d) = document(e) else { return no_tile() };
+                let mut w = world_transform(d.tile().tscene(), g);
+                let u = d.tile().unit();
+                w.position.x += f64::from(dx) * u;
+                w.position.z += f64::from(dz) * u;
+                return if d.set_world_transform(g, &w, 0) { ok("") } else { fail("cannot move it") };
+            }
+
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
             let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
             let Some((dx, dz)) = parsed else { return fail("usage: tile_move <dx m> <dz m>") };
-            let Some(d) = document(e) else { return no_tile() };
-            let mut w = world_transform(d.tile().tscene(), g);
-            let u = d.tile().unit();
-            w.position.x += f64::from(dx) * u;
-            w.position.z += f64::from(dz) * u;
-            return if d.set_world_transform(g, &w, 0) { ok("") } else { fail("cannot move it") };
-        }
+            let Some(el) = el else { return fail("nothing selected") };
+            let t = d.tile();
+            let mut p = t.world_position(el);
+            let above = p.y - t.terrain_height(p.x, p.z);
+            p.x += dx;
+            p.z += dz;
+            p.y = t.terrain_height(p.x, p.z) + above;
+            if !t.is_instance(el) {
+                return fail("cannot move this element");
+            }
 
-        let el = primary(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-        let Some((dx, dz)) = parsed else { return fail("usage: tile_move <dx m> <dz m>") };
-        let Some(el) = el else { return fail("nothing selected") };
-        let t = d.tile();
-        let mut p = t.world_position(el);
-        let above = p.y - t.terrain_height(p.x, p.z);
-        p.x += dx;
-        p.z += dz;
-        p.y = t.terrain_height(p.x, p.z) + above;
-        if !t.is_instance(el) {
-            return fail("cannot move this element");
-        }
-
-        d.set_world_metres(el, p, 0);
-        ok("")
-    });
+            d.set_world_metres(el, p, 0);
+            ok("")
+        },
+    );
 
     c.add(
-        "snap", "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off] [edges on|off] [heights on|off] [angle <deg>]",
+        "snap",
+        "snap [grid on|off] [size <m>] [tolerance <m>] [vertices on|off] [edges on|off] [heights on|off] [angle <deg>]",
         "the snapping of the grab and the placing (the viewport's snap chip); no argument: log it",
         |e, a| {
             with_tile(e, |t, _| {
@@ -1171,38 +1357,43 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 }
 
                 ok(format!(
-                    "grid {} size {} tolerance {} vertices {} edges {} heights {} angle {}", t.snap_grid, t.grid_m, t.snap_tolerance, t.snap_vertices,
-                    t.snap_edges, t.snap_heights, t.angle_tolerance,
+                    "grid {} size {} tolerance {} vertices {} edges {} heights {} angle {}",
+                    t.snap_grid, t.grid_m, t.snap_tolerance, t.snap_vertices, t.snap_edges, t.snap_heights, t.angle_tolerance,
                 ))
             })
         },
     );
 
-    c.add("grab_to", "grab_to <x m> <z m>", "the G grab: put the selected instance on the ground at a point (the snapping applies)", |e, a| {
-        with_doc(e, |t, e| {
-            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-            let Some((x, z)) = parsed else { return fail("usage: grab_to <x m> <z m>") };
-            if !t.begin_grab(e) {
-                return fail("nothing selected");
-            }
+    c.add(
+        "grab_to",
+        "grab_to <x m> <z m>",
+        "the G grab: put the selected instance on the ground at a point (the snapping applies)",
+        |e, a| {
+            with_doc(e, |t, e| {
+                let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+                let Some((x, z)) = parsed else { return fail("usage: grab_to <x m> <z m>") };
+                if !t.begin_grab(e) {
+                    return fail("nothing selected");
+                }
 
-            let d = document(e).expect("a tile");
-            let (raw_x, raw_z) = (x, z);
-            let p = t.snap_point(d.tile(), Float3::new(x, 0.0, z), t.grab_elem);
-            let (x, z) = (p.x, p.z);
-            let y = d.tile().terrain_height(x, z) + t.grab_y_offset as f32;
-            if let Some(g) = t.grab_elem {
-                let piece = if t.snap_vertices { d.tile().snap_piece(g, Float3::new(raw_x, y, raw_z), t.piece_reach()) } else { None };
-                match piece {
-                    Some(w) => d.set_world_transform(g, &w, t.grab_gesture),
-                    None => d.set_world_metres(g, Float3::new(x, y, z), t.grab_gesture),
-                };
-            }
+                let d = document(e).expect("a tile");
+                let (raw_x, raw_z) = (x, z);
+                let p = t.snap_point(d.tile(), Float3::new(x, 0.0, z), t.grab_elem);
+                let (x, z) = (p.x, p.z);
+                let y = d.tile().terrain_height(x, z) + t.grab_y_offset as f32;
+                if let Some(g) = t.grab_elem {
+                    let piece = if t.snap_vertices { d.tile().snap_piece(g, Float3::new(raw_x, y, raw_z), t.piece_reach()) } else { None };
+                    match piece {
+                        Some(w) => d.set_world_transform(g, &w, t.grab_gesture),
+                        None => d.set_world_metres(g, Float3::new(x, y, z), t.grab_gesture),
+                    };
+                }
 
-            t.end_grab(e, true);
-            ok("")
-        })
-    });
+                t.end_grab(e, true);
+                ok("")
+            })
+        },
+    );
 
     c.add("duplicate", "duplicate", "duplicate the selected instance (4 m to the side) and select the copy", |e, _| {
         let el = primary(e);
@@ -1254,40 +1445,46 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("add_polygon", "add_polygon \"TYPE|HINT|x,z;x,z;...\"", "add a polygon (AI hint, zone, ...) from points in metres in the working layer; selects it", |e, a| {
-        let el = primary(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let Some(spec) = a.first() else { return fail("usage: add_polygon \"TYPE|HINT|x,z;x,z;...\"") };
-        let parts = spec.split('|').collect::<Vec<_>>();
-        if parts.len() < 3 {
-            return fail("expected TYPE|HINT|x,z;x,z");
-        }
-
-        let pts = parts[2]
-            .split(';')
-            .filter_map(|item| {
-                let xz = item.split(',').collect::<Vec<_>>();
-                if xz.len() != 2 {
-                    return None;
-                }
-
-                let (x, z) = (number(xz[0])?, number(xz[1])?);
-                Some(Float3::new(x, d.tile().terrain_height(x, z), z))
-            })
-            .collect::<Vec<_>>();
-        let _ = el;
-        let (kind, hint) = (parts[0].to_owned(), parts[1].to_owned());
-        with_tile(e, |t, e| {
+    c.add(
+        "add_polygon",
+        "add_polygon \"TYPE|HINT|x,z;x,z;...\"",
+        "add a polygon (AI hint, zone, ...) from points in metres in the working layer; selects it",
+        |e, a| {
+            let el = primary(e);
             let Some(d) = document(e) else { return no_tile() };
-            let layer = t.new_items_layer(d);
-            if crate::tool::POLYGON_TYPES.contains(&kind.as_str()) {
-                d.add_polygon(layer, &kind, &hint, &pts).map_or_else(fail, |_| ok(format!("added {kind}")))
-            } else {
-                let Some(layer) = layer else { return fail("this tile has no scene graph") };
-                d.create(&kind, layer, &wce_tile_editor::tile_document::Create::Line(pts), "").map_or_else(fail, |_| ok(format!("added {kind}")))
+            let Some(spec) = a.first() else { return fail("usage: add_polygon \"TYPE|HINT|x,z;x,z;...\"") };
+            let parts = spec.split('|').collect::<Vec<_>>();
+            if parts.len() < 3 {
+                return fail("expected TYPE|HINT|x,z;x,z");
             }
-        })
-    });
+
+            let pts = parts[2]
+                .split(';')
+                .filter_map(|item| {
+                    let xz = item.split(',').collect::<Vec<_>>();
+                    if xz.len() != 2 {
+                        return None;
+                    }
+
+                    let (x, z) = (number(xz[0])?, number(xz[1])?);
+                    Some(Float3::new(x, d.tile().terrain_height(x, z), z))
+                })
+                .collect::<Vec<_>>();
+            let _ = el;
+            let (kind, hint) = (parts[0].to_owned(), parts[1].to_owned());
+            with_tile(e, |t, e| {
+                let Some(d) = document(e) else { return no_tile() };
+                let layer = t.new_items_layer(d);
+                if crate::tool::POLYGON_TYPES.contains(&kind.as_str()) {
+                    d.add_polygon(layer, &kind, &hint, &pts).map_or_else(fail, |_| ok(format!("added {kind}")))
+                } else {
+                    let Some(layer) = layer else { return fail("this tile has no scene graph") };
+                    d.create(&kind, layer, &wce_tile_editor::tile_document::Create::Line(pts), "")
+                        .map_or_else(fail, |_| ok(format!("added {kind}")))
+                }
+            })
+        },
+    );
 
     c.add(
         "create", "create <type> <x m> <z m> [key]",
@@ -1322,59 +1519,95 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.polygon_point(el, &a[0], idx, p, 0).map_or_else(fail, |()| ok(""))
     });
 
-    c.add("spline_value", "spline_value <attribute> <value> [point index|all]", "a value of the selected river's or road's points (width, foam_amount, alpha_fade, flow_speed, terrain_offset)", |e, a| {
-        let el = primary(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let (Some(attr), Some(value)) = (a.first(), a.get(1).filter(|v| number(v).is_some())) else {
-            return fail("usage: spline_value <attribute> <value> [point index|all]");
-        };
+    c.add(
+        "spline_value",
+        "spline_value <attribute> <value> [point index|all]",
+        "a value of the selected river's or road's points (width, foam_amount, alpha_fade, flow_speed, terrain_offset)",
+        |e, a| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let (Some(attr), Some(value)) = (a.first(), a.get(1).filter(|v| number(v).is_some())) else {
+                return fail("usage: spline_value <attribute> <value> [point index|all]");
+            };
 
-        let Some(el) = el.filter(|&s| d.is_spline(s)) else { return fail("no river or road selected") };
-        let n = d.tile().tscene().polygon_points(el).len();
-        let points = match a.get(2).map(String::as_str) {
-            None | Some("all") => (0..n).collect::<Vec<_>>(),
-            Some(i) => match i.parse::<usize>() {
-                Ok(i) if i < n => vec![i],
-                _ => return fail("no such point"),
-            },
-        };
+            let Some(el) = el.filter(|&s| d.is_spline(s)) else { return fail("no river or road selected") };
+            let n = d.tile().tscene().polygon_points(el).len();
+            let points = match a.get(2).map(String::as_str) {
+                None | Some("all") => (0..n).collect::<Vec<_>>(),
+                Some(i) => match i.parse::<usize>() {
+                    Ok(i) if i < n => vec![i],
+                    _ => return fail("no such point"),
+                },
+            };
 
-        if d.set_spline_value(el, &points, attr, value, 0) { ok(format!("{attr} = {value} on {} points", points.len())) } else { fail("nothing changed") }
-    });
+            if d.set_spline_value(el, &points, attr, value, 0) {
+                ok(format!("{attr} = {value} on {} points", points.len()))
+            } else {
+                fail("nothing changed")
+            }
+        },
+    );
 
-    c.add("wall_sharp", "wall_sharp <point index> on|off", "mark a point of the selected wall (WceWallSpline) as a corner (a mitre) or a smooth one", |e, a| {
-        let el = primary(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let (Some(i), Some(on)) = (a.first().and_then(|x| x.parse::<usize>().ok()), a.get(1).map(|x| x == "on")) else { return fail("usage: wall_sharp <point index> on|off") };
-        let Some(el) = el.filter(|&el| d.tile().is_wall(el)) else { return fail("no wall selected") };
-        if d.set_point_attribute(el, i, "sharp", wce_tile::properties::format_bool(on)) { ok("") } else { fail("no such point") }
-    });
+    c.add(
+        "wall_sharp",
+        "wall_sharp <point index> on|off",
+        "mark a point of the selected wall (WceWallSpline) as a corner (a mitre) or a smooth one",
+        |e, a| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let (Some(i), Some(on)) = (a.first().and_then(|x| x.parse::<usize>().ok()), a.get(1).map(|x| x == "on")) else {
+                return fail("usage: wall_sharp <point index> on|off");
+            };
+            let Some(el) = el.filter(|&el| d.tile().is_wall(el)) else { return fail("no wall selected") };
+            if d.set_point_attribute(el, i, "sharp", wce_tile::properties::format_bool(on)) { ok("") } else { fail("no such point") }
+        },
+    );
 
-    c.add("road_sharp", "road_sharp <point index> on|off", "mark a point of the selected procedural road (WceRoadSpline) as a corner (a corner piece) or a bend", |e, a| {
-        let el = primary(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let (Some(i), Some(on)) = (a.first().and_then(|x| x.parse::<usize>().ok()), a.get(1).map(|x| x == "on")) else { return fail("usage: road_sharp <point index> on|off") };
-        let Some(el) = el.filter(|&el| d.tile().is_road(el)) else { return fail("no road selected") };
-        if d.set_point_attribute(el, i, "sharp", wce_tile::properties::format_bool(on)) { ok("") } else { fail("no such point") }
-    });
+    c.add(
+        "road_sharp",
+        "road_sharp <point index> on|off",
+        "mark a point of the selected procedural road (WceRoadSpline) as a corner (a corner piece) or a bend",
+        |e, a| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let (Some(i), Some(on)) = (a.first().and_then(|x| x.parse::<usize>().ok()), a.get(1).map(|x| x == "on")) else {
+                return fail("usage: road_sharp <point index> on|off");
+            };
+            let Some(el) = el.filter(|&el| d.tile().is_road(el)) else { return fail("no road selected") };
+            if d.set_point_attribute(el, i, "sharp", wce_tile::properties::format_bool(on)) { ok("") } else { fail("no such point") }
+        },
+    );
 
-    c.add("ground_profile", "ground_profile <x0 m> <z0 m> <x1 m> <z1 m> <n>", "log the terrain's height (as it shows) at n + 1 points from (x0, z0) to (x1, z1), metres", |e, a| {
-        let v = a.iter().filter_map(|t| t.parse::<f32>().ok()).collect::<Vec<_>>();
-        let [x0, z0, x1, z1, n] = v.as_slice() else { return fail("usage: ground_profile <x0 m> <z0 m> <x1 m> <z1 m> <n>") };
-        let Some(d) = document(e) else { return no_tile() };
-        let n = (*n as usize).max(1);
-        ok((0..=n).map(|i| {
-            let t = i as f32 / n as f32;
-            let (x, z) = (x0 + (x1 - x0) * t, z0 + (z1 - z0) * t);
-            format!("({x:.1}, {z:.1}) {:.2}", d.tile().terrain_height(x, z))
-        }).collect::<Vec<_>>().join("\n"))
-    });
+    c.add(
+        "ground_profile",
+        "ground_profile <x0 m> <z0 m> <x1 m> <z1 m> <n>",
+        "log the terrain's height (as it shows) at n + 1 points from (x0, z0) to (x1, z1), metres",
+        |e, a| {
+            let v = a.iter().filter_map(|t| t.parse::<f32>().ok()).collect::<Vec<_>>();
+            let [x0, z0, x1, z1, n] = v.as_slice() else { return fail("usage: ground_profile <x0 m> <z0 m> <x1 m> <z1 m> <n>") };
+            let Some(d) = document(e) else { return no_tile() };
+            let n = (*n as usize).max(1);
+            ok((0..=n)
+                .map(|i| {
+                    let t = i as f32 / n as f32;
+                    let (x, z) = (x0 + (x1 - x0) * t, z0 + (z1 - z0) * t);
+                    format!("({x:.1}, {z:.1}) {:.2}", d.tile().terrain_height(x, z))
+                })
+                .collect::<Vec<_>>()
+                .join("\n"))
+        },
+    );
 
-    c.add("wall_layers", "wall_layers", "log the kit walls' height layers, in the stack's order: each one's name and owner (wall:<key>#<signature>)", |e, _| {
-        let Some(d) = document(e) else { return no_tile() };
-        let l = d.tile().kit_wall_layers();
-        ok(format!("{} layer(s){}", l.len(), l.iter().map(|(n, o)| format!("; {n} ({o})")).collect::<String>()))
-    });
+    c.add(
+        "wall_layers",
+        "wall_layers",
+        "log the kit walls' height layers, in the stack's order: each one's name and owner (wall:<key>#<signature>)",
+        |e, _| {
+            let Some(d) = document(e) else { return no_tile() };
+            let l = d.tile().kit_wall_layers();
+            ok(format!("{} layer(s){}", l.len(), l.iter().map(|(n, o)| format!("; {n} ({o})")).collect::<String>()))
+        },
+    );
 
     c.add("wall_levels", "wall_levels", "log the selected kit wall's pieces with their levels at their joints, the ground at their middle below the wall's height layer and as it shows (scene y), and their joints (metres)", |e, _| {
         let el = primary(e);
@@ -1439,24 +1672,29 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             l.plan.warnings.iter().chain(&skipped).chain(&defences_skipped).map(|w| format!("; {w}")).collect::<String>()))
     });
 
-    c.add("assert_wall", "assert_wall <corners> <steps> [start end: free|attached]", "test: the selected wall's layout has these many corners and step sections (and its ends are free or attached)", |e, a| {
-        let el = primary(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let Some(l) = el.and_then(|el| d.tile().wall_layout(el)) else { return fail("no wall selected") };
-        let want = |i: usize| a.get(i).and_then(|x| x.parse::<usize>().ok());
-        let (corners, steps) = (l.plan.corners.len(), l.plan.steps.len());
-        if want(0).is_some_and(|n| n != corners) || want(1).is_some_and(|n| n != steps) {
-            return fail(format!("{corners} corner(s), {steps} step section(s)"));
-        }
-
-        for (k, end) in l.ends.iter().enumerate() {
-            if let Some(w) = a.get(2 + k).filter(|w| (*w == "attached") != end.is_some()) {
-                return fail(format!("end {k} is {}, not {w}", if end.is_some() { "attached" } else { "free" }));
+    c.add(
+        "assert_wall",
+        "assert_wall <corners> <steps> [start end: free|attached]",
+        "test: the selected wall's layout has these many corners and step sections (and its ends are free or attached)",
+        |e, a| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(l) = el.and_then(|el| d.tile().wall_layout(el)) else { return fail("no wall selected") };
+            let want = |i: usize| a.get(i).and_then(|x| x.parse::<usize>().ok());
+            let (corners, steps) = (l.plan.corners.len(), l.plan.steps.len());
+            if want(0).is_some_and(|n| n != corners) || want(1).is_some_and(|n| n != steps) {
+                return fail(format!("{corners} corner(s), {steps} step section(s)"));
             }
-        }
 
-        ok("")
-    });
+            for (k, end) in l.ends.iter().enumerate() {
+                if let Some(w) = a.get(2 + k).filter(|w| (*w == "attached") != end.is_some()) {
+                    return fail(format!("end {k} is {}, not {w}", if end.is_some() { "attached" } else { "free" }));
+                }
+            }
+
+            ok("")
+        },
+    );
 
     c.add("assert_wall_doors", "assert_wall_doors <n>", "test: the selected wall has n door sections", |e, a| {
         let el = primary(e);
@@ -1464,30 +1702,50 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let Some(l) = el.and_then(|el| d.tile().wall_layout(el)) else { return fail("no wall selected") };
         let ps = wce_walls::pieces::pieces(&l.plan, l.profile);
         let (doors, _) = d.tile().wall_doors(&l, &ps);
-        if a.first().and_then(|x| x.parse::<usize>().ok()) == Some(doors.len()) { ok("") } else { fail(format!("{} door section(s)", doors.len())) }
-    });
-
-    c.add("tile_measure", "tile_measure", "log the selected tape measure's (WceMeasureLine) lengths: the whole line's and each stretch's", |e, _| {
-        let el = primary(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let Some(m) = el.and_then(|el| d.tile().measure_line(el)) else { return fail("no tape measure selected") };
-        let mut out = crate::measure_tool::summary(&m).into_iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>();
-        for (i, s) in m.stretches.iter().enumerate() {
-            out.push(format!("{i}-{}: ground {:.3} straight {:.3} map {:.3} rise {:+.3} grade {:+.2} %", i + 1, s.ground, s.straight, s.horizontal, s.rise, s.grade_percent()));
+        if a.first().and_then(|x| x.parse::<usize>().ok()) == Some(doors.len()) {
+            ok("")
+        } else {
+            fail(format!("{} door section(s)", doors.len()))
         }
-
-        ok(out.join("\n"))
     });
 
     c.add(
-        "assert_measure", "assert_measure <ground m> <straight m> <map m> [tolerance m]",
+        "tile_measure",
+        "tile_measure",
+        "log the selected tape measure's (WceMeasureLine) lengths: the whole line's and each stretch's",
+        |e, _| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(m) = el.and_then(|el| d.tile().measure_line(el)) else { return fail("no tape measure selected") };
+            let mut out = crate::measure_tool::summary(&m).into_iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>();
+            for (i, s) in m.stretches.iter().enumerate() {
+                out.push(format!(
+                    "{i}-{}: ground {:.3} straight {:.3} map {:.3} rise {:+.3} grade {:+.2} %",
+                    i + 1,
+                    s.ground,
+                    s.straight,
+                    s.horizontal,
+                    s.rise,
+                    s.grade_percent()
+                ));
+            }
+
+            ok(out.join("\n"))
+        },
+    );
+
+    c.add(
+        "assert_measure",
+        "assert_measure <ground m> <straight m> <map m> [tolerance m]",
         "test: the selected tape measure's total lengths along the ground, straight and on the map (tolerance 0.01 m)",
         |e, a| {
             let el = primary(e);
             let Some(d) = document(e) else { return no_tile() };
             let Some(m) = el.and_then(|el| d.tile().measure_line(el)) else { return fail("no tape measure selected") };
             let want = |i: usize| a.get(i).and_then(|v| number(v));
-            let (Some(ground), Some(straight), Some(map)) = (want(0), want(1), want(2)) else { return fail("usage: assert_measure <ground> <straight> <map> [tolerance]") };
+            let (Some(ground), Some(straight), Some(map)) = (want(0), want(1), want(2)) else {
+                return fail("usage: assert_measure <ground> <straight> <map> [tolerance]");
+            };
             let tol = f64::from(want(3).unwrap_or(0.01));
             let t = &m.total;
             let got = format!("ground {:.3}, straight {:.3}, map {:.3}", t.ground, t.straight, t.horizontal);
@@ -1503,17 +1761,24 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(crate::measure_tool::angle_summary(&a).into_iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"))
     });
 
-    c.add("assert_angle", "assert_angle <on the map deg> <in space deg> [tolerance deg]", "test: the selected angle finder's angles (tolerance 0.1 deg)", |e, a| {
-        let el = primary(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let Some(got) = el.and_then(|el| d.tile().angle_finder(el)) else { return fail("no angle finder selected") };
-        let (Some(map), Some(space)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else { return fail("usage: assert_angle <map> <space> [tolerance]") };
-        let tol = f64::from(a.get(2).and_then(|v| number(v)).unwrap_or(0.1));
-        let text = format!("on the map {:.3}, in space {:.3}", got.on_map, got.in_space);
-        if (got.on_map - f64::from(map)).abs() > tol || (got.in_space - f64::from(space)).abs() > tol { fail(text) } else { ok(text) }
-    });
+    c.add(
+        "assert_angle",
+        "assert_angle <on the map deg> <in space deg> [tolerance deg]",
+        "test: the selected angle finder's angles (tolerance 0.1 deg)",
+        |e, a| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(got) = el.and_then(|el| d.tile().angle_finder(el)) else { return fail("no angle finder selected") };
+            let (Some(map), Some(space)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else {
+                return fail("usage: assert_angle <map> <space> [tolerance]");
+            };
+            let tol = f64::from(a.get(2).and_then(|v| number(v)).unwrap_or(0.1));
+            let text = format!("on the map {:.3}, in space {:.3}", got.on_map, got.in_space);
+            if (got.on_map - f64::from(map)).abs() > tol || (got.in_space - f64::from(space)).abs() > tol { fail(text) } else { ok(text) }
+        },
+    );
 
-    c.add("new_layer", "new_layer <name>","a new layer under the scene graph, selected", |e, a| {
+    c.add("new_layer", "new_layer <name>", "a new layer under the scene graph, selected", |e, a| {
         let Some(d) = document(e) else { return no_tile() };
         let Some(name) = a.first() else { return fail("usage: new_layer <name>") };
         let graph = d.tile().tscene().scene_graph();
@@ -1533,20 +1798,39 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.move_to_layer(el, layer).map_or_else(fail, |_| ok(""))
     });
 
-    c.add("tile_problems", "tile_problems", "log what the game would leave out of the open tile: the manual trees outside every vegetation exclusion polygon", |e, _| {
-        let Some(d) = document(e) else { return no_tile() };
-        let trees = d.trees_outside_exclusions();
-        let shown = trees.iter().take(10).map(|&t| {
-            let p = d.tile().world_position(t);
-            format!("{t} ({:.1}, {:.1})", p.x, p.z)
-        }).collect::<Vec<_>>();
-        ok(format!("{} manual tree(s) outside every vegetation exclusion polygon{}{}", trees.len(), if shown.is_empty() { "" } else { ": " }, shown.join(", ")))
-    });
+    c.add(
+        "tile_problems",
+        "tile_problems",
+        "log what the game would leave out of the open tile: the manual trees outside every vegetation exclusion polygon",
+        |e, _| {
+            let Some(d) = document(e) else { return no_tile() };
+            let trees = d.trees_outside_exclusions();
+            let shown = trees
+                .iter()
+                .take(10)
+                .map(|&t| {
+                    let p = d.tile().world_position(t);
+                    format!("{t} ({:.1}, {:.1})", p.x, p.z)
+                })
+                .collect::<Vec<_>>();
+            ok(format!(
+                "{} manual tree(s) outside every vegetation exclusion polygon{}{}",
+                trees.len(),
+                if shown.is_empty() { "" } else { ": " },
+                shown.join(", ")
+            ))
+        },
+    );
 
-    c.add("save_for_kit", "save_for_kit [raw_data folder]", "write the open tile as TEd reads it into the Assembly Kit (or this raw_data folder)", |e, a| {
-        let kit = a.first().map(std::path::PathBuf::from);
-        with_tile(e, |t, e| t.save_for_kit(e, kit).map_or_else(fail, ok))
-    });
+    c.add(
+        "save_for_kit",
+        "save_for_kit [raw_data folder]",
+        "write the open tile as TEd reads it into the Assembly Kit (or this raw_data folder)",
+        |e, a| {
+            let kit = a.first().map(std::path::PathBuf::from);
+            with_tile(e, |t, e| t.save_for_kit(e, kit).map_or_else(fail, ok))
+        },
+    );
 
     c.add("new_tile", "new_tile <name> [x cells] [y cells] [height m] [density 32|64|128]", "a new battle tile, flat at the height, as a project (Tile > New tile...; defaults 8 8 10, density 128, or 32 above 16 cells), opened", |e, a| {
         use wce_tile::new_tile;
@@ -1583,11 +1867,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.migrate_extracted(e).map_or_else(fail, ok))
     });
 
-    c.add("save_tile_as", "save_tile_as <tile set> <name> <variation>", "TEd's Save Tile As (Tile > Save tile as...): the open tile as another battle tile in the projects folder", |e, a| {
-        let (Some(set), Some(name), Some(v)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else { return fail("usage: save_tile_as <tile set> <name> <variation>") };
-        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
-        with_tile(e, |t, e| t.save_tile_as(e, id, &set, &name, &v).map_or_else(fail, ok))
-    });
+    c.add(
+        "save_tile_as",
+        "save_tile_as <tile set> <name> <variation>",
+        "TEd's Save Tile As (Tile > Save tile as...): the open tile as another battle tile in the projects folder",
+        |e, a| {
+            let (Some(set), Some(name), Some(v)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else {
+                return fail("usage: save_tile_as <tile set> <name> <variation>");
+            };
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            with_tile(e, |t, e| t.save_tile_as(e, id, &set, &name, &v).map_or_else(fail, ok))
+        },
+    );
 
     c.add("resize_tile", "resize_tile <x cells> <z cells> [centre | <x cell> <z cell>] [flat]", "TEd's Resize Tile (Tile > Resize tile...): the old tile centred (default) or at a cell, the new area carried out from the edges (or flat); saved and opened again", |e, a| {
         let (Some(x), Some(z)) = (a.first().and_then(|v| v.parse::<i32>().ok()), a.get(1).and_then(|v| v.parse::<i32>().ok())) else { return fail("usage: resize_tile <x cells> <z cells> [centre | <x cell> <z cell>] [flat]") };
@@ -1603,26 +1894,41 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.resize_tile(e, id, &r).map_or_else(fail, ok))
     });
 
-    c.add("tile_set_new", "tile_set_new <name> [r g b]", "a new tile set in the projects' tile database (Tile > Tile database... > New tile set); the colour picked when not given", |e, a| {
-        let Some(name) = a.first().cloned() else { return fail("usage: tile_set_new <name> [r g b]") };
-        let colour = (a.len() >= 4).then(|| Some([a[1].parse::<u8>().ok()?, a[2].parse::<u8>().ok()?, a[3].parse::<u8>().ok()?])).flatten();
-        with_tile(e, |t, e| t.new_tile_set(e, &name, colour).map_or_else(fail, ok))
-    });
+    c.add(
+        "tile_set_new",
+        "tile_set_new <name> [r g b]",
+        "a new tile set in the projects' tile database (Tile > Tile database... > New tile set); the colour picked when not given",
+        |e, a| {
+            let Some(name) = a.first().cloned() else { return fail("usage: tile_set_new <name> [r g b]") };
+            let colour =
+                (a.len() >= 4).then(|| Some([a[1].parse::<u8>().ok()?, a[2].parse::<u8>().ok()?, a[3].parse::<u8>().ok()?])).flatten();
+            with_tile(e, |t, e| t.new_tile_set(e, &name, colour).map_or_else(fail, ok))
+        },
+    );
 
-    c.add("tile_database", "tile_database [<set> <n tiles>]", "open the Tile database window; with a set, test that it lists that many tiles in it", |e, a| {
-        with_tile(e, |t, e| {
-            t.open_tile_database(e);
-            let ui = t.tile_db.as_ref().expect("opened");
-            match (a.first(), a.get(1).and_then(|v| v.parse::<usize>().ok())) {
-                (Some(set), Some(n)) => {
-                    let got = ui.tiles.get(set).map_or(0, Vec::len);
-                    if got == n && ui.sets.iter().any(|s| &s.0.name == set) { ok("") } else { fail(format!("set {set}: {got} tile(s), listed {}", ui.sets.iter().any(|s| &s.0.name == set))) }
+    c.add(
+        "tile_database",
+        "tile_database [<set> <n tiles>]",
+        "open the Tile database window; with a set, test that it lists that many tiles in it",
+        |e, a| {
+            with_tile(e, |t, e| {
+                t.open_tile_database(e);
+                let ui = t.tile_db.as_ref().expect("opened");
+                match (a.first(), a.get(1).and_then(|v| v.parse::<usize>().ok())) {
+                    (Some(set), Some(n)) => {
+                        let got = ui.tiles.get(set).map_or(0, Vec::len);
+                        if got == n && ui.sets.iter().any(|s| &s.0.name == set) {
+                            ok("")
+                        } else {
+                            fail(format!("set {set}: {got} tile(s), listed {}", ui.sets.iter().any(|s| &s.0.name == set)))
+                        }
+                    }
+
+                    _ => ok(format!("{} set(s)", ui.sets.len())),
                 }
-
-                _ => ok(format!("{} set(s)", ui.sets.len())),
-            }
-        })
-    });
+            })
+        },
+    );
 
     c.add("new_tile_dialog", "new_tile_dialog", "open the New tile dialog (Tile > New tile...)", |e, _| {
         with_tile(e, |t, _| {
@@ -1631,40 +1937,58 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("import_from_kit", "import_from_kit", "open the Assembly Kit's copy of the open project (its next save replaces the project; an extracted tile is extracted again)", |e, _| {
-        with_tile(e, |t, e| t.import_from_kit(e).map_or_else(fail, ok))
-    });
+    c.add(
+        "import_from_kit",
+        "import_from_kit",
+        "open the Assembly Kit's copy of the open project (its next save replaces the project; an extracted tile is extracted again)",
+        |e, _| with_tile(e, |t, e| t.import_from_kit(e).map_or_else(fail, ok)),
+    );
 
-    c.add("save_to", "save_to <folder>", "write the tile (tile.wce, the height map and its other files) into another folder (the originals stay)", |e, a| {
-        let Some(d) = document(e) else { return no_tile() };
-        let Some(dir) = a.first() else { return fail("usage: save_to <folder>") };
-        match d.save(&SaveTarget { path: PathBuf::from(dir) }) {
-            Ok(()) => ok(d.tile().last_message.clone()),
-            Err(msg) => fail(msg),
-        }
-    });
+    c.add(
+        "save_to",
+        "save_to <folder>",
+        "write the tile (tile.wce, the height map and its other files) into another folder (the originals stay)",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(dir) = a.first() else { return fail("usage: save_to <folder>") };
+            match d.save(&SaveTarget { path: PathBuf::from(dir) }) {
+                Ok(()) => ok(d.tile().last_message.clone()),
+                Err(msg) => fail(msg),
+            }
+        },
+    );
 
-    c.add("tile_diagnostics", "tile_diagnostics <file.txt>", "write the tile's counts and model fallbacks (what Tile Studio wrote next to a shot)", |e, a| {
-        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
-        let Some(path) = a.first() else { return fail("usage: tile_diagnostics <file.txt>") };
-        let text = e.docs.find_as::<TileDocument>(id).expect("a tile").tile().diagnostics(Some(&e.scene));
-        match std::fs::write(path, text) {
-            Ok(()) => ok(""),
-            Err(_) => fail(format!("cannot write {path}")),
-        }
-    });
+    c.add(
+        "tile_diagnostics",
+        "tile_diagnostics <file.txt>",
+        "write the tile's counts and model fallbacks (what Tile Studio wrote next to a shot)",
+        |e, a| {
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            let Some(path) = a.first() else { return fail("usage: tile_diagnostics <file.txt>") };
+            let text = e.docs.find_as::<TileDocument>(id).expect("a tile").tile().diagnostics(Some(&e.scene));
+            match std::fs::write(path, text) {
+                Ok(()) => ok(""),
+                Err(_) => fail(format!("cannot write {path}")),
+            }
+        },
+    );
 
     // ---- scripted mouse on instances (the same events a real click or drag sends)
-    c.add("tile_click", "tile_click <element> [ctrl|shift]", "click the pixel where an instance is (selects it through the viewport, like the mouse)", |e, a| {
-        let (Some(d), Some(x)) = (document(e), a.first()) else { return fail("usage: tile_click <element> [ctrl|shift]") };
-        let Some(el) = usize::try_from(atoi(x)).ok().filter(|&el| d.tile().is_instance(el)) else { return fail("not an instance") };
-        let mut p = d.tile().world_position(el);
-        if d.tile().tscene().type_of(el) == "BUILDING_INSTANCE" {
-            p.y += d.tile().marker_radius(el) * 0.5;
-        }
+    c.add(
+        "tile_click",
+        "tile_click <element> [ctrl|shift]",
+        "click the pixel where an instance is (selects it through the viewport, like the mouse)",
+        |e, a| {
+            let (Some(d), Some(x)) = (document(e), a.first()) else { return fail("usage: tile_click <element> [ctrl|shift]") };
+            let Some(el) = usize::try_from(atoi(x)).ok().filter(|&el| d.tile().is_instance(el)) else { return fail("not an instance") };
+            let mut p = d.tile().world_position(el);
+            if d.tile().tscene().type_of(el) == "BUILDING_INSTANCE" {
+                p.y += d.tile().marker_radius(el) * 0.5;
+            }
 
-        click_at(e, p, "").unwrap_or_else(|| fail("the instance is not in view"))
-    });
+            click_at(e, p, "").unwrap_or_else(|| fail("the instance is not in view"))
+        },
+    );
 
     c.add("tile_click_ground", "tile_click_ground <x m> <z m>", "click the pixel where a ground point is", |e, a| {
         let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
@@ -1673,53 +1997,77 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         click_at(e, p, "").unwrap_or_else(|| fail("the point is not in view"))
     });
 
-    c.add("tile_drag_point", "tile_drag_point <index> <x m> <z m>", "drag a point handle of the selected polygon to a ground point with the mouse", |e, a| {
-        let el = primary(e);
-        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
-        let (Some(d), Some((idx, x, z))) = (document(e), parsed) else { return fail("usage: tile_drag_point <index> <x m> <z m>") };
-        let Some(el) = el.filter(|&el| d.tile().is_polygon(el)) else { return fail("no polygon selected") };
-        let pts = d.tile().polygon_display_points(el);
-        let Some(&from) = usize::try_from(idx as i64).ok().and_then(|i| pts.get(i)) else { return fail("no such point") };
-        let to = Float3::new(x, d.tile().terrain_height(x, z), z);
-        let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
-        let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
-        mouse(e, &args, "")
-    });
+    c.add(
+        "tile_drag_point",
+        "tile_drag_point <index> <x m> <z m>",
+        "drag a point handle of the selected polygon to a ground point with the mouse",
+        |e, a| {
+            let el = primary(e);
+            let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
+            let (Some(d), Some((idx, x, z))) = (document(e), parsed) else { return fail("usage: tile_drag_point <index> <x m> <z m>") };
+            let Some(el) = el.filter(|&el| d.tile().is_polygon(el)) else { return fail("no polygon selected") };
+            let pts = d.tile().polygon_display_points(el);
+            let Some(&from) = usize::try_from(idx as i64).ok().and_then(|i| pts.get(i)) else { return fail("no such point") };
+            let to = Float3::new(x, d.tile().terrain_height(x, z), z);
+            let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+            let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
+            mouse(e, &args, "")
+        },
+    );
 
-    c.add("light_radius_drag", "light_radius_drag <radius m>", "drag the radius handle of the selected point light with the mouse, to this radius", |e, a| {
-        let el = primary(e);
-        let (Some(d), Some(r)) = (document(e), a.first().and_then(|x| number(x))) else { return fail("usage: light_radius_drag <radius m>") };
-        let Some((from, _)) = el.and_then(|el| d.tile().light_radius_handle(el)) else { return fail("no point light selected") };
-        let c = d.tile().world_position(el.expect("selected"));
-        let to = Float3::new(c.x + r, c.y, c.z);
-        let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
-        let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
-        mouse(e, &args, "")
-    });
+    c.add(
+        "light_radius_drag",
+        "light_radius_drag <radius m>",
+        "drag the radius handle of the selected point light with the mouse, to this radius",
+        |e, a| {
+            let el = primary(e);
+            let (Some(d), Some(r)) = (document(e), a.first().and_then(|x| number(x))) else {
+                return fail("usage: light_radius_drag <radius m>");
+            };
+            let Some((from, _)) = el.and_then(|el| d.tile().light_radius_handle(el)) else { return fail("no point light selected") };
+            let c = d.tile().world_position(el.expect("selected"));
+            let to = Float3::new(c.x + r, c.y, c.z);
+            let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+            let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
+            mouse(e, &args, "")
+        },
+    );
 
-    c.add("shelter_target_drag", "shelter_target_drag <x m> <z m>", "drag the target handle of the selected civilian shelter with the mouse to a ground point", |e, a| {
-        let el = primary(e);
-        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-        let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: shelter_target_drag <x m> <z m>") };
-        let Some(from) = el.and_then(|el| d.tile().shelter_target(el)) else { return fail("no civilian shelter selected") };
-        let from = Float3::new(from.x, from.y + 0.3, from.z);
-        let to = Float3::new(x, d.tile().terrain_height(x, z), z);
-        let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
-        let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
-        mouse(e, &args, "")
-    });
+    c.add(
+        "shelter_target_drag",
+        "shelter_target_drag <x m> <z m>",
+        "drag the target handle of the selected civilian shelter with the mouse to a ground point",
+        |e, a| {
+            let el = primary(e);
+            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: shelter_target_drag <x m> <z m>") };
+            let Some(from) = el.and_then(|el| d.tile().shelter_target(el)) else { return fail("no civilian shelter selected") };
+            let from = Float3::new(from.x, from.y + 0.3, from.z);
+            let to = Float3::new(x, d.tile().terrain_height(x, z), z);
+            let (Some((x0, y0)), Some((x1, y1))) = (e.viewport.project(from), e.viewport.project(to)) else { return fail("not in view") };
+            let args = ["drag".to_owned(), format!("{x0:.1}"), format!("{y0:.1}"), format!("{x1:.1}"), format!("{y1:.1}"), "6".to_owned()];
+            mouse(e, &args, "")
+        },
+    );
 
-    c.add("assert_shelter_target", "assert_shelter_target <x m> <z m> [tolerance]", "test: the selected civilian shelter's target is at this ground point", |e, a| {
-        let el = primary(e);
-        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-        let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: assert_shelter_target <x m> <z m> [tolerance]") };
-        let tol = a.get(2).and_then(|v| number(v)).unwrap_or(0.5);
-        match el.and_then(|el| d.tile().shelter_target(el)) {
-            Some(t) if (t.x - x).abs() <= tol && (t.z - z).abs() <= tol => ok(""),
-            Some(t) => fail(format!("target at {:.2} {:.2}", t.x, t.z)),
-            None => fail("no civilian shelter selected"),
-        }
-    });
+    c.add(
+        "assert_shelter_target",
+        "assert_shelter_target <x m> <z m> [tolerance]",
+        "test: the selected civilian shelter's target is at this ground point",
+        |e, a| {
+            let el = primary(e);
+            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            let (Some(d), Some((x, z))) = (document(e), parsed) else {
+                return fail("usage: assert_shelter_target <x m> <z m> [tolerance]");
+            };
+            let tol = a.get(2).and_then(|v| number(v)).unwrap_or(0.5);
+            match el.and_then(|el| d.tile().shelter_target(el)) {
+                Some(t) if (t.x - x).abs() <= tol && (t.z - z).abs() <= tol => ok(""),
+                Some(t) => fail(format!("target at {:.2} {:.2}", t.x, t.z)),
+                None => fail("no civilian shelter selected"),
+            }
+        },
+    );
 
     c.add(
         "siege_ends", "siege_ends [all | <start> <end>]",
@@ -1776,20 +2124,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("assert_at_cursor", "assert_at_cursor [tolerance]", "test: the selected instance is on the ground point the mouse last hovered", |e, a| {
-        with_doc(e, |t, e| {
-            let tol = a.first().and_then(|x| number(x)).unwrap_or(0.5);
-            let el = primary(e);
-            let (Some(el), true) = (el, t.terrain_hit) else { return fail("nothing selected or the cursor never touched the ground") };
-            let p = document(e).expect("a tile").tile().world_position(el);
-            let c = t.cursor;
-            if (p.x - c.x).abs() <= tol && (p.z - c.z).abs() <= tol {
-                ok("")
-            } else {
-                fail(format!("at {:.2} {:.2}, cursor {:.2} {:.2}", p.x, p.z, c.x, c.z))
-            }
-        })
-    });
+    c.add(
+        "assert_at_cursor",
+        "assert_at_cursor [tolerance]",
+        "test: the selected instance is on the ground point the mouse last hovered",
+        |e, a| {
+            with_doc(e, |t, e| {
+                let tol = a.first().and_then(|x| number(x)).unwrap_or(0.5);
+                let el = primary(e);
+                let (Some(el), true) = (el, t.terrain_hit) else { return fail("nothing selected or the cursor never touched the ground") };
+                let p = document(e).expect("a tile").tile().world_position(el);
+                let c = t.cursor;
+                if (p.x - c.x).abs() <= tol && (p.z - c.z).abs() <= tol {
+                    ok("")
+                } else {
+                    fail(format!("at {:.2} {:.2}, cursor {:.2} {:.2}", p.x, p.z, c.x, c.z))
+                }
+            })
+        },
+    );
 
     c.add("assert_mode", "assert_mode select|raise|...", "test: the tile tool's left-button mode", |e, a| {
         with_tile(e, |t, _| {
@@ -1800,19 +2153,29 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("assert_grabbing", "assert_grabbing 0|1", "test: whether a G grab is in progress", |e, a| {
         with_tile(e, |t, _| {
-            if a.first().is_some_and(|x| (x == "1") == t.grabbing) { ok("") } else { fail(if t.grabbing { "grabbing" } else { "not grabbing" }) }
+            if a.first().is_some_and(|x| (x == "1") == t.grabbing) {
+                ok("")
+            } else {
+                fail(if t.grabbing { "grabbing" } else { "not grabbing" })
+            }
         })
     });
 
     // ---- layers: flags, structure, export type. A layer is named by its path from the scene graph ("Walls/Standard_Walls"), "#n" is an
     // element index.
     c.add(
-        "tile_flag", "tile_flag <layer path | #elem | selected> visible|active on|off", "the eye (OIF_VISIBLE) or the cursor arrow (OIF_ACTIVE, selectable) of a layer or instance",
+        "tile_flag",
+        "tile_flag <layer path | #elem | selected> visible|active on|off",
+        "the eye (OIF_VISIBLE) or the cursor arrow (OIF_ACTIVE, selectable) of a layer or instance",
         |e, a| {
             let sel = selected(e);
-            let Some(d) = document(e).filter(|_| a.len() >= 3) else { return fail("usage: tile_flag <layer path | #elem | selected> visible|active on|off") };
+            let Some(d) = document(e).filter(|_| a.len() >= 3) else {
+                return fail("usage: tile_flag <layer path | #elem | selected> visible|active on|off");
+            };
             let el = element_arg(d, &a[0], primary_of(&sel, d));
-            let Some(el) = el.filter(|&el| el < d.tile().tscene().doc().elements().len()) else { return fail(format!("no such layer or element '{}'", a[0])) };
+            let Some(el) = el.filter(|&el| el < d.tile().tscene().doc().elements().len()) else {
+                return fail(format!("no such layer or element '{}'", a[0]));
+            };
             let flag = match a[1].as_str() {
                 "visible" => "OIF_VISIBLE",
                 "active" => "OIF_ACTIVE",
@@ -1824,26 +2187,36 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_new_layer", "tile_new_layer <name> [parent layer path]", "a new layer in a layer (the scene graph by default), selected", |e, a| {
-        let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_new_layer <name> [parent layer path]") };
-        let parent = match a.get(1) {
-            Some(p) => d.tile().find_layer(p),
-            None => d.tile().tscene().scene_graph(),
-        };
+    c.add(
+        "tile_new_layer",
+        "tile_new_layer <name> [parent layer path]",
+        "a new layer in a layer (the scene graph by default), selected",
+        |e, a| {
+            let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_new_layer <name> [parent layer path]") };
+            let parent = match a.get(1) {
+                Some(p) => d.tile().find_layer(p),
+                None => d.tile().tscene().scene_graph(),
+            };
 
-        d.add_layer(parent, &a[0]).map_or_else(|err| fail(if err.is_empty() { "no such parent layer".to_owned() } else { err }), |_| ok(""))
-    });
+            d.add_layer(parent, &a[0])
+                .map_or_else(|err| fail(if err.is_empty() { "no such parent layer".to_owned() } else { err }), |_| ok(""))
+        },
+    );
 
     c.add("tile_rename", "tile_rename <layer path | #elem | selected> <name>", "rename a layer or an instance", |e, a| {
         let sel = selected(e);
-        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_rename <layer path | #elem | selected> <name>") };
+        let Some(d) = document(e).filter(|_| a.len() >= 2) else {
+            return fail("usage: tile_rename <layer path | #elem | selected> <name>");
+        };
         let el = element_arg(d, &a[0], primary_of(&sel, d));
         if el.is_some_and(|el| d.rename(el, &a[1])) { ok("") } else { fail(format!("no such layer or element '{}'", a[0])) }
     });
 
     c.add(
-        "tile_move_to", "tile_move_to <what: path | #elem | selected> <target layer path> [before <path | #elem>]",
-        "move layers / instances into a layer (in front of a sibling): the selection when `selected`", |e, a| {
+        "tile_move_to",
+        "tile_move_to <what: path | #elem | selected> <target layer path> [before <path | #elem>]",
+        "move layers / instances into a layer (in front of a sibling): the selection when `selected`",
+        |e, a| {
             let sel = selected(e);
             let Some(d) = document(e).filter(|_| a.len() >= 2) else {
                 return fail("usage: tile_move_to <path | #elem | selected> <target layer path> [before <path | #elem>]");
@@ -1865,25 +2238,33 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.group_items(&sel, &a[0]).map_or_else(fail, |_| ok(""))
     });
 
-    c.add("tile_working_layer", "tile_working_layer [layer path | #elem | none]", "TEd's working layer, where new items go (none: the root); no argument: log it", |e, a| {
-        let sel = selected(e);
-        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
-        with_tile(e, |t, e| {
-            let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-            match a.first().map(String::as_str) {
-                None => ok(t.working_layer_of(d).map_or_else(|| "the root".to_owned(), |l| crate::tool::TileTool::layer_label(d, l))),
-                Some("none") => t.set_working_layer(d, None).map_or_else(fail, ok),
-                Some(spec) => {
-                    let Some(el) = element_arg(d, spec, primary_of(&sel, d)) else { return fail(format!("no layer '{spec}'")) };
-                    t.set_working_layer(d, Some(el)).map_or_else(fail, ok)
+    c.add(
+        "tile_working_layer",
+        "tile_working_layer [layer path | #elem | none]",
+        "TEd's working layer, where new items go (none: the root); no argument: log it",
+        |e, a| {
+            let sel = selected(e);
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            with_tile(e, |t, e| {
+                let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+                match a.first().map(String::as_str) {
+                    None => ok(t.working_layer_of(d).map_or_else(|| "the root".to_owned(), |l| crate::tool::TileTool::layer_label(d, l))),
+                    Some("none") => t.set_working_layer(d, None).map_or_else(fail, ok),
+                    Some(spec) => {
+                        let Some(el) = element_arg(d, spec, primary_of(&sel, d)) else { return fail(format!("no layer '{spec}'")) };
+                        t.set_working_layer(d, Some(el)).map_or_else(fail, ok)
+                    }
                 }
-            }
-        })
-    });
+            })
+        },
+    );
 
-    c.add("tile_instance_group", "tile_instance_group", "group the selection into an instance group in the working layer (Ctrl+G)", |e, _| {
-        with_tile(e, |t, e| t.group_selection(e).map_or_else(fail, ok))
-    });
+    c.add(
+        "tile_instance_group",
+        "tile_instance_group",
+        "group the selection into an instance group in the working layer (Ctrl+G)",
+        |e, _| with_tile(e, |t, e| t.group_selection(e).map_or_else(fail, ok)),
+    );
 
     c.add("tile_ungroup", "tile_ungroup", "take the selected instance groups apart into the working layer (Ctrl+U)", |e, _| {
         with_tile(e, |t, e| t.ungroup_selection(e).map_or_else(fail, ok))
@@ -1895,15 +2276,26 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         let words = a.iter().map(|w| w.to_lowercase()).collect::<Vec<_>>();
         with_tile(e, |t, e| {
             let lib = t.prefab_library(e);
-            let rows = lib.entries().filter(|p| words.iter().all(|w| format!("{}/{}", p.folder, p.key).to_lowercase().contains(w))).map(|p| format!("{}  {}", p.key, p.folder)).collect::<Vec<_>>();
+            let rows = lib
+                .entries()
+                .filter(|p| words.iter().all(|w| format!("{}/{}", p.folder, p.key).to_lowercase().contains(w)))
+                .map(|p| format!("{}  {}", p.key, p.folder))
+                .collect::<Vec<_>>();
             ok(format!("{} prefabs:\n{}", rows.len(), rows.join("\n")))
         })
     });
 
-    c.add("tile_flip_mode", "tile_flip_mode", "enter Flip mode for the selection, the plane through its centre", |e, _| with_tile(e, |t, e| t.begin_flip(e).map_or_else(fail, ok)));
+    c.add("tile_flip_mode", "tile_flip_mode", "enter Flip mode for the selection, the plane through its centre", |e, _| {
+        with_tile(e, |t, e| t.begin_flip(e).map_or_else(fail, ok))
+    });
     c.add("tile_flip_plane", "tile_flip_plane [<x m> <z m> <angle>]", "where Flip mode's plane is", |e, a| {
         if a.is_empty() {
-            return with_tile(e, |t, _| t.flip.map_or_else(|| fail("not in Flip mode"), |f| ok(format!("plane {:.3} {:.3} {:.2}", f.plane.x, f.plane.z, f.plane.angle))));
+            return with_tile(e, |t, _| {
+                t.flip.map_or_else(
+                    || fail("not in Flip mode"),
+                    |f| ok(format!("plane {:.3} {:.3} {:.2}", f.plane.x, f.plane.z, f.plane.angle)),
+                )
+            });
         }
 
         let [x, z, angle] = [0, 1, 2].map(|i| a.get(i).and_then(|v| number(v)));
@@ -1929,22 +2321,42 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("share_project", "share_project <zip>", "write the open tile's project (its variations, entry and the projects' prefabs it uses) into a zip to share", |e, a| {
-        let Some(out) = a.first().map(std::path::PathBuf::from) else { return fail("usage: share_project <zip>") };
-        with_tile(e, |t, e| t.share_project(e, Some(&out)).map_or_else(|why| {
-            t.share_failed(e, "Share project", &why);
-            fail(why)
-        }, ok))
-    });
+    c.add(
+        "share_project",
+        "share_project <zip>",
+        "write the open tile's project (its variations, entry and the projects' prefabs it uses) into a zip to share",
+        |e, a| {
+            let Some(out) = a.first().map(std::path::PathBuf::from) else { return fail("usage: share_project <zip>") };
+            with_tile(e, |t, e| {
+                t.share_project(e, Some(&out)).map_or_else(
+                    |why| {
+                        t.share_failed(e, "Share project", &why);
+                        fail(why)
+                    },
+                    ok,
+                )
+            })
+        },
+    );
 
-    c.add("import_shared", "import_shared <zip> [overwrite]", "import a shared project into the projects folder and open its tile; without overwrite, one that replaces files asks first", |e, a| {
-        let Some(zip) = a.first().map(std::path::PathBuf::from) else { return fail("usage: import_shared <zip> [overwrite]") };
-        let overwrite = a.get(1).is_some_and(|w| w == "overwrite");
-        with_tile(e, |t, e| t.import_shared_from(e, &zip, overwrite).map_or_else(|why| {
-            t.share_failed(e, "Import shared project", &why);
-            fail(why)
-        }, ok))
-    });
+    c.add(
+        "import_shared",
+        "import_shared <zip> [overwrite]",
+        "import a shared project into the projects folder and open its tile; without overwrite, one that replaces files asks first",
+        |e, a| {
+            let Some(zip) = a.first().map(std::path::PathBuf::from) else { return fail("usage: import_shared <zip> [overwrite]") };
+            let overwrite = a.get(1).is_some_and(|w| w == "overwrite");
+            with_tile(e, |t, e| {
+                t.import_shared_from(e, &zip, overwrite).map_or_else(
+                    |why| {
+                        t.share_failed(e, "Import shared project", &why);
+                        fail(why)
+                    },
+                    ok,
+                )
+            })
+        },
+    );
 
     c.add("check_platforms", "check_platforms", "check the tile's bridges and wall walks as the game links them: the bridges units cannot get onto or cross, the walls whose walkways meet but do not join (the Problems section's Check platforms)", |e, _| {
         with_tile(e, |t, e| {
@@ -1955,14 +2367,23 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("on_walks", "on_walks <x m> <z m> <radius m>", "the buildings that are not the fort's but stand on its walks near a point (what blocks units on the walls)", |e, a| {
-        let (Some(x), Some(z), Some(r)) = (a.first().and_then(|v| v.parse::<f32>().ok()), a.get(1).and_then(|v| v.parse::<f32>().ok()), a.get(2).and_then(|v| v.parse::<f32>().ok())) else {
-            return fail("usage: on_walks <x m> <z m> <radius m>");
-        };
-        let Some(d) = document(e) else { return fail("no tile open") };
-        let found = d.tile_mut().things_on_walks(x, z, r);
-        ok(format!("{} on the walks\n{}", found.len(), found.join("\n")))
-    });
+    c.add(
+        "on_walks",
+        "on_walks <x m> <z m> <radius m>",
+        "the buildings that are not the fort's but stand on its walks near a point (what blocks units on the walls)",
+        |e, a| {
+            let (Some(x), Some(z), Some(r)) = (
+                a.first().and_then(|v| v.parse::<f32>().ok()),
+                a.get(1).and_then(|v| v.parse::<f32>().ok()),
+                a.get(2).and_then(|v| v.parse::<f32>().ok()),
+            ) else {
+                return fail("usage: on_walks <x m> <z m> <radius m>");
+            };
+            let Some(d) = document(e) else { return fail("no tile open") };
+            let found = d.tile_mut().things_on_walks(x, z, r);
+            ok(format!("{} on the walks\n{}", found.len(), found.join("\n")))
+        },
+    );
 
     c.add("siege_check", "siege_check", "check the tile's siege AI layout as the game needs it (wce_siege::check: the perimeter, the nodes' rectangles and boundaries, the edges' ends): its problems and notes", |e, _| {
         let Some(d) = document(e) else { return fail("no tile open") };
@@ -2041,10 +2462,17 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(format!("{} line(s)\n{}", out.len(), out.join("\n")))
     });
 
-    c.add("tile_flip_tile", "tile_flip_tile x|z", "flip the whole tile about its middle along x or z: items, terrain, terrain layers and links (one undo entry)", |e, a| {
-        let Some(axis) = a.first().and_then(|w| wce_tile_editor::tile_document::TileFlipAxis::named(w)) else { return fail("usage: tile_flip_tile x|z") };
-        with_tile(e, |t, e| t.do_flip_tile(e, axis).map_or_else(fail, ok))
-    });
+    c.add(
+        "tile_flip_tile",
+        "tile_flip_tile x|z",
+        "flip the whole tile about its middle along x or z: items, terrain, terrain layers and links (one undo entry)",
+        |e, a| {
+            let Some(axis) = a.first().and_then(|w| wce_tile_editor::tile_document::TileFlipAxis::named(w)) else {
+                return fail("usage: tile_flip_tile x|z");
+            };
+            with_tile(e, |t, e| t.do_flip_tile(e, axis).map_or_else(fail, ok))
+        },
+    );
 
     c.add("place_turn", "place_turn <degrees>", "turn what is being placed, as R does by the rotate step", |e, a| {
         let Some(deg) = a.first().and_then(|v| number(v)) else { return fail("usage: place_turn <degrees>") };
@@ -2054,10 +2482,17 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("create_type", "create_type [type]", "the Create panel's list: the items of a type (Buildings, Vegetation, Decals ...; none: the favourites and the recent ones)", |e, a| {
-        let name = a.join(" ");
-        with_tile(e, |t, _| t.set_create_category((!name.is_empty()).then_some(name.as_str())).map_or_else(fail, |()| ok(String::new())))
-    });
+    c.add(
+        "create_type",
+        "create_type [type]",
+        "the Create panel's list: the items of a type (Buildings, Vegetation, Decals ...; none: the favourites and the recent ones)",
+        |e, a| {
+            let name = a.join(" ");
+            with_tile(e, |t, _| {
+                t.set_create_category((!name.is_empty()).then_some(name.as_str())).map_or_else(fail, |()| ok(String::new()))
+            })
+        },
+    );
 
     c.add("create_view", "create_view list|grid", "the Create panel's view: a list, or a grid of pictures", |e, a| {
         let grid = match a.first().map(String::as_str) {
@@ -2073,87 +2508,125 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("create_filter", "create_filter [words]", "the Create panel's search (no words: clear it); its folders open while it has words", |e, a| {
-        let words = a.join(" ");
-        with_tile(e, |t, _| {
-            t.set_create_filter(&words);
-            ok(String::new())
-        })
+    c.add(
+        "create_filter",
+        "create_filter [words]",
+        "the Create panel's search (no words: clear it); its folders open while it has words",
+        |e, a| {
+            let words = a.join(" ");
+            with_tile(e, |t, _| {
+                t.set_create_filter(&words);
+                ok(String::new())
+            })
+        },
+    );
+
+    c.add("prefab_rescan", "prefab_rescan", "scan the prefab folders again", |e, _| {
+        with_tile(e, |t, e| ok(format!("{} prefabs", t.rescan_prefabs(e))))
     });
 
-    c.add("prefab_rescan", "prefab_rescan", "scan the prefab folders again", |e, _| with_tile(e, |t, e| ok(format!("{} prefabs", t.rescan_prefabs(e)))));
+    c.add(
+        "keys",
+        "keys <type> [filter]",
+        "the valid keys of a type in the open tile's files (the Create and Placement pickers' lists): the count and the first 20 matching",
+        |e, a| {
+            let Some(kind) = a.first().cloned() else { return fail("usage: keys <type> [filter]") };
+            let filter = a.get(1).map(|f| f.to_lowercase()).unwrap_or_default();
+            with_tile(e, |t, e| {
+                let keys = t.catalogue(e, &kind);
+                let hits = keys.iter().filter(|k| k.to_lowercase().contains(&filter)).collect::<Vec<_>>();
+                ok(format!(
+                    "{} keys, {} matching: {}",
+                    keys.len(),
+                    hits.len(),
+                    hits.iter().take(20).map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
+                ))
+            })
+        },
+    );
 
-    c.add("keys", "keys <type> [filter]", "the valid keys of a type in the open tile's files (the Create and Placement pickers' lists): the count and the first 20 matching", |e, a| {
-        let Some(kind) = a.first().cloned() else { return fail("usage: keys <type> [filter]") };
-        let filter = a.get(1).map(|f| f.to_lowercase()).unwrap_or_default();
-        with_tile(e, |t, e| {
-            let keys = t.catalogue(e, &kind);
-            let hits = keys.iter().filter(|k| k.to_lowercase().contains(&filter)).collect::<Vec<_>>();
-            ok(format!("{} keys, {} matching: {}", keys.len(), hits.len(), hits.iter().take(20).map(|k| k.as_str()).collect::<Vec<_>>().join(", ")))
-        })
-    });
+    c.add(
+        "place_modes",
+        "place_modes <freeform|landscape|entity> [none|surface]",
+        "the placement chips: what new things stand on and how they are turned",
+        |e, a| {
+            use crate::settings::{RotationMode, SurfaceMode};
+            let surface = match a.first().map(String::as_str) {
+                Some("freeform") => SurfaceMode::Freeform,
+                Some("landscape") => SurfaceMode::Landscape,
+                Some("entity") => SurfaceMode::Entity,
+                _ => return fail("usage: place_modes <freeform|landscape|entity> [none|surface]"),
+            };
 
-    c.add("place_modes", "place_modes <freeform|landscape|entity> [none|surface]", "the placement chips: what new things stand on and how they are turned", |e, a| {
-        use crate::settings::{RotationMode, SurfaceMode};
-        let surface = match a.first().map(String::as_str) {
-            Some("freeform") => SurfaceMode::Freeform,
-            Some("landscape") => SurfaceMode::Landscape,
-            Some("entity") => SurfaceMode::Entity,
-            _ => return fail("usage: place_modes <freeform|landscape|entity> [none|surface]"),
-        };
+            let rotation = if a.get(1).map(String::as_str) == Some("surface") { RotationMode::Surface } else { RotationMode::None };
+            with_tile(e, |t, e| {
+                t.modes = Some((surface, rotation));
+                e.update_tool_settings(crate::settings::SETTINGS_ID, |s: &mut crate::settings::TileSettings| {
+                    s.place_surface = surface;
+                    s.place_rotation = rotation;
+                });
+                ok("")
+            })
+        },
+    );
 
-        let rotation = if a.get(1).map(String::as_str) == Some("surface") { RotationMode::Surface } else { RotationMode::None };
-        with_tile(e, |t, e| {
-            t.modes = Some((surface, rotation));
-            e.update_tool_settings(crate::settings::SETTINGS_ID, |s: &mut crate::settings::TileSettings| {
-                s.place_surface = surface;
-                s.place_rotation = rotation;
-            });
-            ok("")
-        })
-    });
+    c.add(
+        "veg_brush",
+        "veg_brush on|off [radius] [spacing] [clearance] [fill]",
+        "the vegetation brush: paint trees instead of placing one per click, and its settings",
+        |e, a| {
+            let on = match a.first().map(String::as_str) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => return fail("usage: veg_brush on|off [radius] [spacing] [clearance] [fill]"),
+            };
 
-    c.add("veg_brush", "veg_brush on|off [radius] [spacing] [clearance] [fill]", "the vegetation brush: paint trees instead of placing one per click, and its settings", |e, a| {
-        let on = match a.first().map(String::as_str) {
-            Some("on") => true,
-            Some("off") => false,
-            _ => return fail("usage: veg_brush on|off [radius] [spacing] [clearance] [fill]"),
-        };
+            with_tile(e, |t, e| {
+                let mut b = t.veg_brush(e);
+                b.on = on;
+                let num = |i: usize| a.get(i).and_then(|v| number(v));
+                b.radius = num(1).unwrap_or(b.radius);
+                b.spacing = num(2).unwrap_or(b.spacing);
+                b.clearance = num(3).unwrap_or(b.clearance);
+                b.fill = num(4).unwrap_or(b.fill);
+                t.set_veg_brush(e, b);
+                ok("")
+            })
+        },
+    );
 
-        with_tile(e, |t, e| {
-            let mut b = t.veg_brush(e);
-            b.on = on;
-            let num = |i: usize| a.get(i).and_then(|v| number(v));
-            b.radius = num(1).unwrap_or(b.radius);
-            b.spacing = num(2).unwrap_or(b.spacing);
-            b.clearance = num(3).unwrap_or(b.clearance);
-            b.fill = num(4).unwrap_or(b.fill);
-            t.set_veg_brush(e, b);
-            ok("")
-        })
-    });
+    c.add(
+        "veg_set_new",
+        "veg_set_new <name>",
+        "a new vegetation set from the selected trees (each kind weighted by how many there are)",
+        |e, a| {
+            let Some(name) = a.first().cloned() else { return fail("usage: veg_set_new <name>") };
+            with_tile(e, |t, e| t.new_vegetation_set(e, &name).map_or_else(fail, ok))
+        },
+    );
 
-    c.add("veg_set_new", "veg_set_new <name>", "a new vegetation set from the selected trees (each kind weighted by how many there are)", |e, a| {
-        let Some(name) = a.first().cloned() else { return fail("usage: veg_set_new <name>") };
-        with_tile(e, |t, e| t.new_vegetation_set(e, &name).map_or_else(fail, ok))
-    });
-
-    c.add("veg_set_add", "veg_set_add <key>...", "add trees to the new vegetation set (not saved) and place or paint with it, as Ctrl + click on them in the Create panel does", |e, a| {
-        if a.is_empty() {
-            return fail("usage: veg_set_add <key>...");
-        }
-
-        let keys = a.iter().map(|k| wce_tile::vegetation_sets::SetEntry { key: k.clone(), weight: 1.0, scale: None }).collect::<Vec<_>>();
-        with_tile(e, |t, e| {
-            let trees = t.catalogue(e, "VEGETATION_INSTANCE");
-            if let Some(k) = keys.iter().find(|k| !trees.contains(&k.key)) {
-                return fail(format!("no tree '{}' in the game's files", k.key));
+    c.add(
+        "veg_set_add",
+        "veg_set_add <key>...",
+        "add trees to the new vegetation set (not saved) and place or paint with it, as Ctrl + click on them in the Create panel does",
+        |e, a| {
+            if a.is_empty() {
+                return fail("usage: veg_set_add <key>...");
             }
 
-            t.add_to_new_set(e, &keys);
-            ok(t.status.clone())
-        })
-    });
+            let keys =
+                a.iter().map(|k| wce_tile::vegetation_sets::SetEntry { key: k.clone(), weight: 1.0, scale: None }).collect::<Vec<_>>();
+            with_tile(e, |t, e| {
+                let trees = t.catalogue(e, "VEGETATION_INSTANCE");
+                if let Some(k) = keys.iter().find(|k| !trees.contains(&k.key)) {
+                    return fail(format!("no tree '{}' in the game's files", k.key));
+                }
+
+                t.add_to_new_set(e, &keys);
+                ok(t.status.clone())
+            })
+        },
+    );
 
     c.add("veg_set_save", "veg_set_save <name>", "save the new vegetation set under a name", |e, a| {
         let Some(name) = a.first().cloned() else { return fail("usage: veg_set_save <name>") };
@@ -2168,68 +2641,94 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| crate::create_panel::make_set_for_script(t, e, &name).map_or_else(fail, |()| ok("")))
     });
 
-    c.add("veg_paint", "veg_paint <x m> <z m> [<x m> <z m>]...", "one stroke of the vegetation brush through ground points (a dab at each): its trees go into the working layer", |e, a| {
-        let pts = a.chunks(2).map(|p| (p.first().and_then(|v| number(v)), p.get(1).and_then(|v| number(v)))).collect::<Vec<_>>();
-        if pts.is_empty() || a.len() % 2 != 0 || pts.iter().any(|p| p.0.is_none() || p.1.is_none()) {
-            return fail("usage: veg_paint <x m> <z m> [<x m> <z m>]...");
-        }
-
-        with_tile(e, |t, e| {
-            if !t.painting_trees(e) {
-                return fail("not painting trees (start placing a tree with the brush on)");
+    c.add(
+        "veg_paint",
+        "veg_paint <x m> <z m> [<x m> <z m>]...",
+        "one stroke of the vegetation brush through ground points (a dab at each): its trees go into the working layer",
+        |e, a| {
+            let pts = a.chunks(2).map(|p| (p.first().and_then(|v| number(v)), p.get(1).and_then(|v| number(v)))).collect::<Vec<_>>();
+            if pts.is_empty() || a.len() % 2 != 0 || pts.iter().any(|p| p.0.is_none() || p.1.is_none()) {
+                return fail("usage: veg_paint <x m> <z m> [<x m> <z m>]...");
             }
 
-            for (i, (x, z)) in pts.iter().map(|p| (p.0.unwrap_or_default(), p.1.unwrap_or_default())).enumerate() {
+            with_tile(e, |t, e| {
+                if !t.painting_trees(e) {
+                    return fail("not painting trees (start placing a tree with the brush on)");
+                }
+
+                for (i, (x, z)) in pts.iter().map(|p| (p.0.unwrap_or_default(), p.1.unwrap_or_default())).enumerate() {
+                    let Some(d) = document(e) else { return no_tile() };
+                    t.cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
+                    if i == 0 {
+                        t.begin_stroke(e, false);
+                    } else {
+                        t.dab(e);
+                    }
+                }
+
+                ok(t.end_stroke_veg(e))
+            })
+        },
+    );
+
+    c.add(
+        "veg_erase",
+        "veg_erase <x m> <z m>",
+        "the vegetation brush's taking away (Ctrl + drag) once at a ground point: the manual trees in its circle go",
+        |e, a| {
+            let (Some(x), Some(z)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else {
+                return fail("usage: veg_erase <x m> <z m>");
+            };
+            with_tile(e, |t, e| {
                 let Some(d) = document(e) else { return no_tile() };
                 t.cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
-                if i == 0 {
-                    t.begin_stroke(e, false);
-                } else {
-                    t.dab(e);
+                t.begin_stroke(e, true);
+                ok(t.end_stroke_veg(e))
+            })
+        },
+    );
+
+    c.add(
+        "draw_point",
+        "draw_point <x m> <z m>",
+        "add a point to the line being drawn, on the ground at x z, as a click there does",
+        |e, a| {
+            let (Some(x), Some(z)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else {
+                return fail("usage: draw_point <x m> <z m>");
+            };
+            with_tile(e, |t, e| {
+                if !t.drawing {
+                    return fail("nothing is being drawn");
                 }
-            }
 
-            ok(t.end_stroke_veg(e))
-        })
-    });
+                let Some(d) = document(e) else { return fail("no tile open") };
+                t.draw_pts.push(Float3::new(x, d.tile().terrain_height(x, z), z));
+                ok(format!("{} points", t.draw_pts.len()))
+            })
+        },
+    );
 
-    c.add("veg_erase", "veg_erase <x m> <z m>", "the vegetation brush's taking away (Ctrl + drag) once at a ground point: the manual trees in its circle go", |e, a| {
-        let (Some(x), Some(z)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else { return fail("usage: veg_erase <x m> <z m>") };
-        with_tile(e, |t, e| {
-            let Some(d) = document(e) else { return no_tile() };
-            t.cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
-            t.begin_stroke(e, true);
-            ok(t.end_stroke_veg(e))
-        })
-    });
+    c.add(
+        "draw_finish",
+        "draw_finish",
+        "finish the line being drawn, as Enter does (it goes where the drawing goes: its holder, the working layer)",
+        |e, _| {
+            with_tile(e, |t, e| {
+                if !t.drawing {
+                    return fail("nothing is being drawn");
+                }
 
-    c.add("draw_point", "draw_point <x m> <z m>", "add a point to the line being drawn, on the ground at x z, as a click there does", |e, a| {
-        let (Some(x), Some(z)) = (a.first().and_then(|v| number(v)), a.get(1).and_then(|v| number(v))) else { return fail("usage: draw_point <x m> <z m>") };
-        with_tile(e, |t, e| {
-            if !t.drawing {
-                return fail("nothing is being drawn");
-            }
-
-            let Some(d) = document(e) else { return fail("no tile open") };
-            t.draw_pts.push(Float3::new(x, d.tile().terrain_height(x, z), z));
-            ok(format!("{} points", t.draw_pts.len()))
-        })
-    });
-
-    c.add("draw_finish", "draw_finish", "finish the line being drawn, as Enter does (it goes where the drawing goes: its holder, the working layer)", |e, _| {
-        with_tile(e, |t, e| {
-            if !t.drawing {
-                return fail("nothing is being drawn");
-            }
-
-            t.finish_drawing(e);
-            ok(t.status.clone())
-        })
-    });
+                t.finish_drawing(e);
+                ok(t.status.clone())
+            })
+        },
+    );
 
     c.add("draft_set", "draft_set <attribute> <value>", "set a value of what is being placed or drawn, as its Inspector does", |e, a| {
         with_tile(e, |t, _| {
-            let ([attr, value], Some(d)) = (a, &mut t.draft) else { return fail("usage: draft_set <attribute> <value>, while placing or drawing") };
+            let ([attr, value], Some(d)) = (a, &mut t.draft) else {
+                return fail("usage: draft_set <attribute> <value>, while placing or drawing");
+            };
             d.attrs.insert(attr.clone(), value.clone());
             t.create.drafts.insert(d.kind.clone(), d.clone());
             ok("")
@@ -2243,11 +2742,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.adjust_node_boundary(el, reach).map_or_else(fail, |b| ok(format!("Boundary {b}: {} points", d.tile().tscene().polygon_points(b).len())))
     });
 
-    c.add("street_fit", "street_fit", "fit the selected street edge's two Street boundaries between the nodes it joins, as its Inspector's button does (one undo entry)", |e, _| {
-        let Some(el) = primary(e) else { return fail("no edge selected") };
-        let Some(d) = document(e) else { return no_tile() };
-        d.fit_street_sides(el).map_or_else(fail, |()| ok(""))
-    });
+    c.add(
+        "street_fit",
+        "street_fit",
+        "fit the selected street edge's two Street boundaries between the nodes it joins, as its Inspector's button does (one undo entry)",
+        |e, _| {
+            let Some(el) = primary(e) else { return fail("no edge selected") };
+            let Some(d) = document(e) else { return no_tile() };
+            d.fit_street_sides(el).map_or_else(fail, |()| ok(""))
+        },
+    );
 
     c.add("boundary_preset", "boundary_preset circle|semicircle|square|polygon [size m] [turn deg]", "the selected capture location's (or the selected boundary's) boundary as a preset shape, as its Inspector does: its size and turn kept unless given (one undo entry)", |e, a| {
         use wce_tile_editor::tile_document::BoundaryKind;
@@ -2304,17 +2808,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("start_making", "start_making <type | building | prefab> [key]", "start placing or drawing something, as a click in the Create panel does (the mouse places it)", |e, a| {
-        let Some(what) = a.first().cloned() else { return fail("usage: start_making <type | building | prefab> [key]") };
-        let key = a.get(1).cloned().unwrap_or_default();
-        with_tile(e, |t, e| crate::create_panel::make_for_script(t, e, &what, &key).map_or_else(fail, |()| ok("")))
-    });
+    c.add(
+        "start_making",
+        "start_making <type | building | prefab> [key]",
+        "start placing or drawing something, as a click in the Create panel does (the mouse places it)",
+        |e, a| {
+            let Some(what) = a.first().cloned() else { return fail("usage: start_making <type | building | prefab> [key]") };
+            let key = a.get(1).cloned().unwrap_or_default();
+            with_tile(e, |t, e| crate::create_panel::make_for_script(t, e, &what, &key).map_or_else(fail, |()| ok("")))
+        },
+    );
 
     c.add(
-        "thumbnail", "thumbnail <building | type | prefab> <key> [copy to.png]",
+        "thumbnail",
+        "thumbnail <building | type | prefab> <key> [copy to.png]",
         "ask for the Create panel thumbnail of an entry; ok with its file once it is made (wait frames and call again), copied when asked",
         |e, a| {
-            let (Some(what), Some(key)) = (a.first().cloned(), a.get(1).cloned()) else { return fail("usage: thumbnail <building | type | prefab> <key> [copy to.png]") };
+            let (Some(what), Some(key)) = (a.first().cloned(), a.get(1).cloned()) else {
+                return fail("usage: thumbnail <building | type | prefab> <key> [copy to.png]");
+            };
             let copy = a.get(2).cloned();
             with_tile(e, |t, e| match crate::create_panel::thumbnail_for_script(t, e, &what, &key) {
                 Ok(Some(file)) => match copy.map(|to| std::fs::copy(&file, to)) {
@@ -2328,37 +2840,47 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("align", "align <x | z | height> <first | min | centre | max>", "line the selected instances up, as the selection menu's Align does", |e, a| {
-        let all = selected(e);
-        let axis = match a.first().map(String::as_str) {
-            Some("x") => 0,
-            Some("height") => 1,
-            Some("z") => 2,
-            _ => return fail("usage: align <x | z | height> <first | min | centre | max>"),
-        };
-        use wce_tile_editor::tile_document::AlignTo;
-        let to = match a.get(1).map(String::as_str) {
-            Some("first") => AlignTo::First,
-            Some("min") => AlignTo::Min,
-            Some("centre") => AlignTo::Centre,
-            Some("max") => AlignTo::Max,
-            _ => return fail("usage: align <x | z | height> <first | min | centre | max>"),
-        };
-        let Some(d) = document(e) else { return no_tile() };
-        ok(format!("{} moved", d.align(&all, axis, to)))
-    });
+    c.add(
+        "align",
+        "align <x | z | height> <first | min | centre | max>",
+        "line the selected instances up, as the selection menu's Align does",
+        |e, a| {
+            let all = selected(e);
+            let axis = match a.first().map(String::as_str) {
+                Some("x") => 0,
+                Some("height") => 1,
+                Some("z") => 2,
+                _ => return fail("usage: align <x | z | height> <first | min | centre | max>"),
+            };
+            use wce_tile_editor::tile_document::AlignTo;
+            let to = match a.get(1).map(String::as_str) {
+                Some("first") => AlignTo::First,
+                Some("min") => AlignTo::Min,
+                Some("centre") => AlignTo::Centre,
+                Some("max") => AlignTo::Max,
+                _ => return fail("usage: align <x | z | height> <first | min | centre | max>"),
+            };
+            let Some(d) = document(e) else { return no_tile() };
+            ok(format!("{} moved", d.align(&all, axis, to)))
+        },
+    );
 
-    c.add("distribute", "distribute <x | z | line>", "space the selected instances evenly, as the selection menu's Distribute does", |e, a| {
-        let all = selected(e);
-        let axis = match a.first().map(String::as_str) {
-            Some("x") => Some(0),
-            Some("z") => Some(2),
-            Some("line") => None,
-            _ => return fail("usage: distribute <x | z | line>"),
-        };
-        let Some(d) = document(e) else { return no_tile() };
-        ok(format!("{} moved", d.distribute(&all, axis)))
-    });
+    c.add(
+        "distribute",
+        "distribute <x | z | line>",
+        "space the selected instances evenly, as the selection menu's Distribute does",
+        |e, a| {
+            let all = selected(e);
+            let axis = match a.first().map(String::as_str) {
+                Some("x") => Some(0),
+                Some("z") => Some(2),
+                Some("line") => None,
+                _ => return fail("usage: distribute <x | z | line>"),
+            };
+            let Some(d) = document(e) else { return no_tile() };
+            ok(format!("{} moved", d.distribute(&all, axis)))
+        },
+    );
 
     c.add("view_save", "view_save <name>", "save the camera as a view of the open tile (the viewport's camera chip)", |e, a| {
         let Some(name) = a.first().cloned() else { return fail("usage: view_save <name>") };
@@ -2378,21 +2900,27 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("paste", "paste [<x m> <z m> | inplace]", "paste the copied items: the first at a ground point (the rest around it), or where they were", |e, a| {
-        let at = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-        with_tile(e, |t, e| {
-            if let Some((x, z)) = at {
-                let d = document(e).expect("a tile");
-                t.terrain_hit = true;
-                t.snapped_cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
-            }
+    c.add(
+        "paste",
+        "paste [<x m> <z m> | inplace]",
+        "paste the copied items: the first at a ground point (the rest around it), or where they were",
+        |e, a| {
+            let at = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            with_tile(e, |t, e| {
+                if let Some((x, z)) = at {
+                    let d = document(e).expect("a tile");
+                    t.terrain_hit = true;
+                    t.snapped_cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
+                }
 
-            if t.paste(e, at.is_some()) { ok(t.status.clone()) } else { fail(t.status.clone()) }
-        })
-    });
+                if t.paste(e, at.is_some()) { ok(t.status.clone()) } else { fail(t.status.clone()) }
+            })
+        },
+    );
 
     c.add(
-        "select_by", "select_by <type | key | everything | invert>",
+        "select_by",
+        "select_by <type | key | everything | invert>",
         "select as the selection menu's Select does: all of the primary's type or key, everything shown, or the inverse",
         |e, a| {
             let what = a.first().cloned().unwrap_or_default();
@@ -2421,7 +2949,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "box_select", "box_select <x0 m> <z0 m> <x1 m> <z1 m>",
+        "box_select",
+        "box_select <x0 m> <z0 m> <x1 m> <z1 m>",
         "B and a drag with the mouse from one ground point's pixel to another's (the box select)",
         |e, a| {
             let parsed = (a.len() >= 4).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
@@ -2433,7 +2962,8 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 t.box_select = crate::selection_tools::BoxSelect { armed: true, ..Default::default() };
                 ok("")
             });
-            let args = ["drag".to_owned(), format!("{sx0:.1}"), format!("{sy0:.1}"), format!("{sx1:.1}"), format!("{sy1:.1}"), "6".to_owned()];
+            let args =
+                ["drag".to_owned(), format!("{sx0:.1}"), format!("{sy0:.1}"), format!("{sx1:.1}"), format!("{sy1:.1}"), "6".to_owned()];
             mouse(e, &args, "")
         },
     );
@@ -2446,41 +2976,50 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add(
-        "place_preview", "place_preview <type | building | prefab> <x m> <z m> [key] | place_preview off",
-        "start placing (a Create type, a building or a prefab) and show its preview at x z as if the mouse were there", |e, a| {
-        if a.first().map(String::as_str) == Some("off") {
-            return with_tile(e, |t, _| {
-                t.placing = None;
-                t.preview_forced = false;
-                ok("")
-            });
-        }
-
-        let (Some(what), Some(x), Some(z)) = (a.first().cloned(), a.get(1).and_then(|v| number(v)), a.get(2).and_then(|v| number(v))) else {
-            return fail("usage: place_preview <type | building | prefab> <x m> <z m> [key] | place_preview off");
-        };
-
-        let key = a.get(3).cloned().unwrap_or_default();
-        with_tile(e, |t, e| {
-            let Some(d) = crate::tool::document(e) else { return no_tile() };
-            t.cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
-            t.terrain_hit = true;
-            t.preview_forced = true;
-            match crate::create_panel::make_for_script(t, e, &what, &key) {
-                Ok(()) => ok(""),
-                Err(err) => fail(err),
+        "place_preview",
+        "place_preview <type | building | prefab> <x m> <z m> [key] | place_preview off",
+        "start placing (a Create type, a building or a prefab) and show its preview at x z as if the mouse were there",
+        |e, a| {
+            if a.first().map(String::as_str) == Some("off") {
+                return with_tile(e, |t, _| {
+                    t.placing = None;
+                    t.preview_forced = false;
+                    ok("")
+                });
             }
-        })
-    });
 
-    c.add("prefab_place", "prefab_place <key> [x m z m]", "place a prefab in the working layer, on the ground at x z (default: the view's centre)", |e, a| {
-        let Some(key) = a.first().cloned() else { return fail("usage: prefab_place <key> [x m z m]") };
-        let at = (a.len() >= 3).then(|| Some(Float3::new(number(&a[1])?, 0.0, number(&a[2])?))).flatten();
-        with_tile(e, |t, e| {
-            let at = at.unwrap_or_else(|| t.placement_point(e));
-            t.place_prefab(e, &key, at).map_or_else(fail, ok)
-        })
-    });
+            let (Some(what), Some(x), Some(z)) = (a.first().cloned(), a.get(1).and_then(|v| number(v)), a.get(2).and_then(|v| number(v)))
+            else {
+                return fail("usage: place_preview <type | building | prefab> <x m> <z m> [key] | place_preview off");
+            };
+
+            let key = a.get(3).cloned().unwrap_or_default();
+            with_tile(e, |t, e| {
+                let Some(d) = crate::tool::document(e) else { return no_tile() };
+                t.cursor = Float3::new(x, d.tile().terrain_height(x, z), z);
+                t.terrain_hit = true;
+                t.preview_forced = true;
+                match crate::create_panel::make_for_script(t, e, &what, &key) {
+                    Ok(()) => ok(""),
+                    Err(err) => fail(err),
+                }
+            })
+        },
+    );
+
+    c.add(
+        "prefab_place",
+        "prefab_place <key> [x m z m]",
+        "place a prefab in the working layer, on the ground at x z (default: the view's centre)",
+        |e, a| {
+            let Some(key) = a.first().cloned() else { return fail("usage: prefab_place <key> [x m z m]") };
+            let at = (a.len() >= 3).then(|| Some(Float3::new(number(&a[1])?, 0.0, number(&a[2])?))).flatten();
+            with_tile(e, |t, e| {
+                let at = at.unwrap_or_else(|| t.placement_point(e));
+                t.place_prefab(e, &key, at).map_or_else(fail, ok)
+            })
+        },
+    );
 
     fn selected_group(e: &Editor) -> Option<usize> {
         let d = e.docs.find_as::<TileDocument>(crate::tool::document_id(e)?)?;
@@ -2492,19 +3031,27 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |t, e| t.open_in_prefab_tool(e, g).map_or_else(fail, ok))
     });
 
-    c.add("prefab_recognise", "prefab_recognise", "make the instance groups that are exact copies of a prefab references to it (as opening a tile from the Assembly Kit does)", |e, _| {
-        with_tile(e, |t, e| t.recognise_prefabs(e).map_or_else(fail, ok))
-    });
+    c.add(
+        "prefab_recognise",
+        "prefab_recognise",
+        "make the instance groups that are exact copies of a prefab references to it (as opening a tile from the Assembly Kit does)",
+        |e, _| with_tile(e, |t, e| t.recognise_prefabs(e).map_or_else(fail, ok)),
+    );
 
     c.add("prefab_unpack", "prefab_unpack", "make the selected copy of a prefab a plain group", |e, _| {
         let Some(g) = selected_group(e) else { return fail("select a copy of a prefab") };
         with_tile(e, |t, e| t.unpack_prefab(e, g).map_or_else(fail, ok))
     });
 
-    c.add("prefab_save_kit", "prefab_save_kit <key>", "write a prefab as TEd reads it into the Assembly Kit's art/prefabs (the prefabs placed in it baked)", |e, a| {
-        let Some(key) = a.first().cloned() else { return fail("usage: prefab_save_kit <key>") };
-        with_tile(e, |t, e| t.save_prefab_for_kit(e, &key, None).map_or_else(fail, ok))
-    });
+    c.add(
+        "prefab_save_kit",
+        "prefab_save_kit <key>",
+        "write a prefab as TEd reads it into the Assembly Kit's art/prefabs (the prefabs placed in it baked)",
+        |e, a| {
+            let Some(key) = a.first().cloned() else { return fail("usage: prefab_save_kit <key>") };
+            with_tile(e, |t, e| t.save_prefab_for_kit(e, &key, None).map_or_else(fail, ok))
+        },
+    );
 
     c.add("prefab_save", "prefab_save <name> [folder]", "save the selected instance group as a new prefab (renamed after it)", |e, a| {
         let Some(name) = a.first().cloned() else { return fail("usage: prefab_save <name> [folder]") };
@@ -2523,64 +3070,107 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if ok_first && d.remove_items(&what) { ok("") } else { fail("nothing to delete") }
     });
 
-    c.add("tile_duplicate_layer", "tile_duplicate_layer <layer path>", "duplicate a layer with everything in it (named '<name> copy')", |e, a| {
-        let sel = selected(e);
-        let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_duplicate_layer <layer path>") };
-        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer") };
-        d.duplicate_layer(el).map_or_else(fail, |_| ok(""))
-    });
+    c.add(
+        "tile_duplicate_layer",
+        "tile_duplicate_layer <layer path>",
+        "duplicate a layer with everything in it (named '<name> copy')",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_duplicate_layer <layer path>") };
+            let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer") };
+            d.duplicate_layer(el).map_or_else(fail, |_| ok(""))
+        },
+    );
 
-    c.add("tile_export_type", "tile_export_type <layer path> Normal|Off|Separate|Escalation1|Escalation2|Escalation3", "the export type of a layer", |e, a| {
-        let sel = selected(e);
-        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_export_type <layer path> Normal|Off|Separate|Escalation1|Escalation2|Escalation3") };
-        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)).filter(|&el| d.tile().tscene().is_layer(el)) else { return fail("no such layer") };
-        if d.set_attribute(el, "export_type", &format!("LayerExportType_{}", a[1])) { ok("") } else { fail("cannot set it") }
-    });
+    c.add(
+        "tile_export_type",
+        "tile_export_type <layer path> Normal|Off|Separate|Escalation1|Escalation2|Escalation3",
+        "the export type of a layer",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else {
+                return fail("usage: tile_export_type <layer path> Normal|Off|Separate|Escalation1|Escalation2|Escalation3");
+            };
+            let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)).filter(|&el| d.tile().tscene().is_layer(el)) else {
+                return fail("no such layer");
+            };
+            if d.set_attribute(el, "export_type", &format!("LayerExportType_{}", a[1])) { ok("") } else { fail("cannot set it") }
+        },
+    );
 
-    c.add("tile_piece_ends", "tile_piece_ends [selected | #elem]", "log a fort piece's ends as piece-to-piece snapping sees them (piece frame: joint, the way out, the outer side)", |e, a| {
-        let sel = selected(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let Some(el) = element_arg(d, a.first().map_or("selected", String::as_str), primary_of(&sel, d)) else { return fail("no such element") };
-        let Some(key) = d.tile().tscene().doc().get(el, "key") else { return fail("not a building") };
-        let ends = d.tile().piece_ends(&key);
-        ok(format!("{} end(s): ", ends.len()) + &ends.iter().map(|x| format!("at {:.2} {:.2} {:.2} out {:.2} {:.2} side {:.2} {:.2}", x.at[0], x.at[1], x.at[2], x.out[0], x.out[1], x.side[0], x.side[1])).collect::<Vec<_>>().join(" | "))
-    });
+    c.add(
+        "tile_piece_ends",
+        "tile_piece_ends [selected | #elem]",
+        "log a fort piece's ends as piece-to-piece snapping sees them (piece frame: joint, the way out, the outer side)",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(el) = element_arg(d, a.first().map_or("selected", String::as_str), primary_of(&sel, d)) else {
+                return fail("no such element");
+            };
+            let Some(key) = d.tile().tscene().doc().get(el, "key") else { return fail("not a building") };
+            let ends = d.tile().piece_ends(&key);
+            ok(format!("{} end(s): ", ends.len())
+                + &ends
+                    .iter()
+                    .map(|x| {
+                        format!(
+                            "at {:.2} {:.2} {:.2} out {:.2} {:.2} side {:.2} {:.2}",
+                            x.at[0], x.at[1], x.at[2], x.out[0], x.out[1], x.side[0], x.side[1]
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" | "))
+        },
+    );
 
-    c.add("tile_fire","tile_fire play|stop|state [selected | #elem]", "the burning sequence's preview of a building (fire.rs): play it from the start, stop it, or log where it is", |e, a| {
-        let sel = selected(e);
-        let now = e.clock.time();
-        let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_fire play|stop|state [selected | #elem]") };
-        let Some(el) = element_arg(d, a.get(1).map_or("selected", String::as_str), primary_of(&sel, d)) else { return fail("no such element") };
-        if d.tile().tscene().type_of(el) != "BUILDING_INSTANCE" {
-            return fail("not a building");
-        }
-
-        match a[0].as_str() {
-            "play" => d.tile_mut().fire_start(el, now),
-            "stop" => d.tile_mut().fire_stop(Some(el)),
-            "state" => {
-                return ok(&d.tile().fire_time(el).map_or("not burning".to_owned(), |t| {
-                    let (amount, stage) = wce_tile_editor::tile_document::fire::fire_at(t);
-                    format!("{t:.2} s, stage {stage}, char {amount:.3}")
-                }));
+    c.add(
+        "tile_fire",
+        "tile_fire play|stop|state [selected | #elem]",
+        "the burning sequence's preview of a building (fire.rs): play it from the start, stop it, or log where it is",
+        |e, a| {
+            let sel = selected(e);
+            let now = e.clock.time();
+            let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_fire play|stop|state [selected | #elem]") };
+            let Some(el) = element_arg(d, a.get(1).map_or("selected", String::as_str), primary_of(&sel, d)) else {
+                return fail("no such element");
+            };
+            if d.tile().tscene().type_of(el) != "BUILDING_INSTANCE" {
+                return fail("not a building");
             }
 
-            _ => return fail("usage: tile_fire play|stop|state [selected | #elem]"),
-        }
+            match a[0].as_str() {
+                "play" => d.tile_mut().fire_start(el, now),
+                "stop" => d.tile_mut().fire_stop(Some(el)),
+                "state" => {
+                    return ok(&d.tile().fire_time(el).map_or("not burning".to_owned(), |t| {
+                        let (amount, stage) = wce_tile_editor::tile_document::fire::fire_at(t);
+                        format!("{t:.2} s, stage {stage}, char {amount:.3}")
+                    }));
+                }
 
-        ok("")
-    });
+                _ => return fail("usage: tile_fire play|stop|state [selected | #elem]"),
+            }
 
-    c.add("wall_preview_stats", "wall_preview_stats [made] [kept]", "log how many times the walls' preview pieces were made and how many sets are kept; with numbers, test them", |e, a| {
-        let Some(d) = document(e) else { return no_tile() };
-        let (made, kept) = d.tile().wall_preview_stats();
-        let want = |i: usize| a.get(i).and_then(|v| v.parse::<u64>().ok());
-        match (want(0), want(1)) {
-            (Some(m), _) if m != made => fail(format!("{made} made, expected {m}")),
-            (_, Some(k)) if k != kept as u64 => fail(format!("{kept} kept, expected {k}")),
-            _ => ok(format!("{made} made, {kept} kept")),
-        }
-    });
+            ok("")
+        },
+    );
+
+    c.add(
+        "wall_preview_stats",
+        "wall_preview_stats [made] [kept]",
+        "log how many times the walls' preview pieces were made and how many sets are kept; with numbers, test them",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let (made, kept) = d.tile().wall_preview_stats();
+            let want = |i: usize| a.get(i).and_then(|v| v.parse::<u64>().ok());
+            match (want(0), want(1)) {
+                (Some(m), _) if m != made => fail(format!("{made} made, expected {m}")),
+                (_, Some(k)) if k != kept as u64 => fail(format!("{kept} kept, expected {k}")),
+                _ => ok(format!("{made} made, {kept} kept")),
+            }
+        },
+    );
 
     c.add(
         "wall_tech_check", "wall_tech_check [gaps stacked loose]",
@@ -2646,12 +3236,17 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("tile_generate_siege_ai", "tile_generate_siege_ai", "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported", |e, _| {
-        with_tile(e, |t, e| match t.generate_siege_ai_now(e) {
-            Ok(l) => ok(&format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("\n  {w}")).collect::<String>())),
-            Err(err) => fail(&err),
-        })
-    });
+    c.add(
+        "tile_generate_siege_ai",
+        "tile_generate_siege_ai",
+        "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported",
+        |e, _| {
+            with_tile(e, |t, e| match t.generate_siege_ai_now(e) {
+                Ok(l) => ok(&format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("\n  {w}")).collect::<String>())),
+                Err(err) => fail(&err),
+            })
+        },
+    );
 
     c.add("tile_select_layer", "tile_select_layer <layer path | #elem>", "select a layer or an element in the scene tree", |e, a| {
         let Some(what) = a.first() else { return fail("usage: tile_select_layer <layer path | #elem>") };
@@ -2701,61 +3296,90 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_tree", "tile_tree [depth]", "log the scene tree from the root down to a depth (default 2) with each layer's flags and child count", |e, a| {
-        let Some(d) = document(e) else { return no_tile() };
-        let depth = a.first().map_or(2, |x| atoi(x));
-        let t = d.tile();
-        let sc = t.tscene();
-        let mut out = String::new();
-        let mut stack = sc.scene_graph().map(|g| vec![(g, 0i64)]).unwrap_or_default();
-        while let Some((el, level)) = stack.pop() {
-            let kids = sc.children(el);
-            out += &format!(
-                "{:width$}#{el} {} '{}' {}{}{} {}\n", "", sc.type_of(el), sc.name(el), if t.own_flag(el, "OIF_VISIBLE") { "V" } else { "-" },
-                if t.own_flag(el, "OIF_ACTIVE") { "A" } else { "-" }, if sc.is_layer(el) { format!(" export={}", t.export_type(el)) } else { String::new() },
-                kids.len(), width = (level * 2) as usize,
-            );
-            if level < depth {
-                stack.extend(kids.into_iter().filter(|&k| sc.is_layer(k)).rev().map(|k| (k, level + 1)));
+    c.add(
+        "tile_tree",
+        "tile_tree [depth]",
+        "log the scene tree from the root down to a depth (default 2) with each layer's flags and child count",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let depth = a.first().map_or(2, |x| atoi(x));
+            let t = d.tile();
+            let sc = t.tscene();
+            let mut out = String::new();
+            let mut stack = sc.scene_graph().map(|g| vec![(g, 0i64)]).unwrap_or_default();
+            while let Some((el, level)) = stack.pop() {
+                let kids = sc.children(el);
+                out += &format!(
+                    "{:width$}#{el} {} '{}' {}{}{} {}\n",
+                    "",
+                    sc.type_of(el),
+                    sc.name(el),
+                    if t.own_flag(el, "OIF_VISIBLE") { "V" } else { "-" },
+                    if t.own_flag(el, "OIF_ACTIVE") { "A" } else { "-" },
+                    if sc.is_layer(el) { format!(" export={}", t.export_type(el)) } else { String::new() },
+                    kids.len(),
+                    width = (level * 2) as usize,
+                );
+                if level < depth {
+                    stack.extend(kids.into_iter().filter(|&k| sc.is_layer(k)).rev().map(|k| (k, level + 1)));
+                }
             }
-        }
 
-        ok(out)
-    });
+            ok(out)
+        },
+    );
 
     c.add("assert_flag", "assert_flag <layer path | #elem> visible|active 0|1", "test: the element's own eye / cursor arrow", |e, a| {
         let sel = selected(e);
-        let Some(d) = document(e).filter(|_| a.len() >= 3) else { return fail("usage: assert_flag <layer path | #elem> visible|active 0|1") };
+        let Some(d) = document(e).filter(|_| a.len() >= 3) else {
+            return fail("usage: assert_flag <layer path | #elem> visible|active 0|1");
+        };
         let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer or element") };
         let v = d.tile().own_flag(el, if a[1] == "visible" { "OIF_VISIBLE" } else { "OIF_ACTIVE" });
         if v == (a[2] == "1") { ok("") } else { fail(format!("{} {} is {}", a[0], a[1], if v { "1" } else { "0" })) }
     });
 
-    c.add("assert_shown", "assert_shown <layer path | #elem> 0|1", "test: the element is drawn (visible itself and in every layer above)", |e, a| {
-        let sel = selected(e);
-        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_shown <layer path | #elem> 0|1") };
-        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer or element") };
-        let shown = d.tile().shown(el);
-        if shown == (a[1] == "1") { ok("") } else { fail(format!("{}{}", a[0], if shown { " is shown" } else { " is hidden" })) }
-    });
-
-    c.add("assert_selectable", "assert_selectable <layer path | #elem> 0|1", "test: the element can be picked (active itself and in every layer above)", |e, a| {
-        let sel = selected(e);
-        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_selectable <layer path | #elem> 0|1") };
-        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer or element") };
-        let s = d.tile().selectable(el);
-        if s == (a[1] == "1") { ok("") } else { fail(format!("{}{}", a[0], if s { " is selectable" } else { " is locked" })) }
-    });
+    c.add(
+        "assert_shown",
+        "assert_shown <layer path | #elem> 0|1",
+        "test: the element is drawn (visible itself and in every layer above)",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_shown <layer path | #elem> 0|1") };
+            let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer or element") };
+            let shown = d.tile().shown(el);
+            if shown == (a[1] == "1") { ok("") } else { fail(format!("{}{}", a[0], if shown { " is shown" } else { " is hidden" })) }
+        },
+    );
 
     c.add(
-        "assert_layer", "assert_layer <layer path> <children n | exists 0|1 | export Type | name N>",
-        "test: facts of a layer (children n | exists 0|1 | export Type | child <index> <name>)", |e, a| {
+        "assert_selectable",
+        "assert_selectable <layer path | #elem> 0|1",
+        "test: the element can be picked (active itself and in every layer above)",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_selectable <layer path | #elem> 0|1") };
+            let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail("no such layer or element") };
+            let s = d.tile().selectable(el);
+            if s == (a[1] == "1") { ok("") } else { fail(format!("{}{}", a[0], if s { " is selectable" } else { " is locked" })) }
+        },
+    );
+
+    c.add(
+        "assert_layer",
+        "assert_layer <layer path> <children n | exists 0|1 | export Type | name N>",
+        "test: facts of a layer (children n | exists 0|1 | export Type | child <index> <name>)",
+        |e, a| {
             let sel = selected(e);
             let usage = "usage: assert_layer <layer path> <children n | exists 0|1 | export Type>";
             let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail(usage) };
             let el = element_arg(d, &a[0], primary_of(&sel, d));
             if a[1] == "exists" {
-                return if el.is_some() == a.get(2).is_some_and(|x| x == "1") { ok("") } else { fail(if el.is_some() { "the layer exists" } else { "no such layer" }) };
+                return if el.is_some() == a.get(2).is_some_and(|x| x == "1") {
+                    ok("")
+                } else {
+                    fail(if el.is_some() { "the layer exists" } else { "no such layer" })
+                };
             }
 
             let Some(el) = el else { return fail(format!("no such layer '{}'", a[0])) };
@@ -2774,7 +3398,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 // The direct child at an index (counted from 0) has this name.
                 ("child", 4..) => {
                     let kids = t.tscene().children(el);
-                    let got = usize::try_from(atoi(&a[2])).ok().and_then(|i| kids.get(i)).map_or_else(|| "(none)".to_owned(), |&k| t.tscene().name(k));
+                    let got = usize::try_from(atoi(&a[2]))
+                        .ok()
+                        .and_then(|i| kids.get(i))
+                        .map_or_else(|| "(none)".to_owned(), |&k| t.tscene().name(k));
                     if got == a[3] { ok("") } else { fail(format!("child {} is '{got}'", a[2])) }
                 }
 
@@ -2783,20 +3410,29 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("assert_selection_names", "assert_selection_names <name>...", "test: the selected elements have exactly these names, in selection order", |e, a| {
-        let sel = selected(e);
-        let Some(d) = document(e) else { return no_tile() };
-        let got = sel.iter().map(|&el| d.tile().tscene().name(el)).collect::<Vec<_>>().join(",");
-        let want = a.join(",");
-        if got == want { ok("") } else { fail(format!("selected: {got}")) }
-    });
+    c.add(
+        "assert_selection_names",
+        "assert_selection_names <name>...",
+        "test: the selected elements have exactly these names, in selection order",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let got = sel.iter().map(|&el| d.tile().tscene().name(el)).collect::<Vec<_>>().join(",");
+            let want = a.join(",");
+            if got == want { ok("") } else { fail(format!("selected: {got}")) }
+        },
+    );
 
     // ---- placement: landscape / freeform, snapping, the off-terrain report
     c.add(
-        "tile_placement", "tile_placement <path | #elem | selected> landscape|freeform",
-        "set the surface mode of the instances (layers: everything below); landscape snaps them to the terrain", |e, a| {
+        "tile_placement",
+        "tile_placement <path | #elem | selected> landscape|freeform",
+        "set the surface mode of the instances (layers: everything below); landscape snaps them to the terrain",
+        |e, a| {
             let sel = selected(e);
-            let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: tile_placement <path | #elem | selected> landscape|freeform") };
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else {
+                return fail("usage: tile_placement <path | #elem | selected> landscape|freeform");
+            };
             let p = primary_of(&sel, d);
             let what = if a[0] == "selected" { sel.clone() } else { element_arg(d, &a[0], p).into_iter().collect() };
             if what.is_empty() {
@@ -2814,10 +3450,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "tile_snap", "tile_snap <path | #elem | selected | all> [freeform]",
-        "put landscape instances (with `freeform`: every instance) on the terrain; `all` is every instance of the tile", |e, a| {
+        "tile_snap",
+        "tile_snap <path | #elem | selected | all> [freeform]",
+        "put landscape instances (with `freeform`: every instance) on the terrain; `all` is every instance of the tile",
+        |e, a| {
             let sel = selected(e);
-            let Some(d) = document(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_snap <path | #elem | selected | all> [freeform]") };
+            let Some(d) = document(e).filter(|_| !a.is_empty()) else {
+                return fail("usage: tile_snap <path | #elem | selected | all> [freeform]");
+            };
             let p = primary_of(&sel, d);
             let what: Vec<usize> = match a[0].as_str() {
                 "all" => d.tile().tscene().scene_graph().into_iter().collect(),
@@ -2833,23 +3473,31 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_set_world", "tile_set_world <x m> <y m> <z m>", "type a world position for the selected instance (the Inspector's X / Y / Z fields)", |e, a| {
-        let el = primary(e);
-        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
-        let (Some(d), Some((x, y, z))) = (document(e), parsed) else { return fail("usage: tile_set_world <x m> <y m> <z m>") };
-        let Some(el) = el.filter(|&el| d.tile().is_instance(el)) else { return fail("no instance selected") };
-        d.set_world_metres(el, Float3::new(x, y, z), 0);
-        d.history_mut().break_merge();
-        ok("")
-    });
+    c.add(
+        "tile_set_world",
+        "tile_set_world <x m> <y m> <z m>",
+        "type a world position for the selected instance (the Inspector's X / Y / Z fields)",
+        |e, a| {
+            let el = primary(e);
+            let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
+            let (Some(d), Some((x, y, z))) = (document(e), parsed) else { return fail("usage: tile_set_world <x m> <y m> <z m>") };
+            let Some(el) = el.filter(|&el| d.tile().is_instance(el)) else { return fail("no instance selected") };
+            d.set_world_metres(el, Float3::new(x, y, z), 0);
+            d.history_mut().break_merge();
+            ok("")
+        },
+    );
 
     c.add(
-        "assert_attr", "assert_attr <element | selected> <attribute> <value | ->",
+        "assert_attr",
+        "assert_attr <element | selected> <attribute> <value | ->",
         "test: the element's attribute in the tile has this text (`-`: it is not written)",
         |e, a| {
             let selected = primary(e);
             let el = a.first().and_then(|x| if x == "selected" { selected } else { x.parse::<usize>().ok() });
-            let (Some(d), Some(el), Some(attr), Some(_)) = (document(e), el, a.get(1), a.get(2)) else { return fail("usage: assert_attr <element | selected> <attribute> <value | ->") };
+            let (Some(d), Some(el), Some(attr), Some(_)) = (document(e), el, a.get(1), a.get(2)) else {
+                return fail("usage: assert_attr <element | selected> <attribute> <value | ->");
+            };
             let want = a[2..].join(" ");
             let got = d.tile().tscene().doc().get(el, attr);
             match got {
@@ -2861,24 +3509,38 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_set_common", "tile_set_common <attribute> <value>", "set a property on every selected element, as the Inspector does with several selected (one undo entry)", |e, a| {
-        let (Some(id), [attr, value]) = (crate::tool::document_id(e), a) else { return fail("usage: tile_set_common <attribute> <value>") };
-        let elems = selected(e);
-        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-        d.set_common(&elems, attr, value).map(|n| format!("{n} of {} changed", elems.len())).map_or_else(fail, ok)
-    });
+    c.add(
+        "tile_set_common",
+        "tile_set_common <attribute> <value>",
+        "set a property on every selected element, as the Inspector does with several selected (one undo entry)",
+        |e, a| {
+            let (Some(id), [attr, value]) = (crate::tool::document_id(e), a) else {
+                return fail("usage: tile_set_common <attribute> <value>");
+            };
+            let elems = selected(e);
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            d.set_common(&elems, attr, value).map(|n| format!("{n} of {} changed", elems.len())).map_or_else(fail, ok)
+        },
+    );
 
-    c.add("assert_attr_near", "assert_attr_near <element | selected> <attribute> <number> <tolerance>", "test: the element's attribute is a number this close", |e, a| {
-        let selected = primary(e);
-        let el = a.first().and_then(|x| if x == "selected" { selected } else { x.parse::<usize>().ok() });
-        let parsed = (a.len() >= 4).then(|| Some((number(&a[2])?, number(&a[3])?))).flatten();
-        let (Some(d), Some(el), Some((want, tol))) = (document(e), el, parsed) else { return fail("usage: assert_attr_near <element | selected> <attribute> <number> <tolerance>") };
-        match d.tile().tscene().doc().get(el, &a[1]).and_then(|v| v.trim().parse::<f32>().ok()) {
-            Some(v) if (v - want).abs() <= tol => ok(""),
-            Some(v) => fail(format!("{} is {v}, expected {want}", a[1])),
-            None => fail(format!("{} is not a number", a[1])),
-        }
-    });
+    c.add(
+        "assert_attr_near",
+        "assert_attr_near <element | selected> <attribute> <number> <tolerance>",
+        "test: the element's attribute is a number this close",
+        |e, a| {
+            let selected = primary(e);
+            let el = a.first().and_then(|x| if x == "selected" { selected } else { x.parse::<usize>().ok() });
+            let parsed = (a.len() >= 4).then(|| Some((number(&a[2])?, number(&a[3])?))).flatten();
+            let (Some(d), Some(el), Some((want, tol))) = (document(e), el, parsed) else {
+                return fail("usage: assert_attr_near <element | selected> <attribute> <number> <tolerance>");
+            };
+            match d.tile().tscene().doc().get(el, &a[1]).and_then(|v| v.trim().parse::<f32>().ok()) {
+                Some(v) if (v - want).abs() <= tol => ok(""),
+                Some(v) => fail(format!("{} is {v}, expected {want}", a[1])),
+                None => fail(format!("{} is not a number", a[1])),
+            }
+        },
+    );
 
     c.add(
         "assert_piece", "assert_piece <piece> visible|burning <0|1> | model <text> | offset <x> <y> <z> [tolerance]",
@@ -2919,12 +3581,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "assert_instance_param", "assert_instance_param <index 0..15> <value> [tolerance]",
+        "assert_instance_param",
+        "assert_instance_param <index 0..15> <value> [tolerance]",
         "test: every model piece of the selected instance draws with this POSITION4..7 value (index 3 is POSITION4.w)",
         |e, a| {
             let el = primary(e);
             let parsed = (a.len() >= 2).then(|| Some((a[0].parse::<usize>().ok().filter(|&i| i < 16)?, number(&a[1])?))).flatten();
-            let (Some(d), Some((i, want))) = (document(e), parsed) else { return fail("usage: assert_instance_param <index 0..15> <value> [tolerance]") };
+            let (Some(d), Some((i, want))) = (document(e), parsed) else {
+                return fail("usage: assert_instance_param <index 0..15> <value> [tolerance]");
+            };
             let tol = a.get(2).and_then(|v| number(v)).unwrap_or(1e-3);
             let Some(el) = el else { return fail("nothing selected") };
             let ids = d.tile().piece_entities(el);
@@ -2933,7 +3598,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             }
 
             for id in ids {
-                let Some(wce_scene::render_scene::Payload::MeshInstance(mi)) = e.scene.find(id).map(|en| &en.payload) else { return fail(format!("entity {id} is no mesh")) };
+                let Some(wce_scene::render_scene::Payload::MeshInstance(mi)) = e.scene.find(id).map(|en| &en.payload) else {
+                    return fail(format!("entity {id} is no mesh"));
+                };
                 let got = [mi.p4, mi.p5, mi.p6, mi.p7][i / 4][i % 4];
                 if (got - want).abs() > tol {
                     return fail(format!("entity {id}: {got}, expected {want}"));
@@ -2945,8 +3612,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "tile_report_off_terrain", "tile_report_off_terrain [tolerance m] [layer path]",
-        "log the landscape instances that are more than the tolerance (default 0.5) off the terrain, worst first", |e, a| {
+        "tile_report_off_terrain",
+        "tile_report_off_terrain [tolerance m] [layer path]",
+        "log the landscape instances that are more than the tolerance (default 0.5) off the terrain, worst first",
+        |e, a| {
             let Some(d) = document(e) else { return no_tile() };
             let tol = match a.first() {
                 Some(x) => match number(x) {
@@ -2986,7 +3655,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             for o in list.iter().take(8) {
                 let w = t.world_position(o.elem);
                 s += &format!(
-                    "\n  #{} {} '{}' {} m (world {} {} {}, terrain {})", o.elem, t.tscene().type_of(o.elem), t.tscene().name(o.elem), f6(o.dy), f6(w.x), f6(w.y), f6(w.z),
+                    "\n  #{} {} '{}' {} m (world {} {} {}, terrain {})",
+                    o.elem,
+                    t.tscene().type_of(o.elem),
+                    t.tscene().name(o.elem),
+                    f6(o.dy),
+                    f6(w.x),
+                    f6(w.y),
+                    f6(w.z),
                     f6(t.terrain_height(w.x, w.z)),
                 );
             }
@@ -2995,18 +3671,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("assert_placement", "assert_placement <path | #elem | selected> landscape|freeform|none", "test: the element's surface mode", |e, a| {
-        let sel = selected(e);
-        let Some(d) = document(e).filter(|_| a.len() >= 2) else { return fail("usage: assert_placement <path | #elem | selected> landscape|freeform|none") };
-        let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail(format!("no such element '{}'", a[0])) };
-        let got = match d.tile().placement(el) {
-            Placement::Landscape => "landscape",
-            Placement::Freeform => "freeform",
-            Placement::None => "none",
-        };
+    c.add(
+        "assert_placement",
+        "assert_placement <path | #elem | selected> landscape|freeform|none",
+        "test: the element's surface mode",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e).filter(|_| a.len() >= 2) else {
+                return fail("usage: assert_placement <path | #elem | selected> landscape|freeform|none");
+            };
+            let Some(el) = element_arg(d, &a[0], primary_of(&sel, d)) else { return fail(format!("no such element '{}'", a[0])) };
+            let got = match d.tile().placement(el) {
+                Placement::Landscape => "landscape",
+                Placement::Freeform => "freeform",
+                Placement::None => "none",
+            };
 
-        if got == a[1] { ok("") } else { fail(format!("placement is {got}, expected {}", a[1])) }
-    });
+            if got == a[1] { ok("") } else { fail(format!("placement is {got}, expected {}", a[1])) }
+        },
+    );
 
     c.add(
         "assert_on_terrain", "assert_on_terrain <path | #elem | selected> 0|1 [tolerance m]",
@@ -3052,26 +3735,33 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_inspect", "tile_inspect <element | #elem | selected> [piece]", "log the Property Editor rows of an element (or of one of its building pieces) with their values", |e, a| {
-        let sel = selected(e);
-        let Some(d) = document(e) else { return fail("usage: tile_inspect <element | #elem | selected> [piece]") };
-        let arg = a.first().map_or("selected", String::as_str);
-        let Some(el) = arg.parse::<usize>().ok().or_else(|| element_arg(d, arg, primary_of(&sel, d))) else { return fail("usage: tile_inspect <element | #elem | selected> [piece]") };
-        let item = match a.get(1).and_then(|x| x.parse::<usize>().ok()) {
-            Some(k) => wce_tile_editor::tile_document::piece_item(el, k),
-            None => wce_tile_editor::tile_document::item_of(el),
-        };
+    c.add(
+        "tile_inspect",
+        "tile_inspect <element | #elem | selected> [piece]",
+        "log the Property Editor rows of an element (or of one of its building pieces) with their values",
+        |e, a| {
+            let sel = selected(e);
+            let Some(d) = document(e) else { return fail("usage: tile_inspect <element | #elem | selected> [piece]") };
+            let arg = a.first().map_or("selected", String::as_str);
+            let Some(el) = arg.parse::<usize>().ok().or_else(|| element_arg(d, arg, primary_of(&sel, d))) else {
+                return fail("usage: tile_inspect <element | #elem | selected> [piece]");
+            };
+            let item = match a.get(1).and_then(|x| x.parse::<usize>().ok()) {
+                Some(k) => wce_tile_editor::tile_document::piece_item(el, k),
+                None => wce_tile_editor::tile_document::item_of(el),
+            };
 
-        let mut rows = DumpInspector::default();
-        rows.lines.push(format!("#{el} {}", d.tile().tscene().type_of(el)));
-        let src = wce_scene::render_scene::SourceRef { doc: d.id(), item };
-        d.inspect(src, &mut rows);
-        for l in &rows.lines {
-            wce_foundation::log::info(l.clone());
-        }
+            let mut rows = DumpInspector::default();
+            rows.lines.push(format!("#{el} {}", d.tile().tscene().type_of(el)));
+            let src = wce_scene::render_scene::SourceRef { doc: d.id(), item };
+            d.inspect(src, &mut rows);
+            for l in &rows.lines {
+                wce_foundation::log::info(l.clone());
+            }
 
-        ok(format!("{} rows", rows.lines.len()))
-    });
+            ok(format!("{} rows", rows.lines.len()))
+        },
+    );
 
     c.add(
         "tile_edit", "tile_edit <element | selected> [piece <n>] <row> <value...>",
@@ -3093,13 +3783,29 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_model_bounds", "tile_model_bounds <building key>", "log the bounds of a building key's model pieces (after a few frames, when the models have loaded)", |e, a| {
-        let (Some(d), Some(key)) = (document(e), a.first()) else { return fail("usage: tile_model_bounds <building key>") };
-        match d.tile().building_model(key) {
-            Some(m) => ok(format!("{key}: ok {} resolved {} pieces {} bmin {:.3} {:.3} {:.3} bmax {:.3} {:.3} {:.3}", m.ok, m.resolved, m.pieces.len(), m.bmin.x, m.bmin.y, m.bmin.z, m.bmax.x, m.bmax.y, m.bmax.z)),
-            None => fail(format!("the tile has no building key '{key}'")),
-        }
-    });
+    c.add(
+        "tile_model_bounds",
+        "tile_model_bounds <building key>",
+        "log the bounds of a building key's model pieces (after a few frames, when the models have loaded)",
+        |e, a| {
+            let (Some(d), Some(key)) = (document(e), a.first()) else { return fail("usage: tile_model_bounds <building key>") };
+            match d.tile().building_model(key) {
+                Some(m) => ok(format!(
+                    "{key}: ok {} resolved {} pieces {} bmin {:.3} {:.3} {:.3} bmax {:.3} {:.3} {:.3}",
+                    m.ok,
+                    m.resolved,
+                    m.pieces.len(),
+                    m.bmin.x,
+                    m.bmin.y,
+                    m.bmin.z,
+                    m.bmax.x,
+                    m.bmax.y,
+                    m.bmax.z
+                )),
+                None => fail(format!("the tile has no building key '{key}'")),
+            }
+        },
+    );
 
     c.add(
         "tile_dump_placement", "tile_dump_placement <file.tsv>",
@@ -3130,25 +3836,45 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("assert_off_terrain_count", "assert_off_terrain_count <tolerance m> <n>", "test: n landscape instances of the tile are more than the tolerance off the terrain", |e, a| {
-        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-        let (Some(d), Some((tol, n))) = (document(e), parsed) else { return fail("usage: assert_off_terrain_count <tolerance m> <n>") };
-        let got = d.tile().off_terrain(tol, None).len();
-        if got == n as usize { ok("") } else { fail(format!("{got} instances off the terrain, expected {}", a[1])) }
-    });
+    c.add(
+        "assert_off_terrain_count",
+        "assert_off_terrain_count <tolerance m> <n>",
+        "test: n landscape instances of the tile are more than the tolerance off the terrain",
+        |e, a| {
+            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            let (Some(d), Some((tol, n))) = (document(e), parsed) else { return fail("usage: assert_off_terrain_count <tolerance m> <n>") };
+            let got = d.tile().off_terrain(tol, None).len();
+            if got == n as usize { ok("") } else { fail(format!("{got} instances off the terrain, expected {}", a[1])) }
+        },
+    );
 
-    c.add("assert_placement_counts", "assert_placement_counts <landscape n> <freeform n>", "test: how many instances are landscape / freeform", |e, a| {
-        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-        let (Some(d), Some((l, f))) = (document(e), parsed) else { return fail("usage: assert_placement_counts <landscape n> <freeform n>") };
-        let c = d.tile().placement_counts();
-        if c.landscape == l as usize && c.freeform == f as usize { ok("") } else { fail(format!("landscape {}, freeform {}", c.landscape, c.freeform)) }
-    });
+    c.add(
+        "assert_placement_counts",
+        "assert_placement_counts <landscape n> <freeform n>",
+        "test: how many instances are landscape / freeform",
+        |e, a| {
+            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            let (Some(d), Some((l, f))) = (document(e), parsed) else {
+                return fail("usage: assert_placement_counts <landscape n> <freeform n>");
+            };
+            let c = d.tile().placement_counts();
+            if c.landscape == l as usize && c.freeform == f as usize {
+                ok("")
+            } else {
+                fail(format!("landscape {}, freeform {}", c.landscape, c.freeform))
+            }
+        },
+    );
 
     // ---- ground look
     c.add(
-        "tile_terrain", "tile_terrain blended|flat [climate] [season sp|su|au|wi]",
-        "the ground colour of the open tile: the blend map mixed from the climate's textures, or the plain tiled texture", |e, a| {
-            let Some(id) = crate::tool::document_id(e).filter(|_| !a.is_empty()) else { return fail("usage: tile_terrain blended|flat [climate] [season sp|su|au|wi]") };
+        "tile_terrain",
+        "tile_terrain blended|flat [climate] [season sp|su|au|wi]",
+        "the ground colour of the open tile: the blend map mixed from the climate's textures, or the plain tiled texture",
+        |e, a| {
+            let Some(id) = crate::tool::document_id(e).filter(|_| !a.is_empty()) else {
+                return fail("usage: tile_terrain blended|flat [climate] [season sp|su|au|wi]");
+            };
             let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
             let mut look = d.tile().terrain_look().clone();
             match a[0].as_str() {
@@ -3240,25 +3966,43 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("tile_links", "tile_links [on|off]", "log the tile database entry's link targets and rules (the cells they name), or show / hide them on the ground", |e, a| {
-        let Some(d) = document(e) else { return no_tile() };
-        if let Some(w) = a.first() {
-            if w != "on" && w != "off" {
-                return fail("usage: tile_links [on|off]");
+    c.add(
+        "tile_links",
+        "tile_links [on|off]",
+        "log the tile database entry's link targets and rules (the cells they name), or show / hide them on the ground",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            if let Some(w) = a.first() {
+                if w != "on" && w != "off" {
+                    return fail("usage: tile_links [on|off]");
+                }
+
+                d.tile_mut().display_mut().show_links = w == "on";
+                d.tile_mut().display_changed();
+                return ok("");
             }
 
-            d.tile_mut().display_mut().show_links = w == "on";
-            d.tile_mut().display_changed();
-            return ok("");
-        }
-
-        let cells = d.tile().link_cells();
-        let s = cells
-            .iter()
-            .map(|c| format!("\n  {}{} {}", if c.target { "target " } else if c.equals { "= " } else { "!= " }, c.set, c.text))
-            .collect::<String>();
-        ok(format!("{} link item(s){s}", cells.len()))
-    });
+            let cells = d.tile().link_cells();
+            let s = cells
+                .iter()
+                .map(|c| {
+                    format!(
+                        "\n  {}{} {}",
+                        if c.target {
+                            "target "
+                        } else if c.equals {
+                            "= "
+                        } else {
+                            "!= "
+                        },
+                        c.set,
+                        c.text
+                    )
+                })
+                .collect::<String>();
+            ok(format!("{} link item(s){s}", cells.len()))
+        },
+    );
 
     c.add(
         "link_edit", "link_edit add target <set> <x> <y> | add rule <set> <x> <y> [not] | remove target|rule <i> | set rule <i> <field> <value>",
@@ -3328,18 +4072,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("link_candidates", "link_candidates [show <join> <k>]", "find the tiles that can follow the open tile at each join (Tile links); with show, show one in the map context", |e, a| {
-        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
-        if a.first().is_some_and(|x| x == "show") {
-            let (Some(j), Some(k)) = (a.get(1).and_then(|v| v.parse().ok()), a.get(2).and_then(|v| v.parse().ok())) else { return fail("usage: link_candidates show <join> <k>") };
-            return with_tile(e, |t, e| t.show_link_candidate(e, id, j, k).map_or_else(fail, ok));
-        }
+    c.add(
+        "link_candidates",
+        "link_candidates [show <join> <k>]",
+        "find the tiles that can follow the open tile at each join (Tile links); with show, show one in the map context",
+        |e, a| {
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            if a.first().is_some_and(|x| x == "show") {
+                let (Some(j), Some(k)) = (a.get(1).and_then(|v| v.parse().ok()), a.get(2).and_then(|v| v.parse().ok())) else {
+                    return fail("usage: link_candidates show <join> <k>");
+                };
+                return with_tile(e, |t, e| t.show_link_candidate(e, id, j, k).map_or_else(fail, ok));
+            }
 
-        with_tile(e, |t, e| match t.find_link_candidates(e, id) {
-            Ok(c) => ok(format!("per join: {c:?}")),
-            Err(err) => fail(err),
-        })
-    });
+            with_tile(e, |t, e| match t.find_link_candidates(e, id) {
+                Ok(c) => ok(format!("per join: {c:?}")),
+                Err(err) => fail(err),
+            })
+        },
+    );
 
     c.add("tile_prop", "tile_prop <attribute> <value> [variation]", "set a tile property of the entry as the Tile panel's Tile properties does (red green blue mask random_rotatable ...; variation: normal_strength)", |e, a| {
         let (Some(attr), Some(value)) = (a.first().cloned(), a.get(1).cloned()) else { return fail("usage: tile_prop <attribute> <value> [variation]") };
@@ -3353,56 +4104,84 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
     });
 
-    c.add("integrity_errors", "integrity_errors [n]", "log TEd's scene integrity errors of the tile (the Problems section); with n, test that there are that many", |e, a| {
-        let Some(d) = document(e) else { return no_tile() };
-        let p = d.tile().integrity_errors();
-        for (el, m) in &p {
-            wce_foundation::log::info(format!("integrity: #{el} {} '{}': {m}", d.tile().tscene().type_of(*el), d.tile().tscene().name(*el)));
-        }
+    c.add(
+        "integrity_errors",
+        "integrity_errors [n]",
+        "log TEd's scene integrity errors of the tile (the Problems section); with n, test that there are that many",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let p = d.tile().integrity_errors();
+            for (el, m) in &p {
+                wce_foundation::log::info(format!(
+                    "integrity: #{el} {} '{}': {m}",
+                    d.tile().tscene().type_of(*el),
+                    d.tile().tscene().name(*el)
+                ));
+            }
 
-        match a.first().and_then(|v| v.parse::<usize>().ok()) {
-            Some(n) if n != p.len() => fail(format!("{} integrity error(s), expected {n}", p.len())),
-            _ => ok(format!("{} integrity error(s)", p.len())),
-        }
-    });
+            match a.first().and_then(|v| v.parse::<usize>().ok()) {
+                Some(n) if n != p.len() => fail(format!("{} integrity error(s), expected {n}", p.len())),
+                _ => ok(format!("{} integrity error(s)", p.len())),
+            }
+        },
+    );
 
-    c.add("link_problems", "link_problems [n]", "log the tile's link problems (the validator); with n, test that there are that many", |e, a| {
-        let Some(d) = document(e) else { return no_tile() };
-        let p = d.link_problems();
-        for x in &p {
-            wce_foundation::log::info(format!("link problem: {}", x.message));
-        }
+    c.add(
+        "link_problems",
+        "link_problems [n]",
+        "log the tile's link problems (the validator); with n, test that there are that many",
+        |e, a| {
+            let Some(d) = document(e) else { return no_tile() };
+            let p = d.link_problems();
+            for x in &p {
+                wce_foundation::log::info(format!("link problem: {}", x.message));
+            }
 
-        match a.first().and_then(|v| v.parse::<usize>().ok()) {
-            Some(n) if n != p.len() => fail(format!("{} link problem(s), expected {n}", p.len())),
-            _ => ok(format!("{} link problem(s)", p.len())),
-        }
-    });
+            match a.first().and_then(|v| v.parse::<usize>().ok()) {
+                Some(n) if n != p.len() => fail(format!("{} link problem(s), expected {n}", p.len())),
+                _ => ok(format!("{} link problem(s)", p.len())),
+            }
+        },
+    );
 
-    c.add("assert_links", "assert_links <targets n> <rules n> [drawn 0|1]", "test: the entry has n link targets and n rules; whether they are drawn on the ground (after a frame)", |e, a| {
-        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-        let (Some(d), Some((t, r))) = (document(e), parsed) else { return fail("usage: assert_links <targets n> <rules n> [drawn 0|1]") };
-        let cells = d.tile().link_cells();
-        let targets = cells.iter().filter(|c| c.target).count();
-        let rules = cells.len() - targets;
-        if targets != t as usize || rules != r as usize {
-            return fail(format!("{targets} targets, {rules} rules"));
-        }
+    c.add(
+        "assert_links",
+        "assert_links <targets n> <rules n> [drawn 0|1]",
+        "test: the entry has n link targets and n rules; whether they are drawn on the ground (after a frame)",
+        |e, a| {
+            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            let (Some(d), Some((t, r))) = (document(e), parsed) else {
+                return fail("usage: assert_links <targets n> <rules n> [drawn 0|1]");
+            };
+            let cells = d.tile().link_cells();
+            let targets = cells.iter().filter(|c| c.target).count();
+            let rules = cells.len() - targets;
+            if targets != t as usize || rules != r as usize {
+                return fail(format!("{targets} targets, {rules} rules"));
+            }
 
-        let drawn = d.tile().links_drawn();
-        if a.get(2).is_some_and(|x| (x == "1") != drawn) {
-            return fail(format!("links are {}drawn", if drawn { "" } else { "not " }));
-        }
+            let drawn = d.tile().links_drawn();
+            if a.get(2).is_some_and(|x| (x == "1") != drawn) {
+                return fail(format!("links are {}drawn", if drawn { "" } else { "not " }));
+            }
 
-        ok("")
-    });
+            ok("")
+        },
+    );
 
-    c.add("assert_link_cell", "assert_link_cell <x> <y> <x0 m> <z0 m>", "test: the entry cell (x, y) lies at this world corner (the row counts from the +z edge)", |e, a| {
-        let parsed = (a.len() >= 4).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
-        let (Some(d), Some((x, y, ex, ez))) = (document(e), parsed) else { return fail("usage: assert_link_cell <x> <y> <x0 m> <z0 m>") };
-        let (x0, z0, _, _) = d.tile().cell_rect(x as i32, y as i32);
-        if (x0 - ex).abs() < 0.01 && (z0 - ez).abs() < 0.01 { ok("") } else { fail(format!("cell corner is {}, {}", f6(x0), f6(z0))) }
-    });
+    c.add(
+        "assert_link_cell",
+        "assert_link_cell <x> <y> <x0 m> <z0 m>",
+        "test: the entry cell (x, y) lies at this world corner (the row counts from the +z edge)",
+        |e, a| {
+            let parsed = (a.len() >= 4).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?))).flatten();
+            let (Some(d), Some((x, y, ex, ez))) = (document(e), parsed) else {
+                return fail("usage: assert_link_cell <x> <y> <x0 m> <z0 m>");
+            };
+            let (x0, z0, _, _) = d.tile().cell_rect(x as i32, y as i32);
+            if (x0 - ex).abs() < 0.01 && (z0 - ez).abs() < 0.01 { ok("") } else { fail(format!("cell corner is {}, {}", f6(x0), f6(z0))) }
+        },
+    );
 
     c.add(
         "tile_tech", "tile_tech [all | none | on|off <kind>... | scope all|selected | range <m> | xray|highest|detect on|off | fill <0..1>]",
@@ -3491,25 +4270,45 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add("tile_water", "tile_water on|off", "show or hide the river water of the open tile", |e, a| {
-        let (Some(d), Some(w)) = (document(e), a.first().filter(|w| *w == "on" || *w == "off")) else { return fail("usage: tile_water on|off") };
+        let (Some(d), Some(w)) = (document(e), a.first().filter(|w| *w == "on" || *w == "off")) else {
+            return fail("usage: tile_water on|off");
+        };
         d.tile_mut().display_mut().show_water = w == "on";
         d.tile_mut().display_changed();
         ok("")
     });
 
-    c.add("tile_favourite", "tile_favourite <entry key>", "star a tile of the Tiles panel's source (its location: terrain/tiles/...), or take its star away", |e, a| {
-        let Some(key) = a.first().map(|k| wce_formats::tile_entry::normalize_location(k)) else { return fail("usage: tile_favourite <entry key>") };
-        with_tile(e, |t, e| {
-            let source = t.browse_source();
-            ok(if t.toggle_favourite(e, &source, &key) { format!("{key}: favourite") } else { format!("{key}: not a favourite") })
-        })
-    });
+    c.add(
+        "tile_favourite",
+        "tile_favourite <entry key>",
+        "star a tile of the Tiles panel's source (its location: terrain/tiles/...), or take its star away",
+        |e, a| {
+            let Some(key) = a.first().map(|k| wce_formats::tile_entry::normalize_location(k)) else {
+                return fail("usage: tile_favourite <entry key>");
+            };
+            with_tile(e, |t, e| {
+                let source = t.browse_source();
+                ok(if t.toggle_favourite(e, &source, &key) { format!("{key}: favourite") } else { format!("{key}: not a favourite") })
+            })
+        },
+    );
 
     c.add("tile_marks", "tile_marks", "log the favourite and the recently opened tiles (source, key, variation)", |e, _| {
         with_tile(e, |t, e| {
             let (favourites, recent) = t.marks(e);
-            let line = |r: &crate::settings::TileRef| format!("  {}  {}{}\n", r.source, r.key, if r.variation.is_empty() { String::new() } else { format!("  ({})", r.variation) });
-            let text = format!("favourites:\n{}recent:\n{}", favourites.iter().map(line).collect::<String>(), recent.iter().map(line).collect::<String>());
+            let line = |r: &crate::settings::TileRef| {
+                format!(
+                    "  {}  {}{}\n",
+                    r.source,
+                    r.key,
+                    if r.variation.is_empty() { String::new() } else { format!("  ({})", r.variation) }
+                )
+            };
+            let text = format!(
+                "favourites:\n{}recent:\n{}",
+                favourites.iter().map(line).collect::<String>(),
+                recent.iter().map(line).collect::<String>()
+            );
             wce_foundation::log::info(&text);
             ok(text)
         })
@@ -3542,43 +4341,59 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_weather_edit", "tile_weather_edit", "edit the open tile's weather in the Weather tool (the tile follows the edits; Save writes it into the project)", |e, _| {
-        with_tile(e, |t, e| {
-            let Some(file) = e.weather_preview().map(str::to_owned) else { return fail("the tile has no weather file") };
-            t.weather.edit(e, &file);
-            ok("")
-        })
-    });
-
-    c.add("tile_weather_search", "tile_weather_search [words]", "the words (and-ed) the files of the open tile's weather list must hold; none: every file", |e, a| {
-        let words = a.join(" ");
-        with_tile(e, |t, _| {
-            t.weather.set_search(&words);
-            ok("")
-        })
-    });
-
-    c.add("tile_areas", "tile_areas outline <0..1> | fill <0..1> | type <type> <0..1> | reset", "the Areas chip: the polygons' outlines, fills and a type's fill factor, kept in the settings", |e, a| {
-        const USAGE: &str = "usage: tile_areas outline <0..1> | fill <0..1> | type <type> <0..1> | reset";
-        let value = |i: usize| a.get(i).and_then(|v| v.parse::<f32>().ok()).map(|v| v.clamp(0.0, 1.0));
-        with_tile(e, |t, e| {
-            let mut look = t.polygon_look(e).clone();
-            match (a.first().map(String::as_str), value(1), value(2)) {
-                (Some("outline"), Some(v), _) => look.outline = v,
-                (Some("fill"), Some(v), _) => look.fill = v,
-                (Some("type"), _, Some(v)) => look.set_type_factor(&a[1], v),
-                (Some("reset"), _, _) => look = Default::default(),
-                _ => return fail(USAGE),
-            }
-
-            t.areas = Some(look);
-            t.save_polygon_look(e);
-            ok("")
-        })
-    });
+    c.add(
+        "tile_weather_edit",
+        "tile_weather_edit",
+        "edit the open tile's weather in the Weather tool (the tile follows the edits; Save writes it into the project)",
+        |e, _| {
+            with_tile(e, |t, e| {
+                let Some(file) = e.weather_preview().map(str::to_owned) else { return fail("the tile has no weather file") };
+                t.weather.edit(e, &file);
+                ok("")
+            })
+        },
+    );
 
     c.add(
-        "tile_type", "tile_type <type> on|off|only | tile_type all",
+        "tile_weather_search",
+        "tile_weather_search [words]",
+        "the words (and-ed) the files of the open tile's weather list must hold; none: every file",
+        |e, a| {
+            let words = a.join(" ");
+            with_tile(e, |t, _| {
+                t.weather.set_search(&words);
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "tile_areas",
+        "tile_areas outline <0..1> | fill <0..1> | type <type> <0..1> | reset",
+        "the Areas chip: the polygons' outlines, fills and a type's fill factor, kept in the settings",
+        |e, a| {
+            const USAGE: &str = "usage: tile_areas outline <0..1> | fill <0..1> | type <type> <0..1> | reset";
+            let value = |i: usize| a.get(i).and_then(|v| v.parse::<f32>().ok()).map(|v| v.clamp(0.0, 1.0));
+            with_tile(e, |t, e| {
+                let mut look = t.polygon_look(e).clone();
+                match (a.first().map(String::as_str), value(1), value(2)) {
+                    (Some("outline"), Some(v), _) => look.outline = v,
+                    (Some("fill"), Some(v), _) => look.fill = v,
+                    (Some("type"), _, Some(v)) => look.set_type_factor(&a[1], v),
+                    (Some("reset"), _, _) => look = Default::default(),
+                    _ => return fail(USAGE),
+                }
+
+                t.areas = Some(look);
+                t.save_polygon_look(e);
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "tile_type",
+        "tile_type <type> on|off|only | tile_type all",
         "the Scene panel's type toggles: list and show a type or not (a view setting), show only that type, or show every type",
         |e, a| {
             let Some(d) = document(e) else { return no_tile() };
@@ -3609,31 +4424,46 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("tile_sea", "tile_sea on|off", "show or hide the sea at 0 m (the tile's plane and the map context's sea; kept in the settings)", |e, a| {
-        let Some(w) = a.first().filter(|w| *w == "on" || *w == "off") else { return fail("usage: tile_sea on|off") };
-        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
-        with_tile(e, |t, e| {
-            t.set_show_sea(e, id, w == "on");
+    c.add(
+        "tile_sea",
+        "tile_sea on|off",
+        "show or hide the sea at 0 m (the tile's plane and the map context's sea; kept in the settings)",
+        |e, a| {
+            let Some(w) = a.first().filter(|w| *w == "on" || *w == "off") else { return fail("usage: tile_sea on|off") };
+            let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+            with_tile(e, |t, e| {
+                t.set_show_sea(e, id, w == "on");
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "tile_vfx_boxes",
+        "tile_vfx_boxes on|off",
+        "show or hide the VFX boxes (the VFXInstance markers; the effects still play; kept in the settings)",
+        |e, a| {
+            let Some(w) = a.first().filter(|w| *w == "on" || *w == "off") else { return fail("usage: tile_vfx_boxes on|off") };
+            crate::tool::set_vfx_boxes(e, w == "on");
             ok("")
-        })
-    });
+        },
+    );
 
-    c.add("tile_vfx_boxes", "tile_vfx_boxes on|off", "show or hide the VFX boxes (the VFXInstance markers; the effects still play; kept in the settings)", |e, a| {
-        let Some(w) = a.first().filter(|w| *w == "on" || *w == "off") else { return fail("usage: tile_vfx_boxes on|off") };
-        crate::tool::set_vfx_boxes(e, w == "on");
-        ok("")
-    });
+    c.add(
+        "tile_sea_state",
+        "tile_sea_state [wind]",
+        "draw the sea with a battle wind's waves and whitecaps (a key of wind_levels_tables; kept in the settings); no wind: list them",
+        |e, a| {
+            let states = e.renderer().map(|r| r.sea_states()).unwrap_or_default();
+            let Some(key) = a.first() else { return ok(format!("sea states: {}", states.join(", "))) };
+            if !states.contains(key) {
+                return fail(format!("no wind '{key}'; winds: {}", states.join(", ")));
+            }
 
-    c.add("tile_sea_state", "tile_sea_state [wind]", "draw the sea with a battle wind's waves and whitecaps (a key of wind_levels_tables; kept in the settings); no wind: list them", |e, a| {
-        let states = e.renderer().map(|r| r.sea_states()).unwrap_or_default();
-        let Some(key) = a.first() else { return ok(format!("sea states: {}", states.join(", "))) };
-        if !states.contains(key) {
-            return fail(format!("no wind '{key}'; winds: {}", states.join(", ")));
-        }
-
-        crate::tool::set_sea_state(e, key);
-        ok("")
-    });
+            crate::tool::set_sea_state(e, key);
+            ok("")
+        },
+    );
 
     c.add("tree_list", "tree_list [on | off | auto | <category>]", "the procedural trees, generated as BOB would (again on every call): on / off; a category of the kit's (default, a climate key) instead of the ground's climate; auto: the ground's climate again; no argument: log the categories", |e, a| {
         let Some(d) = document(e) else { return fail("no tile open") };
@@ -3658,28 +4488,40 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok("")
     });
 
-    c.add("grass", "grass on|off|regenerate", "draw the tile's grass near the camera, generated as BOB would: on / off; regenerate: again from the tile as it is", |e, a| {
-        let Some(d) = document(e) else { return fail("no tile open") };
-        let t = d.tile_mut();
-        match a.first().map(String::as_str) {
-            Some("on") => t.display_mut().show_grass = true,
-            Some("off") => t.display_mut().show_grass = false,
-            Some("regenerate") => t.reload_grass(),
-            _ => return fail("usage: grass on|off|regenerate"),
-        }
+    c.add(
+        "grass",
+        "grass on|off|regenerate",
+        "draw the tile's grass near the camera, generated as BOB would: on / off; regenerate: again from the tile as it is",
+        |e, a| {
+            let Some(d) = document(e) else { return fail("no tile open") };
+            let t = d.tile_mut();
+            match a.first().map(String::as_str) {
+                Some("on") => t.display_mut().show_grass = true,
+                Some("off") => t.display_mut().show_grass = false,
+                Some("regenerate") => t.reload_grass(),
+                _ => return fail("usage: grass on|off|regenerate"),
+            }
 
-        ok("")
-    });
+            ok("")
+        },
+    );
 
-    c.add("assert_water", "assert_water <pieces n>", "test: the tile has n water meshes (river splines + the sea plane) in the scene (after a frame)", |e, a| {
-        let (Some(d), Some(n)) = (document(e), a.first().and_then(|x| number(x))) else { return fail("usage: assert_water <pieces n>") };
-        let t = d.tile();
-        if t.water_pieces() == n as usize {
-            ok(t.water_note().to_owned())
-        } else {
-            fail(format!("{} water meshes: {}", t.water_pieces(), t.water_note()))
-        }
-    });
+    c.add(
+        "assert_water",
+        "assert_water <pieces n>",
+        "test: the tile has n water meshes (river splines + the sea plane) in the scene (after a frame)",
+        |e, a| {
+            let (Some(d), Some(n)) = (document(e), a.first().and_then(|x| number(x))) else {
+                return fail("usage: assert_water <pieces n>");
+            };
+            let t = d.tile();
+            if t.water_pieces() == n as usize {
+                ok(t.water_note().to_owned())
+            } else {
+                fail(format!("{} water meshes: {}", t.water_pieces(), t.water_note()))
+            }
+        },
+    );
 
     c.add(
         "assert_ground", "assert_ground blended|flat [layers n] [climate]",
@@ -3746,68 +4588,104 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
     });
 
-    c.add("assert_world_xz", "assert_world_xz <x m> <z m> [tolerance]", "test: the selected instance is at this ground position (any height)", |e, a| {
-        let el = primary(e);
-        let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-        let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: assert_world_xz <x m> <z m> [tolerance]") };
-        let tol = a.get(2).and_then(|v| number(v)).unwrap_or(0.01);
-        let Some(el) = el else { return fail("nothing selected") };
-        let p = d.tile().world_position(el);
-        if (p.x - x).abs() <= tol && (p.z - z).abs() <= tol { ok("") } else { fail(format!("at {:.3} {:.3}, expected {x:.3} {z:.3}", p.x, p.z)) }
-    });
+    c.add(
+        "assert_world_xz",
+        "assert_world_xz <x m> <z m> [tolerance]",
+        "test: the selected instance is at this ground position (any height)",
+        |e, a| {
+            let el = primary(e);
+            let parsed = (a.len() >= 2).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: assert_world_xz <x m> <z m> [tolerance]") };
+            let tol = a.get(2).and_then(|v| number(v)).unwrap_or(0.01);
+            let Some(el) = el else { return fail("nothing selected") };
+            let p = d.tile().world_position(el);
+            if (p.x - x).abs() <= tol && (p.z - z).abs() <= tol {
+                ok("")
+            } else {
+                fail(format!("at {:.3} {:.3}, expected {x:.3} {z:.3}", p.x, p.z))
+            }
+        },
+    );
 
-    c.add("mark_height", "mark_height <name> <x m> <z m>", "remember the terrain height at a point under a name (for assert_height_delta)", |e, a| {
-        with_doc(e, |t, e| {
-            let parsed = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten();
-            let Some((x, z)) = parsed else { return fail("usage: mark_height <name> <x m> <z m>") };
-            let h = document(e).expect("a tile").tile().terrain_height(x, z);
-            t.marks.insert(a[0].clone(), h);
-            ok("")
-        })
-    });
+    c.add(
+        "mark_height",
+        "mark_height <name> <x m> <z m>",
+        "remember the terrain height at a point under a name (for assert_height_delta)",
+        |e, a| {
+            with_doc(e, |t, e| {
+                let parsed = (a.len() >= 3).then(|| Some((number(&a[1])?, number(&a[2])?))).flatten();
+                let Some((x, z)) = parsed else { return fail("usage: mark_height <name> <x m> <z m>") };
+                let h = document(e).expect("a tile").tile().terrain_height(x, z);
+                t.marks.insert(a[0].clone(), h);
+                ok("")
+            })
+        },
+    );
 
-    c.add("assert_height_delta", "assert_height_delta <name> <x m> <z m> <min> <max>", "test: the height at a point changed by an amount in [min, max] since mark_height", |e, a| {
-        with_doc(e, |t, e| {
-            let parsed = (a.len() >= 5).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
-            let Some((x, z, lo, hi)) = parsed else { return fail("usage: assert_height_delta <name> <x m> <z m> <min> <max>") };
-            let Some(&mark) = t.marks.get(&a[0]) else { return fail(format!("no mark '{}'", a[0])) };
-            let delta = document(e).expect("a tile").tile().terrain_height(x, z) - mark;
-            if delta >= lo && delta <= hi { ok("") } else { fail(format!("height changed by {delta:.4}, expected {lo:.4} .. {hi:.4}")) }
-        })
-    });
+    c.add(
+        "assert_height_delta",
+        "assert_height_delta <name> <x m> <z m> <min> <max>",
+        "test: the height at a point changed by an amount in [min, max] since mark_height",
+        |e, a| {
+            with_doc(e, |t, e| {
+                let parsed = (a.len() >= 5).then(|| Some((number(&a[1])?, number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
+                let Some((x, z, lo, hi)) = parsed else { return fail("usage: assert_height_delta <name> <x m> <z m> <min> <max>") };
+                let Some(&mark) = t.marks.get(&a[0]) else { return fail(format!("no mark '{}'", a[0])) };
+                let delta = document(e).expect("a tile").tile().terrain_height(x, z) - mark;
+                if delta >= lo && delta <= hi { ok("") } else { fail(format!("height changed by {delta:.4}, expected {lo:.4} .. {hi:.4}")) }
+            })
+        },
+    );
 
     c.add("assert_height", "assert_height <x m> <z m> <height m> [tolerance]", "test: the terrain height at a point", |e, a| {
         let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?))).flatten();
-        let (Some(d), Some((x, z, h))) = (document(e), parsed) else { return fail("usage: assert_height <x m> <z m> <height m> [tolerance]") };
+        let (Some(d), Some((x, z, h))) = (document(e), parsed) else {
+            return fail("usage: assert_height <x m> <z m> <height m> [tolerance]");
+        };
         let tol = a.get(3).and_then(|v| number(v)).unwrap_or(0.01);
         let got = d.tile().terrain_height(x, z);
         if (got - h).abs() <= tol { ok("") } else { fail(format!("height {got:.4}, expected {h:.4}")) }
     });
 
-    c.add("assert_blend", "assert_blend <x m> <z m> <group 0-3> <variation 0-3> <min weight 0-65535> [max weight]", "test: a blend map weight at a point", |e, a| {
-        let parsed = (a.len() >= 5).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
-        let (Some(d), Some((x, z, g, v, lo))) = (document(e), parsed) else { return fail("usage: assert_blend <x m> <z m> <group> <variation> <min weight> [max weight]") };
-        let hi = a.get(5).and_then(|v| number(v)).unwrap_or(65535.0);
-        if let Err(why) = d.tile_mut().load_blend() {
-            return fail(why);
-        }
+    c.add(
+        "assert_blend",
+        "assert_blend <x m> <z m> <group 0-3> <variation 0-3> <min weight 0-65535> [max weight]",
+        "test: a blend map weight at a point",
+        |e, a| {
+            let parsed =
+                (a.len() >= 5).then(|| Some((number(&a[0])?, number(&a[1])?, number(&a[2])?, number(&a[3])?, number(&a[4])?))).flatten();
+            let (Some(d), Some((x, z, g, v, lo))) = (document(e), parsed) else {
+                return fail("usage: assert_blend <x m> <z m> <group> <variation> <min weight> [max weight]");
+            };
+            let hi = a.get(5).and_then(|v| number(v)).unwrap_or(65535.0);
+            if let Err(why) = d.tile_mut().load_blend() {
+                return fail(why);
+            }
 
-        let Some(p) = d.tile().blend_pixel_at(x, z) else { return fail("no blend map read there") };
-        let got = f32::from(p[(g as usize).min(3) * 4 + (v as usize).min(3)]);
-        if (lo..=hi).contains(&got) { ok("") } else { fail(format!("weight {got}, expected {lo} .. {hi}")) }
-    });
+            let Some(p) = d.tile().blend_pixel_at(x, z) else { return fail("no blend map read there") };
+            let got = f32::from(p[(g as usize).min(3) * 4 + (v as usize).min(3)]);
+            if (lo..=hi).contains(&got) { ok("") } else { fail(format!("weight {got}, expected {lo} .. {hi}")) }
+        },
+    );
 
-    c.add("assert_ground_type", "assert_ground_type <x m> <z m> <ground type | none>", "test: the ground type painted at a point", |e, a| {
-        let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
-        let (Some(d), Some((x, z))) = (document(e), parsed) else { return fail("usage: assert_ground_type <x m> <z m> <ground type | none>") };
-        if let Err(why) = d.tile_mut().load_ground() {
-            return fail(why);
-        }
+    c.add(
+        "assert_ground_type",
+        "assert_ground_type <x m> <z m> <ground type | none>",
+        "test: the ground type painted at a point",
+        |e, a| {
+            let parsed = (a.len() >= 3).then(|| Some((number(&a[0])?, number(&a[1])?))).flatten();
+            let (Some(d), Some((x, z))) = (document(e), parsed) else {
+                return fail("usage: assert_ground_type <x m> <z m> <ground type | none>");
+            };
+            if let Err(why) = d.tile_mut().load_ground() {
+                return fail(why);
+            }
 
-        let Some(rgb) = d.tile().ground_rgb_at(x, z) else { return fail("no ground type map there") };
-        let got = GROUND_TYPES.iter().find(|(_, c)| *c == rgb).map_or(if rgb == [0, 0, 0] { "none" } else { "?" }, |(n, _)| *n);
-        if got == a[2] { ok("") } else { fail(format!("ground type {got} ({rgb:?})")) }
-    });
+            let Some(rgb) = d.tile().ground_rgb_at(x, z) else { return fail("no ground type map there") };
+            let got = GROUND_TYPES.iter().find(|(_, c)| *c == rgb).map_or(if rgb == [0, 0, 0] { "none" } else { "?" }, |(n, _)| *n);
+            if got == a[2] { ok("") } else { fail(format!("ground type {got} ({rgb:?})")) }
+        },
+    );
 
     c.add("assert_selected_type", "assert_selected_type <type>", "test: the primary selected element has this type", |e, a| {
         let el = primary(e);
@@ -3817,11 +4695,9 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         if ty == want { ok("") } else { fail(format!("selected {ty}")) }
     });
 
-    c.add("assert_file_exists", "assert_file_exists <path>", "test: a file exists", |_, a| {
-        match a.first() {
-            Some(p) if Path::new(p).exists() => ok(""),
-            other => fail(format!("missing {}", other.map_or("", String::as_str))),
-        }
+    c.add("assert_file_exists", "assert_file_exists <path>", "test: a file exists", |_, a| match a.first() {
+        Some(p) if Path::new(p).exists() => ok(""),
+        other => fail(format!("missing {}", other.map_or("", String::as_str))),
     });
 }
 

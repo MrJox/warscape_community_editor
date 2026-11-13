@@ -108,10 +108,21 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
     std::thread::spawn(move || {
         let t0 = Instant::now();
         let built = if model.built { Some(built_changes(&model, &db, &name, packs.as_deref())) } else { None };
-        let r = built.unwrap_or_else(|| build(&model, &BuildInputs { db: &db, environment_map: &env, tile_upgrades: &upgrades }).map_err(|err| err.to_string()))
+        let r = built
+            .unwrap_or_else(|| {
+                build(&model, &BuildInputs { db: &db, environment_map: &env, tile_upgrades: &upgrades }).map_err(|err| err.to_string())
+            })
             .and_then(|b| {
                 let (folder, pack) = write(&out, &name, &b.files, profile)?;
-                Ok(Exported { map: name.clone(), revision, folder, pack, files: b.files, messages: b.messages, secs: t0.elapsed().as_secs_f64() })
+                Ok(Exported {
+                    map: name.clone(),
+                    revision,
+                    folder,
+                    pack,
+                    files: b.files,
+                    messages: b.messages,
+                    secs: t0.elapsed().as_secs_f64(),
+                })
             });
         let _ = tx.send(r);
     });
@@ -120,7 +131,12 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
 }
 
 /// A built map's files that differ from the packs' (or the packs lack), as a build's.
-fn built_changes(model: &wce_terrain::MapModel, db: &TileDatabase, name: &str, packs: Option<&dyn wce_vfs::files::Files>) -> Result<wce_terrain_io::attila::build::Built, String> {
+fn built_changes(
+    model: &wce_terrain::MapModel,
+    db: &TileDatabase,
+    name: &str,
+    packs: Option<&dyn wce_vfs::files::Files>,
+) -> Result<wce_terrain_io::attila::build::Built, String> {
     let written = wce_terrain_io::built::write(model, Some(db)).map_err(|err| err.to_string())?;
     let (folder, _) = game_folder(name);
     let mut files = vec![];
@@ -140,7 +156,12 @@ pub fn summary(x: &Exported) -> String {
     let bytes: usize = x.files.iter().map(|f| f.1.len()).sum();
     let mut m = format!(
         "exported {}: {} files, {:.1} MB in {:.1} s, to {} and {}",
-        x.map, x.files.len(), bytes as f64 / 1e6, x.secs, x.folder.display(), x.pack.display()
+        x.map,
+        x.files.len(),
+        bytes as f64 / 1e6,
+        x.secs,
+        x.folder.display(),
+        x.pack.display()
     );
 
     if !x.messages.is_empty() {

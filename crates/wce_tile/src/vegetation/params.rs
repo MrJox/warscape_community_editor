@@ -240,7 +240,16 @@ impl GenerationParams {
     /// `parse_group_xml`: false stops at the first object that can't be read (the group stays, with the objects before it).
     fn group(&mut self, el: &Element) -> bool {
         let Some(name) = el.attribute("group_name").map(str::to_owned) else { return false };
-        let required = ["group_channel_range_low", "group_channel_range_high", "group_channel_range_falloff", "height_range_low", "height_range_high", "height_range_falloff", "probability", "channel_group"];
+        let required = [
+            "group_channel_range_low",
+            "group_channel_range_high",
+            "group_channel_range_falloff",
+            "height_range_low",
+            "height_range_high",
+            "height_range_falloff",
+            "probability",
+            "channel_group",
+        ];
         if required.iter().any(|r| el.child(r).is_none()) {
             return false;
         }
@@ -248,8 +257,16 @@ impl GenerationParams {
         let channel_group = text(el, "channel_group").unwrap_or_default();
         let g = GroupParams {
             name: name.clone(),
-            channel: Range::group(value_f32(el, "group_channel_range_low"), value_f32(el, "group_channel_range_high"), value_f32(el, "group_channel_range_falloff")),
-            height: Range::group(value_f32(el, "height_range_low"), value_f32(el, "height_range_high"), value_f32(el, "height_range_falloff")),
+            channel: Range::group(
+                value_f32(el, "group_channel_range_low"),
+                value_f32(el, "group_channel_range_high"),
+                value_f32(el, "group_channel_range_falloff"),
+            ),
+            height: Range::group(
+                value_f32(el, "height_range_low"),
+                value_f32(el, "height_range_high"),
+                value_f32(el, "height_range_falloff"),
+            ),
             probability: value_f32(el, "probability"),
             grouping_probability: value_f32(el, "grouping_probability"),
             grouping_radius: value_f32(el, "grouping_radius"),
@@ -273,8 +290,18 @@ impl GenerationParams {
     /// `parse_object_parameters_xml`.
     fn object(&mut self, el: &Element, group: &str, kind: u32) -> bool {
         let required = [
-            "model", "size_low", "size_high", "blendmap_range_low", "blendmap_range_high", "blendmap_range_falloff", "height_low", "height_high", "height_falloff",
-            "probability", "humidities", "categories",
+            "model",
+            "size_low",
+            "size_high",
+            "blendmap_range_low",
+            "blendmap_range_high",
+            "blendmap_range_falloff",
+            "height_low",
+            "height_high",
+            "height_falloff",
+            "probability",
+            "humidities",
+            "categories",
         ];
         if required.iter().any(|r| el.child(r).is_none()) {
             return false;
@@ -311,7 +338,11 @@ impl GenerationParams {
             kind,
             size_low,
             size_range: value_f32(el, "size_high") - size_low,
-            blend: Range::object(value_f32(el, "blendmap_range_low"), value_f32(el, "blendmap_range_high"), value_f32(el, "blendmap_range_falloff")),
+            blend: Range::object(
+                value_f32(el, "blendmap_range_low"),
+                value_f32(el, "blendmap_range_high"),
+                value_f32(el, "blendmap_range_falloff"),
+            ),
             height: Range::object(value_f32(el, "height_low"), value_f32(el, "height_high"), value_f32(el, "height_falloff")),
             probability: value_f32(el, "probability"),
             min_separation: value_f32(el, "minimum_seperation"),

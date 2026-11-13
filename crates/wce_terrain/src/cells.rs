@@ -23,7 +23,6 @@ pub struct CellLayer {
 }
 
 impl CellLayer {
-
     /// The layer of an 8-bit RGB or RGBA image's pixels (`channels` 3 or 4, rows top first).
     ///
     /// # Errors

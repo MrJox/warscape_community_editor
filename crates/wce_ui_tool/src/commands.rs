@@ -45,7 +45,19 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     c.add("ui_tree", "ui_tree", "Logs the components of the open layout", |e, _| {
         let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
         for (i, en) in UiTool::entries_of(e, id).iter().enumerate() {
-            log::info(format!("{}[{}] {} ({}) @{},{} {}x{} screen {},{}", "  ".repeat(en.depth), i, en.name, en.class, en.x, en.y, en.w, en.h, en.ax, en.ay));
+            log::info(format!(
+                "{}[{}] {} ({}) @{},{} {}x{} screen {},{}",
+                "  ".repeat(en.depth),
+                i,
+                en.name,
+                en.class,
+                en.x,
+                en.y,
+                en.w,
+                en.h,
+                en.ax,
+                en.ay
+            ));
         }
 
         ok("listed")
@@ -166,22 +178,27 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("ui_screen", "ui_screen <WxH|none>", "Sizes the layout's root to a screen, as the game does: docked components move with it", |e, a| {
-        let v = a.first().cloned().unwrap_or_else(|| "none".into());
-        let size = if v == "none" {
-            None
-        } else {
-            match v.to_ascii_lowercase().split_once('x').and_then(|(w, h)| Some((w.parse::<i32>().ok()?, h.parse::<i32>().ok()?))) {
-                Some(s) => Some(s),
-                None => return fail("usage: ui_screen <WxH|none>, like 1920x1080"),
-            }
-        };
+    c.add(
+        "ui_screen",
+        "ui_screen <WxH|none>",
+        "Sizes the layout's root to a screen, as the game does: docked components move with it",
+        |e, a| {
+            let v = a.first().cloned().unwrap_or_else(|| "none".into());
+            let size = if v == "none" {
+                None
+            } else {
+                match v.to_ascii_lowercase().split_once('x').and_then(|(w, h)| Some((w.parse::<i32>().ok()?, h.parse::<i32>().ok()?))) {
+                    Some(s) => Some(s),
+                    None => return fail("usage: ui_screen <WxH|none>, like 1920x1080"),
+                }
+            };
 
-        with_ui(e, |t, _| {
-            t.op_screen(size);
-            ok("screen")
-        })
-    });
+            with_ui(e, |t, _| {
+                t.op_screen(size);
+                ok("screen")
+            })
+        },
+    );
 
     c.add("ui_related", "ui_related on|off [all]", "Draws the layouts this one is used with, faded, as reference", |e, a| {
         let on = a.first().map(|s| s == "on").unwrap_or(true);
@@ -192,41 +209,55 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("ui_assert_related", "ui_assert_related <min items>", "Fails unless at least that many reference pictures and texts are drawn", |e, a| {
-        let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
-        let want = a.first().and_then(|s| int(s)).unwrap_or(1) as usize;
-        with_ui(e, |t, e| {
-            let n = t.related_count(e, id);
-            if n >= want { ok(format!("{n} reference items")) } else { fail(format!("{n} reference items drawn, wanted at least {want}")) }
-        })
-    });
-
-    c.add("ui_animate", "ui_animate <number|name> <animation> <ms> | ui_animate none", "Previews an animation of a component at a moment", |e, a| {
-        if a.first().map(String::as_str) == Some("none") {
+    c.add(
+        "ui_assert_related",
+        "ui_assert_related <min items>",
+        "Fails unless at least that many reference pictures and texts are drawn",
+        |e, a| {
             let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
-            return with_ui(e, |t, e| match t.op_animate(e, id, None) {
+            let want = a.first().and_then(|s| int(s)).unwrap_or(1) as usize;
+            with_ui(e, |t, e| {
+                let n = t.related_count(e, id);
+                if n >= want {
+                    ok(format!("{n} reference items"))
+                } else {
+                    fail(format!("{n} reference items drawn, wanted at least {want}"))
+                }
+            })
+        },
+    );
+
+    c.add(
+        "ui_animate",
+        "ui_animate <number|name> <animation> <ms> | ui_animate none",
+        "Previews an animation of a component at a moment",
+        |e, a| {
+            if a.first().map(String::as_str) == Some("none") {
+                let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
+                return with_ui(e, |t, e| match t.op_animate(e, id, None) {
+                    Ok(m) => ok(m),
+                    Err(m) => fail(m),
+                });
+            }
+
+            if a.len() < 3 {
+                return fail("usage: ui_animate <number|name> <animation> <ms>");
+            }
+
+            let (id, i) = match find_entry(e, &a[0]) {
+                Ok(v) => v,
+                Err(m) => return fail(m),
+            };
+
+            let path = UiTool::entries_of(e, id)[i].path.clone();
+            let t_ms = a[2].parse::<f32>().unwrap_or(0.0);
+            let name = a[1].clone();
+            with_ui(e, |t, e| match t.op_animate(e, id, Some((path, name, t_ms))) {
                 Ok(m) => ok(m),
                 Err(m) => fail(m),
-            });
-        }
-
-        if a.len() < 3 {
-            return fail("usage: ui_animate <number|name> <animation> <ms>");
-        }
-
-        let (id, i) = match find_entry(e, &a[0]) {
-            Ok(v) => v,
-            Err(m) => return fail(m),
-        };
-
-        let path = UiTool::entries_of(e, id)[i].path.clone();
-        let t_ms = a[2].parse::<f32>().unwrap_or(0.0);
-        let name = a[1].clone();
-        with_ui(e, |t, e| match t.op_animate(e, id, Some((path, name, t_ms))) {
-            Ok(m) => ok(m),
-            Err(m) => fail(m),
-        })
-    });
+            })
+        },
+    );
 
     c.add("ui_state", "ui_state <name|none>", "Draws the state of that name wherever a component has it", |e, a| {
         let n = a.first().cloned().filter(|s| s != "none");
@@ -252,58 +283,72 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("ui_preview", "ui_preview <number|name> show|hide|reset|state <name>", "Preview a component hidden, shown or in another state", |e, a| {
-        if a.len() < 2 {
-            return fail("usage: ui_preview <number|name> show|hide|reset|state <name>");
-        }
-
-        let (id, i) = match find_entry(e, &a[0]) {
-            Ok(v) => v,
-            Err(m) => return fail(m),
-        };
-
-        let path = UiTool::entries_of(e, id)[i].path.clone();
-        let state_idx = if a[1] == "state" {
-            let Some(want) = a.get(2) else { return fail("usage: ui_preview <entry> state <name>") };
-            match tool_doc(e, id).and_then(|d| d.model().entry_state_names(&path).iter().position(|n| n == want)) {
-                Some(k) => Some(k),
-                None => return fail(format!("no state '{want}'")),
-            }
-        } else {
-            None
-        };
-
-        let verb = a[1].clone();
-        with_ui(e, |t, _| {
-            match verb.as_str() {
-                "show" => t.op_visibility(path, Some(true)),
-                "hide" => t.op_visibility(path, Some(false)),
-                "reset" => {
-                    t.op_visibility(path.clone(), None);
-                    t.op_entry_state(path, None);
-                }
-                "state" => t.op_entry_state(path, state_idx),
-                other => return fail(format!("unknown preview action '{other}'")),
+    c.add(
+        "ui_preview",
+        "ui_preview <number|name> show|hide|reset|state <name>",
+        "Preview a component hidden, shown or in another state",
+        |e, a| {
+            if a.len() < 2 {
+                return fail("usage: ui_preview <number|name> show|hide|reset|state <name>");
             }
 
-            ok("preview")
-        })
-    });
-
-    c.add("ui_assert_shown", "ui_assert_shown <n|all|fewer>", "Fails unless n components are drawn with the current options (all: every component; fewer: not all)", |e, a| {
-        let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
-        let word = a.first().cloned().unwrap_or_default();
-        let total = UiTool::entries_of(e, id).len();
-        with_ui(e, |t, e| {
-            let n = t.shown_count(e, id);
-            let good = match word.as_str() {
-                "all" => n == total,
-                "fewer" => n < total,
-                w => int(w).is_some_and(|w| w as usize == n),
+            let (id, i) = match find_entry(e, &a[0]) {
+                Ok(v) => v,
+                Err(m) => return fail(m),
             };
-            if good { ok(format!("{n} of {total} shown")) } else { fail(format!("{n} of {total} components are drawn, expected {word}")) }
-        })
-    });
+
+            let path = UiTool::entries_of(e, id)[i].path.clone();
+            let state_idx = if a[1] == "state" {
+                let Some(want) = a.get(2) else { return fail("usage: ui_preview <entry> state <name>") };
+                match tool_doc(e, id).and_then(|d| d.model().entry_state_names(&path).iter().position(|n| n == want)) {
+                    Some(k) => Some(k),
+                    None => return fail(format!("no state '{want}'")),
+                }
+            } else {
+                None
+            };
+
+            let verb = a[1].clone();
+            with_ui(e, |t, _| {
+                match verb.as_str() {
+                    "show" => t.op_visibility(path, Some(true)),
+                    "hide" => t.op_visibility(path, Some(false)),
+                    "reset" => {
+                        t.op_visibility(path.clone(), None);
+                        t.op_entry_state(path, None);
+                    }
+                    "state" => t.op_entry_state(path, state_idx),
+                    other => return fail(format!("unknown preview action '{other}'")),
+                }
+
+                ok("preview")
+            })
+        },
+    );
+
+    c.add(
+        "ui_assert_shown",
+        "ui_assert_shown <n|all|fewer>",
+        "Fails unless n components are drawn with the current options (all: every component; fewer: not all)",
+        |e, a| {
+            let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
+            let word = a.first().cloned().unwrap_or_default();
+            let total = UiTool::entries_of(e, id).len();
+            with_ui(e, |t, e| {
+                let n = t.shown_count(e, id);
+                let good = match word.as_str() {
+                    "all" => n == total,
+                    "fewer" => n < total,
+                    w => int(w).is_some_and(|w| w as usize == n),
+                };
+                if good {
+                    ok(format!("{n} of {total} shown"))
+                } else {
+                    fail(format!("{n} of {total} components are drawn, expected {word}"))
+                }
+            })
+        },
+    );
 
     c.add("ui_mark_count", "ui_mark_count", "Remembers how many components the layout has, for ui_assert_count_delta", |e, _| {
         let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
@@ -314,59 +359,86 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("ui_assert_count_delta", "ui_assert_count_delta <n|>0>", "Fails unless the component count is the marked one plus n (or, with >0, more than the marked one)", |e, a| {
-        let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
-        let n = UiTool::entries_of(e, id).len() as i64;
-        let want = a.first().cloned().unwrap_or_default();
-        with_ui(e, |t, _| {
-            let mark = t.marked_count() as i64;
-            let good = match want.strip_prefix('>') {
-                Some(min) => int(min).is_some_and(|m| n - mark > m as i64),
-                None => int(&want).is_some_and(|d| n - mark == d as i64),
-            };
-            if good { ok(format!("{n} components ({:+})", n - mark)) } else { fail(format!("{n} components, {:+} against the mark, expected {want}", n - mark)) }
-        })
-    });
-
-    c.add("ui_assert_size", "ui_assert_size <number|name> <w|-> <h|->", "Fails unless the component's default state has that size (- ignores a side)", |e, a| {
-        if a.len() < 3 {
-            return fail("usage: ui_assert_size <number|name> <w|-> <h|->");
-        }
-
-        let (id, i) = match find_entry(e, &a[0]) {
-            Ok(v) => v,
-            Err(m) => return fail(m),
-        };
-
-        let en = &UiTool::entries_of(e, id)[i];
-        let side = |s: &str, have: i32| s == "-" || int(s) == Some(have);
-        if side(&a[1], en.w) && side(&a[2], en.h) { ok("size ok") } else { fail(format!("{} is {}x{}, expected {} x {}", en.name, en.w, en.h, a[1], a[2])) }
-    });
-
-    c.add("ui_assert_skin", "ui_assert_skin <name> loose|packed|both|selected", "Fails unless the skin list has the skin as described", |e, a| {
-        if a.len() < 2 {
-            return fail("usage: ui_assert_skin <name> loose|packed|both|selected");
-        }
-
-        with_ui(e, |t, e| {
-            if a[1] == "selected" {
-                return if t.skin_selected() == a[0] { ok("selected") } else { fail(format!("the selected skin is {:?}", t.skin_selected())) };
-            }
-
-            match t.skin_info(e, &a[0]) {
-                None => fail(format!("no skin {:?} in the list", a[0])),
-                Some((loose, packed)) => {
-                    let got = match (loose, packed) {
-                        (true, true) => "both",
-                        (true, false) => "loose",
-                        (false, true) => "packed",
-                        _ => "neither",
-                    };
-                    if got == a[1] { ok(got) } else { fail(format!("skin {} is {got}, expected {}", a[0], a[1])) }
+    c.add(
+        "ui_assert_count_delta",
+        "ui_assert_count_delta <n|>0>",
+        "Fails unless the component count is the marked one plus n (or, with >0, more than the marked one)",
+        |e, a| {
+            let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
+            let n = UiTool::entries_of(e, id).len() as i64;
+            let want = a.first().cloned().unwrap_or_default();
+            with_ui(e, |t, _| {
+                let mark = t.marked_count() as i64;
+                let good = match want.strip_prefix('>') {
+                    Some(min) => int(min).is_some_and(|m| n - mark > m as i64),
+                    None => int(&want).is_some_and(|d| n - mark == d as i64),
+                };
+                if good {
+                    ok(format!("{n} components ({:+})", n - mark))
+                } else {
+                    fail(format!("{n} components, {:+} against the mark, expected {want}", n - mark))
                 }
+            })
+        },
+    );
+
+    c.add(
+        "ui_assert_size",
+        "ui_assert_size <number|name> <w|-> <h|->",
+        "Fails unless the component's default state has that size (- ignores a side)",
+        |e, a| {
+            if a.len() < 3 {
+                return fail("usage: ui_assert_size <number|name> <w|-> <h|->");
             }
-        })
-    });
+
+            let (id, i) = match find_entry(e, &a[0]) {
+                Ok(v) => v,
+                Err(m) => return fail(m),
+            };
+
+            let en = &UiTool::entries_of(e, id)[i];
+            let side = |s: &str, have: i32| s == "-" || int(s) == Some(have);
+            if side(&a[1], en.w) && side(&a[2], en.h) {
+                ok("size ok")
+            } else {
+                fail(format!("{} is {}x{}, expected {} x {}", en.name, en.w, en.h, a[1], a[2]))
+            }
+        },
+    );
+
+    c.add(
+        "ui_assert_skin",
+        "ui_assert_skin <name> loose|packed|both|selected",
+        "Fails unless the skin list has the skin as described",
+        |e, a| {
+            if a.len() < 2 {
+                return fail("usage: ui_assert_skin <name> loose|packed|both|selected");
+            }
+
+            with_ui(e, |t, e| {
+                if a[1] == "selected" {
+                    return if t.skin_selected() == a[0] {
+                        ok("selected")
+                    } else {
+                        fail(format!("the selected skin is {:?}", t.skin_selected()))
+                    };
+                }
+
+                match t.skin_info(e, &a[0]) {
+                    None => fail(format!("no skin {:?} in the list", a[0])),
+                    Some((loose, packed)) => {
+                        let got = match (loose, packed) {
+                            (true, true) => "both",
+                            (true, false) => "loose",
+                            (false, true) => "packed",
+                            _ => "neither",
+                        };
+                        if got == a[1] { ok(got) } else { fail(format!("skin {} is {got}, expected {}", a[0], a[1])) }
+                    }
+                }
+            })
+        },
+    );
 
     c.add("ui_load_picture", "ui_load_picture <picture path>", "Loads a picture as the canvas would (the project folder first)", |e, a| {
         let Some(p) = a.first().cloned() else { return fail("usage: ui_load_picture <picture path>") };
@@ -376,34 +448,44 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("ui_assert_picture_pixel", "ui_assert_picture_pixel <picture path> <r> <g> <b>", "Fails unless the picture was read from the project folder and its first pixel has that colour", |e, a| {
-        if a.len() < 4 {
-            return fail("usage: ui_assert_picture_pixel <picture path> <r> <g> <b>");
-        }
+    c.add(
+        "ui_assert_picture_pixel",
+        "ui_assert_picture_pixel <picture path> <r> <g> <b>",
+        "Fails unless the picture was read from the project folder and its first pixel has that colour",
+        |e, a| {
+            if a.len() < 4 {
+                return fail("usage: ui_assert_picture_pixel <picture path> <r> <g> <b>");
+            }
 
-        let want: Vec<Option<i32>> = a[1..4].iter().map(|s| int(s)).collect();
-        with_ui(e, |t, _| match t.loose_pixel(&a[0]) {
-            None => fail(format!("{} is not loaded from the project folder", a[0])),
-            Some(p) if want == [Some(p[0] as i32), Some(p[1] as i32), Some(p[2] as i32)] => ok("pixel ok"),
-            Some(p) => fail(format!("first pixel is {:?}, expected {:?}", &p[..3], want)),
-        })
-    });
+            let want: Vec<Option<i32>> = a[1..4].iter().map(|s| int(s)).collect();
+            with_ui(e, |t, _| match t.loose_pixel(&a[0]) {
+                None => fail(format!("{} is not loaded from the project folder", a[0])),
+                Some(p) if want == [Some(p[0] as i32), Some(p[1] as i32), Some(p[2] as i32)] => ok("pixel ok"),
+                Some(p) => fail(format!("first pixel is {:?}, expected {:?}", &p[..3], want)),
+            })
+        },
+    );
 
-    c.add("ui_copy_file", "ui_copy_file <from> <to>", "Writes a copy of a file (a new modification time, as an editor saving it would), making the folder", |_, a| {
-        if a.len() < 2 {
-            return fail("usage: ui_copy_file <from> <to>");
-        }
+    c.add(
+        "ui_copy_file",
+        "ui_copy_file <from> <to>",
+        "Writes a copy of a file (a new modification time, as an editor saving it would), making the folder",
+        |_, a| {
+            if a.len() < 2 {
+                return fail("usage: ui_copy_file <from> <to>");
+            }
 
-        let Ok(data) = std::fs::read(&a[0]) else { return fail(format!("cannot read {}", a[0])) };
-        if let Some(p) = Path::new(&a[1]).parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
+            let Ok(data) = std::fs::read(&a[0]) else { return fail(format!("cannot read {}", a[0])) };
+            if let Some(p) = Path::new(&a[1]).parent() {
+                let _ = std::fs::create_dir_all(p);
+            }
 
-        match std::fs::write(&a[1], data) {
-            Ok(()) => ok("copied"),
-            Err(m) => fail(m.to_string()),
-        }
-    });
+            match std::fs::write(&a[1], data) {
+                Ok(()) => ok("copied"),
+                Err(m) => fail(m.to_string()),
+            }
+        },
+    );
 
     c.add("ui_watch_now", "ui_watch_now", "Looks for changed files on the next frame instead of within a second", |e, _| {
         with_ui(e, |t, _| {
@@ -424,57 +506,72 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("ui_project", "ui_project <folder>", "Makes the folder the game's projects folder: layouts are saved in its loose/, pictures there show at once", |e, a| {
-        if a.is_empty() {
-            return fail("usage: ui_project <folder>");
-        }
+    c.add(
+        "ui_project",
+        "ui_project <folder>",
+        "Makes the folder the game's projects folder: layouts are saved in its loose/, pictures there show at once",
+        |e, a| {
+            if a.is_empty() {
+                return fail("usage: ui_project <folder>");
+            }
 
-        let f = a.join(" ");
-        with_ui(e, |t, e| match t.set_project(e, &f) {
-            Ok(()) => ok("project set"),
-            Err(m) => fail(m),
-        })
-    });
+            let f = a.join(" ");
+            with_ui(e, |t, e| match t.set_project(e, &f) {
+                Ok(()) => ok("project set"),
+                Err(m) => fail(m),
+            })
+        },
+    );
 
-    c.add("ui_export", "ui_export <pack file>", "Saves the changed layouts into the project folder and writes the folder into a mod pack", |e, a| {
-        if a.is_empty() {
-            return fail("usage: ui_export <pack file>");
-        }
+    c.add(
+        "ui_export",
+        "ui_export <pack file>",
+        "Saves the changed layouts into the project folder and writes the folder into a mod pack",
+        |e, a| {
+            if a.is_empty() {
+                return fail("usage: ui_export <pack file>");
+            }
 
-        let p = a.join(" ");
-        with_ui(e, |t, e| match t.export_pack(e, &p) {
-            Ok(n) => ok(format!("{n} files")),
-            Err(m) => fail(m),
-        })
-    });
+            let p = a.join(" ");
+            with_ui(e, |t, e| match t.export_pack(e, &p) {
+                Ok(n) => ok(format!("{n} files")),
+                Err(m) => fail(m),
+            })
+        },
+    );
 
-    c.add("ui_move_to", "ui_move_to <component> <target> before|after|inside", "Moves a component next to or into another, as a drop in the Layers panel does (numbers or names)", |e, a| {
-        if a.len() < 3 {
-            return fail("usage: ui_move_to <component> <target> before|after|inside");
-        }
+    c.add(
+        "ui_move_to",
+        "ui_move_to <component> <target> before|after|inside",
+        "Moves a component next to or into another, as a drop in the Layers panel does (numbers or names)",
+        |e, a| {
+            if a.len() < 3 {
+                return fail("usage: ui_move_to <component> <target> before|after|inside");
+            }
 
-        let place = match a[2].as_str() {
-            "before" => wce_ui_model::model::Place::Before,
-            "after" => wce_ui_model::model::Place::After,
-            "inside" => wce_ui_model::model::Place::Inside,
-            _ => return fail("the place is before, after or inside"),
-        };
+            let place = match a[2].as_str() {
+                "before" => wce_ui_model::model::Place::Before,
+                "after" => wce_ui_model::model::Place::After,
+                "inside" => wce_ui_model::model::Place::Inside,
+                _ => return fail("the place is before, after or inside"),
+            };
 
-        let (id, src) = match find_entry(e, &a[0]) {
-            Ok(v) => v,
-            Err(m) => return fail(m),
-        };
+            let (id, src) = match find_entry(e, &a[0]) {
+                Ok(v) => v,
+                Err(m) => return fail(m),
+            };
 
-        let target = match find_entry(e, &a[1]) {
-            Ok((_, t)) => t,
-            Err(m) => return fail(m),
-        };
+            let target = match find_entry(e, &a[1]) {
+                Ok((_, t)) => t,
+                Err(m) => return fail(m),
+            };
 
-        with_ui(e, |t, e| match t.drop_layer(e, id, src, target, place) {
-            Ok(()) => ok("moved"),
-            Err(m) => fail(m),
-        })
-    });
+            with_ui(e, |t, e| match t.drop_layer(e, id, src, target, place) {
+                Ok(()) => ok("moved"),
+                Err(m) => fail(m),
+            })
+        },
+    );
 
     c.add("ui_rename", "ui_rename <component> <new name>", "Renames a component", |e, a| {
         if a.len() < 2 {
@@ -493,105 +590,135 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
-    c.add("ui_assert_parent", "ui_assert_parent <component> <parent>", "Fails unless the component sits directly inside the parent", |e, a| {
-        if a.len() < 2 {
-            return fail("usage: ui_assert_parent <component> <parent>");
-        }
-
-        let (id, i) = match find_entry(e, &a[0]) {
-            Ok(v) => v,
-            Err(m) => return fail(m),
-        };
-
-        let want = match find_entry(e, &a[1]) {
-            Ok((_, p)) => p,
-            Err(m) => return fail(m),
-        };
-
-        let ents = UiTool::entries_of(e, id);
-        match ents[i].parent {
-            Some(p) if p == want => ok("parent ok"),
-            other => fail(format!("{} sits in {:?}, expected {} ({})", a[0], other.map(|p| ents[p].name.clone()), a[1], ents[want].name)),
-        }
-    });
-
-    c.add("ui_assert_order", "ui_assert_order <first> <second>", "Fails unless the two siblings are next to each other, the first drawn right before the second", |e, a| {
-        if a.len() < 2 {
-            return fail("usage: ui_assert_order <first> <second>");
-        }
-
-        let (id, i) = match find_entry(e, &a[0]) {
-            Ok(v) => v,
-            Err(m) => return fail(m),
-        };
-
-        let j = match find_entry(e, &a[1]) {
-            Ok((_, j)) => j,
-            Err(m) => return fail(m),
-        };
-
-        let ents = UiTool::entries_of(e, id);
-        let sibs: Vec<usize> = (0..ents.len()).filter(|&k| ents[k].parent == ents[i].parent).collect();
-        let (pi, pj) = (sibs.iter().position(|&k| k == i), sibs.iter().position(|&k| k == j));
-        match (pi, pj) {
-            (Some(x), Some(y)) if ents[i].parent == ents[j].parent && x + 1 == y => ok("order ok"),
-            _ => fail(format!("{} is not directly before {}", a[0], a[1])),
-        }
-    });
-
-    c.add("ui_prop", "ui_prop component|state <name> <value>", "Sets a property of the selected component (or of its default state) by the name the Fields panel shows", |e, a| {
-        if a.len() < 3 {
-            return fail("usage: ui_prop component|state <name> <value>");
-        }
-
-        let Some((id, Some(i))) = current(e) else { return fail("no component is selected") };
-        let Some(en) = UiTool::entries_of(e, id).get(i).cloned() else { return fail("the selection is gone") };
-        let Some(doc) = tool_doc(e, id) else { return fail("no UI layout is open") };
-        let path = if a[0] == "state" {
-            match doc.model().default_state_path(&en.path) {
-                Some(p) => p,
-                None => return fail("the component has no state"),
+    c.add(
+        "ui_assert_parent",
+        "ui_assert_parent <component> <parent>",
+        "Fails unless the component sits directly inside the parent",
+        |e, a| {
+            if a.len() < 2 {
+                return fail("usage: ui_assert_parent <component> <parent>");
             }
-        } else {
-            en.path.clone()
-        };
 
-        let props = doc.model().properties(&path);
-        let Some(p) = props.items.iter().find(|p| p.name.eq_ignore_ascii_case(&a[1])) else { return fail(format!("no property {:?}", a[1])) };
-        let change = match p.edit_from_text(&a[2..].join(" ")) {
-            Ok(c) => c,
-            Err(m) => return fail(m),
-        };
+            let (id, i) = match find_entry(e, &a[0]) {
+                Ok(v) => v,
+                Err(m) => return fail(m),
+            };
 
-        let idx = p.idx;
-        match doc.edit(&format!("Set {}", a[1]), 0, |m| m.edit_prop(&path, idx, change)) {
-            Ok(()) => ok("set"),
-            Err(m) => fail(m),
-        }
-    });
+            let want = match find_entry(e, &a[1]) {
+                Ok((_, p)) => p,
+                Err(m) => return fail(m),
+            };
 
-    c.add("ui_assert_prop", "ui_assert_prop component|state <name> <shown value>", "Fails unless the property of the selected component shows that value", |e, a| {
-        if a.len() < 3 {
-            return fail("usage: ui_assert_prop component|state <name> <shown value>");
-        }
-
-        let Some((id, Some(i))) = current(e) else { return fail("no component is selected") };
-        let Some(en) = UiTool::entries_of(e, id).get(i).cloned() else { return fail("the selection is gone") };
-        let Some(doc) = tool_doc(e, id) else { return fail("no UI layout is open") };
-        let path = if a[0] == "state" {
-            match doc.model().default_state_path(&en.path) {
-                Some(p) => p,
-                None => return fail("the component has no state"),
+            let ents = UiTool::entries_of(e, id);
+            match ents[i].parent {
+                Some(p) if p == want => ok("parent ok"),
+                other => {
+                    fail(format!("{} sits in {:?}, expected {} ({})", a[0], other.map(|p| ents[p].name.clone()), a[1], ents[want].name))
+                }
             }
-        } else {
-            en.path.clone()
-        };
+        },
+    );
 
-        let props = doc.model().properties(&path);
-        let Some(p) = props.items.iter().find(|p| p.name.eq_ignore_ascii_case(&a[1])) else { return fail(format!("no property {:?}", a[1])) };
-        let want = a[2..].join(" ");
-        if p.shown().eq_ignore_ascii_case(&want) { ok("property ok") } else { fail(format!("{} shows {:?}, expected {:?}", p.name, p.shown(), want)) }
-    });
+    c.add(
+        "ui_assert_order",
+        "ui_assert_order <first> <second>",
+        "Fails unless the two siblings are next to each other, the first drawn right before the second",
+        |e, a| {
+            if a.len() < 2 {
+                return fail("usage: ui_assert_order <first> <second>");
+            }
+
+            let (id, i) = match find_entry(e, &a[0]) {
+                Ok(v) => v,
+                Err(m) => return fail(m),
+            };
+
+            let j = match find_entry(e, &a[1]) {
+                Ok((_, j)) => j,
+                Err(m) => return fail(m),
+            };
+
+            let ents = UiTool::entries_of(e, id);
+            let sibs: Vec<usize> = (0..ents.len()).filter(|&k| ents[k].parent == ents[i].parent).collect();
+            let (pi, pj) = (sibs.iter().position(|&k| k == i), sibs.iter().position(|&k| k == j));
+            match (pi, pj) {
+                (Some(x), Some(y)) if ents[i].parent == ents[j].parent && x + 1 == y => ok("order ok"),
+                _ => fail(format!("{} is not directly before {}", a[0], a[1])),
+            }
+        },
+    );
+
+    c.add(
+        "ui_prop",
+        "ui_prop component|state <name> <value>",
+        "Sets a property of the selected component (or of its default state) by the name the Fields panel shows",
+        |e, a| {
+            if a.len() < 3 {
+                return fail("usage: ui_prop component|state <name> <value>");
+            }
+
+            let Some((id, Some(i))) = current(e) else { return fail("no component is selected") };
+            let Some(en) = UiTool::entries_of(e, id).get(i).cloned() else { return fail("the selection is gone") };
+            let Some(doc) = tool_doc(e, id) else { return fail("no UI layout is open") };
+            let path = if a[0] == "state" {
+                match doc.model().default_state_path(&en.path) {
+                    Some(p) => p,
+                    None => return fail("the component has no state"),
+                }
+            } else {
+                en.path.clone()
+            };
+
+            let props = doc.model().properties(&path);
+            let Some(p) = props.items.iter().find(|p| p.name.eq_ignore_ascii_case(&a[1])) else {
+                return fail(format!("no property {:?}", a[1]));
+            };
+            let change = match p.edit_from_text(&a[2..].join(" ")) {
+                Ok(c) => c,
+                Err(m) => return fail(m),
+            };
+
+            let idx = p.idx;
+            match doc.edit(&format!("Set {}", a[1]), 0, |m| m.edit_prop(&path, idx, change)) {
+                Ok(()) => ok("set"),
+                Err(m) => fail(m),
+            }
+        },
+    );
+
+    c.add(
+        "ui_assert_prop",
+        "ui_assert_prop component|state <name> <shown value>",
+        "Fails unless the property of the selected component shows that value",
+        |e, a| {
+            if a.len() < 3 {
+                return fail("usage: ui_assert_prop component|state <name> <shown value>");
+            }
+
+            let Some((id, Some(i))) = current(e) else { return fail("no component is selected") };
+            let Some(en) = UiTool::entries_of(e, id).get(i).cloned() else { return fail("the selection is gone") };
+            let Some(doc) = tool_doc(e, id) else { return fail("no UI layout is open") };
+            let path = if a[0] == "state" {
+                match doc.model().default_state_path(&en.path) {
+                    Some(p) => p,
+                    None => return fail("the component has no state"),
+                }
+            } else {
+                en.path.clone()
+            };
+
+            let props = doc.model().properties(&path);
+            let Some(p) = props.items.iter().find(|p| p.name.eq_ignore_ascii_case(&a[1])) else {
+                return fail(format!("no property {:?}", a[1]));
+            };
+            let want = a[2..].join(" ");
+            if p.shown().eq_ignore_ascii_case(&want) {
+                ok("property ok")
+            } else {
+                fail(format!("{} shows {:?}, expected {:?}", p.name, p.shown(), want))
+            }
+        },
+    );
 
     c.add("ui_set_xml", "ui_set_xml <file>", "Replaces the layout's XML with a file's text", |e, a| {
         let Some(p) = a.first() else { return fail("usage: ui_set_xml <file>") };
@@ -658,25 +785,34 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
     });
 
-    c.add("ui_assert_screen_rect", "ui_assert_screen_rect <number|name> <x> <y> <w> <h>", "Fails unless the game would put the component there with the current screen size and animation", |e, a| {
-        if a.len() < 5 {
-            return fail("usage: ui_assert_screen_rect <number|name> <x> <y> <w> <h>");
-        }
-
-        let (id, i) = match find_entry(e, &a[0]) {
-            Ok(v) => v,
-            Err(m) => return fail(m),
-        };
-
-        let want: Vec<Option<i32>> = a[1..5].iter().map(|s| int(s)).collect();
-        with_ui(e, |t, e| match t.rect_of(e, id, i) {
-            Some(r) => {
-                let got = [r.x.round() as i32, r.y.round() as i32, r.w.round() as i32, r.h.round() as i32];
-                if want == got.map(Some) { ok("screen rect ok") } else { fail(format!("component {i} is at {got:?} on screen, expected {want:?}")) }
+    c.add(
+        "ui_assert_screen_rect",
+        "ui_assert_screen_rect <number|name> <x> <y> <w> <h>",
+        "Fails unless the game would put the component there with the current screen size and animation",
+        |e, a| {
+            if a.len() < 5 {
+                return fail("usage: ui_assert_screen_rect <number|name> <x> <y> <w> <h>");
             }
-            None => fail("no such component"),
-        })
-    });
+
+            let (id, i) = match find_entry(e, &a[0]) {
+                Ok(v) => v,
+                Err(m) => return fail(m),
+            };
+
+            let want: Vec<Option<i32>> = a[1..5].iter().map(|s| int(s)).collect();
+            with_ui(e, |t, e| match t.rect_of(e, id, i) {
+                Some(r) => {
+                    let got = [r.x.round() as i32, r.y.round() as i32, r.w.round() as i32, r.h.round() as i32];
+                    if want == got.map(Some) {
+                        ok("screen rect ok")
+                    } else {
+                        fail(format!("component {i} is at {got:?} on screen, expected {want:?}"))
+                    }
+                }
+                None => fail("no such component"),
+            })
+        },
+    );
 
     c.add("ui_reset_all", "ui_reset_all", "Throws away every change since the layout was opened or saved", |e, _| {
         let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
@@ -687,13 +823,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         }
     });
 
-    c.add("ui_assert_xml_roundtrip", "ui_assert_xml_roundtrip", "Fails unless the layout converts to binary and back to the same XML", |e, _| {
-        let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
-        let Some(doc) = tool_doc(e, id) else { return fail("no UI layout is open") };
-        match doc.bytes().and_then(|b| wce_ui_model::UiModel::from_bytes(&b)) {
-            Ok(m) if m.to_xml() == *doc.xml() => ok("round trip ok"),
-            Ok(_) => fail("the binary reads back as different XML"),
-            Err(m) => fail(m),
-        }
-    });
+    c.add(
+        "ui_assert_xml_roundtrip",
+        "ui_assert_xml_roundtrip",
+        "Fails unless the layout converts to binary and back to the same XML",
+        |e, _| {
+            let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
+            let Some(doc) = tool_doc(e, id) else { return fail("no UI layout is open") };
+            match doc.bytes().and_then(|b| wce_ui_model::UiModel::from_bytes(&b)) {
+                Ok(m) if m.to_xml() == *doc.xml() => ok("round trip ok"),
+                Ok(_) => fail("the binary reads back as different XML"),
+                Err(m) => fail(m),
+            }
+        },
+    );
 }

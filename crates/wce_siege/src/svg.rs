@@ -19,7 +19,12 @@ pub fn svg(input: &Input, layout: &Layout, scale: f64, title: &str) -> String {
     };
     let (w, h) = ((hi[0] - lo[0]) * scale, (hi[1] - lo[1]) * scale);
     let mut s = String::new();
-    let _ = writeln!(s, r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w:.0}" height="{:.0}" viewBox="0 -20 {w:.0} {:.0}" style="background:#fafaf5">"#, h + 20.0, h + 20.0);
+    let _ = writeln!(
+        s,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w:.0}" height="{:.0}" viewBox="0 -20 {w:.0} {:.0}" style="background:#fafaf5">"#,
+        h + 20.0,
+        h + 20.0
+    );
     let _ = writeln!(s, r#"<text x="4" y="-6" font-size="12" font-family="sans-serif">{}</text>"#, escape(title));
     let pt = |p: &P| format!("{:.1},{:.1}", (p[0] - lo[0]) * scale, (p[1] - lo[1]) * scale);
     let poly = |s: &mut String, pts: &[P], closed: bool, style: &str| {
@@ -42,7 +47,11 @@ pub fn svg(input: &Input, layout: &Layout, scale: f64, title: &str) -> String {
     }
 
     for (k, p) in &layout.defender.polygons {
-        let fill = if *k == crate::ZoneKind::Additive { "fill:#33e;fill-opacity:0.06;stroke:#00c;stroke-width:1" } else { "fill:none;stroke:#00c;stroke-width:0.5;stroke-dasharray:1 3" };
+        let fill = if *k == crate::ZoneKind::Additive {
+            "fill:#33e;fill-opacity:0.06;stroke:#00c;stroke-width:1"
+        } else {
+            "fill:none;stroke:#00c;stroke-width:0.5;stroke-dasharray:1 3"
+        };
         poly(&mut s, p, true, fill);
     }
 
@@ -88,7 +97,12 @@ pub fn svg(input: &Input, layout: &Layout, scale: f64, title: &str) -> String {
     let line = |s: &mut String, l: &[P], colour: &str| {
         poly(s, l, false, &format!("fill:none;stroke:{colour};stroke-width:2.5"));
         if let Some(e) = l.last() {
-            let _ = writeln!(s, r#"<circle cx="{:.1}" cy="{:.1}" r="3" style="fill:{colour}"/>"#, (e[0] - lo[0]) * scale, (e[1] - lo[1]) * scale);
+            let _ = writeln!(
+                s,
+                r#"<circle cx="{:.1}" cy="{:.1}" r="3" style="fill:{colour}"/>"#,
+                (e[0] - lo[0]) * scale,
+                (e[1] - lo[1]) * scale
+            );
         }
     };
     for a in &layout.approaches {
@@ -112,7 +126,13 @@ pub fn svg(input: &Input, layout: &Layout, scale: f64, title: &str) -> String {
     }
 
     for c in &input.captures {
-        let _ = writeln!(s, r##"<circle cx="{:.1}" cy="{:.1}" r="{}" style="fill:#fc0;stroke:#a80"/>"##, (c.at[0] - lo[0]) * scale, (c.at[1] - lo[1]) * scale, if c.major { 5 } else { 3 });
+        let _ = writeln!(
+            s,
+            r##"<circle cx="{:.1}" cy="{:.1}" r="{}" style="fill:#fc0;stroke:#a80"/>"##,
+            (c.at[0] - lo[0]) * scale,
+            (c.at[1] - lo[1]) * scale,
+            if c.major { 5 } else { 3 }
+        );
     }
 
     s.push_str("</svg>\n");

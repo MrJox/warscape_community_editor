@@ -25,13 +25,32 @@ fn main() {
         let window = SDL_CreateWindow(c"wce_imgui demo".as_ptr(), 1280, 800, SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
         assert!(!window.is_null(), "SDL_CreateWindow failed");
         let sd = DXGI_SWAP_CHAIN_DESC {
-            BufferDesc: DXGI_MODE_DESC { Format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() }, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            BufferUsage: DXGI_USAGE(DXGI_USAGE_RENDER_TARGET_OUTPUT), BufferCount: 2, OutputWindow: HWND(window.cast()), Windowed: true.into(), SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD, Flags: 0,
+            BufferDesc: DXGI_MODE_DESC { Format: DXGI_FORMAT_R8G8B8A8_UNORM, ..Default::default() },
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            BufferUsage: DXGI_USAGE(DXGI_USAGE_RENDER_TARGET_OUTPUT),
+            BufferCount: 2,
+            OutputWindow: HWND(window.cast()),
+            Windowed: true.into(),
+            SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
+            Flags: 0,
         };
 
         let (mut swap, mut dev, mut ctx) = (None, None, None);
-        D3D11CreateDeviceAndSwapChain(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), 0, Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION as u32, Some(&sd),
-            Some(&mut swap), Some(&mut dev), None, Some(&mut ctx)).ok().expect("D3D11CreateDeviceAndSwapChain");
+        D3D11CreateDeviceAndSwapChain(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            0,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION as u32,
+            Some(&sd),
+            Some(&mut swap),
+            Some(&mut dev),
+            None,
+            Some(&mut ctx),
+        )
+        .ok()
+        .expect("D3D11CreateDeviceAndSwapChain");
         let (swap, dev, ctx): (IDXGISwapChain, ID3D11Device, ID3D11DeviceContext) = (swap.unwrap(), dev.unwrap(), ctx.unwrap());
 
         let mut imgui = Context::create();

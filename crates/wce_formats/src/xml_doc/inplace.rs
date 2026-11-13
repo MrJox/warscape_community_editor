@@ -23,7 +23,6 @@ fn shift(el: &mut XmlElement, delta: isize) {
 }
 
 impl XmlDoc {
-
     /// Where the record of the next edits starts.
     pub fn journal_mark(&self) -> usize {
         self.journal.len()

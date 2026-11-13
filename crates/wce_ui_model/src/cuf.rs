@@ -96,13 +96,33 @@ impl Cuf {
         let count = r.u16()? as usize;
         let pixel_bytes = r.u32()? as usize;
         let index: Vec<u16> = r.take(0x20000)?.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-        let metrics: Vec<Metric> = r.take(4 * count)?.chunks_exact(4).map(|c| Metric { top: c[0] as i8, advance: c[1] as i8, width: c[2], height: c[3] }).collect();
+        let metrics: Vec<Metric> = r
+            .take(4 * count)?
+            .chunks_exact(4)
+            .map(|c| Metric { top: c[0] as i8, advance: c[1] as i8, width: c[2], height: c[3] })
+            .collect();
         let first_pixel: Vec<u32> = r.take(4 * count)?.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
         let pixels = r.take(pixel_bytes)?.to_vec();
         let kerning_count = r.u16()? as usize;
         let kerning_first = r.u16()? as usize;
         let kerning: Vec<i8> = r.take(kerning_count * kerning_count)?.iter().map(|b| *b as i8).collect();
-        Ok(Self { font_height, line_spacing, ascender, descender, space_width, character_spacing, bounding_width, bounding_height, index, metrics, first_pixel, pixels, kerning_count, kerning_first, kerning })
+        Ok(Self {
+            font_height,
+            line_spacing,
+            ascender,
+            descender,
+            space_width,
+            character_spacing,
+            bounding_width,
+            bounding_height,
+            index,
+            metrics,
+            first_pixel,
+            pixels,
+            kerning_count,
+            kerning_first,
+            kerning,
+        })
     }
 
     pub fn glyph_count(&self) -> usize {

@@ -75,18 +75,22 @@ impl VegetationSet {
     ///
     /// The file can't be read or is not a set.
     pub fn load(path: &Path, root: &Path) -> Result<Self, String> {
-        let doc = XmlDoc::parse(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?).map_err(|e| format!("{}: {e}", path.display()))?;
+        let doc = XmlDoc::parse(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         let els = doc.elements();
         if els.first().is_none_or(|e| e.name != "VEGETATION_SET") {
             return Err(format!("{}: not a vegetation set", path.display()));
         }
 
         let num = |e: usize, n: &str| doc.get(e, n).and_then(|v| v.trim().parse::<f32>().ok());
-        let entries = (0..els.len()).filter(|&e| els[e].name == "entry").filter_map(|e| {
-            let key = doc.get(e, "key").filter(|k| !k.is_empty())?;
-            let scale = num(e, "scale_min").zip(num(e, "scale_max"));
-            Some(SetEntry { key, weight: num(e, "weight").unwrap_or(1.0), scale })
-        }).collect();
+        let entries = (0..els.len())
+            .filter(|&e| els[e].name == "entry")
+            .filter_map(|e| {
+                let key = doc.get(e, "key").filter(|k| !k.is_empty())?;
+                let scale = num(e, "scale_min").zip(num(e, "scale_max"));
+                Some(SetEntry { key, weight: num(e, "weight").unwrap_or(1.0), scale })
+            })
+            .collect();
 
         Ok(Self { name: name_of(path), folder: folder_of(path, root), path: path.to_path_buf(), entries })
     }
@@ -97,7 +101,11 @@ impl VegetationSet {
         for e in &self.entries {
             out += &format!("    <entry key=\"{}\" weight=\"{}\"", e.key, crate::ted_scene::format_number(f64::from(e.weight)));
             if let Some((lo, hi)) = e.scale {
-                out += &format!(" scale_min=\"{}\" scale_max=\"{}\"", crate::ted_scene::format_number(f64::from(lo)), crate::ted_scene::format_number(f64::from(hi)));
+                out += &format!(
+                    " scale_min=\"{}\" scale_max=\"{}\"",
+                    crate::ted_scene::format_number(f64::from(lo)),
+                    crate::ted_scene::format_number(f64::from(hi))
+                );
             }
 
             out += "/>\n";

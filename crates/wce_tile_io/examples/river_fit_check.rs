@@ -51,13 +51,23 @@ fn main() {
     let game = games.game(&args[0]).expect("game");
     let dir = PathBuf::from(&args[1]);
     let filter = args.get(2).cloned().unwrap_or_default();
-    let mut packs = std::fs::read_dir(&dir).expect("data").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>();
+    let mut packs = std::fs::read_dir(&dir)
+        .expect("data")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "pack"))
+        .collect::<Vec<_>>();
     packs.sort();
     let (mut meshes, mut bad) = (0, 0);
     let mut worst = [0.0f32; 4];
     for p in packs {
         let Ok(mut pack) = Pack::read_and_merge(std::slice::from_ref(&p), game, true, false, false) else { continue };
-        let names = pack.files().keys().filter(|n| n.starts_with("terrain/tiles/") && n.ends_with("/mesh.rigid_model_v2") && n.contains(&filter)).cloned().collect::<Vec<_>>();
+        let names = pack
+            .files()
+            .keys()
+            .filter(|n| n.starts_with("terrain/tiles/") && n.ends_with("/mesh.rigid_model_v2") && n.contains(&filter))
+            .cloned()
+            .collect::<Vec<_>>();
         for n in names {
             let Some(Ok(Some(b))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { continue };
             let Some(block) = read_river_block(&b) else { continue };
@@ -117,7 +127,10 @@ fn main() {
         }
     }
 
-    println!("{meshes} meshes with a river block, {bad} off; worst: {:.3} m, width {:.3}, alpha {:.3}, flow / foam {:.4}", worst[0], worst[1], worst[2], worst[3]);
+    println!(
+        "{meshes} meshes with a river block, {bad} off; worst: {:.3} m, width {:.3}, alpha {:.3}, flow / foam {:.4}",
+        worst[0], worst[1], worst[2], worst[3]
+    );
     if bad > 0 {
         std::process::exit(1);
     }

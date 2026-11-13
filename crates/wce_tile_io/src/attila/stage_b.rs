@@ -62,7 +62,12 @@ impl Group {
 pub fn group_of(name: &str) -> Option<Group> {
     Some(match name.to_lowercase().as_str() {
         "blend.dds" | "index.dds" | "ground_types.dds" => Group::Textures,
-        "normal.dds" | "tile.agf" | "mesh.rigid_model_v2" | "outfield_mesh.rigid_model_v2" | "hf_height_map.data" | "terrain_outlines.xml" => Group::Terrain,
+        "normal.dds"
+        | "tile.agf"
+        | "mesh.rigid_model_v2"
+        | "outfield_mesh.rigid_model_v2"
+        | "hf_height_map.data"
+        | "terrain_outlines.xml" => Group::Terrain,
         "hf_water_map.data" => Group::Water,
         _ => return None,
     })
@@ -75,12 +80,20 @@ pub fn fingerprints(raw: &Tile) -> std::collections::BTreeMap<&'static str, u64>
     wce_foundation::wce_prof!("stage_b.fingerprints");
     use super::carry::Fnv;
     use wce_tile_model::MapKind;
-    let entry = raw.entry.as_ref().map(|e| crate::xml::write(&e.root, &super::ted_project::entry_style(), &super::schema::EntrySchema)).unwrap_or_default();
+    let entry = raw
+        .entry
+        .as_ref()
+        .map(|e| crate::xml::write(&e.root, &super::ted_project::entry_style(), &super::schema::EntrySchema))
+        .unwrap_or_default();
     let mut base = Fnv::new();
     base.bytes(&entry).str(raw.variation.as_deref().unwrap_or_default());
     let mut rivers = Fnv::new();
     for r in &raw.rivers {
-        rivers.u32(r.index.unwrap_or(u32::MAX)).bytes(&crate::xml::write(&r.root, &crate::xml::DocStyle::ted(), &super::schema::RiverSchema));
+        rivers.u32(r.index.unwrap_or(u32::MAX)).bytes(&crate::xml::write(
+            &r.root,
+            &crate::xml::DocStyle::ted(),
+            &super::schema::RiverSchema,
+        ));
     }
 
     let instances = |h: &mut Fnv, list: Vec<(String, [f32; 16])>| {
@@ -150,7 +163,8 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat)
     let mut out = vec![];
     let tessellated = respliced.then(|| {
         // The tile's cells along z: the grid's (h - 1) / density of `terrain_files`.
-        let cells_y = raw.entry.as_ref().and_then(|e| e.root.get("height")).and_then(wce_tile_model::Value::as_int).unwrap_or(0).max(0) as usize;
+        let cells_y =
+            raw.entry.as_ref().and_then(|e| e.root.get("height")).and_then(wce_tile_model::Value::as_int).unwrap_or(0).max(0) as usize;
         super::river::tessellate(&super::river::river_splines(raw, cells_y), river)
     });
     for (name, blob) in &carried {
@@ -166,7 +180,9 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat)
     }
 
     if respliced {
-        notes.notes.push("stage B: the decompiled tile's meshes kept with their river block made again (only the rivers changed)".to_owned());
+        notes
+            .notes
+            .push("stage B: the decompiled tile's meshes kept with their river block made again (only the rivers changed)".to_owned());
     }
 
     let wanted = Group::ALL.into_iter().filter(|&g| !keep(g) && !(g == Group::Terrain && respliced)).collect::<Vec<_>>();
@@ -175,7 +191,9 @@ pub fn stage_b_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat)
     }
 
     for g in wanted.iter().filter(|&&g| has(g)) {
-        notes.notes.push(format!("stage B: the decompiled tile's {} files made again (the project changed since it was decompiled)", g.name()));
+        notes
+            .notes
+            .push(format!("stage B: the decompiled tile's {} files made again (the project changed since it was decompiled)", g.name()));
     }
 
     match made_files(raw, ctx, river) {
@@ -249,8 +267,13 @@ impl PackIndex {
         use rpfm_lib::files::pack::Pack;
         self.index.get_or_init(|| {
             let ours = |p: &Path| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.to_lowercase().starts_with("wce_"));
-            let mut packs = std::fs::read_dir(&self.data).into_iter().flatten().flatten().map(|e| e.path())
-                .filter(|p| p.extension().is_some_and(|x| x == "pack") && !ours(p)).collect::<Vec<_>>();
+            let mut packs = std::fs::read_dir(&self.data)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "pack") && !ours(p))
+                .collect::<Vec<_>>();
             packs.sort();
             let mut out = std::collections::HashMap::new();
             let Some(game) = Self::game() else { return out };

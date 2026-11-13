@@ -4,7 +4,6 @@
 
 /// A map of a piece's frame.
 pub trait Warp {
-
     /// Where a point goes.
     fn point(&self, p: [f32; 3]) -> [f32; 3];
 
@@ -65,10 +64,14 @@ impl Warp for Shifted<'_> {
     }
 
     fn corner_faces(&self) -> Vec<CornerFace> {
-        self.inner.corner_faces().into_iter().map(|f| {
-            let [a, b, c] = f.plane;
-            CornerFace { plane: [a, b, c - a * self.dx], ..f }
-        }).collect()
+        self.inner
+            .corner_faces()
+            .into_iter()
+            .map(|f| {
+                let [a, b, c] = f.plane;
+                CornerFace { plane: [a, b, c - a * self.dx], ..f }
+            })
+            .collect()
     }
 }
 
@@ -96,7 +99,9 @@ pub fn clip_to(points: &[[f32; 3]], planes: &[[f32; 3]], closed: bool) -> Vec<[f
                     kept.push(p);
                 }
 
-                if let Some(&q) = out.get(i + 1) && (side(&p) >= 0.0) != (side(&q) >= 0.0) {
+                if let Some(&q) = out.get(i + 1)
+                    && (side(&p) >= 0.0) != (side(&q) >= 0.0)
+                {
                     let (sp, sq) = (side(&p), side(&q));
                     kept.push(lerp(p, q, sp / (sp - sq)));
                 }
@@ -130,7 +135,6 @@ pub struct Bend {
 }
 
 impl Bend {
-
     /// A bend that turns the piece's end at `x1` by `angle` radians.
     pub fn turning(x0: f32, x1: f32, angle: f32) -> Self {
         Self { x0, radius: (x1 - x0) / angle }

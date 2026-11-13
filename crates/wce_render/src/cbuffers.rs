@@ -6,7 +6,10 @@
 
 use std::collections::BTreeMap;
 
-use wce_d3d11::{ContextExt, D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC, D3D11_USAGE_DEFAULT, DeviceExt, ID3D11Buffer, ID3D11Device, ID3D11DeviceContext};
+use wce_d3d11::{
+    ContextExt, D3D11_BIND_CONSTANT_BUFFER, D3D11_BUFFER_DESC, D3D11_USAGE_DEFAULT, DeviceExt, ID3D11Buffer, ID3D11Device,
+    ID3D11DeviceContext,
+};
 
 /// A variable of a buffer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,7 +35,6 @@ pub struct ConstantBuffers {
 }
 
 impl ConstantBuffers {
-
     /// Declares (or widens) a buffer from a shader's reflection. Variables already declared keep their first layout.
     pub fn declare(&mut self, name: &str, size: u32, vars: &BTreeMap<String, Var>) {
         let b = self.buffers.entry(name.to_owned()).or_insert_with(|| Buffer { name: name.to_owned(), dirty: true, ..Default::default() });

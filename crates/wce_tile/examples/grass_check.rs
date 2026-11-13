@@ -40,7 +40,8 @@ fn main() {
     let oracle_dir: Option<PathBuf> = args.iter().position(|a| a == "--oracle-dir").and_then(|i| args.get(i + 1)).map(PathBuf::from);
     let raw = game.join("assembly_kit").join("raw_data");
     let vfs = Vfs::mount(&Config::new(game.clone(), GameProfile::from_env().clone())).expect("vfs");
-    let params = grass::GrassParams::load(&game.join("assembly_kit/working_data/terrain/vegetation/battle/grass/max_grass.xml")).expect("max_grass.xml");
+    let params = grass::GrassParams::load(&game.join("assembly_kit/working_data/terrain/vegetation/battle/grass/max_grass.xml"))
+        .expect("max_grass.xml");
     let mut folders: Vec<String> = vfs
         .list("terrain/tiles/battle/", ".grass_list.bin")
         .into_iter()
@@ -75,21 +76,39 @@ fn main() {
             let mine_list = grass::generate_grass(&inputs, &params, seed);
             let mine: HashSet<(String, i64, i64)> = mine_list.iter().map(|g| key(&g.key, g.x, g.z)).collect();
             let same = mine.intersection(&theirs).count();
-            let their_y: std::collections::HashMap<(String, i64, i64), f32> =
-                list.grass_list().grass_list().iter().flat_map(|v| v.value().iter().map(move |i| (key(v.key(), *i.x(), *i.z()), *i.y()))).collect();
-            let dy = mine_list.iter().filter_map(|g| their_y.get(&key(&g.key, g.x, g.z)).map(|y| (y - f16_round(g.y)).abs())).fold(0.0f32, f32::max);
+            let their_y: std::collections::HashMap<(String, i64, i64), f32> = list
+                .grass_list()
+                .grass_list()
+                .iter()
+                .flat_map(|v| v.value().iter().map(move |i| (key(v.key(), *i.x(), *i.z()), *i.y())))
+                .collect();
+            let dy = mine_list
+                .iter()
+                .filter_map(|g| their_y.get(&key(&g.key, g.x, g.z)).map(|y| (y - f16_round(g.y)).abs()))
+                .fold(0.0f32, f32::max);
             // The order of each key's patches (their yaws in the game).
             let ordered = list.grass_list().grass_list().iter().all(|v| {
                 let theirs = v.value().iter().map(|i| key(v.key(), *i.x(), *i.z()));
                 let ours = mine_list.iter().filter(|g| g.key == *v.key()).map(|g| key(&g.key, g.x, g.z));
                 theirs.eq(ours)
             });
-            let mut line = format!("{folder}\ttheirs {}\tmine {}\tsame {same}\torder {}\tmax dy {dy:.3}", theirs.len(), mine.len(), if ordered { "same" } else { "differs" });
+            let mut line = format!(
+                "{folder}\ttheirs {}\tmine {}\tsame {same}\torder {}\tmax dy {dy:.3}",
+                theirs.len(),
+                mine.len(),
+                if ordered { "same" } else { "differs" }
+            );
             if args.iter().any(|a| a == "--order") {
                 for v in list.grass_list().grass_list() {
-                    let theirs: Vec<(i64, i64)> = v.value().iter().map(|i| ((*i.x() * 2.0).round() as i64, (*i.z() * 2.0).round() as i64)).collect();
-                    let ours: Vec<(i64, i64)> = mine_list.iter().filter(|g| g.key == *v.key()).map(|g| ((g.x * 2.0).round() as i64, (g.z * 2.0).round() as i64)).collect();
-                    let idx: Vec<String> = theirs.iter().take(12).map(|p| ours.iter().position(|q| q == p).map_or("-".into(), |i| i.to_string())).collect();
+                    let theirs: Vec<(i64, i64)> =
+                        v.value().iter().map(|i| ((*i.x() * 2.0).round() as i64, (*i.z() * 2.0).round() as i64)).collect();
+                    let ours: Vec<(i64, i64)> = mine_list
+                        .iter()
+                        .filter(|g| g.key == *v.key())
+                        .map(|g| ((g.x * 2.0).round() as i64, (g.z * 2.0).round() as i64))
+                        .collect();
+                    let idx: Vec<String> =
+                        theirs.iter().take(12).map(|p| ours.iter().position(|q| q == p).map_or("-".into(), |i| i.to_string())).collect();
                     line += &format!("\n  {} {} ours {} order {}", v.key(), theirs.len(), ours.len(), idx.join(" "));
                 }
             }
@@ -97,8 +116,12 @@ fn main() {
             if diff {
                 let pos = |s: &HashSet<(String, i64, i64)>| s.iter().map(|(_, x, z)| (*x, *z)).collect::<HashSet<_>>();
                 let (tp, mp) = (pos(&theirs), pos(&mine));
-                line += &format!("\n  same positions {}; only theirs {:?}\n  only mine {:?}", tp.intersection(&mp).count(),
-                    theirs.difference(&mine).take(6).collect::<Vec<_>>(), mine.difference(&theirs).take(6).collect::<Vec<_>>());
+                line += &format!(
+                    "\n  same positions {}; only theirs {:?}\n  only mine {:?}",
+                    tp.intersection(&mp).count(),
+                    theirs.difference(&mine).take(6).collect::<Vec<_>>(),
+                    mine.difference(&theirs).take(6).collect::<Vec<_>>()
+                );
             }
 
             line

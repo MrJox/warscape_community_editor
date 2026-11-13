@@ -243,7 +243,6 @@ impl Mask {
         Self { n, v: (0..n * n).into_par_iter().map(|k| f(k % n, k / n)).collect() }
     }
 
-
     /// A box blur of radius `r`, three times (about a Gaussian).
     fn blurred(&self, r: usize) -> Self {
         let mut m = self.clone();
@@ -309,7 +308,9 @@ fn smooth(a: f32, b: f32, x: f32) -> f32 {
 
 /// Hash noise: 0 .. 1.
 fn hash(x: i64, y: i64, seed: u32) -> f32 {
-    let mut h = (x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (y as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ u64::from(seed).wrapping_mul(0x1656_67B1_9E37_79F9);
+    let mut h = (x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (y as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        ^ u64::from(seed).wrapping_mul(0x1656_67B1_9E37_79F9);
     h ^= h >> 31;
     h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     h ^= h >> 29;
@@ -363,7 +364,11 @@ fn fill(frame: &Frame, polys: &[&[P]]) -> Mask {
 
     m.v.par_chunks_mut(n).enumerate().for_each(|(j, row)| {
         let y = j as f64 + 0.5;
-        let mut xs: Vec<f64> = edges.iter().filter(|(a, b)| (a[1] <= y) != (b[1] <= y)).map(|(a, b)| a[0] + (y - a[1]) / (b[1] - a[1]) * (b[0] - a[0])).collect();
+        let mut xs: Vec<f64> = edges
+            .iter()
+            .filter(|(a, b)| (a[1] <= y) != (b[1] <= y))
+            .map(|(a, b)| a[0] + (y - a[1]) / (b[1] - a[1]) * (b[0] - a[0]))
+            .collect();
         xs.sort_by(f64::total_cmp);
         for pair in xs.chunks(2) {
             let [x0, x1] = [pair[0], *pair.get(1).unwrap_or(&pair[0])];
@@ -446,10 +451,12 @@ fn fill_union(frame: &Frame, polys: &[&[P]]) -> Mask {
         }
         for j in j0..=j1 as usize {
             let y = j as f64 + 0.5;
-            let mut xs: Vec<f64> = (0..px.len()).filter_map(|k| {
-                let (a, b) = (px[k], px[(k + 1) % px.len()]);
-                ((a[1] <= y) != (b[1] <= y)).then(|| a[0] + (y - a[1]) / (b[1] - a[1]) * (b[0] - a[0]))
-            }).collect();
+            let mut xs: Vec<f64> = (0..px.len())
+                .filter_map(|k| {
+                    let (a, b) = (px[k], px[(k + 1) % px.len()]);
+                    ((a[1] <= y) != (b[1] <= y)).then(|| a[0] + (y - a[1]) / (b[1] - a[1]) * (b[0] - a[0]))
+                })
+                .collect();
             xs.sort_by(f64::total_cmp);
             for pair in xs.chunks(2) {
                 let [x0, x1] = [pair[0], *pair.get(1).unwrap_or(&pair[0])];
@@ -540,17 +547,23 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
     let seed = style.seed;
 
     // The ground's heights and slopes on the canvas.
-    let heights: Vec<f32> = (0..n * n).into_par_iter().map(|k| {
-        let p = frame.world(k % n, k / n);
-        input.height.sample(p[0], p[1])
-    }).collect();
+    let heights: Vec<f32> = (0..n * n)
+        .into_par_iter()
+        .map(|k| {
+            let p = frame.world(k % n, k / n);
+            input.height.sample(p[0], p[1])
+        })
+        .collect();
     let h_at = |i: i64, j: i64| heights[(j.clamp(0, n as i64 - 1) as usize) * n + i.clamp(0, n as i64 - 1) as usize];
     // The gradient (dh/dx east, dh/dz north) per pixel.
-    let grad: Vec<[f32; 2]> = (0..n * n).into_par_iter().map(|k| {
-        let (i, j) = ((k % n) as i64, (k / n) as i64);
-        let s = (2.0 * frame.m) as f32;
-        [(h_at(i + 1, j) - h_at(i - 1, j)) / s, (h_at(i, j - 1) - h_at(i, j + 1)) / s]
-    }).collect();
+    let grad: Vec<[f32; 2]> = (0..n * n)
+        .into_par_iter()
+        .map(|k| {
+            let (i, j) = ((k % n) as i64, (k / n) as i64);
+            let s = (2.0 * frame.m) as f32;
+            [(h_at(i + 1, j) - h_at(i - 1, j)) / s, (h_at(i, j - 1) - h_at(i, j + 1)) / s]
+        })
+        .collect();
     let slope_deg = |k: usize| f64::from((grad[k][0] * grad[k][0] + grad[k][1] * grad[k][1]).sqrt()).atan().to_degrees();
 
     // Water: the sea under 0 m, rivers and lakes.
@@ -635,11 +648,15 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
     let sea_rim = if sea_only.v.iter().any(|&w| w > 0.5) {
         let near = sea_only.blurred(1);
         let low = min_filter(&heights, n, ((8.0 * px_m) as usize).max(2));
-        Some(Mask::from_fn(n, |i, j| {
-            let k = j * n + i;
-            let shore = f32::from(u8::from(near.v[k] > 0.02 && water.v[k] < 0.5));
-            shore * smooth(3.5, 6.0, heights[k] - low[k]) * f32::from(u8::from(inland_near.v[k] < 0.02))
-        }).blurred(1).step(0.35, 0.12))
+        Some(
+            Mask::from_fn(n, |i, j| {
+                let k = j * n + i;
+                let shore = f32::from(u8::from(near.v[k] > 0.02 && water.v[k] < 0.5));
+                shore * smooth(3.5, 6.0, heights[k] - low[k]) * f32::from(u8::from(inland_near.v[k] < 0.02))
+            })
+            .blurred(1)
+            .step(0.35, 0.12),
+        )
     } else {
         None
     };
@@ -858,7 +875,12 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
     // Walls: thick ink, as the hand-made radars draw them; gates a gap of the street's colour across.
     if !input.walls.is_empty() {
         let rings: Vec<&[P]> = input.walls.iter().flat_map(|w| w.footprint.iter().map(Vec::as_slice)).collect();
-        let lines: Vec<(&[P], f64)> = input.walls.iter().filter(|w| w.line[0] != w.line[1]).map(|w| (&w.line[..], if w.palisade { 2.5 } else { 3.5 } * px_m)).collect();
+        let lines: Vec<(&[P], f64)> = input
+            .walls
+            .iter()
+            .filter(|w| w.line[0] != w.line[1])
+            .map(|w| (&w.line[..], if w.palisade { 2.5 } else { 3.5 } * px_m))
+            .collect();
         let mut m = fill(&frame, &rings);
         m.max_with(&stroke(&frame, &lines));
         let m = m.blurred(1).step(0.15, 0.1);
@@ -902,14 +924,17 @@ pub fn render(input: &RadarInput, style: &RadarStyle) -> RadarImage {
 /// The least of `v` (an `n` x `n` raster) within `r` pixels (a square), per pixel.
 fn min_filter(v: &[f32], n: usize, r: usize) -> Vec<f32> {
     let pass = |src: &[f32], horizontal: bool| -> Vec<f32> {
-        (0..n * n).into_par_iter().map(|k| {
-            let (i, j) = (k % n, k / n);
-            if horizontal {
-                (i.saturating_sub(r)..=(i + r).min(n - 1)).map(|x| src[j * n + x]).fold(f32::MAX, f32::min)
-            } else {
-                (j.saturating_sub(r)..=(j + r).min(n - 1)).map(|y| src[y * n + i]).fold(f32::MAX, f32::min)
-            }
-        }).collect()
+        (0..n * n)
+            .into_par_iter()
+            .map(|k| {
+                let (i, j) = (k % n, k / n);
+                if horizontal {
+                    (i.saturating_sub(r)..=(i + r).min(n - 1)).map(|x| src[j * n + x]).fold(f32::MAX, f32::min)
+                } else {
+                    (j.saturating_sub(r)..=(j + r).min(n - 1)).map(|y| src[y * n + i]).fold(f32::MAX, f32::min)
+                }
+            })
+            .collect()
     };
     pass(&pass(v, true), false)
 }
@@ -946,7 +971,8 @@ fn plot_shade(p: P, seed: u32) -> f32 {
     for dz in -1..=1 {
         for dx in -1..=1 {
             let (x, z) = (cx + dx, cz + dz);
-            let d = (gx - (x as f64 + f64::from(hash(x, z, seed ^ 0x51)))).powi(2) + (gz - (z as f64 + f64::from(hash(x, z, seed ^ 0x52)))).powi(2);
+            let d = (gx - (x as f64 + f64::from(hash(x, z, seed ^ 0x51)))).powi(2)
+                + (gz - (z as f64 + f64::from(hash(x, z, seed ^ 0x52)))).powi(2);
             if d < best.0 {
                 best = (d, x, z);
             }
@@ -1107,28 +1133,34 @@ pub fn blend_roads(weights: &[u16], w: usize, h: usize, area: [f64; 4]) -> Field
 
 fn erode(m: &[bool], w: usize, h: usize, r: usize) -> Vec<bool> {
     let pass = |m: &[bool], horizontal: bool| -> Vec<bool> {
-        (0..w * h).into_par_iter().map(|k| {
-            let (i, j) = (k % w, k / w);
-            if horizontal {
-                (i.saturating_sub(r)..=(i + r).min(w - 1)).all(|x| m[j * w + x])
-            } else {
-                (j.saturating_sub(r)..=(j + r).min(h - 1)).all(|y| m[y * w + i])
-            }
-        }).collect()
+        (0..w * h)
+            .into_par_iter()
+            .map(|k| {
+                let (i, j) = (k % w, k / w);
+                if horizontal {
+                    (i.saturating_sub(r)..=(i + r).min(w - 1)).all(|x| m[j * w + x])
+                } else {
+                    (j.saturating_sub(r)..=(j + r).min(h - 1)).all(|y| m[y * w + i])
+                }
+            })
+            .collect()
     };
     pass(&pass(m, true), false)
 }
 
 fn dilate(m: &[bool], w: usize, h: usize, r: usize) -> Vec<bool> {
     let pass = |m: &[bool], horizontal: bool| -> Vec<bool> {
-        (0..w * h).into_par_iter().map(|k| {
-            let (i, j) = (k % w, k / w);
-            if horizontal {
-                (i.saturating_sub(r)..=(i + r).min(w - 1)).any(|x| m[j * w + x])
-            } else {
-                (j.saturating_sub(r)..=(j + r).min(h - 1)).any(|y| m[y * w + i])
-            }
-        }).collect()
+        (0..w * h)
+            .into_par_iter()
+            .map(|k| {
+                let (i, j) = (k % w, k / w);
+                if horizontal {
+                    (i.saturating_sub(r)..=(i + r).min(w - 1)).any(|x| m[j * w + x])
+                } else {
+                    (j.saturating_sub(r)..=(j + r).min(h - 1)).any(|y| m[y * w + i])
+                }
+            })
+            .collect()
     };
     pass(&pass(m, true), false)
 }

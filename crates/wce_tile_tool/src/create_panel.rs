@@ -24,12 +24,35 @@ use crate::settings::{RECENT_KEEP, SETTINGS_ID, TileSettings};
 use crate::tool::{SetInUse, TileTool, document, primary};
 
 /// The categories, in the panel's order.
-pub const CATEGORIES: [&str; 12] =
-    ["Buildings", "Vegetation", "Decals", "Models", "Effects", "Lights", "Prefabs", "Gameplay", "AI & regions", "Siege", "Rivers & roads", "References"];
+pub const CATEGORIES: [&str; 12] = [
+    "Buildings",
+    "Vegetation",
+    "Decals",
+    "Models",
+    "Effects",
+    "Lights",
+    "Prefabs",
+    "Gameplay",
+    "AI & regions",
+    "Siege",
+    "Rivers & roads",
+    "References",
+];
 
 /// The categories' icons, for the rail.
 const CATEGORY_ICONS: [&str; CATEGORIES.len()] = [
-    icons::HOUSE, icons::TREE_PINE, icons::IMAGE, icons::BOX, icons::SPARKLES, icons::LIGHTBULB, icons::GROUP, icons::FLAG, icons::BRAIN, icons::SWORDS, icons::WAVES, icons::USER,
+    icons::HOUSE,
+    icons::TREE_PINE,
+    icons::IMAGE,
+    icons::BOX,
+    icons::SPARKLES,
+    icons::LIGHTBULB,
+    icons::GROUP,
+    icons::FLAG,
+    icons::BRAIN,
+    icons::SWORDS,
+    icons::WAVES,
+    icons::USER,
 ];
 
 /// The rail's width.
@@ -84,12 +107,26 @@ fn generic_folder(counts: &std::collections::HashMap<String, usize>, key: &str) 
 
 /// The types without a key of each fixed category (category, type, drawn).
 const FIXED: [(usize, &str, bool); 20] = [
-    (11, "WceRefHuman", false), (11, "WceRefUnit", false), (11, "WceRefShip", false), (11, "WceMeasureLine", true), (11, "WceAngleFinder", true),
-    (5, "POINT_LIGHT_INSTANCE", false), (7, "CaptureLocationInstance", false), (7, "DeploymentZonePolygonInstanceGroup", false),
-    (7, "CivilianShelter", false), (7, "CivilianDeploymentZone", true), (7, "ZONE_POLYGON_INSTANCE", true),
-    (7, "LiteBuildingZone", true), (9, "SiegeAINodeInstance", false), (9, "SiegeAIEdgeInstance", true), (8, "AI_HINT_POLYGON_INSTANCE", true),
-    (8, "NOGO_REGION_POLYGON_INSTANCE", true), (8, "GO_REGION_POLYGON_INSTANCE", true), (8, "VegetationExclusionPolygonInstance", true),
-    (8, "AISeparatorInstance", true), (10, "SplineRiverInstance", true),
+    (11, "WceRefHuman", false),
+    (11, "WceRefUnit", false),
+    (11, "WceRefShip", false),
+    (11, "WceMeasureLine", true),
+    (11, "WceAngleFinder", true),
+    (5, "POINT_LIGHT_INSTANCE", false),
+    (7, "CaptureLocationInstance", false),
+    (7, "DeploymentZonePolygonInstanceGroup", false),
+    (7, "CivilianShelter", false),
+    (7, "CivilianDeploymentZone", true),
+    (7, "ZONE_POLYGON_INSTANCE", true),
+    (7, "LiteBuildingZone", true),
+    (9, "SiegeAINodeInstance", false),
+    (9, "SiegeAIEdgeInstance", true),
+    (8, "AI_HINT_POLYGON_INSTANCE", true),
+    (8, "NOGO_REGION_POLYGON_INSTANCE", true),
+    (8, "GO_REGION_POLYGON_INSTANCE", true),
+    (8, "VegetationExclusionPolygonInstance", true),
+    (8, "AISeparatorInstance", true),
+    (10, "SplineRiverInstance", true),
 ];
 
 /// The types made only inside a holder (`wce_tile::parents`), drawn from the holder's Inspector (`TileTool::inspect_holder`): not entries of
@@ -109,7 +146,8 @@ const WALL: (usize, &str, bool) = (9, wce_tile_editor::tile_document::WALL_SPLIN
 const PROCEDURAL_ROAD: (usize, &str, bool) = (10, wce_tile_editor::tile_document::ROAD_SPLINE, true);
 
 /// The keyed types of the first categories.
-const KEYED: [(usize, &str); 5] = [(0, "BUILDING_INSTANCE"), (1, "VEGETATION_INSTANCE"), (2, "ProjectedDecalInstance"), (3, "SIMPLE_MESH_INSTANCE"), (4, "VFXInstance")];
+const KEYED: [(usize, &str); 5] =
+    [(0, "BUILDING_INSTANCE"), (1, "VEGETATION_INSTANCE"), (2, "ProjectedDecalInstance"), (3, "SIMPLE_MESH_INSTANCE"), (4, "VFXInstance")];
 
 /// What an entry makes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -146,7 +184,14 @@ pub struct Entry {
 impl Entry {
     /// The new vegetation set (not saved) as an entry, to place or paint with it.
     pub fn new_set_entry() -> Self {
-        Self { category: 1, label: "new vegetation set".to_owned(), make: Make::VegSet { name: String::new() }, folder: String::new(), project: false, search: String::new() }
+        Self {
+            category: 1,
+            label: "new vegetation set".to_owned(),
+            make: Make::VegSet { name: String::new() },
+            folder: String::new(),
+            project: false,
+            search: String::new(),
+        }
     }
 
     /// Its id in the favourites and the recent entries.
@@ -173,7 +218,8 @@ impl Entry {
 pub(crate) const PROJECT_PREFAB_ICON: &str = icons::LINK_2;
 
 /// What the tooltip of a prefab of the projects folder says.
-pub(crate) const PROJECT_PREFAB_TIP: &str = "A prefab of the projects folder (the editor's .wce): the prefabs placed in it stay references, and edits of it are saved there.";
+pub(crate) const PROJECT_PREFAB_TIP: &str =
+    "A prefab of the projects folder (the editor's .wce): the prefabs placed in it stay references, and edits of it are saved there.";
 
 /// The order of an entry in its category: its folder's parts, each before the entries (folders first), then the entry.
 pub(crate) fn folder_order(folder: &str) -> Vec<(u8, String)> {
@@ -398,7 +444,8 @@ impl TileTool {
             _ => true,
         };
         for (category, kind, drawn) in FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD]).filter(|(_, kind, _)| has(kind)) {
-            let make = if *drawn { Make::Draw { kind: (*kind).to_owned() } } else { Make::Place { kind: (*kind).to_owned(), key: String::new() } };
+            let make =
+                if *drawn { Make::Draw { kind: (*kind).to_owned() } } else { Make::Place { kind: (*kind).to_owned(), key: String::new() } };
             out.push(entry(*category, crate::entity_types::type_name(kind).to_owned(), make, kind));
         }
 
@@ -406,7 +453,12 @@ impl TileTool {
         let projects = self.prefab_folders(e).into_iter().next();
         for p in lib.entries() {
             let project = projects.as_ref().is_some_and(|r| *r == p.root);
-            let mut en = entry(6, p.key.clone(), Make::Prefab { key: p.key.clone() }, &format!("prefab {}{}", p.folder, if project { " project" } else { "" }));
+            let mut en = entry(
+                6,
+                p.key.clone(),
+                Make::Prefab { key: p.key.clone() },
+                &format!("prefab {}{}", p.folder, if project { " project" } else { "" }),
+            );
             en.folder.clone_from(&p.folder);
             en.project = project;
             out.push(en);
@@ -460,7 +512,14 @@ impl TileTool {
         let Some(id) = crate::tool::document_id(e) else { return };
         e.selection.set(wce_scene::render_scene::SourceRef { doc: id, item: wce_tile_editor::tile_document::item_of(holder) });
         let label = crate::entity_types::type_name(kind).to_owned();
-        let en = Entry { category: 0, label, make: Make::Draw { kind: kind.to_owned() }, folder: String::new(), project: false, search: String::new() };
+        let en = Entry {
+            category: 0,
+            label,
+            make: Make::Draw { kind: kind.to_owned() },
+            folder: String::new(),
+            project: false,
+            search: String::new(),
+        };
         self.start_making(e, &en);
         if let (Some(role), Some(d)) = (role, &mut self.draft) {
             d.attrs.insert("name".to_owned(), role.to_owned());
@@ -499,7 +558,9 @@ impl TileTool {
         // A node: its Boundary made for the ground around it, and how its Bounding Box is read.
         // A capture location: its boundary as a preset shape (TEd's), keeping its size (the boundary's Inspector edits size and turn).
         let mut preset = None;
-        if d.tile().tscene().type_of(holder) == "CaptureLocationInstance" && let Some(b) = d.capture_boundary(holder) {
+        if d.tile().tscene().type_of(holder) == "CaptureLocationInstance"
+            && let Some(b) = d.capture_boundary(holder)
+        {
             // Buttons sized to their names, the boundary's own shape lit (selectables of no width took the whole line: the others were
             // past the panel's edge).
             let now = d.boundary_shape(b).map(|s| s.kind);
@@ -531,8 +592,12 @@ impl TileTool {
             gui::end_disabled();
             if gui::is_item_hovered_allow_disabled() {
                 gui::set_tooltip(match joins {
-                    Some(_) => "Its two Street boundaries made again as the generator makes them: along its Street between the two nodes it joins, at the corridor's faces (the no-go regions, buildings, fort pieces, steep ground, sea and the other nodes' Boundaries), each end ticked into the node's Boundary. One undo entry.",
-                    None => "It joins no two nodes: its Street's first and last points must be in two nodes' Bounding Boxes (as the game finds them).",
+                    Some(_) => {
+                        "Its two Street boundaries made again as the generator makes them: along its Street between the two nodes it joins, at the corridor's faces (the no-go regions, buildings, fort pieces, steep ground, sea and the other nodes' Boundaries), each end ticked into the node's Boundary. One undo entry."
+                    }
+                    None => {
+                        "It joins no two nodes: its Street's first and last points must be in two nodes' Bounding Boxes (as the game finds them)."
+                    }
                 });
             }
         }
@@ -544,7 +609,9 @@ impl TileTool {
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip("The Boundary made again as the generator makes it: the free ground nearest to the node, within the range, out to the no-go regions, buildings, fort pieces, steep ground and sea around it, the other nodes' Boundaries and halfway to the nodes without one; grown onto the buildings' faces, stopping at the no-go regions' and the other Boundaries' edges. One undo entry.");
+                gui::set_tooltip(
+                    "The Boundary made again as the generator makes it: the free ground nearest to the node, within the range, out to the no-go regions, buildings, fort pieces, steep ground and sea around it, the other nodes' Boundaries and halfway to the nodes without one; grown onto the buildings' faces, stopping at the no-go regions' and the other Boundaries' edges. One undo entry.",
+                );
             }
 
             // Its range (kept in the Tile settings).
@@ -556,7 +623,9 @@ impl TileTool {
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip("How far the adjusted Boundary may reach from the node's centre (at least to its Bounding Box's corners). Automatic: as the generator, 30 to 60 units for an area node by the room around it, 18 to 32 for an intersection, 24 for an entry.");
+                gui::set_tooltip(
+                    "How far the adjusted Boundary may reach from the node's centre (at least to its Bounding Box's corners). Automatic: as the generator, 30 to 60 units for an area node by the room around it, 18 to 32 for an intersection, 24 for an entry.",
+                );
             }
 
             gui::text_wrapped(BOUNDING_BOX_NOTE);
@@ -583,7 +652,9 @@ impl TileTool {
             };
         }
 
-        if adjust.is_some() && let Some(d) = document(e) {
+        if adjust.is_some()
+            && let Some(d) = document(e)
+        {
             self.status = match d.adjust_node_boundary(holder, Some(reach).filter(|&r| r > 0.0)) {
                 Ok(_) => "the Boundary adjusted to what is around the node".to_owned(),
                 Err(err) => err,
@@ -623,7 +694,9 @@ impl TileTool {
     /// shortcut (Enter, a middle click: `tile.finish_drawing`).
     fn finish_hint(&self, e: &Editor) -> String {
         let keys = wce_editor::shortcuts::keys("tile.finish_drawing").iter().flatten().map(|c| c.text()).collect::<Vec<_>>().join(" or ");
-        let closed = crate::tool::document_id(e).and_then(|id| e.docs.find_as::<wce_tile_editor::tile_document::TileDocument>(id)).is_some_and(|d| self.drawing_look(e, d).1);
+        let closed = crate::tool::document_id(e)
+            .and_then(|id| e.docs.find_as::<wce_tile_editor::tile_document::TileDocument>(id))
+            .is_some_and(|d| self.drawing_look(e, d).1);
         match (closed, keys.is_empty()) {
             (true, true) => "click its first point to close it".to_owned(),
             (true, false) => format!("click its first point to close it ({keys} too)"),
@@ -639,7 +712,11 @@ impl TileTool {
             && !wce_tile::parents::holders(kind).is_empty()
             && Self::selected_holder(e, kind).is_none()
         {
-            self.status = format!("select {} and use its Inspector's buttons to draw a {}", wce_tile::parents::holders_label(kind), wce_tile::parents::label(kind));
+            self.status = format!(
+                "select {} and use its Inspector's buttons to draw a {}",
+                wce_tile::parents::holders_label(kind),
+                wce_tile::parents::label(kind)
+            );
             return;
         }
 
@@ -662,7 +739,11 @@ impl TileTool {
         match &en.make {
             Make::VegSet { name } => {
                 // No name: the new set, not saved yet.
-                let set = if name.is_empty() { self.scratch_set.clone() } else { self.vegetation_sets(e).iter().find(|s| s.name == *name).cloned() };
+                let set = if name.is_empty() {
+                    self.scratch_set.clone()
+                } else {
+                    self.vegetation_sets(e).iter().find(|s| s.name == *name).cloned()
+                };
                 let Some(set) = set.filter(|s| !s.entries.is_empty()) else {
                     self.status = format!("the vegetation set {name} has no trees");
                     self.making = None;
@@ -689,7 +770,10 @@ impl TileTool {
 
                 // Inside the selected holder; a shape's role (its name) one of the holder's, the first it lacks unless one was chosen.
                 self.create.holder = Self::selected_holder(e, kind);
-                if let (Some(h), Some(d)) = (self.create.holder, document(e)) && !d.holder_roles(h).is_empty() && kind != "DEPLOYMENT_ZONE_POLYGON_INSTANCE" {
+                if let (Some(h), Some(d)) = (self.create.holder, document(e))
+                    && !d.holder_roles(h).is_empty()
+                    && kind != "DEPLOYMENT_ZONE_POLYGON_INSTANCE"
+                {
                     let named = draft.attrs.get("name").filter(|n| d.holder_roles(h).iter().any(|r| r.name == n.as_str())).cloned();
                     match d.shape_role(h, named.as_deref()).or_else(|_| d.shape_role(h, None)) {
                         Ok(role) => {
@@ -735,7 +819,10 @@ impl TileTool {
                 e.selection.clear();
                 for mut r in picked {
                     // (A building's piece is not an element: it does not move.)
-                    if let Some(at) = at && r.item >= at && wce_tile_editor::tile_document::elem_of(r.item).is_some() {
+                    if let Some(at) = at
+                        && r.item >= at
+                        && wce_tile_editor::tile_document::elem_of(r.item).is_some()
+                    {
                         r.item += added;
                     }
 
@@ -810,7 +897,8 @@ impl TileTool {
         let Some(id) = crate::tool::document_id(e) else { return false };
         let items = e.selection.items().iter().copied().filter(|r| r.doc == id).collect::<Vec<_>>();
         let Some(d) = e.docs.find_as_mut::<wce_tile_editor::tile_document::TileDocument>(id) else { return false };
-        let at = items.iter().filter_map(|&r| d.item_transform(r)).map(|m| Float3::new(m.m[0][3], m.m[1][3], m.m[2][3])).collect::<Vec<_>>();
+        let at =
+            items.iter().filter_map(|&r| d.item_transform(r)).map(|m| Float3::new(m.m[0][3], m.m[1][3], m.m[2][3])).collect::<Vec<_>>();
         if at.is_empty() {
             return false;
         }
@@ -880,7 +968,11 @@ impl TileTool {
         }
 
         self.set_placing_yaw(turned);
-        self.status = format!("turn {:.1} deg (Alt + mouse; Shift: steps of {} deg; click places it here)", turned.rem_euclid(360.0), self.angle_step);
+        self.status = format!(
+            "turn {:.1} deg (Alt + mouse; Shift: steps of {} deg; click places it here)",
+            turned.rem_euclid(360.0),
+            self.angle_step
+        );
     }
 
     /// What the preview turns its text by: the turn being placed (`placing_preview`).
@@ -1023,7 +1115,15 @@ impl TileTool {
                 ins.text("folder", "folder", &p.folder);
                 ins.text("file", "file", &p.path.display().to_string());
                 let project = self.prefab_folders(e).first() == Some(&p.root);
-                ins.text("source", "from", if project { "the projects folder: prefabs placed in it stay references" } else { "an Assembly Kit (TEd's): prefabs placed in it are copies" });
+                ins.text(
+                    "source",
+                    "from",
+                    if project {
+                        "the projects folder: prefabs placed in it stay references"
+                    } else {
+                        "an Assembly Kit (TEd's): prefabs placed in it are copies"
+                    },
+                );
             }
 
             let mut yaw = self.create.prefab_yaw;
@@ -1054,12 +1154,15 @@ impl TileTool {
         if !roles.is_empty() {
             ins.section(&format!("New {}", wce_tile::parents::label(&draft.kind)));
             let names = roles.iter().map(|r| r.name.to_owned()).collect::<Vec<_>>();
-            let tips = roles.iter().map(|r| match (r.most, r.closed) {
-                (1, _) => format!("{}: it has one (drawing it again replaces it)", r.name),
-                (n, _) if n > 1 => format!("{}: it has up to {n}", r.name),
-                (_, true) => format!("{}: a closed shape", r.name),
-                _ => format!("{}: an open line", r.name),
-            }).collect::<Vec<_>>();
+            let tips = roles
+                .iter()
+                .map(|r| match (r.most, r.closed) {
+                    (1, _) => format!("{}: it has one (drawing it again replaces it)", r.name),
+                    (n, _) if n > 1 => format!("{}: it has up to {n}", r.name),
+                    (_, true) => format!("{}: a closed shape", r.name),
+                    _ => format!("{}: an open line", r.name),
+                })
+                .collect::<Vec<_>>();
             let mut idx = draft.attrs.get("name").and_then(|n| names.iter().position(|x| x == n)).unwrap_or(0) as i32;
             if ins.edit_choice_tips("wce_role", "shape", &mut idx, &names, &tips) {
                 draft.attrs.insert("name".to_owned(), names[idx.max(0) as usize].clone());
@@ -1076,7 +1179,9 @@ impl TileTool {
             self.keep_draft();
         }
 
-        if gui::button(&format!("{}  Reset to the defaults", icons::UNDO_2)) && let Some(dr) = &mut self.draft {
+        if gui::button(&format!("{}  Reset to the defaults", icons::UNDO_2))
+            && let Some(dr) = &mut self.draft
+        {
             let role = dr.attrs.get("name").cloned().filter(|_| !roles.is_empty());
             dr.attrs.clear();
             dr.attrs.extend(role.map(|r| ("name".to_owned(), r)));
@@ -1116,7 +1221,8 @@ impl TileTool {
             }
         }
 
-        self.create.folders = self.create.shown.iter().map(|rows| FolderRows::of(rows.iter().map(|&i| (i, entries[i].folder.as_str())))).collect();
+        self.create.folders =
+            self.create.shown.iter().map(|rows| FolderRows::of(rows.iter().map(|&i| (i, entries[i].folder.as_str())))).collect();
 
         self.create.shown_for = stamp;
     }
@@ -1124,7 +1230,10 @@ impl TileTool {
     /// The models an entry places, for its thumbnail: a building, a tree, a model or a prefab (nothing for the others).
     fn thumbnail_parts(&mut self, e: &mut Editor, en: &Entry) -> Vec<(wce_foundation::math::Float4x4, wce_scene::render_scene::Payload)> {
         let text = match &en.make {
-            Make::Place { kind, key } if !key.is_empty() && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance") => {
+            Make::Place { kind, key }
+                if !key.is_empty()
+                    && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance") =>
+            {
                 document(e).and_then(|d| d.draft_text(&Draft::new(kind, key)))
             }
 
@@ -1145,7 +1254,10 @@ impl TileTool {
     /// Whether an entry can have a thumbnail.
     fn has_thumbnail(en: &Entry) -> bool {
         match &en.make {
-            Make::Place { kind, key } => !key.is_empty() && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance"),
+            Make::Place { kind, key } => {
+                !key.is_empty()
+                    && matches!(kind.as_str(), "BUILDING_INSTANCE" | "VEGETATION_INSTANCE" | "SIMPLE_MESH_INSTANCE" | "VFXInstance")
+            }
             Make::Prefab { .. } => true,
             _ => false,
         }
@@ -1258,7 +1370,14 @@ impl TileTool {
     }
 
     /// Rows as cells, as many to a line as the panel fits.
-    fn create_cells(&self, rows: &[usize], entries: &[Entry], favourites: &[String], uid: &str, mut take: impl FnMut(usize, (bool, bool, bool))) {
+    fn create_cells(
+        &self,
+        rows: &[usize],
+        entries: &[Entry],
+        favourites: &[String],
+        uid: &str,
+        mut take: impl FnMut(usize, (bool, bool, bool)),
+    ) {
         let spacing = gui::item_spacing().x;
         let across = (((gui::content_region_avail().x + spacing) / (GRID_PICTURE + spacing)) as usize).max(1);
         let lines = rows.len().div_ceil(across);
@@ -1332,7 +1451,12 @@ impl TileTool {
     /// No such type.
     pub fn set_create_category(&mut self, name: Option<&str>) -> Result<(), String> {
         self.create.category = match name {
-            Some(name) => Some(CATEGORIES.iter().position(|c| c.eq_ignore_ascii_case(name)).ok_or_else(|| format!("no type '{name}': {}", CATEGORIES.join(", ")))?),
+            Some(name) => Some(
+                CATEGORIES
+                    .iter()
+                    .position(|c| c.eq_ignore_ascii_case(name))
+                    .ok_or_else(|| format!("no type '{name}': {}", CATEGORIES.join(", ")))?,
+            ),
             None => None,
         };
 
@@ -1382,7 +1506,6 @@ impl TileTool {
             return;
         }
 
-
         if document(e).is_none() {
             gui::text_disabled("Open a tile first.");
             gui::end();
@@ -1399,12 +1522,23 @@ impl TileTool {
             gui::set_keyboard_focus_here(0);
         }
 
-        let enter = gui::input_text("##createfilter", Some(&format!("{}  search everything (Enter: the first; Space in the viewport; Ctrl + click / Ctrl + Enter a tree: into a new set)", icons::SEARCH)), &mut self.create.filter, 128, gui::INPUT_ENTER_RETURNS_TRUE);
+        let enter = gui::input_text(
+            "##createfilter",
+            Some(&format!(
+                "{}  search everything (Enter: the first; Space in the viewport; Ctrl + click / Ctrl + Enter a tree: into a new set)",
+                icons::SEARCH
+            )),
+            &mut self.create.filter,
+            128,
+            gui::INPUT_ENTER_RETURNS_TRUE,
+        );
         let entries = self.create_entries(e);
         self.filter_entries(&entries);
 
         // Enter takes the first entry found (Ctrl + Enter on a tree: into the new set, and the search keeps the keyboard).
-        let first = (enter && !self.create.filter.trim().is_empty()).then(|| self.create.shown.iter().find_map(|rows| rows.first().copied())).flatten();
+        let first = (enter && !self.create.filter.trim().is_empty())
+            .then(|| self.create.shown.iter().find_map(|rows| rows.first().copied()))
+            .flatten();
         if let Some(i) = first {
             self.create.filter_refocus = gui::io().KeyCtrl && self.set_entries_of(e, &entries[i]).is_some();
         }
@@ -1420,7 +1554,10 @@ impl TileTool {
 
         // The view: a list, or a grid of pictures.
         let grid = *self.create.grid.get_or_insert_with(|| e.tool_settings::<TileSettings>(SETTINGS_ID).create_grid);
-        for (on, icon, tip) in [(false, icons::LIST_TREE, "A list"), (true, icons::LAYOUT_GRID, "Pictures: each entry with its thumbnail, made as it comes into view")] {
+        for (on, icon, tip) in [
+            (false, icons::LIST_TREE, "A list"),
+            (true, icons::LAYOUT_GRID, "Pictures: each entry with its thumbnail, made as it comes into view"),
+        ] {
             if gui::selectable_sized(&format!("{icon}##view{on}"), grid == on, 0, gui::v2(gui::frame_height(), 0.0)) && grid != on {
                 self.create.grid = Some(on);
                 e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.create_grid = on);
@@ -1441,14 +1578,23 @@ impl TileTool {
                 self.thumbs.cancel();
             }
         } else if gui::small_button(&format!("{}  Make thumbnails of the list", icons::IMAGE)) {
-            let rows = self.create.shown.iter().flatten().copied().filter(|&i| Self::has_thumbnail(&entries[i]) && only.is_none_or(|c| entries[i].category == c)).collect::<Vec<_>>();
+            let rows = self
+                .create
+                .shown
+                .iter()
+                .flatten()
+                .copied()
+                .filter(|&i| Self::has_thumbnail(&entries[i]) && only.is_none_or(|c| entries[i].category == c))
+                .collect::<Vec<_>>();
             for i in rows {
                 self.thumbnail(e, &entries[i], false);
             }
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Renders a picture of every building, tree, model and prefab the list shows (filter it first: there are thousands), kept in the cache folder. Hover an entry to see its picture; one hovered without a picture is made then.");
+            gui::set_tooltip(
+                "Renders a picture of every building, tree, model and prefab the list shows (filter it first: there are thousands), kept in the cache folder. Hover an entry to see its picture; one hovered without a picture is made then.",
+            );
         }
 
         let mut start = first;
@@ -1468,12 +1614,22 @@ impl TileTool {
             wce_foundation::wce_prof!("tile.panel.create.list");
             // Favourites and recent entries (filtered alike), then the categories (open while a filter is typed).
             for (title, icon, ids) in [("Favourites", icons::STAR, &favourites), ("Recent", icons::HISTORY, &recent)] {
-                let rows = ids.iter().filter_map(|id| by_id(id)).filter(|&i| passes(&entries[i], &words) && only.is_none_or(|c| entries[i].category == c)).collect::<Vec<_>>();
+                let rows = ids
+                    .iter()
+                    .filter_map(|id| by_id(id))
+                    .filter(|&i| passes(&entries[i], &words) && only.is_none_or(|c| entries[i].category == c))
+                    .collect::<Vec<_>>();
                 if rows.is_empty() {
                     continue;
                 }
 
-                if grid && gui::tree_node_ex_id(&format!("create_{title}"), gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH, &format!("{icon}  {title} ({})", rows.len())) {
+                if grid
+                    && gui::tree_node_ex_id(
+                        &format!("create_{title}"),
+                        gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH,
+                        &format!("{icon}  {title} ({})", rows.len()),
+                    )
+                {
                     self.create_cells(&rows, &entries, &favourites, title, |i, (c, s, h)| {
                         if c {
                             start = Some(i);
@@ -1489,7 +1645,13 @@ impl TileTool {
                     });
 
                     gui::tree_pop();
-                } else if !grid && gui::tree_node_ex_id(&format!("create_{title}"), gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH, &format!("{icon}  {title} ({})", rows.len())) {
+                } else if !grid
+                    && gui::tree_node_ex_id(
+                        &format!("create_{title}"),
+                        gui::TREE_DEFAULT_OPEN | gui::TREE_SPAN_AVAIL_WIDTH,
+                        &format!("{icon}  {title} ({})", rows.len()),
+                    )
+                {
                     for i in rows {
                         let en = &entries[i];
                         let (c, s, h) = self.create_row(en, favourites.contains(&en.id()), &format!("{title}{i}"));
@@ -1533,7 +1695,9 @@ impl TileTool {
                 }
 
                 if c == 6 && rows.is_empty() {
-                    gui::text_wrapped("No prefabs. TEd keeps them in <Assembly Kit>/raw_data/art/prefabs; new ones are saved in the projects folder's assembly_kit/raw_data/art/prefabs.");
+                    gui::text_wrapped(
+                        "No prefabs. TEd keeps them in <Assembly Kit>/raw_data/art/prefabs; new ones are saved in the projects folder's assembly_kit/raw_data/art/prefabs.",
+                    );
                 }
 
                 let folders = self.create.folders.get(c).cloned().unwrap_or_default();
@@ -1583,7 +1747,9 @@ impl TileTool {
 
         if grid {
             self.grid_thumbnails(e, &entries);
-            if let Some(i) = hovered && gui::begin_tooltip() {
+            if let Some(i) = hovered
+                && gui::begin_tooltip()
+            {
                 gui::text(&entries[i].label);
                 gui::text_disabled("right click: star");
                 gui::end_tooltip();
@@ -1594,7 +1760,10 @@ impl TileTool {
 
         gui::end_child();
         if let Some(label) = self.making.clone().filter(|_| self.placing.is_some() || self.drawing) {
-            gui::text_colored(theme::palette().highlight, &format!("{}  {label}", if self.drawing { icons::SQUARE_PEN } else { icons::MOUSE_POINTER_2 }));
+            gui::text_colored(
+                theme::palette().highlight,
+                &format!("{}  {label}", if self.drawing { icons::SQUARE_PEN } else { icons::MOUSE_POINTER_2 }),
+            );
             if self.drawing {
                 gui::text_disabled(&format!("{} points: {}", self.draw_pts.len(), self.finish_hint(e)));
             } else {
@@ -1604,7 +1773,6 @@ impl TileTool {
             if gui::button("Stop (Esc)") {
                 self.stop_making();
             }
-
         }
         gui::end();
 
@@ -1644,7 +1812,9 @@ impl TileTool {
     /// What an entry adds to the new vegetation set: a tree, or a set's trees; `None` for anything else.
     fn set_entries_of(&mut self, e: &mut Editor, en: &Entry) -> Option<Vec<wce_tile::vegetation_sets::SetEntry>> {
         match &en.make {
-            Make::Place { kind, key } if kind == "VEGETATION_INSTANCE" && !key.is_empty() => Some(vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }]),
+            Make::Place { kind, key } if kind == "VEGETATION_INSTANCE" && !key.is_empty() => {
+                Some(vec![wce_tile::vegetation_sets::SetEntry { key: key.clone(), weight: 1.0, scale: None }])
+            }
             Make::VegSet { name } => self.vegetation_sets(e).iter().find(|s| s.name == *name).map(|s| s.entries.clone()),
             _ => None,
         }
@@ -1674,7 +1844,13 @@ impl TileTool {
 
         gui::set_next_item_width(380.0);
         let before = self.create.quick_filter.clone();
-        let enter = gui::input_text("##quickfilter", Some(&format!("{}  add... (words are and-ed; Up / Down, Enter)", icons::SEARCH)), &mut self.create.quick_filter, 128, gui::INPUT_ENTER_RETURNS_TRUE);
+        let enter = gui::input_text(
+            "##quickfilter",
+            Some(&format!("{}  add... (words are and-ed; Up / Down, Enter)", icons::SEARCH)),
+            &mut self.create.quick_filter,
+            128,
+            gui::INPUT_ENTER_RETURNS_TRUE,
+        );
         if self.create.quick_filter != before {
             self.create.quick_row = 0;
         }
@@ -1772,8 +1948,14 @@ pub fn make_for_script(t: &mut TileTool, e: &mut Editor, what: &str, key: &str) 
     let make = match what {
         "building" => Make::Place { kind: "BUILDING_INSTANCE".to_owned(), key: key.to_owned() },
         "prefab" => Make::Prefab { key: key.to_owned() },
-        kind if FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD]).any(|(_, k, drawn)| *k == kind && *drawn) || SHAPES.contains(&kind) => Make::Draw { kind: kind.to_owned() },
-        kind if FIXED.iter().any(|(_, k, _)| *k == kind) || KEYED.iter().any(|(_, k)| *k == kind) => Make::Place { kind: kind.to_owned(), key: key.to_owned() },
+        kind if FIXED.iter().chain([&ROAD, &WALL, &PROCEDURAL_ROAD]).any(|(_, k, drawn)| *k == kind && *drawn)
+            || SHAPES.contains(&kind) =>
+        {
+            Make::Draw { kind: kind.to_owned() }
+        }
+        kind if FIXED.iter().any(|(_, k, _)| *k == kind) || KEYED.iter().any(|(_, k)| *k == kind) => {
+            Make::Place { kind: kind.to_owned(), key: key.to_owned() }
+        }
         kind => return Err(format!("{kind} can't be created here")),
     };
 
@@ -1795,7 +1977,14 @@ pub fn make_set_for_script(t: &mut TileTool, e: &mut Editor, name: &str) -> Resu
         return Err(format!("no vegetation set '{name}'"));
     }
 
-    let en = Entry { category: 1, label: format!("set: {name}"), make: Make::VegSet { name: name.to_owned() }, folder: String::new(), project: false, search: String::new() };
+    let en = Entry {
+        category: 1,
+        label: format!("set: {name}"),
+        make: Make::VegSet { name: name.to_owned() },
+        folder: String::new(),
+        project: false,
+        search: String::new(),
+    };
     t.start_making(e, &en);
     Ok(())
 }
@@ -1843,18 +2032,22 @@ pub(crate) fn shape_items(d: &wce_tile_editor::tile_document::TileDocument, elem
 
     let sc = d.tile().tscene();
     let kids = sc.children(holder);
-    d.holder_roles(holder).iter().map(|r| {
-        let count = kids.iter().filter(|&&c| sc.name(c) == r.name).count();
-        let has = count > 0;
-        let full = (r.most > 1 && count >= r.most).then(|| format!("It has its {} {}s: delete one to draw another.", r.most, r.name.to_lowercase()));
-        let label = match r.most {
-            1 if has => format!("Draw its {} again (replaces it)", r.name),
-            1 => format!("Draw its {}", r.name),
-            _ => format!("Draw a {}", r.name.to_lowercase()),
-        };
+    d.holder_roles(holder)
+        .iter()
+        .map(|r| {
+            let count = kids.iter().filter(|&&c| sc.name(c) == r.name).count();
+            let has = count > 0;
+            let full = (r.most > 1 && count >= r.most)
+                .then(|| format!("It has its {} {}s: delete one to draw another.", r.most, r.name.to_lowercase()));
+            let label = match r.most {
+                1 if has => format!("Draw its {} again (replaces it)", r.name),
+                1 => format!("Draw its {}", r.name),
+                _ => format!("Draw a {}", r.name.to_lowercase()),
+            };
 
-        ShapeItem { label, holder, kind, role: Some(r.name), full }
-    }).collect()
+            ShapeItem { label, holder, kind, role: Some(r.name), full }
+        })
+        .collect()
 }
 
 /// A name broken into lines of at most `width` pixels at its spaces (a word longer than a line is cut), `max` lines at most, the last one

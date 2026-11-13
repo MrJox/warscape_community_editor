@@ -106,8 +106,12 @@ pub fn river_file(scene: &TedScene, river: usize, factors: Factors, campaign: bo
             let Some(pos) = vec("position") else { continue };
             let num = |n: &str| doc.get(p, n).and_then(|v| strtod(&v)).unwrap_or(0.0);
             points.push(Point {
-                pos: world(pos), cin: world(vec("controlIn").unwrap_or(pos)), cout: world(vec("controlOut").unwrap_or(pos)),
-                width: printf_g(num("width") * factors.width), foam: printf_g(num("foam_amount")), alpha: printf_g(num("alpha_fade")),
+                pos: world(pos),
+                cin: world(vec("controlIn").unwrap_or(pos)),
+                cout: world(vec("controlOut").unwrap_or(pos)),
+                width: printf_g(num("width") * factors.width),
+                foam: printf_g(num("foam_amount")),
+                alpha: printf_g(num("alpha_fade")),
                 flow: printf_g(num("flow_speed")),
             });
         }

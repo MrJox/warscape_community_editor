@@ -25,7 +25,14 @@ pub fn write_pack(path: &Path, game: &str, files: Vec<(String, Vec<u8>)>, tables
 /// # Errors
 ///
 /// As [`write_pack`].
-pub fn write_pack_as(path: &Path, game: &str, kind: PFHFileType, files: Vec<(String, Vec<u8>)>, tables: Vec<(String, DB)>, table_file: &str) -> Result<(), String> {
+pub fn write_pack_as(
+    path: &Path,
+    game: &str,
+    kind: PFHFileType,
+    files: Vec<(String, Vec<u8>)>,
+    tables: Vec<(String, DB)>,
+    table_file: &str,
+) -> Result<(), String> {
     let games = SupportedGames::default();
     let info = games.game(game).ok_or_else(|| format!("rpfm knows no {game}"))?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).ok_or("no pack name")?;
@@ -61,7 +68,9 @@ pub fn read_pack_files(path: &Path, game: &str) -> Result<Vec<(String, Vec<u8>)>
     names.sort();
     let mut out = vec![];
     for n in names {
-        let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { return Err(format!("{}: {n}: no bytes", path.display())) };
+        let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else {
+            return Err(format!("{}: {n}: no bytes", path.display()));
+        };
         out.push((n, bytes));
     }
 
@@ -91,7 +100,13 @@ pub fn is_tiles_file(path: &str, prefix: &str) -> bool {
 /// # Errors
 ///
 /// The pack exists and doesn't read, or it can't be written.
-pub fn replace_in_proc_pack(path: &Path, game: &str, prefix: &str, files: Vec<(String, Vec<u8>)>, tables: Vec<(String, DB)>) -> Result<usize, String> {
+pub fn replace_in_proc_pack(
+    path: &Path,
+    game: &str,
+    prefix: &str,
+    files: Vec<(String, Vec<u8>)>,
+    tables: Vec<(String, DB)>,
+) -> Result<usize, String> {
     let existing = if path.is_file() { read_pack_files(path, game)? } else { vec![] };
     let mut kept = existing.into_iter().filter(|(p, _)| !is_tiles_file(p, prefix)).collect::<Vec<_>>();
     let others = kept.len();
@@ -115,7 +130,14 @@ pub fn replace_in_proc_pack(path: &Path, game: &str, prefix: &str, files: Vec<(S
 /// # Errors
 ///
 /// The pack exists and doesn't read, or it can't be written.
-pub fn replace_in_pack(path: &Path, game: &str, prefix: &str, folder: &str, files: Vec<(String, Vec<u8>)>, tables: Vec<(String, DB)>) -> Result<usize, String> {
+pub fn replace_in_pack(
+    path: &Path,
+    game: &str,
+    prefix: &str,
+    folder: &str,
+    files: Vec<(String, Vec<u8>)>,
+    tables: Vec<(String, DB)>,
+) -> Result<usize, String> {
     let existing = if path.is_file() { read_pack_files(path, game)? } else { vec![] };
     let below = format!("{}/", folder.trim_end_matches('/').to_lowercase());
     let written = files.iter().map(|(p, _)| p.to_lowercase()).collect::<std::collections::HashSet<_>>();

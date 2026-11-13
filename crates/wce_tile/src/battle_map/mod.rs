@@ -49,8 +49,13 @@ fn fill<'a>(db: &'a TileDatabase, map: &Path) -> Result<TileMapFill<'a>, String>
     let explicit = read("explicit_tiles.txt").ok().map(|b| b.iter().map(|&c| char::from(c)).collect::<String>());
     let lf = read("lf_heights.tif").ok().and_then(|b| tiff_heights(&b).ok());
     let images = MapImages {
-        width: w, height: h, tile_map: &tiles, climate_map: climate.as_ref().map(|c| c.2.as_slice()), explicit_tiles: explicit.as_deref(),
-        lf: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)), lf_u16: None,
+        width: w,
+        height: h,
+        tile_map: &tiles,
+        climate_map: climate.as_ref().map(|c| c.2.as_slice()),
+        explicit_tiles: explicit.as_deref(),
+        lf: lf.as_ref().map(|(v, fw, fh)| (v.as_slice(), *fw, *fh)),
+        lf_u16: None,
         campaign: false,
     };
 
@@ -163,7 +168,8 @@ fn tile_list(db: &TileDatabase, fill: &TileMapFill, campaign: bool) -> TileList 
         let tile = &db.tiles[p.tile];
         let size = tile.width.max(tile.height);
         let (x, y) = (i32::from(p.x), i32::from(p.y));
-        list.bounds = [list.bounds[0].min(x - size), list.bounds[1].min(y - size), list.bounds[2].max(x + size), list.bounds[3].max(y + size)];
+        list.bounds =
+            [list.bounds[0].min(x - size), list.bounds[1].min(y - size), list.bounds[2].max(x + size), list.bounds[3].max(y + size)];
         list.placements.push(TileListPlacement { name: index, x: p.x, y: p.y, flags: p.flags, climate: p.climate, lf: p.lf, old: [0; 3] });
     }
 
@@ -174,7 +180,12 @@ fn tile_list(db: &TileDatabase, fill: &TileMapFill, campaign: bool) -> TileList 
 pub fn kit_maps(raw_root: &Path) -> Vec<String> {
     let dir = raw_root.join("terrain").join("battles");
     let mut out: Vec<String> = std::fs::read_dir(&dir)
-        .map(|d| d.filter_map(Result::ok).filter(|e| e.path().join("tile_map.png").is_file()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+        .map(|d| {
+            d.filter_map(Result::ok)
+                .filter(|e| e.path().join("tile_map.png").is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        })
         .unwrap_or_default();
     out.sort();
     out
@@ -196,7 +207,10 @@ pub fn load_snow_map(map: &Path, season: &str) -> Option<(u32, u32, Vec<u8>)> {
 /// The map's tile map can't be read.
 pub fn load_kit_map(db: &TileDatabase, map: &Path) -> Result<context::PlacedMap, String> {
     let (list, _) = fill_kit_map(db, map)?;
-    let lf = std::fs::read(map.join("lf_heights.tif")).ok().and_then(|b| TiffFile::parse(&b).ok()).filter(|t| t.bits_per_sample == 16 && t.samples_per_pixel == 1)
+    let lf = std::fs::read(map.join("lf_heights.tif"))
+        .ok()
+        .and_then(|b| TiffFile::parse(&b).ok())
+        .filter(|t| t.bits_per_sample == 16 && t.samples_per_pixel == 1)
         .map(|t| context::LfField::new(t.width, t.height, t.pixels.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect()));
     let name = map.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     Ok(context::PlacedMap::from_tile_list(&name, &list, db, lf))
@@ -219,7 +233,13 @@ pub fn l16_dds_heights(b: &[u8]) -> Option<context::LfField> {
 /// # Errors
 ///
 /// The tile map doesn't read.
-pub fn load_game_map(name: &str, db: &TileDatabase, index: &[u8], tiles: &[u8], lf_dds: Option<&[u8]>) -> Result<context::PlacedMap, String> {
+pub fn load_game_map(
+    name: &str,
+    db: &TileDatabase,
+    index: &[u8],
+    tiles: &[u8],
+    lf_dds: Option<&[u8]>,
+) -> Result<context::PlacedMap, String> {
     let map = TileMap::parse(index, tiles)?;
     Ok(context::PlacedMap::from_tile_map(name, &map, db, lf_dds.and_then(l16_dds_heights)))
 }

@@ -24,7 +24,12 @@ fn main() {
             } else {
                 differ += 1;
                 if differ <= 5 {
-                    println!("  {kind} {}: {} files written ({})", tile.location(), written.len(), written.iter().map(|w| w.0.as_str()).collect::<Vec<_>>().join(", "));
+                    println!(
+                        "  {kind} {}: {} files written ({})",
+                        tile.location(),
+                        written.len(),
+                        written.iter().map(|w| w.0.as_str()).collect::<Vec<_>>().join(", ")
+                    );
                     if let Some((_, bytes)) = written.iter().find(|w| w.0 == file) {
                         let (a, b) = (&db.files[file], bytes);
                         let at = a.iter().zip(b.iter()).position(|(x, y)| x != y).unwrap_or(a.len().min(b.len()));
@@ -37,7 +42,10 @@ fn main() {
 
         println!(
             "{kind}: {} files, {} tile sets, {} tiles, {} texture groups; {same} tiles write their file back byte for byte, {differ} do not",
-            db.files.len(), db.database.tile_sets().len(), db.database.tiles().len(), db.texture_groups.len()
+            db.files.len(),
+            db.database.tile_sets().len(),
+            db.database.tiles().len(),
+            db.texture_groups.len()
         );
         failed += differ;
     }

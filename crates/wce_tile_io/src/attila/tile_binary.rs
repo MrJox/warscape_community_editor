@@ -20,7 +20,7 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use rpfm_lib::files::bmd::Bmd;
-use rpfm_lib::files::esf::{Coordinates3DNode, ESF, ESFSignature, F32Node, NodeType, RecordNode, RecordNodeFlags, BoolNode, U32Node};
+use rpfm_lib::files::esf::{BoolNode, Coordinates3DNode, ESF, ESFSignature, F32Node, NodeType, RecordNode, RecordNodeFlags, U32Node};
 use rpfm_lib::files::fastbin_lists::{CivilianDeploymentFile, CivilianShelterFile, GrassListFile, TreeListFile};
 use rpfm_lib::files::tile_database::TileDatabase;
 use rpfm_lib::files::{Decodeable, Encodeable};
@@ -67,7 +67,9 @@ fn classify(name: &str, head: &[u8]) -> Option<Part> {
         _ if head.starts_with(b"CHMF") && lower == "hf_height_map.data" => Part::Chmf(MapKind::Height),
         _ if head.starts_with(b"CHMF") && lower == "hf_water_map.data" => Part::Chmf(MapKind::Water),
         _ if lower.ends_with(".markers") => Part::Markers,
-        _ if head.starts_with(&[0xCA, 0xAB, 0, 0]) && (lower.starts_with("building_list") || lower == "far_building_list") => Part::BuildingList,
+        _ if head.starts_with(&[0xCA, 0xAB, 0, 0]) && (lower.starts_with("building_list") || lower == "far_building_list") => {
+            Part::BuildingList
+        }
         _ if head.starts_with(&[0xCA, 0xAB, 0, 0]) => Part::Esf,
         _ if fastbin && lower.ends_with(".tree_list.bin") => Part::TreeListBin,
         _ if fastbin && lower.ends_with("grass_list.bin") => Part::GrassListBin,
@@ -188,7 +190,9 @@ fn write_chmf(doc: &Document, tile: &Tile, own: bool) -> std::result::Result<(Ve
     let kind = if doc.name.eq_ignore_ascii_case("hf_water_map.data") { MapKind::Water } else { MapKind::Height };
     let root = &doc.root;
     let regions = root.children.iter().filter(|c| c.class == "region").collect::<Vec<_>>();
-    let maps = (0..regions.len()).map(|i| tile.map(kind, i as u32).ok_or_else(|| format!("{}: no raster for region {i}", doc.name))).collect::<std::result::Result<Vec<_>, _>>()?;
+    let maps = (0..regions.len())
+        .map(|i| tile.map(kind, i as u32).ok_or_else(|| format!("{}: no raster for region {i}", doc.name)))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     if own
         && let Some(ChmfTrivia { kept: Some((bytes, prints)) }) = tile.trivia::<ChmfTrivia>(&doc.name)
         && maps.iter().map(|m| m.raster.samples.fingerprint()).eq(prints.iter().copied())
@@ -349,7 +353,9 @@ fn write_markers(doc: &Document) -> std::result::Result<Vec<u8>, String> {
                 F::PointLists(n) => (
                     n,
                     rec.child("polylines").map(|l| {
-                        M::PointLists(l.children.iter().map(|c| c.get("points").and_then(Value::as_floats).map(pts).unwrap_or_default()).collect())
+                        M::PointLists(
+                            l.children.iter().map(|c| c.get("points").and_then(Value::as_floats).map(pts).unwrap_or_default()).collect(),
+                        )
                     }),
                 ),
 
@@ -414,8 +420,12 @@ fn read_building_list(name: &str, b: &[u8], tile: &mut Tile) -> std::result::Res
         n.set("scale", v3(b.scale));
         n.set("starting_damage", Value::Float(f64::from(b.starting_damage)));
         for (k, v) in [
-            ("on_fire", b.on_fire), ("start_disabled", b.start_disabled), ("weak_point", b.weak_point), ("ai_breachable", b.ai_breachable),
-            ("indestructible", b.indestructible), ("dockable", b.dockable),
+            ("on_fire", b.on_fire),
+            ("start_disabled", b.start_disabled),
+            ("weak_point", b.weak_point),
+            ("ai_breachable", b.ai_breachable),
+            ("indestructible", b.indestructible),
+            ("dockable", b.dockable),
         ] {
             n.set(k, Value::Bool(v));
         }
@@ -600,7 +610,15 @@ fn read_old_list(name: &str, kind: OldListKind, b: &[u8], tile: &mut Tile) -> st
         }
 
         (OldListKind::Tree, 0) => {
-            recs.set("up", Value::Floats((0..n).flat_map(|i| (0..3).map(move |k| (i, k))).map(|(i, k)| f64::from(f32::from_le_bytes(l.record(i)[12 + 4 * k..16 + 4 * k].try_into().expect("4")))).collect()));
+            recs.set(
+                "up",
+                Value::Floats(
+                    (0..n)
+                        .flat_map(|i| (0..3).map(move |k| (i, k)))
+                        .map(|(i, k)| f64::from(f32::from_le_bytes(l.record(i)[12 + 4 * k..16 + 4 * k].try_into().expect("4"))))
+                        .collect(),
+                ),
+            );
             recs.set("bytes_24", Value::Bytes((0..n).flat_map(|i| l.record(i)[24..26].to_vec()).collect()));
             recs.set("scale", Value::Bytes((0..n).map(|i| l.record(i)[26]).collect()));
             recs.set("byte_27", Value::Bytes((0..n).map(|i| l.record(i)[27]).collect()));

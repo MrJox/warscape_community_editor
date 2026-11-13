@@ -107,7 +107,6 @@ pub struct XmlDoc {
 pub const PARALLEL_MIN: usize = 4 << 20;
 
 impl XmlDoc {
-
     /// Reads a document, keeping the bytes as [`Self::origin_bytes`]. A big text is read in pieces side by side.
     ///
     /// # Errors

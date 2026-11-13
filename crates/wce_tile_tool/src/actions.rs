@@ -46,10 +46,16 @@ const FLANGE_THRESHOLD_TIP: &str = "The stroke weight (0..1) where the group tak
 
 /// The terrain modes in the toolbar (`TileMode` order after Select), their icons and tips.
 const BRUSHES: [(&str, &str); 9] = [
-    (icons::ARROW_BIG_UP, "Raise the terrain"), (icons::ARROW_BIG_DOWN, "Lower the terrain"), (icons::WAVES, "Smooth the terrain"),
-    (icons::MINUS, "Flatten the terrain to a height"), (icons::RULER, "Level the terrain"),
+    (icons::ARROW_BIG_UP, "Raise the terrain"),
+    (icons::ARROW_BIG_DOWN, "Lower the terrain"),
+    (icons::WAVES, "Smooth the terrain"),
+    (icons::MINUS, "Flatten the terrain to a height"),
+    (icons::RULER, "Level the terrain"),
     (icons::MOUNTAIN, "Roughen the terrain with noise: the same pattern wherever the brush goes, deeper the longer you paint"),
-    (icons::IMAGE, "Stamp a shape into the terrain, one click at a time: the image brush's picture (else the brush's falloff) raised to the stamp's height"),
+    (
+        icons::IMAGE,
+        "Stamp a shape into the terrain, one click at a time: the image brush's picture (else the brush's falloff) raised to the stamp's height",
+    ),
     (icons::BRUSH, "Paint the ground's textures (Ctrl: erase, painting the first group's first variation)"),
     (icons::PALETTE, "Paint the ground types (shown in the ground types view while painting; Ctrl: erase)"),
 ];
@@ -108,7 +114,6 @@ impl TileTool {
 
             gui::same_line();
         }
-
     }
 
     /// The tile's snapping in the viewport's snap chip: of the grab (G), of the move gizmo and of the placing (to the grid, to points), and
@@ -116,32 +121,42 @@ impl TileTool {
     pub(crate) fn draw_snap_settings(&mut self) {
         gui::separator_text("Tile");
         if gui::is_item_hovered() {
-            gui::set_tooltip("The grab (G), the move gizmo and the placing (to the grid, to points), and the turn of Ctrl+R / R. While grabbing, PageUp / PageDown move a freeform item along the ground's normal.");
+            gui::set_tooltip(
+                "The grab (G), the move gizmo and the placing (to the grid, to points), and the turn of Ctrl+R / R. While grabbing, PageUp / PageDown move a freeform item along the ground's normal.",
+            );
         }
 
         gui::checkbox("snap to grid", &mut self.snap_grid);
         gui::same_line();
         gui::checkbox("heights too", &mut self.snap_heights);
         if gui::is_item_hovered() {
-            gui::set_tooltip("The grid snaps the height too: a freeform item moved up or down with the gizmo goes to whole grid steps (horizontal and vertical snapping).");
+            gui::set_tooltip(
+                "The grid snaps the height too: a freeform item moved up or down with the gizmo goes to whole grid steps (horizontal and vertical snapping).",
+            );
         }
 
         gui::set_next_item_width(120.0);
         gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
         gui::checkbox("snap to points", &mut self.snap_vertices);
         if gui::is_item_hovered() {
-            gui::set_tooltip("Snap to vertices: what is grabbed or placed goes onto the nearest instance, polygon point or building footprint corner within the tolerance (1.5 m when it is 0). Before the edges and the grid.");
+            gui::set_tooltip(
+                "Snap to vertices: what is grabbed or placed goes onto the nearest instance, polygon point or building footprint corner within the tolerance (1.5 m when it is 0). Before the edges and the grid.",
+            );
         }
 
         gui::checkbox("snap to edges", &mut self.snap_edges);
         if gui::is_item_hovered() {
-            gui::set_tooltip("What is grabbed or placed goes onto the nearest polygon or line edge or building footprint side within the tolerance (1.5 m when it is 0), sliding along it. After the points, before the grid.");
+            gui::set_tooltip(
+                "What is grabbed or placed goes onto the nearest polygon or line edge or building footprint side within the tolerance (1.5 m when it is 0), sliding along it. After the points, before the grid.",
+            );
         }
 
         gui::set_next_item_width(120.0);
         gui::drag_float("tolerance (m)", &mut self.snap_tolerance, 0.05, 0.0, 32.0, "%.2f");
         if gui::is_item_hovered() {
-            gui::set_tooltip("TEd's snap tolerance. 0: the grid always snaps. Above 0: an axis snaps only when it is this close to a grid line (a magnet), and points snap within it.");
+            gui::set_tooltip(
+                "TEd's snap tolerance. 0: the grid always snaps. Above 0: an axis snaps only when it is this close to a grid line (a magnet), and points snap within it.",
+            );
         }
 
         gui::set_next_item_width(120.0);
@@ -153,7 +168,9 @@ impl TileTool {
         gui::set_next_item_width(120.0);
         gui::drag_float("angle tolerance (deg)", &mut self.angle_tolerance, 0.5, 0.0, 90.0, "%.1f");
         if gui::is_item_hovered() {
-            gui::set_tooltip("The rotate gizmo: an item's heading goes to a whole rotate step (north-aligned) when it comes this close to one (a magnet). 0: off.");
+            gui::set_tooltip(
+                "The rotate gizmo: an item's heading goes to a whole rotate step (north-aligned) when it comes this close to one (a magnet). 0: off.",
+            );
         }
     }
 
@@ -261,7 +278,11 @@ impl TileTool {
 
             // The entry's four texture groups, each with four variations (Auto-Flange picks the variations itself).
             let g = d.project().entry.as_ref().map(|en| en.texture_group()).unwrap_or_default();
-            let names = [g.red, g.green, g.blue, g.alpha].iter().enumerate().map(|(i, n)| if n.is_empty() { format!("({}: none)", i + 1) } else { n.clone() }).collect::<Vec<_>>();
+            let names = [g.red, g.green, g.blue, g.alpha]
+                .iter()
+                .enumerate()
+                .map(|(i, n)| if n.is_empty() { format!("({}: none)", i + 1) } else { n.clone() })
+                .collect::<Vec<_>>();
             let (mut group, mut variation) = (i32::from(self.paint_channel / 4), i32::from(self.paint_channel % 4));
             if m != 4 {
                 ins.edit_choice("group", "texture group", &mut group, &names);
@@ -343,9 +364,7 @@ impl TileTool {
         );
         let level = ins.button("level_along", "Level the ground along the selected line", line.is_some());
         ins.tooltip(LEVEL_ALONG_TIP);
-        if level
-            && let Some(line) = line
-        {
+        if level && let Some(line) = line {
             let d = document(e).expect("a tile");
             let msg = match d.level_along(line, &self.brush) {
                 Ok(n) => format!("ground levelled along the line: {n} dabs"),
@@ -366,9 +385,7 @@ impl TileTool {
             e.status(&msg, false);
         }
 
-        if along
-            && let (Some(line), Some(kind)) = (line, self.brush_kind())
-        {
+        if along && let (Some(line), Some(kind)) = (line, self.brush_kind()) {
             let d = document(e).expect("a tile");
             let msg = match d.stroke_along(kind, line, &self.brush) {
                 Ok(n) => format!("stroked along the line: {n} dabs"),
@@ -419,7 +436,8 @@ impl TileTool {
             return;
         }
 
-        if gui::menu_item(&format!("{}  Add here...", icons::PLUS), wce_editor::shortcuts::label("tile.quick_add").as_deref(), false, true) {
+        if gui::menu_item(&format!("{}  Add here...", icons::PLUS), wce_editor::shortcuts::label("tile.quick_add").as_deref(), false, true)
+        {
             self.request_quick_add();
         }
 
@@ -476,7 +494,12 @@ impl TileTool {
             use wce_tile_editor::tile_document::AlignTo;
             for (axis, name) in [(0, "x"), (2, "z"), (1, "height")] {
                 if gui::begin_menu(&format!("Align {name}")) {
-                    for (to, label) in [(AlignTo::First, "to the first selected"), (AlignTo::Min, "to the lowest"), (AlignTo::Centre, "to the middle"), (AlignTo::Max, "to the highest")] {
+                    for (to, label) in [
+                        (AlignTo::First, "to the first selected"),
+                        (AlignTo::Min, "to the lowest"),
+                        (AlignTo::Centre, "to the middle"),
+                        (AlignTo::Max, "to the highest"),
+                    ] {
                         if gui::menu_item(label, None, false, true) {
                             let n = d.align(&all, axis, to);
                             self.status = format!("aligned {name}: {n} moved");
@@ -495,7 +518,11 @@ impl TileTool {
             for (axis, label, tip) in [
                 (Some(0), "Distribute along x", "Even gaps along x between the two furthest apart; the rest keep their order and their z."),
                 (Some(2), "Distribute along z", "Even gaps along z between the two furthest apart; the rest keep their order and their x."),
-                (None, "Distribute on a line", "Even gaps on the straight line from the first selected to the last; the rest are put on it, in their order along it."),
+                (
+                    None,
+                    "Distribute on a line",
+                    "Even gaps on the straight line from the first selected to the last; the rest are put on it, in their order along it.",
+                ),
             ] {
                 if gui::menu_item(label, None, false, all.len() >= 3) {
                     let n = d.distribute(&all, axis);
@@ -527,7 +554,12 @@ impl TileTool {
             return;
         }
 
-        if gui::menu_item(&one("Paste in place", icons::CLIPBOARD), wce_editor::shortcuts::label("tile.paste_in_place").as_deref(), false, can_paste) {
+        if gui::menu_item(
+            &one("Paste in place", icons::CLIPBOARD),
+            wce_editor::shortcuts::label("tile.paste_in_place").as_deref(),
+            false,
+            can_paste,
+        ) {
             self.paste(e, false);
             return;
         }

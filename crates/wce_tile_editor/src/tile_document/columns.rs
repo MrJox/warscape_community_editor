@@ -99,8 +99,15 @@ type BuildingPlaced = (Vec<(Float4x4, String, usize)>, Vec<PlacedPiece>);
 impl Default for ColumnState {
     fn default() -> Self {
         Self {
-            dirty: true, logic: HashMap::new(), models: HashMap::new(), metas: HashMap::new(), relevant: HashMap::new(), by_elem: HashMap::new(), signature: 0,
-            placed: HashMap::new(), changed: HashSet::new(),
+            dirty: true,
+            logic: HashMap::new(),
+            models: HashMap::new(),
+            metas: HashMap::new(),
+            relevant: HashMap::new(),
+            by_elem: HashMap::new(),
+            signature: 0,
+            placed: HashMap::new(),
+            changed: HashSet::new(),
         }
     }
 }
@@ -122,7 +129,17 @@ fn emitter_effect(key: &str) -> Option<&str> {
 fn logic_emitter(entry: &serde_json::Value) -> Option<MetaEffect> {
     let effect = emitter_effect(entry.get("key")?.as_str()?)?.to_owned();
     let m = transform_of(entry.get("matrix_1")?)?.m;
-    Some(MetaEffect { tag: String::new(), effect, start: 0.0, end: 0.0, position: [m[0][3], m[1][3], m[2][3]], rotation: [0.0, 0.0, 0.0, 1.0], bone: -1, scale: 1.0, volume: None })
+    Some(MetaEffect {
+        tag: String::new(),
+        effect,
+        start: 0.0,
+        end: 0.0,
+        position: [m[0][3], m[1][3], m[2][3]],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        bone: -1,
+        scale: 1.0,
+        volume: None,
+    })
 }
 
 /// A row-vector transform of the logic file (translation in m30..m32) as the editor's column-vector matrix.
@@ -161,7 +178,13 @@ fn parse_logic(bytes: &[u8]) -> Result<Logic, String> {
                 states[index].push(ColumnRef { key: building.to_lowercase(), local });
             }
 
-            let emitters = d.get("vfx_emitters").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(logic_emitter).collect::<Vec<_>>();
+            let emitters = d
+                .get("vfx_emitters")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(logic_emitter)
+                .collect::<Vec<_>>();
             if let (false, Some(destruct)) = (emitters.is_empty(), d.get("name").and_then(serde_json::Value::as_str)) {
                 out.emitters.insert(destruct.to_lowercase(), Arc::new(emitters));
             }
@@ -235,13 +258,16 @@ impl Tile {
         }
 
         let path = format!("rigidmodels/buildings/{key}/{key}_tech.cs2.parsed");
-        let found = self.files.as_deref().filter(|f| f.exists(&path)).and_then(|f| f.read(&path).ok()).and_then(|bytes| match parse_logic(&bytes) {
-            Ok(l) => (!l.columns.is_empty() || !l.emitters.is_empty()).then(|| Arc::new(l)),
-            Err(error) => {
-                log::warn(format!("{path}: {error} (its bridging columns are not drawn)"));
-                None
-            }
-        });
+        let found =
+            self.files.as_deref().filter(|f| f.exists(&path)).and_then(|f| f.read(&path).ok()).and_then(|bytes| {
+                match parse_logic(&bytes) {
+                    Ok(l) => (!l.columns.is_empty() || !l.emitters.is_empty()).then(|| Arc::new(l)),
+                    Err(error) => {
+                        log::warn(format!("{path}: {error} (its bridging columns are not drawn)"));
+                        None
+                    }
+                }
+            });
 
         self.columns.logic.insert(key.to_owned(), found.clone());
         found
@@ -275,7 +301,10 @@ impl Tile {
             return r;
         }
 
-        let metas = self.files.as_deref().is_some_and(|f| f.list(&format!("rigidmodels/buildings/{key}/"), ".meta").iter().any(|p| !p.ends_with("_anim.meta")));
+        let metas = self
+            .files
+            .as_deref()
+            .is_some_and(|f| f.list(&format!("rigidmodels/buildings/{key}/"), ".meta").iter().any(|p| !p.ends_with("_anim.meta")));
         let r = metas || self.building_logic(key).is_some();
         self.columns.relevant.insert(key.to_owned(), r);
         r
@@ -297,7 +326,12 @@ impl Tile {
                 }
 
                 let stem = &file[..file.find("destruct01").unwrap_or(0)];
-                let levels = paths.iter().filter(|q| q.contains(stem) && static_piece(q) && copied_piece(q).is_none()).map(|q| destruct_number(q)).max().unwrap_or(1);
+                let levels = paths
+                    .iter()
+                    .filter(|q| q.contains(stem) && static_piece(q) && copied_piece(q).is_none())
+                    .map(|q| destruct_number(q))
+                    .max()
+                    .unwrap_or(1);
                 pieces.push((p.clone(), levels));
             }
 
@@ -433,13 +467,15 @@ impl Tile {
         let pos = |w: &Float4x4| Float3::new(w.m[0][3], w.m[1][3], w.m[2][3]);
         let shared = {
             wce_prof!("tile.columns.joints");
-            (0..placed.len()).map(|i| {
-                let p = pos(&placed[i].0);
-                placed.iter().enumerate().any(|(j, (w, _, e))| {
-                    let q = pos(w);
-                    j != i && *e != placed[i].2 && (p.x - q.x).abs() < tol && (p.y - q.y).abs() < tol && (p.z - q.z).abs() < tol
+            (0..placed.len())
+                .map(|i| {
+                    let p = pos(&placed[i].0);
+                    placed.iter().enumerate().any(|(j, (w, _, e))| {
+                        let q = pos(w);
+                        j != i && *e != placed[i].2 && (p.x - q.x).abs() < tol && (p.y - q.y).abs() < tol && (p.z - q.z).abs() < tol
+                    })
                 })
-            }).collect::<Vec<_>>()
+                .collect::<Vec<_>>()
         };
 
         // What each building shows: its columns (broken where they are shared) and its pieces with effects. A building whose share did not
@@ -567,7 +603,10 @@ mod tests {
 
     #[test]
     fn piece_names() {
-        assert_eq!(piece_name("rigidmodels/buildings/roman_fort_straight/roman_fort_straight_piece01_destruct01.rigid_model_v2").as_deref(), Some("piece01"));
+        assert_eq!(
+            piece_name("rigidmodels/buildings/roman_fort_straight/roman_fort_straight_piece01_destruct01.rigid_model_v2").as_deref(),
+            Some("piece01")
+        );
         assert_eq!(piece_name("a/b/x_piece12_destruct03_0.rigid_model_v2").as_deref(), Some("piece12"));
     }
 

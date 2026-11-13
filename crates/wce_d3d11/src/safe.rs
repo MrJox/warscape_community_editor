@@ -46,19 +46,53 @@ pub fn format_layout(f: DXGI_FORMAT) -> Option<FormatLayout> {
     let (block, bytes) = match f {
         DXGI_FORMAT_R32G32B32A32_FLOAT | DXGI_FORMAT_R32G32B32A32_UINT | DXGI_FORMAT_R32G32B32A32_TYPELESS => (1, 16),
         DXGI_FORMAT_R32G32B32_FLOAT => (1, 12),
-        DXGI_FORMAT_R16G16B16A16_FLOAT | DXGI_FORMAT_R16G16B16A16_UNORM | DXGI_FORMAT_R16G16B16A16_TYPELESS | DXGI_FORMAT_R32G32_FLOAT => (1, 8),
-        DXGI_FORMAT_R8G8B8A8_UNORM | DXGI_FORMAT_R8G8B8A8_UNORM_SRGB | DXGI_FORMAT_R8G8B8A8_TYPELESS | DXGI_FORMAT_B8G8R8A8_UNORM
-        | DXGI_FORMAT_B8G8R8A8_UNORM_SRGB | DXGI_FORMAT_B8G8R8A8_TYPELESS | DXGI_FORMAT_B8G8R8X8_UNORM | DXGI_FORMAT_B8G8R8X8_UNORM_SRGB
-        | DXGI_FORMAT_B8G8R8X8_TYPELESS | DXGI_FORMAT_R10G10B10A2_UNORM | DXGI_FORMAT_R16G16_UNORM | DXGI_FORMAT_R16G16_FLOAT
-        | DXGI_FORMAT_R32_FLOAT | DXGI_FORMAT_R32_UINT | DXGI_FORMAT_D32_FLOAT | DXGI_FORMAT_D24_UNORM_S8_UINT => (1, 4),
-        DXGI_FORMAT_R8G8_UNORM | DXGI_FORMAT_R16_FLOAT | DXGI_FORMAT_R16_UINT | DXGI_FORMAT_R16_UNORM | DXGI_FORMAT_B5G6R5_UNORM
+        DXGI_FORMAT_R16G16B16A16_FLOAT | DXGI_FORMAT_R16G16B16A16_UNORM | DXGI_FORMAT_R16G16B16A16_TYPELESS | DXGI_FORMAT_R32G32_FLOAT => {
+            (1, 8)
+        }
+        DXGI_FORMAT_R8G8B8A8_UNORM
+        | DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+        | DXGI_FORMAT_R8G8B8A8_TYPELESS
+        | DXGI_FORMAT_B8G8R8A8_UNORM
+        | DXGI_FORMAT_B8G8R8A8_UNORM_SRGB
+        | DXGI_FORMAT_B8G8R8A8_TYPELESS
+        | DXGI_FORMAT_B8G8R8X8_UNORM
+        | DXGI_FORMAT_B8G8R8X8_UNORM_SRGB
+        | DXGI_FORMAT_B8G8R8X8_TYPELESS
+        | DXGI_FORMAT_R10G10B10A2_UNORM
+        | DXGI_FORMAT_R16G16_UNORM
+        | DXGI_FORMAT_R16G16_FLOAT
+        | DXGI_FORMAT_R32_FLOAT
+        | DXGI_FORMAT_R32_UINT
+        | DXGI_FORMAT_D32_FLOAT
+        | DXGI_FORMAT_D24_UNORM_S8_UINT => (1, 4),
+        DXGI_FORMAT_R8G8_UNORM
+        | DXGI_FORMAT_R16_FLOAT
+        | DXGI_FORMAT_R16_UINT
+        | DXGI_FORMAT_R16_UNORM
+        | DXGI_FORMAT_B5G6R5_UNORM
         | DXGI_FORMAT_B5G5R5A1_UNORM => (1, 2),
         DXGI_FORMAT_R8_UNORM | DXGI_FORMAT_A8_UNORM => (1, 1),
-        DXGI_FORMAT_BC1_TYPELESS | DXGI_FORMAT_BC1_UNORM | DXGI_FORMAT_BC1_UNORM_SRGB | DXGI_FORMAT_BC4_TYPELESS | DXGI_FORMAT_BC4_UNORM
+        DXGI_FORMAT_BC1_TYPELESS
+        | DXGI_FORMAT_BC1_UNORM
+        | DXGI_FORMAT_BC1_UNORM_SRGB
+        | DXGI_FORMAT_BC4_TYPELESS
+        | DXGI_FORMAT_BC4_UNORM
         | DXGI_FORMAT_BC4_SNORM => (4, 8),
-        DXGI_FORMAT_BC2_TYPELESS | DXGI_FORMAT_BC2_UNORM | DXGI_FORMAT_BC2_UNORM_SRGB | DXGI_FORMAT_BC3_TYPELESS | DXGI_FORMAT_BC3_UNORM
-        | DXGI_FORMAT_BC3_UNORM_SRGB | DXGI_FORMAT_BC5_TYPELESS | DXGI_FORMAT_BC5_UNORM | DXGI_FORMAT_BC5_SNORM | DXGI_FORMAT_BC6H_TYPELESS
-        | DXGI_FORMAT_BC6H_UF16 | DXGI_FORMAT_BC6H_SF16 | DXGI_FORMAT_BC7_TYPELESS | DXGI_FORMAT_BC7_UNORM | DXGI_FORMAT_BC7_UNORM_SRGB => (4, 16),
+        DXGI_FORMAT_BC2_TYPELESS
+        | DXGI_FORMAT_BC2_UNORM
+        | DXGI_FORMAT_BC2_UNORM_SRGB
+        | DXGI_FORMAT_BC3_TYPELESS
+        | DXGI_FORMAT_BC3_UNORM
+        | DXGI_FORMAT_BC3_UNORM_SRGB
+        | DXGI_FORMAT_BC5_TYPELESS
+        | DXGI_FORMAT_BC5_UNORM
+        | DXGI_FORMAT_BC5_SNORM
+        | DXGI_FORMAT_BC6H_TYPELESS
+        | DXGI_FORMAT_BC6H_UF16
+        | DXGI_FORMAT_BC6H_SF16
+        | DXGI_FORMAT_BC7_TYPELESS
+        | DXGI_FORMAT_BC7_UNORM
+        | DXGI_FORMAT_BC7_UNORM_SRGB => (4, 16),
         _ => return None,
     };
 
@@ -269,9 +303,21 @@ pub trait DeviceExt {
 
     /// A volume texture; `init` as for [`Self::create_texture_2d`], one entry per mip.
     fn create_texture_3d(&self, desc: &D3D11_TEXTURE3D_DESC, init: Option<&[InitData]>) -> windows_core::Result<ID3D11Texture3D>;
-    fn create_shader_resource_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_SHADER_RESOURCE_VIEW_DESC>) -> windows_core::Result<ID3D11ShaderResourceView>;
-    fn create_render_target_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_RENDER_TARGET_VIEW_DESC>) -> windows_core::Result<ID3D11RenderTargetView>;
-    fn create_depth_stencil_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_DEPTH_STENCIL_VIEW_DESC>) -> windows_core::Result<ID3D11DepthStencilView>;
+    fn create_shader_resource_view(
+        &self,
+        resource: &ID3D11Resource,
+        desc: Option<&D3D11_SHADER_RESOURCE_VIEW_DESC>,
+    ) -> windows_core::Result<ID3D11ShaderResourceView>;
+    fn create_render_target_view(
+        &self,
+        resource: &ID3D11Resource,
+        desc: Option<&D3D11_RENDER_TARGET_VIEW_DESC>,
+    ) -> windows_core::Result<ID3D11RenderTargetView>;
+    fn create_depth_stencil_view(
+        &self,
+        resource: &ID3D11Resource,
+        desc: Option<&D3D11_DEPTH_STENCIL_VIEW_DESC>,
+    ) -> windows_core::Result<ID3D11DepthStencilView>;
     fn create_sampler_state(&self, desc: &D3D11_SAMPLER_DESC) -> windows_core::Result<ID3D11SamplerState>;
     fn create_blend_state(&self, desc: &D3D11_BLEND_DESC) -> windows_core::Result<ID3D11BlendState>;
     fn create_depth_stencil_state(&self, desc: &D3D11_DEPTH_STENCIL_DESC) -> windows_core::Result<ID3D11DepthStencilState>;
@@ -282,7 +328,11 @@ pub trait DeviceExt {
     fn create_hull_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11HullShader>;
     fn create_domain_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11DomainShader>;
     fn create_compute_shader(&self, bytecode: &[u8]) -> windows_core::Result<ID3D11ComputeShader>;
-    fn create_unordered_access_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_UNORDERED_ACCESS_VIEW_DESC>) -> windows_core::Result<ID3D11UnorderedAccessView>;
+    fn create_unordered_access_view(
+        &self,
+        resource: &ID3D11Resource,
+        desc: Option<&D3D11_UNORDERED_ACCESS_VIEW_DESC>,
+    ) -> windows_core::Result<ID3D11UnorderedAccessView>;
     fn create_input_layout(&self, elements: &[InputElement], bytecode: &[u8]) -> windows_core::Result<ID3D11InputLayout>;
     fn create_query(&self, kind: D3D11_QUERY) -> windows_core::Result<ID3D11Query>;
 }
@@ -337,21 +387,33 @@ impl DeviceExt for ID3D11Device {
         created(hr, out)
     }
 
-    fn create_shader_resource_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_SHADER_RESOURCE_VIEW_DESC>) -> windows_core::Result<ID3D11ShaderResourceView> {
+    fn create_shader_resource_view(
+        &self,
+        resource: &ID3D11Resource,
+        desc: Option<&D3D11_SHADER_RESOURCE_VIEW_DESC>,
+    ) -> windows_core::Result<ID3D11ShaderResourceView> {
         let mut out = None;
         // SAFETY: a description by reference, or none.
         let hr = unsafe { self.CreateShaderResourceView(resource, desc.map(|d| d as *const _), Some(&mut out)) };
         created(hr, out)
     }
 
-    fn create_render_target_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_RENDER_TARGET_VIEW_DESC>) -> windows_core::Result<ID3D11RenderTargetView> {
+    fn create_render_target_view(
+        &self,
+        resource: &ID3D11Resource,
+        desc: Option<&D3D11_RENDER_TARGET_VIEW_DESC>,
+    ) -> windows_core::Result<ID3D11RenderTargetView> {
         let mut out = None;
         // SAFETY: a description by reference, or none.
         let hr = unsafe { self.CreateRenderTargetView(resource, desc.map(|d| d as *const _), Some(&mut out)) };
         created(hr, out)
     }
 
-    fn create_depth_stencil_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_DEPTH_STENCIL_VIEW_DESC>) -> windows_core::Result<ID3D11DepthStencilView> {
+    fn create_depth_stencil_view(
+        &self,
+        resource: &ID3D11Resource,
+        desc: Option<&D3D11_DEPTH_STENCIL_VIEW_DESC>,
+    ) -> windows_core::Result<ID3D11DepthStencilView> {
         let mut out = None;
         // SAFETY: a description by reference, or none.
         let hr = unsafe { self.CreateDepthStencilView(resource, desc.map(|d| d as *const _), Some(&mut out)) };
@@ -428,7 +490,11 @@ impl DeviceExt for ID3D11Device {
         created(hr, out)
     }
 
-    fn create_unordered_access_view(&self, resource: &ID3D11Resource, desc: Option<&D3D11_UNORDERED_ACCESS_VIEW_DESC>) -> windows_core::Result<ID3D11UnorderedAccessView> {
+    fn create_unordered_access_view(
+        &self,
+        resource: &ID3D11Resource,
+        desc: Option<&D3D11_UNORDERED_ACCESS_VIEW_DESC>,
+    ) -> windows_core::Result<ID3D11UnorderedAccessView> {
         let mut out = None;
         // SAFETY: a description by reference, or none.
         let hr = unsafe { self.CreateUnorderedAccessView(resource, desc.map(|d| d as *const _), Some(&mut out)) };
@@ -525,7 +591,13 @@ pub trait ContextExt {
     fn set_render_targets(&self, rtvs: &[Option<ID3D11RenderTargetView>], dsv: Option<&ID3D11DepthStencilView>);
     /// The render targets and the pixel shader's UAVs (slots from `rtvs.len()`); `counts` sets the append / counter buffers' counters
     /// (one per UAV; u32::MAX keeps a counter).
-    fn set_render_targets_and_uavs(&self, rtvs: &[Option<ID3D11RenderTargetView>], dsv: Option<&ID3D11DepthStencilView>, uavs: &[Option<ID3D11UnorderedAccessView>], counts: &[u32]);
+    fn set_render_targets_and_uavs(
+        &self,
+        rtvs: &[Option<ID3D11RenderTargetView>],
+        dsv: Option<&ID3D11DepthStencilView>,
+        uavs: &[Option<ID3D11UnorderedAccessView>],
+        counts: &[u32],
+    );
     fn clear_unordered_access_view_uint(&self, uav: &ID3D11UnorderedAccessView, values: [u32; 4]);
     fn set_viewports(&self, viewports: &[D3D11_VIEWPORT]);
     fn set_scissor_rects(&self, rects: &[D3D11_RECT]);
@@ -588,7 +660,15 @@ pub trait ContextExt {
     /// Copies `src_box` of a subresource (all of it when `None`) to `dst_at` of another. Skipped, and noted ([`take_rejected`]), when
     /// either subresource doesn't exist or the region falls outside either.
     #[track_caller]
-    fn copy_subresource_region(&self, dst: &ID3D11Resource, dst_sub: u32, dst_at: [u32; 3], src: &ID3D11Resource, src_sub: u32, src_box: Option<&D3D11_BOX>);
+    fn copy_subresource_region(
+        &self,
+        dst: &ID3D11Resource,
+        dst_sub: u32,
+        dst_at: [u32; 3],
+        src: &ID3D11Resource,
+        src_sub: u32,
+        src_box: Option<&D3D11_BOX>,
+    );
 
     /// Copies `data` into a subresource, or the `dst_box` region of it, with these pitches.
     ///
@@ -597,7 +677,15 @@ pub trait ContextExt {
     /// Fails without copying when the subresource doesn't exist, has a format without a known layout, `dst_box` falls outside it (also
     /// noted, [`take_rejected`]) or `data` doesn't cover the region.
     #[track_caller]
-    fn update_subresource(&self, dst: &ID3D11Resource, sub: u32, dst_box: Option<&D3D11_BOX>, data: &[u8], row_pitch: u32, depth_pitch: u32) -> windows_core::Result<()>;
+    fn update_subresource(
+        &self,
+        dst: &ID3D11Resource,
+        sub: u32,
+        dst_box: Option<&D3D11_BOX>,
+        data: &[u8],
+        row_pitch: u32,
+        depth_pitch: u32,
+    ) -> windows_core::Result<()>;
 
     /// Maps a subresource (`flags`: `D3D11_MAP_FLAG_DO_NOT_WAIT` or 0).
     ///
@@ -623,12 +711,23 @@ impl ContextExt for ID3D11DeviceContext {
         unsafe { self.OMSetRenderTargets((!rtvs.is_empty()).then_some(rtvs), dsv) };
     }
 
-    fn set_render_targets_and_uavs(&self, rtvs: &[Option<ID3D11RenderTargetView>], dsv: Option<&ID3D11DepthStencilView>, uavs: &[Option<ID3D11UnorderedAccessView>], counts: &[u32]) {
+    fn set_render_targets_and_uavs(
+        &self,
+        rtvs: &[Option<ID3D11RenderTargetView>],
+        dsv: Option<&ID3D11DepthStencilView>,
+        uavs: &[Option<ID3D11UnorderedAccessView>],
+        counts: &[u32],
+    ) {
         assert_eq!(uavs.len(), counts.len(), "one initial count per UAV");
         // SAFETY: a binding call with slices; the UAVs and their counts have the same length (checked above).
         unsafe {
             self.OMSetRenderTargetsAndUnorderedAccessViews(
-                (!rtvs.is_empty()).then_some(rtvs), dsv, rtvs.len() as u32, uavs.len() as u32, Some(uavs.as_ptr()), Some(counts.as_ptr()),
+                (!rtvs.is_empty()).then_some(rtvs),
+                dsv,
+                rtvs.len() as u32,
+                uavs.len() as u32,
+                Some(uavs.as_ptr()),
+                Some(counts.as_ptr()),
             );
         };
     }
@@ -681,7 +780,9 @@ impl ContextExt for ID3D11DeviceContext {
     fn set_vertex_buffers(&self, start: u32, buffers: &[Option<ID3D11Buffer>], strides: &[u32], offsets: &[u32]) {
         assert!(buffers.len() == strides.len() && buffers.len() == offsets.len(), "one stride and offset per vertex buffer");
         // SAFETY: three slices of the length passed.
-        unsafe { self.IASetVertexBuffers(start, buffers.len() as u32, Some(buffers.as_ptr()), Some(strides.as_ptr()), Some(offsets.as_ptr())) };
+        unsafe {
+            self.IASetVertexBuffers(start, buffers.len() as u32, Some(buffers.as_ptr()), Some(strides.as_ptr()), Some(offsets.as_ptr()))
+        };
     }
 
     fn set_index_buffer(&self, buffer: Option<&ID3D11Buffer>, format: DXGI_FORMAT, offset: u32) {
@@ -865,12 +966,27 @@ impl ContextExt for ID3D11DeviceContext {
     }
 
     #[track_caller]
-    fn copy_subresource_region(&self, dst: &ID3D11Resource, dst_sub: u32, [x, y, z]: [u32; 3], src: &ID3D11Resource, src_sub: u32, src_box: Option<&D3D11_BOX>) {
+    fn copy_subresource_region(
+        &self,
+        dst: &ID3D11Resource,
+        dst_sub: u32,
+        [x, y, z]: [u32; 3],
+        src: &ID3D11Resource,
+        src_sub: u32,
+        src_box: Option<&D3D11_BOX>,
+    ) {
         let fits = match (extent(src, src_sub), extent(dst, dst_sub)) {
             (Some(s), Some(d)) => {
                 let s = s.dims();
                 let b = src_box.copied().unwrap_or(D3D11_BOX { left: 0, top: 0, front: 0, right: s[0], bottom: s[1], back: s[2] });
-                let at = D3D11_BOX { left: x, top: y, front: z, right: x.saturating_add(b.right - b.left.min(b.right)), bottom: y.saturating_add(b.bottom - b.top.min(b.bottom)), back: z.saturating_add(b.back - b.front.min(b.back)) };
+                let at = D3D11_BOX {
+                    left: x,
+                    top: y,
+                    front: z,
+                    right: x.saturating_add(b.right - b.left.min(b.right)),
+                    bottom: y.saturating_add(b.bottom - b.top.min(b.bottom)),
+                    back: z.saturating_add(b.back - b.front.min(b.back)),
+                };
                 box_within(&b, s) && box_within(&at, d.dims())
             }
 
@@ -879,7 +995,11 @@ impl ContextExt for ID3D11DeviceContext {
 
         if !fits {
             let (s, d) = (extent(src, src_sub).map(|e| e.dims()), extent(dst, dst_sub).map(|e| e.dims()));
-            reject(format!("copy_subresource_region at {}: {src_box:?} of {s:?} to {:?} of {d:?}", std::panic::Location::caller(), [x, y, z]));
+            reject(format!(
+                "copy_subresource_region at {}: {src_box:?} of {s:?} to {:?} of {d:?}",
+                std::panic::Location::caller(),
+                [x, y, z]
+            ));
             return;
         }
 
@@ -888,7 +1008,15 @@ impl ContextExt for ID3D11DeviceContext {
     }
 
     #[track_caller]
-    fn update_subresource(&self, dst: &ID3D11Resource, sub: u32, dst_box: Option<&D3D11_BOX>, data: &[u8], row_pitch: u32, depth_pitch: u32) -> windows_core::Result<()> {
+    fn update_subresource(
+        &self,
+        dst: &ID3D11Resource,
+        sub: u32,
+        dst_box: Option<&D3D11_BOX>,
+        data: &[u8],
+        row_pitch: u32,
+        depth_pitch: u32,
+    ) -> windows_core::Result<()> {
         if let (Some(b), Some(e)) = (dst_box, extent(dst, sub))
             && !box_within(b, e.dims())
         {
@@ -899,7 +1027,9 @@ impl ContextExt for ID3D11DeviceContext {
         let need = match extent(dst, sub) {
             Some(Extent::Buffer(size)) => dst_box.map_or(size, |b| b.right.saturating_sub(b.left)) as usize,
             Some(Extent::Texture { format, w, h, d }) => {
-                let (w, h, d) = dst_box.map_or((w, h, d), |b| (b.right.saturating_sub(b.left), b.bottom.saturating_sub(b.top), b.back.saturating_sub(b.front)));
+                let (w, h, d) = dst_box.map_or((w, h, d), |b| {
+                    (b.right.saturating_sub(b.left), b.bottom.saturating_sub(b.top), b.back.saturating_sub(b.front))
+                });
                 if w == 0 || h == 0 || d == 0 {
                     return Ok(());
                 }
@@ -977,13 +1107,27 @@ pub fn compile(source: &str, name: &str, entry: &str, target: &str) -> Result<Ve
     let (mut code, mut errors) = (None, None);
     // SAFETY: the source, names and outputs are alive during the call.
     let hr = unsafe {
-        D3DCompile(source.as_ptr().cast(), source.len(), PCSTR(name_c.as_ptr().cast()), None, None, PCSTR(entry_c.as_ptr().cast()),
-            PCSTR(target_c.as_ptr().cast()), 0, 0, &raw mut code, &raw mut errors)
+        D3DCompile(
+            source.as_ptr().cast(),
+            source.len(),
+            PCSTR(name_c.as_ptr().cast()),
+            None,
+            None,
+            PCSTR(entry_c.as_ptr().cast()),
+            PCSTR(target_c.as_ptr().cast()),
+            0,
+            0,
+            &raw mut code,
+            &raw mut errors,
+        )
     };
 
     match (hr.is_ok(), code) {
         (true, Some(code)) => Ok(blob_bytes(&code)),
-        _ => Err(errors.as_ref().map(|e| String::from_utf8_lossy(&blob_bytes(e)).trim_end_matches('\0').to_owned()).unwrap_or_else(|| entry.to_owned())),
+        _ => Err(errors
+            .as_ref()
+            .map(|e| String::from_utf8_lossy(&blob_bytes(e)).trim_end_matches('\0').to_owned())
+            .unwrap_or_else(|| entry.to_owned())),
     }
 }
 

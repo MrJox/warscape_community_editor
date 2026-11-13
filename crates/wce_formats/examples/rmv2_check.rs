@@ -34,9 +34,29 @@ fn standard_layout(t: MaterialType) -> bool {
     use MaterialType as M;
     !matches!(
         t,
-        M::RsTerrain | M::BowWave | M::DebugGeometry | M::RiverOutfield | M::RsRiver | M::WeightedTextureBlend | M::ProjectedDecal | M::ProjectedDecalV2
-            | M::ProjectedDecalV3 | M::ProjectedDecalV4 | M::CustomTerrain | M::CollisionShape | M::WeightedCloth | M::Rope | M::TextureCombo
-            | M::TextureComboVertexWind | M::StaticPointLight | M::Uk27 | M::Uk54 | M::Uk56 | M::Uk57 | M::AlphaBlend | M::Cloth
+        M::RsTerrain
+            | M::BowWave
+            | M::DebugGeometry
+            | M::RiverOutfield
+            | M::RsRiver
+            | M::WeightedTextureBlend
+            | M::ProjectedDecal
+            | M::ProjectedDecalV2
+            | M::ProjectedDecalV3
+            | M::ProjectedDecalV4
+            | M::CustomTerrain
+            | M::CollisionShape
+            | M::WeightedCloth
+            | M::Rope
+            | M::TextureCombo
+            | M::TextureComboVertexWind
+            | M::StaticPointLight
+            | M::Uk27
+            | M::Uk54
+            | M::Uk56
+            | M::Uk57
+            | M::AlphaBlend
+            | M::Cloth
     )
 }
 

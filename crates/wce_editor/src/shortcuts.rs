@@ -96,7 +96,8 @@ impl Chord {
     /// Whether the key is held with these Ctrl and Alt (Shift too when the chord has it).
     fn down(&self) -> bool {
         let io = gui::io();
-        gui::is_key_down(self.key) && (is_modifier(self.key) || (io.KeyCtrl == self.ctrl && io.KeyAlt == self.alt && (!self.shift || io.KeyShift)))
+        gui::is_key_down(self.key)
+            && (is_modifier(self.key) || (io.KeyCtrl == self.ctrl && io.KeyAlt == self.alt && (!self.shift || io.KeyShift)))
     }
 }
 
@@ -117,7 +118,11 @@ impl Scope {
     /// Whether keys of the two scopes can be read at the same time (one key may then do two things).
     pub fn overlaps(self, other: Scope) -> bool {
         match (self, other) {
-            (Scope::Global, _) | (_, Scope::Global) | (Scope::Viewport, Scope::Viewport) | (Scope::Viewport, Scope::Tool(_)) | (Scope::Tool(_), Scope::Viewport) => true,
+            (Scope::Global, _)
+            | (_, Scope::Global)
+            | (Scope::Viewport, Scope::Viewport)
+            | (Scope::Viewport, Scope::Tool(_))
+            | (Scope::Tool(_), Scope::Viewport) => true,
             (Scope::Tool(a), Scope::Tool(b)) => a == b,
         }
     }
@@ -235,7 +240,8 @@ pub fn set_keys_in(a: &Action, table: &mut BTreeMap<String, Vec<String>>, keys: 
 
 /// Uses the settings' table (`Settings::shortcuts`).
 pub fn set_overrides(table: &BTreeMap<String, Vec<String>>) {
-    let map = actions().iter().filter(|a| table.contains_key(a.id)).map(|a| (a.id.to_owned(), keys_in(a, table))).collect::<HashMap<_, _>>();
+    let map =
+        actions().iter().filter(|a| table.contains_key(a.id)).map(|a| (a.id.to_owned(), keys_in(a, table))).collect::<HashMap<_, _>>();
     if let Ok(mut o) = OVERRIDES.write() {
         *o = Some(map);
     }

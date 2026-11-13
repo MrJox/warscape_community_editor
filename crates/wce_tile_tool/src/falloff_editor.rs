@@ -83,19 +83,31 @@ impl TileTool {
         if let Some(i) = self.falloff_drag.filter(|&i| i < c.points.len()) {
             // The ends stay at the centre and the edge; a point stays between its neighbours.
             let last = c.points.len() - 1;
-            let x = if i == 0 { 0.0 } else if i == last { 1.0 } else { at_mouse[0].clamp(c.points[i - 1][0] + 0.01, c.points[i + 1][0] - 0.01) };
+            let x = if i == 0 {
+                0.0
+            } else if i == last {
+                1.0
+            } else {
+                at_mouse[0].clamp(c.points[i - 1][0] + 0.01, c.points[i + 1][0] - 0.01)
+            };
             c.points[i] = [x, at_mouse[1]];
         } else if hovered && gui::is_mouse_double_clicked(0) && near.is_none() {
             c.points.push(at_mouse);
             c.points = FalloffCurve::from_points(&c.points).points;
-        } else if hovered && gui::is_mouse_clicked(1)
+        } else if hovered
+            && gui::is_mouse_clicked(1)
             && let Some(i) = near.filter(|&i| i != 0 && i + 1 != c.points.len())
         {
             c.points.remove(i);
         }
 
         let dl = gui::window_draw_list();
-        let (dim, grid, line, dot) = (theme::u32(theme::palette_background()), gui::col32(90, 90, 90, 120), theme::u32(theme::text()), gui::col32(250, 190, 60, 255));
+        let (dim, grid, line, dot) = (
+            theme::u32(theme::palette_background()),
+            gui::col32(90, 90, 90, 120),
+            theme::u32(theme::text()),
+            gui::col32(250, 190, 60, 255),
+        );
         dl.rect_filled(origin, gui::v2(origin.x + W, origin.y + H), dim, 0.0);
         for k in 1..4 {
             let f = k as f32 / 4.0;

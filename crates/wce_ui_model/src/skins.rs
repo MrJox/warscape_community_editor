@@ -29,7 +29,9 @@ pub fn loose_names(project: &Path) -> Vec<String> {
 }
 
 fn count_files(dir: &Path) -> usize {
-    std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| if e.path().is_dir() { count_files(&e.path()) } else { 1 }).sum()).unwrap_or(0)
+    std::fs::read_dir(dir)
+        .map(|d| d.filter_map(|e| e.ok()).map(|e| if e.path().is_dir() { count_files(&e.path()) } else { 1 }).sum())
+        .unwrap_or(0)
 }
 
 fn entry<'a>(map: &'a mut BTreeMap<String, Skin>, name: &str) -> &'a mut Skin {

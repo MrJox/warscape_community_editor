@@ -28,7 +28,12 @@ fn main() {
         };
 
         let Some(water) = &f.water else { continue };
-        let Ok(png) = std::fs::read(dir.join("ground_type_map.png")).map_err(|e| e.to_string()).and_then(|b| PngFile::parse(&b).map_err(|e| e.to_string())) else { continue };
+        let Ok(png) = std::fs::read(dir.join("ground_type_map.png"))
+            .map_err(|e| e.to_string())
+            .and_then(|b| PngFile::parse(&b).map_err(|e| e.to_string()))
+        else {
+            continue;
+        };
         let bpp = png.bytes_per_pixel();
         let (pw, ph) = (png.width as usize, png.height as usize);
         // The map is bordered by one cell; the grid is the tile's own vertices, one per pixel at the same density.
@@ -66,7 +71,17 @@ fn main() {
 
         v.sort_by(f32::total_cmp);
         let at = |p: f64| v[((v.len() - 1) as f64 * p) as usize];
-        format!("{} px: min {:.2}  p5 {:.2}  p25 {:.2}  median {:.2}  p75 {:.2}  p95 {:.2}  max {:.2}", v.len(), at(0.0), at(0.05), at(0.25), at(0.5), at(0.75), at(0.95), at(1.0))
+        format!(
+            "{} px: min {:.2}  p5 {:.2}  p25 {:.2}  median {:.2}  p75 {:.2}  p95 {:.2}  max {:.2}",
+            v.len(),
+            at(0.0),
+            at(0.05),
+            at(0.25),
+            at(0.5),
+            at(0.75),
+            at(0.95),
+            at(1.0)
+        )
     };
 
     println!("deep water:    {}", pct(&mut deep));

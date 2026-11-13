@@ -151,7 +151,6 @@ pub struct PackOrder {
 const PACK_TYPE_PATCH: u32 = 2;
 
 impl GameProfile {
-
     /// Total War: Attila.
     pub const ATTILA: GameProfile = GameProfile {
         key: "attila",
@@ -162,7 +161,10 @@ impl GameProfile {
         data_dir: "data",
         exe: "Attila.exe",
         used_mods_file: "used_mods.txt",
-        vanilla: VanillaPacks::Manifest { file: "manifest.txt", extra: &["charlemagne.pack", "belisarius.pack", "blood.pack", "slavs.pack"] },
+        vanilla: VanillaPacks::Manifest {
+            file: "manifest.txt",
+            extra: &["charlemagne.pack", "belisarius.pack", "blood.pack", "slavs.pack"],
+        },
         rpfm_schema: "schema_att.ron",
         campaign_battle_map: "terrain/battles/main_attila_map",
         default_environment: "weather/charlemagne/med_sp_land_day_dry.environment",
@@ -192,13 +194,55 @@ impl GameProfile {
         exe: "Rome2.exe",
         used_mods_file: "used_mods.txt",
         vanilla: VanillaPacks::List(&[
-            "blood_rome2.pack", "boot.pack", "data.pack", "data_rome2.pack", "divided.pack", "gaul.pack", "greeks.pack", "invasion.pack",
-            "local_en_shared_rome2.pack", "local_cz.pack", "local_en.pack", "local_fr.pack", "local_ge.pack", "local_it.pack", "local_pl.pack",
-            "local_ru.pack", "local_tr.pack", "local_sp.pack", "models.pack", "models_rome2.pack", "models2.pack", "models2_rome2.pack",
-            "models3_rome2.pack", "movies.pack", "movies_rome2.pack", "music.pack", "music_rome2.pack", "music_en_shared_rome2.pack",
-            "music_fr.pack", "music_ge.pack", "music_it.pack", "music_ru.pack", "music_sp.pack", "punic.pack", "sound.pack", "sound_rome2.pack",
-            "terrain.pack", "terrain_rome2.pack", "terrain2.pack", "terrain2_rome2.pack", "terrain3_rome2.pack", "tiles.pack", "tiles_rome2.pack",
-            "tiles2.pack", "tiles2_rome2.pack", "tiles3.pack", "tiles3_rome2.pack", "tiles4.pack", "tiles4_rome2.pack",
+            "blood_rome2.pack",
+            "boot.pack",
+            "data.pack",
+            "data_rome2.pack",
+            "divided.pack",
+            "gaul.pack",
+            "greeks.pack",
+            "invasion.pack",
+            "local_en_shared_rome2.pack",
+            "local_cz.pack",
+            "local_en.pack",
+            "local_fr.pack",
+            "local_ge.pack",
+            "local_it.pack",
+            "local_pl.pack",
+            "local_ru.pack",
+            "local_tr.pack",
+            "local_sp.pack",
+            "models.pack",
+            "models_rome2.pack",
+            "models2.pack",
+            "models2_rome2.pack",
+            "models3_rome2.pack",
+            "movies.pack",
+            "movies_rome2.pack",
+            "music.pack",
+            "music_rome2.pack",
+            "music_en_shared_rome2.pack",
+            "music_fr.pack",
+            "music_ge.pack",
+            "music_it.pack",
+            "music_ru.pack",
+            "music_sp.pack",
+            "punic.pack",
+            "sound.pack",
+            "sound_rome2.pack",
+            "terrain.pack",
+            "terrain_rome2.pack",
+            "terrain2.pack",
+            "terrain2_rome2.pack",
+            "terrain3_rome2.pack",
+            "tiles.pack",
+            "tiles_rome2.pack",
+            "tiles2.pack",
+            "tiles2_rome2.pack",
+            "tiles3.pack",
+            "tiles3_rome2.pack",
+            "tiles4.pack",
+            "tiles4_rome2.pack",
         ]),
         rpfm_schema: "schema_rom2.ron",
         campaign_battle_map: "terrain/battles/main_rome_map",
@@ -291,7 +335,11 @@ impl GameProfile {
     /// * `game_dir` - Folder of the game.
     /// * `use_mods` - If the enabled mods are included.
     pub fn pack_order(&self, game_dir: &Path, use_mods: bool) -> PackOrder {
-        let mods: Vec<String> = if use_mods { read_lines(&game_dir.join(self.used_mods_file)).iter().filter_map(|l| used_mod(l).map(str::to_owned)).collect() } else { vec![] };
+        let mods: Vec<String> = if use_mods {
+            read_lines(&game_dir.join(self.used_mods_file)).iter().filter_map(|l| used_mod(l).map(str::to_owned)).collect()
+        } else {
+            vec![]
+        };
         self.pack_order_with(game_dir, &mods)
     }
 
@@ -382,9 +430,7 @@ fn pack_type(path: &Path) -> Option<u32> {
 
 /// Lines of a text file, or none if it can't be read.
 fn read_lines(path: &Path) -> Vec<String> {
-    std::fs::read(path)
-        .map(|bytes| String::from_utf8_lossy(&bytes).lines().map(|line| line.to_owned()).collect())
-        .unwrap_or_default()
+    std::fs::read(path).map(|bytes| String::from_utf8_lossy(&bytes).lines().map(|line| line.to_owned()).collect()).unwrap_or_default()
 }
 
 /// The pack of a `mod "<name>";` line of the launcher, if the line is one.

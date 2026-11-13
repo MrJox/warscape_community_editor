@@ -65,7 +65,8 @@ fn region(link: (i32, i32), corner: (i32, i32), cell: (i32, i32), size: f32, ble
     let mut out = vec![];
     let mut push = |a: Tri, b: Tri| {
         if let [q0, q1, q2, q3] = quad {
-            let tri = |a: &[f32; 3], b: &[f32; 3], c: &[f32; 3]| Tri { p: [[a[0], a[1]], [b[0], b[1]], [c[0], c[1]]], w: [a[2], b[2], c[2]] };
+            let tri =
+                |a: &[f32; 3], b: &[f32; 3], c: &[f32; 3]| Tri { p: [[a[0], a[1]], [b[0], b[1]], [c[0], c[1]]], w: [a[2], b[2], c[2]] };
             out.push(tri(q0, q1, q2));
             out.push(tri(q0, q2, q3));
         } else {
@@ -192,7 +193,15 @@ fn text<'a>(n: &'a Node, k: &str) -> &'a str {
 ///
 /// The source is the tile's own field when both links' linking tiles end with its variation's location, else the first link's
 /// linking tile's `final_heights` (not seen in the kit). Returns whether it applied (BOB then blends no other link).
-fn straight_self_tiling(raw: &Tile, entry: &Node, raw_data: &Path, linking_tiles: &HashMap<String, String>, field: &mut [f32], w: usize, h: usize) -> Result<bool, String> {
+fn straight_self_tiling(
+    raw: &Tile,
+    entry: &Node,
+    raw_data: &Path,
+    linking_tiles: &HashMap<String, String>,
+    field: &mut [f32],
+    w: usize,
+    h: usize,
+) -> Result<bool, String> {
     let links = entry.wrapped("TILE_LINKS");
     let (mut count, mut sea, mut pair) = (0, None, vec![]);
     for (i, l) in links.iter().enumerate() {
@@ -298,7 +307,14 @@ fn straight_self_tiling(raw: &Tile, entry: &Node, raw_data: &Path, linking_tiles
 /// # Errors
 ///
 /// A linking tile that is not in the database, or whose heights are missing ("You need to convert ... first").
-pub fn blend_links(raw: &Tile, raw_data: &Path, linking_tiles: &HashMap<String, String>, field: &mut [f32], w: usize, h: usize) -> Result<(), String> {
+pub fn blend_links(
+    raw: &Tile,
+    raw_data: &Path,
+    linking_tiles: &HashMap<String, String>,
+    field: &mut [f32],
+    w: usize,
+    h: usize,
+) -> Result<(), String> {
     wce_foundation::wce_prof!("stage_b.blend_links");
     let Some(entry) = raw.entry.as_ref().map(|e| &e.root) else { return Ok(()) };
     if super::bob_tile::self_tiling(entry, linking_tiles) && straight_self_tiling(raw, entry, raw_data, linking_tiles, field, w, h)? {
@@ -330,7 +346,11 @@ pub fn blend_links(raw: &Tile, raw_data: &Path, linking_tiles: &HashMap<String, 
             let base = (int(l, "base_x"), int(l, "base_y"));
             let inverted = (point.0, th - 1 - point.1);
             let blend = int(l, "blend_size") as f32;
-            let quad = l.wrapped("blend_quad").iter().map(|p| [0, 1, 2].map(|i| p.get(["x", "y", "z"][i]).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32)).collect::<Vec<_>>();
+            let quad = l
+                .wrapped("blend_quad")
+                .iter()
+                .map(|p| [0, 1, 2].map(|i| p.get(["x", "y", "z"][i]).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32))
+                .collect::<Vec<_>>();
             // With a target cell next to the link point, only the rotations that put the target there count.
             let adjacent = targets.iter().any(|t| (t.0 - point.0).abs() + (t.1 - point.1).abs() == 1 && (t.0 == point.0 || t.1 == point.1));
             for r in 0..4 {

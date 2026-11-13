@@ -44,25 +44,42 @@ impl Tile {
         let mut keys = match kind {
             "BUILDING_INSTANCE" => {
                 let prefix = "rigidmodels/buildings/";
-                let mut keys = files.list(prefix, ".rigid_model_v2").into_iter().filter_map(|p| {
-                    let slash = p.rfind('/')?;
-                    p.get(prefix.len()..slash).filter(|f| !f.is_empty()).map(str::to_owned)
-                }).collect::<Vec<_>>();
+                let mut keys = files
+                    .list(prefix, ".rigid_model_v2")
+                    .into_iter()
+                    .filter_map(|p| {
+                        let slash = p.rfind('/')?;
+                        p.get(prefix.len()..slash).filter(|f| !f.is_empty()).map(str::to_owned)
+                    })
+                    .collect::<Vec<_>>();
                 keys.extend(self.building_db().keys().map(str::to_owned));
                 keys
             }
 
-            "VEGETATION_INSTANCE" => ["shrubs", "trees"].iter().flat_map(|dir| {
-                let prefix = format!("battleterrain/vegetation/{dir}/");
-                files.list(&prefix, ".rigid_model_v2").into_iter().filter_map(move |p| {
-                    let (species, variant) = p.strip_prefix(&prefix)?.strip_suffix(".rigid_model_v2")?.split_once('/')?;
-                    (!variant.contains('/')).then(|| format!("{species}.{variant}"))
-                }).collect::<Vec<_>>()
-            }).collect(),
+            "VEGETATION_INSTANCE" => ["shrubs", "trees"]
+                .iter()
+                .flat_map(|dir| {
+                    let prefix = format!("battleterrain/vegetation/{dir}/");
+                    files
+                        .list(&prefix, ".rigid_model_v2")
+                        .into_iter()
+                        .filter_map(move |p| {
+                            let (species, variant) = p.strip_prefix(&prefix)?.strip_suffix(".rigid_model_v2")?.split_once('/')?;
+                            (!variant.contains('/')).then(|| format!("{species}.{variant}"))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
 
-            "ProjectedDecalInstance" => files.list("rigidmodels/decals/", ".rigid_model_v2").into_iter().map(|p| p.replace('/', "\\")).collect(),
+            "ProjectedDecalInstance" => {
+                files.list("rigidmodels/decals/", ".rigid_model_v2").into_iter().map(|p| p.replace('/', "\\")).collect()
+            }
             "SIMPLE_MESH_INSTANCE" => files.list("rigidmodels/", ".rigid_model_v2"),
-            "VFXInstance" => files.list("vfx/", ".xml").into_iter().filter_map(|p| p.strip_prefix("vfx/")?.strip_suffix(".xml").map(str::to_owned)).collect(),
+            "VFXInstance" => files
+                .list("vfx/", ".xml")
+                .into_iter()
+                .filter_map(|p| p.strip_prefix("vfx/")?.strip_suffix(".xml").map(str::to_owned))
+                .collect(),
             _ => vec![],
         };
 
@@ -78,7 +95,8 @@ impl Tile {
     /// the mouse going over the ground.
     pub fn set_preview(&mut self, scene: &mut RenderScene, text: Option<&[u8]>, at: Float3, yaw: f32, normal: Option<Double3>) {
         let key = scene_key(scene);
-        let gone = self.preview.scene_key != key || self.preview.entities.iter().chain([&self.preview.overlay]).any(|&e| e != 0 && scene.find(e).is_none());
+        let gone = self.preview.scene_key != key
+            || self.preview.entities.iter().chain([&self.preview.overlay]).any(|&e| e != 0 && scene.find(e).is_none());
         let Some(text) = text else {
             self.clear_preview(scene);
             return;
@@ -160,10 +178,14 @@ impl Tile {
 
     /// The models `text` draws (an element as `insert_element_text` takes it), in metres around its root element: what a thumbnail shows.
     pub fn model_parts(&self, text: &[u8]) -> Vec<(Float4x4, MeshInstance)> {
-        self.preview_parts(text).0.into_iter().filter_map(|it| match it.payload {
-            Payload::MeshInstance(mi) => Some((it.local, mi)),
-            _ => None,
-        }).collect()
+        self.preview_parts(text)
+            .0
+            .into_iter()
+            .filter_map(|it| match it.payload {
+                Payload::MeshInstance(mi) => Some((it.local, mi)),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Everything `text` draws (models, decals, effects, lights), in metres around its root element: what a thumbnail shows.
@@ -200,10 +222,14 @@ impl Tile {
             // Polygons: their outline.
             let points = mini.polygon_points(e);
             if !points.is_empty() {
-                let world = points.iter().filter_map(|&p| mini.point_position(p)).map(|v| {
-                    let p = w.position + w.rotation * v;
-                    Float3::new((p.x / unit) as f32, (p.y / unit) as f32, (p.z / unit) as f32)
-                }).collect::<Vec<_>>();
+                let world = points
+                    .iter()
+                    .filter_map(|&p| mini.point_position(p))
+                    .map(|v| {
+                        let p = w.position + w.rotation * v;
+                        Float3::new((p.x / unit) as f32, (p.y / unit) as f32, (p.z / unit) as f32)
+                    })
+                    .collect::<Vec<_>>();
                 let closed = mini.doc().get(e, "polygon_closed").is_none_or(|v| v != "0") && !wce_tile::splines::is_spline(mini.type_of(e));
                 for i in 0..world.len() {
                     if i + 1 < world.len() || (closed && world.len() > 2) {
@@ -215,27 +241,42 @@ impl Tile {
             }
 
             let models = match mini.type_of(e) {
-                "BUILDING_INSTANCE" => get("key").map(|k| {
-                    let level = get("destruction_level").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0);
-                    self.preview_building(&k, level)
-                }).unwrap_or_default(),
+                "BUILDING_INSTANCE" => get("key")
+                    .map(|k| {
+                        let level = get("destruction_level").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(0);
+                        self.preview_building(&k, level)
+                    })
+                    .unwrap_or_default(),
                 "VEGETATION_INSTANCE" => get("key").and_then(|k| vegetation_model(self.files.as_deref(), &k)).into_iter().collect(),
-                "SIMPLE_MESH_INSTANCE" => get("key").map(|k| k.replace('\\', "/").to_lowercase()).filter(|p| self.files.as_deref().is_some_and(|f| f.exists(p))).into_iter().collect(),
+                "SIMPLE_MESH_INSTANCE" => get("key")
+                    .map(|k| k.replace('\\', "/").to_lowercase())
+                    .filter(|p| self.files.as_deref().is_some_and(|f| f.exists(p)))
+                    .into_iter()
+                    .collect(),
                 _ => vec![],
             };
 
             let payloads = match mini.type_of(e) {
-                "ProjectedDecalInstance" => get("key").map(|k| Payload::Decal(Decal { model: k.replace('\\', "/"), tiled: false, opacity: 1.0, parallax: 0.0 })).into_iter().collect(),
+                "ProjectedDecalInstance" => get("key")
+                    .map(|k| Payload::Decal(Decal { model: k.replace('\\', "/"), tiled: false, opacity: 1.0, parallax: 0.0 }))
+                    .into_iter()
+                    .collect(),
                 "POINT_LIGHT_INSTANCE" => vec![Payload::PointLight(super::view::point_light_of(mini.doc(), e, 0.0))],
-                "VFXInstance" => get("vfx").map(|effect| {
-                    let scale = get("scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / unit;
-                    Payload::VfxEmitter(VfxEmitter { effect, scale: scale as f32, mesh: None })
-                }).into_iter().collect(),
-                kind => models.into_iter().map(|model| {
-                    // A tree's leaves need "nothing dissolved" (see `add_item_entities`).
-                    let p4 = if kind == "VEGETATION_INSTANCE" { [0.5, 1.0, 0.0, 1000.0] } else { MeshInstance::default().p4 };
-                    Payload::MeshInstance(MeshInstance { model, lod: true, p4, ..Default::default() })
-                }).collect::<Vec<_>>(),
+                "VFXInstance" => get("vfx")
+                    .map(|effect| {
+                        let scale = get("scale").and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(1.0) / unit;
+                        Payload::VfxEmitter(VfxEmitter { effect, scale: scale as f32, mesh: None })
+                    })
+                    .into_iter()
+                    .collect(),
+                kind => models
+                    .into_iter()
+                    .map(|model| {
+                        // A tree's leaves need "nothing dissolved" (see `add_item_entities`).
+                        let p4 = if kind == "VEGETATION_INSTANCE" { [0.5, 1.0, 0.0, 1000.0] } else { MeshInstance::default().p4 };
+                        Payload::MeshInstance(MeshInstance { model, lod: true, p4, ..Default::default() })
+                    })
+                    .collect::<Vec<_>>(),
             };
 
             // A marker where nothing is drawn, and around an effect (a torch's flame is a few centimetres) and a light (it lights, it has no shape).
@@ -259,22 +300,32 @@ impl Tile {
     /// destroyed shows destroyed).
     fn preview_building(&self, key: &str, level: i64) -> Vec<String> {
         if let Some(m) = self.models.get(key).filter(|m| m.ok) {
-            return m.pieces.iter().enumerate().map(|(i, p)| self.piece_file(p, level, m.piece_levels.get(i).copied().unwrap_or(m.levels))).collect();
+            return m
+                .pieces
+                .iter()
+                .enumerate()
+                .map(|(i, p)| self.piece_file(p, level, m.piece_levels.get(i).copied().unwrap_or(m.levels)))
+                .collect();
         }
 
         let Some(files) = self.files.as_deref() else { return vec![] };
         let all = files.list(&format!("rigidmodels/buildings/{}/", key.to_lowercase()), ".rigid_model_v2");
         let levels = all.iter().map(|p| wce_walls::pieces::level_of(p)).max().unwrap_or(1).max(1);
-        all.iter().filter(|p| {
-            let file = &p[p.rfind('/').map_or(0, |s| s + 1)..];
-            static_piece(file) && (!file.contains("destruct") || file.contains("destruct01")) && !piece_copy(p, |q| files.exists(q))
-        }).map(|p| self.piece_file(p, level, levels)).collect()
+        all.iter()
+            .filter(|p| {
+                let file = &p[p.rfind('/').map_or(0, |s| s + 1)..];
+                static_piece(file) && (!file.contains("destruct") || file.contains("destruct01")) && !piece_copy(p, |q| files.exists(q))
+            })
+            .map(|p| self.piece_file(p, level, levels))
+            .collect()
     }
 }
 
 /// The 12 edges of a box.
 fn box_edges(lo: Float3, hi: Float3) -> Vec<(Float3, Float3)> {
-    let c = |i: u8| Float3::new(if i & 1 != 0 { hi.x } else { lo.x }, if i & 2 != 0 { hi.y } else { lo.y }, if i & 4 != 0 { hi.z } else { lo.z });
+    let c = |i: u8| {
+        Float3::new(if i & 1 != 0 { hi.x } else { lo.x }, if i & 2 != 0 { hi.y } else { lo.y }, if i & 4 != 0 { hi.z } else { lo.z })
+    };
     let mut out = vec![];
     for i in 0..8u8 {
         for bit in [1u8, 2, 4] {

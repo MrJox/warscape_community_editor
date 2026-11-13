@@ -62,7 +62,6 @@ pub struct Raster {
 }
 
 impl Raster {
-
     /// Whether the sample count matches the size.
     pub fn is_consistent(&self) -> bool {
         self.samples.len() == self.width as usize * self.height as usize * self.channels as usize

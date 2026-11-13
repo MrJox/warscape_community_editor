@@ -66,8 +66,20 @@ pub enum TechKind {
 }
 
 pub const KINDS: [TechKind; 15] = [
-    TechKind::Collision, TechKind::Gates, TechKind::Outlines, TechKind::SoftCollisions, TechKind::Footprints, TechKind::Platforms, TechKind::Pipes,
-    TechKind::EfLines, TechKind::DockingLines, TechKind::ArrowEmitters, TechKind::ActionVfx, TechKind::FileRefs, TechKind::Emitters, TechKind::Bounds,
+    TechKind::Collision,
+    TechKind::Gates,
+    TechKind::Outlines,
+    TechKind::SoftCollisions,
+    TechKind::Footprints,
+    TechKind::Platforms,
+    TechKind::Pipes,
+    TechKind::EfLines,
+    TechKind::DockingLines,
+    TechKind::ArrowEmitters,
+    TechKind::ActionVfx,
+    TechKind::FileRefs,
+    TechKind::Emitters,
+    TechKind::Bounds,
     TechKind::Flag,
 ];
 
@@ -86,20 +98,74 @@ pub struct TechInfo {
 impl TechKind {
     pub fn info(self) -> TechInfo {
         let (name, group, tip, rgb) = match self {
-            Self::Collision => ("Collision mesh", 0, "The piece's collision hull (collision_3d) as the edges of its triangles: what projectiles and units are tested against.", [0.25, 0.8, 1.0]),
+            Self::Collision => (
+                "Collision mesh",
+                0,
+                "The piece's collision hull (collision_3d) as the edges of its triangles: what projectiles and units are tested against.",
+                [0.25, 0.8, 1.0],
+            ),
             Self::Gates => ("Gate collision", 0, "The collision meshes of a gate (two per gate).", [0.9, 0.4, 1.0]),
-            Self::Outlines => ("Hard outlines", 0, "The collision outlines: the hard footprint that blocks units, the outline the siege AI treats as the building.", [1.0, 0.35, 0.2]),
-            Self::SoftCollisions => ("Soft collisions", 0, "Soft collision cylinders (radius and height): volumes units steer around.", [0.6, 0.95, 0.3]),
-            Self::Footprints => ("Footprints", 1, "The footprint outlines (the orange lines of the building tools): what the building stands on and units may walk on, a plaza's floor or a road.", [1.0, 0.6, 0.1]),
-            Self::Platforms => ("Platforms", 1, "Walkable platforms (floors, walkways, tower tops), filled. Green: treated as ground; blue: raised; orange: a siege tower's ramp.", [0.3, 0.55, 1.0]),
-            Self::Pipes => ("Pipes", 1, "The paths units take between platforms, by type: stairs green, ladders and ropes teal, doors and teleports purple, jumps yellow.", [0.4, 0.95, 0.3]),
-            Self::EfLines => ("Formation lines", 1, "Where units stand to fight (entity formation lines): wall tops gold, windows light blue, crenels red, entrances orange, engines purple; the tick is the facing.", [1.0, 0.8, 0.2]),
-            Self::DockingLines => ("Docking lines", 2, "Where siege equipment (ladders, ramps) attaches to the building; the tick is the direction.", [0.2, 0.95, 0.85]),
+            Self::Outlines => (
+                "Hard outlines",
+                0,
+                "The collision outlines: the hard footprint that blocks units, the outline the siege AI treats as the building.",
+                [1.0, 0.35, 0.2],
+            ),
+            Self::SoftCollisions => {
+                ("Soft collisions", 0, "Soft collision cylinders (radius and height): volumes units steer around.", [0.6, 0.95, 0.3])
+            }
+            Self::Footprints => (
+                "Footprints",
+                1,
+                "The footprint outlines (the orange lines of the building tools): what the building stands on and units may walk on, a plaza's floor or a road.",
+                [1.0, 0.6, 0.1],
+            ),
+            Self::Platforms => (
+                "Platforms",
+                1,
+                "Walkable platforms (floors, walkways, tower tops), filled. Green: treated as ground; blue: raised; orange: a siege tower's ramp.",
+                [0.3, 0.55, 1.0],
+            ),
+            Self::Pipes => (
+                "Pipes",
+                1,
+                "The paths units take between platforms, by type: stairs green, ladders and ropes teal, doors and teleports purple, jumps yellow.",
+                [0.4, 0.95, 0.3],
+            ),
+            Self::EfLines => (
+                "Formation lines",
+                1,
+                "Where units stand to fight (entity formation lines): wall tops gold, windows light blue, crenels red, entrances orange, engines purple; the tick is the facing.",
+                [1.0, 0.8, 0.2],
+            ),
+            Self::DockingLines => (
+                "Docking lines",
+                2,
+                "Where siege equipment (ladders, ramps) attaches to the building; the tick is the direction.",
+                [0.2, 0.95, 0.85],
+            ),
             Self::ArrowEmitters => ("Arrow emitters", 2, "The positions the building's arrows are fired from.", [1.0, 0.3, 0.3]),
-            Self::ActionVfx => ("Action effects", 2, "The nodes where the building's action effects (and their attachment points) play.", [0.75, 0.45, 1.0]),
-            Self::FileRefs => ("Attached buildings", 2, "Buildings the piece's state attaches (torches, the bridging columns of walls) at their places.", [1.0, 0.6, 0.8]),
-            Self::Emitters => ("Particle emitters", 2, "The effects of the pieces' .meta files and their logic file's list, at their places. Bright: plays while the building stands; dim: on an event (fire, destruction, capture), or in a .meta the game drops (Attila); a box: a volumetric effect.", [0.4, 1.0, 0.5]),
-            Self::Bounds => ("Bounding boxes", 3, "The building's bounding box (white) and the box of each piece's state (grey).", [0.9, 0.9, 0.95]),
+            Self::ActionVfx => (
+                "Action effects",
+                2,
+                "The nodes where the building's action effects (and their attachment points) play.",
+                [0.75, 0.45, 1.0],
+            ),
+            Self::FileRefs => (
+                "Attached buildings",
+                2,
+                "Buildings the piece's state attaches (torches, the bridging columns of walls) at their places.",
+                [1.0, 0.6, 0.8],
+            ),
+            Self::Emitters => (
+                "Particle emitters",
+                2,
+                "The effects of the pieces' .meta files and their logic file's list, at their places. Bright: plays while the building stands; dim: on an event (fire, destruction, capture), or in a .meta the game drops (Attila); a box: a volumetric effect.",
+                [0.4, 1.0, 0.5],
+            ),
+            Self::Bounds => {
+                ("Bounding boxes", 3, "The building's bounding box (white) and the box of each piece's state (grey).", [0.9, 0.9, 0.95])
+            }
             Self::Flag => ("Minimap flag", 3, "The node of the flag the building has on the tactical map.", [0.4, 1.0, 0.4]),
         };
 
@@ -217,7 +283,10 @@ pub struct TechStats {
 /// One thing to draw, in the frame of the piece (or building) it is in.
 #[derive(Clone, Debug)]
 enum Shape {
-    Lines { pts: Vec<Float3>, closed: bool },
+    Lines {
+        pts: Vec<Float3>,
+        closed: bool,
+    },
 
     /// Pairs of points.
     Segments(Vec<Float3>),
@@ -229,7 +298,11 @@ enum Shape {
     Axes(Float4x4, f32),
     Box(Float3, Float3),
     BoxAt(Float4x4, Float3),
-    Circle { at: Float4x4, radius: f32, height: f32 },
+    Circle {
+        at: Float4x4,
+        radius: f32,
+        height: f32,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -297,7 +370,10 @@ fn matrix(v: &Value) -> Float4x4 {
 }
 
 fn cube(v: &Value) -> Option<(Float3, Float3)> {
-    let (lo, hi) = (Float3::new(num(&v["min_x"]), num(&v["min_y"]), num(&v["min_z"])), Float3::new(num(&v["max_x"]), num(&v["max_y"]), num(&v["max_z"])));
+    let (lo, hi) = (
+        Float3::new(num(&v["min_x"]), num(&v["min_y"]), num(&v["min_z"])),
+        Float3::new(num(&v["max_x"]), num(&v["max_y"]), num(&v["max_z"])),
+    );
     (hi.x >= lo.x && hi.y >= lo.y && hi.z >= lo.z && (hi.x > lo.x || hi.y > lo.y || hi.z > lo.z)).then_some((lo, hi))
 }
 
@@ -351,7 +427,9 @@ fn ef_rgb(action: &str) -> [f32; 3] {
 
 fn parse_level(d: &Value) -> TechLevel {
     let mut level = TechLevel { index: d["index"].as_u64().unwrap_or(0) as u32, ..Default::default() };
-    let mut push = |kind: TechKind, rgb: Option<[f32; 3]>, shape: Shape| level.items.push(Item { kind, rgb: rgb.unwrap_or_else(|| kind.info().rgb), shape });
+    let mut push = |kind: TechKind, rgb: Option<[f32; 3]>, shape: Shape| {
+        level.items.push(Item { kind, rgb: rgb.unwrap_or_else(|| kind.info().rgb), shape })
+    };
 
     let hull = mesh_edges(&d["collision_3d"]);
     if !hull.is_empty() {
@@ -452,7 +530,12 @@ fn parse_level(d: &Value) -> TechLevel {
     if let Some((lo, hi)) = cube(&d["bounding_box"]) {
         push(TechKind::Bounds, Some([0.55, 0.55, 0.6]), Shape::Box(lo, hi));
         if rings.is_empty() {
-            rings.push(vec![Float3::new(lo.x, lo.y, lo.z), Float3::new(hi.x, lo.y, lo.z), Float3::new(hi.x, lo.y, hi.z), Float3::new(lo.x, lo.y, hi.z)]);
+            rings.push(vec![
+                Float3::new(lo.x, lo.y, lo.z),
+                Float3::new(hi.x, lo.y, lo.z),
+                Float3::new(hi.x, lo.y, hi.z),
+                Float3::new(lo.x, lo.y, hi.z),
+            ]);
         }
     }
 
@@ -476,7 +559,11 @@ fn parse(bytes: &[u8]) -> Result<TechModel, String> {
         let rgb = TechKind::Flag.info().rgb;
         model.building.push(Item { kind: TechKind::Flag, rgb, shape: Shape::Axes(at, 1.5) });
         let pole = [Float3::new(0.0, 0.0, 0.0), Float3::new(0.0, 6.0, 0.0)];
-        model.building.push(Item { kind: TechKind::Flag, rgb, shape: Shape::Segments(pole.iter().map(|&p| at.transform_point(p)).collect()) });
+        model.building.push(Item {
+            kind: TechKind::Flag,
+            rgb,
+            shape: Shape::Segments(pole.iter().map(|&p| at.transform_point(p)).collect()),
+        });
         let cloth = [Float3::new(0.0, 6.0, 0.0), Float3::new(0.0, 4.5, 0.0), Float3::new(2.5, 5.25, 0.0)].map(|p| at.transform_point(p));
         model.building.push(Item { kind: TechKind::Flag, rgb, shape: Shape::Lines { pts: cloth.to_vec(), closed: true } });
     }
@@ -484,7 +571,11 @@ fn parse(bytes: &[u8]) -> Result<TechModel, String> {
     for p in list(&v["pieces"]) {
         let mut levels: Vec<TechLevel> = list(&p["destructs"]).iter().map(parse_level).collect();
         levels.sort_by_key(|l| l.index);
-        model.pieces.push(TechPiece { name: p["name"].as_str().unwrap_or_default().to_lowercase(), local: matrix(&p["node_transform"]), levels });
+        model.pieces.push(TechPiece {
+            name: p["name"].as_str().unwrap_or_default().to_lowercase(),
+            local: matrix(&p["node_transform"]),
+            levels,
+        });
     }
 
     Ok(model)
@@ -563,7 +654,14 @@ fn emit(o: &mut Overlay, w: &Float4x4, item: &Item, fill: f32) {
         Shape::BoxAt(at, half) => o.box_wire_transformed(&(*w * *at), -*half, *half, line),
         Shape::Circle { at, radius, height } => {
             let m = *w * *at;
-            let ring = |y: f32| -> Vec<Float3> { (0..16).map(|k| { let a = k as f32 * std::f32::consts::TAU / 16.0; m.transform_point(Float3::new(a.cos() * radius, y, a.sin() * radius)) }).collect() };
+            let ring = |y: f32| -> Vec<Float3> {
+                (0..16)
+                    .map(|k| {
+                        let a = k as f32 * std::f32::consts::TAU / 16.0;
+                        m.transform_point(Float3::new(a.cos() * radius, y, a.sin() * radius))
+                    })
+                    .collect()
+            };
             let (base, top) = (ring(0.0), ring(*height));
             o.polygon_outline(&base, true, line);
             o.polygon_outline(&top, true, line);
@@ -623,12 +721,17 @@ fn centroid(ring: &[[f32; 2]]) -> [f32; 2] {
 /// Whether two footprints overlap: an edge of one crosses an edge of the other, or a corner (or the middle) of one is well inside the other.
 /// The middle is what finds two that coincide (a building put twice on the same place), where no corner is inside and no edge crosses.
 fn rings_overlap(a: &[Vec<[f32; 2]>], b: &[Vec<[f32; 2]>]) -> bool {
-    a.iter().any(|ra| b.iter().any(|rb| {
-        (0..ra.len()).any(|i| {
-            let (p, q) = (ra[i], ra[(i + 1) % ra.len()]);
-            (0..rb.len()).any(|j| crosses(p, q, rb[j], rb[(j + 1) % rb.len()]))
-        }) || ra.iter().any(|&p| deep_inside(p, rb)) || rb.iter().any(|&p| deep_inside(p, ra)) || deep_inside(centroid(ra), rb) || deep_inside(centroid(rb), ra)
-    }))
+    a.iter().any(|ra| {
+        b.iter().any(|rb| {
+            (0..ra.len()).any(|i| {
+                let (p, q) = (ra[i], ra[(i + 1) % ra.len()]);
+                (0..rb.len()).any(|j| crosses(p, q, rb[j], rb[(j + 1) % rb.len()]))
+            }) || ra.iter().any(|&p| deep_inside(p, rb))
+                || rb.iter().any(|&p| deep_inside(p, ra))
+                || deep_inside(centroid(ra), rb)
+                || deep_inside(centroid(rb), ra)
+        })
+    })
 }
 
 /// What [`Tile::wall_tech_check`] found on a wall.
@@ -646,10 +749,15 @@ pub struct WallTechReport {
 
 /// The area two rings share on the ground (the second taken as convex: a platform strip).
 fn overlap_area(a: &[[f32; 2]], b: &[[f32; 2]]) -> f32 {
-    let signed = |r: &[[f32; 2]]| (0..r.len()).map(|i| {
-        let (p, q) = (r[i], r[(i + 1) % r.len()]);
-        p[0] * q[1] - q[0] * p[1]
-    }).sum::<f32>() / 2.0;
+    let signed = |r: &[[f32; 2]]| {
+        (0..r.len())
+            .map(|i| {
+                let (p, q) = (r[i], r[(i + 1) % r.len()]);
+                p[0] * q[1] - q[0] * p[1]
+            })
+            .sum::<f32>()
+            / 2.0
+    };
     let turn = signed(b).signum();
     let mut out = a.to_vec();
     for i in 0..b.len() {
@@ -663,7 +771,10 @@ fn overlap_area(a: &[[f32; 2]], b: &[[f32; 2]]) -> f32 {
             }
 
             if keep(p) != keep(q) {
-                let (dp, dq) = ((d[0] - c[0]) * (p[1] - c[1]) - (d[1] - c[1]) * (p[0] - c[0]), (d[0] - c[0]) * (q[1] - c[1]) - (d[1] - c[1]) * (q[0] - c[0]));
+                let (dp, dq) = (
+                    (d[0] - c[0]) * (p[1] - c[1]) - (d[1] - c[1]) * (p[0] - c[0]),
+                    (d[0] - c[0]) * (q[1] - c[1]) - (d[1] - c[1]) * (q[0] - c[0]),
+                );
                 let t = dp / (dp - dq);
                 out.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
             }
@@ -716,8 +827,17 @@ pub(crate) struct TechState {
 impl Default for TechState {
     fn default() -> Self {
         Self {
-            dirty: true, changed: HashSet::new(), models: HashMap::new(), metas: HashMap::new(), built: HashMap::new(), cells: HashMap::new(), collisions: 0, live: false,
-            eye: Float3::new(1e30, 1e30, 1e30), selection: vec![], stats: TechStats::default(),
+            dirty: true,
+            changed: HashSet::new(),
+            models: HashMap::new(),
+            metas: HashMap::new(),
+            built: HashMap::new(),
+            cells: HashMap::new(),
+            collisions: 0,
+            live: false,
+            eye: Float3::new(1e30, 1e30, 1e30),
+            selection: vec![],
+            stats: TechStats::default(),
         }
     }
 }
@@ -920,9 +1040,15 @@ impl Tile {
                 let frame = *world * piece.local;
                 for item in &level.items {
                     match (&item.kind, &item.shape) {
-                        (TechKind::Platforms, Shape::Fill(pts)) => platforms.push((k, pts.iter().map(|&q| frame.transform_point(q)).collect::<Vec<_>>())),
-                        (TechKind::Footprints, Shape::Lines { pts, .. }) => feet.push(xz(&pts.iter().map(|&q| frame.transform_point(q)).collect::<Vec<_>>())),
-                        (TechKind::EfLines, Shape::Segments(pts)) if pts.len() >= 2 => lines.push((frame.transform_point(pts[0]), frame.transform_point(pts[1]))),
+                        (TechKind::Platforms, Shape::Fill(pts)) => {
+                            platforms.push((k, pts.iter().map(|&q| frame.transform_point(q)).collect::<Vec<_>>()))
+                        }
+                        (TechKind::Footprints, Shape::Lines { pts, .. }) => {
+                            feet.push(xz(&pts.iter().map(|&q| frame.transform_point(q)).collect::<Vec<_>>()))
+                        }
+                        (TechKind::EfLines, Shape::Segments(pts)) if pts.len() >= 2 => {
+                            lines.push((frame.transform_point(pts[0]), frame.transform_point(pts[1])))
+                        }
                         _ => {}
                     }
                 }
@@ -939,10 +1065,14 @@ impl Tile {
             for sm in &layout.plan.samples {
                 let p = [(sm.centre[0] / u) as f32, (sm.centre[1] / u) as f32];
                 let across = [-sm.dir[1] as f32, sm.dir[0] as f32];
-                let in_foot = |q: [f32; 2]| feet.iter().any(|r| inside(q, r) || (0..r.len()).any(|i| seg_dist(q, r[i], r[(i + 1) % r.len()]) < 0.05));
+                let in_foot =
+                    |q: [f32; 2]| feet.iter().any(|r| inside(q, r) || (0..r.len()).any(|i| seg_dist(q, r[i], r[(i + 1) % r.len()]) < 0.05));
                 // A corner's tip lies outside the footprints by their margin from the outer face, more along the bisector.
                 let at_corner = layout.plan.corners.iter().any(|&(s, _)| (sm.s - s).abs() < 2.0 * u);
-                let covered = at_corner || [0.0f32, 1.0, -1.0, 2.5, -2.5, 4.0, -4.0, 6.0, -6.0].iter().any(|&d| in_foot([p[0] + across[0] * d, p[1] + across[1] * d]));
+                let covered = at_corner
+                    || [0.0f32, 1.0, -1.0, 2.5, -2.5, 4.0, -4.0, 6.0, -6.0]
+                        .iter()
+                        .any(|&d| in_foot([p[0] + across[0] * d, p[1] + across[1] * d]));
                 match (covered, &open) {
                     (false, None) => open = Some((sm.s / u, p)),
                     (true, Some((s0, at))) => {
@@ -976,11 +1106,15 @@ impl Tile {
         }
 
         // Formation lines' ends: on a platform (within a few centimetres, up to half a metre above or under it).
-        let on_platform = |p: Float3| platforms.iter().any(|(_, r)| {
-            let g = xz(r);
-            let ys = r.iter().fold((f32::MAX, f32::MIN), |(lo, hi), q| (lo.min(q.y), hi.max(q.y)));
-            p.y >= ys.0 - 0.5 && p.y <= ys.1 + 0.5 && (inside([p.x, p.z], &g) || (0..g.len()).any(|i| seg_dist([p.x, p.z], g[i], g[(i + 1) % g.len()]) < 0.05))
-        });
+        let on_platform = |p: Float3| {
+            platforms.iter().any(|(_, r)| {
+                let g = xz(r);
+                let ys = r.iter().fold((f32::MAX, f32::MIN), |(lo, hi), q| (lo.min(q.y), hi.max(q.y)));
+                p.y >= ys.0 - 0.5
+                    && p.y <= ys.1 + 0.5
+                    && (inside([p.x, p.z], &g) || (0..g.len()).any(|i| seg_dist([p.x, p.z], g[i], g[(i + 1) % g.len()]) < 0.05))
+            })
+        };
         for (a, b) in &lines {
             for p in [*a, *b] {
                 if !on_platform(p) {
@@ -1046,13 +1180,14 @@ impl Tile {
         }
 
         let path = format!("rigidmodels/buildings/{key}/{key}_tech.cs2.parsed");
-        let found = self.files.as_deref().filter(|f| f.exists(&path)).and_then(|f| f.read(&path).ok()).and_then(|bytes| match parse(&bytes) {
-            Ok(m) => Some(Arc::new(m)),
-            Err(error) => {
-                log::warn(format!("{path}: {error} (its technology is not drawn)"));
-                None
-            }
-        });
+        let found =
+            self.files.as_deref().filter(|f| f.exists(&path)).and_then(|f| f.read(&path).ok()).and_then(|bytes| match parse(&bytes) {
+                Ok(m) => Some(Arc::new(m)),
+                Err(error) => {
+                    log::warn(format!("{path}: {error} (its technology is not drawn)"));
+                    None
+                }
+            });
 
         self.tech.models.insert(key.to_owned(), found.clone());
         found
@@ -1064,7 +1199,14 @@ impl Tile {
         }
 
         let path = format!("{}.meta", file.strip_suffix(".rigid_model_v2").unwrap_or(file));
-        let found = self.files.as_deref().filter(|f| f.exists(&path)).and_then(|f| f.read(&path).ok()).and_then(|bytes| meta_effects(&bytes)).filter(|e| !e.is_empty()).map(Arc::new);
+        let found = self
+            .files
+            .as_deref()
+            .filter(|f| f.exists(&path))
+            .and_then(|f| f.read(&path).ok())
+            .and_then(|bytes| meta_effects(&bytes))
+            .filter(|e| !e.is_empty())
+            .map(Arc::new);
         self.tech.metas.insert(file.to_owned(), found.clone());
         found
     }
@@ -1077,36 +1219,69 @@ impl Tile {
 
         let building = |e: usize| self.tscene().type_of(e) == "BUILDING_INSTANCE";
         // A procedural wall is as far as its nearest piece (it can be long).
-        let wall_distance = |e: usize| self.generated_buildings(e).iter().map(|(w, _)| {
-            let d = w.transform_point(Float3::new(0.0, 0.0, 0.0)) - eye;
-            dot(d, d).sqrt()
-        }).fold(f32::MAX, f32::min);
+        let wall_distance = |e: usize| {
+            self.generated_buildings(e)
+                .iter()
+                .map(|(w, _)| {
+                    let d = w.transform_point(Float3::new(0.0, 0.0, 0.0)) - eye;
+                    dot(d, d).sqrt()
+                })
+                .fold(f32::MAX, f32::min)
+        };
         let mut walls = self.wall_preview.shown_walls();
         walls.extend(self.roads_with_buildings());
         let mut found: Vec<(f32, usize)> = match s.scope {
-            TechScope::All => self.instances.iter().copied().filter(|&e| building(e) && self.shown(e)).filter_map(|e| {
-                let d = self.world_position(e) - eye;
-                let d = dot(d, d).sqrt();
-                (d <= s.distance + self.marker_radius(e)).then_some((d, e))
-            }).chain(walls.iter().copied().filter(|&e| self.shown(e)).map(|e| (wall_distance(e), e)).filter(|&(d, _)| d <= s.distance)).collect(),
+            TechScope::All => self
+                .instances
+                .iter()
+                .copied()
+                .filter(|&e| building(e) && self.shown(e))
+                .filter_map(|e| {
+                    let d = self.world_position(e) - eye;
+                    let d = dot(d, d).sqrt();
+                    (d <= s.distance + self.marker_radius(e)).then_some((d, e))
+                })
+                .chain(walls.iter().copied().filter(|&e| self.shown(e)).map(|e| (wall_distance(e), e)).filter(|&(d, _)| d <= s.distance))
+                .collect(),
             TechScope::Selected => {
-                let groups: Vec<usize> = self.tech.selection.iter().copied().filter(|&g| g < self.tscene().doc().elements().len() && is_group(self.tscene().type_of(g))).collect();
-                let mut chosen: Vec<usize> = self.tech.selection.iter().copied().filter(|&e| e < self.tscene().doc().elements().len() && building(e)).collect();
+                let groups: Vec<usize> = self
+                    .tech
+                    .selection
+                    .iter()
+                    .copied()
+                    .filter(|&g| g < self.tscene().doc().elements().len() && is_group(self.tscene().type_of(g)))
+                    .collect();
+                let mut chosen: Vec<usize> =
+                    self.tech.selection.iter().copied().filter(|&e| e < self.tscene().doc().elements().len() && building(e)).collect();
                 if !groups.is_empty() {
-                    chosen.extend(self.instances.iter().copied().filter(|&b| building(b) && groups.iter().any(|&g| self.tscene().is_descendant(b, g))));
+                    chosen.extend(
+                        self.instances
+                            .iter()
+                            .copied()
+                            .filter(|&b| building(b) && groups.iter().any(|&g| self.tscene().is_descendant(b, g))),
+                    );
                 }
 
-                chosen.extend(walls.iter().copied().filter(|&w| self.tech.selection.contains(&w) || groups.iter().any(|&g| self.tscene().is_descendant(w, g))));
+                chosen.extend(
+                    walls
+                        .iter()
+                        .copied()
+                        .filter(|&w| self.tech.selection.contains(&w) || groups.iter().any(|&g| self.tscene().is_descendant(w, g))),
+                );
                 chosen.sort_unstable();
                 chosen.dedup();
-                chosen.into_iter().filter(|&e| self.shown(e)).map(|e| {
-                    if walls.contains(&e) {
-                        return (wall_distance(e), e);
-                    }
+                chosen
+                    .into_iter()
+                    .filter(|&e| self.shown(e))
+                    .map(|e| {
+                        if walls.contains(&e) {
+                            return (wall_distance(e), e);
+                        }
 
-                    let d = self.world_position(e) - eye;
-                    (dot(d, d).sqrt(), e)
-                }).collect()
+                        let d = self.world_position(e) - eye;
+                        (dot(d, d).sqrt(), e)
+                    })
+                    .collect()
             }
         };
 
@@ -1178,7 +1353,11 @@ impl Tile {
         }
 
         let n = all.len() as f32;
-        let centre = Float3::new(all.iter().map(|p| p.x).sum::<f32>() / n, all.iter().map(|p| p.y).sum::<f32>() / n, all.iter().map(|p| p.z).sum::<f32>() / n);
+        let centre = Float3::new(
+            all.iter().map(|p| p.x).sum::<f32>() / n,
+            all.iter().map(|p| p.y).sum::<f32>() / n,
+            all.iter().map(|p| p.z).sum::<f32>() / n,
+        );
         Some(Foot { elem: e, rings, lo, hi, centre })
     }
 
@@ -1206,7 +1385,8 @@ impl Tile {
         };
 
         // The scene was replaced: the entities went with it.
-        let alive = self.tech.cells.values().all(|(id, _)| scene.find(*id).is_some()) && (self.tech.collisions == 0 || scene.find(self.tech.collisions).is_some());
+        let alive = self.tech.cells.values().all(|(id, _)| scene.find(*id).is_some())
+            && (self.tech.collisions == 0 || scene.find(self.tech.collisions).is_some());
         if !alive {
             self.tech.cells.clear();
             self.tech.collisions = 0;
@@ -1322,10 +1502,18 @@ impl Tile {
         let mut subjects = drawn.to_vec();
         if s.scope == TechScope::Selected && !drawn.is_empty() && drawn.len() * self.instances.len() <= 4_000_000 {
             let near: Vec<(Float3, f32)> = drawn.iter().map(|&e| (self.world_position(e), self.marker_radius(e))).collect();
-            let rest: Vec<usize> = self.instances.iter().copied().filter(|&e| self.tscene().type_of(e) == "BUILDING_INSTANCE" && self.shown(e) && !drawn.contains(&e)).collect();
+            let rest: Vec<usize> = self
+                .instances
+                .iter()
+                .copied()
+                .filter(|&e| self.tscene().type_of(e) == "BUILDING_INSTANCE" && self.shown(e) && !drawn.contains(&e))
+                .collect();
             for e in rest {
                 let (p, r) = (self.world_position(e), self.marker_radius(e));
-                if near.iter().any(|&(q, rq)| { let d = p - q; dot(d, d).sqrt() <= r + rq + 4.0 }) {
+                if near.iter().any(|&(q, rq)| {
+                    let d = p - q;
+                    dot(d, d).sqrt() <= r + rq + 4.0
+                }) {
                     subjects.push(e);
                 }
             }

@@ -40,7 +40,12 @@ fn main() {
             continue;
         }
 
-        println!("{name}: {} bytes ours, {} BOB's; header {}", ours.len(), theirs.len(), if ours[..128] == theirs[..128] { "same" } else { "DIFFERS" });
+        println!(
+            "{name}: {} bytes ours, {} BOB's; header {}",
+            ours.len(),
+            theirs.len(),
+            if ours[..128] == theirs[..128] { "same" } else { "DIFFERS" }
+        );
         if &theirs[84..88] != b"DXT5" {
             let n = ours.iter().zip(&theirs).skip(128).filter(|(a, b)| a != b).count();
             println!("  {n} bytes differ");

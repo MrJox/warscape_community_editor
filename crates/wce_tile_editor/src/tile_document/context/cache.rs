@@ -181,9 +181,32 @@ impl W {
 
 fn write_material(w: &mut W, m: &TerrainMaterial) {
     let TerrainMaterial {
-            baked: _,
-        x0, z0, x1, z1, y0, y1, blend, index, normal, alpha, normal_id: _, normal_dirty: _, blend_id: _, blend_dirty: _, diffuse, normal_tex, pixel_scale, outfield_scale, mid_strength, smoothness, reflectivity,
-        detail_colour, detail_normal, campaign, id: _,
+        baked: _,
+        x0,
+        z0,
+        x1,
+        z1,
+        y0,
+        y1,
+        blend,
+        index,
+        normal,
+        alpha,
+        normal_id: _,
+        normal_dirty: _,
+        blend_id: _,
+        blend_dirty: _,
+        diffuse,
+        normal_tex,
+        pixel_scale,
+        outfield_scale,
+        mid_strength,
+        smoothness,
+        reflectivity,
+        detail_colour,
+        detail_normal,
+        campaign,
+        id: _,
     } = m;
     for v in [x0, z0, x1, z1, y0, y1] {
         w.f64(*v);
@@ -301,7 +324,14 @@ pub fn encode(t: &Template) -> Vec<u8> {
         None => w.bool(false),
     }
 
-    let kept: Vec<usize> = (0..t.entities.len()).filter(|&i| matches!(t.entities[i].1, Payload::MeshInstance(_) | Payload::Decal(_) | Payload::PointLight(_) | Payload::VfxEmitter(_) | Payload::Water(_))).collect();
+    let kept: Vec<usize> = (0..t.entities.len())
+        .filter(|&i| {
+            matches!(
+                t.entities[i].1,
+                Payload::MeshInstance(_) | Payload::Decal(_) | Payload::PointLight(_) | Payload::VfxEmitter(_) | Payload::Water(_)
+            )
+        })
+        .collect();
     w.u32(kept.iter().filter(|&&i| i < t.mid).count() as u32);
     w.u32(kept.len() as u32);
     for &i in &kept {
@@ -402,7 +432,8 @@ impl R<'_> {
 }
 
 fn read_material(r: &mut R) -> Result<TerrainMaterial, String> {
-    let mut m = TerrainMaterial { x0: r.f64()?, z0: r.f64()?, x1: r.f64()?, z1: r.f64()?, y0: r.f64()?, y1: r.f64()?, ..Default::default() };
+    let mut m =
+        TerrainMaterial { x0: r.f64()?, z0: r.f64()?, x1: r.f64()?, z1: r.f64()?, y0: r.f64()?, y1: r.f64()?, ..Default::default() };
     m.blend = r.image()?;
     m.index = r.image()?;
     m.normal = r.image()?;
@@ -429,12 +460,28 @@ fn read_payload(r: &mut R) -> Result<Payload, String> {
     Ok(match r.u8()? {
         1 => {
             let (model, casts_shadow, lod) = (r.str()?, r.bool()?, r.bool()?);
-            Payload::MeshInstance(MeshInstance { model, casts_shadow, lod, p4: r.f32_array()?, p5: r.f32_array()?, p6: r.f32_array()?, p7: r.f32_array()?, burning: false })
+            Payload::MeshInstance(MeshInstance {
+                model,
+                casts_shadow,
+                lod,
+                p4: r.f32_array()?,
+                p5: r.f32_array()?,
+                p6: r.f32_array()?,
+                p7: r.f32_array()?,
+                burning: false,
+            })
         }
 
         2 => Payload::Decal(Decal { model: r.str()?, tiled: r.bool()?, opacity: r.f32()?, parallax: r.f32()? }),
         3 => Payload::PointLight(PointLight {
-            colour: r.f32_array()?, colour_scale: r.f32()?, colour_min: r.f32()?, radius: r.f32()?, smooth: r.bool()?, animation: r.u8()?, speed: r.f32_array()?, phase: r.f32()?,
+            colour: r.f32_array()?,
+            colour_scale: r.f32()?,
+            colour_min: r.f32()?,
+            radius: r.f32()?,
+            smooth: r.bool()?,
+            animation: r.u8()?,
+            speed: r.f32_array()?,
+            phase: r.f32()?,
         }),
         4 => {
             let (effect, scale) = (r.str()?, r.f32()?);
@@ -482,7 +529,8 @@ pub fn decode(bytes: &[u8]) -> Result<Template, String> {
         entities.push((m, read_payload(r)?));
     }
 
-    let mut t = Template { extent, own: Grid { nx, nz, ox, oz, step, heights: Arc::new(heights) }, material, entities, mid, ..Default::default() };
+    let mut t =
+        Template { extent, own: Grid { nx, nz, ox, oz, step, heights: Arc::new(heights) }, material, entities, mid, ..Default::default() };
     t.finish();
     Ok(t)
 }
@@ -509,7 +557,11 @@ mod tests {
     fn prune_removes_only_other_formats() {
         let dir = std::env::temp_dir().join(format!("wce_cache_prune_{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("a scratch folder");
-        let mut t = Template { extent: (8.0, 8.0), own: Grid { nx: 2, nz: 2, ox: 0.0, oz: 0.0, step: 2.0, heights: Arc::new(vec![0.0; 4]) }, ..Default::default() };
+        let mut t = Template {
+            extent: (8.0, 8.0),
+            own: Grid { nx: 2, nz: 2, ox: 0.0, oz: 0.0, step: 2.0, heights: Arc::new(vec![0.0; 4]) },
+            ..Default::default()
+        };
         t.finish();
         write(&dir, 1, &t).expect("written");
         let mut old = MAGIC.to_vec();
@@ -528,12 +580,36 @@ mod tests {
         m.diffuse[3] = "d3.dds".to_owned();
         m.smoothness[15] = 0.5;
         let mut t = Template {
-            extent: (128.0, 256.0), own: Grid { nx: 2, nz: 3, ox: -8.0, oz: -8.0, step: 2.0, heights: Arc::new(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]) }, material: Some(Arc::new(m)),
+            extent: (128.0, 256.0),
+            own: Grid { nx: 2, nz: 3, ox: -8.0, oz: -8.0, step: 2.0, heights: Arc::new(vec![0.0, 1.0, 2.0, 3.0, 4.0, 5.0]) },
+            material: Some(Arc::new(m)),
             entities: vec![
                 (Float4x4::IDENTITY, Payload::MeshInstance(MeshInstance { model: "b.rigid_model_v2".to_owned(), ..Default::default() })),
-                (Float4x4::IDENTITY, Payload::Water(Water { verts: vec![WaterVertex { x: 1.0, fade: 0.5, ..Default::default() }], indices: vec![0, 0, 0], ..Default::default() })),
-                (Float4x4::IDENTITY, Payload::PointLight(PointLight { colour: [1.0, 0.5, 0.25], colour_scale: 2.0, colour_min: 0.0, radius: 9.0, smooth: true, animation: 2, speed: [1.0, 2.0], phase: 0.3 })),
-                (Float4x4::IDENTITY, Payload::VfxEmitter(VfxEmitter { effect: "fire".to_owned(), scale: 1.5, mesh: Some(Arc::new(vec![[1.0; 9]])) })),
+                (
+                    Float4x4::IDENTITY,
+                    Payload::Water(Water {
+                        verts: vec![WaterVertex { x: 1.0, fade: 0.5, ..Default::default() }],
+                        indices: vec![0, 0, 0],
+                        ..Default::default()
+                    }),
+                ),
+                (
+                    Float4x4::IDENTITY,
+                    Payload::PointLight(PointLight {
+                        colour: [1.0, 0.5, 0.25],
+                        colour_scale: 2.0,
+                        colour_min: 0.0,
+                        radius: 9.0,
+                        smooth: true,
+                        animation: 2,
+                        speed: [1.0, 2.0],
+                        phase: 0.3,
+                    }),
+                ),
+                (
+                    Float4x4::IDENTITY,
+                    Payload::VfxEmitter(VfxEmitter { effect: "fire".to_owned(), scale: 1.5, mesh: Some(Arc::new(vec![[1.0; 9]])) }),
+                ),
                 (Float4x4::IDENTITY, Payload::Decal(Decal { model: "d".to_owned(), tiled: true, opacity: 0.7, parallax: 0.1 })),
             ],
             mid: 2,
@@ -548,6 +624,9 @@ mod tests {
         assert_eq!(back.mid, 2);
         assert_eq!(back.entities.iter().map(|e| &e.1).collect::<Vec<_>>(), t.entities.iter().map(|e| &e.1).collect::<Vec<_>>());
         let (a, b) = (back.material.as_ref().unwrap(), t.material.as_ref().unwrap());
-        assert_eq!((a.x0, a.z1, a.y0, &a.blend, &a.diffuse, a.smoothness, &a.detail_colour), (b.x0, b.z1, b.y0, &b.blend, &b.diffuse, b.smoothness, &b.detail_colour));
+        assert_eq!(
+            (a.x0, a.z1, a.y0, &a.blend, &a.diffuse, a.smoothness, &a.detail_colour),
+            (b.x0, b.z1, b.y0, &b.blend, &b.diffuse, b.smoothness, &b.detail_colour)
+        );
     }
 }

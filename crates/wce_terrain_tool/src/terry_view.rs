@@ -10,10 +10,7 @@ use std::collections::HashMap;
 use wce_editor::editor::Editor;
 use wce_editor::gui;
 use wce_foundation::math::{Float3, Float4x4};
-use wce_scene::render_scene::{
-    DocumentId, EntityId, LayerId, Overlay, OverlayVertex, Payload, RenderScene, SourceRef,
-    overlay_colour,
-};
+use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, OverlayVertex, Payload, RenderScene, SourceRef, overlay_colour};
 use wce_terrain::terry::{EntityKind, TerryProject};
 use wce_terrain_editor::MapDocument;
 use wce_terrain_editor::document::{TERRY_CELL, TerryFrame};
@@ -42,34 +39,15 @@ mod removal_tests {
                 view.layer,
                 Float4x4::IDENTITY,
                 Payload::Overlay(Overlay::default()),
-                SourceRef {
-                    item: source.item + i,
-                    ..source
-                },
+                SourceRef { item: source.item + i, ..source },
             );
             view.shown.insert(source.item + i, id);
             // Interleaving unrelated ids catches accidental removal of a whole layer or a contiguous enclosing range.
-            keep.push(scene.add(
-                other_layer,
-                Float4x4::IDENTITY,
-                Payload::Overlay(Overlay::default()),
-                SourceRef { doc: 8, item: i },
-            ));
+            keep.push(scene.add(other_layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 8, item: i }));
         }
-        view.draft = scene.add(
-            view.layer,
-            Float4x4::IDENTITY,
-            Payload::Overlay(Overlay::default()),
-            SourceRef {
-                doc: 7,
-                item: u64::MAX,
-            },
-        );
+        view.draft = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 7, item: u64::MAX });
         keep.push(view.draft);
-        let retained: Vec<_> = keep
-            .iter()
-            .map(|&id| scene.find(id).unwrap().clone())
-            .collect();
+        let retained: Vec<_> = keep.iter().map(|&id| scene.find(id).unwrap().clone()).collect();
         let layers = scene.layers().to_vec();
         let terrain_revision = scene.terrain_revision();
         let mut cursor = 0;
@@ -83,20 +61,11 @@ mod removal_tests {
         assert_eq!(scene.terrain_revision(), terrain_revision);
         let changes = scene.structure_since(&mut cursor).unwrap();
         assert_eq!(changes.len(), 6);
-        assert!(
-            changes
-                .iter()
-                .all(|c| matches!(c, StructureChange::Removed(_)))
-        );
+        assert!(changes.iter().all(|c| matches!(c, StructureChange::Removed(_))));
         view.remove_shown(&mut scene);
         assert!(scene.structure_since(&mut cursor).unwrap().is_empty());
         assert_eq!(scene.entities(), retained);
-        let rebuilt = scene.add(
-            view.layer,
-            Float4x4::IDENTITY,
-            Payload::Overlay(Overlay::default()),
-            source,
-        );
+        let rebuilt = scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), source);
         assert_eq!(selection.items(), &[source]);
         assert_eq!(selection.entities(&scene), vec![rebuilt]);
         assert!(scene.pickable(scene.find(rebuilt).unwrap()));
@@ -115,20 +84,11 @@ mod removal_tests {
                     let mut view = TerryView::default();
                     view.layer = scene.add_layer(1, "benchmark");
                     for i in 0..filler {
-                        scene.add(
-                            view.layer,
-                            Float4x4::IDENTITY,
-                            Payload::Overlay(Overlay::default()),
-                            SourceRef { doc: 2, item: i },
-                        );
+                        scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 2, item: i });
                     }
                     for i in 0..count {
-                        let id = scene.add(
-                            view.layer,
-                            Float4x4::IDENTITY,
-                            Payload::Overlay(Overlay::default()),
-                            SourceRef { doc: 1, item: i },
-                        );
+                        let id =
+                            scene.add(view.layer, Float4x4::IDENTITY, Payload::Overlay(Overlay::default()), SourceRef { doc: 1, item: i });
                         view.shown.insert(i, id);
                     }
                     let start = std::time::Instant::now();
@@ -143,10 +103,7 @@ mod removal_tests {
                     assert_eq!(scene.entities().len(), filler as usize);
                 }
                 times.sort_by(f64::total_cmp);
-                println!(
-                    "overlays={count} unrelated={filler} batch={batch} median_ms={:.3} samples_ms={times:?}",
-                    times[1]
-                );
+                println!("overlays={count} unrelated={filler} batch={batch} median_ms={:.3} samples_ms={times:?}", times[1]);
             }
         }
     }
@@ -181,11 +138,16 @@ pub enum Mode {
 
 /// The modes of a battle map's and of a campaign map's `.terry`, with their labels.
 const BATTLE_MODES: [(Mode, &str); 4] = [
-    (Mode::Select, "select (the gizmo moves)"), (Mode::NewBca, "new battle catchment area"), (Mode::NewDeploymentZone, "new deployment zone"),
+    (Mode::Select, "select (the gizmo moves)"),
+    (Mode::NewBca, "new battle catchment area"),
+    (Mode::NewDeploymentZone, "new deployment zone"),
     (Mode::EditPoints, "edit the selected polyline's points"),
 ];
 const CAMPAIGN_MODES: [(Mode, &str); 4] = [
-    (Mode::Select, "select (the gizmo moves)"), (Mode::NewProp, "new prop"), (Mode::NewVfx, "new VFX"), (Mode::NewEnvironmentVolume, "new environment volume"),
+    (Mode::Select, "select (the gizmo moves)"),
+    (Mode::NewProp, "new prop"),
+    (Mode::NewVfx, "new VFX"),
+    (Mode::NewEnvironmentVolume, "new environment volume"),
 ];
 
 /// What a campaign creation makes: the prop's model and scale, the VFX's effect, the environment volume's lighting and radii (`.terry`
@@ -230,7 +192,16 @@ pub struct TerryView {
 impl Default for TerryView {
     fn default() -> Self {
         Self {
-            show: [true, true, true, true], radius_m: 40_000.0, season: 0, mode: Mode::Select, points: vec![], picked: None, layer: 0, shown: HashMap::new(), built: None, draft: 0,
+            show: [true, true, true, true],
+            radius_m: 40_000.0,
+            season: 0,
+            mode: Mode::Select,
+            points: vec![],
+            picked: None,
+            layer: 0,
+            shown: HashMap::new(),
+            built: None,
+            draft: 0,
             new: NewCampaignEntity { scale: 0.3, radii: [100.0, 150.0], ..Default::default() },
         }
     }
@@ -244,7 +215,11 @@ fn style(p: &TerryProject, id: u64, kind: &EntityKind) -> (usize, [f32; 4]) {
         EntityKind::Bca(_) => (0, [1.0, 0.65, 0.15, 1.0]),
         EntityKind::CatchmentRegion => (1, [0.75, 0.75, 0.75, 0.6]),
         EntityKind::DeploymentRegion => {
-            let alliance = p.parent_of(id).and_then(|z| p.entity(z)).and_then(|z| p.component(z, "ECDeploymentZone")).and_then(|c| p.doc.get(c, "alliance_id"));
+            let alliance = p
+                .parent_of(id)
+                .and_then(|z| p.entity(z))
+                .and_then(|z| p.component(z, "ECDeploymentZone"))
+                .and_then(|c| p.doc.get(c, "alliance_id"));
             (2, if alliance.as_deref() == Some("1") { [0.9, 0.35, 0.85, 1.0] } else { [0.35, 0.9, 0.4, 1.0] })
         }
 
@@ -304,10 +279,12 @@ fn overlay(d: &MapDocument, frame: &Frame, id: u64, show: [bool; 4], season: usi
         for attr in ["inner_radius", "outer_radius"] {
             let r: f64 = p.doc.get(c, attr).and_then(|v| v.trim().parse().ok()).unwrap_or(0.0);
             if r > 0.0 {
-                let ring: Vec<[f64; 2]> = (0..48).map(|k| {
-                    let a = f64::from(k) / 48.0 * std::f64::consts::TAU;
-                    [w[0] + r * a.cos(), w[2] + r * a.sin()]
-                }).collect();
+                let ring: Vec<[f64; 2]> = (0..48)
+                    .map(|k| {
+                        let a = f64::from(k) / 48.0 * std::f64::consts::TAU;
+                        [w[0] + r * a.cos(), w[2] + r * a.sin()]
+                    })
+                    .collect();
                 on_ground(frame, &ring, true, d.terry_frame, colour, &mut lines);
             }
         }
@@ -335,20 +312,33 @@ impl TerryView {
         let Some(d) = e.docs.find_as::<MapDocument>(doc) else { return self.clear(e) };
         let Some(p) = d.project() else { return self.clear(e) };
         let cam = e.viewport.camera();
-        let at = { let (x, z) = d.terry_frame.from_frame(f64::from(cam.target.x), f64::from(cam.target.z)); [x, z] };
+        let at = {
+            let (x, z) = d.terry_frame.from_frame(f64::from(cam.target.x), f64::from(cam.target.z));
+            [x, z]
+        };
         let revision = d.terry_revision.load(std::sync::atomic::Ordering::Relaxed);
         let fresh = self.built.is_some_and(|(bd, br, bs, brad, bc)| {
-            bd == doc && br == revision && bs == (self.show, self.season) && brad == self.radius_m && (bc[0] - at[0]).hypot(bc[1] - at[1]) < f64::from(self.radius_m) / 4.0
+            bd == doc
+                && br == revision
+                && bs == (self.show, self.season)
+                && brad == self.radius_m
+                && (bc[0] - at[0]).hypot(bc[1] - at[1]) < f64::from(self.radius_m) / 4.0
         });
 
         if !fresh {
             let r = f64::from(self.radius_m);
-            let wanted: Vec<u64> = p.entities.iter().map(|x| x.id).filter(|&id| {
-                let w = p.world_position(id);
-                (w[0] - at[0]).hypot(w[2] - at[1]) <= r
-            }).collect();
+            let wanted: Vec<u64> = p
+                .entities
+                .iter()
+                .map(|x| x.id)
+                .filter(|&id| {
+                    let w = p.world_position(id);
+                    (w[0] - at[0]).hypot(w[2] - at[1]) <= r
+                })
+                .collect();
 
-            let overlays: Vec<(u64, Overlay)> = wanted.into_iter().filter_map(|id| Some((id, overlay(d, &frame, id, self.show, self.season)?))).collect();
+            let overlays: Vec<(u64, Overlay)> =
+                wanted.into_iter().filter_map(|id| Some((id, overlay(d, &frame, id, self.show, self.season)?))).collect();
             if self.layer == 0 || e.scene.layer(self.layer).is_none() {
                 self.layer = e.scene.add_layer(doc, "terry entities");
                 self.shown.clear();
@@ -384,8 +374,19 @@ impl TerryView {
             for (k, q) in pts.iter().enumerate() {
                 let picked = self.picked == Some((id, k));
                 let cell = d.terry_frame.cell;
-                let (r, c) = if picked { (cell / 3.0, overlay_colour(1.0, 0.25, 0.25, 1.0)) } else { (cell / 6.0, overlay_colour(1.0, 1.0, 0.3, 1.0)) };
-                on_ground(&frame, &[[q[0] - r, q[1] - r], [q[0] + r, q[1] - r], [q[0] + r, q[1] + r], [q[0] - r, q[1] + r]], true, d.terry_frame, c, &mut lines);
+                let (r, c) = if picked {
+                    (cell / 3.0, overlay_colour(1.0, 0.25, 0.25, 1.0))
+                } else {
+                    (cell / 6.0, overlay_colour(1.0, 1.0, 0.3, 1.0))
+                };
+                on_ground(
+                    &frame,
+                    &[[q[0] - r, q[1] - r], [q[0] + r, q[1] - r], [q[0] + r, q[1] + r], [q[0] - r, q[1] + r]],
+                    true,
+                    d.terry_frame,
+                    c,
+                    &mut lines,
+                );
             }
 
             Some(Overlay { lines, depth_test: false, pickable: false, ..Default::default() })
@@ -419,7 +420,9 @@ impl TerryView {
             Mode::NewBca => Some(new_bca(e, doc, at).unwrap_or_else(|err| err)),
             Mode::NewProp => Some(new_prop(e, doc, at, &self.new.model, self.new.scale).unwrap_or_else(|err| err)),
             Mode::NewVfx => Some(new_vfx(e, doc, at, &self.new.vfx).unwrap_or_else(|err| err)),
-            Mode::NewEnvironmentVolume => Some(new_environment_volume(e, doc, at, &self.new.lighting, self.new.radii).unwrap_or_else(|err| err)),
+            Mode::NewEnvironmentVolume => {
+                Some(new_environment_volume(e, doc, at, &self.new.lighting, self.new.radii).unwrap_or_else(|err| err))
+            }
             Mode::NewDeploymentZone => {
                 // Next to the first point: the zone closed and made.
                 let close = self.points.len() >= 3 && (self.points[0][0] - at[0]).hypot(self.points[0][1] - at[1]) < TERRY_CELL / 2.0;
@@ -531,7 +534,9 @@ impl TerryView {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Terry's generator: the procedural BCAs replaced by those bca_generation_spec.xml makes from the map's tiles, with their deployment zones");
+            gui::set_tooltip(
+                "Terry's generator: the procedural BCAs replaced by those bca_generation_spec.xml makes from the map's tiles, with their deployment zones",
+            );
         }
     }
 
@@ -556,14 +561,18 @@ impl TerryView {
         };
 
         let pick = |label: &str, value: &mut String, list: &[String]| {
-            if value.is_empty() && let Some(first) = list.first() {
+            if value.is_empty()
+                && let Some(first) = list.first()
+            {
                 value.clone_from(first);
             }
 
             gui::input_text(label, None, value, 512, 0);
             let mut k = list.iter().position(|v| v == value).map_or(-1, |k| k as i32);
             let names: Vec<&str> = list.iter().map(String::as_str).collect();
-            if gui::combo(&format!("used in the map##{label}"), &mut k, &names) && let Some(v) = list.get(k.max(0) as usize) {
+            if gui::combo(&format!("used in the map##{label}"), &mut k, &names)
+                && let Some(v) = list.get(k.max(0) as usize)
+            {
                 value.clone_from(v);
             }
         };
@@ -573,10 +582,16 @@ impl TerryView {
             Mode::NewProp => {
                 pick("model", &mut self.new.model, &used(&|k| if let EntityKind::Prop(m) = k { Some(m.clone()) } else { None }));
                 gui::drag_float("scale", &mut self.new.scale, 0.01, 0.01, 100.0, "%.3f");
-                if let Some(x) = first_selected && let EntityKind::Prop(m) = p.kind(x) && gui::button("From the selected") {
+                if let Some(x) = first_selected
+                    && let EntityKind::Prop(m) = p.kind(x)
+                    && gui::button("From the selected")
+                {
                     self.new.model = m;
-                    let s: Vec<f32> = p.component(x, "ECTransform").and_then(|c| p.doc.get(c, "scale"))
-                        .map(|v| v.split_whitespace().filter_map(|t| t.parse().ok()).collect()).unwrap_or_default();
+                    let s: Vec<f32> = p
+                        .component(x, "ECTransform")
+                        .and_then(|c| p.doc.get(c, "scale"))
+                        .map(|v| v.split_whitespace().filter_map(|t| t.parse().ok()).collect())
+                        .unwrap_or_default();
                     self.new.scale = s.first().copied().unwrap_or(1.0);
                 }
 
@@ -585,13 +600,20 @@ impl TerryView {
 
             Mode::NewVfx => {
                 pick("effect", &mut self.new.vfx, &used(&|k| if let EntityKind::Vfx(v) = k { Some(v.clone()) } else { None }));
-                if let Some(x) = first_selected && let EntityKind::Vfx(v) = p.kind(x) && gui::button("From the selected") {
+                if let Some(x) = first_selected
+                    && let EntityKind::Vfx(v) = p.kind(x)
+                    && gui::button("From the selected")
+                {
                     self.new.vfx = v;
                 }
             }
 
             Mode::NewEnvironmentVolume => {
-                pick("lighting", &mut self.new.lighting, &used(&|k| if let EntityKind::EnvironmentVolume(l) = k { Some(l.clone()) } else { None }));
+                pick(
+                    "lighting",
+                    &mut self.new.lighting,
+                    &used(&|k| if let EntityKind::EnvironmentVolume(l) = k { Some(l.clone()) } else { None }),
+                );
                 gui::drag_float2("inner, outer radius", &mut self.new.radii, 1.0, "%.1f");
                 gui::text_disabled("an outer radius of 0 is the map's global lighting");
             }
@@ -602,7 +624,12 @@ impl TerryView {
 }
 
 /// A structural edit of the document's `.terry` onto its history.
-fn structural(e: &mut Editor, doc: DocumentId, name: &str, f: impl FnOnce(&mut TerryProject) -> Result<Vec<wce_formats::xml_doc::XmlSplice>, String>) -> Result<(), String> {
+fn structural(
+    e: &mut Editor,
+    doc: DocumentId,
+    name: &str,
+    f: impl FnOnce(&mut TerryProject) -> Result<Vec<wce_formats::xml_doc::XmlSplice>, String>,
+) -> Result<(), String> {
     let d = e.docs.find_as_mut::<MapDocument>(doc).ok_or("no map shown")?;
     let p = d.project_mut().ok_or("this map has no .terry project")?;
     let splices = f(p)?;
@@ -633,7 +660,9 @@ pub fn new_bca(e: &mut Editor, doc: DocumentId, at: [f64; 2]) -> Result<String, 
 {{i}}<children>\n{{i}}{{i}}<child id=\"{cid:x}\"/>\n{{i}}</children>\n</entity>\n<entity id=\"{cid:x}\" name=\"Catchment Region\">\n{{i}}<components>\n\
 {{i}}{{i}}<ECRectangle width=\"2304\" height=\"2304\" active=\"true\"/>\n{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"0 0 0\"/>\n\
 {{i}}{{i}}<ECLandscapeAbove active=\"true\"/>\n{{i}}</components>\n{{i}}<children/>\n</entity>",
-        n(x), n(y), n(z)
+        n(x),
+        n(y),
+        n(z)
     );
 
     structural(e, doc, "new battle catchment area", |p| p.insert_entities(&xml).map_err(|err| err.to_string()))?;
@@ -641,7 +670,15 @@ pub fn new_bca(e: &mut Editor, doc: DocumentId, at: [f64; 2]) -> Result<String, 
 }
 
 /// One campaign entity (the kit's components, in its order) at `at`, named `name`: one step on the history.
-fn new_campaign_entity(e: &mut Editor, doc: DocumentId, at: [f64; 2], y: Option<f64>, name: &str, what: &str, components: &str) -> Result<String, String> {
+fn new_campaign_entity(
+    e: &mut Editor,
+    doc: DocumentId,
+    at: [f64; 2],
+    y: Option<f64>,
+    name: &str,
+    what: &str,
+    components: &str,
+) -> Result<String, String> {
     let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
     let p = d.project().ok_or("this map has no .terry project")?;
     if !d.terry_frame.y_from_lf {
@@ -652,7 +689,10 @@ fn new_campaign_entity(e: &mut Editor, doc: DocumentId, at: [f64; 2], y: Option<
     let n = |v: f64| wce_terrain::terry::number_text(v);
     let y = y.unwrap_or_else(|| d.terry_y_at(at[0], at[1]));
     let components = components.replace("{pos}", &format!("{} {} {}", n(at[0]), n(y), n(at[1])));
-    let xml = format!("<entity id=\"{id:x}\" name=\"{}\">\n{{i}}<components>\n{components}{{i}}</components>\n{{i}}<children/>\n</entity>", xml_attr(name));
+    let xml = format!(
+        "<entity id=\"{id:x}\" name=\"{}\">\n{{i}}<components>\n{components}{{i}}</components>\n{{i}}<children/>\n</entity>",
+        xml_attr(name)
+    );
     structural(e, doc, what, |p| p.insert_entities(&xml).map_err(|err| err.to_string()))?;
     Ok(format!("{what}: {name} ({id:x}) at {}, {}, {}", n(at[0]), n(y), n(at[1])))
 }
@@ -710,7 +750,9 @@ pub fn new_environment_volume(e: &mut Editor, doc: DocumentId, at: [f64; 2], lig
     let c = format!(
         "{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{{pos}}\"/>\n\
 {{i}}{{i}}<ECEnvironmentVolume outer_radius=\"{}\" lighting_file=\"{}\" active=\"true\" inner_radius=\"{}\"/>\n",
-        n(radii[1]), xml_attr(lighting.trim()), n(radii[0])
+        n(radii[1]),
+        xml_attr(lighting.trim()),
+        n(radii[0])
     );
 
     new_campaign_entity(e, doc, at, None, &format!("EV {}", count + 1), "new environment volume", &c)
@@ -734,20 +776,29 @@ pub fn new_zone(e: &mut Editor, doc: DocumentId, pts: &[[f64; 2]]) -> Result<Str
     }
 
     let is_bca = |id: &u64| p.entity(*id).is_some_and(|x| matches!(p.kind(x), EntityKind::Bca(_)));
-    let holds = |id: &u64| p.entity(*id).and_then(|x| p.rectangle(x)).is_some_and(|r| {
-        let w = p.world_position(*id);
-        (pts[0][0] - w[0]).abs() <= r[0] / 2.0 && (pts[0][1] - w[2]).abs() <= r[1] / 2.0
-    });
+    let holds = |id: &u64| {
+        p.entity(*id).and_then(|x| p.rectangle(x)).is_some_and(|r| {
+            let w = p.world_position(*id);
+            (pts[0][0] - w[0]).abs() <= r[0] / 2.0 && (pts[0][1] - w[2]).abs() <= r[1] / 2.0
+        })
+    };
 
-    let bca = selected.iter().copied().find(is_bca).or_else(|| p.entities.iter().map(|x| x.id).filter(is_bca).find(holds))
+    let bca = selected
+        .iter()
+        .copied()
+        .find(is_bca)
+        .or_else(|| p.entities.iter().map(|x| x.id).filter(is_bca).find(holds))
         .ok_or("a deployment zone belongs to a battle catchment area: select one, or start the zone inside one")?;
     let (id, rid) = (p.next_id(), p.next_id() + 1);
-    let zones = p.entity(bca).map_or(0, |b| b.children.iter().filter(|c| p.entity(**c).is_some_and(|x| p.component(x, "ECDeploymentZone").is_some())).count());
+    let zones = p
+        .entity(bca)
+        .map_or(0, |b| b.children.iter().filter(|c| p.entity(**c).is_some_and(|x| p.component(x, "ECDeploymentZone").is_some())).count());
     let (pair, alliance) = (zones / 2, zones % 2);
     let n = |v: f64| wce_terrain::terry::number_text(v);
     let o = pts[0];
     let y = d.lf_metres_at(o[0], o[1]);
-    let points: String = pts.iter().map(|q| format!("{{i}}{{i}}{{i}}{{i}}<point x=\"{}\" y=\"{}\"/>\n", n(q[0] - o[0]), n(q[1] - o[1]))).collect();
+    let points: String =
+        pts.iter().map(|q| format!("{{i}}{{i}}{{i}}{{i}}<point x=\"{}\" y=\"{}\"/>\n", n(q[0] - o[0]), n(q[1] - o[1]))).collect();
     let xml = format!(
         "<entity id=\"{id:x}\" name=\"DZ {pair}/{alliance}\">\n{{i}}<components>\n\
 {{i}}{{i}}<ECDeploymentZone deployment_category=\"DZC_RIVER\" deployment_type=\"DZT_1V1\" active=\"true\" facing_direction=\"0\" deployment_zone_id=\"0\" alliance_id=\"{alliance}\" configuration=\"0\"/>\n\
@@ -755,7 +806,9 @@ pub fn new_zone(e: &mut Editor, doc: DocumentId, pts: &[[f64; 2]]) -> Result<Str
 {{i}}{{i}}<ECDeploymentZoneRegion active=\"true\" region_type=\"DZRT_ADDITIVE\"/>\n{{i}}{{i}}<ECPolyline active=\"true\">\n{{i}}{{i}}{{i}}<polyline closed=\"true\">\n\
 {points}{{i}}{{i}}{{i}}</polyline>\n{{i}}{{i}}</ECPolyline>\n{{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{} {} {}\"/>\n\
 {{i}}</components>\n{{i}}<children/>\n</entity>",
-        n(o[0]), n(y), n(o[1])
+        n(o[0]),
+        n(y),
+        n(o[1])
     );
 
     structural(e, doc, "new deployment zone", |p| {
@@ -779,10 +832,18 @@ impl TerryView {
     fn edit_point(&mut self, e: &mut Editor, doc: DocumentId, at: [f64; 2]) -> Result<String, String> {
         let selected: Vec<u64> = e.selection.items().iter().filter(|s| s.doc == doc).map(|s| s.item).collect();
         let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
-        let (id, mut pts) = selected.iter().find_map(|&id| polyline_world(d, id).map(|p| (id, p))).ok_or("select an entity with a polyline (a deployment zone region)")?;
+        let (id, mut pts) = selected
+            .iter()
+            .find_map(|&id| polyline_world(d, id).map(|p| (id, p)))
+            .ok_or("select an entity with a polyline (a deployment zone region)")?;
         let near = TERRY_CELL / 2.0;
-        let vertex = pts.iter().enumerate().map(|(k, q)| (k, (q[0] - at[0]).hypot(q[1] - at[1]))).filter(|v| v.1 <= near)
-            .min_by(|a, b| a.1.total_cmp(&b.1)).map(|v| v.0);
+        let vertex = pts
+            .iter()
+            .enumerate()
+            .map(|(k, q)| (k, (q[0] - at[0]).hypot(q[1] - at[1])))
+            .filter(|v| v.1 <= near)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|v| v.0);
         let what;
         if gui::is_key_down(gui::MOD_CTRL) {
             let k = vertex.ok_or("Ctrl+click on a point to remove it")?;
@@ -859,10 +920,13 @@ pub fn duplicate(e: &mut Editor, doc: DocumentId, ids: &[u64]) -> Result<String,
     let mut xml = String::new();
     for &root in &roots {
         let texts = p.entity_text(root);
-        let map: HashMap<u64, u64> = texts.iter().map(|(old, _)| {
-            next += 1;
-            (*old, next - 1)
-        }).collect();
+        let map: HashMap<u64, u64> = texts
+            .iter()
+            .map(|(old, _)| {
+                next += 1;
+                (*old, next - 1)
+            })
+            .collect();
 
         for (old, text) in texts {
             let mut t = text;
@@ -875,7 +939,11 @@ pub fn duplicate(e: &mut Editor, doc: DocumentId, ids: &[u64]) -> Result<String,
                 && let Some(pos) = p.entity(old).and_then(|x| p.local_position(x))
             {
                 let n = |v: f64| wce_terrain::terry::number_text(v);
-                t = t.replacen(&format!("position=\"{} {} {}\"", n(pos[0]), n(pos[1]), n(pos[2])), &format!("position=\"{} {} {}\"", n(pos[0] + TERRY_CELL), n(pos[1]), n(pos[2])), 1);
+                t = t.replacen(
+                    &format!("position=\"{} {} {}\"", n(pos[0]), n(pos[1]), n(pos[2])),
+                    &format!("position=\"{} {} {}\"", n(pos[0] + TERRY_CELL), n(pos[1]), n(pos[2])),
+                    1,
+                );
             }
 
             // The text's own lines lose the indent of the scene's entities (insert_entities puts it back).
@@ -896,7 +964,10 @@ pub fn duplicate(e: &mut Editor, doc: DocumentId, ids: &[u64]) -> Result<String,
 
 /// The battle field of a placed map as the generator takes it: its placements as tile database indices (in the map's order: the battle
 /// field's); the ones the database doesn't know are left out.
-fn battle_field(db: &wce_tile::battle_map::tile_db::TileDatabase, placed: &wce_tile::battle_map::context::PlacedMap) -> Vec<wce_tile::battle_map::fill::Placement> {
+fn battle_field(
+    db: &wce_tile::battle_map::tile_db::TileDatabase,
+    placed: &wce_tile::battle_map::context::PlacedMap,
+) -> Vec<wce_tile::battle_map::fill::Placement> {
     let mut by_name = HashMap::new();
     for (t, tile) in db.tiles.iter().enumerate() {
         for v in 0..tile.variations.len() {
@@ -904,13 +975,23 @@ fn battle_field(db: &wce_tile::battle_map::tile_db::TileDatabase, placed: &wce_t
         }
     }
 
-    placed.placements.iter().filter_map(|p| {
-        let key = format!("{}\\{}", p.location.replace('/', "\\").trim_matches('\\'), p.variation).to_lowercase();
-        let &(tile, variation) = by_name.get(&key)?;
-        Some(wce_tile::battle_map::fill::Placement {
-            tile, variation, x: p.x as i16, y: p.y as i16, flags: (p.rotation & 0xf0) | if p.flipped { 4 } else { 0 }, climate: p.climate, lf: [0.0, 0.0],
+    placed
+        .placements
+        .iter()
+        .filter_map(|p| {
+            let key = format!("{}\\{}", p.location.replace('/', "\\").trim_matches('\\'), p.variation).to_lowercase();
+            let &(tile, variation) = by_name.get(&key)?;
+            Some(wce_tile::battle_map::fill::Placement {
+                tile,
+                variation,
+                x: p.x as i16,
+                y: p.y as i16,
+                flags: (p.rotation & 0xf0) | if p.flipped { 4 } else { 0 },
+                climate: p.climate,
+                lf: [0.0, 0.0],
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// Terry's Generate Battle Catchment Areas (docs/re/terry.md, "The BCA generator"): the procedural BCAs (and their regions and zones)
@@ -919,7 +1000,11 @@ fn battle_field(db: &wce_tile::battle_map::tile_db::TileDatabase, placed: &wce_t
 /// then the Assembly Kits. One step on the history.
 pub fn generate_bcas(e: &mut Editor, doc: DocumentId) -> Result<String, String> {
     let roots = crate::tool::kit_roots(e);
-    let spec_path = roots.iter().filter_map(|r| r.parent()).map(|k| k.join("editor_working_data/Terry/bca_generation_spec.xml")).find(|p| p.is_file())
+    let spec_path = roots
+        .iter()
+        .filter_map(|r| r.parent())
+        .map(|k| k.join("editor_working_data/Terry/bca_generation_spec.xml"))
+        .find(|p| p.is_file())
         .ok_or("no editor_working_data/Terry/bca_generation_spec.xml in the projects' kit layout or an Assembly Kit")?;
     let spec = wce_terrain::bca::Spec::parse(&std::fs::read(&spec_path).map_err(|err| format!("{}: {err}", spec_path.display()))?);
     let d = e.docs.find_as::<MapDocument>(doc).ok_or("no map shown")?;
@@ -935,7 +1020,12 @@ pub fn generate_bcas(e: &mut Editor, doc: DocumentId) -> Result<String, String> 
     let zones: usize = kept.iter().map(|b| b.zones.len()).sum();
     let errors: Vec<String> = all.iter().flat_map(|b| b.errors.iter().map(move |m| format!("{}: {m}", b.name))).collect();
     if kept.is_empty() && old.is_empty() {
-        return Ok(format!("no battle catchment areas: {} made, {} with errors (a map's {} cells by its edges make none)", all.len(), errors.len(), spec.map_border_for_outfield));
+        return Ok(format!(
+            "no battle catchment areas: {} made, {} with errors (a map's {} cells by its edges make none)",
+            all.len(),
+            errors.len(),
+            spec.map_border_for_outfield
+        ));
     }
 
     structural(e, doc, "generate battle catchment areas", |p| {
@@ -946,7 +1036,11 @@ pub fn generate_bcas(e: &mut Editor, doc: DocumentId) -> Result<String, String> 
 
     let mut msg = format!(
         "{} battle catchment areas with {zones} deployment zones ({} made, {} with errors{}; {} procedural ones replaced; {} deployment masks)",
-        kept.len(), all.len(), all.iter().filter(|b| !b.errors.is_empty()).count(), if spec.delete_invalid { ", left out" } else { "" }, old.len(),
+        kept.len(),
+        all.len(),
+        all.iter().filter(|b| !b.errors.is_empty()).count(),
+        if spec.delete_invalid { ", left out" } else { "" },
+        old.len(),
         masks.len()
     );
 

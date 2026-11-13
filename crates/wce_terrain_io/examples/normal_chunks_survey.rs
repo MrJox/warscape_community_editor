@@ -13,7 +13,12 @@ fn main() {
     cfg.mod_packs = Some(vec![]);
     let vfs = Vfs::mount(&cfg).expect("vfs");
     let filter = a.get(1).cloned().unwrap_or_default();
-    let mut maps: Vec<String> = vfs.list("terrain/battles/", ".dds").iter().filter(|p| p.contains("/normals/normal_0.dds")).map(|p| p.trim_end_matches("/normals/normal_0.dds").to_owned()).collect();
+    let mut maps: Vec<String> = vfs
+        .list("terrain/battles/", ".dds")
+        .iter()
+        .filter(|p| p.contains("/normals/normal_0.dds"))
+        .map(|p| p.trim_end_matches("/normals/normal_0.dds").to_owned())
+        .collect();
     maps.sort();
     let u32_at = |b: &[u8], o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
     for m in maps.iter().filter(|m| m.contains(&filter)) {
@@ -35,7 +40,12 @@ fn main() {
         // Chunk 0 against chunk 1 (to its right) at the offsets of the steps.
         let mut agree = String::new();
         if count > 1
-            && let (Ok(a0), Ok(a1)) = (dds_decode_mip(&c0, 0), vfs.read(&format!("{m}/normals/normal_1.dds")).map_err(|e| e.to_string()).and_then(|b| dds_decode_mip(&b, 0).map_err(str::to_owned)))
+            && let (Ok(a0), Ok(a1)) = (
+                dds_decode_mip(&c0, 0),
+                vfs.read(&format!("{m}/normals/normal_1.dds"))
+                    .map_err(|e| e.to_string())
+                    .and_then(|b| dds_decode_mip(&b, 0).map_err(str::to_owned)),
+            )
         {
             for s in [128u32, 256, 512] {
                 let (mut sum, mut n) = (0u64, 0u64);

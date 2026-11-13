@@ -20,7 +20,6 @@ pub struct GroundTypeField {
 }
 
 impl GroundTypeField {
-
     /// # Errors
     ///
     /// The image is not 8-bit RGB or RGBA.
@@ -208,7 +207,15 @@ mod tests {
 
     #[test]
     fn painting_and_undoing_gives_the_bytes_back() {
-        let png = PngFile { width: 40, height: 30, bit_depth: 8, color_type: 6, pixels: [0, 0, 0, 255].repeat(1200), pixels_edited: true, ..Default::default() };
+        let png = PngFile {
+            width: 40,
+            height: 30,
+            bit_depth: 8,
+            color_type: 6,
+            pixels: [0, 0, 0, 255].repeat(1200),
+            pixels_edited: true,
+            ..Default::default()
+        };
         let bytes = png.encode().unwrap();
         let mut f = GroundTypeField::from_png(PngFile::parse(&bytes).unwrap()).unwrap();
         assert_eq!(f.to_bytes().unwrap(), bytes);

@@ -91,7 +91,9 @@ fn main() {
         // ---- moves: several random ones per layout, each from the untouched layout
         for _ in 0..6 {
             let s = comps[rng.next(comps.len())];
-            let candidates: Vec<usize> = (0..ents.len()).filter(|&t| ents[t].kind == EntryKind::Entry && !ents[t].path.starts_with(&ents[s].path) && t != s).collect();
+            let candidates: Vec<usize> = (0..ents.len())
+                .filter(|&t| ents[t].kind == EntryKind::Entry && !ents[t].path.starts_with(&ents[s].path) && t != s)
+                .collect();
             if candidates.is_empty() {
                 continue;
             }
@@ -137,7 +139,10 @@ fn main() {
             }
 
             if (after[k].ax, after[k].ay) != (ents[s].ax, ents[s].ay) {
-                fail(path, format!("{label}: it moved on screen from ({}, {}) to ({}, {})", ents[s].ax, ents[s].ay, after[k].ax, after[k].ay));
+                fail(
+                    path,
+                    format!("{label}: it moved on screen from ({}, {}) to ({}, {})", ents[s].ax, ents[s].ay, after[k].ax, after[k].ay),
+                );
             }
 
             let parent_id = after[k].parent.map(|p| after[p].id);
@@ -155,14 +160,20 @@ fn main() {
                 }
                 Place::Before | Place::After => {
                     let want_parent = ents[t].parent.map(|p| ents[p].id);
-                    if parent_id != want_parent || after[k].parent.map(|p| after[p].name.clone()) != ents[t].parent.map(|p| ents[p].name.clone()) {
+                    if parent_id != want_parent
+                        || after[k].parent.map(|p| after[p].name.clone()) != ents[t].parent.map(|p| ents[p].name.clone())
+                    {
                         fail(path, format!("{label}: it is not a sibling of the target"));
                     }
 
                     let sibs: Vec<usize> = (0..after.len()).filter(|&j| after[j].parent == after[k].parent).collect();
                     // the target again: ids repeat in a layout (a template used several times), so it is the same one of its kind in order
-                    let nth = (0..ents.len()).filter(|&j| j != s && ents[j].id == ents[t].id && ents[j].name == ents[t].name).position(|j| j == t);
-                    let tk = nth.and_then(|n| (0..after.len()).filter(|&j| j != k && after[j].id == ents[t].id && after[j].name == ents[t].name).nth(n));
+                    let nth = (0..ents.len())
+                        .filter(|&j| j != s && ents[j].id == ents[t].id && ents[j].name == ents[t].name)
+                        .position(|j| j == t);
+                    let tk = nth.and_then(|n| {
+                        (0..after.len()).filter(|&j| j != k && after[j].id == ents[t].id && after[j].name == ents[t].name).nth(n)
+                    });
                     let (pk, pt) = (sibs.iter().position(|&j| j == k), tk.and_then(|tk| sibs.iter().position(|&j| j == tk)));
                     let ok = match (pk, pt, place) {
                         (Some(a), Some(b), Place::Before) => a + 1 == b,
@@ -171,7 +182,10 @@ fn main() {
                     };
 
                     if !ok {
-                        fail(path, format!("{label}: it is not directly {} the target", if place == Place::Before { "before" } else { "after" }));
+                        fail(
+                            path,
+                            format!("{label}: it is not directly {} the target", if place == Place::Before { "before" } else { "after" }),
+                        );
                     }
                 }
             }
@@ -192,7 +206,11 @@ fn main() {
                 Ok(p) => {
                     let after = m.entries();
                     match after.iter().position(|e| e.path == p) {
-                        Some(k) if after[k].name == "wce_check_new" && after[k].parent.is_some_and(|q| after[q].id == ents[t].id) && after.len() == ents.len() + 1 => {
+                        Some(k)
+                            if after[k].name == "wce_check_new"
+                                && after[k].parent.is_some_and(|q| after[q].id == ents[t].id)
+                                && after.len() == ents.len() + 1 =>
+                        {
                             if after[k].id == 0 || after.iter().filter(|e| e.id == after[k].id).count() != 1 {
                                 fail(path, format!("add into {what}: the new component's id is not unique"));
                             }
@@ -234,7 +252,8 @@ fn main() {
             Ok(()) => {
                 let after = m.entries();
                 let gone: std::collections::HashSet<usize> = subtree(&ents, s).into_iter().collect();
-                let want: Vec<(String, usize)> = (0..ents.len()).filter(|i| !gone.contains(i)).map(|i| (ents[i].name.clone(), ents[i].depth)).collect();
+                let want: Vec<(String, usize)> =
+                    (0..ents.len()).filter(|i| !gone.contains(i)).map(|i| (ents[i].name.clone(), ents[i].depth)).collect();
                 let have: Vec<(String, usize)> = after.iter().map(|e| (e.name.clone(), e.depth)).collect();
                 if want != have {
                     fail(path, format!("delete {}: what is left is not the rest of the layout", ents[s].name));

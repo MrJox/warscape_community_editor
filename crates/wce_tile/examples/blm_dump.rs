@@ -22,6 +22,10 @@ fn main() {
     }
 
     ids.sort_unstable();
-    let distinct = { let mut d = ids.clone(); d.dedup(); d.len() };
+    let distinct = {
+        let mut d = ids.clone();
+        d.dedup();
+        d.len()
+    };
     println!("ids: {} in all, {distinct} distinct, from {:?} to {:?}", ids.len(), ids.first(), ids.last());
 }

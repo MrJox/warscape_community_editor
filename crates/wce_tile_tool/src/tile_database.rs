@@ -96,7 +96,10 @@ impl TileTool {
         let ours = settings_file(&projects);
         if !ours.is_file() {
             let theirs = if e.game().features.kit_tiles { self.kit_for(e, "battle") } else { self.packs_database(e) };
-            let kit = theirs.map(|k| settings_file(&k)).filter(|k| k.is_file()).ok_or("no tile database settings to start from (set the Assembly Kit in the settings)")?;
+            let kit = theirs
+                .map(|k| settings_file(&k))
+                .filter(|k| k.is_file())
+                .ok_or("no tile database settings to start from (set the Assembly Kit in the settings)")?;
             if let Some(dir) = ours.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
             }
@@ -130,7 +133,9 @@ impl TileTool {
         let mut open = true;
         if gui::begin("Tile database", Some(&mut open), gui::WINDOW_NO_DOCKING) {
             if e.game().features.kit_tiles {
-                gui::text_wrapped("The battle tile sets of the Assembly Kit and of the projects, with their tiles (a click opens one). A new set goes into the projects' tile database; Save for Assembly Kit takes it into the kit's when a tile there uses it. Tile > Save tile as... puts a tile into a set.");
+                gui::text_wrapped(
+                    "The battle tile sets of the Assembly Kit and of the projects, with their tiles (a click opens one). A new set goes into the projects' tile database; Save for Assembly Kit takes it into the kit's when a tile there uses it. Tile > Save tile as... puts a tile into a set.",
+                );
             } else {
                 gui::text_wrapped(&format!(
                     "The battle tile sets of {}'s packs and of the projects, with their tiles (a click opens one; a tile of the packs is extracted into the projects). A new set goes into the projects' tile database. Tile > Save tile as... puts a tile into a set.",
@@ -147,7 +152,9 @@ impl TileTool {
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip("Its colour in the battle maps' pictures (a map paints a cell with a set's colour to ask for a tile of it): one no other set has. Left alone, one is picked.");
+                gui::set_tooltip(
+                    "Its colour in the battle maps' pictures (a map paints a cell with a set's colour to ask for a tile of it): one no other set has. Left alone, one is picked.",
+                );
             }
 
             gui::same_line();
@@ -192,12 +199,26 @@ impl TileTool {
                     let label = format!("{}  ({} tile(s)){}###set{}", s.name, tiles.len(), if *ours { "  [projects]" } else { "" }, s.name);
                     if gui::tree_node(&label) {
                         if !s.link_as_set.is_empty() || !s.linking_tile.is_empty() {
-                            gui::text_disabled(&format!("links as {}; linking tile {}", if s.link_as_set.is_empty() { &s.name } else { &s.link_as_set }, s.linking_tile));
+                            gui::text_disabled(&format!(
+                                "links as {}; linking tile {}",
+                                if s.link_as_set.is_empty() { &s.name } else { &s.link_as_set },
+                                s.linking_tile
+                            ));
                         }
 
                         for t in tiles.iter().filter(|t| f.is_empty() || s.name.contains(&f) || hit(t)) {
                             let name = t.location.rsplit(['\\', '/']).next().unwrap_or_default();
-                            if gui::selectable(&format!("{name}  {} x {}{}##{}", t.size.0, t.size.1, if t.ours { "  [projects]" } else { "" }, t.entry.display()), false, 0) {
+                            if gui::selectable(
+                                &format!(
+                                    "{name}  {} x {}{}##{}",
+                                    t.size.0,
+                                    t.size.1,
+                                    if t.ours { "  [projects]" } else { "" },
+                                    t.entry.display()
+                                ),
+                                false,
+                                0,
+                            ) {
                                 open_entry = Some(t.clone());
                             }
                         }

@@ -57,8 +57,14 @@ use Field::*;
 
 const MATRIX: Field = Matrix("transform");
 const DECAL: [Field; 6] = [IfByte(65), F32("parallax_scale"), U8("tiled"), F32("scale_x"), F32("scale_y"), F32("scale_z")];
-const PROP_HEAD: [Field; 7] = [MATRIX, U8("unknown_64"), U8("is_decal"), U8("unknown_66"), U8("unknown_67"), U8("unknown_68"), U8("unknown_69")];
-const VISIBILITY: [Field; 4] = [U8("visible_inside_snow_zone"), U8("visible_outside_snow_zone"), U8("visible_inside_destruction_zone"), U8("visible_outside_destruction_zone")];
+const PROP_HEAD: [Field; 7] =
+    [MATRIX, U8("unknown_64"), U8("is_decal"), U8("unknown_66"), U8("unknown_67"), U8("unknown_68"), U8("unknown_69")];
+const VISIBILITY: [Field; 4] = [
+    U8("visible_inside_snow_zone"),
+    U8("visible_outside_snow_zone"),
+    U8("visible_inside_destruction_zone"),
+    U8("visible_outside_destruction_zone"),
+];
 
 macro_rules! cat {
     ($($part:expr),* $(,)?) => {{
@@ -85,7 +91,9 @@ macro_rules! cat {
 pub fn layout(class: &str, version: u32) -> Option<(&'static [Field], KeyKind)> {
     Some(match (class, version) {
         // Rome 2's version 4: the head without its last flag (the water plane's, `unknown_69`).
-        ("PROP_MARKER", 4) => (cat!([MATRIX, U8("unknown_64"), U8("is_decal"), U8("unknown_66"), U8("unknown_67"), U8("unknown_68")], DECAL), KeyKind::Wide),
+        ("PROP_MARKER", 4) => {
+            (cat!([MATRIX, U8("unknown_64"), U8("is_decal"), U8("unknown_66"), U8("unknown_67"), U8("unknown_68")], DECAL), KeyKind::Wide)
+        }
         ("PROP_MARKER", 5) => (cat!(PROP_HEAD, DECAL), KeyKind::Wide),
         ("PROP_MARKER", 6) => (cat!(PROP_HEAD, [U32("seasons")], DECAL), KeyKind::Wide),
         ("PROP_MARKER", 8) => (cat!(PROP_HEAD, [U32("seasons"), Bytes("unknown_74", 3)], DECAL), KeyKind::Wide),
@@ -100,15 +108,39 @@ pub fn layout(class: &str, version: u32) -> Option<(&'static [Field], KeyKind)> 
         ),
         ("POINT_LIGHT_MARKER", 2) => (
             cat!([
-                F32("x"), F32("y"), F32("z"), F32("radius"), F32("red"), F32("green"), F32("blue"), F32("colour_scale"), Str("animation_type"),
-                F32("animation_speed_x"), F32("animation_speed_y"), F32("colour_min"), F32("random_offset"), Str("falloff_type"),
+                F32("x"),
+                F32("y"),
+                F32("z"),
+                F32("radius"),
+                F32("red"),
+                F32("green"),
+                F32("blue"),
+                F32("colour_scale"),
+                Str("animation_type"),
+                F32("animation_speed_x"),
+                F32("animation_speed_y"),
+                F32("colour_min"),
+                F32("random_offset"),
+                Str("falloff_type"),
             ]),
             KeyKind::Wide,
         ),
         ("POINT_LIGHT_MARKER", 3) => (
             cat!([
-                F32("x"), F32("y"), F32("z"), F32("radius"), F32("red"), F32("green"), F32("blue"), F32("colour_scale"), U8("unknown_32"),
-                Str("animation_type"), F32("animation_speed_x"), F32("animation_speed_y"), F32("colour_min"), F32("random_offset"),
+                F32("x"),
+                F32("y"),
+                F32("z"),
+                F32("radius"),
+                F32("red"),
+                F32("green"),
+                F32("blue"),
+                F32("colour_scale"),
+                U8("unknown_32"),
+                Str("animation_type"),
+                F32("animation_speed_x"),
+                F32("animation_speed_y"),
+                F32("colour_min"),
+                F32("random_offset"),
                 Str("falloff_type"),
             ]),
             KeyKind::Wide,
@@ -279,7 +311,6 @@ fn put_id(o: &mut Vec<u8>, id: u32) {
 }
 
 impl MarkersFile {
-
     /// # Errors
     ///
     /// Not a markers file, a truncated one, or records of a class / version without a layout.
@@ -469,8 +500,15 @@ mod tests {
 
     fn file(class: &str, version: u32, records: &[Vec<u8>], groups: Option<Vec<MarkerGroup>>) -> MarkersFile {
         MarkersFile {
-            repository: "BASE_MARKER_REPOSITORY".into(), repository_id: 0x9D9BB, repository_u32: 1, repository_u16: 1, class_id: 0x00B7_E42E,
-            class_name: class.into(), version, records: records.to_vec(), groups,
+            repository: "BASE_MARKER_REPOSITORY".into(),
+            repository_id: 0x9D9BB,
+            repository_u32: 1,
+            repository_u16: 1,
+            class_id: 0x00B7_E42E,
+            class_name: class.into(),
+            version,
+            records: records.to_vec(),
+            groups,
         }
     }
 

@@ -4,9 +4,9 @@
 use std::collections::BTreeMap;
 
 use wce_editor_core::inspector::Inspector;
+use wce_foundation::math::{Double3, Double3x3};
 use wce_tile::properties::{Access, Kind, RuleContext, access, schema};
 use wce_tile::ted_scene::TedScene;
-use wce_foundation::math::{Double3, Double3x3};
 use wce_tile::world_transform::{rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
 
 use super::edits::{edit_value, point_instance, scene_point};
@@ -121,7 +121,9 @@ impl TileDocument {
 
         // A capture location's boundary preset (the draft's, not the element's attributes).
         let preset = super::edits::DRAFT_BOUNDARY.map(|k| n.attrs.remove(k));
-        if d.kind == "CaptureLocationInstance" && let Some(kind) = preset[0].as_deref().and_then(boundary_kind) {
+        if d.kind == "CaptureLocationInstance"
+            && let Some(kind) = preset[0].as_deref().and_then(boundary_kind)
+        {
             let u = self.tile().unit();
             let size = preset[1].as_deref().and_then(|v| v.parse::<f64>().ok()).unwrap_or(20.0).max(0.5);
             let turn = preset[2].as_deref().and_then(|v| v.parse::<f64>().ok()).unwrap_or_else(|| draft_flag_degrees(&n.attrs));
@@ -178,7 +180,9 @@ impl TileDocument {
         // The values a new one gets without the draft's: its kind's own (an effect's scale) over the type's defaults.
         let template = wce_tile::new_instances::template(&d.kind);
         let own = point_instance(&d.kind, Double3::ZERO, &d.key, self.tile().unit()).map(|n| n.attrs).unwrap_or_default();
-        let default = |attr: &str| own.get(attr).cloned().or_else(|| template.and_then(|t| t.attrs.iter().find(|(k, _)| *k == attr)).map(|(_, v)| (*v).to_owned()));
+        let default = |attr: &str| {
+            own.get(attr).cloned().or_else(|| template.and_then(|t| t.attrs.iter().find(|(k, _)| *k == attr)).map(|(_, v)| (*v).to_owned()))
+        };
         let before = d.yaw;
         let mut yaw = d.yaw;
         if turnable && ins.edit_float("yaw", "turn (deg; R / Shift+R)", &mut yaw, 1.0, -360.0, 360.0) {
@@ -189,7 +193,9 @@ impl TileDocument {
         ins.section("Properties");
         let mut changed = d.yaw != before;
         for prop in props {
-            if matches!(prop.attr, "key" | "vfx" | "name") || matches!(prop.kind, Kind::Flags | Kind::Position | Kind::Orientation | Kind::DestructionLevel) {
+            if matches!(prop.attr, "key" | "vfx" | "name")
+                || matches!(prop.kind, Kind::Flags | Kind::Position | Kind::Orientation | Kind::DestructionLevel)
+            {
                 continue;
             }
 
@@ -198,7 +204,16 @@ impl TileDocument {
             let cur = cur.unwrap_or_default();
 
             // TEd's rules, as for a placed one (a building's category decides its wall properties; a draft has no file to go by).
-            let ctx = RuleContext { category: category.as_deref(), shape: d.attrs.get("polygon_shape").map(String::as_str), present: false, capture_location: wce_tile::export_as_prop::capture_location_set(d.attrs.get("capture_location").map(String::as_str)), export_as_prop: wce_tile::export_as_prop::exports_as_prop(d.attrs.get(wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).map(String::as_str), d.attrs.get("capture_location").map(String::as_str)) };
+            let ctx = RuleContext {
+                category: category.as_deref(),
+                shape: d.attrs.get("polygon_shape").map(String::as_str),
+                present: false,
+                capture_location: wce_tile::export_as_prop::capture_location_set(d.attrs.get("capture_location").map(String::as_str)),
+                export_as_prop: wce_tile::export_as_prop::exports_as_prop(
+                    d.attrs.get(wce_tile::export_as_prop::EXPORT_AS_PROP_ATTR).map(String::as_str),
+                    d.attrs.get("capture_location").map(String::as_str),
+                ),
+            };
             match access(prop, &ctx) {
                 Access::Hidden => continue,
                 Access::ReadOnly => {
@@ -215,7 +230,8 @@ impl TileDocument {
                 Kind::Placement => {
                     let modes = ["Landscape: Above", "Freeform"].map(str::to_owned);
                     let mut idx = i32::from(cur == "MSM_FREEFORM");
-                    ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes).then(|| if idx == 1 { "MSM_FREEFORM" } else { "MSM_LANDSCAPE" }.to_owned())
+                    ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes)
+                        .then(|| if idx == 1 { "MSM_FREEFORM" } else { "MSM_LANDSCAPE" }.to_owned())
                 }
 
                 Kind::Text => {
@@ -248,7 +264,12 @@ impl TileDocument {
             && let Some(target) = sc.doc().get(g, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))
         {
             let v = target + (after - before);
-            let text = format!("vector({},{},{})", wce_tile::ted_scene::format_number(v.x), wce_tile::ted_scene::format_number(v.y), wce_tile::ted_scene::format_number(v.z));
+            let text = format!(
+                "vector({},{},{})",
+                wce_tile::ted_scene::format_number(v.x),
+                wce_tile::ted_scene::format_number(v.y),
+                wce_tile::ted_scene::format_number(v.z)
+            );
             self.tscene_mut().set_attr(g, "target", &text);
         }
     }
@@ -259,7 +280,15 @@ impl TileDocument {
     /// # Errors
     ///
     /// The text is not an element, or there is no such layer.
-    pub fn place_text(&mut self, what: &str, text: &[u8], into: usize, at: wce_foundation::math::Float3, name: Option<&str>, on_terrain: bool) -> Result<usize, String> {
+    pub fn place_text(
+        &mut self,
+        what: &str,
+        text: &[u8],
+        into: usize,
+        at: wce_foundation::math::Float3,
+        name: Option<&str>,
+        on_terrain: bool,
+    ) -> Result<usize, String> {
         self.check_structure(&[], Some(into))?;
         self.check_fits([super::edits::text_kind(text)], into)?;
         let mark = self.begin()?;
@@ -279,7 +308,8 @@ impl TileDocument {
             // What is inside on the landscape goes onto the terrain where it now is: it kept the height it had where it was saved (a
             // prefab's parts floated or sank by the ground's difference).
             let unit = self.tile().unit();
-            let inside = self.tile().instances_below(&[g]).into_iter().filter(|&e| e != g && self.tile().on_the_terrain(e)).collect::<Vec<_>>();
+            let inside =
+                self.tile().instances_below(&[g]).into_iter().filter(|&e| e != g && self.tile().on_the_terrain(e)).collect::<Vec<_>>();
             for e in inside {
                 let t = self.tile();
                 let w = wce_tile::world_transform::world_transform(t.tscene(), e).position;
@@ -312,7 +342,13 @@ mod tests {
 
     #[test]
     fn the_tilt_takes_up_to_the_normal() {
-        for n in [Double3::new(0.3, 1.0, -0.2), Double3::new(-1.0, 0.1, 0.0), Double3::new(0.0, 1.0, 0.0), Double3::new(0.0, -1.0, 0.0), Double3::new(0.2, -0.5, 0.7)] {
+        for n in [
+            Double3::new(0.3, 1.0, -0.2),
+            Double3::new(-1.0, 0.1, 0.0),
+            Double3::new(0.0, 1.0, 0.0),
+            Double3::new(0.0, -1.0, 0.0),
+            Double3::new(0.2, -0.5, 0.7),
+        ] {
             let len = (n.x * n.x + n.y * n.y + n.z * n.z).sqrt();
             let up = tilt_to(n) * Double3::new(0.0, 1.0, 0.0);
             assert!((up - n * (1.0 / len)).max_abs_diff(Double3::ZERO) < 1e-12, "{n:?} -> {up:?}");

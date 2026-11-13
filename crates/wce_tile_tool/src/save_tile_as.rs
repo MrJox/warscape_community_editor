@@ -33,7 +33,14 @@ impl TileTool {
     }
 
     /// Saves the open tile as `set/name/variation`; the status says how it went.
-    pub(crate) fn save_tile_as(&mut self, e: &mut Editor, id: DocumentId, set: &str, name: &str, variation: &str) -> Result<String, String> {
+    pub(crate) fn save_tile_as(
+        &mut self,
+        e: &mut Editor,
+        id: DocumentId,
+        set: &str,
+        name: &str,
+        variation: &str,
+    ) -> Result<String, String> {
         let kit = self.battle_database_root(e);
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile")?;
         let msg = d.save_tile_as(set, name, variation, kit.as_deref())?;
@@ -53,7 +60,9 @@ impl TileTool {
         }
 
         let mut ui = self.save_as.take().unwrap_or_default();
-        gui::text_wrapped("The tile as a battle tile of the projects folder: terrain/tiles/battle/<tile set>/<name>/<variation>, with an entry of its own. A tile of that name and size takes it as one more variation (keeping its other properties); one of another size is refused, as TEd does.");
+        gui::text_wrapped(
+            "The tile as a battle tile of the projects folder: terrain/tiles/battle/<tile set>/<name>/<variation>, with an entry of its own. A tile of that name and size takes it as one more variation (keeping its other properties); one of another size is refused, as TEd does.",
+        );
         for (label, v) in [("tile set", &mut ui.set), ("name", &mut ui.name), ("variation", &mut ui.variation)] {
             gui::set_next_item_width(240.0);
             gui::input_text(label, None, v, 64, 0);

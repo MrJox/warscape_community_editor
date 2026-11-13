@@ -119,51 +119,65 @@ impl TileDocument {
             with_contents(sc, e, &mut all);
         }
 
-        all.into_iter().filter(|&e| !sc.is_layer(e)).map(|e| {
-            let w = world_transform(sc, e);
-            let at = |p: Double3| w.position + w.rotation * p;
-            let mirrored = |p: Double3| plane.mirror(p, u);
+        all.into_iter()
+            .filter(|&e| !sc.is_layer(e))
+            .map(|e| {
+                let w = world_transform(sc, e);
+                let at = |p: Double3| w.position + w.rotation * p;
+                let mirrored = |p: Double3| plane.mirror(p, u);
 
-            // What follows the landscape stays as high above the ground: the other side of the plane can be higher (a river left under it).
-            let landscape = t.placement_of_attr(e) == Placement::Landscape;
-            let ground = |p: Double3| f64::from(t.terrain_height((p.x / u) as f32, (p.z / u) as f32)) * u;
-            let rise = |p: Double3| if landscape && !terrain_too { ground(plane.mirror(p, u)) - ground(p) } else { 0.0 };
-            let river = sc.type_of(e) == "SplineRiverInstance";
-            let factor = if river { factors.next().unwrap_or(1.0) } else { 1.0 };
-            let lifted = |p: Double3, by: f64| {
-                let q = plane.mirror(p, u);
-                Double3::new(q.x, q.y / factor + by, q.z)
-            };
+                // What follows the landscape stays as high above the ground: the other side of the plane can be higher (a river left under it).
+                let landscape = t.placement_of_attr(e) == Placement::Landscape;
+                let ground = |p: Double3| f64::from(t.terrain_height((p.x / u) as f32, (p.z / u) as f32)) * u;
+                let rise = |p: Double3| if landscape && !terrain_too { ground(plane.mirror(p, u)) - ground(p) } else { 0.0 };
+                let river = sc.type_of(e) == "SplineRiverInstance";
+                let factor = if river { factors.next().unwrap_or(1.0) } else { 1.0 };
+                let lifted = |p: Double3, by: f64| {
+                    let q = plane.mirror(p, u);
+                    Double3::new(q.x, q.y / factor + by, q.z)
+                };
 
-            let spline = if wce_tile::splines::is_spline(sc.type_of(e)) {
-                splines::read(sc, e).iter().map(|p| {
-                    let by = rise(at(p.position));
-                    let handle = |h: Double3| (h != Double3::ZERO).then(|| lifted(at(h), by));
-                    [Some(lifted(at(p.position), by)), handle(p.control_in), handle(p.control_out)]
-                }).collect()
-            } else {
-                vec![]
-            };
+                let spline = if wce_tile::splines::is_spline(sc.type_of(e)) {
+                    splines::read(sc, e)
+                        .iter()
+                        .map(|p| {
+                            let by = rise(at(p.position));
+                            let handle = |h: Double3| (h != Double3::ZERO).then(|| lifted(at(h), by));
+                            [Some(lifted(at(p.position), by)), handle(p.control_in), handle(p.control_out)]
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
 
-            let wall_flip = (sc.type_of(e) == WALL_SPLINE).then(|| !sc.doc().get(e, "wall_flip").is_some_and(|v| parse_bool(&v)));
+                let wall_flip = (sc.type_of(e) == WALL_SPLINE).then(|| !sc.doc().get(e, "wall_flip").is_some_and(|v| parse_bool(&v)));
 
-            let points = if spline.is_empty() { sc.polygon_points(e).into_iter().filter_map(|p| sc.point_position(p)).map(|p| lifted(at(p), rise(at(p)))).collect() } else { vec![] };
+                let points = if spline.is_empty() {
+                    sc.polygon_points(e).into_iter().filter_map(|p| sc.point_position(p)).map(|p| lifted(at(p), rise(at(p)))).collect()
+                } else {
+                    vec![]
+                };
 
-            // A shelter's target is in the frame of its parent, as its position.
-            let pw = parent_transform(sc, e);
-            let target = sc.doc().get(e, "target").and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector")).map(|v| mirrored(pw.position + pw.rotation * v));
+                // A shelter's target is in the frame of its parent, as its position.
+                let pw = parent_transform(sc, e);
+                let target = sc
+                    .doc()
+                    .get(e, "target")
+                    .and_then(|v| wce_tile::ted_scene::parse_vec3(&v, "vector"))
+                    .map(|v| mirrored(pw.position + pw.rotation * v));
 
-            // Lines and what holds other items are not turned: their points and contents go where they go.
-            let holds = !sc.children(e).is_empty() || !sc.polygon_points(e).is_empty();
-            let rotation = if holds { w.rotation } else { plane.mirror_rotation(&w.rotation) };
-            let mut position = lifted(w.position, rise(w.position));
-            if !holds && landscape && !terrain_too {
-                position.y = ground(position);
-            }
+                // Lines and what holds other items are not turned: their points and contents go where they go.
+                let holds = !sc.children(e).is_empty() || !sc.polygon_points(e).is_empty();
+                let rotation = if holds { w.rotation } else { plane.mirror_rotation(&w.rotation) };
+                let mut position = lifted(w.position, rise(w.position));
+                if !holds && landscape && !terrain_too {
+                    position.y = ground(position);
+                }
 
-            let keeps_heights = river && t.rivers_keep_heights() && sc.doc().get(e, RIVER_HEIGHT_ATTR).is_none();
-            Target { elem: e, position, rotation, points, spline, target, wall_flip, keeps_heights }
-        }).collect()
+                let keeps_heights = river && t.rivers_keep_heights() && sc.doc().get(e, RIVER_HEIGHT_ATTR).is_none();
+                Target { elem: e, position, rotation, points, spline, target, wall_flip, keeps_heights }
+            })
+            .collect()
     }
 
     fn apply_flip(&mut self, targets: &[Target]) -> Result<(), String> {
@@ -373,7 +387,11 @@ impl TileDocument {
         let _ = t.project.load_blend();
         let _ = t.project.load_ground();
         let p = &t.project;
-        let plane = FlipPlane { x: (p.extent_x() * 0.5) as f32, z: (p.extent_z() * 0.5) as f32, angle: if axis == TileFlipAxis::X { 0.0 } else { 90.0 } };
+        let plane = FlipPlane {
+            x: (p.extent_x() * 0.5) as f32,
+            z: (p.extent_z() * 0.5) as f32,
+            angle: if axis == TileFlipAxis::X { 0.0 } else { 90.0 },
+        };
         let (cells_x, cells_y) = (p.info.cells_x, p.info.cells_y);
         let sc = self.tile().tscene();
         let graph = sc.scene_graph().ok_or("this tile has no scene graph")?;
@@ -395,8 +413,21 @@ impl TileDocument {
         let attr = super::vegetation::LIST_FLIP_ATTR;
         let now = sc.doc().get(root, attr).unwrap_or_default();
         let (mut fx, mut fz) = (now.contains('x'), now.contains('z'));
-        if axis == TileFlipAxis::X { fx = !fx } else { fz = !fz }
-        sc.set_attr(root, attr, match (fx, fz) { (true, true) => "xz", (true, false) => "x", (false, true) => "z", _ => "" });
+        if axis == TileFlipAxis::X {
+            fx = !fx
+        } else {
+            fz = !fz
+        }
+        sc.set_attr(
+            root,
+            attr,
+            match (fx, fz) {
+                (true, true) => "xz",
+                (true, false) => "x",
+                (false, true) => "z",
+                _ => "",
+            },
+        );
 
         let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
         let t = self.tile_mut();
@@ -468,19 +499,24 @@ impl TileDocument {
         t.reload_tree_list();
 
         // The links.
-        let links = t.project.entry.as_ref().map(|entry| {
-            let before = (entry.link_targets(), entry.links());
-            let mut after = before.clone();
-            for c in &mut after.0 {
-                if across_x { c.x = mirror_cell(cells_x, c.x) } else { c.y = mirror_cell(cells_y, c.y) }
-            }
+        let links = t
+            .project
+            .entry
+            .as_ref()
+            .map(|entry| {
+                let before = (entry.link_targets(), entry.links());
+                let mut after = before.clone();
+                for c in &mut after.0 {
+                    if across_x { c.x = mirror_cell(cells_x, c.x) } else { c.y = mirror_cell(cells_y, c.y) }
+                }
 
-            for l in &mut after.1 {
-                if across_x { l.x = mirror_cell(cells_x, l.x) } else { l.y = mirror_cell(cells_y, l.y) }
-            }
+                for l in &mut after.1 {
+                    if across_x { l.x = mirror_cell(cells_x, l.x) } else { l.y = mirror_cell(cells_y, l.y) }
+                }
 
-            LinksCommand { name: String::new(), before, after, gesture: 0 }
-        }).filter(|c| c.before != c.after);
+                LinksCommand { name: String::new(), before, after, gesture: 0 }
+            })
+            .filter(|c| c.before != c.after);
 
         let mut links = links;
         if let Some(l) = &mut links {
@@ -489,6 +525,10 @@ impl TileDocument {
 
         let linked = links.as_ref().map_or(0, |l| l.after.0.len() + l.after.1.len());
         self.history.push(Box::new(TileFlipCommand { splice, height, blend, ground, links, first: true }));
-        Ok(format!("tile flipped along {}: {} items, {changed} map pixels, {linked} links", if across_x { "x" } else { "z" }, targets.len()))
+        Ok(format!(
+            "tile flipped along {}: {} items, {changed} map pixels, {linked} links",
+            if across_x { "x" } else { "z" },
+            targets.len()
+        ))
     }
 }

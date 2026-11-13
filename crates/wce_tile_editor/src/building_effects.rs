@@ -88,7 +88,13 @@ fn matrix(at: [f32; 3]) -> Value {
     let mut m = serde_json::Map::new();
     for r in 0..4 {
         for c in 0..4 {
-            let v = if r == 3 && c < 3 { at[c] } else if r == c { 1.0 } else { 0.0 };
+            let v = if r == 3 && c < 3 {
+                at[c]
+            } else if r == c {
+                1.0
+            } else {
+                0.0
+            };
             m.insert(format!("m{r}{c}"), json!(v));
         }
     }
@@ -123,7 +129,9 @@ fn raise_posts(d: &mut Value, mesh: &[Triangle], models: &BTreeMap<String, Vec<M
     let mut raised = 0;
     for f in d["file_refs"].as_array_mut().into_iter().flatten() {
         let Some(building) = attached(f).filter(|b| STANDING.contains(&b.as_str())) else { continue };
-        let Some(flame) = models.get(&building).and_then(|e| e.first()).and_then(|e| through(&f["transform"], e.position)) else { continue };
+        let Some(flame) = models.get(&building).and_then(|e| e.first()).and_then(|e| through(&f["transform"], e.position)) else {
+            continue;
+        };
         let Some(top) = top_at(mesh, flame[0], flame[2]).filter(|top| flame[1] < top + UNDER) else { continue };
         let y = f["transform"]["m31"].as_f64().unwrap_or_default() as f32;
         f["transform"]["m31"] = json!(y + top + OVER - flame[1]);
@@ -256,7 +264,12 @@ pub fn build(files: &Vfs) -> Result<Built, String> {
         let key = path.split('/').nth(2).unwrap_or_default();
         let mesh_of = |destruct: &str| {
             let meshes = files.list(&format!("{dir}{key}_{destruct}"), ".rigid_model_v2");
-            meshes.into_iter().filter(|p| !p.contains("_anim")).filter_map(|p| files.read(p).ok()).flat_map(|b| triangles(&b)).collect::<Vec<_>>()
+            meshes
+                .into_iter()
+                .filter(|p| !p.contains("_anim"))
+                .filter_map(|p| files.read(p).ok())
+                .flat_map(|b| triangles(&b))
+                .collect::<Vec<_>>()
         };
 
         match patched(&bytes, &own, &models, &mesh_of, &mut copies, &mut built.raised) {
@@ -340,7 +353,17 @@ mod tests {
 
     #[test]
     fn a_post_under_the_mesh_goes_up_and_one_over_it_stays() {
-        let post = MetaEffect { tag: String::new(), effect: "fire".to_owned(), start: 0.0, end: 0.0, position: [0.0, 2.0, 0.0], rotation: [0.0, 0.0, 0.0, 1.0], bone: -1, scale: 1.0, volume: None };
+        let post = MetaEffect {
+            tag: String::new(),
+            effect: "fire".to_owned(),
+            start: 0.0,
+            end: 0.0,
+            position: [0.0, 2.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            bone: -1,
+            scale: 1.0,
+            volume: None,
+        };
         let models = BTreeMap::from([("torch_ground_post".to_owned(), vec![post])]);
         let file_ref = |y: f32| json!({ "key": "piece01_destruct01_file:torch_ground_post", "transform": matrix([1.0, y, 1.0]) });
 

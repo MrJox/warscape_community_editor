@@ -254,7 +254,8 @@ impl UiModel {
     fn instances(&self, entries: &[Entry], entry: usize, animation: &str) -> (Vec<Instance>, Vec<(u32, usize, String)>) {
         let mut started: Vec<Instance> = Vec::new();
         let mut queue: Vec<(usize, String, u32, u32)> = vec![(entry, animation.to_string(), 0, 0)];
-        let by_id: HashMap<u32, usize> = entries.iter().enumerate().filter(|(_, e)| e.kind == EntryKind::Entry && e.id != 0).map(|(i, e)| (e.id, i)).collect();
+        let by_id: HashMap<u32, usize> =
+            entries.iter().enumerate().filter(|(_, e)| e.kind == EntryKind::Entry && e.id != 0).map(|(i, e)| (e.id, i)).collect();
         let mut states: Vec<(u32, usize, String)> = Vec::new();
         while let Some((en, name, start, depth)) = queue.pop() {
             if started.len() >= 64 || depth > 8 || en >= entries.len() {
@@ -321,7 +322,12 @@ impl UiModel {
         let base = if dock > 0 { (doff.0 as f32, doff.1 as f32) } else { (en.x as f32, en.y as f32) };
         let cur_state = self.default_state(el);
         let size0 = cur_state.map(crate::layout::state_size).unwrap_or((en.w as f32, en.h as f32));
-        let colour0 = cur_state.and_then(|s| s.find("image_uses")).and_then(|u| u.elems().find(|x| x.name == "image_use")).and_then(|u| u.find("color")).map(color_of).unwrap_or([255; 4]);
+        let colour0 = cur_state
+            .and_then(|s| s.find("image_uses"))
+            .and_then(|u| u.elems().find(|x| x.name == "image_use"))
+            .and_then(|u| u.find("color"))
+            .map(color_of)
+            .unwrap_or([255; 4]);
 
         // source metrics of the first frame: the component as it is
         let (mut cur_off, mut src_size, mut src_col) = (base, (size0.0 as i32, size0.1 as i32), colour0);
@@ -332,7 +338,11 @@ impl UiModel {
             let finished = remaining >= f.time;
             let p = if finished || f.time == 0 { 1.0 } else { f.curve.progress(local as f32, f.time as f32, f.weight) };
             if f.mask & MASK_POSITION != 0 {
-                let off = if f.absolute { (lerp(cur_off.0, f.offset.0, p), lerp(cur_off.1, f.offset.1, p)) } else { (cur_off.0 + lerp(0.0, f.offset.0, p), cur_off.1 + lerp(0.0, f.offset.1, p)) };
+                let off = if f.absolute {
+                    (lerp(cur_off.0, f.offset.0, p), lerp(cur_off.1, f.offset.1, p))
+                } else {
+                    (cur_off.0 + lerp(0.0, f.offset.0, p), cur_off.1 + lerp(0.0, f.offset.1, p))
+                };
                 ep.offset = Some(off);
                 if finished {
                     cur_off = if f.absolute { f.offset } else { (cur_off.0 + f.offset.0, cur_off.1 + f.offset.1) };
@@ -348,7 +358,8 @@ impl UiModel {
             if f.mask & (MASK_COLOUR | MASK_OPACITY) != 0 {
                 let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * p).round().clamp(0.0, 255.0);
                 if f.mask & MASK_COLOUR != 0 {
-                    ep.rgb = Some([mix(src_col[0], f.color[0]) as u8, mix(src_col[1], f.color[1]) as u8, mix(src_col[2], f.color[2]) as u8]);
+                    ep.rgb =
+                        Some([mix(src_col[0], f.color[0]) as u8, mix(src_col[1], f.color[1]) as u8, mix(src_col[2], f.color[2]) as u8]);
                 }
 
                 if f.mask & MASK_OPACITY != 0 {
@@ -393,7 +404,18 @@ mod tests {
 
     #[test]
     fn curves_start_at_zero_and_end_at_one() {
-        for c in [Curve::Linear, Curve::QuadIn, Curve::QuadOut, Curve::QuadInOut, Curve::CubicIn, Curve::CubicOut, Curve::CubicInOut, Curve::CircIn, Curve::CircOut, Curve::CircInOut] {
+        for c in [
+            Curve::Linear,
+            Curve::QuadIn,
+            Curve::QuadOut,
+            Curve::QuadInOut,
+            Curve::CubicIn,
+            Curve::CubicOut,
+            Curve::CubicInOut,
+            Curve::CircIn,
+            Curve::CircOut,
+            Curve::CircInOut,
+        ] {
             let a = c.progress(0.0, 100.0, 1.0);
             let b = c.progress(100.0, 100.0, 1.0);
             assert!(a.abs() < 1e-4, "{c:?} starts at {a}");

@@ -218,17 +218,38 @@ impl PickTargets {
         }
 
         let desc = |w: u32, h: u32, fmt: DXGI_FORMAT, usage: D3D11_USAGE, bind: u32, cpu: u32| D3D11_TEXTURE2D_DESC {
-            Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: usage, BindFlags: bind,
-            CPUAccessFlags: cpu, MiscFlags: 0,
+            Width: w,
+            Height: h,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: fmt,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: usage,
+            BindFlags: bind,
+            CPUAccessFlags: cpu,
+            MiscFlags: 0,
         };
 
-        self.id_tex = dev.create_texture_2d(&desc(w, h, DXGI_FORMAT_R32_UINT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None).ok();
+        self.id_tex =
+            dev.create_texture_2d(&desc(w, h, DXGI_FORMAT_R32_UINT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None).ok();
         self.id_rtv = self.id_tex.as_ref().and_then(|tex| dev.create_render_target_view(tex, None).ok());
         self.dsv = depth_target(dev, w, h, DXGI_FORMAT_D32_FLOAT);
-        self.id_staging = dev.create_texture_2d(&desc(id_staging.0, id_staging.1, DXGI_FORMAT_R32_UINT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None).ok();
-        self.pos_tex = dev.create_texture_2d(&desc(w, h, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None).ok();
+        self.id_staging = dev
+            .create_texture_2d(
+                &desc(id_staging.0, id_staging.1, DXGI_FORMAT_R32_UINT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32),
+                None,
+            )
+            .ok();
+        self.pos_tex = dev
+            .create_texture_2d(&desc(w, h, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET as u32, 0), None)
+            .ok();
         self.pos_rtv = self.pos_tex.as_ref().and_then(|tex| dev.create_render_target_view(tex, None).ok());
-        self.pos_staging = dev.create_texture_2d(&desc(pos_staging.0, pos_staging.1, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32), None).ok();
+        self.pos_staging = dev
+            .create_texture_2d(
+                &desc(pos_staging.0, pos_staging.1, DXGI_FORMAT_R32G32B32A32_FLOAT, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ as u32),
+                None,
+            )
+            .ok();
         self.w = w;
         self.h = h;
     }
@@ -412,7 +433,6 @@ fn write_dynamic<T: bytemuck::NoUninit>(ctx: &ID3D11DeviceContext, buffer: &ID3D
 }
 
 impl Renderer {
-
     fn create_editor_resources(&mut self) -> Result<(), RenderError> {
         if self.editor.ready {
             return Ok(());
@@ -429,7 +449,10 @@ impl Renderer {
         let ovs = compile(EDITOR_HLSL, "editor_passes", "outline_vs", "vs_5_0")?;
         let ops = compile(EDITOR_HLSL, "editor_passes", "outline_ps", "ps_5_0")?;
         let dps = compile(EDITOR_HLSL, "editor_passes", "drape_ps", "ps_5_0")?;
-        let oel = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false), element(c"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, false)];
+        let oel = [
+            element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
+            element(c"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, false),
+        ];
         let mut pel = vec![element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false)];
         for i in 1..=3 {
             pel.push(element(c"POSITION", i, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, (i - 1) * 16, true));
@@ -452,23 +475,53 @@ impl Renderer {
         e.outline_cb = dynamic_buffer(&dev, OUTLINE_CB, D3D11_BIND_CONSTANT_BUFFER);
         e.drape_ps = dev.create_pixel_shader(&dps).ok();
         e.drape_cb = dynamic_buffer(&dev, DRAPE_CB, D3D11_BIND_CONSTANT_BUFFER);
-        let channel = |mask: u8| crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
-            BlendEnable: false.into(), SrcBlend: D3D11_BLEND_ONE, DestBlend: D3D11_BLEND_ZERO, BlendOp: D3D11_BLEND_OP_ADD, SrcBlendAlpha: D3D11_BLEND_ONE,
-            DestBlendAlpha: D3D11_BLEND_ZERO, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: mask,
-        });
+        let channel = |mask: u8| {
+            crate::particles::blend_state(
+                &dev,
+                D3D11_RENDER_TARGET_BLEND_DESC {
+                    BlendEnable: false.into(),
+                    SrcBlend: D3D11_BLEND_ONE,
+                    DestBlend: D3D11_BLEND_ZERO,
+                    BlendOp: D3D11_BLEND_OP_ADD,
+                    SrcBlendAlpha: D3D11_BLEND_ONE,
+                    DestBlendAlpha: D3D11_BLEND_ZERO,
+                    BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                    RenderTargetWriteMask: mask,
+                },
+            )
+        };
         e.mask_bs_all = channel(D3D11_COLOR_WRITE_ENABLE_RED as u8);
         e.mask_bs_visible = channel(D3D11_COLOR_WRITE_ENABLE_GREEN as u8);
 
         e.ovl_slots_cb = dynamic_buffer(&dev, SLOTS_CB, D3D11_BIND_CONSTANT_BUFFER);
         e.ovl_cb = dynamic_buffer(&dev, FRAME_CB, D3D11_BIND_CONSTANT_BUFFER);
         e.pick_cb = dynamic_buffer(&dev, FRAME_CB, D3D11_BIND_CONSTANT_BUFFER);
-        e.ovl_blend = crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
-            BlendEnable: true.into(), SrcBlend: D3D11_BLEND_SRC_ALPHA, DestBlend: D3D11_BLEND_INV_SRC_ALPHA, BlendOp: D3D11_BLEND_OP_ADD,
-            SrcBlendAlpha: D3D11_BLEND_ZERO, DestBlendAlpha: D3D11_BLEND_ONE, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
-        });
+        e.ovl_blend = crate::particles::blend_state(
+            &dev,
+            D3D11_RENDER_TARGET_BLEND_DESC {
+                BlendEnable: true.into(),
+                SrcBlend: D3D11_BLEND_SRC_ALPHA,
+                DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
+                BlendOp: D3D11_BLEND_OP_ADD,
+                SrcBlendAlpha: D3D11_BLEND_ZERO,
+                DestBlendAlpha: D3D11_BLEND_ONE,
+                BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
+            },
+        );
 
-        let mut dd = D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, ..Default::default() };
-        let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: true.into(), ..Default::default() };
+        let mut dd = D3D11_DEPTH_STENCIL_DESC {
+            DepthEnable: true.into(),
+            DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO,
+            DepthFunc: D3D11_COMPARISON_LESS_EQUAL,
+            ..Default::default()
+        };
+        let rd = D3D11_RASTERIZER_DESC {
+            FillMode: D3D11_FILL_SOLID,
+            CullMode: D3D11_CULL_NONE,
+            DepthClipEnable: true.into(),
+            ..Default::default()
+        };
         e.ovl_ds_test = dev.create_depth_stencil_state(&dd).ok();
         dd.DepthEnable = false.into();
         e.ovl_ds_off = dev.create_depth_stencil_state(&dd).ok();
@@ -530,10 +583,12 @@ impl Renderer {
         if structural {
             self.editor.ovl_volatile.clear();
         } else if self.editor.ovl_cache_rev != scene.overlay_revision() {
-            let size = |id: EntityId| scene.find(id).map_or(0, |e| match &e.payload {
-                Payload::Overlay(o) => overlay_size(o),
-                _ => 0,
-            });
+            let size = |id: EntityId| {
+                scene.find(id).map_or(0, |e| match &e.payload {
+                    Payload::Overlay(o) => overlay_size(o),
+                    _ => 0,
+                })
+            };
 
             let own = |id: EntityId| scene.find(id).is_some_and(|e| matches!(&e.payload, Payload::Overlay(o) if own_buffer(o)));
 
@@ -638,7 +693,10 @@ impl Renderer {
                     const SEGMENTS: usize = 64;
                     for plane in 0..3 {
                         for k in 0..SEGMENTS {
-                            let (a0, a1) = (k as f32 / SEGMENTS as f32 * std::f32::consts::TAU, (k + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU);
+                            let (a0, a1) = (
+                                k as f32 / SEGMENTS as f32 * std::f32::consts::TAU,
+                                (k + 1) as f32 / SEGMENTS as f32 * std::f32::consts::TAU,
+                            );
                             sel.line(at(a0, plane), at(a1, plane), yellow);
                         }
                     }
@@ -660,7 +718,10 @@ impl Renderer {
         let mut placed = std::collections::BTreeSet::new();
         for &(id, mark) in &e.ovl_cache_marks {
             let mark = std::array::from_fn(|b| mark[b].min(e.ovl_gpu_cache.count[b]));
-            parts.push((&e.ovl_gpu_cache, (std::array::from_fn(|b| e.ovl_gpu_cache.first[b] + at[b]), std::array::from_fn(|b| mark[b] - at[b].min(mark[b])))));
+            parts.push((
+                &e.ovl_gpu_cache,
+                (std::array::from_fn(|b| e.ovl_gpu_cache.first[b] + at[b]), std::array::from_fn(|b| mark[b] - at[b].min(mark[b]))),
+            ));
             at = mark;
             if let Some(big) = e.ovl_big.get(&id).filter(|_| shown(id)) {
                 parts.push((&big.gpu, whole(&big.gpu)));
@@ -669,7 +730,13 @@ impl Renderer {
         }
 
         let cache = &e.ovl_gpu_cache;
-        parts.push((cache, (std::array::from_fn(|b| cache.first[b] + at[b].min(cache.count[b])), std::array::from_fn(|b| cache.count[b] - at[b].min(cache.count[b])))));
+        parts.push((
+            cache,
+            (
+                std::array::from_fn(|b| cache.first[b] + at[b].min(cache.count[b])),
+                std::array::from_fn(|b| cache.count[b] - at[b].min(cache.count[b])),
+            ),
+        ));
         for (id, big) in &e.ovl_big {
             if !placed.contains(id) && shown(*id) {
                 parts.push((&big.gpu, whole(&big.gpu)));
@@ -689,7 +756,12 @@ impl Renderer {
             self.ctx.vs_set_constant_buffers(1, std::slice::from_ref(&e.ovl_slots_cb));
         }
 
-        let topology = [D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST, D3D11_PRIMITIVE_TOPOLOGY_LINELIST];
+        let topology = [
+            D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+            D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
+            D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+            D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
+        ];
         self.ctx.set_render_targets(&[target.rtv().cloned()], self.gbuffer.dsv.as_ref());
         self.ctx.set_viewports(&[viewport(0.0, 0.0, target.width() as f32, target.height() as f32)]);
         self.ctx.set_blend_state(e.ovl_blend.as_ref());
@@ -720,7 +792,13 @@ impl Renderer {
     /// The buffers of the overlays that have their own (`EditorGpu::ovl_big`) brought up to date: the ones whose overlay changed (`changed`, the scene's log of
     /// overlays updated), whose payload was replaced or whose entity went (its log of structural changes) are made again or dropped, and
     /// new big overlays get one. A new scene, or a log that was cut short, starts over.
-    fn update_big_overlays(&mut self, scene: &RenderScene, scene_id: usize, changed: Option<&[EntityId]>, structure: Option<&[StructureChange]>) {
+    fn update_big_overlays(
+        &mut self,
+        scene: &RenderScene,
+        scene_id: usize,
+        changed: Option<&[EntityId]>,
+        structure: Option<&[StructureChange]>,
+    ) {
         let e = &mut self.editor;
         match (structure, changed) {
             (Some(structure), Some(changed)) if e.ovl_cache_scene == scene_id => {
@@ -745,7 +823,9 @@ impl Renderer {
 
         // Gone (a single removal is logged as Other), become small or a selection mask, or moved.
         e.ovl_big.retain(|id, b| {
-            scene.find(*id).is_some_and(|x| x.world == b.world && matches!(&x.payload, Payload::Overlay(o) if own_buffer(o) && !o.selection_mask))
+            scene
+                .find(*id)
+                .is_some_and(|x| x.world == b.world && matches!(&x.payload, Payload::Overlay(o) if own_buffer(o) && !o.selection_mask))
         });
 
         for x in scene.entities() {
@@ -768,7 +848,8 @@ impl Renderer {
     fn cache_touched(&self, scene: &RenderScene, log: Option<&[StructureChange]>) -> bool {
         let e = &self.editor;
         let ours = |id: EntityId| e.ovl_cache_ids.contains(&id) || e.ovl_volatile.contains(&id);
-        let small = |id: EntityId| scene.find(id).is_some_and(|x| matches!(&x.payload, Payload::Overlay(o) if !own_buffer(o) && !o.selection_mask));
+        let small =
+            |id: EntityId| scene.find(id).is_some_and(|x| matches!(&x.payload, Payload::Overlay(o) if !own_buffer(o) && !o.selection_mask));
         let Some(log) = log else { return true };
         for c in log {
             match c {
@@ -806,7 +887,12 @@ impl Renderer {
             return;
         }
 
-        let tinted = self.settings.tinted.iter().copied().filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e) && matches!(e.payload, Payload::MeshInstance(_))))
+        let tinted = self
+            .settings
+            .tinted
+            .iter()
+            .copied()
+            .filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e) && matches!(e.payload, Payload::MeshInstance(_))))
             .collect::<std::collections::HashSet<_>>();
         if tinted.is_empty() {
             return;
@@ -814,7 +900,13 @@ impl Renderer {
 
         let (Some(cb), Some(tcb)) = (self.editor.pick_cb.clone(), self.editor.tint_cb.clone()) else { return };
         let vp_m = self.camera.main_view_proj;
-        let view = DrawView { frustum: Frustum::from_view_projection(&vp_m), eye: self.camera.eye, lod_scale: self.settings.lod_scale, quality: self.lod_quality(), ..Default::default() };
+        let view = DrawView {
+            frustum: Frustum::from_view_projection(&vp_m),
+            eye: self.camera.eye,
+            lod_scale: self.settings.lod_scale,
+            quality: self.lod_quality(),
+            ..Default::default()
+        };
         let draws = std::mem::take(&mut self.draw_lists.draws);
         let mut vis = Visible::default();
         draws.cull(&view, &mut vis);
@@ -829,7 +921,8 @@ impl Renderer {
         draws.gather(&vis, &mut instances, 1.0, [0.0; 3]);
         if self.editor.tint_inst_capacity < n {
             self.editor.tint_inst_capacity = (n * 2).max(1024);
-            self.editor.tint_inst_vb = dynamic_buffer(&self.dev, self.editor.tint_inst_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
+            self.editor.tint_inst_vb =
+                dynamic_buffer(&self.dev, self.editor.tint_inst_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
         }
 
         let Some(vb) = self.editor.tint_inst_vb.clone().filter(|vb| write_dynamic(&self.ctx, vb, &instances)) else {
@@ -869,7 +962,10 @@ impl Renderer {
 
     /// The scene's ground overlay over the target (an editor view: never in the game view).
     pub(crate) fn pass_ground_overlay(&mut self, scene: &RenderScene, target: &RenderTarget) {
-        let Some(o) = scene.ground_overlay().filter(|o| o.opacity > 0.0 && o.w > 0 && o.h > 0 && o.rgba.len() >= (o.w * o.h * 4) as usize) else { return };
+        let Some(o) = scene.ground_overlay().filter(|o| o.opacity > 0.0 && o.w > 0 && o.h > 0 && o.rgba.len() >= (o.w * o.h * 4) as usize)
+        else {
+            return;
+        };
         if scene.layer(o.layer).is_none_or(|l| !l.visible) {
             return;
         }
@@ -881,8 +977,16 @@ impl Renderer {
 
         if self.editor.drape.as_ref().is_none_or(|(id, _)| *id != o.id) {
             let desc = D3D11_TEXTURE2D_DESC {
-                Width: o.w, Height: o.h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: o.w,
+                Height: o.h,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_IMMUTABLE,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
 
             let tex = self.dev.create_texture_2d(&desc, Some(&[InitData::new(&o.rgba[..(o.w * o.h * 4) as usize], o.w * 4)]));
@@ -931,10 +1035,17 @@ impl Renderer {
 
         // What goes into the mask: the selected entities (meshes and terrain through their draw sets, overlays as triangles and lines) and the
         // overlays that stand for selected items.
-        let selected = self.settings.selection.iter().copied().filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e))).collect::<std::collections::HashSet<_>>();
+        let selected = self
+            .settings
+            .selection
+            .iter()
+            .copied()
+            .filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e)))
+            .collect::<std::collections::HashSet<_>>();
         let key = (std::ptr::from_ref(scene) as usize, scene.overlay_revision());
         if self.editor.outline_overlays.0 != key {
-            self.editor.outline_overlays = (key, scene.entities().iter().filter(|e| matches!(e.payload, Payload::Overlay(_))).map(|e| e.id).collect());
+            self.editor.outline_overlays =
+                (key, scene.entities().iter().filter(|e| matches!(e.payload, Payload::Overlay(_))).map(|e| e.id).collect());
         }
 
         // The overlays' part of the mask, made again only when the scene's overlays or the selection changed.
@@ -966,7 +1077,8 @@ impl Renderer {
             }
         };
 
-        let meshes = selected.iter().any(|&id| scene.find(id).is_some_and(|e| matches!(e.payload, Payload::MeshInstance(_) | Payload::Terrain(_))));
+        let meshes =
+            selected.iter().any(|&id| scene.find(id).is_some_and(|e| matches!(e.payload, Payload::MeshInstance(_) | Payload::Terrain(_))));
         if !meshes && n_tris == 0 && n_lines == 0 {
             self.editor.outline_geometry = Some((geometry_key, 0, 0));
             return;
@@ -975,8 +1087,16 @@ impl Renderer {
         let (w, h) = (target.width(), target.height());
         if self.editor.mask_w != w || self.editor.mask_h != h {
             let desc = D3D11_TEXTURE2D_DESC {
-                Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: w,
+                Height: h,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R8G8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
 
             let e = &mut self.editor;
@@ -986,11 +1106,21 @@ impl Renderer {
             (e.mask_w, e.mask_h) = (w, h);
         }
 
-        let (Some(rtv), Some(srv), Some(cb), Some(ocb)) = (self.editor.mask_rtv.clone(), self.editor.mask_srv.clone(), self.editor.pick_cb.clone(), self.editor.outline_cb.clone()) else { return };
+        let (Some(rtv), Some(srv), Some(cb), Some(ocb)) =
+            (self.editor.mask_rtv.clone(), self.editor.mask_srv.clone(), self.editor.pick_cb.clone(), self.editor.outline_cb.clone())
+        else {
+            return;
+        };
 
         // The selected items of both draw sets, culled and gathered once for the two draws.
         let vp_m = self.camera.main_view_proj;
-        let view = DrawView { frustum: Frustum::from_view_projection(&vp_m), eye: self.camera.eye, lod_scale: self.settings.lod_scale, quality: self.lod_quality(), ..Default::default() };
+        let view = DrawView {
+            frustum: Frustum::from_view_projection(&vp_m),
+            eye: self.camera.eye,
+            lod_scale: self.settings.lod_scale,
+            quality: self.lod_quality(),
+            ..Default::default()
+        };
         let (draws, terrain_draws) = (std::mem::take(&mut self.draw_lists.draws), std::mem::take(&mut self.draw_lists.terrain_draws));
         // Per set: its visible list and where its instances start in `instances`.
         let mut sets: Vec<(&crate::draw_set::DrawSet, Visible, u32)> = vec![];
@@ -1013,7 +1143,8 @@ impl Renderer {
         // Uploads: the gathered instances, the overlays' triangles then lines (when they were made again).
         if self.editor.mask_inst_capacity < instances.len() {
             self.editor.mask_inst_capacity = (instances.len() * 2).max(1024);
-            self.editor.mask_inst_vb = dynamic_buffer(&self.dev, self.editor.mask_inst_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
+            self.editor.mask_inst_vb =
+                dynamic_buffer(&self.dev, self.editor.mask_inst_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
         }
 
         if self.editor.mask_vb_capacity < ovl_bytes.len() {
@@ -1022,7 +1153,8 @@ impl Renderer {
         }
 
         let inst_vb = self.editor.mask_inst_vb.clone().filter(|vb| instances.is_empty() || write_dynamic(&self.ctx, vb, &instances));
-        let ovl_vb = self.editor.mask_vb.clone().filter(|vb| cached.is_some() || ovl_bytes.is_empty() || write_dynamic(&self.ctx, vb, &ovl_bytes));
+        let ovl_vb =
+            self.editor.mask_vb.clone().filter(|vb| cached.is_some() || ovl_bytes.is_empty() || write_dynamic(&self.ctx, vb, &ovl_bytes));
         if cached.is_none() {
             self.editor.outline_geometry = ovl_vb.as_ref().map(|_| (geometry_key, n_tris, n_lines));
         }
@@ -1164,7 +1296,9 @@ impl Renderer {
             return 0;
         }
 
-        let (Some(staging), Some(id_tex)) = (self.editor.pick_view.id_staging.clone(), self.editor.pick_view.id_tex.clone()) else { return 0 };
+        let (Some(staging), Some(id_tex)) = (self.editor.pick_view.id_staging.clone(), self.editor.pick_view.id_tex.clone()) else {
+            return 0;
+        };
         let pick_box = D3D11_BOX { left: x as u32, top: y as u32, front: 0, right: x as u32 + 1, bottom: y as u32 + 1, back: 1 };
         self.ctx.copy_subresource_region(&staging, 0, [0; 3], &id_tex, 0, Some(&pick_box));
         self.ctx.map(&staging, 0, D3D11_MAP_READ, 0).ok().and_then(|ms| ms.read::<u32>()).unwrap_or(0)
@@ -1173,7 +1307,15 @@ impl Renderer {
     /// The id pass of the meshes and the terrain into the pick targets (ids, world positions), at the target's size; `skip`: entities left out.
     /// `top`: the straight-down targets (`surfaces_below`, every LOD drawn as the camera sees it, nothing too small to draw left out), else
     /// the view's. False when the targets can't be made.
-    fn id_pass(&mut self, scene: &RenderScene, params: &ViewParams, vp_m: &Float4x4, (w, h): (u32, u32), skip: &dyn Fn(EntityId) -> bool, top: bool) -> bool {
+    fn id_pass(
+        &mut self,
+        scene: &RenderScene,
+        params: &ViewParams,
+        vp_m: &Float4x4,
+        (w, h): (u32, u32),
+        skip: &dyn Fn(EntityId) -> bool,
+        top: bool,
+    ) -> bool {
         let vp_m = *vp_m;
         let dev = self.dev.clone();
         if top {
@@ -1207,7 +1349,11 @@ impl Renderer {
             frustum: Frustum::from_view_projection(&vp_m),
             eye: params.camera.eye,
             lod_scale: self.settings.lod_scale,
-            min_ratio: if top || params.camera.is_ortho() { 0.0 } else { self.settings.min_pixels * 2.0 * (params.camera.fov_y * 0.5).tan() / h as f32 },
+            min_ratio: if top || params.camera.is_ortho() {
+                0.0
+            } else {
+                self.settings.min_pixels * 2.0 * (params.camera.fov_y * 0.5).tan() / h as f32
+            },
             quality: self.lod_quality(),
             ..Default::default()
         };
@@ -1227,11 +1373,16 @@ impl Renderer {
 
             if self.editor.pick_inst_capacity < n {
                 self.editor.pick_inst_capacity = (n * 2).max(4096);
-                self.editor.pick_inst_vb = dynamic_buffer(&self.dev, self.editor.pick_inst_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
+                self.editor.pick_inst_vb =
+                    dynamic_buffer(&self.dev, self.editor.pick_inst_capacity * size_of::<RigidInstance>(), D3D11_BIND_VERTEX_BUFFER);
                 self.editor.pick_id_vb = dynamic_buffer(&self.dev, self.editor.pick_inst_capacity * 4, D3D11_BIND_VERTEX_BUFFER);
             }
 
-            let (Some(inst_vb), Some(id_vb), Some(cb)) = (self.editor.pick_inst_vb.clone(), self.editor.pick_id_vb.clone(), self.editor.pick_cb.clone()) else { continue };
+            let (Some(inst_vb), Some(id_vb), Some(cb)) =
+                (self.editor.pick_inst_vb.clone(), self.editor.pick_id_vb.clone(), self.editor.pick_cb.clone())
+            else {
+                continue;
+            };
             let mut instances = vec![RigidInstance::default(); n];
             set.gather(&vis, &mut instances, 1.0, [0.0; 3]);
             if !write_dynamic(&self.ctx, &inst_vb, &instances) || !write_dynamic(&self.ctx, &id_vb, &set.gather_ids(&vis)) {
@@ -1265,7 +1416,15 @@ impl Renderer {
     /// The surface under pixel (x, y): the nearest mesh or terrain (not the overlays, not the locked layers, not what `skip` says), its world
     /// point, its normal (from the points of the pixels around it, towards the camera; straight up where they are missing) and its entity.
     /// `None` where nothing is.
-    pub fn pick_surface(&mut self, scene: &RenderScene, params: &ViewParams, target: &RenderTarget, x: i32, y: i32, skip: &dyn Fn(EntityId) -> bool) -> Option<SurfaceHit> {
+    pub fn pick_surface(
+        &mut self,
+        scene: &RenderScene,
+        params: &ViewParams,
+        target: &RenderTarget,
+        x: i32,
+        y: i32,
+        skip: &dyn Fn(EntityId) -> bool,
+    ) -> Option<SurfaceHit> {
         let (w, h) = (target.width(), target.height());
         if x < 1 || y < 1 || x + 1 >= w as i32 || y + 1 >= h as i32 {
             return None;
@@ -1283,7 +1442,9 @@ impl Renderer {
         }
 
         let t = &self.editor.pick_view;
-        let (Some(staging), Some(id_staging), Some(pos_tex), Some(id_tex)) = (t.pos_staging.clone(), t.id_staging.clone(), t.pos_tex.clone(), t.id_tex.clone()) else {
+        let (Some(staging), Some(id_staging), Some(pos_tex), Some(id_tex)) =
+            (t.pos_staging.clone(), t.id_staging.clone(), t.pos_tex.clone(), t.id_tex.clone())
+        else {
             return None;
         };
 
@@ -1295,7 +1456,9 @@ impl Renderer {
         let ms = self.ctx.map(&staging, 0, D3D11_MAP_READ, 0).ok()?;
         let at = |i: usize, j: usize| -> Option<Float3> {
             let row = ms.row(j, 48)?;
-            let f = |k: usize| f32::from_le_bytes([row[i * 16 + k * 4], row[i * 16 + k * 4 + 1], row[i * 16 + k * 4 + 2], row[i * 16 + k * 4 + 3]]);
+            let f = |k: usize| {
+                f32::from_le_bytes([row[i * 16 + k * 4], row[i * 16 + k * 4 + 1], row[i * 16 + k * 4 + 2], row[i * 16 + k * 4 + 3]])
+            };
             (f(3) > 0.5).then(|| Float3::new(f(0), f(1), f(2)))
         };
 
@@ -1330,7 +1493,15 @@ impl Renderer {
     /// The topmost surfaces (meshes and terrain; not the overlays, the locked layers, what `skip` says) over a `size` metres square around
     /// `center`, seen straight down at `res` x `res` pixels, the models at the LODs the camera of `params` sees. For putting things on
     /// whatever is below a ground point, wherever the camera is. `None` when the pass can't be drawn.
-    pub fn surfaces_below(&mut self, scene: &RenderScene, params: &ViewParams, center: Float3, size: f32, res: u32, skip: &dyn Fn(EntityId) -> bool) -> Option<SurfaceGrid> {
+    pub fn surfaces_below(
+        &mut self,
+        scene: &RenderScene,
+        params: &ViewParams,
+        center: Float3,
+        size: f32,
+        res: u32,
+        skip: &dyn Fn(EntityId) -> bool,
+    ) -> Option<SurfaceGrid> {
         if let Err(error) = self.create_editor_resources() {
             self.error(error.0);
             return None;
@@ -1347,7 +1518,9 @@ impl Renderer {
         }
 
         let t = &self.editor.pick_top;
-        let (Some(pos_staging), Some(id_staging), Some(pos_tex), Some(id_tex)) = (t.pos_staging.clone(), t.id_staging.clone(), t.pos_tex.clone(), t.id_tex.clone()) else {
+        let (Some(pos_staging), Some(id_staging), Some(pos_tex), Some(id_tex)) =
+            (t.pos_staging.clone(), t.id_staging.clone(), t.pos_tex.clone(), t.id_tex.clone())
+        else {
             return None;
         };
 

@@ -45,7 +45,13 @@ fn half(bits: u16) -> f32 {
     let frac = f32::from(bits & 0x3FF);
     sign * match exp {
         0 => frac * 2f32.powi(-24),
-        31 => if frac == 0.0 { f32::INFINITY } else { f32::NAN },
+        31 => {
+            if frac == 0.0 {
+                f32::INFINITY
+            } else {
+                f32::NAN
+            }
+        }
         e => (1.0 + frac / 1024.0) * 2f32.powi(e - 15),
     }
 }
@@ -83,12 +89,15 @@ pub fn to_half(v: f32) -> u16 {
 }
 
 impl OldList {
-
     /// # Errors
     ///
     /// A version without a known record size, or a file whose records do not fill it exactly.
     pub fn parse(kind: OldListKind, b: &[u8]) -> Result<Self, OldListError> {
-        let rd32 = |o: usize| b.get(o..o + 4).map(|x| u32::from_le_bytes(x.try_into().expect("4 bytes"))).ok_or_else(|| OldListError(format!("truncated at {o}")));
+        let rd32 = |o: usize| {
+            b.get(o..o + 4)
+                .map(|x| u32::from_le_bytes(x.try_into().expect("4 bytes")))
+                .ok_or_else(|| OldListError(format!("truncated at {o}")))
+        };
         let (version, n, total) = (rd32(0)?, rd32(4)? as usize, rd32(8)? as usize);
         let Some(size) = record_size(kind, version) else { return Err(OldListError(format!("{kind:?} list version {version}"))) };
         if n > b.len() / 6 {
@@ -98,7 +107,10 @@ impl OldList {
         let mut p = 12;
         let mut types = Vec::with_capacity(n);
         for _ in 0..n {
-            let len = b.get(p..p + 2).map(|x| usize::from(u16::from_le_bytes([x[0], x[1]]))).ok_or_else(|| OldListError("truncated name".to_owned()))?;
+            let len = b
+                .get(p..p + 2)
+                .map(|x| usize::from(u16::from_le_bytes([x[0], x[1]])))
+                .ok_or_else(|| OldListError("truncated name".to_owned()))?;
             let name = b.get(p + 2..p + 2 + len).ok_or_else(|| OldListError("truncated name".to_owned()))?.to_vec();
             p += 2 + len;
             types.push((name, rd32(p)?));

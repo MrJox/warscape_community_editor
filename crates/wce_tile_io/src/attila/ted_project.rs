@@ -33,7 +33,8 @@ enum Part {
 
 /// A number in a file name, without leading zeros (so the name can be rebuilt from it).
 fn index(digits: &str) -> Option<u32> {
-    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) && (digits == "0" || !digits.starts_with('0'))).then(|| digits.parse().ok())?
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) && (digits == "0" || !digits.starts_with('0')))
+        .then(|| digits.parse().ok())?
 }
 
 fn classify(name: &str) -> Option<Part> {
@@ -144,7 +145,8 @@ impl TileFormat for TedProject {
 
         if let Some((name, blob)) = &files.entry {
             let bytes = blob.bytes().map_err(|e| TileIoError::File { file: name.clone(), what: e.to_string() })?;
-            let (root, style) = read_xml(&bytes, &EntrySchema, &mut report).map_err(|what| TileIoError::File { file: name.clone(), what })?;
+            let (root, style) =
+                read_xml(&bytes, &EntrySchema, &mut report).map_err(|what| TileIoError::File { file: name.clone(), what })?;
             tile.entry = Some(Entry { file_name: name.clone(), root });
             tile.source.insert(ENTRY.to_owned(), Arc::new(style));
             report.parts.push((name.clone(), PartRead::Decoded));
@@ -160,7 +162,8 @@ impl TileFormat for TedProject {
         let mut out = TileFiles { variation: tile.variation.clone(), ..Default::default() };
         let mut report = WriteReport::default();
         let own = tile.source_format == Some(ID);
-        let style = |key: &str, default: fn() -> DocStyle| own.then(|| tile.trivia::<DocStyle>(key).cloned()).flatten().unwrap_or_else(default);
+        let style =
+            |key: &str, default: fn() -> DocStyle| own.then(|| tile.trivia::<DocStyle>(key).cloned()).flatten().unwrap_or_else(default);
         let mut put = |name: String, bytes: Vec<u8>, how: PartWritten, out: &mut TileFiles| {
             report.parts.push((name.clone(), how));
             out.folder.insert(name, Blob::Bytes(bytes.into()));
@@ -215,7 +218,9 @@ mod tests {
 
     #[test]
     fn file_names_round_trip() {
-        for name in ["tile.ted", "height_map_0.png", "height_map_12.png", "river_spline.xml", "river_spline3.xml", "blend_map.tif", "nogo.png"] {
+        for name in
+            ["tile.ted", "height_map_0.png", "height_map_12.png", "river_spline.xml", "river_spline3.xml", "blend_map.tif", "nogo.png"]
+        {
             assert_eq!(file_name(classify(name).unwrap()).unwrap(), name);
         }
 

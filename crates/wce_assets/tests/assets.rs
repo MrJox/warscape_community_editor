@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use wce_assets::vfx_constants::{VFX_CURVE_WIDTH, VFX_DISTORTION_VIEW_ID, VFX_MAIN_VIEW_ID, build_emitter_constants, vfx_bits, vfx_texture_path};
+use wce_assets::vfx_constants::{
+    VFX_CURVE_WIDTH, VFX_DISTORTION_VIEW_ID, VFX_MAIN_VIEW_ID, build_emitter_constants, vfx_bits, vfx_texture_path,
+};
 use wce_assets::vfx_def::{parse_curves, parse_vfx};
 use wce_assets::weather_vfx::load_weather_vfx;
 use wce_formats::xml_doc::XmlDoc;
@@ -119,13 +121,22 @@ fn weather_effects() {
     let read = |path: &str| files.get(path).map(|text| text.as_bytes().to_vec()).ok_or_else(|| format!("missing {path}"));
 
     let w = load_weather_vfx(&read, "rain").unwrap();
-    assert_eq!((w.definition.type_index(), w.definition.severity, w.definition.wind_size_max, w.definition.wind_gust_curve), (1, 2, 3.0, 4.0));
+    assert_eq!(
+        (w.definition.type_index(), w.definition.severity, w.definition.wind_size_max, w.definition.wind_gust_curve),
+        (1, 2, 3.0, 4.0)
+    );
     assert_eq!(w.emitters.len(), 1);
     let drops = &w.emitters[0];
-    assert_eq!((drops.instance.as_str(), drops.tint_min[0], drops.particle_lifetime_bias, drops.scale, drops.pos), ("rain", 0.5, [0.0, 0.25], 1.5, [0.0, 5.0, 0.0]));
+    assert_eq!(
+        (drops.instance.as_str(), drops.tint_min[0], drops.particle_lifetime_bias, drops.scale, drops.pos),
+        ("rain", 0.5, [0.0, 0.25], 1.5, [0.0, 5.0, 0.0])
+    );
     assert!(drops.camera_following);
     assert_eq!(drops.k.behaviour_mask[3], VFX_DISTORTION_VIEW_ID);
-    assert_eq!(w.notes, ["rain/burst: rigid model 'rigidmodels/' not drawn in weather", "vfx/missing_library.xml: missing vfx/missing_library.xml"]);
+    assert_eq!(
+        w.notes,
+        ["rain/burst: rigid model 'rigidmodels/' not drawn in weather", "vfx/missing_library.xml: missing vfx/missing_library.xml"]
+    );
 
     assert!(load_weather_vfx(&read, "").unwrap().emitters.is_empty());
     assert_eq!(load_weather_vfx(&read, "nope").unwrap().notes.len(), 1);

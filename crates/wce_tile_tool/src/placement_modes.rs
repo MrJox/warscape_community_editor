@@ -56,10 +56,12 @@ impl TileTool {
         self.surface_px = Some((ev.x, ev.y));
         let (doc, grabbed) = (document_id(e).unwrap_or(0), self.grab_elem.filter(|_| self.grabbing));
         let skip = |en: &wce_scene::render_scene::Entity| {
-            en.source.doc == doc && grabbed.is_some_and(|g| elem_of(en.source.item) == Some(g) || piece_of(en.source.item).is_some_and(|(p, _)| p == g))
+            en.source.doc == doc
+                && grabbed.is_some_and(|g| elem_of(en.source.item) == Some(g) || piece_of(en.source.item).is_some_and(|(p, _)| p == g))
         };
 
-        self.surface_hit = wce_editor::viewport::surface_under(e, ev.x, ev.y, &skip).map(|h| SurfacePoint { point: h.point, normal: h.normal });
+        self.surface_hit =
+            wce_editor::viewport::surface_under(e, ev.x, ev.y, &skip).map(|h| SurfacePoint { point: h.point, normal: h.normal });
     }
 
     /// Where a click places now: the surface under the mouse (Entity: Above) or the terrain under it; true: on the terrain.
@@ -136,8 +138,16 @@ impl TileTool {
 
             let surfaces = [
                 (SurfaceMode::Freeform, icons::MOVE, "Freeform: on the terrain under the mouse, keeping that height"),
-                (SurfaceMode::Landscape, icons::MOUNTAIN, "Landscape: Above: stands on the terrain (snapped to it when the terrain changes)"),
-                (SurfaceMode::Entity, icons::BOXES, "Entity: Above: on whatever is under the mouse (a building, a rock; the terrain where nothing is); TEd gets it as freeform"),
+                (
+                    SurfaceMode::Landscape,
+                    icons::MOUNTAIN,
+                    "Landscape: Above: stands on the terrain (snapped to it when the terrain changes)",
+                ),
+                (
+                    SurfaceMode::Entity,
+                    icons::BOXES,
+                    "Entity: Above: on whatever is under the mouse (a building, a rock; the terrain where nothing is); TEd gets it as freeform",
+                ),
             ];
             for (mode, icon, tip) in surfaces {
                 if chip(surface == mode, icon, &format!("surface{mode:?}"), tip) {
@@ -157,7 +167,8 @@ impl TileTool {
             }
 
             // A tree: one per click, or the brush.
-            let tree = self.placing == Some(crate::tool::Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE");
+            let tree =
+                self.placing == Some(crate::tool::Placing::Draft) && self.draft.as_ref().is_some_and(|d| d.kind == "VEGETATION_INSTANCE");
             let mut brush = None;
             if tree {
                 wce_editor::chips::chip_separator();
@@ -166,7 +177,8 @@ impl TileTool {
                     brush = Some(false);
                 }
 
-                if chip(on, icons::BRUSH, "vegbrush", "Brush: paint trees (Ctrl + drag takes them away); its settings are in the Inspector") {
+                if chip(on, icons::BRUSH, "vegbrush", "Brush: paint trees (Ctrl + drag takes them away); its settings are in the Inspector")
+                {
                     brush = Some(true);
                 }
             }

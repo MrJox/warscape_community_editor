@@ -151,7 +151,10 @@ fn pieces(on: &[bool], nx: usize, nz: usize) -> Vec<Vec<(usize, usize)>> {
             None => out.push(cells),
             Some(cut) => {
                 // Each side may fall apart: its regions again.
-                for side in [cells.iter().filter(|p| p.0 < cut).copied().collect::<Vec<_>>(), cells.iter().filter(|p| p.0 >= cut).copied().collect()] {
+                for side in [
+                    cells.iter().filter(|p| p.0 < cut).copied().collect::<Vec<_>>(),
+                    cells.iter().filter(|p| p.0 >= cut).copied().collect(),
+                ] {
                     work.extend(split_regions(&side));
                 }
             }
@@ -246,7 +249,9 @@ fn outlines(cells: &[(usize, usize)]) -> Vec<Vec<(usize, usize)>> {
             let d = dir(&edges[e]);
             // Left, straight on, right.
             let next = from.get(&edges[e].1).and_then(|outs| {
-                [(-d.1, d.0), d, (d.1, -d.0)].into_iter().find_map(|want| outs.iter().copied().find(|&o| !used[o] && dir(&edges[o]) == want))
+                [(-d.1, d.0), d, (d.1, -d.0)]
+                    .into_iter()
+                    .find_map(|want| outs.iter().copied().find(|&o| !used[o] && dir(&edges[o]) == want))
             });
             match next {
                 Some(n) => e = n,

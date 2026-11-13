@@ -220,7 +220,14 @@ impl<'a> Reader<'a> {
 
     fn c_uuid(&mut self, c: Option<&str>) -> R<()> {
         let b = self.get(16)?;
-        let vv = [hex_bytes(&b[0..4], ""), hex_bytes(&b[4..6], ""), hex_bytes(&b[6..8], ""), hex_bytes(&b[8..10], ""), hex_bytes(&b[10..16], "")].join("-");
+        let vv = [
+            hex_bytes(&b[0..4], ""),
+            hex_bytes(&b[4..6], ""),
+            hex_bytes(&b[6..8], ""),
+            hex_bytes(&b[8..10], ""),
+            hex_bytes(&b[10..16], ""),
+        ]
+        .join("-");
         self.cmt_out(format!("<uuid>{}</uuid>", vv), c);
         Ok(())
     }
@@ -1172,15 +1179,17 @@ impl<'a> Reader<'a> {
     }
 
     fn c_event_list(&mut self) -> R<()> {
-        self.tag("events", &[], |s| loop {
-            let e = s.get_s()?;
-            if e == "events_end" {
-                return Ok(());
+        self.tag("events", &[], |s| {
+            loop {
+                let e = s.get_s()?;
+                if e == "events_end" {
+                    return Ok(());
+                }
+                s.tag("event", &[], |s| {
+                    s.out(&format!("<s>{}</s>", xml_escape(&e)));
+                    Ok(())
+                })?;
             }
-            s.tag("event", &[], |s| {
-                s.out(&format!("<s>{}</s>", xml_escape(&e)));
-                Ok(())
-            })?;
         })
     }
 

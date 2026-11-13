@@ -28,13 +28,24 @@ fn main() {
     }
 
     for pack in vfs.packs() {
-        let kind = if pack.loose { "loose  " } else if pack.is_mod { "mod    " } else { "vanilla" };
+        let kind = if pack.loose {
+            "loose  "
+        } else if pack.is_mod {
+            "mod    "
+        } else {
+            "vanilla"
+        };
         println!("  {kind} {}", pack.name);
     }
 
-    println!(".environment {}, .lighting {}, vfx xml {}, fxc {}, building rmv2 {}",
-        vfs.list("", ".environment").len(), vfs.list("", ".lighting").len(), vfs.list("vfx/", ".xml").len(),
-        vfs.list("fxc/", ".fxc").len(), vfs.list("rigidmodels/buildings/", ".rigid_model_v2").len());
+    println!(
+        ".environment {}, .lighting {}, vfx xml {}, fxc {}, building rmv2 {}",
+        vfs.list("", ".environment").len(),
+        vfs.list("", ".lighting").len(),
+        vfs.list("vfx/", ".xml").len(),
+        vfs.list("fxc/", ".fxc").len(),
+        vfs.list("rigidmodels/buildings/", ".rigid_model_v2").len()
+    );
 
     if !finds.is_empty() {
         for (path, pack) in vfs.files() {

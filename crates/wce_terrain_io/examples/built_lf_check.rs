@@ -26,10 +26,20 @@ fn main() {
         }
 
         let read = |n: &str| vfs.read(&format!("{folder}/{n}")).ok();
-        let (Some(want), Some(dds)) = (read("lf_height_map.data"), read("lf_height_map.dds")) else { skipped += 1; continue };
-        let cells = read("terrain.tile_list").and_then(|b| TileList::parse(&b).ok()).map(|t| (t.battle_size[0], t.battle_size[1]))
-            .or_else(|| read("tile_map.index").filter(|i| i.len() >= 12).map(|i| (u32::from_le_bytes(i[4..8].try_into().unwrap()), u32::from_le_bytes(i[8..12].try_into().unwrap()))));
-        let Some(cells) = cells else { skipped += 1; continue };
+        let (Some(want), Some(dds)) = (read("lf_height_map.data"), read("lf_height_map.dds")) else {
+            skipped += 1;
+            continue;
+        };
+        let cells =
+            read("terrain.tile_list").and_then(|b| TileList::parse(&b).ok()).map(|t| (t.battle_size[0], t.battle_size[1])).or_else(|| {
+                read("tile_map.index")
+                    .filter(|i| i.len() >= 12)
+                    .map(|i| (u32::from_le_bytes(i[4..8].try_into().unwrap()), u32::from_le_bytes(i[8..12].try_into().unwrap())))
+            });
+        let Some(cells) = cells else {
+            skipped += 1;
+            continue;
+        };
         let u = |o: usize| u32::from_le_bytes(dds[o..o + 4].try_into().unwrap());
         let (h, w) = (u(12), u(16));
         let field = PagedU16::from_le_rows(w, h, &dds[128..]);
@@ -38,7 +48,12 @@ fn main() {
             Some(mine) if mine == want => same += 1,
             Some(mine) => {
                 bad += 1;
-                println!("  {folder}: DIFFERS (sizes {} / {}, first at {:?})", mine.len(), want.len(), mine.iter().zip(&want).position(|(x, y)| x != y));
+                println!(
+                    "  {folder}: DIFFERS (sizes {} / {}, first at {:?})",
+                    mine.len(),
+                    want.len(),
+                    mine.iter().zip(&want).position(|(x, y)| x != y)
+                );
             }
         }
     }

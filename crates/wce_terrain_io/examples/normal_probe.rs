@@ -82,7 +82,10 @@ fn main() {
         }
     }
 
-    println!("best: mean error {:.2} at offset ({}, {}) from (col*256, row*256), perm {:?}, flip {}", best.0, best.1, best.2, perms[best.3], best.4);
+    println!(
+        "best: mean error {:.2} at offset ({}, {}) from (col*256, row*256), perm {:?}, flip {}",
+        best.0, best.1, best.2, perms[best.3], best.4
+    );
     let (ox, oy) = (col * 256 + best.1, row * 256 + best.2);
     for (sx, sy) in [(0, 0), (288, 288), (575, 575), (100, 400)] {
         let by = if best.4 { i64::from(bh) - 1 - (oy + sy) } else { oy + sy };

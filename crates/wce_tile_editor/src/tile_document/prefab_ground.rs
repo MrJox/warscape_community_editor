@@ -80,7 +80,11 @@ impl Tile {
 
         // A value being dragged in the Inspector (a draft) counts already: the ground follows the drag.
         let value = |g: usize, attr: &str| -> Option<f64> {
-            self.drafts.get(&(g, attr.to_owned())).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()).or_else(|| number(doc, g, attr))
+            self.drafts
+                .get(&(g, attr.to_owned()))
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|v| v.is_finite())
+                .or_else(|| number(doc, g, attr))
         };
 
         let mut out = vec![];
@@ -109,7 +113,15 @@ impl Tile {
             let Some((hash, terrain)) = (source.0)(&key) else { continue };
             let w = world_transform(sc, e);
             let feather = value(e, TERRAIN_FEATHER_ATTR).map(|f| f.max(0.0));
-            out.push(Ground { elem: e, key, terrain, hash, at: Placement::from_transform(w.position, &w.rotation), opacity: opacity as f32, feather });
+            out.push(Ground {
+                elem: e,
+                key,
+                terrain,
+                hash,
+                at: Placement::from_transform(w.position, &w.rotation),
+                opacity: opacity as f32,
+                feather,
+            });
         }
 
         out.sort_by_key(|g| els[g.elem].end_off);
@@ -118,7 +130,8 @@ impl Tile {
 
     /// A hash of the ground settings being dragged.
     fn ground_drafts(&self) -> u64 {
-        let mut all = self.drafts.iter().filter(|((_, a), _)| is_ground_attr(a)).map(|((e, a), v)| format!("{e} {a} {v}")).collect::<Vec<_>>();
+        let mut all =
+            self.drafts.iter().filter(|((_, a), _)| is_ground_attr(a)).map(|((e, a), v)| format!("{e} {a} {v}")).collect::<Vec<_>>();
         all.sort();
         fnv(FNV_START, &all.join("|").bytes().map(u64::from).collect::<Vec<_>>())
     }
@@ -128,7 +141,18 @@ impl Tile {
     fn ground_signature(&self, g: &Ground, grid: &Grid, below_of: Option<u64>) -> u64 {
         let at = g.at;
         let (cx, cz) = at.to_scene(1.0, 0.0);
-        let mut h = fnv(FNV_START, &[g.hash, at.x.to_bits(), at.z.to_bits(), cx.to_bits(), cz.to_bits(), u64::from(g.opacity.to_bits()), g.feather.map_or(u64::MAX, f64::to_bits)]);
+        let mut h = fnv(
+            FNV_START,
+            &[
+                g.hash,
+                at.x.to_bits(),
+                at.z.to_bits(),
+                cx.to_bits(),
+                cz.to_bits(),
+                u64::from(g.opacity.to_bits()),
+                g.feather.map_or(u64::MAX, f64::to_bits),
+            ],
+        );
         h = fnv(h, &g.key.to_lowercase().bytes().map(u64::from).collect::<Vec<_>>());
         if !g.terrain.normalize {
             return h;
@@ -156,7 +180,12 @@ impl Tile {
             return;
         }
 
-        let has_layers = self.project.layers.as_ref().and_then(|l| l.height.as_ref()).is_some_and(|s| s.layers.iter().any(|l| is_prefab_layer(&l.owner)));
+        let has_layers = self
+            .project
+            .layers
+            .as_ref()
+            .and_then(|l| l.height.as_ref())
+            .is_some_and(|s| s.layers.iter().any(|l| is_prefab_layer(&l.owner)));
         if self.project.prefab_ground.is_none() && !has_layers {
             return;
         }
@@ -164,18 +193,31 @@ impl Tile {
         // Looked at again only when something could have changed it (a ground setting being dragged too).
         let version = self.project.height.as_ref().map_or(0, |f| f.version().1);
         let drafts = self.ground_drafts();
-        let seen = fnv(FNV_START, &[self.history_version, self.structure_version, self.edits_seen, version, u64::from(self.prefab_ground_stale), drafts]);
+        let seen = fnv(
+            FNV_START,
+            &[self.history_version, self.structure_version, self.edits_seen, version, u64::from(self.prefab_ground_stale), drafts],
+        );
         if seen == self.prefab_ground_seen {
             return;
         }
 
         let Some(grid) = Grid::of(&self.project) else { return };
         let grounds = self.prefab_grounds();
-        let made = self.project.layers.as_ref().and_then(|l| l.height.as_ref()).map(|s| s.layers.iter().filter(|l| is_prefab_layer(&l.owner)).map(|l| (l.id, l.owner.clone())).collect::<Vec<_>>()).unwrap_or_default();
-        let wanted = grounds.iter().enumerate().map(|(n, g)| {
-            let below_of = made.iter().find(|(_, o)| parse_owner(o).is_some_and(|(m, _)| m == n)).map(|(id, _)| *id);
-            owner_of(n, self.ground_signature(g, &grid, below_of))
-        }).collect::<Vec<_>>();
+        let made = self
+            .project
+            .layers
+            .as_ref()
+            .and_then(|l| l.height.as_ref())
+            .map(|s| s.layers.iter().filter(|l| is_prefab_layer(&l.owner)).map(|l| (l.id, l.owner.clone())).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let wanted = grounds
+            .iter()
+            .enumerate()
+            .map(|(n, g)| {
+                let below_of = made.iter().find(|(_, o)| parse_owner(o).is_some_and(|(m, _)| m == n)).map(|(id, _)| *id);
+                owner_of(n, self.ground_signature(g, &grid, below_of))
+            })
+            .collect::<Vec<_>>();
 
         // A prefab's layer that changed changes its signature: stale only makes them looked at.
         let current = made.iter().map(|(_, o)| o.clone()).collect::<Vec<_>>();
@@ -245,7 +287,9 @@ impl Tile {
         for (n, id) in owners {
             let below_of = Some(id);
             let sig = self.ground_signature(&grounds[n], grid, below_of);
-            if let Some(l) = self.project.layers.as_mut().and_then(|l| l.height.as_mut()).and_then(|s| s.layers.iter_mut().find(|l| l.id == id)) {
+            if let Some(l) =
+                self.project.layers.as_mut().and_then(|l| l.height.as_mut()).and_then(|s| s.layers.iter_mut().find(|l| l.id == id))
+            {
                 l.owner = owner_of(n, sig);
             }
         }
@@ -285,23 +329,38 @@ impl super::TileDocument {
         ins.text("ground_size", "size", &format!("{w:.1} x {h:.1}"));
 
         // Opacity and feather: drafts while dragged.
-        let draft = |d: &mut Self, attr: &str, now: f64, edit: &mut dyn FnMut(&mut dyn wce_editor_core::inspector::Inspector, &mut f32) -> bool, ins: &mut dyn wce_editor_core::inspector::Inspector| {
+        let draft = |d: &mut Self,
+                     attr: &str,
+                     now: f64,
+                     edit: &mut dyn FnMut(&mut dyn wce_editor_core::inspector::Inspector, &mut f32) -> bool,
+                     ins: &mut dyn wce_editor_core::inspector::Inspector| {
             let k = (e, attr.to_owned());
             let mut v = d.tile().drafts.get(&k).and_then(|s| s.parse::<f32>().ok()).unwrap_or(now as f32);
             if edit(ins, &mut v) {
                 d.tile_mut().drafts.insert(k.clone(), wce_tile::ted_scene::format_number(f64::from(v)));
             }
 
-            if ins.gesture_ended() && let Some(v) = d.tile_mut().drafts.remove(&k) {
+            if ins.gesture_ended()
+                && let Some(v) = d.tile_mut().drafts.remove(&k)
+            {
                 d.set_attribute(e, attr, &v);
             }
         };
 
         draft(self, TERRAIN_OPACITY_ATTR, opacity, &mut |ins, v| ins.edit_slider("ground_opacity", "opacity", v, 0.0, 1.0), ins);
         if terrain.normalize {
-            draft(self, TERRAIN_FEATHER_ATTR, feather.unwrap_or(terrain.feather), &mut |ins, v| ins.edit_float("ground_feather", "feather", v, 0.1, 0.0, 100.0), ins);
+            draft(
+                self,
+                TERRAIN_FEATHER_ATTR,
+                feather.unwrap_or(terrain.feather),
+                &mut |ins, v| ins.edit_float("ground_feather", "feather", v, 0.1, 0.0, 100.0),
+                ins,
+            );
             if feather.is_some() {
-                ins.mark_fields(vec![("ground_feather".to_owned(), format!("Override: the prefab's is {}", wce_tile::ted_scene::format_number(terrain.feather)))]);
+                ins.mark_fields(vec![(
+                    "ground_feather".to_owned(),
+                    format!("Override: the prefab's is {}", wce_tile::ted_scene::format_number(terrain.feather)),
+                )]);
             }
 
             if ins.button("ground_feather_reset", "The prefab's feather", feather.is_some()) {
@@ -323,7 +382,12 @@ impl super::TileDocument {
     /// (an undo entry of its own, after the unpack's). Returns whether it had any.
     pub(crate) fn keep_prefab_ground(&mut self, n: usize, key: &str) -> bool {
         let t = self.tile();
-        let has = t.project.layers.as_ref().and_then(|l| l.height.as_ref()).is_some_and(|s| s.layers.iter().any(|l| parse_owner(&l.owner).is_some_and(|(m, _)| m == n)));
+        let has = t
+            .project
+            .layers
+            .as_ref()
+            .and_then(|l| l.height.as_ref())
+            .is_some_and(|s| s.layers.iter().any(|l| parse_owner(&l.owner).is_some_and(|(m, _)| m == n)));
         if !has {
             return false;
         }

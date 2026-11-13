@@ -74,12 +74,17 @@ struct Totals {
 /// its ancestors' positions and its own.
 /// The markers files the compiler writes (stage A).
 const COMPILED_MARKERS: [&str; 6] = [
-    "prop_marker.markers", "particle_emitter_marker.markers", "point_light_marker.markers", "ai_hint_polyline_marker.markers", "ai_separator_marker.markers",
+    "prop_marker.markers",
+    "particle_emitter_marker.markers",
+    "point_light_marker.markers",
+    "ai_hint_polyline_marker.markers",
+    "ai_separator_marker.markers",
     "ai_hint_polyline_list_marker.markers",
 ];
 
 /// The XML files the compiler writes (stage A).
-const COMPILED_XML: [&str; 6] = ["definition.xml", "go_outlines.xml", "non_terrain_outlines.xml", "zones.xml", "deployment_areas.xml", "capture_location_list.xml"];
+const COMPILED_XML: [&str; 6] =
+    ["definition.xml", "go_outlines.xml", "non_terrain_outlines.xml", "zones.xml", "deployment_areas.xml", "capture_location_list.xml"];
 
 /// The largest magnitude of the numbers of an XML document (its coordinates' scale).
 fn xml_scale(n: &Node) -> f64 {
@@ -97,9 +102,13 @@ fn xml_within(a: &Node, b: &Node, scale: f64) -> bool {
             x.name == y.name
                 && (x.value == y.value || {
                     // A number, or a list of them (`x,y;x,y`), each within the precision.
-                    let nums = |v: &Value| v.as_str().map(|t| t.split([',', ';']).map(|n| n.trim().parse::<f64>().ok()).collect::<Option<Vec<_>>>());
+                    let nums = |v: &Value| {
+                        v.as_str().map(|t| t.split([',', ';']).map(|n| n.trim().parse::<f64>().ok()).collect::<Option<Vec<_>>>())
+                    };
                     match (nums(&x.value), nums(&y.value)) {
-                        (Some(Some(u)), Some(Some(v))) => u.len() == v.len() && u.iter().zip(&v).all(|(a, b)| (a - b).abs() <= 3e-6 * scale),
+                        (Some(Some(u)), Some(Some(v))) => {
+                            u.len() == v.len() && u.iter().zip(&v).all(|(a, b)| (a - b).abs() <= 3e-6 * scale)
+                        }
                         _ => false,
                     }
                 })
@@ -109,7 +118,9 @@ fn xml_within(a: &Node, b: &Node, scale: f64) -> bool {
 
 /// The serde documents the compiler writes (stage A): the escalation BMDs and the civilian deployment list.
 fn compiled_serde(name: &str) -> bool {
-    name == "civilian_deployment.bin" || name == "civilian_shelter.bin" || (name.starts_with("bmd_data_escalation") && name.ends_with(".bin"))
+    name == "civilian_deployment.bin"
+        || name == "civilian_shelter.bin"
+        || (name.starts_with("bmd_data_escalation") && name.ends_with(".bin"))
 }
 
 /// The escalation BMDs' XML twins.
@@ -131,7 +142,15 @@ fn mask_garbage(ours: &Node, theirs: &Node, masked: &mut Vec<String>) -> (Node, 
         if let Some(is_model) = model(b) {
             let mut fields = vec!["snow", "destruction"];
             if is_model {
-                fields.extend(["decal_parallax", "decal_tiled", "decal_params_parallax", "decal_params_scalex", "decal_params_scaley", "decal_params_scalez", "decal_params_tiled"]);
+                fields.extend([
+                    "decal_parallax",
+                    "decal_tiled",
+                    "decal_params_parallax",
+                    "decal_params_scalex",
+                    "decal_params_scaley",
+                    "decal_params_scalez",
+                    "decal_params_tiled",
+                ]);
             }
 
             for f in fields {
@@ -180,8 +199,16 @@ fn strip_links(n: &Node, links: &mut Vec<String>) -> Node {
 
     for c in &n.children {
         match c.class.as_str() {
-            "building_links" => links.push(c.children.iter().map(|l| l.get("building_index").and_then(Value::as_int).unwrap_or(-1).to_string()).collect::<Vec<_>>().join(";")),
-            "building_indices" => links.push(c.props().iter().map(|p| p.value.as_str().unwrap_or_default().to_owned()).collect::<Vec<_>>().join(";")),
+            "building_links" => links.push(
+                c.children
+                    .iter()
+                    .map(|l| l.get("building_index").and_then(Value::as_int).unwrap_or(-1).to_string())
+                    .collect::<Vec<_>>()
+                    .join(";"),
+            ),
+            "building_indices" => {
+                links.push(c.props().iter().map(|p| p.value.as_str().unwrap_or_default().to_owned()).collect::<Vec<_>>().join(";"))
+            }
             _ => out.children.push(strip_links(c, links)),
         }
     }
@@ -191,7 +218,13 @@ fn strip_links(n: &Node, links: &mut Vec<String>) -> Node {
 
 /// The largest magnitude of a serde document's 2D coordinates (`x`, `y`, `z` floats).
 fn serde_scale(n: &Node) -> f64 {
-    let own = n.props().iter().filter(|p| matches!(p.name.as_str(), "x" | "y" | "z")).filter_map(|p| p.value.as_f64()).map(f64::abs).fold(1.0, f64::max);
+    let own = n
+        .props()
+        .iter()
+        .filter(|p| matches!(p.name.as_str(), "x" | "y" | "z"))
+        .filter_map(|p| p.value.as_f64())
+        .map(f64::abs)
+        .fold(1.0, f64::max);
     n.children.iter().map(serde_scale).fold(own, f64::max)
 }
 
@@ -201,7 +234,13 @@ fn serde_scale(n: &Node) -> f64 {
 fn serde_within(a: &Node, b: &Node, scale: f64, path: &str, exceptions: &mut Vec<String>) -> Option<String> {
     let path = format!("{path}/{}", b.class);
     if a.class != b.class || a.children.len() != b.children.len() || a.props().len() != b.props().len() {
-        return Some(format!("{path}: shape: ours {} props {} children, theirs {} props {} children", a.props().len(), a.children.len(), b.props().len(), b.children.len()));
+        return Some(format!(
+            "{path}: shape: ours {} props {} children, theirs {} props {} children",
+            a.props().len(),
+            a.children.len(),
+            b.props().len(),
+            b.children.len()
+        ));
     }
 
     let ulps = |u: f32, v: f32| (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs();
@@ -256,8 +295,19 @@ fn serde_within(a: &Node, b: &Node, scale: f64, path: &str, exceptions: &mut Vec
 
 /// TEd's ground type colours (`EMPIREUTILITY::ground_type_to_colour`, docs/re/terrain.md).
 const PALETTE: [[u8; 3]; 13] = [
-    [64, 225, 231], [0, 255, 0], [150, 75, 0], [244, 164, 96], [172, 225, 175], [170, 170, 170], [0, 0, 255], [93, 255, 255],
-    [255, 96, 0], [255, 100, 100], [255, 255, 255], [255, 255, 0], [64, 0, 0],
+    [64, 225, 231],
+    [0, 255, 0],
+    [150, 75, 0],
+    [244, 164, 96],
+    [172, 225, 175],
+    [170, 170, 170],
+    [0, 0, 255],
+    [93, 255, 255],
+    [255, 96, 0],
+    [255, 100, 100],
+    [255, 255, 255],
+    [255, 255, 0],
+    [64, 0, 0],
 ];
 
 /// A polygon's points (x, z).
@@ -267,7 +317,12 @@ fn our_polygons<'a>(n: &'a Node, origin: (f64, f64), out: &mut Vec<(&'a Node, Ve
     let p = n.get("position").and_then(Value::as_vec3).unwrap_or_default();
     let here = (origin.0 + p[0], origin.1 + p[2]);
     if let Some(points) = n.child("points") {
-        let pts = points.children.iter().filter_map(|c| c.get("position").and_then(Value::as_vec3)).map(|q| (here.0 + q[0], here.1 + q[2])).collect();
+        let pts = points
+            .children
+            .iter()
+            .filter_map(|c| c.get("position").and_then(Value::as_vec3))
+            .map(|q| (here.0 + q[0], here.1 + q[2]))
+            .collect();
         out.push((n, pts));
     }
 
@@ -278,7 +333,12 @@ fn our_polygons<'a>(n: &'a Node, origin: (f64, f64), out: &mut Vec<(&'a Node, Ve
 
 /// A value as tile.ted writes it.
 fn crate_value_text(class: &str, attr: &str, v: &Value) -> String {
-    wce_tile_io::xml::value_text(&wce_tile_io::attila::schema::TedSchema, wce_tile_model::Sym::new(class), wce_tile_model::Sym::new(attr), v)
+    wce_tile_io::xml::value_text(
+        &wce_tile_io::attila::schema::TedSchema,
+        wce_tile_model::Sym::new(class),
+        wce_tile_model::Sym::new(attr),
+        v,
+    )
 }
 
 /// The first difference between two trees, as a path.
@@ -294,7 +354,14 @@ fn first_diff(a: &Node, b: &Node, path: &str) -> Option<String> {
     }
 
     if a.props().len() != b.props().len() || a.children.len() != b.children.len() {
-        return Some(format!("{path}/{}: {} / {} props, {} / {} children", a.class, a.props().len(), b.props().len(), a.children.len(), b.children.len()));
+        return Some(format!(
+            "{path}/{}: {} / {} props, {} / {} children",
+            a.class,
+            a.props().len(),
+            b.props().len(),
+            a.children.len(),
+            b.children.len()
+        ));
     }
 
     a.children.iter().zip(&b.children).enumerate().find_map(|(i, (x, y))| first_diff(x, y, &format!("{path}/{}[{i}]", a.class)))
@@ -326,7 +393,11 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             let what = match (&raw.scene, &back.scene, &raw.entry, &back.entry) {
                 (Some(a), Some(b), _, _) if a.without_trivia() != b.without_trivia() => first_diff(a, b, ""),
                 (_, _, Some(a), Some(b)) if a.root.without_trivia() != b.root.without_trivia() => first_diff(&a.root, &b.root, "entry"),
-                _ => Some(format!("maps {:?} / {:?}", raw.maps.iter().map(|m| (m.kind, m.raster.width)).collect::<Vec<_>>(), back.maps.iter().map(|m| (m.kind, m.raster.width)).collect::<Vec<_>>())),
+                _ => Some(format!(
+                    "maps {:?} / {:?}",
+                    raw.maps.iter().map(|m| (m.kind, m.raster.width)).collect::<Vec<_>>(),
+                    back.maps.iter().map(|m| (m.kind, m.raster.width)).collect::<Vec<_>>()
+                )),
             };
 
             local.read_back_differs += 1;
@@ -338,7 +409,8 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             && let (Some(d), Some(e)) = (binary.document("definition.xml"), raw.entry.as_ref())
         {
             let def = d.root.children.iter().find(|c| !c.class.as_str().starts_with('#')).unwrap_or(&d.root);
-            let attrs = def.props().iter().map(|p| format!("{}={}", p.name, p.value.as_str().unwrap_or_default())).collect::<Vec<_>>().join(" ");
+            let attrs =
+                def.props().iter().map(|p| format!("{}={}", p.name, p.value.as_str().unwrap_or_default())).collect::<Vec<_>>().join(" ");
             let ent = ["width", "height", "tile_set"].iter().map(|a| format!("{a}={:?}", e.root.get(a))).collect::<Vec<_>>().join(" ");
             let kind = folder.split('/').nth(2).unwrap_or_default();
             *local.losses.entry(format!("definition [{kind}] {attrs} | {ent}")).or_default() += 1;
@@ -347,7 +419,11 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
         // The read-back project compiled (stage A) against the binary, document by document and field by field.
         {
             // The binary's marker versions, so that an older file is compared field by field.
-            let mut versions = binary.documents.iter().map(|d| (d.name.clone(), d.root.get("version").and_then(Value::as_int))).collect::<BTreeMap<_, _>>();
+            let mut versions = binary
+                .documents
+                .iter()
+                .map(|d| (d.name.clone(), d.root.get("version").and_then(Value::as_int)))
+                .collect::<BTreeMap<_, _>>();
             // A BMD's version and its props' (the records' own; a file's are all one).
             for d in binary.documents.iter().filter(|d| d.root.class == "BMD") {
                 versions.insert(d.name.clone(), d.root.get("serialise_version").and_then(Value::as_int));
@@ -392,7 +468,8 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 use wce_tile_io::attila::{carry::FINGERPRINTS, stage_b, stage_c};
                 let mut p = back.clone();
                 p.files.retain(|f| {
-                    !((regen_b && f.path == format!("{}/{FINGERPRINTS}", stage_b::CARRIED_DIR)) || (regen_c && f.path == format!("{}/{FINGERPRINTS}", stage_c::CARRIED_DIR)))
+                    !((regen_b && f.path == format!("{}/{FINGERPRINTS}", stage_b::CARRIED_DIR))
+                        || (regen_c && f.path == format!("{}/{FINGERPRINTS}", stage_c::CARRIED_DIR)))
                 });
                 p
             });
@@ -400,7 +477,11 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             let (compiled, cnotes) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compile(project, &cctx))) {
                 Ok(r) => r?,
                 Err(p) => {
-                    let what = p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_default();
+                    let what = p
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| p.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+                        .unwrap_or_default();
                     local.compile_beyond += 1;
                     local.problems.push(format!("{name}: the compile panicked: {what}"));
                     *local.losses.entry("compile panicked".to_owned()).or_default() += 1;
@@ -424,7 +505,10 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 for name in theirs.folder.keys().filter(|n| !ours.folder.contains_key(*n)) {
                     let carried = back.files.iter().any(|f| f.path == *name);
                     let key = name.chars().map(|c| if c.is_ascii_digit() { '#' } else { c }).collect::<String>();
-                    *local.losses.entry(format!("not compiled{}: {key}", if carried { " (carried by the project)" } else { "" })).or_default() += 1;
+                    *local
+                        .losses
+                        .entry(format!("not compiled{}: {key}", if carried { " (carried by the project)" } else { "" }))
+                        .or_default() += 1;
                 }
 
                 for name in ours.folder.keys().filter(|n| !theirs.folder.contains_key(*n)) {
@@ -492,7 +576,9 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                             let pos = ty.get("position").and_then(Value::as_floats).unwrap_or_default().to_vec();
                             let sc = ty.get("scale").and_then(Value::as_floats).unwrap_or_default().to_vec();
                             let fl = ty.get("flags").and_then(Value::as_ints).unwrap_or_default().to_vec();
-                            (0..sc.len()).map(move |i| (key.clone(), [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]], (sc[i] * 127.0).round() as i64, fl[i]))
+                            (0..sc.len()).map(move |i| {
+                                (key.clone(), [pos[3 * i], pos[3 * i + 1], pos[3 * i + 2]], (sc[i] * 127.0).round() as i64, fl[i])
+                            })
                         })
                         // The static trees: the generated objects (on the generator's grid) are not decompiled.
                         .filter(|t| !wce_tile_io::attila::decompile::on_generator_grid(t.1[0], t.1[2], density))
@@ -510,18 +596,28 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                         if let Some(i) = ours.iter().position(|o| o == t) {
                             ours.swap_remove(i);
                             exact += 1;
-                        } else if let Some(i) = ours.iter().position(|o| o.0 == t.0 && o.2 == t.2 && o.3 == t.3 && (0..3).all(|k| (o.1[k] - t.1[k]).abs() < 1e-3)) {
+                        } else if let Some(i) = ours
+                            .iter()
+                            .position(|o| o.0 == t.0 && o.2 == t.2 && o.3 == t.3 && (0..3).all(|k| (o.1[k] - t.1[k]).abs() < 1e-3))
+                        {
                             ours.swap_remove(i);
                             near += 1;
                         } else if local.problems.len() < 40 {
-                            local.problems.push(format!("{name}: regenerated tree missing: {t:?}; nearest {:?}", ours.iter().filter(|o| o.0 == t.0).min_by(|a, b| ((a.1[0] - t.1[0]).abs() + (a.1[2] - t.1[2]).abs()).total_cmp(&((b.1[0] - t.1[0]).abs() + (b.1[2] - t.1[2]).abs())))));
+                            local.problems.push(format!(
+                                "{name}: regenerated tree missing: {t:?}; nearest {:?}",
+                                ours.iter().filter(|o| o.0 == t.0).min_by(|a, b| ((a.1[0] - t.1[0]).abs() + (a.1[2] - t.1[2]).abs())
+                                    .total_cmp(&((b.1[0] - t.1[0]).abs() + (b.1[2] - t.1[2]).abs())))
+                            ));
                         }
                     }
 
                     let e = local.attr_same.entry(format!("stage C regenerated {name} static trees: exact")).or_default();
                     e.0 += exact;
                     e.1 += theirs.len() - exact;
-                    let e = local.attr_same.entry(format!("stage C regenerated {name} static trees: within 1 mm, same scale and flag")).or_default();
+                    let e = local
+                        .attr_same
+                        .entry(format!("stage C regenerated {name} static trees: within 1 mm, same scale and flag"))
+                        .or_default();
                     e.0 += exact + near;
                     e.1 += theirs.len() - exact - near + ours.len();
                     break;
@@ -531,10 +627,17 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             let docs = &compiled.documents;
             // A document's bytes as the binary writer gives them with the tile's styles (the compiled tile's or the binary's).
             let bytes_in = |t: &wce_tile_model::Tile, d: &wce_tile_model::Document| {
-                let one = wce_tile_model::Tile { documents: vec![d.clone()], source_format: t.source_format, source: t.source.clone(), ..Default::default() };
+                let one = wce_tile_model::Tile {
+                    documents: vec![d.clone()],
+                    source_format: t.source_format,
+                    source: t.source.clone(),
+                    ..Default::default()
+                };
                 TileBinary.write(&one).ok().and_then(|(f, _)| f.folder.get(&d.name).and_then(|b| b.bytes().ok()).map(|b| b.to_vec()))
             };
-            let bytes = |d: &wce_tile_model::Document| if docs.iter().any(|x| std::ptr::eq(x, d)) { bytes_in(&compiled, d) } else { bytes_in(&binary, d) };
+            let bytes = |d: &wce_tile_model::Document| {
+                if docs.iter().any(|x| std::ptr::eq(x, d)) { bytes_in(&compiled, d) } else { bytes_in(&binary, d) }
+            };
 
             // The compiled XML files: the document as the binary's (values; the layout is the writer's).
             for theirs in binary.documents.iter().filter(|d| COMPILED_XML.contains(&d.name.as_str()) || compiled_twin(&d.name)) {
@@ -544,7 +647,10 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 let mut masked = vec![];
                 let (mut ours_links, mut theirs_links) = (vec![], vec![]);
                 let pair = docs.iter().find(|d| d.name == theirs.name).map(|ours| {
-                    let (a, b) = (strip_links(&ours.root.without_trivia(), &mut ours_links), strip_links(&theirs.root.without_trivia(), &mut theirs_links));
+                    let (a, b) = (
+                        strip_links(&ours.root.without_trivia(), &mut ours_links),
+                        strip_links(&theirs.root.without_trivia(), &mut theirs_links),
+                    );
                     mask_garbage(&a, &b, &mut masked)
                 });
                 if (compiled_twin(&theirs.name) || theirs.name == "capture_location_list.xml") && pair.is_some() {
@@ -571,7 +677,11 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     Some((ours, theirs_masked)) => {
                         local.attr_same.entry(ckey.clone()).or_default().1 += 1;
                         local.compile_beyond += 1;
-                        local.problems.push(format!("{name}: compiled {}: {}", theirs.name, first_diff(ours, theirs_masked, "").unwrap_or_default()));
+                        local.problems.push(format!(
+                            "{name}: compiled {}: {}",
+                            theirs.name,
+                            first_diff(ours, theirs_masked, "").unwrap_or_default()
+                        ));
                     }
                     None => {
                         local.attr_same.entry(ckey.clone()).or_default().1 += 1;
@@ -621,7 +731,8 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
 
                 let mut masked = vec![];
                 let (mut ours_links, mut theirs_links) = (vec![], vec![]);
-                let (a, b) = mask_garbage(&strip_links(&ours.root, &mut ours_links), &strip_links(&theirs.root, &mut theirs_links), &mut masked);
+                let (a, b) =
+                    mask_garbage(&strip_links(&ours.root, &mut ours_links), &strip_links(&theirs.root, &mut theirs_links), &mut masked);
                 if ours_links.len() + theirs_links.len() > 0 {
                     let l = local.attr_same.entry(format!("compile {kind} capture building links")).or_default();
                     if ours_links == theirs_links {
@@ -669,14 +780,23 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 }
             }
 
-            for theirs in binary.documents.iter().filter(|d| (d.root.class == "BATTLEFIELD_BUILDING_LIST" && !d.name.ends_with(".xml")) || COMPILED_MARKERS.contains(&d.name.as_str())) {
+            for theirs in binary.documents.iter().filter(|d| {
+                (d.root.class == "BATTLEFIELD_BUILDING_LIST" && !d.name.ends_with(".xml")) || COMPILED_MARKERS.contains(&d.name.as_str())
+            }) {
                 let kind = match theirs.name.as_str() {
                     n if n == "building_list" || COMPILED_MARKERS.contains(&n) => n,
                     _ => "building_list_<layer>",
                 };
                 let Some(ours) = docs.iter().find(|d| d.name == theirs.name) else {
                     let carried = back.files.iter().any(|f| f.path == theirs.name);
-                    *local.losses.entry(format!("compile: {} {}", theirs.name, if carried { "carried by the project (legacy)" } else { "NOT COMPILED" })).or_default() += 1;
+                    *local
+                        .losses
+                        .entry(format!(
+                            "compile: {} {}",
+                            theirs.name,
+                            if carried { "carried by the project (legacy)" } else { "NOT COMPILED" }
+                        ))
+                        .or_default() += 1;
                     if !carried {
                         local.compile_beyond += 1;
                     }
@@ -703,7 +823,8 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     }
                 }
 
-                let rec = |d: &wce_tile_model::Document| d.root.children.iter().filter(|c| c.class != "groups").cloned().collect::<Vec<_>>();
+                let rec =
+                    |d: &wce_tile_model::Document| d.root.children.iter().filter(|c| c.class != "groups").cloned().collect::<Vec<_>>();
                 let (a, b) = (rec(ours), rec(theirs));
                 if a.len() != b.len() {
                     local.compile_beyond += 1;
@@ -715,14 +836,18 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     // A siege graph record's polylines: as many, each within the points' precision.
                     if let Some(theirs_lines) = y.child("polylines") {
                         let ours_lines = x.child("polylines").map_or(&[][..], |l| &l.children[..]);
-                        let pts = |n: &Node| n.get("points").and_then(Value::as_floats).unwrap_or_default().iter().map(|&v| v as f32).collect::<Vec<_>>();
+                        let pts = |n: &Node| {
+                            n.get("points").and_then(Value::as_floats).unwrap_or_default().iter().map(|&v| v as f32).collect::<Vec<_>>()
+                        };
                         let same = ours_lines.len() == theirs_lines.children.len()
                             && ours_lines.iter().zip(&theirs_lines.children).all(|(o, t)| {
                                 let (a, b) = (pts(o), pts(t));
                                 let scale = b.iter().map(|v| v.abs()).fold(1.0f32, f32::max);
-                                a.len() == b.len() && a.iter().zip(&b).all(|(u, v)| {
-                                    (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 3e-6 * scale
-                                })
+                                a.len() == b.len()
+                                    && a.iter().zip(&b).all(|(u, v)| {
+                                        (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4
+                                            || (u - v).abs() <= 3e-6 * scale
+                                    })
                             });
                         let c = local.attr_same.entry(format!("compile {kind}.polylines (within the text's precision)")).or_default();
                         if same {
@@ -730,7 +855,12 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                         } else {
                             c.1 += 1;
                             local.compile_beyond += 1;
-                            local.problems.push(format!("{name}: compiled {} polylines differ: ours {:?}, binary {:?}", theirs.name, ours_lines.iter().map(pts).collect::<Vec<_>>(), theirs_lines.children.iter().map(pts).collect::<Vec<_>>()));
+                            local.problems.push(format!(
+                                "{name}: compiled {} polylines differ: ours {:?}, binary {:?}",
+                                theirs.name,
+                                ours_lines.iter().map(pts).collect::<Vec<_>>(),
+                                theirs_lines.children.iter().map(pts).collect::<Vec<_>>()
+                            ));
                         }
                     }
 
@@ -755,72 +885,128 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                             let within = x.get(p.name.as_str()).is_some_and(|ours| {
                                 let (a, b) = (comps(ours), comps(&p.value));
                                 match p.name.as_str() {
-                                    "position" => a.len() == b.len() && a.iter().zip(&b).all(|(u, v)| {
-                                        (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 1e-6
-                                    }),
+                                    "position" => {
+                                        a.len() == b.len()
+                                            && a.iter().zip(&b).all(|(u, v)| {
+                                                (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4
+                                                    || (u - v).abs() <= 1e-6
+                                            })
+                                    }
                                     // A marker's matrix: the rotation within 1e-5 rad times its row's length (the scale), through the
                                     // text's euler and scale; the translation like a position.
-                                    "transform" => a.len() == 16 && b.len() == 16 && a.iter().zip(&b).enumerate().all(|(i, (u, v))| {
-                                        let ulps = (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs();
-                                        if (12..15).contains(&i) {
-                                            ulps <= 4 || (u - v).abs() <= 1e-6
-                                        } else {
-                                            let row = i / 4 * 4;
-                                            let len = (b[row] * b[row] + b[row + 1] * b[row + 1] + b[row + 2] * b[row + 2]).sqrt();
-                                            ulps <= 4 || (u - v).abs() <= 1e-5 * len.max(1.0)
-                                        }
-                                    }),
+                                    "transform" => {
+                                        a.len() == 16
+                                            && b.len() == 16
+                                            && a.iter().zip(&b).enumerate().all(|(i, (u, v))| {
+                                                let ulps = (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs();
+                                                if (12..15).contains(&i) {
+                                                    ulps <= 4 || (u - v).abs() <= 1e-6
+                                                } else {
+                                                    let row = i / 4 * 4;
+                                                    let len = (b[row] * b[row] + b[row + 1] * b[row + 1] + b[row + 2] * b[row + 2]).sqrt();
+                                                    ulps <= 4 || (u - v).abs() <= 1e-5 * len.max(1.0)
+                                                }
+                                            })
+                                    }
                                     // A polyline's points: TEd writes a polygon's points relative to it with `%g` (6 digits).
-                                    "points" => a.len() == b.len() && {
-                                        let scale = b.iter().map(|v| v.abs()).fold(1.0f32, f32::max);
-                                        a.iter().zip(&b).all(|(u, v)| {
-                                            (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 3e-6 * scale
-                                        })
-                                    },
+                                    "points" => {
+                                        a.len() == b.len() && {
+                                            let scale = b.iter().map(|v| v.abs()).fold(1.0f32, f32::max);
+                                            a.iter().zip(&b).all(|(u, v)| {
+                                                (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4
+                                                    || (u - v).abs() <= 3e-6 * scale
+                                            })
+                                        }
+                                    }
                                     "orientation" => {
                                         let d = |sign: f32| a.iter().zip(&b).map(|(u, v)| (u - sign * v).abs()).fold(0.0f32, f32::max);
                                         a.len() == b.len() && d(1.0).min(d(-1.0)) <= 1e-5
                                     }
                                     // Any other number: within 4 ulps or 1e-6 (TEd's float behind the text, like parallax_scale 0.02
                                     // one ulp above f32 0.02).
-                                    _ => a.len() == 1 && b.len() == 1 && {
-                                        let (u, v) = (a[0], b[0]);
-                                        (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4 || (u - v).abs() <= 1e-6
-                                    },
+                                    _ => {
+                                        a.len() == 1 && b.len() == 1 && {
+                                            let (u, v) = (a[0], b[0]);
+                                            (i64::from(u.to_bits() as i32) - i64::from(v.to_bits() as i32)).unsigned_abs() <= 4
+                                                || (u - v).abs() <= 1e-6
+                                        }
+                                    }
                                 }
                             });
                             if within {
                                 *local.losses.entry(format!("compile {kind}.{} within the text's precision", p.name)).or_default() += 1;
-                            } else if p.name == "orientation" && (comps(&p.value).iter().map(|c| c * c).sum::<f32>().sqrt() - 1.0).abs() > 1e-5 {
+                            } else if p.name == "orientation"
+                                && (comps(&p.value).iter().map(|c| c * c).sum::<f32>().sqrt() - 1.0).abs() > 1e-5
+                            {
                                 // TEd's matrix was not a pure rotation (the binary's quaternion is not unit): an euler cannot say that.
-                                *local.losses.entry(format!("compile {kind}.orientation: the binary's quaternion is not unit")).or_default() += 1;
-                            } else if p.name == "scale" && comps(&p.value).iter().all(|v| (v.to_bits() as i64 - 1.0f32.to_bits() as i64).abs() <= 4) {
+                                *local
+                                    .losses
+                                    .entry(format!("compile {kind}.orientation: the binary's quaternion is not unit"))
+                                    .or_default() += 1;
+                            } else if p.name == "scale"
+                                && comps(&p.value).iter().all(|v| (v.to_bits() as i64 - 1.0f32.to_bits() as i64).abs() <= 4)
+                            {
                                 // Rome 2's TEd writes each axis's length of the building's matrix in memory: 1 within a few ulps, which the
                                 // text cannot carry.
-                                *local.losses.entry(format!("compile {kind}.scale: 1 within 4 ulps (Rome 2's TEd's matrix in memory)")).or_default() += 1;
+                                *local
+                                    .losses
+                                    .entry(format!("compile {kind}.scale: 1 within 4 ulps (Rome 2's TEd's matrix in memory)"))
+                                    .or_default() += 1;
                             } else if p.name == "starting_damage" {
                                 // The decompiler's level is the one whose export is the binary's damage when any is (the inverse of the
                                 // export), so a damage no level gives is from older building data (another model's levels).
-                                *local.losses.entry(format!("compile {kind}.starting_damage from older building data (no level gives it)")).or_default() += 1;
+                                *local
+                                    .losses
+                                    .entry(format!("compile {kind}.starting_damage from older building data (no level gives it)"))
+                                    .or_default() += 1;
                             } else {
                                 local.compile_beyond += 1;
-                                local.problems.push(format!("{name}: compiled {} {} of {:?} beyond the text's precision: ours {:?}, binary {:?}", theirs.name, p.name, y.get("key"), x.get(p.name.as_str()), p.value));
+                                local.problems.push(format!(
+                                    "{name}: compiled {} {} of {:?} beyond the text's precision: ours {:?}, binary {:?}",
+                                    theirs.name,
+                                    p.name,
+                                    y.get("key"),
+                                    x.get(p.name.as_str()),
+                                    p.value
+                                ));
                             }
 
                             // How far: the largest difference in units in the last place (absolute for quaternions).
                             if let Some(ours) = x.get(p.name.as_str()) {
-                                let ulps = comps(ours).iter().zip(comps(&p.value)).map(|(a, b)| (i64::from(a.to_bits() as i32) - i64::from(b.to_bits() as i32)).unsigned_abs()).max().unwrap_or(0);
+                                let ulps = comps(ours)
+                                    .iter()
+                                    .zip(comps(&p.value))
+                                    .map(|(a, b)| (i64::from(a.to_bits() as i32) - i64::from(b.to_bits() as i32)).unsigned_abs())
+                                    .max()
+                                    .unwrap_or(0);
                                 let abs = comps(ours).iter().zip(comps(&p.value)).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
                                 let neg = comps(ours).iter().zip(comps(&p.value)).map(|(a, b)| (a + b).abs()).fold(0.0f32, f32::max);
                                 let bucket = if p.name == "orientation" {
-                                    match abs.min(neg) { d if d < 1e-6 => "< 1e-6", d if d < 1e-5 => "< 1e-5", d if d < 1e-3 => "< 1e-3", _ => "more" }
+                                    match abs.min(neg) {
+                                        d if d < 1e-6 => "< 1e-6",
+                                        d if d < 1e-5 => "< 1e-5",
+                                        d if d < 1e-3 => "< 1e-3",
+                                        _ => "more",
+                                    }
                                 } else {
-                                    match ulps { 0..=1 => "1 ulp", 2..=4 => "2-4 ulps", 5..=64 => "5-64 ulps", _ => "more" }
+                                    match ulps {
+                                        0..=1 => "1 ulp",
+                                        2..=4 => "2-4 ulps",
+                                        5..=64 => "5-64 ulps",
+                                        _ => "more",
+                                    }
                                 };
                                 *local.losses.entry(format!("compile {kind}.{} off by {bucket}", p.name)).or_default() += 1;
                             }
                             if c.1 <= 2 && std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
-                                local.problems.push(format!("{name}: compiled {} {} of {:?}: ours {:?}, binary {:?}", theirs.name, p.name, y.get("key"), x.get(p.name.as_str()), p.value));
+                                local.problems.push(format!(
+                                    "{name}: compiled {} {} of {:?}: ours {:?}, binary {:?}",
+                                    theirs.name,
+                                    p.name,
+                                    y.get("key"),
+                                    x.get(p.name.as_str()),
+                                    p.value
+                                ));
                             }
                         }
                     }
@@ -832,7 +1018,9 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             let dir = out.join("raw_data").join(folder);
             let (location, _) = split_location(folder);
             let kind = location.split('\\').nth(2).unwrap_or("battle");
-            written.write_to(&dir, Some(&out.join("raw_data/terrain/tiles").join(kind).join("_tile_database/TILES"))).map_err(|e| e.to_string())?;
+            written
+                .write_to(&dir, Some(&out.join("raw_data/terrain/tiles").join(kind).join("_tile_database/TILES")))
+                .map_err(|e| e.to_string())?;
         }
 
         // Against the kit's raw tile.
@@ -862,8 +1050,14 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             && field.height() == m.raster.height
         {
             let entry = raw.entry.as_ref().expect("entry");
-            let v = entry.root.child("VARIATIONS").and_then(|vs| vs.children.iter().find(|v| v.get("location").and_then(Value::as_str) == raw.variation.as_deref()));
-            let (min, scale) = (v.and_then(|v| v.get("min_height")).and_then(Value::as_f64).unwrap_or(0.0), v.and_then(|v| v.get("scale")).and_then(Value::as_f64).unwrap_or(1.0));
+            let v = entry
+                .root
+                .child("VARIATIONS")
+                .and_then(|vs| vs.children.iter().find(|v| v.get("location").and_then(Value::as_str) == raw.variation.as_deref()));
+            let (min, scale) = (
+                v.and_then(|v| v.get("min_height")).and_then(Value::as_f64).unwrap_or(0.0),
+                v.and_then(|v| v.get("scale")).and_then(Value::as_f64).unwrap_or(1.0),
+            );
             let (w, h) = (field.width() as usize, field.height() as usize);
             // A shipped CHMF of range ~0 is a flat tile (its terrain mesh is flat too; the kit's sources have relief): counted apart.
             if scale.abs() < 1e-6 {
@@ -888,7 +1082,10 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 && dds.len() >= 128
                 && u32::from_le_bytes(dds[84..88].try_into().unwrap()) == 114
             {
-                let (fh, fw) = (u32::from_le_bytes(dds[12..16].try_into().unwrap()) as usize, u32::from_le_bytes(dds[16..20].try_into().unwrap()) as usize);
+                let (fh, fw) = (
+                    u32::from_le_bytes(dds[12..16].try_into().unwrap()) as usize,
+                    u32::from_le_bytes(dds[16..20].try_into().unwrap()) as usize,
+                );
                 if fw + 2 * ppc - 1 == w && fh + 2 * ppc - 1 == h && dds.len() >= 128 + fw * fh * 4 {
                     let (mut fn_, mut fg) = (0, 0);
                     for y in (0..fh).step_by(3) {
@@ -922,7 +1119,6 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     diffs[diffs.len() / 2], diffs[diffs.len() / 10], diffs[diffs.len() * 9 / 10], project.info.min_height, project.info.scale
                 ));
             }
-
         }
 
         // BOB's ground types (docs/re/terrain.md) from our blend map and the entry's groups, against the binary's ground_types.dds.
@@ -946,7 +1142,8 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
             for y in (0..gt.raster.height).step_by(3) {
                 for x in (0..gt.raster.width).step_by(3) {
                     let p = ((y + border) * m.raster.width + x + border) as usize;
-                    let sums: [u32; 4] = std::array::from_fn(|k| wts[16 * p + 4 * k..16 * p + 4 * k + 4].iter().map(|&v| u32::from(v)).sum());
+                    let sums: [u32; 4] =
+                        std::array::from_fn(|k| wts[16 * p + 4 * k..16 * p + 4 * k + 4].iter().map(|&v| u32::from(v)).sum());
                     // The strongest group, ties to the first (BOB compares the 8-bit weights of blend.dds).
                     let q = sums.map(|v| (f64::from(v) / 65535.0 * 255.0).round() as u32);
                     let best = (0..4).find(|&k| (0..4).all(|j| q[k] >= q[j])).unwrap_or(0);
@@ -967,7 +1164,9 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     let _ = k;
                     *seen.entry(*v).or_insert(0usize) += 1;
                 }
-                local.problems.push(format!("{name}: ground types {same} / {n} from the blend map; groups {types:?}; values in the binary {seen:?}"));
+                local
+                    .problems
+                    .push(format!("{name}: ground types {same} / {n} from the blend map; groups {types:?}; values in the binary {seen:?}"));
             }
         }
 
@@ -1034,7 +1233,17 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 };
                 let (e, _) = cands.swap_remove(ci);
                 local.paired += 1;
-                for attr in ["indestructible", "toggleable", "burn", "destruction_level", "weak_wall", "ai_breachable", "dockable", "opacity", "building_tech_level"] {
+                for attr in [
+                    "indestructible",
+                    "toggleable",
+                    "burn",
+                    "destruction_level",
+                    "weak_wall",
+                    "ai_breachable",
+                    "dockable",
+                    "opacity",
+                    "building_tech_level",
+                ] {
                     let ours = b.get(attr).map(|v| match v {
                         Value::Bool(x) => x.to_string(),
                         Value::Int(x) => x.to_string(),
@@ -1054,11 +1263,20 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     } else {
                         c.1 += 1;
                         if attr == "destruction_level" && std::env::var_os("WCE_DECOMPILE_LEVELS").is_some() {
-                            *local.losses.entry(format!("destruction_level differs: {key} ours {} kit {}", ours.clone().unwrap_or_default(), theirs.clone().unwrap_or_default())).or_default() += 1;
+                            *local
+                                .losses
+                                .entry(format!(
+                                    "destruction_level differs: {key} ours {} kit {}",
+                                    ours.clone().unwrap_or_default(),
+                                    theirs.clone().unwrap_or_default()
+                                ))
+                                .or_default() += 1;
                         }
 
                         if c.1 <= 3 && std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
-                            local.problems.push(format!("{name}: {key} {attr}: ours {ours:?}, kit {theirs:?}, kit element {e} {}", sc.layer_path(e)));
+                            local
+                                .problems
+                                .push(format!("{name}: {key} {attr}: ours {ours:?}, kit {theirs:?}, kit element {e} {}", sc.layer_path(e)));
                         }
                     }
                 }
@@ -1068,13 +1286,19 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 let m = euler_matrix(wce_foundation::math::Double3::new(ours[0], ours[1], ours[2]));
                 let theirs = world_transform(sc, e).rotation;
                 let c = local.attr_same.entry("orientation (world rotation, 0.001)".to_owned()).or_default();
-                let diff = (0..3).flat_map(|r| (0..3).map(move |k| (r, k))).map(|(r, k)| (m.m[r][k] - theirs.m[r][k]).abs()).fold(0.0, f64::max);
+                let diff =
+                    (0..3).flat_map(|r| (0..3).map(move |k| (r, k))).map(|(r, k)| (m.m[r][k] - theirs.m[r][k]).abs()).fold(0.0, f64::max);
                 if diff < 0.001 {
                     c.0 += 1;
                 } else {
                     c.1 += 1;
                     if c.1 <= 3 && std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
-                        local.problems.push(format!("{name}: {key} orientation: ours {ours:?}, kit world {:?}, file {:?} ({})", euler_from_matrix(&theirs), sc.doc().get(e, "orientation"), sc.layer_path(e)));
+                        local.problems.push(format!(
+                            "{name}: {key} orientation: ours {ours:?}, kit world {:?}, file {:?} ({})",
+                            euler_from_matrix(&theirs),
+                            sc.doc().get(e, "orientation"),
+                            sc.layer_path(e)
+                        ));
                     }
                 }
             }
@@ -1087,7 +1311,20 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 ("ProjectedDecalInstance", "key", &["scale", "parallax_scale", "tiled"][..]),
                 ("SIMPLE_MESH_INSTANCE", "key", &["scale"][..]),
                 ("VFXInstance", "vfx", &["scale", "autoplay", "use_in_outfield", "seasons"][..]),
-                ("POINT_LIGHT_INSTANCE", "name", &["colour", "radius", "colour_scale", "colour_min", "random_offset", "animation_type", "falloff_type", "animation_speed_scale"][..]),
+                (
+                    "POINT_LIGHT_INSTANCE",
+                    "name",
+                    &[
+                        "colour",
+                        "radius",
+                        "colour_scale",
+                        "colour_min",
+                        "random_offset",
+                        "animation_type",
+                        "falloff_type",
+                        "animation_speed_scale",
+                    ][..],
+                ),
                 ("VEGETATION_INSTANCE", "key", &["scale"][..]),
                 ("CaptureLocationInstance", "database_type", &["flag_facing", "type", "min_num_players", "max_num_players"][..]),
             ] {
@@ -1141,7 +1378,8 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
 
                     // Several instances can share a place (lights of a window, stacked decals of a rock clump): the candidate whose attributes
                     // agree most, then whose world rotation is closest.
-                    let agree = |e: usize| attrs.iter().filter(|a| n.get(a).map(|v| crate_value_text(class, a, v)) == sc.doc().get(e, a)).count();
+                    let agree =
+                        |e: usize| attrs.iter().filter(|a| n.get(a).map(|v| crate_value_text(class, a, v)) == sc.doc().get(e, a)).count();
                     let o = n.get("orientation").and_then(Value::as_vec3).unwrap_or_default();
                     let m = euler_matrix(wce_foundation::math::Double3::new(o[0], o[1], o[2]));
                     let rot_diff = |e: usize| {
@@ -1151,18 +1389,27 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     let Some(ci) = cands
                         .iter()
                         .enumerate()
-                        .filter(|(_, (_, q))| (q.x - p[0]).hypot(q.z - p[2]) < 0.1 && (matches!(class, "VEGETATION_INSTANCE" | "CaptureLocationInstance") || (q.y - p[1]).abs() < 0.1))
+                        .filter(|(_, (_, q))| {
+                            (q.x - p[0]).hypot(q.z - p[2]) < 0.1
+                                && (matches!(class, "VEGETATION_INSTANCE" | "CaptureLocationInstance") || (q.y - p[1]).abs() < 0.1)
+                        })
                         .max_by(|a, b| agree(a.1.0).cmp(&agree(b.1.0)).then_with(|| rot_diff(b.1.0).total_cmp(&rot_diff(a.1.0))))
                         .map(|(i, _)| i)
                     else {
-                        let near = cands.iter().map(|(_, q)| ((q.x - p[0]).hypot(q.z - p[2]), q.y - p[1])).min_by(|a, b| a.0.total_cmp(&b.0));
+                        let near =
+                            cands.iter().map(|(_, q)| ((q.x - p[0]).hypot(q.z - p[2]), q.y - p[1])).min_by(|a, b| a.0.total_cmp(&b.0));
                         if unpaired && class == "ProjectedDecalInstance" {
-                            *local.losses.entry(format!("decals by family: {} unpaired", folder.split('/').nth(3).unwrap_or_default())).or_default() += 1;
+                            *local
+                                .losses
+                                .entry(format!("decals by family: {} unpaired", folder.split('/').nth(3).unwrap_or_default()))
+                                .or_default() += 1;
                         }
                         why(
                             match near {
                                 None => "every kit instance of the key already paired".to_owned(),
-                                Some((h, dy)) if h < 0.1 => format!("same place, height differs ({})", if dy.abs() < 1.0 { "< 1 m" } else { ">= 1 m" }),
+                                Some((h, dy)) if h < 0.1 => {
+                                    format!("same place, height differs ({})", if dy.abs() < 1.0 { "< 1 m" } else { ">= 1 m" })
+                                }
                                 Some((h, _)) if h < 2.0 => "nearest of the key within 2 units".to_owned(),
                                 Some(_) => "nearest of the key further".to_owned(),
                             },
@@ -1174,7 +1421,10 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                     let (e, _) = cands.swap_remove(ci);
                     local.classes.get_mut(class).expect("class").2 += 1;
                     if unpaired && class == "ProjectedDecalInstance" {
-                        *local.losses.entry(format!("decals by family: {} paired", folder.split('/').nth(3).unwrap_or_default())).or_default() += 1;
+                        *local
+                            .losses
+                            .entry(format!("decals by family: {} paired", folder.split('/').nth(3).unwrap_or_default()))
+                            .or_default() += 1;
                     }
                     for attr in attrs {
                         let ours = n.get(attr).map(|v| crate_value_text(class, attr, v));
@@ -1205,12 +1455,18 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                         // WCE_DECOMPILE_ROTATIONS: what the differing rotations have in common.
                         if std::env::var_os("WCE_DECOMPILE_ROTATIONS").is_some() {
                             let d = [1.0, -1.0, 1.0];
-                            let conj = (0..3).flat_map(|r| (0..3).map(move |k| (r, k))).map(|(r, k)| (m.m[r][k] - d[r] * t.m[r][k] * d[k]).abs()).fold(0.0, f64::max);
+                            let conj = (0..3)
+                                .flat_map(|r| (0..3).map(move |k| (r, k)))
+                                .map(|(r, k)| (m.m[r][k] - d[r] * t.m[r][k] * d[k]).abs())
+                                .fold(0.0, f64::max);
                             let (mut pitch, mut roll, mut x) = (false, false, Some(e));
                             while let Some(y) = x {
                                 if let Some(o) = sc.euler(y) {
                                     pitch |= o.y.abs() > 1e-6;
-                                    roll |= o.z.rem_euclid(std::f64::consts::TAU).min(std::f64::consts::TAU - o.z.rem_euclid(std::f64::consts::TAU)) > 1e-6;
+                                    roll |=
+                                        o.z.rem_euclid(std::f64::consts::TAU)
+                                            .min(std::f64::consts::TAU - o.z.rem_euclid(std::f64::consts::TAU))
+                                            > 1e-6;
                                 }
                                 x = sc.doc().elements()[y].parent;
                             }
@@ -1222,16 +1478,33 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                             } else {
                                 String::new()
                             };
-                            let k = format!("{class} rotation differs: chain pitch {pitch} roll {roll}, ours = D kit D {} ({family}{yaw})", conj < 0.001);
+                            let k = format!(
+                                "{class} rotation differs: chain pitch {pitch} roll {roll}, ours = D kit D {} ({family}{yaw})",
+                                conj < 0.001
+                            );
                             if local.losses.get(&k).copied().unwrap_or(0) < 2 {
-                                local.problems.push(format!("{name}: {class} {key} ({k}): ours {o:?} {:?}, kit world {:?} ({}, scale {:?}, our scale {:?})", m.m, t.m, sc.layer_path(e), sc.doc().get(e, "scale"), n.get("scale")));
+                                local.problems.push(format!(
+                                    "{name}: {class} {key} ({k}): ours {o:?} {:?}, kit world {:?} ({}, scale {:?}, our scale {:?})",
+                                    m.m,
+                                    t.m,
+                                    sc.layer_path(e),
+                                    sc.doc().get(e, "scale"),
+                                    n.get("scale")
+                                ));
                             }
 
                             *local.losses.entry(k).or_default() += 1;
                         }
 
                         if c.1 <= 3 && std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
-                            local.problems.push(format!("{name}: {class} {key} orientation: ours {o:?} {:?}, kit world {:?} ({}, file {:?}, scale {:?})", m.m, t.m, sc.layer_path(e), sc.doc().get(e, "orientation"), sc.doc().get(e, "scale")));
+                            local.problems.push(format!(
+                                "{name}: {class} {key} orientation: ours {o:?} {:?}, kit world {:?} ({}, file {:?}, scale {:?})",
+                                m.m,
+                                t.m,
+                                sc.layer_path(e),
+                                sc.doc().get(e, "orientation"),
+                                sc.doc().get(e, "scale")
+                            ));
                         }
                     }
                 }
@@ -1240,7 +1513,12 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 if class == "CaptureLocationInstance" && std::env::var_os("WCE_DECOMPILE_UNPAIRED").is_some() {
                     for (key, left) in &by_key {
                         for (e, q) in left {
-                            local.problems.push(format!("{name}: kit capture location {key} at ({:.1}, {:.1}) without ours ({})", q.x, q.z, sc.layer_path(*e)));
+                            local.problems.push(format!(
+                                "{name}: kit capture location {key} at ({:.1}, {:.1}) without ours ({})",
+                                q.x,
+                                q.z,
+                                sc.layer_path(*e)
+                            ));
                         }
                     }
                 }
@@ -1270,10 +1548,14 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 }
 
                 let w = world_transform(sc, e);
-                let pts = pts_e.iter().filter_map(|&p| sc.point_position(p)).map(|q| {
-                    let v = w.position + w.rotation * q;
-                    (v.x, v.z)
-                }).collect::<Vec<_>>();
+                let pts = pts_e
+                    .iter()
+                    .filter_map(|&p| sc.point_position(p))
+                    .map(|q| {
+                        let v = w.position + w.rotation * q;
+                        (v.x, v.z)
+                    })
+                    .collect::<Vec<_>>();
                 kit.entry(sc.type_of(e).to_owned()).or_default().push((e, pts));
             }
 
@@ -1286,13 +1568,22 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 local.classes.entry(class.clone()).or_default().0 += 1;
                 let Some(cands) = kit.get_mut(&class) else { continue };
                 let c = centre(&pts);
-                let Some(ci) = cands.iter().position(|(_, k)| k.len() == pts.len() && {
-                    let kc = centre(k);
-                    (kc.0 - c.0).hypot(kc.1 - c.1) < 1.0
+                let Some(ci) = cands.iter().position(|(_, k)| {
+                    k.len() == pts.len() && {
+                        let kc = centre(k);
+                        (kc.0 - c.0).hypot(kc.1 - c.1) < 1.0
+                    }
                 }) else {
                     if std::env::var_os("WCE_DECOMPILE_EXAMPLES").is_some() {
-                        let near = cands.iter().map(|(e, k)| (e, k.len(), centre(k))).min_by(|a, b| (a.2.0 - c.0).hypot(a.2.1 - c.1).total_cmp(&(b.2.0 - c.0).hypot(b.2.1 - c.1)));
-                        local.problems.push(format!("{name}: unpaired {class}: {} points, centre {c:?}; nearest kit {near:?}; ours {:?}", pts.len(), &pts[..pts.len().min(4)]));
+                        let near = cands
+                            .iter()
+                            .map(|(e, k)| (e, k.len(), centre(k)))
+                            .min_by(|a, b| (a.2.0 - c.0).hypot(a.2.1 - c.1).total_cmp(&(b.2.0 - c.0).hypot(b.2.1 - c.1)));
+                        local.problems.push(format!(
+                            "{name}: unpaired {class}: {} points, centre {c:?}; nearest kit {near:?}; ours {:?}",
+                            pts.len(),
+                            &pts[..pts.len().min(4)]
+                        ));
                     }
 
                     continue;
@@ -1440,17 +1731,30 @@ fn main() {
     let kit = game.join("assembly_kit");
     let games = SupportedGames::default();
     let attila = games.game("attila").expect("attila");
-    let mut packs = std::fs::read_dir(game.join("data")).expect("data").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "pack")).collect::<Vec<_>>();
+    let mut packs = std::fs::read_dir(game.join("data"))
+        .expect("data")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "pack"))
+        .collect::<Vec<_>>();
     packs.sort();
 
     // The game's tile data (the databases, the buildings' destruction levels, categories and thresholds), then the packs again for their
     // tile folders.
-    let data = wce_tile_io::attila::game_data::GameData::load(wce_foundation::game::GameProfile::from_env(), &game, wce_tile_io::attila::game_data::default_schema_path(wce_foundation::game::GameProfile::from_env()).as_deref()).expect("data");
+    let data = wce_tile_io::attila::game_data::GameData::load(
+        wce_foundation::game::GameProfile::from_env(),
+        &game,
+        wce_tile_io::attila::game_data::default_schema_path(wce_foundation::game::GameProfile::from_env()).as_deref(),
+    )
+    .expect("data");
     for w in &data.warnings {
         eprintln!("{w}");
     }
 
-    let mut opened = packs.iter().filter_map(|p| Pack::read_and_merge(std::slice::from_ref(p), attila, true, false, false).ok().map(|pack| (p.clone(), pack))).collect::<Vec<_>>();
+    let mut opened = packs
+        .iter()
+        .filter_map(|p| Pack::read_and_merge(std::slice::from_ref(p), attila, true, false, false).ok().map(|pack| (p.clone(), pack)))
+        .collect::<Vec<_>>();
     let trees = opt("--trees");
     let ctx = data.context(trees.as_deref());
     let totals = Mutex::new(Totals::default());
@@ -1463,7 +1767,9 @@ fn main() {
             folders.entry(dir.to_owned()).or_default().push(n.clone());
         }
 
-        folders.retain(|d, names| names.iter().any(|n| n.ends_with("/hf_height_map.data")) && filter.as_ref().is_none_or(|f| d.contains(f.as_str())));
+        folders.retain(|d, names| {
+            names.iter().any(|n| n.ends_with("/hf_height_map.data")) && filter.as_ref().is_none_or(|f| d.contains(f.as_str()))
+        });
         let folders = folders.into_iter().take(limit.saturating_sub(done)).collect::<Vec<_>>();
         done += folders.len();
         for batch in folders.chunks(32) {
@@ -1488,8 +1794,19 @@ fn main() {
     let t = totals.into_inner().expect("totals");
     println!("tile folders: {} decompiled, {} failed; {} with the kit's raw tile", t.tiles - t.failed, t.failed, t.with_kit);
     println!("entries (but the variation's min_height / scale): {} identical to the kit's, {} differ", t.entry_same, t.entry_differ);
-    println!("heights inside the border: {} of {} samples within 1 cm of the kit's ({:.1} %)", t.height_within_1cm, t.height_samples, 100.0 * t.height_within_1cm as f64 / t.height_samples.max(1) as f64);
-    println!("heights against the kit's final_heights.dds (BOB's last export): {} tiles, {} of {} samples within 1 cm ({:.1} %)", t.final_tiles, t.final_within_1cm, t.final_samples, 100.0 * t.final_within_1cm as f64 / t.final_samples.max(1) as f64);
+    println!(
+        "heights inside the border: {} of {} samples within 1 cm of the kit's ({:.1} %)",
+        t.height_within_1cm,
+        t.height_samples,
+        100.0 * t.height_within_1cm as f64 / t.height_samples.max(1) as f64
+    );
+    println!(
+        "heights against the kit's final_heights.dds (BOB's last export): {} tiles, {} of {} samples within 1 cm ({:.1} %)",
+        t.final_tiles,
+        t.final_within_1cm,
+        t.final_samples,
+        100.0 * t.final_within_1cm as f64 / t.final_samples.max(1) as f64
+    );
     println!(
         "blend maps against the kit's: {} tiles, group weights off by {:.2} / 255 on average, dominant (group, variation) the same on {:.1} % of the pixels",
         t.blend_tiles,
@@ -1502,7 +1819,10 @@ fn main() {
         100.0 * t.ground_same as f64 / t.ground_pixels.max(1) as f64
     );
     println!("flat CHMF (range ~0, the mesh flat too; the kit's sources are not): {} tiles, left out of the heights above", t.flat_heights);
-    println!("buildings: {} decompiled, {} in the kit's tile.ted, {} paired (key, world position within 10 cm)", t.buildings, t.kit_buildings, t.paired);
+    println!(
+        "buildings: {} decompiled, {} in the kit's tile.ted, {} paired (key, world position within 10 cm)",
+        t.buildings, t.kit_buildings, t.paired
+    );
     for (k, (a, b)) in &t.attr_same {
         println!("  {k}: {a} same, {b} differ");
     }

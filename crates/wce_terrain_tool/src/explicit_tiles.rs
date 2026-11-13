@@ -21,7 +21,12 @@ const LIST_MAX: usize = 400;
 /// A tile's size in cells from its path in `explicit_tiles.txt` (a tile's location, or a variation's: `<tile>\<variation>`).
 pub fn tile_size(db: &TileDatabase, path: &str) -> Option<(i32, i32)> {
     let p = path.replace('/', "\\");
-    db.tiles.iter().find(|t| t.location.eq_ignore_ascii_case(&p) || t.variations.iter().any(|v| format!("{}\\{}", t.location, v.location).eq_ignore_ascii_case(&p)))
+    db.tiles
+        .iter()
+        .find(|t| {
+            t.location.eq_ignore_ascii_case(&p)
+                || t.variations.iter().any(|v| format!("{}\\{}", t.location, v.location).eq_ignore_ascii_case(&p))
+        })
         .map(|t| (t.width, t.height))
 }
 
@@ -58,21 +63,30 @@ impl ExplicitPanel {
         let t = ExplicitTile { x: at.0 as i32, y: at.1 as i32, path: self.choice.clone(), rotation: self.rotation * 90 };
         let r = rect(&t, size);
         let inside = r[0] >= 0 && r[1] >= 0 && r[2] <= i64::from(d.placed.width) && r[3] <= i64::from(d.placed.height);
-        let free = d.model().and_then(|m| m.explicit.as_ref()).is_none_or(|x| {
-            x.get().tiles().all(|o| tile_size(&d.db, &o.path).is_none_or(|s| !overlap(rect(o, s), r)))
-        });
+        let free = d
+            .model()
+            .and_then(|m| m.explicit.as_ref())
+            .is_none_or(|x| x.get().tiles().all(|o| tile_size(&d.db, &o.path).is_none_or(|s| !overlap(rect(o, s), r))));
 
         Some((r, inside && free))
     }
 
     /// The explicit tiles' cells for the Map panel to outline (the selected one brighter), and the preview.
     pub fn marks(&self, d: &MapDocument) -> Vec<([i64; 4], [u8; 4])> {
-        let mut out: Vec<([i64; 4], [u8; 4])> = d.model().and_then(|m| m.explicit.as_ref()).map(|x| {
-            x.get().tiles().enumerate().filter_map(|(i, t)| {
-                let s = tile_size(&d.db, &t.path)?;
-                Some((rect(t, s), if Some(i) == self.selected { [255, 255, 255, 255] } else { [80, 200, 255, 220] }))
-            }).collect()
-        }).unwrap_or_default();
+        let mut out: Vec<([i64; 4], [u8; 4])> = d
+            .model()
+            .and_then(|m| m.explicit.as_ref())
+            .map(|x| {
+                x.get()
+                    .tiles()
+                    .enumerate()
+                    .filter_map(|(i, t)| {
+                        let s = tile_size(&d.db, &t.path)?;
+                        Some((rect(t, s), if Some(i) == self.selected { [255, 255, 255, 255] } else { [80, 200, 255, 220] }))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         if let Some((r, ok)) = self.preview.filter(|_| self.placing) {
             out.push((r, if ok { [60, 230, 90, 255] } else { [240, 60, 50, 255] }));
@@ -131,7 +145,9 @@ impl ExplicitPanel {
         };
 
         if m.built {
-            gui::text_wrapped("A map of a game without kit maps (Rome 2) is edited in its built form: its tiles in the Placements section, its LF with the LF brush.");
+            gui::text_wrapped(
+                "A map of a game without kit maps (Rome 2) is edited in its built form: its tiles in the Placements section, its LF with the LF brush.",
+            );
             self.placing = false;
             return;
         }

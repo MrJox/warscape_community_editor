@@ -38,11 +38,26 @@ fn attrs(b: &BattlefieldBuilding) -> Vec<(&'static str, String)> {
     };
 
     vec![
-        ("key", b.key.clone()), ("position_x", f(b.position[0])), ("position_y", f(b.position[1])), ("position_z", f(b.position[2])),
-        ("position_type", ptype), ("orientation_i", f(b.orientation[0])), ("orientation_j", f(b.orientation[1])), ("orientation_k", f(b.orientation[2])),
-        ("orientation_w", f(b.orientation[3])), ("scale_x", f(b.scale[0])), ("scale_y", f(b.scale[1])), ("scale_z", f(b.scale[2])),
-        ("starting_damage", f(b.starting_damage)), ("on_fire", t(b.on_fire)), ("start_disabled", t(b.start_disabled)), ("weak_point", t(b.weak_point)),
-        ("ai_breachable", t(b.ai_breachable)), ("indestructible", t(b.indestructible)), ("dockable", t(b.dockable)), ("toggleable", t(b.toggleable.unwrap_or(false))),
+        ("key", b.key.clone()),
+        ("position_x", f(b.position[0])),
+        ("position_y", f(b.position[1])),
+        ("position_z", f(b.position[2])),
+        ("position_type", ptype),
+        ("orientation_i", f(b.orientation[0])),
+        ("orientation_j", f(b.orientation[1])),
+        ("orientation_k", f(b.orientation[2])),
+        ("orientation_w", f(b.orientation[3])),
+        ("scale_x", f(b.scale[0])),
+        ("scale_y", f(b.scale[1])),
+        ("scale_z", f(b.scale[2])),
+        ("starting_damage", f(b.starting_damage)),
+        ("on_fire", t(b.on_fire)),
+        ("start_disabled", t(b.start_disabled)),
+        ("weak_point", t(b.weak_point)),
+        ("ai_breachable", t(b.ai_breachable)),
+        ("indestructible", t(b.indestructible)),
+        ("dockable", t(b.dockable)),
+        ("toggleable", t(b.toggleable.unwrap_or(false))),
         ("lite", t(b.lite.unwrap_or(false))),
     ]
 }
@@ -88,6 +103,8 @@ fn main() {
         }
     }
 
-    println!("{lists} lists ({failed} did not read), {buildings} buildings; {twins} with an XML twin, {compared} buildings compared, {differ} differences");
+    println!(
+        "{lists} lists ({failed} did not read), {buildings} buildings; {twins} with an XML twin, {compared} buildings compared, {differ} differences"
+    );
     std::process::exit(i32::from(failed + differ != 0));
 }

@@ -8,10 +8,10 @@
 use std::sync::mpsc;
 
 use wce_editor::editor::Editor;
-use wce_editor_core::camera_controller::CameraMode;
-use wce_editor_core::document::Document;
 use wce_editor::gui::{self, Vec2, col32, v2};
 use wce_editor::{icons, theme};
+use wce_editor_core::camera_controller::CameraMode;
+use wce_editor_core::document::Document;
 use wce_foundation::log;
 use wce_scene::render_scene::DocumentId;
 use wce_siege::{EdgeKind, NodeKind, P, ZoneKind};
@@ -45,7 +45,8 @@ enum Base {
 }
 
 /// The bases of the minimap only (after the ground views), with their names and the `minimap` command's words; the ground views' words.
-const OWN_BASES: [(Base, &str, &str); 3] = [(Base::Height, "height", "height"), (Base::Radar, "radar", "radar"), (Base::None, "none", "none")];
+const OWN_BASES: [(Base, &str, &str); 3] =
+    [(Base::Height, "height", "height"), (Base::Radar, "radar", "radar"), (Base::None, "none", "none")];
 
 /// Seconds between two radars while the tile is edited (it waits for the buttons to be released too).
 const RADAR_EVERY: f64 = 1.0;
@@ -57,7 +58,10 @@ const RADAR_JPEG_QUALITY: u8 = 92;
 /// The JPEG comment (COM segment) marking a radar the editor wrote: one without it is hand-made and is only replaced with `force`.
 const RADAR_MARK: &[u8] = b"wce radar generator";
 const VIEW_WORDS: [(TerrainView, &str); 5] = [
-    (TerrainView::Colour, "colour"), (TerrainView::BlendGroups, "groups"), (TerrainView::GroundTypes, "ground"), (TerrainView::Protection, "protection"),
+    (TerrainView::Colour, "colour"),
+    (TerrainView::BlendGroups, "groups"),
+    (TerrainView::GroundTypes, "ground"),
+    (TerrainView::Protection, "protection"),
     (TerrainView::WaterDepth, "water"),
 ];
 
@@ -123,7 +127,11 @@ fn ground_key(d: &TileDocument, doc: DocumentId, view: TerrainView) -> GroundKey
     };
 
     let look = t.terrain_look();
-    let (climate, season) = if matches!(view, TerrainView::Colour | TerrainView::BlendGroups) { (look.climate.clone(), look.season.clone()) } else { Default::default() };
+    let (climate, season) = if matches!(view, TerrainView::Colour | TerrainView::BlendGroups) {
+        (look.climate.clone(), look.season.clone())
+    } else {
+        Default::default()
+    };
     GroundKey { doc, view, climate, season, maps }
 }
 
@@ -215,7 +223,9 @@ impl GroundPicture {
         match (&self.job, &self.failed, &self.baked) {
             (Some((k, _)), _, _) => format!("baking the {}...", view_name(k.view)),
             (None, Some((k, why)), _) if self.baked.as_ref().is_none_or(|(b, _)| b != k) => format!("no {}: {why}", view_name(k.view)),
-            (None, _, Some((k, _))) if k.view == TerrainView::Colour => format!("{}, {} (the blend's CPU stand-in)", k.climate, season_name(&k.season)),
+            (None, _, Some((k, _))) if k.view == TerrainView::Colour => {
+                format!("{}, {} (the blend's CPU stand-in)", k.climate, season_name(&k.season))
+            }
             (None, _, Some((_, b))) => b.report.clone(),
             _ => String::new(),
         }
@@ -276,9 +286,33 @@ pub struct MinimapUi {
 impl Default for MinimapUi {
     fn default() -> Self {
         Self {
-            base: Base::Ground(TerrainView::Colour), show_siege: true, show_zones: true, show_cells: false, show_nogo: false, show_camera: true, zoom: 1.0, centre: None,
-            visible: false, doc: 0, serial: 0, note: String::new(), colour: GroundPicture::default(), ground: GroundPicture::default(), heights: Picture::default(),
-            height_for: None, height_time: -1e9, height_range: (0.0, 0.0), radar: Picture::default(), radar_for: None, radar_time: -1e9, siege: None, siege_for: 0, siege_time: -1e9, pan_from: None, wheel_owned: false, fit_size: v2(0.0, 0.0),
+            base: Base::Ground(TerrainView::Colour),
+            show_siege: true,
+            show_zones: true,
+            show_cells: false,
+            show_nogo: false,
+            show_camera: true,
+            zoom: 1.0,
+            centre: None,
+            visible: false,
+            doc: 0,
+            serial: 0,
+            note: String::new(),
+            colour: GroundPicture::default(),
+            ground: GroundPicture::default(),
+            heights: Picture::default(),
+            height_for: None,
+            height_time: -1e9,
+            height_range: (0.0, 0.0),
+            radar: Picture::default(),
+            radar_for: None,
+            radar_time: -1e9,
+            siege: None,
+            siege_for: 0,
+            siege_time: -1e9,
+            pan_from: None,
+            wheel_owned: false,
+            fit_size: v2(0.0, 0.0),
         }
     }
 }
@@ -293,7 +327,10 @@ struct Frame {
 
 impl Frame {
     fn screen(&self, x: f64, z: f64) -> Vec2 {
-        v2((f64::from(self.mid.x) + (x - self.centre[0]) * self.scale) as f32, (f64::from(self.mid.y) - (z - self.centre[1]) * self.scale) as f32)
+        v2(
+            (f64::from(self.mid.x) + (x - self.centre[0]) * self.scale) as f32,
+            (f64::from(self.mid.y) - (z - self.centre[1]) * self.scale) as f32,
+        )
     }
 
     fn world(&self, p: Vec2) -> [f64; 2] {
@@ -391,7 +428,9 @@ impl MinimapUi {
         let area = d.tile().minimap_area();
         let fit = (f64::from(avail.x) / area[2]).min(f64::from(avail.y) / area[3]);
         let mut frame = Frame {
-            mid: v2((lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5), centre: self.centre.unwrap_or([area[0] + area[2] * 0.5, area[1] + area[3] * 0.5]), scale: fit * self.zoom,
+            mid: v2((lo.x + hi.x) * 0.5, (lo.y + hi.y) * 0.5),
+            centre: self.centre.unwrap_or([area[0] + area[2] * 0.5, area[1] + area[3] * 0.5]),
+            scale: fit * self.zoom,
         };
 
         // Zoom around the cursor, pan with the middle button.
@@ -480,7 +519,12 @@ impl MinimapUi {
             let at = frame.world(mouse);
             let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
             let h = d.project().height_at(at[0], at[1]);
-            let cell = if self.show_cells { cell_at(d, at).map_or_else(String::new, |(x, y, ok)| format!(", cell ({x}, {y}) {}", if ok { "valid" } else { "not the tile's" })) } else { String::new() };
+            let cell = if self.show_cells {
+                cell_at(d, at)
+                    .map_or_else(String::new, |(x, y, ok)| format!(", cell ({x}, {y}) {}", if ok { "valid" } else { "not the tile's" }))
+            } else {
+                String::new()
+            };
             gui::set_tooltip(&format!("{:.0}, {:.0} m, ground {h:.1} m{cell}\nleft: camera here, wheel: zoom, middle: pan", at[0], at[1]));
         }
 
@@ -522,11 +566,20 @@ impl MinimapUi {
             }
 
             gui::same_line_touching();
-            let shown = [(self.show_siege, "siege AI"), (self.show_zones, "deployment"), (self.show_cells, "cells"), (self.show_nogo, "no-go"), (self.show_camera, "camera")]
-                .into_iter()
-                .filter_map(|(on, name)| on.then_some(name))
-                .collect::<Vec<_>>();
-            let tip = format!("Overlays: {}\nClick: what is drawn over the map", if shown.is_empty() { "none".to_owned() } else { shown.join(", ") });
+            let shown = [
+                (self.show_siege, "siege AI"),
+                (self.show_zones, "deployment"),
+                (self.show_cells, "cells"),
+                (self.show_nogo, "no-go"),
+                (self.show_camera, "camera"),
+            ]
+            .into_iter()
+            .filter_map(|(on, name)| on.then_some(name))
+            .collect::<Vec<_>>();
+            let tip = format!(
+                "Overlays: {}\nClick: what is drawn over the map",
+                if shown.is_empty() { "none".to_owned() } else { shown.join(", ") }
+            );
             if chip(!shown.is_empty(), icons::EYE, "minimapoverlays", &tip) {
                 gui::open_popup("minimapoverlays");
             }
@@ -549,7 +602,9 @@ impl MinimapUi {
         gui::checkbox("Deployment##minimap", &mut self.show_zones);
         gui::checkbox("Cells##minimap", &mut self.show_cells);
         if gui::is_item_hovered() {
-            gui::set_tooltip("The tile's cells (its database entry's): the valid ones outlined, the others darkened (the Tile panel's valid cells).");
+            gui::set_tooltip(
+                "The tile's cells (its database entry's): the valid ones outlined, the others darkened (the Tile panel's valid cells).",
+            );
         }
 
         gui::checkbox("No-go##minimap", &mut self.show_nogo);
@@ -620,7 +675,8 @@ impl MinimapUi {
 
     fn refresh_radar(&mut self, e: &mut Editor, id: DocumentId, now: f64) {
         let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-        let key = (d.history().version(), d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some(), d.tile().radar_models_resolved());
+        let key =
+            (d.history().version(), d.tile().water_depth().is_some(), d.tile().auto_nogos().is_some(), d.tile().radar_models_resolved());
         let idle = !(0..3).any(gui::is_mouse_down);
         if self.radar_for != Some(key) && (self.radar_for.is_none() || (idle && now - self.radar_time >= RADAR_EVERY)) {
             let started = std::time::Instant::now();
@@ -662,7 +718,15 @@ impl MinimapUi {
         let row = size as usize * 4;
         let pixels: Vec<u8> = rgba.chunks(row).rev().flatten().copied().collect();
         let bytes = if png {
-            let png = wce_formats::png_file::PngFile { width: size, height: size, bit_depth: 8, color_type: 6, pixels, pixels_edited: true, ..Default::default() };
+            let png = wce_formats::png_file::PngFile {
+                width: size,
+                height: size,
+                bit_depth: 8,
+                color_type: 6,
+                pixels,
+                pixels_edited: true,
+                ..Default::default()
+            };
             png.encode().map_err(|e| e.to_string())?
         } else {
             radar_jpeg(size, &pixels)?
@@ -747,8 +811,15 @@ impl MinimapUi {
         });
 
         Ok(format!(
-            "minimap: {}, siege {}, deployment {}, cells {}, no-go {}, camera {}, zoom {:.2}{siege}{}", base_name(self.base), self.show_siege, self.show_zones,
-            self.show_cells, self.show_nogo, self.show_camera, self.zoom, if self.note.is_empty() { String::new() } else { format!(" ({})", self.note) },
+            "minimap: {}, siege {}, deployment {}, cells {}, no-go {}, camera {}, zoom {:.2}{siege}{}",
+            base_name(self.base),
+            self.show_siege,
+            self.show_zones,
+            self.show_cells,
+            self.show_nogo,
+            self.show_camera,
+            self.zoom,
+            if self.note.is_empty() { String::new() } else { format!(" ({})", self.note) },
         ))
     }
 
@@ -759,8 +830,16 @@ impl MinimapUi {
         self.heights.clear(e);
         self.radar.clear(e);
         *self = Self {
-            base: self.base, show_siege: self.show_siege, show_zones: self.show_zones, show_cells: self.show_cells, show_nogo: self.show_nogo, show_camera: self.show_camera,
-            visible: self.visible, serial: self.serial, wheel_owned: self.wheel_owned, ..Self::default()
+            base: self.base,
+            show_siege: self.show_siege,
+            show_zones: self.show_zones,
+            show_cells: self.show_cells,
+            show_nogo: self.show_nogo,
+            show_camera: self.show_camera,
+            visible: self.visible,
+            serial: self.serial,
+            wheel_owned: self.wheel_owned,
+            ..Self::default()
         };
     }
 }

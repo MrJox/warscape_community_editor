@@ -109,7 +109,9 @@ fn check_pack_files(vfs: &Vfs) -> Result<i32, String> {
         }
 
         println!(
-            "{name}: bin {} bytes (writer identical), xml {} bytes (data {}, to_xml {xml_state}, xml->bin identical)", bin.len(), xml.len(),
+            "{name}: bin {} bytes (writer identical), xml {} bytes (data {}, to_xml {xml_state}, xml->bin identical)",
+            bin.len(),
+            xml.len(),
             if same { "equal to the bin" } else { "DIFFERENT" },
         );
         for problem in from_bin.validate() {
@@ -146,7 +148,9 @@ fn for_each_combination(names_from: &AssetVariationDb, mut f: impl FnMut(&Variat
 
 fn candidate_lists(db: &AssetVariationDb, names_from: &AssetVariationDb) -> Vec<Vec<String>> {
     let mut all = vec![];
-    for_each_combination(names_from, |q, _| all.push(db.matches("environment", q).variations.iter().map(|v| v.filename().clone()).collect()));
+    for_each_combination(names_from, |q, _| {
+        all.push(db.matches("environment", q).variations.iter().map(|v| v.filename().clone()).collect())
+    });
     all
 }
 
@@ -245,7 +249,8 @@ fn check_clones(original: &AssetVariationDb) -> i32 {
 
                 let mut cloned = q.clone();
                 cloned.insert(m.name().clone(), "wce_clone".to_owned());
-                let files = |q: &VariationQuery| db.matches("environment", q).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>();
+                let files =
+                    |q: &VariationQuery| db.matches("environment", q).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>();
                 if files(q) != files(&cloned) {
                     differ += 1;
                 }
@@ -305,7 +310,10 @@ fn run() -> Result<i32, String> {
 
     let bits = db.value_count();
     println!(
-        "{BIN} from {}: {} metas ({bits} values, {} of 32 bits), {} variations", vfs.packs()[owner].name, db.categories().len(), bits.min(32),
+        "{BIN} from {}: {} metas ({bits} values, {} of 32 bits), {} variations",
+        vfs.packs()[owner].name,
+        db.categories().len(),
+        bits.min(32),
         env.variations().len(),
     );
     let mut rc = check_pack_files(&vfs)?;
@@ -332,7 +340,11 @@ fn run() -> Result<i32, String> {
     // Self-consistency: the query made of each variation's own first allowed value per category must find it.
     let mut self_bad = 0;
     for v in env.variations() {
-        let q = db.allowed_values(*v.flags()).into_iter().filter_map(|(cat, allowed)| allowed.first().map(|a| (cat.to_owned(), (*a).to_owned()))).collect();
+        let q = db
+            .allowed_values(*v.flags())
+            .into_iter()
+            .filter_map(|(cat, allowed)| allowed.first().map(|a| (cat.to_owned(), (*a).to_owned())))
+            .collect();
         let r = db.matches("environment", &q);
         if !r.variations.iter().any(|&c| std::ptr::eq::<Variation>(c, v)) {
             println!("NOT found by its own conditions: {}", v.filename());
@@ -396,7 +408,13 @@ fn run() -> Result<i32, String> {
         referenced.iter().filter(|f| !uses.contains_key(*f)).count(),
     );
     println!("missing files {missing}, never-matching variations {impossible}");
-    Ok(if rc != 0 { rc } else if missing != 0 || impossible != 0 { 2 } else { 0 })
+    Ok(if rc != 0 {
+        rc
+    } else if missing != 0 || impossible != 0 {
+        2
+    } else {
+        0
+    })
 }
 
 fn main() {
