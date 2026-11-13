@@ -1388,6 +1388,14 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         ok(rows.iter().map(|(k, l, below, shown, j)| format!("{k}: {:.2} -> {:.2}, ground {below:.2} below, {shown:.2} shown; joints ({:.2}, {:.2}) -> ({:.2}, {:.2})", l[0], l[1], j[0][0], j[0][1], j[1][0], j[1][1])).collect::<Vec<_>>().join("\n"))
     });
 
+    c.add("wall_convert", "wall_convert", "the selected kit wall's Convert to buildings (the Inspector's button): its pieces made buildings, the wall kept hidden and not exported", |e, _| {
+        let el = primary(e);
+        let Some(id) = crate::tool::document_id(e) else { return no_tile() };
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        let Some(el) = el else { return fail("no wall selected") };
+        d.convert_wall_to_buildings(el).map_or_else(fail, ok)
+    });
+
     c.add("wall_info", "wall_info", "log the selected wall's layout: base, length, corners, runs, step sections, attached ends, warnings (a kit wall: its pieces, how far it strays from its line, how short of its end it stops)", |e, _| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };

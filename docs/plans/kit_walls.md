@@ -211,3 +211,45 @@ From the user's first try on TDD's middle_men_port_a (a 530 m wall over hills do
   Check platforms: 0 breaks in the wall walks.
 
 Tested (scratch `kitwall/p1..p7.txt` on a copy of middle_men_port_a with its database entry; k1, k3, k6 again: as before).
+
+## Follow-ups (user, 2026-11-13)
+
+Three more before the walls are done, each reviewed before the next.
+
+### 6. Tooltips on the wall's Inspector rows
+
+A tooltip on every row of a `WceWallSpline`'s Inspector (`wce_tile::properties::wall_tip`, shown with `Inspector::hint`): what the row
+does, in which kind (procedural or kit) and in what units. Only the walls for now; the rest of the app gets them later, on another
+branch.
+
+### 7. Convert to buildings
+
+A button under a kit wall's rows. It is enabled only when the wall is laid and **has no procedural stretch** (its pieces are all the
+game's). In one undo entry it:
+- adds each laid piece as a `BUILDING_INSTANCE` of its own key in the wall's layer, placed and turned as laid (`scene::place_pieces`,
+  shared with the exports' `scene::lower`);
+- moves the spline into a new child layer of that layer, `(converted) <name>`, hidden (no `OIF_VISIBLE`) and *Don't Export*
+  (`LayerExportType_Off`);
+- keeps the wall's ground: its height layer is no longer the wall's (owner cleared) but a layer of the user's, `Kit wall <name>
+  (converted)`, so hiding the spline does not take it out from under the buildings.
+
+The exports, Siege AI and Check platforms skip walls in a layer that is not exported (`scene::exported`).
+
+### 8. Towers
+
+- **Wall towers** at their own spacing, `wall_tower_every` (default 0 = none), beside `wall_defence_every`, which from then on places
+  only the bastions. A slot both want gets the tower. Only cultures with tower wall pieces get them (the Roman-style sets'
+  `*_tower_c_straight_with_extension` and `*_tower_b_corner_with_extension`, Gondor's curved towers). For the 8 m cultures the setting
+  does nothing, and the Inspector says so. Procedural walls take the same split: towers at `wall_tower_every`, bastions at
+  `wall_defence_every`, instead of alternating at one spacing.
+- **Tower capture points**, generated live like the pieces. Each tower gets a `CaptureLocationInstance` of `capture_point_tower_only`,
+  `CLT_MINOR`, with its boundary a rectangle over the top of the wall behind the tower (the tower piece's walkway, its length and
+  width). They are drawn in the editor, written by the exports, read by Siege AI, and become real elements on Convert to buildings.
+
+Follow-ups 6 and 7 done (2026-11-13). The button's tooltip says why it is greyed out (`Inspector::button` shows its hint, disabled
+too). The undo entry joins the scene's splice and the height stack's change (`CommandStack::join_last`). Tested (scratch
+`kitwall/c1.txt`, `c2.txt`):
+- A barbarian wall over a 12 m hill: 14 buildings; its ground layer is the user's now (`terrain_layer height list`); Check platforms
+  0 breaks over the buildings. Undo brings the wall, its pieces and its owned layer back; redo converts again.
+- An export of farm_western/1x1/ab after converting a 10-piece wall: the building list has the 10 pieces once (the hidden wall adds
+  nothing).

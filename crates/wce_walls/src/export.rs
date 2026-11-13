@@ -91,10 +91,12 @@ fn extent(files: &dyn Files, key: &str) -> Option<(f64, f64)> {
 /// A base's files or rows don't read, a piece can't be made, or the scene can't be edited.
 pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files: &dyn Files, schema: &Schema, prefix: &str, into: Option<&str>, kit: &[KitWall]) -> Result<LoweredWalls, String> {
     let mut out = LoweredWalls::default();
-    let walls = scene::walls(scene);
-    let kit_walls = scene::all_walls(scene).into_iter().filter(|&e| !scene::is_procedural(scene, e)).collect::<Vec<_>>();
+    // A wall in a layer that is not exported (one converted to buildings) goes, with nothing in its place.
+    let walls = scene::walls(scene).into_iter().filter(|&e| scene::exported(scene, e)).collect::<Vec<_>>();
+    let kit_walls = scene::all_walls(scene).into_iter().filter(|&e| !scene::is_procedural(scene, e) && scene::exported(scene, e)).collect::<Vec<_>>();
+    let unexported = scene::all_walls(scene).into_iter().filter(|&e| !scene::exported(scene, e)).collect::<Vec<_>>();
     let spans = scene.find_all(crate::bridge::BRIDGE_SPAN);
-    if walls.is_empty() && kit_walls.is_empty() && spans.is_empty() {
+    if walls.is_empty() && kit_walls.is_empty() && spans.is_empty() && unexported.is_empty() {
         return Ok(out);
     }
 
@@ -258,8 +260,9 @@ pub fn lower_walls(scene: &mut TedScene, ground: &dyn Fn(f64, f64) -> f64, files
         lowered.push((p.wall, placed));
     }
 
-    // A kit wall's game pieces with its stretches' pieces: one wall, lowered once.
+    // A kit wall's game pieces with its stretches' pieces: one wall, lowered once. The walls not exported: removed.
     lowered.extend(kit_placed);
+    lowered.extend(unexported.into_iter().map(|e| (e, vec![])));
     let mut by_wall: BTreeMap<usize, Vec<(String, Piece)>> = BTreeMap::new();
     for (wall, placed) in lowered {
         by_wall.entry(wall).or_default().extend(placed);

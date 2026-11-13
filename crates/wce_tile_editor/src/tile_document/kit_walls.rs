@@ -294,7 +294,8 @@ impl Tile {
     /// lays it (on the ground below its own height layer), its game pieces and its stretches' plans. A wall that can't be laid is not in it
     /// (the export leaves it out, noted).
     pub fn kit_walls_for_export(&mut self) -> Vec<wce_walls::export::KitWall> {
-        let walls = wce_walls::scene::all_walls(self.tscene()).into_iter().filter(|&e| !wce_walls::scene::is_procedural(self.tscene(), e)).collect::<Vec<_>>();
+        let sc = self.tscene();
+        let walls = wce_walls::scene::all_walls(sc).into_iter().filter(|&e| !wce_walls::scene::is_procedural(sc, e) && wce_walls::scene::exported(sc, e)).collect::<Vec<_>>();
         let mut out = vec![];
         for e in walls {
             let (Some(key), Some(layout)) = (self.wall_layer_key(e), self.kit_layout(e)) else { continue };
@@ -307,7 +308,7 @@ impl Tile {
     }
 
     /// The height stack's layer of a wall's key, if it has one.
-    fn wall_layer_id(&self, key: &str) -> Option<u64> {
+    pub(super) fn wall_layer_id(&self, key: &str) -> Option<u64> {
         let s = self.project.layers.as_ref()?.height.as_ref()?;
         s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|(k, _)| k == key)).map(|l| l.id)
     }
@@ -570,4 +571,112 @@ fn ring_distance(p: [f64; 2], ring: &[[f64; 2]]) -> f64 {
         let t = if len2 > 1e-12 { (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
         (p[0] - a[0] - ab[0] * t).hypot(p[1] - a[1] - ab[1] * t)
     }).fold(f64::MAX, f64::min)
+}
+
+/// What a wall converted to buildings is kept in: a child layer of its own, hidden and not exported (docs/plans/kit_walls.md, follow-up 7).
+pub const CONVERTED_LAYER: &str = "(converted)";
+
+impl super::TileDocument {
+    /// Whether a kit wall can be converted to buildings now (its last layout: laid, all its pieces the game's), or why not.
+    pub fn can_convert_wall(&self, elem: usize) -> Result<usize, String> {
+        let t = self.tile();
+        if !t.is_wall(elem) || wce_walls::scene::is_procedural(t.tscene(), elem) {
+            return Err("only a kit wall (Procedural off) is made of the game's pieces".to_owned());
+        }
+
+        let Some(l) = t.kit_wall_report(elem) else { return Err("the wall is not laid (hidden, or still being made)".to_owned()) };
+        if !l.stretches.is_empty() {
+            return Err(format!("it has {} generated stretch(es) at its ends, which are no game pieces: move its ends until the pieces meet them", l.stretches.len()));
+        }
+
+        if l.placed.is_empty() {
+            return Err("it has no pieces".to_owned());
+        }
+
+        Ok(l.placed.len())
+    }
+
+    /// Converts a kit wall to buildings (docs/plans/kit_walls.md, follow-up 7), one undo entry: a `BUILDING_INSTANCE` per laid piece, in
+    /// the layer or group the wall is in, placed as laid; the wall moved into a new child of its layer, `(converted) <name>`, hidden and
+    /// not exported; its ground kept as a height layer of the user's, `Kit wall <name> (converted)`. Only a wall whose pieces are all the
+    /// game's (no generated stretch). Returns what was done.
+    ///
+    /// # Errors
+    ///
+    /// Not a kit wall, not laid, with a generated stretch, or the scene can't be edited.
+    pub fn convert_wall_to_buildings(&mut self, elem: usize) -> Result<String, String> {
+        use wce_editor_core::command::History;
+
+        self.can_convert_wall(elem)?;
+        self.check_structure(&[elem], None)?;
+
+        // Laid again now (what the preview showed, from what the wall is now).
+        let layout = self.tile_mut().kit_layout(elem).ok_or("the wall can't be laid")?;
+        if !layout.stretches.is_empty() || layout.placed.is_empty() {
+            return Err("the wall has generated stretches or no pieces".to_owned());
+        }
+
+        let placed = layout.placed.iter().map(|p| (p.key.clone(), Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true })).collect::<Vec<_>>();
+        let t = self.tile();
+        let sc = t.tscene();
+        let name = sc.name(elem);
+        let holder = wce_walls::scene::holder(sc, elem).or(sc.scene_graph()).ok_or("the wall is in no layer")?;
+        let layer = {
+            let els = sc.doc().elements();
+            let mut p = Some(holder);
+            while let Some(q) = p.filter(|&q| !matches!(sc.type_of(q), "LayerInstance" | "SCENE_GRAPH")) {
+                p = els[q].parent;
+            }
+
+            p.ok_or("the wall is in no layer")?
+        };
+        let ground_key = t.wall_layer_key(elem);
+        let w = wce_tile::world_transform::world_transform(sc, elem);
+
+        // The scene: the hidden layer, the wall into it (its place kept), the buildings where it was.
+        let before = self.history.size();
+        let mark = self.begin()?;
+        let made = (|| -> Result<Vec<usize>, String> {
+            let sc = self.tscene_mut();
+            let kept = sc.add_layer(Some(layer), &format!("{CONVERTED_LAYER} {name}")).map_err(|e| e.to_string())?;
+            sc.set_attr(kept, "export_type", wce_walls::scene::EXPORT_OFF);
+            sc.set_attr(kept, "flags", " OIF_ACTIVE");
+            let moved = sc.move_to_layer(elem, kept).map_err(|e| e.to_string())?;
+            wce_tile::world_transform::set_world_position(sc, moved, w.position);
+            if sc.euler(moved).is_some() {
+                wce_tile::world_transform::set_world_rotation(sc, moved, &w.rotation);
+            }
+
+            wce_walls::scene::place_pieces(sc, holder, &name, &placed)
+        })();
+        let made = match made {
+            Ok(m) => m,
+            Err(e) => {
+                // What was spliced so far is recorded and taken back.
+                self.push_splice("Convert to buildings".to_owned(), mark, vec![], vec![]);
+                self.history.undo();
+                self.history.drop_redo();
+                return Err(e);
+            }
+        };
+
+        self.push_splice("Convert to buildings".to_owned(), mark, vec![super::item_of(elem)], made.iter().map(|&e| super::item_of(e)).collect());
+
+        // Its ground: no longer the wall's (which would take it out with the wall hidden), the user's.
+        let ground = ground_key.as_deref().and_then(|k| self.tile().wall_layer_id(k));
+        if let Some(id) = ground {
+            let label = format!("Kit wall {name} (converted)");
+            self.change_stack("Convert to buildings", super::layers::LayerType::Height, |p| {
+                if let Some(l) = p.layers.as_mut().and_then(|l| l.height.as_mut()).and_then(|s| s.layers.iter_mut().find(|l| l.id == id)) {
+                    l.owner.clear();
+                    l.name.clone_from(&label);
+                }
+            });
+        }
+
+        let pushed = self.history.size() - before;
+        self.history.join_last(pushed, "Convert to buildings");
+        let ground = if ground.is_some() { format!(", its ground kept as the height layer \"Kit wall {name} (converted)\"") } else { String::new() };
+        Ok(format!("{name}: {} building(s) made; the wall is in the hidden, not exported layer \"{CONVERTED_LAYER} {name}\"{ground}", made.len()))
+    }
 }

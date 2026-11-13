@@ -122,6 +122,13 @@ impl Inspector for ImGuiInspector {
         gui::begin_disabled(!enabled);
         let clicked = gui::small_button(&format!("{label}{}", self.id(field)));
         gui::end_disabled();
+
+        // Its hint, greyed out too (it says why).
+        let hint = std::mem::take(&mut self.next_hint);
+        if !hint.is_empty() && gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(&hint);
+        }
+
         clicked && enabled
     }
 
