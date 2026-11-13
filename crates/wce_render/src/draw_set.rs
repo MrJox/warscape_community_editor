@@ -569,66 +569,12 @@ impl DrawSet {
         wce_prof!("drawset.cull");
         let range = near.as_ref().map(|n| n.1);
         let (n, nb) = (self.slots(), self.batches());
-        let inv_scale = 1.0 / v.lod_scale.max(1e-3);
         let chunk_pairs = (0..n.div_ceil(GRAIN))
             .into_par_iter()
             .map(|chunk| {
                 let mut pairs = vec![];
                 for i in chunk * GRAIN..((chunk + 1) * GRAIN).min(n) {
-                    let f = self.flags[i];
-                    if f & DEAD != 0 || (v.shadow && f & CASTS_SHADOW == 0) || (v.no_context && f & CONTEXT != 0) {
-                        continue;
-                    }
-
-                    let s = &self.sphere[i * 4..i * 4 + 4];
-                    if v.frustum.outside(s, s[3]) {
-                        continue;
-                    }
-
-                    if v.max_distance > 0.0 {
-                        let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
-                        let reach = v.max_distance + s[3];
-                        if dx * dx + dy * dy + dz * dz > reach * reach {
-                            continue;
-                        }
-                    }
-
-                    let me = &self.models[self.model[i] as usize];
-                    let mut lod = 0usize;
-                    if f & LOD != 0 {
-                        let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
-                        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-                        if s[3] < dist * v.min_ratio || s[3] < v.min_radius {
-                            continue;
-                        }
-
-                        // LOD distances are the model's own units: a model drawn at another scale (tiles: 1 / unit) switches at the scaled
-                        // distances.
-                        let item_scale = if me.radius > 0.0 { s[3] / me.radius } else { 1.0 };
-                        let d = dist * inv_scale / item_scale.max(1e-3);
-                        let last = me.lod_distance.len() - 1;
-
-                        // A LOD the quality options switched off is passed over (its distance 0, not enabled: the engine's selection).
-                        let off = v.quality.off(me.material, last + 1);
-                        while lod < last && (off.contains(&lod) || d > v.quality.distance(lod, &me.lod_distance)) {
-                            lod += 1;
-                        }
-
-                        lod = (lod as i32 + v.coarser).min(last as i32) as usize;
-                    }
-
-                    // Bit 63 files the pair under `near`.
-                    let close = range.is_some_and(|(lo, hi)| {
-                        let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
-                        let d = dx * dx + dy * dy + dz * dz;
-                        lo <= d && d <= hi
-                    });
-
-                    for k in me.lod_first[lod]..me.lod_first[lod + 1] {
-                        let b = me.lod_batch[k as usize];
-                        let to_near = close && self.batch_mesh(b).kind == MeshKind::TreeLeaf;
-                        pairs.push((u64::from(to_near) << 63) | (u64::from(b) << 32) | i as u64);
-                    }
+                    self.item_pairs(i, v, range, &mut pairs);
                 }
 
                 pairs
@@ -638,6 +584,79 @@ impl DrawSet {
         Self::group(&chunk_pairs, nb, out, false);
         if let Some((near, _)) = near.as_mut() {
             Self::group(&chunk_pairs, nb, near, true);
+        }
+    }
+
+    /// As [`DrawSet::cull`], over these items only (in this order; items past the set or dead are skipped): a view of a few items (the
+    /// selection outline's) costs them, not the whole set's cull.
+    pub fn cull_items(&self, v: &View, items: &[u32], out: &mut Visible) {
+        wce_prof!("drawset.cull_items");
+        let n = self.slots();
+        let mut pairs = vec![];
+        for &i in items.iter().filter(|&&i| (i as usize) < n) {
+            self.item_pairs(i as usize, v, None, &mut pairs);
+        }
+
+        Self::group(&[pairs], self.batches(), out, false);
+    }
+
+    /// The (batch, item) pairs an item adds to a view: none when it is dead, not for the view, outside it or too small; else one per mesh of
+    /// its LOD. Bit 63 files a leaf within `range` of the eye (squared) under `near` ([`DrawSet::cull_split`]).
+    fn item_pairs(&self, i: usize, v: &View, range: Option<(f32, f32)>, pairs: &mut Vec<u64>) {
+        let f = self.flags[i];
+        if f & DEAD != 0 || (v.shadow && f & CASTS_SHADOW == 0) || (v.no_context && f & CONTEXT != 0) {
+            return;
+        }
+
+        let s = &self.sphere[i * 4..i * 4 + 4];
+        if v.frustum.outside(s, s[3]) {
+            return;
+        }
+
+        if v.max_distance > 0.0 {
+            let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
+            let reach = v.max_distance + s[3];
+            if dx * dx + dy * dy + dz * dz > reach * reach {
+                return;
+            }
+        }
+
+        let me = &self.models[self.model[i] as usize];
+        let mut lod = 0usize;
+        if f & LOD != 0 {
+            let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
+            let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+            if s[3] < dist * v.min_ratio || s[3] < v.min_radius {
+                return;
+            }
+
+            // LOD distances are the model's own units: a model drawn at another scale (tiles: 1 / unit) switches at the scaled
+            // distances.
+            let inv_scale = 1.0 / v.lod_scale.max(1e-3);
+            let item_scale = if me.radius > 0.0 { s[3] / me.radius } else { 1.0 };
+            let d = dist * inv_scale / item_scale.max(1e-3);
+            let last = me.lod_distance.len() - 1;
+
+            // A LOD the quality options switched off is passed over (its distance 0, not enabled: the engine's selection).
+            let off = v.quality.off(me.material, last + 1);
+            while lod < last && (off.contains(&lod) || d > v.quality.distance(lod, &me.lod_distance)) {
+                lod += 1;
+            }
+
+            lod = (lod as i32 + v.coarser).min(last as i32) as usize;
+        }
+
+        // Bit 63 files the pair under `near`.
+        let close = range.is_some_and(|(lo, hi)| {
+            let (dx, dy, dz) = (s[0] - v.eye.x, s[1] - v.eye.y, s[2] - v.eye.z);
+            let d = dx * dx + dy * dy + dz * dz;
+            lo <= d && d <= hi
+        });
+
+        for k in me.lod_first[lod]..me.lod_first[lod + 1] {
+            let b = me.lod_batch[k as usize];
+            let to_near = close && self.batch_mesh(b).kind == MeshKind::TreeLeaf;
+            pairs.push((u64::from(to_near) << 63) | (u64::from(b) << 32) | i as u64);
         }
     }
 

@@ -209,9 +209,7 @@ impl Tile {
         let unit = self.unit();
         let mut ids = vec![];
         for item in &self.building_splines.items {
-            // As a piece of the spline, not the spline: selecting it outlines its line, not every building it lays (hundreds of meshes,
-            // 8 ms a frame on a port's fences); a click on one picks the spline (the Tile tool's click).
-            let source = self.source(super::piece_item(item.spline, 0));
+            let source = self.source(super::item_of(item.spline));
             let [x, y, z] = item.position;
             for (local, payload) in self.preview_payloads(&item.text) {
                 let mut world = local;
