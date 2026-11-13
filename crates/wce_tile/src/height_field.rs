@@ -205,6 +205,13 @@ impl HeightField {
         self.scale = scale;
     }
 
+    /// Whether every sample is inside the field's range (to half a step): stored with it, none is clamped.
+    pub fn holds_range(&self) -> bool {
+        let half_step = self.scale.abs() / 65535.0 * 0.5;
+        let (lo, hi) = (self.min.min(self.min + self.scale) - half_step, self.min.max(self.min + self.scale) + half_step);
+        self.v.iter().all(|&o| (lo..=hi).contains(&(self.base + f64::from(o))))
+    }
+
     /// The range TEd saves the heights with (`TerrainIO.cpp`): min_height = the lowest sample, scale = the highest minus the lowest, no padding
     /// (a flat map: `FLAT_SCALE`). While the lowest and highest samples are within half a step of the field's range, that range is kept, so
     /// that a map that was not edited is saved with the numbers it was read with, bytes and entry unchanged.

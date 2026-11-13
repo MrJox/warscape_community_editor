@@ -698,6 +698,10 @@ pub struct Tile {
     /// The projects folder in the kit's layout tiles are saved into (kit.rs); none: saved where they are.
     pub(crate) projects_root: Option<std::path::PathBuf>,
 
+    /// The Assembly Kit (or the packs' database in its layout) whose battle tiles' colours a tile made by Save as must differ from
+    /// (`save_tile_as`); none: only the projects' are looked at.
+    pub(crate) colour_kit: Option<std::path::PathBuf>,
+
     /// What the tool is about to place, following the mouse (preview.rs).
     pub(crate) preview: preview::Preview,
 
@@ -1004,6 +1008,7 @@ impl TileDocument {
             logic_summaries: RefCell::default(),
             preview: preview::Preview::default(),
             projects_root: None,
+            colour_kit: None,
             drafts: HashMap::new(),
             piece_props: HashMap::new(),
             piece_pending: vec![],
@@ -1221,6 +1226,17 @@ impl Document for TileDocument {
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
         if self.stage.is_some() {
             return self.save_stage();
+        }
+
+        // Save as into a battle tile's folder in the projects: a new tile there with its own entry (Tile > Save tile as), not a folder
+        // no entry points to (its heights, size and colour lost on the next open).
+        if let Some((set, name, variation)) = self.save_as_new_tile(&target.path) {
+            let kit = self.tile().colour_kit.clone();
+            let message = self.save_tile_as(&set, &name, &variation, kit.as_deref())?;
+            let t = self.tile_mut();
+            t.last_message = message;
+            t.converted_on_open = false;
+            return Ok(());
         }
 
         self.save_tile(target).map(|message| {
