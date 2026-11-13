@@ -32,3 +32,15 @@ weather and particle code: docs/plans/weather_current_state.md.
      (`wce_render` `renderer/decals.rs` ~391, `renderer/terrain.rs` ~1107).
    - The campaign skybox model and cube map.
    - A season cross-fade preview (spring, summer, autumn, winter) as the game does it.
+3. **Visual editing, the rest** (UX pass, 2026-11-13; the first part is done: the sun handle, the focus pick, compare, the tone curve and
+   histogram, `wce_weather_tool` `visual.rs`, docs/editor.md). Raised with the user, not started:
+   - A wind arrow on the ground (wind_dir_degrees and strength), fog rings at the fog's start and end while a Fog row is edited, a colour
+     eyedropper from the viewport (or a game screenshot) for the fog, sky and ambient colours.
+   - A sky gradient strip (horizon to zenith) and a fog density curve by distance in the Inspector.
+   - A preview-only switch per section (fog, grading, clouds off) to see what each does; nothing written.
+   - A split wipe between the saved file and the edits (or two files). Compare flips the whole frame instead: the renderer's temporal state
+     (exposure adaptation `tonemap.luma_*`, the environment cube) is the renderer's, not the view's, so two environments in one frame would
+     fight; a wipe needs that state per view first.
+   - Mix two files into a new one: the cross-fade preview's blend (`environment::blend`) written out as a file.
+   - A gallery of the game's weather files rendered on the current scene, filtered by climate, season and time of day.
+   - A game screenshot beside or over the viewport, from the same camera, to match a look by eye.

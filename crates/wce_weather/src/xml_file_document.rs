@@ -154,6 +154,11 @@ impl XmlFileDocument {
         self.xml().elements().get(elem).is_some_and(|e| attr < e.attrs.len())
     }
 
+    /// The last `n` edits as one undo entry named `name` (a drag that edits two attributes at once: the sun's azimuth and elevation).
+    pub fn join_last(&mut self, n: usize, name: &str) {
+        self.history.join_last(n, name);
+    }
+
     /// Sets an attribute to `raw` (already entity-encoded, as it is stored). `gesture` merges the commands of one drag into one entry (0: never merge).
     pub fn set_attr(&mut self, elem: usize, attr: usize, raw: Vec<u8>, gesture: u64) {
         if !self.valid(elem, attr) {

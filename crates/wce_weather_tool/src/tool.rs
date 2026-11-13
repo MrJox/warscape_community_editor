@@ -133,6 +133,9 @@ pub struct WeatherTool {
     pub(crate) scene_count: i32,
 
     pub(crate) picker: WeatherPicker,
+
+    /// The sun handle, the focus pick, compare, the tone curve and histogram (visual.rs).
+    pub(crate) visual: crate::visual::Visual,
 }
 
 impl Default for WeatherTool {
@@ -161,6 +164,7 @@ impl Default for WeatherTool {
             scene_seed: 1,
             scene_count: 16,
             picker: WeatherPicker::default(),
+            visual: crate::visual::Visual::default(),
         }
     }
 }
@@ -347,6 +351,8 @@ impl WeatherTool {
         };
 
         gui::text_colored(theme::dim(), &format!("environment: {lit_by}"));
+        let shown = self.last_params.clone();
+        self.visual.draw_panel(e, self.env_doc, &shown);
 
         if !errors.is_empty() {
             gui::text_colored(theme::error(), "render errors (hover)");
@@ -760,6 +766,24 @@ impl Tool for WeatherTool {
         true
     }
 
+    fn shortcuts(&self) -> &'static [wce_editor::shortcuts::Action] {
+        crate::visual::SHORTCUTS
+    }
+
+    fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        let shown = self.last_params.clone();
+        self.visual.overlay(e, self.env_doc, &shown, origin, size);
+    }
+
+    fn viewport_input(&mut self, e: &mut Editor, event: &wce_editor::tool::ViewportEvent) -> bool {
+        let shown = self.last_params.clone();
+        self.visual.viewport_input(e, self.env_doc, &shown, event)
+    }
+
+    fn claims_left_button(&self, _: &Editor) -> bool {
+        self.visual.claims_left_button()
+    }
+
     /// An environment or lighting file is inspected by effect (sun, fog, exposure, ...) whatever element is selected; the other files by the
     /// selected element's attributes.
     fn inspect(&mut self, e: &mut Editor, ins: &mut dyn wce_editor_core::inspector::Inspector) -> bool {
@@ -855,6 +879,10 @@ impl Tool for WeatherTool {
         };
 
         let mut params = params.unwrap_or_else(|| self.default_env.clone());
+        if let Some(saved) = self.visual.compare_params(e, self.env_doc) {
+            params = saved;
+        }
+
         params.output_gamma = self.output_gamma;
         params.output_brightness = self.output_brightness;
         let slot = &mut e.scene.environment;

@@ -117,6 +117,50 @@ pub fn weather_diagnostics(e: &mut Editor, tool: &WeatherTool) -> String {
 }
 
 pub fn register(c: &mut CommandRegistry<Editor>) {
+    // ---- visual editing (visual.rs)
+    c.add(
+        "weather_sun_disc",
+        "weather_sun_disc",
+        "where the sun's disc is in the viewport image (pixels: x y), for a scripted drag of it; fails when it is not in view",
+        |e, _| {
+            with_weather(e, |t, e| match t.visual.sun_disc_px(e) {
+                Some((x, y)) => ok(format!("{x} {y}")),
+                None => fail("the sun's disc is not in view"),
+            })
+        },
+    );
+
+    c.add("weather_pick_focus", "weather_pick_focus", "the next click in the viewport sets the depth of field's focus", |e, _| {
+        with_weather(e, |t, _| {
+            t.visual.focus_armed = true;
+            ok("")
+        })
+    });
+
+    c.add("weather_compare", "weather_compare on|off", "light the scene with the file as saved instead of the edits", |e, a| {
+        let on = match a.first().map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return fail("usage: weather_compare on|off"),
+        };
+        with_weather(e, |t, _| {
+            t.visual.compare = on;
+            ok("")
+        })
+    });
+
+    c.add("weather_tone_panel", "weather_tone_panel on|off", "open or close the Weather scene panel's tone curve and histogram", |e, a| {
+        let open = match a.first().map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return fail("usage: weather_tone_panel on|off"),
+        };
+        with_weather(e, |t, _| {
+            t.visual.open_tone = Some(open);
+            ok("")
+        })
+    });
+
     c.add("sample", "sample <seed> <count>", "open a new sample map document (the old one goes)", |e, a| {
         with_weather(e, |t, e| {
             t.scene_seed = a.first().map_or(1, |s| int(s) as u32 as i32);
