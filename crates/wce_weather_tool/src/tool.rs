@@ -116,9 +116,9 @@ pub struct WeatherTool {
 
     // File browser.
     category: usize,
-    filter: String,
+    pub(crate) filter: String,
     listing: Vec<String>,
-    listing_dirty: bool,
+    pub(crate) listing_dirty: bool,
 
     // Properties tree.
     attr_filter: String,
@@ -139,6 +139,9 @@ pub struct WeatherTool {
 
     /// The Mix section: the open file cross-faded with another, saved as a new file (mix.rs).
     pub(crate) mix: crate::mix::Mix,
+
+    /// The Weather gallery window (gallery.rs).
+    pub(crate) gallery: crate::gallery::Gallery,
 
     /// A file to open once the panels are drawn (the mix just saved).
     open_after: Option<String>,
@@ -172,6 +175,7 @@ impl Default for WeatherTool {
             picker: WeatherPicker::default(),
             visual: crate::visual::Visual::default(),
             mix: crate::mix::Mix::default(),
+            gallery: crate::gallery::Gallery::default(),
             open_after: None,
         }
     }
@@ -281,6 +285,16 @@ impl WeatherTool {
         }
 
         gui::text_colored(theme::dim(), &format!("{} files", self.listing.len()));
+        gui::same_line();
+        if gui::small_button("Gallery") {
+            self.gallery.open = true;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Thumbnails of the listed .environment files, each drawn on this scene from the camera: click one to open it.",
+            );
+        }
         gui::begin_child("list", gui::v2(0.0, 0.0), 0, 0);
         let mut open = None;
         let listing = &self.listing;
@@ -923,6 +937,8 @@ impl Tool for WeatherTool {
 
         self.last_params = slot.resolved();
 
+        self.gallery.update(e);
+
         // Edit state of the open documents the particle system reads (vfx/ and weather_definitions.xml).
         let mut rev = 0u64;
         let mut live = vec![];
@@ -962,6 +978,11 @@ impl Tool for WeatherTool {
         self.draw_files(e);
         self.draw_properties(e);
         self.draw_scene_bar(e);
+        let listing = self.listing.clone();
+        if let Some(path) = self.gallery.draw(e, &listing) {
+            self.open_after = Some(path);
+        }
+
         if let Some(path) = self.open_after.take()
             && let Err(msg) = e.open_path_from(self, &path, true, true)
         {
