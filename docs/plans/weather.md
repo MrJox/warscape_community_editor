@@ -44,3 +44,8 @@ weather and particle code: docs/plans/weather_current_state.md.
    - Mix two files into a new one: the cross-fade preview's blend (`environment::blend`) written out as a file.
    - A gallery of the game's weather files rendered on the current scene, filtered by climate, season and time of day.
    - A game screenshot beside or over the viewport, from the same camera, to match a look by eye.
+4. **One panel: everything from the Inspector** (user, 2026-11-13; how to do it is for later). Every edit the Properties panel makes
+   reachable from the Inspector, each Inspector section collapsible, so the Properties panel can go. Today only Properties has: the tree
+   of `weather_definitions.xml` and VFX files (picking the element the Inspector edits), structural edits (add, duplicate, move, delete
+   elements, e.g. a second cloud layer), the elements no section lists (cloud sprites, scene nodes), the attribute filter, the Changes
+   tab (per-attribute revert) and Revert all; its Save button repeats File > Save.
