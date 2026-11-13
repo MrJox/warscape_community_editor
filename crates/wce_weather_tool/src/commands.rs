@@ -183,6 +183,25 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "weather_without",
+        "weather_without <fog|clouds|precipitation|tone curve|colour grading|depth of field> on|off",
+        "a preview switch: that part of the file left out of the viewport's light (the file keeps it)",
+        |e, a| {
+            let (name, on) = match a.split_last() {
+                Some((last, rest)) if last == "on" || last == "off" => (rest.join(" "), last == "on"),
+                _ => return fail("usage: weather_without <part> on|off"),
+            };
+            let Some(i) = crate::visual::SWITCHES.iter().position(|(n, _)| *n == name) else {
+                return fail(format!("no preview switch '{name}'"));
+            };
+            with_weather(e, |t, _| {
+                t.visual.without[i] = on;
+                ok("")
+            })
+        },
+    );
+
+    c.add(
         "weather_fog_rings",
         "weather_fog_rings [on|off]",
         "draw where the fog over the ground reaches 25, 50 and 75 % (on / off); no argument: log those distances from the camera's spot",

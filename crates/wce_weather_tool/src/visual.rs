@@ -18,6 +18,16 @@ use wce_scene::render_scene::DocumentId;
 use wce_weather::xml_file_document::XmlFileDocument;
 
 const SUN_DRAG: &str = "weather.sun_drag";
+
+/// The preview switches: what each takes out of the light shown (not out of the file), and what it does.
+pub(crate) const SWITCHES: [(&str, &str); 6] = [
+    ("fog", "The battle fog (distance and height fog) taken out of the preview."),
+    ("clouds", "The cloud layers taken out of the preview (the sky and the cloud shade on the ground)."),
+    ("precipitation", "The weather definition's effects (rain, snow, dust) taken out of the preview."),
+    ("tone curve", "The Exposure section's S-curve made straight in the preview (low and high tones bias 1/3 and 2/3)."),
+    ("colour grading", "The Colour grading section made neutral in the preview (overlay, brightness, contrast, saturation 1, hue 0)."),
+    ("depth of field", "The depth of field turned off in the preview."),
+];
 const COMPARE: &str = "weather.compare";
 
 /// The Weather tool's keys (Settings > Shortcuts).
@@ -80,6 +90,9 @@ pub(crate) struct Visual {
 
     /// The mouse was over the viewport last frame.
     hovered: bool,
+
+    /// The preview switches that are on (`SWITCHES`): those parts of the file are left out of what lights the viewport.
+    pub(crate) without: [bool; 6],
 
     /// Where the fog over the ground reaches 25, 50 and 75 %, as rings around the camera (the Fog distances check box, `weather_fog_rings`).
     pub(crate) fog_rings: bool,
@@ -148,6 +161,39 @@ impl Visual {
     /// The sun and wind handles work: the file is what the viewport shows (not compared, not mixed).
     fn handles(&self) -> bool {
         !self.comparing() && !self.mixing
+    }
+
+    /// Takes out of `p` what the preview switches leave out (the viewport's light only; the file is not touched).
+    pub(crate) fn apply_switches(&self, p: &mut EnvironmentParams) {
+        let neutral = EnvironmentParams::default();
+        if self.without[0] {
+            p.fog_distance_scale = 0.0;
+            p.fog_height_strength = 0.0;
+        }
+
+        if self.without[1] {
+            p.cloud_planes.clear();
+        }
+
+        if self.without[2] {
+            p.weather_definition.clear();
+            p.snowing_intensity = 0.0;
+        }
+
+        if self.without[3] {
+            p.low_tones_bias = [1.0 / 3.0; 3];
+            p.high_tones_bias = [2.0 / 3.0; 3];
+            p.tones_bias_single = p.tones_bias_single.map(|_| [1.0 / 3.0, 2.0 / 3.0]);
+        }
+
+        if self.without[4] {
+            (p.overlay, p.brightness, p.contrast, p.saturation, p.hue) =
+                (neutral.overlay, neutral.brightness, neutral.contrast, neutral.saturation, neutral.hue);
+        }
+
+        if self.without[5] {
+            p.use_dof = false;
+        }
     }
 
     pub(crate) fn comparing(&self) -> bool {
@@ -468,8 +514,11 @@ impl Visual {
         }
 
         let top = gui::v2(origin.x + size.x * 0.5, origin.y + 40.0);
+        let off = SWITCHES.iter().zip(self.without).filter(|(_, on)| *on).map(|((name, _), _)| *name).collect::<Vec<_>>();
         let banner = if self.comparing() {
             Some(("THE SAVED FILE (comparing: uncheck Compare, or let go of C, for the edits)".to_owned(), theme::warning()))
+        } else if !off.is_empty() {
+            Some((format!("preview without {} (the file keeps them)", off.join(", ")), theme::warning()))
         } else if self.focus_armed {
             Some(("Click what should be in focus (Esc: cancel)".to_owned(), theme::modified()))
         } else if self.wind_from.is_some() {
@@ -529,6 +578,17 @@ impl Visual {
         if doc != 0 {
             gui::same_line();
             gui::text_disabled(&format!("sun: drag its disc in the sky, or hold {}", shortcuts::label(SUN_DRAG).unwrap_or_default()));
+        }
+
+        if doc != 0 {
+            gui::text_disabled("preview without:");
+            for (i, (name, tip)) in SWITCHES.iter().enumerate() {
+                gui::same_line();
+                gui::checkbox(&format!("{name}##without"), &mut self.without[i]);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(&format!("{tip} Only the viewport's preview: the file keeps it."));
+                }
+            }
         }
 
         if let Some(open) = self.open_tone.take() {
@@ -641,27 +701,6 @@ impl Visual {
     }
 }
 
-/// The battle fog's opacity over the ground (battlefog.hlsl ps30_main, its DXBC and GLSL listing agree; docs/re/renderer.md, "Battle
-/// fog") at `r` metres from the point below the camera, the camera `h` metres over a ground at height `y`:
-/// saturate((height_strength * smoothstep((top - y - bottom) / (top - bottom)) + saturate(scale * (1 - exp(-(d / L - S))))) * smoothstep(min(r /
-/// clear, 1))), with d the distance from the camera, L = (1 - saturate(strength)) * 1000 metres, S = 8 * saturate(start) - 4 (start less
-/// the precipitation modifier) and bottom 0 (as the renderer sets it).
-pub(crate) fn fog_opacity(p: &EnvironmentParams, r: f32, h: f32, y: f32) -> f32 {
-    let smooth = |x: f32| {
-        let x = x.clamp(0.0, 1.0);
-        x * x * (3.0 - 2.0 * x)
-    };
-    let top = p.fog_height_top.max(0.001);
-    let height = smooth((top - y) / top);
-    let l = (1.0 - p.fog_distance_strength.clamp(0.0, 1.0)) * 1000.0;
-    let s = 8.0 * (p.fog_distance_start - p.fog_precipitation_distance_modifier).clamp(0.0, 1.0) - 4.0;
-    let d = r.hypot(h);
-    let distance =
-        if l > 1e-6 { (p.fog_distance_scale * (1.0 - (-(d / l - s)).exp())).clamp(0.0, 1.0) } else { p.fog_distance_scale.clamp(0.0, 1.0) };
-    let clear = smooth((r / p.fog_clear_distance.max(0.001)).min(1.0));
-    ((p.fog_height_strength * height + distance) * clear).clamp(0.0, 1.0)
-}
-
 /// The fog's opacity steps the rings show.
 pub(crate) const FOG_STEPS: [f32; 3] = [0.25, 0.5, 0.75];
 
@@ -672,7 +711,7 @@ pub(crate) fn fog_rings(p: &EnvironmentParams, h: f32, y: f32) -> ([Option<f32>;
     let mut strongest = 0.0f32;
     let mut r = 0.0f32;
     while r <= 30_000.0 {
-        let a = fog_opacity(p, r, h, y);
+        let a = wce_scene::environment::fog_opacity(p, r, h, y);
         strongest = strongest.max(a);
         for (slot, step) in out.iter_mut().zip(FOG_STEPS) {
             if slot.is_none() && a >= step {
