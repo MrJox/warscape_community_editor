@@ -1223,6 +1223,16 @@ impl Document for TileDocument {
         true
     }
 
+    fn save_as_blocked(&self) -> Option<String> {
+        Some(if self.stage.is_some() {
+            "A prefab stage saves into its prefab: Save, or the Prefabs panel's Save as... for a new prefab.".to_owned()
+        } else {
+            "A tile is its folder and its tile database entry: a copy in any folder opens again without its height range, size and colour. \
+             Use Tile > Save tile as... for another tile, or File > Export."
+                .to_owned()
+        })
+    }
+
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
         if self.stage.is_some() {
             return self.save_stage();

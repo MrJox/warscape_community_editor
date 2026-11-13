@@ -391,7 +391,11 @@ impl Document for MapDocument {
             written += 1;
         }
 
-        self.history.mark_saved();
+        // A copy elsewhere (Save as) leaves the projects' folder without the edits: the map stays unsaved.
+        if self.save_dir.as_deref().is_some_and(|own| wce_editor_core::document::same_path(own, &dir)) {
+            self.history.mark_saved();
+        }
+
         self.message = Some(format!("{}: {written} files written, {kept} already there", dir.display()));
         Ok(())
     }

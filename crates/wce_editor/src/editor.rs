@@ -2083,19 +2083,29 @@ impl Editor {
                 let _ = CommandRegistry::run(self, "save");
             }
 
-            if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save) {
+            // The document marks itself saved when the file picked is its own; a copy elsewhere leaves it unsaved.
+            let blocked = self.docs.active().and_then(|d| d.save_as_blocked());
+            if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save && blocked.is_none()) {
                 let start = self.save_as_start(active);
                 if let Some(p) = file_dialog(true, &start, &[("All files".to_owned(), "*.*".to_owned())])
                     && let Some(d) = self.docs.find_mut(active)
                 {
-                    let result = d.save(&wce_editor_core::document::SaveTarget { path: p });
-                    if result.is_ok() {
-                        d.history_mut().mark_saved();
-                    }
-
-                    let msg = result.map_or_else(|e| e, |()| "saved".to_owned());
+                    let result = d.save(&wce_editor_core::document::SaveTarget { path: p.clone() });
+                    let msg = match result {
+                        Ok(()) if d.modified() => {
+                            format!("a copy saved to {}; the document's own file does not have the edits yet (Save)", p.display())
+                        }
+                        Ok(()) => "saved".to_owned(),
+                        Err(e) => e,
+                    };
                     self.status(&msg, false);
                 }
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(blocked.as_deref().unwrap_or(
+                    "Writes the document to a file you pick. A file on disk goes on as the new file; a game file's copy elsewhere is only a copy (Save still writes the project's).",
+                ));
             }
 
             let unsaved = self.docs.unsaved().len();

@@ -303,6 +303,11 @@ impl Document for XmlFileDocument {
 
         std::fs::write(&to, self.xml().save()).map_err(|_| fail("write failed".to_owned()))?;
 
+        // A game file's copy elsewhere (Save as): the project's file still lacks the edits, so the document stays unsaved.
+        if !self.source.vfs_path.is_empty() && !wce_editor_core::document::same_path(&to, &self.default_save_path()) {
+            return Ok(());
+        }
+
         // The saved file becomes the new baseline.
         let bytes = std::fs::read(&to).map_err(|error| fail(error.to_string()))?;
         *self.history.model_mut() = XmlDoc::parse(bytes).map_err(|error| fail(error.to_string()))?;

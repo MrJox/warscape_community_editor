@@ -20,6 +20,15 @@ pub struct SaveTarget {
     pub path: PathBuf,
 }
 
+/// Whether two paths name the same file, as the file dialogs and the joins spell them (separators and, on Windows, case aside).
+pub fn same_path(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let norm = |p: &std::path::Path| {
+        let s = p.display().to_string().replace('\\', "/");
+        if cfg!(windows) { s.to_lowercase() } else { s }
+    };
+    norm(a) == norm(b)
+}
+
 static NEXT_DOCUMENT: AtomicU32 = AtomicU32::new(1);
 
 /// What every document has: its id (unique in the process, from 1).
@@ -77,7 +86,14 @@ pub trait Document: Any {
         false
     }
 
-    /// Writes the document as minimal edits of its source bytes.
+    /// Why File > Save as does not apply to the document (it is off, with this as its tooltip); `None`: it does. Save as writes a copy
+    /// wherever the user picks, which is no use when the document is more than its files (a tile is its tile database entry too).
+    fn save_as_blocked(&self) -> Option<String> {
+        None
+    }
+
+    /// Writes the document as minimal edits of its source bytes. A save to where the document saves (`target` empty, or its own file)
+    /// marks it saved; a copy elsewhere (Save as) does not, as its own file still lacks the edits.
     ///
     /// # Errors
     ///
