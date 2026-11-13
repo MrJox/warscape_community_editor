@@ -6,5 +6,6 @@ pub mod commands;
 pub mod picker;
 pub mod tool;
 pub mod variation_editor;
+mod visual;
 
 pub use tool::WeatherTool;

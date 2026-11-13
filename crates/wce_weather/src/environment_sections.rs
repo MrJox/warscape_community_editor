@@ -793,6 +793,37 @@ impl XmlFileDocument {
         }
     }
 
+    /// Sets a setting of the sections from outside the Inspector (the viewport's sun handle, its focus pick): `edit` changes the value the
+    /// file holds (else the one the viewport assumes) and it is written as the Inspector writes it (an integer stays one while whole; an
+    /// attribute the element lacks is added). Edits of one `gesture` merge into one undo step.
+    ///
+    /// # Errors
+    ///
+    /// The setting is not one of the sections', or the file has no such element.
+    pub fn edit_setting(&mut self, elem_name: &str, attr: &str, gesture: u64, edit: impl FnOnce(&mut [f32])) -> Result<(), String> {
+        let field = SECTIONS
+            .iter()
+            .flat_map(|s| s.fields)
+            .find(|f| f.elem == elem_name && f.attr == attr)
+            .ok_or_else(|| format!("{elem_name}.{attr} is not a setting of the sections"))?;
+        let elem = *self.elements_named(elem_name).first().ok_or_else(|| format!("this file has no <{elem_name}>"))?;
+        let found = self.attr_value(elem, attr);
+        let at = found.as_ref().map(|(a, _)| *a);
+        let mut v = match found {
+            Some((_, x)) if fits(field.kind, &x) => x,
+            _ => default_of(&EnvironmentParams::default(), field, 0),
+        };
+
+        let (was_int, style) = (v.kind == ValueKind::Int, v.style);
+        edit(&mut v.f);
+        if matches!(v.kind, ValueKind::Int | ValueKind::Float) {
+            v = number(v.f.first().copied().unwrap_or(0.0), was_int, style);
+        }
+
+        self.write_value(elem, attr, at, &v, gesture);
+        Ok(())
+    }
+
     /// The Inspector of an environment or lighting file: every section, then the attributes no section lists.
     pub fn inspect_environment(&mut self, ins: &mut dyn Inspector) {
         let id = self.id();

@@ -271,3 +271,32 @@ fn three_channel_rows_write_only_the_changed_channel() {
         "{out}"
     );
 }
+
+#[test]
+fn edit_setting_writes_as_the_inspector_and_joins_into_one_entry() {
+    let mut d = document();
+    let start = d.history().position();
+
+    // A setting the file lacks is added; one it has keeps its spans and its integer style.
+    d.edit_setting("LIGHTING", "sun_direction_azimuth", 0, |f| f[0] = 135.0).expect("azimuth");
+    d.edit_setting("FOG", "fog_distance_strength", 0, |f| f[0] = 5.0).expect("strength");
+    assert_eq!(d.history().position() - start, 2);
+    d.join_last(2, "Two at once");
+    assert_eq!(d.history().position() - start, 1, "one undo entry");
+    assert!(saved(&d).contains("fog_distance_strength='5'"));
+
+    // A pair keeps its other half.
+    d.edit_setting("DEPTH_OF_FIELD", "DOF_focus", 0, |f| f[0] = 12.5).expect("focus");
+    let p = wce_scene::environment::read_environment(d.xml());
+    assert_eq!(p.sun_azimuth, 135.0);
+    assert_eq!(p.dof_focus, [12.5, 40.0]);
+
+    // Not a setting of the sections, or an element the file lacks.
+    assert!(d.edit_setting("LIGHTING", "nonsense", 0, |_| {}).is_err());
+    assert!(d.edit_setting("SKYGEN", "backscatter_decay", 0, |_| {}).is_err());
+
+    // The joined entry undoes both.
+    d.history_mut().undo();
+    d.history_mut().undo();
+    assert_eq!(saved(&d), FILE);
+}

@@ -519,6 +519,13 @@ impl Editor {
         &self.dev
     }
 
+    /// The viewport's last image as RGBA8 rows (width, height, pixels; top row first), as shown. Waits for the GPU: for occasional reads (a
+    /// histogram twice a second), not every frame.
+    pub fn read_viewport_rgba8(&self) -> Option<(u32, u32, Vec<u8>)> {
+        let t = self.viewport.target();
+        Some((t.width(), t.height(), t.read_rgba8(&self.dev, &self.ctx)?))
+    }
+
     pub fn context(&self) -> &ID3D11DeviceContext {
         &self.ctx
     }
