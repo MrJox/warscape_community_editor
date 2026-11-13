@@ -237,11 +237,9 @@ The exports, Siege AI and Check platforms skip walls in a layer that is not expo
 
 ### 8. Towers
 
-- **Wall towers** at their own spacing, `wall_tower_every` (default 0 = none), beside `wall_defence_every`, which from then on places
-  only the bastions. A slot both want gets the tower. Only cultures with tower wall pieces get them (the Roman-style sets'
-  `*_tower_c_straight_with_extension` and `*_tower_b_corner_with_extension`, Gondor's curved towers). For the 8 m cultures the setting
-  does nothing, and the Inspector says so. Procedural walls take the same split: towers at `wall_tower_every`, bastions at
-  `wall_defence_every`, instead of alternating at one spacing.
+- **Wall towers** (user, 2026-11-13: no setting of their own): the defence slots of `wall_defence_every` alternate tower and bastion in
+  both kinds, the tower first, as the procedural walls already do (`profile.defences`); a kit wall takes, of the defences of the
+  slot's shape, a tower and a bastion in turn (the other where the culture has only one: the 8 m cultures' curved bastion).
 - **Tower capture points**, generated live like the pieces. Each tower gets a `CaptureLocationInstance` of `capture_point_tower_only`,
   `CLT_MINOR`, with its boundary a rectangle over the top of the wall behind the tower (the tower piece's walkway, its length and
   width). They are drawn in the editor, written by the exports, read by Siege AI, and become real elements on Convert to buildings.
@@ -253,3 +251,17 @@ too). The undo entry joins the scene's splice and the height stack's change (`Co
   0 breaks over the buildings. Undo brings the wall, its pieces and its owned layer back; redo converts again.
 - An export of farm_western/1x1/ab after converting a 10-piece wall: the building list has the 10 pieces once (the hidden wall adds
   nothing).
+
+Follow-up 8 done (2026-11-13), as the user chose: no setting of its own. A kit wall's defence slots take, of the defences of the slot's
+shape, a tower and a bastion in turn (`kit::defence_of`), as the procedural walls' `profile.defences` already did. The towers (pieces
+whose key says `tower`, the game's only: the tower sections and corners, Gondor's curved towers, and the towers ending the 15 m walls,
+which vanilla links to tower captures too) get their capture locations from `wce_walls::towers`. Each is a rectangle from the tower's
+joint to joint, as wide as its walk's edges (a tower ending the wall: the 20 units of walk beyond its joint), at the walk's height,
+named `wce_wall<key>_tower<n>`; the tower's building names it (`capture_location`, as vanilla's). They are drawn in cyan, written by
+`scene::lower` / `place_pieces` (the exports, Convert to buildings) and given to Generate SiegeAI.
+
+Tested (scratch `kitwall/t1.txt`, `t2.txt`):
+- A 200 m Roman kit wall, defences every 60: tower, bastion, tower... (as the procedural wall's); 0 breaks; Convert to buildings makes
+  7 capture locations (5 tower sections, 2 tower ends), each named by its tower.
+- An export of a 100 m Roman wall on farm_western/1x1/ab: `capture_location_list.xml` has its 4 tower captures, rectangles of
+  10 x 4.25 m, each linked to its tower's building.

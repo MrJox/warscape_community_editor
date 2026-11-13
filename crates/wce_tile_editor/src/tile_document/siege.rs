@@ -469,6 +469,17 @@ impl Tile {
             input.captures.push(Capture { at: [p.x, p.z], major: sc.doc().get(e, "type").as_deref() == Some("CLT_MAJOR") });
         }
 
+        // The walls' towers' capture locations: made with them (wce_walls::towers), not elements until an export or a conversion.
+        for e in wce_walls::scene::all_walls(sc) {
+            if skip(e) {
+                continue;
+            }
+
+            for c in self.wall_tower_captures(e) {
+                input.captures.push(Capture { at: [c.at[0], c.at[2]], major: false });
+            }
+        }
+
         // Ground under the sea: the heights, sampled every 4 units (the generator keeps the water joined to the map's edge).
         let height = |x: f64, z: f64| self.project.height_at(x / u, z / u);
         let (hx, hz) = (input.bounds.1[0], input.bounds.1[1]);

@@ -230,13 +230,13 @@ const INSTANCE_ATTRS: [(&str, &str); 15] = [
 /// # Errors
 ///
 /// The wall's layer has no children element, or the text can't be spliced.
-pub fn lower(scene: &mut TedScene, wall: usize, placed: &[(String, Piece)], into: Option<&str>) -> Result<usize, String> {
+pub fn lower(scene: &mut TedScene, wall: usize, placed: &[(String, Piece)], into: Option<&str>, captures: &[crate::towers::TowerCapture]) -> Result<usize, String> {
     let layer = match into {
         Some(name) => top_layer(scene, name)?,
         None => holder(scene, wall).or(scene.scene_graph()).ok_or("the wall is in no layer")?,
     };
     let name = scene.name(wall);
-    place_pieces(scene, layer, &name, placed)?;
+    place_pieces(scene, layer, &name, placed, captures)?;
 
     // The layer comes after the wall (it is made at the end): its index stays.
     scene.remove(wall)?;
@@ -250,20 +250,33 @@ pub fn holder(scene: &TedScene, elem: usize) -> Option<usize> {
 }
 
 /// A `BUILDING_INSTANCE` per piece of a wall named `name` (key, the piece's frame as its world transform: scene units, its yaw) in `layer`
-/// (a layer or a group), as a placed fort wall is (breachable, dockable, intact, freeform). The new elements, in order.
+/// (a layer or a group), as a placed fort wall is (breachable, dockable, intact, freeform), and its towers' capture locations
+/// (`towers::tower_captures`: each tower naming its own, `capture_location`). The new elements, in order (the buildings, then the
+/// captures).
 ///
 /// # Errors
 ///
 /// The layer has no children element, or the text can't be spliced.
-pub fn place_pieces(scene: &mut TedScene, layer: usize, name: &str, placed: &[(String, Piece)]) -> Result<Vec<usize>, String> {
+pub fn place_pieces(scene: &mut TedScene, layer: usize, name: &str, placed: &[(String, Piece)], captures: &[crate::towers::TowerCapture]) -> Result<Vec<usize>, String> {
     let mut out = vec![];
-    for (key, piece) in placed {
+    for (i, (key, piece)) in placed.iter().enumerate() {
         let mut attrs = INSTANCE_ATTRS.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect::<Vec<_>>();
         attrs.push(("key".to_owned(), key.clone()));
         attrs.push(("name".to_owned(), format!("{name}: {key}")));
+        if let Some(c) = captures.iter().find(|c| c.piece == i) {
+            attrs.push(("capture_location".to_owned(), c.name.clone()));
+        }
+
         let e = scene.add_instance(Some(layer), "BUILDING_INSTANCE", &attrs)?;
         set_world_position(scene, e, Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]));
         set_world_rotation(scene, e, &euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)));
+        out.push(e);
+    }
+
+    for c in captures {
+        let text = wce_tile::new_instances::element_text(&crate::towers::capture_element(c)?)?;
+        let e = scene.insert_element_text(layer, &text).map_err(|e| e.to_string())?;
+        set_world_position(scene, e, Double3::new(c.at[0], c.at[1], c.at[2]));
         out.push(e);
     }
 

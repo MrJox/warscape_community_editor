@@ -269,6 +269,35 @@ impl Tile {
         wce_walls::scene::doors(self.tscene(), layout, &ps, &ground, &radius)
     }
 
+    /// A wall's game pieces as laid now (key, frame): a kit wall's last layout, a procedural wall's towers, bastions and caps.
+    pub(crate) fn wall_game_pieces(&self, elem: usize) -> Vec<(String, wce_walls::pieces::Piece)> {
+        if !self.is_wall(elem) {
+            return vec![];
+        }
+
+        if !wce_walls::scene::is_procedural(self.tscene(), elem) {
+            return self.wall_preview.kit_layouts.get(&elem).map_or_else(Vec::new, |l| {
+                l.placed.iter().map(|p| (p.key.clone(), wce_walls::pieces::Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true })).collect()
+            });
+        }
+
+        let Some(l) = self.wall_layout(elem) else { return vec![] };
+        let rigid = pieces(&l.plan, l.profile).into_iter().filter(|p| p.rigid).filter_map(|p| p.base.map(|k| (k.to_owned(), p)));
+        rigid.chain(wce_walls::pieces::cap_instances(&l.plan, l.profile).into_iter().map(|(k, p)| (k.to_owned(), p))).collect()
+    }
+
+    /// A wall's towers' capture locations (`wce_walls::towers`), as an export or Convert to buildings makes them.
+    pub fn wall_tower_captures(&self, elem: usize) -> Vec<wce_walls::towers::TowerCapture> {
+        let placed = self.wall_game_pieces(elem);
+        if placed.is_empty() {
+            return vec![];
+        }
+
+        let key = wce_walls::scene::wall_key(self.tscene(), elem).unwrap_or_else(|| format!("e{elem}"));
+        let read = |k: &str| self.files.as_deref().and_then(|f| f.read(&format!("{}{k}_tech.cs2.parsed", folder(k))).ok());
+        wce_walls::towers::tower_captures(&key, &placed, &read)
+    }
+
     /// The lines of a wall's layout (the document's world): the outer foot on the ground (orange), the walkway (yellow), the step sections
     /// (red uprights at their ends), the corners (magenta uprights), the attached ends (green crosses).
     pub(crate) fn wall_overlay(&self, elem: usize, o: &mut Overlay) {
@@ -300,6 +329,8 @@ impl Tile {
             for st in &l.stretches {
                 o.line(w(st.from[0], st.from_level + l.walk, st.from[1]), w(st.to[0], st.to_level + l.walk, st.to[1]), walk);
             }
+
+            self.tower_capture_lines(elem, o);
 
             let ends = [l.placed.first().map(|p| (p.joints[0], p.levels[0])), l.placed.last().map(|p| (p.joints[1], p.levels[1]))];
             for (k, e) in ends.into_iter().enumerate() {
@@ -339,6 +370,7 @@ impl Tile {
             upright(o, d, corner);
         }
 
+        self.tower_capture_lines(elem, o);
         for a in l.ends.iter().flatten() {
             let r = 2.0;
             o.line(w(a.at[0] - r, a.at[1] + 0.3, a.at[2]), w(a.at[0] + r, a.at[1] + 0.3, a.at[2]), end);
@@ -349,6 +381,22 @@ impl Tile {
 }
 
 impl Tile {
+    /// A wall's towers' capture locations (cyan rectangles over the walk behind each tower), with an upright at each one's middle.
+    fn tower_capture_lines(&self, elem: usize, o: &mut Overlay) {
+        let u = self.unit();
+        let w = |x: f64, y: f64, z: f64| Float3::new((x / u) as f32, (y / u) as f32, (z / u) as f32);
+        let colour = overlay_colour(0.3, 0.85, 1.0, 1.0);
+        for c in self.wall_tower_captures(elem) {
+            let y = c.at[1] + 0.3;
+            for k in 0..c.ring.len() {
+                let (a, b) = (c.ring[k], c.ring[(k + 1) % c.ring.len()]);
+                o.line(w(a[0], y, a[1]), w(b[0], y, b[1]), colour);
+            }
+
+            o.line(w(c.at[0], y, c.at[2]), w(c.at[0], y + 6.0, c.at[2]), colour);
+        }
+    }
+
     /// The wall changed (or its ground, or what it is attached to): its preview pieces are made again once it has been left alone for
     /// [`PREVIEW_DELAY`].
     pub(crate) fn wall_changed(&mut self, elem: usize) {

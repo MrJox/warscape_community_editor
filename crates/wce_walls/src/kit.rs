@@ -758,6 +758,14 @@ fn ahead(line: &Line, ways: &[&Way], w: &Way, (p, heading): ([f64; 2], f64), at:
     (next < f64::MAX).then_some(e + next * 0.7)
 }
 
+/// The defence for the `n`-th slot, of the same shape as `w` among `alts`: a tower and a bastion in turn, the tower first (as a procedural
+/// wall's `profile.defences`); the other kind where the culture has only one of that shape.
+fn defence_of<'a>(w: &Way, alts: &[&'a Way], n: usize) -> Option<&'a Way> {
+    let shaped = alts.iter().copied().filter(|a| same_shape(w, &[*a]).is_some()).collect::<Vec<_>>();
+    let tower = n.is_multiple_of(2);
+    shaped.iter().copied().find(|a| crate::towers::is_tower(&a.key) == tower).or_else(|| shaped.first().copied())
+}
+
 /// A way of the same shape as `w` among `alts` (a tower or door section in its place): the same span, turn and shift.
 fn same_shape<'a>(w: &Way, alts: &[&'a Way]) -> Option<&'a Way> {
     alts.iter().copied().find(|a| (a.span - w.span).abs() < 0.05 && (a.turn - w.turn).abs() < 0.1 && (a.shift - w.shift).abs() < 0.05)
@@ -957,6 +965,7 @@ fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: boo
     // Per piece laid, its entry's edges (what the first end's cap joins).
     let mut entries: Vec<Vec<JointEdge>> = vec![];
     let (mut since_defence, mut since_access) = (0.0, 0.0);
+    let mut defences_laid = 0usize;
     for _ in 0..2000 {
         let left = line.length() - at;
         match goal {
@@ -1016,9 +1025,10 @@ fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: boo
         let span = f64::from(w.span);
         let fits = |a: &&Way| w.role != Role::Step && meets(&edges, &a.entry_edges) && same_edges(&a.exit_edges, &w.exit_edges);
         let (d_ok, a_ok) = (defences.iter().copied().filter(fits).collect::<Vec<_>>(), accesses.iter().copied().filter(fits).collect::<Vec<_>>());
-        if options.defence_every > 0.0 && since_defence + span >= options.defence_every && let Some(d) = same_shape(w, &d_ok) {
+        if options.defence_every > 0.0 && since_defence + span >= options.defence_every && let Some(d) = defence_of(w, &d_ok, defences_laid) {
             w = d;
             since_defence = 0.0;
+            defences_laid += 1;
         } else if options.access_every > 0.0 && since_access + span >= options.access_every && let Some(a) = same_shape(w, &a_ok) {
             w = a;
             since_access = 0.0;
@@ -1164,6 +1174,23 @@ mod tests {
         assert!(keys.contains(&"x_fort_tower_c_straight"), "{keys:?}");
         assert_eq!((keys[0], keys[keys.len() - 1]), ("x_fort_endcap_left", "x_fort_endcap_right"), "{keys:?}");
         assert!(laid.stray < 12.0, "{} {:?}", laid.stray, laid.placed.iter().map(|p| (&p.key, p.joints)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn the_defences_take_a_tower_and_a_bastion_in_turn() {
+        let mut c = culture();
+        let straight = c.pieces.iter().find(|p| p.key == "x_fort_straight").unwrap().clone();
+        c.pieces.push(KitPiece { key: "x_fort_straight_with_solid_squared_bastion".to_owned(), role: Role::Defence, ..straight });
+        let laid = lay(&[[0.0, 0.0], [400.0, 0.0]], &c, LayOptions { defence_every: 60.0, ..LayOptions::default() });
+        let defences = laid.placed.iter().filter(|p| p.role == Role::Defence).map(|p| p.key.as_str()).collect::<Vec<_>>();
+        assert!(defences.len() >= 4, "{defences:?}");
+        for (n, k) in defences.iter().enumerate() {
+            assert_eq!(crate::towers::is_tower(k), n % 2 == 0, "{defences:?}");
+        }
+
+        // A culture with only one kind of that shape: that one at every slot.
+        let laid = lay(&[[0.0, 0.0], [400.0, 0.0]], &culture(), LayOptions { defence_every: 60.0, ..LayOptions::default() });
+        assert!(laid.placed.iter().filter(|p| p.role == Role::Defence).count() >= 4);
     }
 
     /// A building's end at `at`, the wall leaving it along `out`, its walk `walk` over its level 0.

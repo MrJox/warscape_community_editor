@@ -631,6 +631,13 @@ impl super::TileDocument {
             p.ok_or("the wall is in no layer")?
         };
         let ground_key = t.wall_layer_key(elem);
+
+        // Its towers' capture locations, as an export makes them (each tower naming its own).
+        let captures = {
+            let key = ground_key.clone().unwrap_or_else(|| format!("e{elem}"));
+            let read = |k: &str| t.files.as_deref().and_then(|f| f.read(&format!("{}{k}_tech.cs2.parsed", wce_walls::building::folder(k))).ok());
+            wce_walls::towers::tower_captures(&key, &placed, &read)
+        };
         let w = wce_tile::world_transform::world_transform(sc, elem);
 
         // The scene: the hidden layer, the wall into it (its place kept), the buildings where it was.
@@ -647,7 +654,7 @@ impl super::TileDocument {
                 wce_tile::world_transform::set_world_rotation(sc, moved, &w.rotation);
             }
 
-            wce_walls::scene::place_pieces(sc, holder, &name, &placed)
+            wce_walls::scene::place_pieces(sc, holder, &name, &placed, &captures)
         })();
         let made = match made {
             Ok(m) => m,
@@ -677,6 +684,7 @@ impl super::TileDocument {
         let pushed = self.history.size() - before;
         self.history.join_last(pushed, "Convert to buildings");
         let ground = if ground.is_some() { format!(", its ground kept as the height layer \"Kit wall {name} (converted)\"") } else { String::new() };
-        Ok(format!("{name}: {} building(s) made; the wall is in the hidden, not exported layer \"{CONVERTED_LAYER} {name}\"{ground}", made.len()))
+        let towers = if captures.is_empty() { String::new() } else { format!(" ({} tower capture location(s) among them)", captures.len()) };
+        Ok(format!("{name}: {} element(s) made{towers}; the wall is in the hidden, not exported layer \"{CONVERTED_LAYER} {name}\"{ground}", made.len()))
     }
 }
