@@ -300,3 +300,40 @@ fn edit_setting_writes_as_the_inspector_and_joins_into_one_entry() {
     d.history_mut().undo();
     assert_eq!(saved(&d), FILE);
 }
+
+#[test]
+fn a_mix_writes_the_numbers_of_the_blend() {
+    use wce_scene::environment::{blend_environments, read_environment};
+    const B: &str = r#"<SCENE name='Scene'>
+  <LIGHTING name='Lighting' sun_colour='rgb(0.0,0.5,1.0)' sun_direction_azimuth='90' sun_direction_elevation='60'/>
+  <FOG name='Fog' fog_distance_strength='5' terrain_relative_height_fog='false' volume_fog_colour='argb(0.5,0.5,0.5,0.0039)'>
+    <DEPTH_OF_FIELD name='Depth Of Field' use_DOF='true' DOF_focus='variance(10,40)'/>
+    <HDR name='HDR' low_tones_bias='0.3' low_tones_bias_red='0.4'/>
+  </FOG>
+  <POST_PROCESSING name='Post Processing' brightness_r='1' brightness_g='1' brightness_b='1'/>
+</SCENE>
+"#;
+    let b = XmlFileDocument::new(Source::default(), B.as_bytes().to_vec(), PathBuf::new()).expect("parses");
+    let (pa, pb) = (read_environment(document().xml()), read_environment(b.xml()));
+
+    // Mixed with itself, or at its own end: the file as it was, byte for byte.
+    let mut same = document();
+    same.write_numbers_of(&blend_environments(&pa, &pa, 0.3));
+    assert_eq!(saved(&same), FILE);
+    let mut end = document();
+    end.write_numbers_of(&blend_environments(&pa, &pb, 0.0));
+    assert_eq!(saved(&end), FILE);
+
+    // Part way, from the nearer file: its numbers are the mix's, its switches its own; a whole number stays whole where it lands whole.
+    let mix = blend_environments(&pa, &pb, 0.4);
+    let mut m = document();
+    m.write_numbers_of(&mix);
+    let got = read_environment(m.xml());
+    assert!((got.sun_elevation - mix.sun_elevation).abs() < 1e-4, "{} {}", got.sun_elevation, mix.sun_elevation);
+    assert!((got.sun_colour.z - mix.sun_colour.z).abs() < 1e-4);
+    assert!((got.fog_distance_strength - mix.fog_distance_strength).abs() < 1e-4);
+    assert_eq!(got.dof_focus, mix.dof_focus);
+    assert_eq!(got.terrain_relative_height_fog, pa.terrain_relative_height_fog);
+    assert_eq!(got.use_dof, pa.use_dof);
+    assert!(saved(&m).contains("fog_distance_strength='3.8'"), "{}", saved(&m));
+}

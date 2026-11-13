@@ -136,6 +136,12 @@ pub struct WeatherTool {
 
     /// The sun handle, the focus pick, compare, the tone curve and histogram (visual.rs).
     pub(crate) visual: crate::visual::Visual,
+
+    /// The Mix section: the open file cross-faded with another, saved as a new file (mix.rs).
+    pub(crate) mix: crate::mix::Mix,
+
+    /// A file to open once the panels are drawn (the mix just saved).
+    open_after: Option<String>,
 }
 
 impl Default for WeatherTool {
@@ -165,6 +171,8 @@ impl Default for WeatherTool {
             scene_count: 16,
             picker: WeatherPicker::default(),
             visual: crate::visual::Visual::default(),
+            mix: crate::mix::Mix::default(),
+            open_after: None,
         }
     }
 }
@@ -353,6 +361,9 @@ impl WeatherTool {
         gui::text_colored(theme::dim(), &format!("environment: {lit_by}"));
         let shown = self.last_params.clone();
         self.visual.draw_panel(e, self.env_doc, &shown);
+        if let Some(path) = self.mix.draw(e, self.env_doc) {
+            self.open_after = Some(path);
+        }
 
         if !errors.is_empty() {
             gui::text_colored(theme::error(), "render errors (hover)");
@@ -891,6 +902,17 @@ impl Tool for WeatherTool {
         slot.blend_t = 0.0;
         slot.owner = if lit { self.env_doc } else { 0 };
 
+        // The Mix section open: the viewport cross-fades to the other file (not while comparing with the saved file).
+        let preview = if self.visual.comparing() { None } else { self.mix.preview(e, self.env_doc) };
+        self.visual.mixing = preview.is_some();
+        if let Some((other, t)) = preview {
+            let slot = &mut e.scene.environment;
+            slot.blend = Some(other);
+            slot.blend_t = t;
+        }
+
+        let slot = &mut e.scene.environment;
+
         self.last_params = slot.resolved();
 
         // Edit state of the open documents the particle system reads (vfx/ and weather_definitions.xml).
@@ -932,6 +954,11 @@ impl Tool for WeatherTool {
         self.draw_files(e);
         self.draw_properties(e);
         self.draw_scene_bar(e);
+        if let Some(path) = self.open_after.take()
+            && let Err(msg) = e.open_path_from(self, &path, true, true)
+        {
+            e.status(&msg, true);
+        }
         let env = find_xml(e, self.env_doc).map(|x| x.source().vfs_path.clone()).unwrap_or_default();
         let loose = e.loose_dir();
         let picked = self.picker.draw(e, &loose, &env);

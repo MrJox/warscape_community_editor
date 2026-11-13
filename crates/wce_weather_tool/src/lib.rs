@@ -3,6 +3,7 @@
 //! weather_editor application onto the shared shell; everything it did is a command here too (docs/editor.md).
 
 pub mod commands;
+mod mix;
 pub mod picker;
 pub mod tool;
 pub mod variation_editor;

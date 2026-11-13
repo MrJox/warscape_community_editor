@@ -838,6 +838,44 @@ impl XmlFileDocument {
         Ok(())
     }
 
+    /// Makes the file's numbers `target`'s (a mix of two files, `blend_environments`): every number, colour and pair of the sections (the
+    /// cloud layers aside) whose value differs from what the file gives is written as the Inspector writes it, an attribute the element
+    /// lacks added; switches, texts and the cloud layers stay the file's (the mix takes them from the nearer file, which is this one).
+    /// Not undoable on its own: for a document made for the mix.
+    pub fn write_numbers_of(&mut self, target: &EnvironmentParams) {
+        let now = wce_scene::environment::read_environment(self.xml());
+        for s in SECTIONS.iter().filter(|s| !s.each_element) {
+            for f in s.fields {
+                let Some(&elem) = self.elements_named(f.elem).first() else { continue };
+                let names: Vec<(String, usize)> = match f.kind {
+                    Kind::Trio(suffixes) => suffixes.iter().enumerate().map(|(i, x)| (format!("{}{x}", f.attr), i)).collect(),
+                    Kind::Number | Kind::Int | Kind::Colour | Kind::ColourA | Kind::Pair => vec![(f.attr.to_owned(), 0)],
+                    Kind::Bool | Kind::Text => continue,
+                };
+
+                for (name, component) in names {
+                    let (want, have) = (default_of(target, f, component), default_of(&now, f, component));
+                    if want.f.len() != have.f.len() || want.f.iter().zip(&have.f).all(|(a, b)| (a - b).abs() <= 1e-6) {
+                        continue;
+                    }
+
+                    let found = self.attr_value(elem, &name);
+                    let at = found.as_ref().map(|(a, _)| *a);
+                    let v = match found {
+                        Some((_, x)) if matches!(x.kind, ValueKind::Int | ValueKind::Float) => {
+                            number(want.f[0], x.kind == ValueKind::Int, x.style)
+                        }
+
+                        Some((_, x)) if x.kind == want.kind => EnvValue { f: want.f.clone(), ..x },
+                        _ => want,
+                    };
+
+                    self.write_value(elem, &name, at, &v, 0);
+                }
+            }
+        }
+    }
+
     /// The Inspector of an environment or lighting file: every section, then the attributes no section lists.
     pub fn inspect_environment(&mut self, ins: &mut dyn Inspector) {
         let id = self.id();
