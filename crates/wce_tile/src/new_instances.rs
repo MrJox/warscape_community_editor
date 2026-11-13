@@ -159,6 +159,8 @@ pub const EDITOR_TEMPLATES: &[InstanceTemplate] = &[
             ("surface_mode", "MSM_LANDSCAPE"),
             ("orientation", "euler(0,0,0)"),
             (crate::building_spline::KEYS, ""),
+            (crate::building_spline::JOINERS, ""),
+            ("bspline_joiner_ends", "false"),
             ("bspline_random", "false"),
             ("bspline_seed", "1"),
             ("bspline_gap", "0"),
