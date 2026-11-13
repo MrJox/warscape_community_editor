@@ -1029,6 +1029,7 @@ impl TileDocument {
             "AI_HINT_POLYGON_INSTANCE" => "AI hint polygon",
             super::WALL_SPLINE => "Wall",
             super::ROAD_SPLINE => "Road",
+            super::BUILDING_SPLINE => "Building spline",
             wce_tile::new_instances::MEASURE_LINE => "Tape measure",
             wce_tile::new_instances::ANGLE_FINDER => "Angle finder",
             _ => "Polygon",
@@ -1917,6 +1918,11 @@ impl TileDocument {
             (super::ROAD_SPLINE, Create::Line(pts)) => {
                 let (c, points) = line(pts)?;
                 new_polygon(kind, points, false).position(c).attr("road_id", t.next_road_id().to_string())
+            }
+
+            (super::BUILDING_SPLINE, Create::Line(pts)) => {
+                let (c, points) = line(pts)?;
+                new_polygon(kind, points, false).position(c)
             }
 
             ("AISeparatorInstance", Create::Line(pts)) => {
@@ -3708,6 +3714,12 @@ impl TileDocument {
         // What a wall's row does (its tooltip).
         if tag == super::WALL_SPLINE
             && let Some(tip) = wce_tile::properties::wall_tip(prop.attr)
+        {
+            ins.hint(tip);
+        }
+
+        if tag == super::BUILDING_SPLINE
+            && let Some(tip) = wce_tile::properties::building_spline_tip(prop.attr)
         {
             ins.hint(tip);
         }

@@ -16,6 +16,7 @@
 
 mod baked_river;
 pub mod brush;
+pub mod building_splines;
 mod collapse;
 mod columns;
 mod commands;
@@ -76,6 +77,7 @@ use wce_vfs::files::Files;
 use crate::terrain_bake::{BakedColour, TerrainLook};
 
 pub use self::bridges::{BridgeEdge, BridgeProblem, BridgeReport, WallPair};
+pub use self::building_splines::BUILDING_SPLINE;
 pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::{BoundaryKind, BoundaryShape, prefab_reference_text, text_kind};
 pub use self::flip::{FlipPlane, TileFlipAxis};
@@ -581,6 +583,9 @@ pub struct Tile {
     pub(crate) road_items_stale: bool,
     pub(crate) road_items_shown: bool,
 
+    /// The buildings laid along the building splines (`building_splines.rs`).
+    pub(crate) building_splines: building_splines::BuildingSplines,
+
     /// The kit's prefabs, which the tool hands over.
     pub(crate) road_prefabs: Option<std::sync::Arc<wce_tile::prefabs::PrefabLibrary>>,
 
@@ -953,6 +958,7 @@ impl TileDocument {
             road_entities: vec![],
             road_items_stale: true,
             road_items_shown: false,
+            building_splines: Default::default(),
             road_prefabs: None,
             road_generated: vec![],
             road_terrain_job: None,

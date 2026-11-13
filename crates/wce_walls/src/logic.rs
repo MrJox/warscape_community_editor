@@ -388,6 +388,18 @@ pub fn extent_x(bytes: &[u8]) -> Result<(f32, f32), String> {
     Ok((f("min_x"), f("max_x")))
 }
 
+/// The x and z ranges of a logic file's box (its footprint on the ground).
+///
+/// # Errors
+///
+/// The file doesn't read.
+pub fn extent_xz(bytes: &[u8]) -> Result<[(f32, f32); 2], String> {
+    let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| format!("cs2.parsed: {e}"))?;
+    let v = serde_json::to_value(&parsed).map_err(|e| e.to_string())?;
+    let f = |k: &str| v["bounding_box"][k].as_f64().unwrap_or(0.0) as f32;
+    Ok([(f("min_x"), f("max_x")), (f("min_z"), f("max_z"))])
+}
+
 /// The z extent of a piece's walkway: its intact platforms lying at `height` (within a few centimetres). None without any.
 pub fn walkway_z(bytes: &[u8], height: f32) -> Option<(f32, f32)> {
     let parsed = Cs2Parsed::decode(&mut Cursor::new(bytes), &None).ok()?;

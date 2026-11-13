@@ -335,7 +335,8 @@ impl TileDocument {
             wce_foundation::log::info(line);
         }
 
-        self.tile().with_road_items(text)
+        let text = self.tile().with_road_items(text)?;
+        self.tile().with_building_spline_items(text)
     }
 
     /// "Save for Assembly Kit": the tile as TEd reads it in the kit `kit_raw` (a raw_data folder), at its folder, with its database entry.
@@ -416,13 +417,16 @@ impl TileDocument {
         Ok(msg)
     }
 
-    /// The walls of the tile (both kinds) as text, each with the layer path it is in (to put back with [`Self::restore_walls`]).
+    /// The walls of the tile (both kinds) and its building splines as text, each with the layer path it is in (to put back with
+    /// [`Self::restore_walls`]).
     pub fn wall_texts(&self) -> Vec<(String, Vec<u8>)> {
         let sc = self.tile().tscene();
-        wce_walls::scene::all_walls(sc).into_iter().map(|w| (sc.layer_path(w), sc.element_text(w))).collect()
+        let splines = (0..sc.doc().elements().len()).filter(|&e| sc.type_of(e) == super::BUILDING_SPLINE);
+        wce_walls::scene::all_walls(sc).into_iter().chain(splines).map(|w| (sc.layer_path(w), sc.element_text(w))).collect()
     }
 
-    /// Import from Assembly Kit of a tile whose project has walls: the layer of their pieces (`wce_walls::export::KIT_LAYER`) goes and the
+    /// Import from Assembly Kit of a tile whose project has walls or building splines: the layers of their pieces (`wce_walls::export::KIT_LAYER`,
+    /// `building_splines::KIT_LAYER`) go and the
     /// walls are put back, each in its layer (the scene graph when it is no longer there); one undo entry. Returns how many were put back.
     ///
     /// # Errors
@@ -431,8 +435,13 @@ impl TileDocument {
     pub fn restore_walls(&mut self, walls: &[(String, Vec<u8>)]) -> Result<usize, String> {
         let sc = self.tile().tscene();
         let graph = sc.scene_graph().ok_or("this tile has no scene graph")?;
-        let pieces =
-            sc.children(graph).into_iter().filter(|&c| sc.is_layer(c) && sc.name(c) == wce_walls::export::KIT_LAYER).collect::<Vec<_>>();
+        let pieces = sc
+            .children(graph)
+            .into_iter()
+            .filter(|&c| {
+                sc.is_layer(c) && [wce_walls::export::KIT_LAYER, super::building_splines::KIT_LAYER].iter().any(|n| sc.name(c) == *n)
+            })
+            .collect::<Vec<_>>();
         if walls.is_empty() && pieces.is_empty() {
             return Ok(0);
         }

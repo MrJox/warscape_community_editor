@@ -1629,6 +1629,18 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         d.convert_wall_to_buildings(el).map_or_else(fail, ok)
     });
 
+    c.add(
+        "bspline_info",
+        "bspline_info",
+        "log the selected building spline's buildings: how many, and each one's key, position (m) and destruction level",
+        |e, _| {
+            let el = primary(e);
+            let Some(d) = document(e) else { return no_tile() };
+            let Some(el) = el.filter(|&el| d.tile().is_building_spline(el)) else { return fail("no building spline selected") };
+            ok(d.tile().building_spline_report(el))
+        },
+    );
+
     c.add("wall_info", "wall_info", "log the selected wall's layout: base, length, corners, runs, step sections, attached ends, warnings (a kit wall: its pieces, how far it strays from its line, how short of its end it stops)", |e, _| {
         let el = primary(e);
         let Some(d) = document(e) else { return no_tile() };

@@ -103,6 +103,17 @@ impl Prop {
         match self.attr {
             crate::export_as_prop::EXPORT_AS_PROP_ATTR => "Export as prop",
             crate::new_instances::WALL_PROCEDURAL => "Procedural",
+            crate::building_spline::KEYS => "Buildings",
+            "bspline_random" => "Random",
+            "bspline_seed" => "Seed",
+            "bspline_gap" => "Gap",
+            "bspline_align" => "Align to ground",
+            "bspline_closed" => "Closed loop",
+            "bspline_offset" => "Side offset",
+            "bspline_damage" => "Damage chance",
+            "bspline_flip" => "Flip chance",
+            "bspline_yaw_jitter" => "Turn jitter",
+            "bspline_side_jitter" => "Side jitter",
             attr => attr,
         }
     }
@@ -334,6 +345,54 @@ const ROAD: &[Prop] = &[
     p("road_fence_damage", Kind::Slider(0.0, 1.0)),
 ];
 
+/// Not TEd's: a building spline (`building_spline`): buildings laid along a line. The list of buildings is edited below the grid.
+const BUILDING_SPLINE: &[Prop] = &[
+    p("flags", Kind::Flags),
+    p("position", Kind::Position),
+    p("line_colour", Kind::Colour),
+    p("selected_line_colour", Kind::Colour),
+    p(crate::building_spline::KEYS, Kind::Text),
+    p("bspline_random", Kind::Bool),
+    p("bspline_seed", Kind::Int(0, 9999)),
+    p("bspline_gap", Kind::Slider(-5.0, 20.0)),
+    p("bspline_align", Kind::Bool),
+    p("bspline_closed", Kind::Bool),
+    p("bspline_offset", Kind::Slider(-20.0, 20.0)),
+    p("bspline_damage", Kind::Slider(0.0, 1.0)),
+    p("bspline_flip", Kind::Slider(0.0, 1.0)),
+    p("bspline_yaw_jitter", Kind::Slider(0.0, 45.0)),
+    p("bspline_side_jitter", Kind::Slider(0.0, 5.0)),
+];
+
+/// The tooltip of a building spline's (`WceBuildingSpline`) Inspector row. `None` for a row without one.
+#[must_use]
+pub fn building_spline_tip(attr: &str) -> Option<&'static str> {
+    Some(match attr {
+        "flags" => "visible: drawn in the editor (a hidden spline lays nothing); active: in the game; draggable: moved with the mouse",
+        "position" => "Where the line is (its points are relative to it): moving it moves the whole line",
+        "line_colour" => "The colour of the line in the viewport",
+        "selected_line_colour" => "The colour of the line while it is selected",
+        crate::building_spline::KEYS => {
+            "The buildings laid along the line, separated by commas (edit the list below the grid). Each is laid with its x along \
+            the line, as long as its model"
+        }
+        "bspline_random" => "On: each building is picked from the list at random, by the seed. Off: the list repeats in order",
+        "bspline_seed" => "The seed of everything random here: the picks, the damage, the flips and the jitter",
+        "bspline_gap" => "The space between one building and the next (metres; below 0 they overlap)",
+        "bspline_align" => {
+            "Tilts each building to the slope under it, end to end and across (as a road's fences), so a fence follows the ground. \
+            Off: upright, its pivot on the ground"
+        }
+        "bspline_closed" => "Closes the line back to its first point (a ring: a pen, an enclosure)",
+        "bspline_offset" => "How far to the right of the line the buildings stand, as it runs from its first point (metres; below 0: left)",
+        "bspline_damage" => "The chance (0 to 1) that each building is laid destroyed, at a random damaged level",
+        "bspline_flip" => "The chance (0 to 1) that each building is turned end for end",
+        "bspline_yaw_jitter" => "How far each building may be turned about its middle, either way (degrees)",
+        "bspline_side_jitter" => "How far each building may be moved across the line, either way (metres)",
+        _ => return None,
+    })
+}
+
 const AI_HINT: &[Prop] = polygon![
     p("subdivision_length", Kind::Slider(0.0, 100.0)),
     p("max_subdivisions", Kind::Int(0, 100)),
@@ -385,6 +444,7 @@ pub fn schema(tag: &str) -> Option<&'static [Prop]> {
         "AI_HINT_POLYGON_INSTANCE" => AI_HINT,
         "WceWallSpline" => WALL,
         "WceRoadSpline" => ROAD,
+        "WceBuildingSpline" => BUILDING_SPLINE,
         "WceRefHuman" | "WceRefUnit" | "WceRefShip" => REFERENCE,
         "WceMeasureLine" | "WceAngleFinder" => MEASURE,
         "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => DEPLOYMENT_POLYGON,

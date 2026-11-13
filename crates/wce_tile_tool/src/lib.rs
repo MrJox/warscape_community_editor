@@ -7,6 +7,7 @@ pub mod actions;
 pub mod areas_chip;
 mod bridge_check;
 mod building_effects_fix;
+mod building_spline_ui;
 mod camera_views;
 pub mod commands;
 pub mod context_panel;

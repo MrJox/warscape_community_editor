@@ -1365,10 +1365,14 @@ impl Tile {
         let ty = self.tscene().type_of(e);
         let spline = wce_tile::splines::is_spline(ty);
         let closed = !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
+        // A building spline's curve is closed already when it is (it ends on its first point).
+        let closed = closed && !self.is_building_spline(e);
         let points = if spline {
             self.spline_world_curve(e)
         } else if self.is_road(e) {
             self.road_world_curve(e)
+        } else if self.is_building_spline(e) {
+            self.building_spline_world_curve(e)
         } else if self.is_wall(e) {
             self.wall_world_curve(e)
         } else {
@@ -1390,11 +1394,14 @@ impl Tile {
             let ty = self.tscene().type_of(e);
             if self.is_polygon(e) {
                 let spline = wce_tile::splines::is_spline(ty);
-                let closed = !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
+                let closed =
+                    !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0") && !self.is_building_spline(e);
                 let points = if spline {
                     self.spline_world_curve(e)
                 } else if self.is_road(e) {
                     self.road_world_curve(e)
+                } else if self.is_building_spline(e) {
+                    self.building_spline_world_curve(e)
                 } else if self.is_wall(e) {
                     self.wall_world_curve(e)
                 } else {
@@ -1461,11 +1468,13 @@ impl Tile {
         let mut o = Overlay { pickable: false, ..Default::default() };
         let ty = self.tscene().type_of(elem).to_owned();
         let spline = wce_tile::splines::is_spline(&ty);
-        let closed = !spline && self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
+        let closed = !spline && self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0") && !self.is_building_spline(elem);
         let points = if spline {
             self.spline_world_curve(elem)
         } else if self.is_road(elem) {
             self.road_world_curve(elem)
+        } else if self.is_building_spline(elem) {
+            self.building_spline_world_curve(elem)
         } else if self.is_wall(elem) {
             self.wall_world_curve(elem)
         } else {
@@ -1506,7 +1515,7 @@ impl Tile {
                     }
 
                     // Corners on a polygon's own points only (not on a spline's, a road's or a wall's curve samples).
-                    let corners = !spline && !self.is_road(elem) && !self.is_wall(elem);
+                    let corners = !spline && !self.is_road(elem) && !self.is_wall(elem) && !self.is_building_spline(elem);
                     cover.edges(
                         &points,
                         closed,
@@ -1619,6 +1628,7 @@ impl Tile {
         self.wall_preview_cleared();
         self.road_entities.clear();
         self.road_items_shown = false;
+        self.building_splines_cleared();
         self.last_highlight = None;
         let pieces = self.instances.iter().filter_map(|&e| self.model_of(e).filter(|m| m.ok)).map(|m| m.pieces.len()).sum::<usize>();
         scene.reserve(pieces + self.instances.len() / 16 + 64);
@@ -1981,6 +1991,7 @@ impl Tile {
         }
 
         self.show_road_items(scene);
+        self.update_building_splines(scene);
         let layer = self.layer;
         if self.water_dirty && !self.stroke_open {
             self.rebuild_water(scene, layer);

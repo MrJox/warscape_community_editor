@@ -298,7 +298,7 @@ impl Tile {
     /// A building's standing pieces: the document's when it uses the key, else its folder's intact pieces.
     /// A building's piece models at a destruction level (0: intact; as the scene draws one, `view::piece_model`: a generated fence the road
     /// destroyed shows destroyed).
-    fn preview_building(&self, key: &str, level: i64) -> Vec<String> {
+    pub(super) fn preview_building(&self, key: &str, level: i64) -> Vec<String> {
         if let Some(m) = self.models.get(key).filter(|m| m.ok) {
             return m
                 .pieces
