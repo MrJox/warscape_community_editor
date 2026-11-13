@@ -7,7 +7,8 @@ A Create panel entry, *Building spline (fences, palisades)*, in the Buildings ca
 
 - **A live spline**, as the procedural roads and walls are: a `WceBuildingSpline` (not TEd's: kept in tile.wce only). Its buildings are
   derived data, laid again whenever the line, its settings, the ground or the buildings' models change; never saved. A click on one of
-  them picks the spline. An export (Save for Assembly Kit, the game's) writes them as plain `BUILDING_INSTANCE`s in the top layer
+  them picks the spline: they are drawn as a piece of it (`piece_item`), so selecting the spline outlines its line only (outlining its
+  363 buildings on a port took 8.5 ms a frame; user, 2026-11-13). An export (Save for Assembly Kit, the game's) writes them as plain `BUILDING_INSTANCE`s in the top layer
   *WCE building splines* (not for a spline in a layer that is not exported); Import from Assembly Kit drops that layer and puts the splines
   back, as it does for the walls.
 - **Each building as long as its model, plus a gap**: its footprint (x and z) from its logic file's box (`<key>_tech.cs2.parsed`), else
