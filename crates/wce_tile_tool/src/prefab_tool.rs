@@ -726,7 +726,7 @@ impl PrefabTool {
             );
         }
 
-        gui::text_disabled("The climate and season: the ground chip at the viewport's top right.");
+        gui::text_disabled("The climate and season: the climate and season chips at the viewport's top left.");
     }
 
     /// The prefab's own settings, saved in it (with its ground): its height layer's. In the Inspector, under the prefab's group.

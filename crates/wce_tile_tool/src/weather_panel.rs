@@ -4,8 +4,12 @@
 //! searchable by text, and the one that lights the tile. Nothing here needs the Weather tool: the file is read from the packs (see
 //! `Editor::set_weather_preview`); when the Weather tool has the same file open, the tile follows its edits.
 //!
-//! Each tile keeps its choice and its filters in the settings (`[tools.tile] weathers`, by the tile's folder). A tile seen for the first time
-//! starts with the filters of its terrain look (climate, season); a tile without a weather file gets the first dry one without snow the filters allow.
+//! Each tile keeps its choice and its filters in the settings (`[tools.tile] weathers`, by the tile's folder). A tile without a weather file
+//! gets the first dry one without snow the filters allow.
+//!
+//! The climate and the season are set in one place, the climate and season chips: they are the tile's terrain look (the ground's textures,
+//! its trees and grass), and the weather's climate and season filters follow it (`follow_look`), as the game lights a battle with its
+//! climate's and season's weather. The Weather panel shows those two filters without changing them.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -39,13 +43,15 @@ pub const FILTERS: [(&str, &str); 8] = [
     ("snow attrition", "snow_attrition"),
 ];
 
-/// The chips over the viewport: icon, category, what it is.
-const CHIPS: [(&str, &str, &str); 4] = [
-    (icons::LEAF, "season", "season"),
-    (icons::CLOUD_RAIN, "precipitation", "precipitation"),
-    (icons::CLOCK, "time_of_day", "time of day"),
-    (icons::GLOBE, "climate", "climate"),
-];
+/// The filters that follow the tile's terrain look (set by the climate and season chips), not set on their own.
+const LOOK_FILTERS: [&str; 2] = ["climate", "season"];
+
+/// The weather's own chips over the viewport (after the climate and season ones): icon, category, what it is.
+const CHIPS: [(&str, &str, &str); 2] =
+    [(icons::CLOUD_RAIN, "precipitation", "precipitation"), (icons::CLOCK, "time_of_day", "time of day")];
+
+/// The game's four battle seasons, as the terrain look and the weather database spell them.
+const SEASONS: [&str; 4] = ["sp", "su", "au", "wi"];
 
 #[derive(Default)]
 pub(crate) struct WeatherUi {
@@ -60,8 +66,8 @@ pub(crate) struct WeatherUi {
     /// Words (and-ed) the listed files must contain.
     search: String,
 
-    /// The tile's climate the choice was last checked against (`follow_climate`).
-    climate: String,
+    /// The terrain look's climate and season the filters were last set from (`follow_look`).
+    look: (String, String),
 }
 
 /// True when `file` holds every word of `search` (case-insensitive).
@@ -90,7 +96,7 @@ impl WeatherUi {
         self.tile = d.source_key();
         self.load_database(e, &dir);
 
-        self.climate = look.climate.clone();
+        self.look = Default::default();
         let remembered = e.tool_settings::<TileSettings>(SETTINGS_ID).weathers.get(&self.tile).cloned();
         self.choice = remembered.unwrap_or_else(|| {
             let mut query = BTreeMap::from([("map".to_owned(), "default_map".to_owned())]);
@@ -120,29 +126,55 @@ impl WeatherUi {
         }
     }
 
-    /// The tile's climate changed (its map context's placement gave it one, or its terrain look changed): a weather of another climate's
-    /// folder (`weather/<climate>/...`) gives way to the new climate's first dry one, as the game lights a battle with its climate's weather.
-    pub(crate) fn follow_climate(&mut self, e: &mut Editor, climate: &str) {
-        if self.tile.is_empty() || self.climate.eq_ignore_ascii_case(climate) {
+    /// The tile's climate or season changed (the chips, its map context's placement, `tile_terrain`), or the tile was opened: the
+    /// weather's climate and season filters become the terrain look's (any when the database has no such value), and a weather they no
+    /// longer let through gives way to the first dry one without snow they do, as the game lights a battle with its climate's and season's
+    /// weather.
+    pub(crate) fn follow_look(&mut self, e: &mut Editor, climate: &str, season: &str) {
+        if self.tile.is_empty() || self.env.is_none() || (self.look.0 == climate && self.look.1 == season) {
             return;
         }
 
-        self.climate = climate.to_owned();
-        let folder = self.choice.file.replace('\\', "/").to_lowercase();
-        let folder = folder.strip_prefix("weather/").and_then(|f| f.split('/').next()).unwrap_or_default().to_owned();
-        if folder.is_empty() || folder.eq_ignore_ascii_case(climate) {
+        self.look = (climate.to_owned(), season.to_owned());
+        let mut changed = false;
+        for (category, value) in [("climate", climate), ("season", season)] {
+            let value = self.value_of(category, value).unwrap_or_default();
+            if self.choice.query.get(category) != Some(&value) {
+                self.choice.query.insert(category.to_owned(), value);
+                changed = true;
+            }
+        }
+
+        if !changed {
             return;
         }
 
-        if let Some(v) = self.value_of("climate", climate) {
-            self.choice.query.insert("climate".to_owned(), v);
+        self.remember(e);
+        self.relight(e, &format!("{climate}, {}", crate::ground_views::season_name(season)));
+    }
+
+    /// The filters changed: the file lighting the tile stays if they still let it through, else (precipitation any) the first dry one
+    /// without snow, else the first one; `what` names the change in the status line when nothing passes.
+    fn relight(&mut self, e: &mut Editor, what: &str) {
+        let files = self.passing();
+        let current = e.weather_preview().map(str::to_owned);
+        if current.as_deref().is_some_and(|c| files.iter().any(|f| normalize(f) == c)) {
+            return;
         }
 
-        let Some(file) = self.first_dry() else { return };
-        match self.set_file(e, &file) {
-            Ok(_) => log::info(format!("the tile's weather: {file} (the first dry one of its climate, {climate})")),
-            Err(m) => e.status(&format!("the tile's weather: {m}"), true),
+        let precipitation = self.choice.query.get("precipitation").is_some_and(|v| !v.is_empty());
+        let pick = if precipitation { None } else { self.first_dry() }.or_else(|| files.first().cloned());
+        match pick {
+            Some(file) => self.apply(e, &file),
+            None => e.status(&format!("no weather file for {what} on this map"), true),
         }
+    }
+
+    /// The files the filters let through (the search is not applied).
+    fn passing(&self) -> Vec<String> {
+        let Some(env) = &self.env else { return vec![] };
+        let query = self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
+        env.matches("environment", &query).variations.iter().map(|v| v.filename().clone()).collect()
     }
 
     /// The first dry weather without snow under the tile's filters: among the files the game picks with precipitation `dry` (else the files
@@ -337,6 +369,12 @@ impl WeatherUi {
             return Err("no tile open".to_owned());
         }
 
+        if LOOK_FILTERS.contains(&category) {
+            return Err(format!(
+                "the {category} is the tile's: set it with the climate and season chips (or tile_terrain), the weather follows"
+            ));
+        }
+
         let env = self.env.as_ref().ok_or_else(|| self.status.clone())?;
         let values = env.category(category).ok_or_else(|| format!("no filter '{category}'"))?.values().clone();
         let value = if value.is_empty() {
@@ -388,7 +426,10 @@ impl WeatherUi {
             let value = self.choice.query.get(category).cloned().unwrap_or_default();
             let vals = env.category(category).map(|m| m.values().clone()).unwrap_or_default();
             gui::set_next_item_width(220.0);
-            if gui::begin_combo(label, if value.is_empty() { "(any)" } else { &value }) {
+            let follows = LOOK_FILTERS.contains(&category);
+            gui::begin_disabled(follows);
+            let open = gui::begin_combo(label, if value.is_empty() { "(any)" } else { &value });
+            if open {
                 if gui::selectable("(any)", value.is_empty(), 0) {
                     filter_changed = Some((category, String::new()));
                 }
@@ -400,6 +441,17 @@ impl WeatherUi {
                 }
 
                 gui::end_combo();
+            }
+
+            gui::end_disabled();
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(&if follows {
+                    format!(
+                        "The tile's {label}, set by the {label} chip over the viewport (the ground follows it too). (any): the database has no files for it."
+                    )
+                } else {
+                    format!("Only the files the game picks for this {label} are listed. (any): every {label}.")
+                });
             }
         }
 
@@ -470,26 +522,14 @@ impl WeatherUi {
         }
     }
 
-    /// Sets a filter from a chip and lights the tile with a file it lets through: the one lighting it if it still passes, else (precipitation
-    /// any) the first dry one without snow, else the first one.
+    /// Sets a filter from a chip and lights the tile with a file it lets through (`relight`).
     fn chip_changed(&mut self, e: &mut Editor, category: &str, value: &str) {
         if let Err(m) = self.set_filter(e, category, value) {
             e.status(&m, true);
             return;
         }
 
-        let (files, _) = self.matching();
-        let current = e.weather_preview().map(str::to_owned);
-        if current.as_deref().is_some_and(|c| files.iter().any(|(f, _)| normalize(f) == c)) {
-            return;
-        }
-
-        let precipitation = self.choice.query.get("precipitation").is_some_and(|v| !v.is_empty());
-        let pick = if precipitation { None } else { self.first_dry() }.or_else(|| files.first().map(|(f, _)| f.clone()));
-        match pick {
-            Some(file) => self.apply(e, &file),
-            None => e.status(&format!("no weather file for {category} {value} on this map"), true),
-        }
+        self.relight(e, &format!("{category} {value}"));
     }
 
     /// Whether some file passes the filters with `category` set to `value`.
@@ -506,10 +546,73 @@ impl WeatherUi {
         !env.matches("environment", &query).variations.is_empty()
     }
 
-    /// The weather chips over the viewport: season, precipitation, time of day and climate (a value no file passes is greyed), then the file
-    /// lighting the tile (icons, the values in their tooltips; a click on the cloud opens the Weather panel) and a pencil that edits it in the Weather tool (a copy in the output folder, which
-    /// the tile follows).
+    /// A climate or season chip: its value's name in the tooltip, its popup listing `items` (value, name); a value no weather file has is
+    /// marked, and can be picked all the same (the ground has it). The value picked.
+    fn look_chip(&self, icon: &str, category: &str, current: &str, items: &[(String, String)]) -> Option<String> {
+        let name = items.iter().find(|(v, _)| v.eq_ignore_ascii_case(current)).map_or(current, |(_, n)| n.as_str());
+        let tip = format!(
+            "{category}: {name}\nThe tile's {category}: the ground's textures, its trees and grass, and the weather files the game picks.\nClick: change it"
+        );
+        if chip(false, icon, &format!("button{category}"), &tip) {
+            gui::open_popup(&format!("chip{category}"));
+        }
+
+        gui::same_line_touching();
+        if !begin_chip_popup(&format!("chip{category}")) {
+            return None;
+        }
+
+        let mut picked = None;
+        gui::text_disabled(category);
+        for (value, name) in items {
+            let weather = self.env.is_none() || self.value_of(category, value).is_some_and(|v| self.passes(category, &v));
+            let label = if weather { name.clone() } else { format!("{name}  (no weather)") };
+            if gui::selectable(&label, value.eq_ignore_ascii_case(current), 0) {
+                picked = Some(value.clone());
+            }
+
+            if !weather && gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "No weather file of this map has it (with the other filters): the ground takes it, the weather is not filtered by it.",
+                );
+            }
+        }
+
+        gui::end_popup();
+        picked
+    }
+
+    /// The climate and season chips: the tile's terrain look (the climates of its tile database, the four battle seasons); the weather
+    /// follows a change (`follow_look`).
+    fn draw_look_chips(&mut self, e: &mut Editor) {
+        let Some(id) = crate::tool::document_id(e) else { return };
+        let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        let mut look = d.tile().terrain_look().clone();
+        let mut climates = d.tile().climates().climates.iter().map(|c| (c.name.clone(), c.name.clone())).collect::<Vec<_>>();
+        if climates.is_empty() {
+            let values = self.env.as_ref().and_then(|env| env.category("climate")).map(|m| m.values().clone()).unwrap_or_default();
+            climates = values.into_iter().map(|v| (v.clone(), v)).collect();
+        }
+
+        let seasons = SEASONS.map(|s| (s.to_owned(), crate::ground_views::season_name(s).to_owned()));
+        let climate = self.look_chip(icons::GLOBE, "climate", &look.climate, &climates);
+        let season = self.look_chip(icons::LEAF, "season", &look.season, &seasons);
+        if climate.is_none() && season.is_none() {
+            return;
+        }
+
+        look.climate = climate.unwrap_or(look.climate);
+        look.season = season.unwrap_or(look.season);
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
+        d.tile_mut().set_terrain_look(&mut e.scene, look.clone());
+        self.follow_look(e, &look.climate, &look.season);
+    }
+
+    /// The chips over the viewport: climate and season (the tile's, `draw_look_chips`), the weather's precipitation and time of day (a
+    /// value no file passes is greyed), then the file lighting the tile (icons, the values in their tooltips; a click on the cloud opens
+    /// the Weather panel) and a pencil that edits it in the Weather tool (the tile follows the edits).
     pub(crate) fn draw_chips(&mut self, e: &mut Editor) {
+        self.draw_look_chips(e);
         let Some(env) = &self.env else { return };
         let mut changed = None;
         for (icon, category, label) in CHIPS {

@@ -1,9 +1,10 @@
 //! The ground views (docs/editor.md): what the ground shows, picked from a chip at the top right of the viewport, as the weather chips at
-//! its top left: the view (`TerrainLook::view`: the colour or a debug view of the tile's maps), the climate and season, the water depth
+//! its top left: the view (`TerrainLook::view`: the colour or a debug view of the tile's maps), the climate and season (shown), the water depth
 //! view's tools, the water, the sea, the procedural trees, the grass and the automatic no-go areas. The Minimap has a chip of its own with
 //! the same views and its own (minimap_panel.rs). The blended ground switch, what the ground shows (or why the plain tiled texture is
-//! used) and the game shaders that did not load are in the popup too (the Tile panel had a Ground section for them). The climate is not
-//! stored in the tile (a map's climate map says it), so it is a setting; a wrong guess looks different, not broken.
+//! used) and the game shaders that did not load are in the popup too (the Tile panel had a Ground section for them). The climate and season
+//! are shown, not set: the climate and season chips at the top left set them (weather_panel.rs), for the ground and the weather at once. The
+//! climate is not stored in the tile (a map's climate map says it), so it is a setting; a wrong guess looks different, not broken.
 
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
@@ -61,7 +62,7 @@ impl TileTool {
         let (look, nogo) = (d.tile().terrain_look().clone(), d.tile().display().show_auto_nogo);
         let view = if look.blended { view_name(look.view) } else { "plain tiled texture (blend off)" };
         let tip = format!(
-            "Ground: {view}{}{}\nClick: the blend and the views, the climate and season, the water, the sea, the trees, the grass, the automatic no-go areas",
+            "Ground: {view}{}{}\nClick: the blend and the views, the water, the sea, the trees, the grass, the automatic no-go areas",
             if look.blended { format!(" ({}, {})", look.climate, season_name(&look.season)) } else { String::new() },
             if nogo { ", automatic no-go areas" } else { "" },
         );
@@ -85,7 +86,7 @@ impl TileTool {
         gui::pop_style_color(1);
     }
 
-    /// The popup: the view (the blend, the views), the climate and season, the water depth view's tools, the water, the vegetation and the
+    /// The popup: the view (the blend, the views), the climate and season (shown), the water depth view's tools, the water, the vegetation and the
     /// checks, laid out as the other chips' popups.
     fn draw_ground_popup(&mut self, e: &mut Editor, id: DocumentId) {
         let failures = e.renderer.as_ref().map(|r| r.shader_failures().to_vec()).unwrap_or_default();
@@ -115,24 +116,10 @@ impl TileTool {
         }
 
         note(d.tile().terrain_note());
-        let climates = d.tile().climates().climates.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
-        if look.blended && !climates.is_empty() {
+        if look.blended {
             gui::separator_text("Climate");
-            let mut ci = climates.iter().position(|c| *c == look.climate).unwrap_or(0) as i32;
-            gui::set_next_item_width(200.0);
-            if gui::combo("Climate##ground", &mut ci, &climates.iter().map(String::as_str).collect::<Vec<_>>()) {
-                look.climate = climates[ci as usize].clone();
-                changed = true;
-            }
-
-            // The game's four battle seasons; a texture without the season's variant falls back to summer (fn 0x1180cb20).
-            let seasons = ["sp", "su", "au", "wi"];
-            let mut si = seasons.iter().position(|s| *s == look.season).unwrap_or(1) as i32;
-            gui::set_next_item_width(200.0);
-            if gui::combo("Season##ground", &mut si, &["spring", "summer", "autumn", "winter"]) {
-                look.season = seasons[si as usize].to_owned();
-                changed = true;
-            }
+            gui::text(&format!("{}, {}", look.climate, season_name(&look.season)));
+            gui::text_disabled("Set by the climate and season chips at the top left (the weather follows them too).");
         }
 
         let water_view = look.blended && look.view == TerrainView::WaterDepth;
