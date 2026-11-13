@@ -137,6 +137,51 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add(
+        "weather_wind_tip",
+        "weather_wind_tip",
+        "where the wind arrow's head is in the viewport image (pixels: x y), for a scripted drag of it; fails when it is not in view",
+        |e, _| {
+            with_weather(e, |t, e| match t.visual.wind_tip_px(e) {
+                Some((x, y)) => ok(format!("{x} {y}")),
+                None => fail("the wind arrow is not in view"),
+            })
+        },
+    );
+
+    c.add(
+        "weather_mix",
+        "weather_mix <file> <t> | off",
+        "cross-fade the open environment file with another (a path in the packs; t 0: this one, 1: the other) in the viewport, as the Mix \
+         section does",
+        |e, a| {
+            if a.first().map(String::as_str) == Some("off") {
+                return with_weather(e, |t, _| {
+                    t.mix.stop();
+                    ok("")
+                });
+            }
+
+            let (Some(file), Some(t)) = (a.first().cloned(), a.get(1).map(|t| num(t) as f32)) else {
+                return fail("usage: weather_mix <file> <t> | off");
+            };
+            with_weather(e, |tool, e| tool.mix.set(e, &file, t).map_or_else(fail, |()| ok("")))
+        },
+    );
+
+    c.add(
+        "weather_mix_save",
+        "weather_mix_save <new path>",
+        "save the mix (weather_mix) as a new .environment file of the project's loose folder",
+        |e, a| {
+            let Some(name) = a.first().cloned() else { return fail("usage: weather_mix_save <new path>") };
+            with_weather(e, |t, e| {
+                let doc = t.env_doc;
+                t.mix.save(e, doc, &name).map_or_else(fail, |p| ok(format!("saved {p}")))
+            })
+        },
+    );
+
     c.add("weather_compare", "weather_compare on|off", "light the scene with the file as saved instead of the edits", |e, a| {
         let on = match a.first().map(String::as_str) {
             Some("on") => true,

@@ -66,6 +66,15 @@ pub(crate) struct Visual {
     /// Where the sun's disc was drawn last frame (screen points).
     sun_screen: Option<gui::Vec2>,
 
+    /// The wind arrow: a drag of its head going on (the history position it started at), where its head was drawn last frame (screen
+    /// points), and the ground point it starts from with the height of the plane the drag runs on.
+    wind_from: Option<usize>,
+    wind_tip: Option<gui::Vec2>,
+    wind_base: Option<Float3>,
+
+    /// The Mix section shows a cross-fade: the handles are off (what is shown is not the file).
+    pub(crate) mixing: bool,
+
     /// The mouse was over the viewport last frame.
     hovered: bool,
 
@@ -116,10 +125,23 @@ fn tenth(a: f32) -> f32 {
 impl Visual {
     /// Where the sun's disc was drawn last frame, in pixels of the viewport image (`weather_sun_disc`, for scripted drags).
     pub(crate) fn sun_disc_px(&self, e: &Editor) -> Option<(i32, i32)> {
-        let s = self.sun_screen?;
+        Self::image_px(e, self.sun_screen?)
+    }
+
+    /// Where the wind arrow's head was drawn last frame, in pixels of the viewport image (`weather_wind_tip`).
+    pub(crate) fn wind_tip_px(&self, e: &Editor) -> Option<(i32, i32)> {
+        Self::image_px(e, self.wind_tip?)
+    }
+
+    fn image_px(e: &Editor, s: gui::Vec2) -> Option<(i32, i32)> {
         let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
         let origin = e.viewport.image_origin();
         Some((((s.x - origin.x) * density) as i32, ((s.y - origin.y) * density) as i32))
+    }
+
+    /// The sun and wind handles work: the file is what the viewport shows (not compared, not mixed).
+    fn handles(&self) -> bool {
+        !self.comparing() && !self.mixing
     }
 
     pub(crate) fn comparing(&self) -> bool {
@@ -197,12 +219,25 @@ impl Visual {
             }
 
             ViewportEventKind::Press => {
-                let near = self.sun_screen.is_some_and(|s| (s.x - at.x).hypot(s.y - at.y) <= SUN_GRAB);
-                if near && !self.comparing() {
-                    self.sun_from = e.docs.find(doc).map(|d| d.history().position());
+                if !self.handles() {
+                    return false;
                 }
 
-                self.sun_from.is_some()
+                let at_wind = self.wind_tip.is_some_and(|s| (s.x - at.x).hypot(s.y - at.y) <= SUN_GRAB);
+                let at_sun = self.sun_screen.is_some_and(|s| (s.x - at.x).hypot(s.y - at.y) <= SUN_GRAB);
+                let here = e.docs.find(doc).map(|d| d.history().position());
+                if at_wind {
+                    self.wind_from = here;
+                } else if at_sun {
+                    self.sun_from = here;
+                }
+
+                self.sun_from.is_some() || self.wind_from.is_some()
+            }
+
+            ViewportEventKind::Drag if self.wind_from.is_some() => {
+                self.wind_drag(e, doc, shown, ev.x, ev.y);
+                true
             }
 
             ViewportEventKind::Drag => {
@@ -215,7 +250,7 @@ impl Visual {
             }
 
             ViewportEventKind::Release => {
-                if self.sun_from.take().is_some()
+                if (self.sun_from.take().is_some() || self.wind_from.take().is_some())
                     && let Some(d) = e.docs.find_mut(doc)
                 {
                     d.history_mut().break_merge();
@@ -230,7 +265,7 @@ impl Visual {
 
     /// Ctrl+L held over the viewport: the mouse's motion turns the sun (sideways: azimuth, up and down: elevation), one undo entry per hold.
     fn sun_key_drag(&mut self, e: &mut Editor, doc: DocumentId, shown: &EnvironmentParams) {
-        let held = doc != 0 && !self.comparing() && !gui::io().WantTextInput && shortcuts::down(SUN_DRAG);
+        let held = doc != 0 && self.handles() && !gui::io().WantTextInput && shortcuts::down(SUN_DRAG);
         if !held {
             if self.sun_key.take().is_some() {
                 self.sun_from = None;
@@ -295,18 +330,94 @@ impl Visual {
         }
     }
 
+    /// A drag of the wind arrow's head: the angle on the ground from the arrow's start to the cursor becomes wind_dir_degrees (the
+    /// file's, the scene's turn taken off), to a degree; one undo entry per drag.
+    fn wind_drag(&mut self, e: &mut Editor, doc: DocumentId, shown: &EnvironmentParams, x: i32, y: i32) {
+        let (Some(from), Some(base)) = (self.wind_from, self.wind_base) else { return };
+        let Some((o, d)) = e.viewport.ray(x, y) else { return };
+        let s = if d.y.abs() > 1e-4 { (base.y - o.y) / d.y } else { -1.0 };
+        if s <= 0.0 {
+            return;
+        }
+
+        let (vx, vz) = (o.x + d.x * s - base.x, o.z + d.z * s - base.z);
+        let Some((_, _, yaw)) = Self::file_sun(e, doc, shown) else { return };
+        if vx.hypot(vz) < 1e-3 {
+            return;
+        }
+
+        // The wind's angle runs from +x towards +z, and the scene's turn takes it the other way round (`Renderer::wind_direction_degrees`).
+        let deg = (vz.atan2(vx).to_degrees() + yaw).rem_euclid(360.0).round() % 360.0;
+        let Some(x) = e.docs.find_as_mut::<XmlFileDocument>(doc) else { return };
+        if x.history().position() != from {
+            x.history_mut().jump_to(from);
+            x.history_mut().drop_redo();
+        }
+
+        if let Err(m) = x.edit_setting("WEATHER", "wind_dir_degrees", 0, |f| f[0] = deg) {
+            e.status(&m, true);
+        }
+    }
+
+    /// The wind arrow on the ground at the camera's target: the way the wind blows (grey when the battle picks a random direction);
+    /// its head is the handle.
+    fn draw_wind(&mut self, e: &Editor, doc: DocumentId, shown: &EnvironmentParams, origin: gui::Vec2, dl: &gui::DrawList) {
+        let Some((_, _, yaw)) = Self::file_sun(e, doc, shown) else { return };
+        let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
+        let cam = e.viewport.camera();
+        let base = match self.wind_base.filter(|_| self.wind_from.is_some()) {
+            Some(b) => b,
+            None => cam.target,
+        };
+        self.wind_base = Some(base);
+        let (dx, dy, dz) = (cam.eye.x - cam.target.x, cam.eye.y - cam.target.y, cam.eye.z - cam.target.z);
+        let len = ((dx * dx + dy * dy + dz * dz).sqrt() * 0.2).clamp(3.0, 400.0);
+        let a = (shown.wind_dir_degrees - yaw).to_radians();
+        let tip = Float3::new(base.x + a.cos() * len, base.y, base.z + a.sin() * len);
+        let (Some((bx, by)), Some((tx, ty))) = (e.viewport.project(base), e.viewport.project(tip)) else { return };
+        let (b, t) = (gui::v2(origin.x + bx / density, origin.y + by / density), gui::v2(origin.x + tx / density, origin.y + ty / density));
+        let (ux, uy) = (t.x - b.x, t.y - b.y);
+        let n = ux.hypot(uy);
+        if n < 4.0 {
+            return;
+        }
+
+        let (ux, uy) = (ux / n, uy / n);
+        let mouse = gui::io().MousePos;
+        let hot = self.wind_from.is_some() || (mouse.x - t.x).hypot(mouse.y - t.y) <= SUN_GRAB;
+        let colour = match (shown.wind_dir_random, hot) {
+            (true, _) => gui::col32(160, 160, 160, 200),
+            (false, true) => gui::col32(120, 230, 255, 255),
+            (false, false) => gui::col32(90, 200, 240, 210),
+        };
+        let back = gui::v2(t.x - ux * 14.0, t.y - uy * 14.0);
+        dl.line(b, back, gui::col32(10, 10, 12, 180), 5.0);
+        dl.line(b, back, colour, 3.0);
+        dl.triangle_filled(t, gui::v2(back.x - uy * 7.0, back.y + ux * 7.0), gui::v2(back.x + uy * 7.0, back.y - ux * 7.0), colour);
+        self.wind_tip = Some(t);
+        if hot && self.wind_from.is_none() {
+            gui::set_tooltip(&format!(
+                "The wind blows this way: wind_dir_degrees {:.0}\u{b0}{}\nDrag the arrowhead to turn it.",
+                shown.wind_dir_degrees.rem_euclid(360.0),
+                if shown.wind_dir_random { " (wind_dir_random is on: each battle picks its own direction instead)" } else { "" }
+            ));
+        }
+    }
+
     /// True while the left button is the tool's: the focus pick armed, or the sun being dragged.
     pub(crate) fn claims_left_button(&self) -> bool {
-        self.focus_armed || self.sun_from.is_some()
+        self.focus_armed || self.sun_from.is_some() || self.wind_from.is_some()
     }
 
     /// Over the viewport: the sun's disc in the sky (grab it to move the sun), the focus pick's hint, the compare label.
     pub(crate) fn overlay(&mut self, e: &mut Editor, doc: DocumentId, shown: &EnvironmentParams, origin: gui::Vec2, size: gui::Vec2) {
         self.hovered = false;
         self.sun_screen = None;
+        self.wind_tip = None;
         let dl = gui::window_draw_list();
         let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
-        if doc != 0 && !self.comparing() {
+        if doc != 0 && self.handles() {
+            self.draw_wind(e, doc, shown, origin, &dl);
             let cam = e.viewport.camera();
             let far = cam.zfar * 0.5;
             let s = shown.to_sun();
@@ -338,6 +449,8 @@ impl Visual {
             Some(("THE SAVED FILE (comparing: uncheck Compare, or let go of C, for the edits)".to_owned(), theme::warning()))
         } else if self.focus_armed {
             Some(("Click what should be in focus (Esc: cancel)".to_owned(), theme::modified()))
+        } else if self.wind_from.is_some() {
+            Some((format!("wind: towards {:.0}\u{b0}", shown.wind_dir_degrees.rem_euclid(360.0)), theme::dim()))
         } else if self.sun_key.is_some() || self.sun_from.is_some() {
             Some((
                 format!("sun: azimuth {:.1}\u{b0}, elevation {:.1}\u{b0}", shown.sun_azimuth.rem_euclid(360.0), shown.sun_elevation),
