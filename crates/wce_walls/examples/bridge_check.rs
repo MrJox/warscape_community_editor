@@ -394,7 +394,7 @@ fn main() {
             "<project version=\"17\">\n    <scene>\n        <SCENE_GRAPH flags=\" OIF_VISIBLE|OIF_ACTIVE\" name=\"scene\">\n            <children>\n                <LayerInstance flags=\" OIF_VISIBLE|OIF_ACTIVE\" export_type=\"LayerExportType_Normal\" position=\"vector(0,0,0)\" name=\"WCE procedural roads\" orientation=\"euler(0,0,0)\">\n                    <children>\n{layer}                    </children>\n                </LayerInstance>\n            </children>\n        </SCENE_GRAPH>\n    </scene>\n</project>\n"
         );
         let mut scene = wce_tile::ted_scene::TedScene::parse_any(text.into_bytes()).expect("the scene");
-        let lowered = wce_walls::export::lower_walls(&mut scene, &ground, &vfs, &schema, "wce_check", None).expect("lowered");
+        let lowered = wce_walls::export::lower_walls(&mut scene, &ground, &vfs, &schema, "wce_check", None, &[]).expect("lowered");
         let left = scene.find_all(wce_walls::bridge::BRIDGE_SPAN).len();
         let instances = scene.find_all("BUILDING_INSTANCE").into_iter().map(|e| scene.doc().get(e, "key").unwrap_or_default()).collect::<Vec<_>>();
         let rows = |k: &str| lowered.tables.values().any(|t| {

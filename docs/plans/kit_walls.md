@@ -163,3 +163,30 @@ out, undo brings it back; saved and opened again, the layer is as it was (not ma
 
 Left: phase 5 (the exports, Save for Assembly Kit, Siege AI). The height layer is in the tile's layers, so a save writes the ground it
 makes into the height map already.
+
+## Phase 5: out (done 2026-11-13)
+
+- **Exports** (`wce_walls::export::KitWall`, `lower_walls`'s `kit`; `TileDocument::kit_walls_for_export`): an export lowers a kit wall as
+  the editor laid it (on the ground below its own height layer: the export's height map has the layer in it, and laid on it the wall
+  could step elsewhere, rule 1), found by its key (`scene::wall_key`, its `wall_id`). Its game pieces become `BUILDING_INSTANCE`s of their
+  own keys (the game's buildings: no files nor rows), its stretches procedural pieces of its base, generated, with their rows, keyed
+  `<prefix>_k<wall>s<stretch>_<piece>`; a wall's pieces go in its layer (Save for Assembly Kit: *WCE procedural walls*, which Import from
+  Assembly Kit drops, putting the walls back). A kit wall the editor could not lay is left out, noted. All three exports take them: Export
+  (`save_exported_walls`), save to a pack (`save_walls_to_pack`), Save for Assembly Kit (`walls_for_kit`). The ground the wall's layer makes
+  is in the height map they write.
+- **Siege AI** (`siege_input_with`): a kit wall's run of pieces is given as a procedural wall's (its walkway through the pieces' joints,
+  every half unit, the footprint across its base's depth: a barbarian piece's own footprint is a strip along its outer face, which closes no
+  outline), its caps, towers and bastions from their logic files, its stretches as procedural walls. Generate SiegeAI lays the kit walls
+  whose layout is not kept yet (a republish clears them until their previews are made again: it had found none).
+- **Check platforms**: phase 2 (each piece a building of its own).
+
+Tested (scratch `kitwall/k9.txt`, `k10.txt`, farm_western/1x1/ab):
+- Export and save to a pack of the gate test (three kit walls): the building list has all 40 kit pieces (26 barbarian, 14 Roman), both
+  gates and the one stretch piece (`wce_farm_western_1x1_ab_k1s0_00`); the stretch's piece and rows in the pack.
+- A closed fort: a barbarian ring from one end of a barbarian gate to the other (flipped: both ends said their outer side was the other
+  way), the first end on the gate, the last by a 15 m stretch, 0 breaks; a capture point inside. Generate SiegeAI: 1 area, 2 wall
+  edges, as the same ring made procedural (1 area, 3 wall edges; both warn that the outline is closed over gaps with the buildings).
+- Save for Assembly Kit was not run: it writes `@wce_proc_data.pack` into the game's own `data` folder; it lowers the walls with the same
+  `lower_walls` as the others.
+
+Tools: `examples/building_list_dump` (wce_tile_io) prints a binary building list's buildings.

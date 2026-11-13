@@ -51,6 +51,15 @@ pub fn all_walls(scene: &TedScene) -> Vec<usize> {
     scene.find_all(WALL_SPLINE)
 }
 
+/// What a kit wall is known by (its height layer, its export): its `wall_id`, the n-th wall of an id after the first `<id>.<n>` in the
+/// document's order (a copied wall keeps its id). `None` without an id.
+pub fn wall_key(scene: &TedScene, elem: usize) -> Option<String> {
+    let id_of = |e: usize| scene.doc().get(e, wce_tile::new_instances::WALL_ID).and_then(|v| v.trim().parse::<u32>().ok()).filter(|&i| i > 0);
+    let id = id_of(elem)?;
+    let n = all_walls(scene).into_iter().take_while(|&e| e != elem).filter(|&e| id_of(e) == Some(id)).count();
+    Some(if n == 0 { id.to_string() } else { format!("{id}.{n}") })
+}
+
 /// Whether a wall is procedural: its *Procedural* checkbox (`wall_procedural`), on when it does not say (a wall from before it).
 pub fn is_procedural(scene: &TedScene, elem: usize) -> bool {
     wce_tile::new_instances::wall_procedural(scene.doc().get(elem, wce_tile::new_instances::WALL_PROCEDURAL).as_deref())

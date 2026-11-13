@@ -115,7 +115,7 @@ fn run() -> Result<(), String> {
     let (_, msg) = project.save(&project_dir, true, project.height_dirty)?;
     println!("{msg}");
 
-    let (pack, dir, notes) = wce_walls::export::save_exported_walls(&game, &vfs, &schema, &project_dir, project.scene.save(), Path::new(out))?;
+    let (pack, dir, notes) = wce_walls::export::save_exported_walls(&game, &vfs, &schema, &project_dir, project.scene.save(), Path::new(out), &[])?;
     for n in &notes {
         println!("export: {n}");
     }

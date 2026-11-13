@@ -298,7 +298,8 @@ impl Tile {
     }
 
     /// The generator's input: the no-go regions, the buildings (what blocks of them; the fort pieces' footprints, platforms and gates, from
-    /// their logic files), the procedural walls, the captures, the sea; what is not exported left out.
+    /// their logic files), the procedural walls, the kit walls (their pieces, their stretches), the captures, the sea; what is not exported
+    /// left out.
     pub fn siege_input(&self) -> Input {
         self.siege_input_with(true)
     }
@@ -361,17 +362,14 @@ impl Tile {
             }
         }
 
-        // Procedural walls: their walkway from their base's, the footprint across their depth.
-        for e in wce_walls::scene::walls(sc) {
-            if skip(e) {
-                continue;
-            }
-
-            let Some(layout) = self.wall_layout(e) else { continue };
-            let z = read(layout.profile.key).map_or(0.0, |l| l.ends.2);
-            let (outer, inner) = layout.profile.depth;
+        // A wall along a line (a procedural wall's plan, a kit wall's joints): its walkway from its base's, the footprint across its depth.
+        // Each point: the centre line, its outer foot, its direction.
+        let band = |points: &[([f64; 2], [f64; 2], [f64; 2])], profile: &wce_walls::profile::Profile| -> Option<WallPiece> {
+            let z = read(profile.key).map_or(0.0, |l| l.ends.2);
+            let (outer, inner) = profile.depth;
             let (mut walk, mut left, mut right) = (vec![], vec![], vec![]);
-            for s in &layout.plan.samples {
+            for &(centre, foot, dir) in points {
+                let s = Sample { centre, foot, dir };
                 let d = [s.centre[0] - s.foot[0], s.centre[1] - s.foot[1]];
                 let l = d[0].hypot(d[1]);
                 let n = if l > 1e-6 { [d[0] / l, d[1] / l] } else { [-s.dir[1], s.dir[0]] };
@@ -382,26 +380,83 @@ impl Tile {
             }
 
             if walk.len() < 2 {
-                continue;
+                return None;
             }
 
             right.reverse();
             left.extend(right);
             let ends = [walk[0], walk[walk.len() - 1]];
-            input.walls.push(WallPiece { footprint: vec![left], platforms: vec![], walkway: walk, gate: false, ends });
+            Some(WallPiece { footprint: vec![left], platforms: vec![], walkway: walk, gate: false, ends })
+        };
+        let along = |plan: &wce_walls::solver::Plan, profile: &wce_walls::profile::Profile| band(&plan.samples.iter().map(|s| (s.centre, s.foot, s.dir)).collect::<Vec<_>>(), profile);
 
-            // Its towers and bastions and the caps past its free ends (the game's pieces, placed as they are): what blocks of them, from
-            // their logic files, as a fort building's (they stand out of the wall's depth).
+        // A game's piece placed as it is (a tower, a bastion, a cap, a kit wall's piece): what blocks of it, from its logic file, as a fort
+        // building's.
+        let game_piece = |key: &str, p: &wce_walls::pieces::Piece| -> Option<WallPiece> {
+            let l = read(key)?;
+            let (sn, cs) = p.yaw.sin_cos();
+            let at = |x: f64, z: f64| -> P { [p.origin[0] + x * cs - z * sn, p.origin[2] + x * sn + z * cs] };
+            let place = |rings: &[Vec<P>]| -> Vec<Vec<P>> { rings.iter().map(|r| r.iter().map(|q| at(q[0], q[1])).collect()).collect() };
+            let mut footprint = place(&l.footprint);
+            footprint.extend(place(&l.hard));
+            let (x0, x1, z) = l.ends;
+            Some(WallPiece { footprint, platforms: place(&l.platforms), walkway: vec![], gate: false, ends: [at(x0, z), at(x1, z)] })
+        };
+
+        // Procedural walls, with their towers and bastions and the caps past their free ends (the game's pieces: they stand out of the
+        // wall's depth).
+        for e in wce_walls::scene::walls(sc) {
+            if skip(e) {
+                continue;
+            }
+
+            let Some(layout) = self.wall_layout(e) else { continue };
+            input.walls.extend(along(&layout.plan, layout.profile));
             let caps = wce_walls::pieces::cap_instances(&layout.plan, layout.profile).into_iter().map(|(_, p)| p);
             for p in wce_walls::pieces::pieces(&layout.plan, layout.profile).into_iter().filter(|p| p.rigid).chain(caps) {
-                let Some(l) = p.base.and_then(|key| read(key)) else { continue };
-                let (sn, cs) = p.yaw.sin_cos();
-                let at = |x: f64, z: f64| -> P { [p.origin[0] + x * cs - z * sn, p.origin[2] + x * sn + z * cs] };
-                let place = |rings: &[Vec<P>]| -> Vec<Vec<P>> { rings.iter().map(|r| r.iter().map(|q| at(q[0], q[1])).collect()).collect() };
-                let mut footprint = place(&l.footprint);
-                footprint.extend(place(&l.hard));
-                let (x0, x1, z) = l.ends;
-                input.walls.push(WallPiece { footprint, platforms: place(&l.platforms), walkway: vec![], gate: false, ends: [at(x0, z), at(x1, z)] });
+                input.walls.extend(p.base.and_then(|key| game_piece(key, &p)));
+            }
+        }
+
+        // Kit walls (docs/plans/kit_walls.md phase 5): their game pieces as they are, their stretches as procedural walls; as laid for
+        // their preview.
+        for e in wce_walls::scene::all_walls(sc).into_iter().filter(|&e| !wce_walls::scene::is_procedural(sc, e)) {
+            if skip(e) {
+                continue;
+            }
+
+            let (Some(layout), Some(profile)) = (self.kit_wall_report(e), wce_walls::scene::wall_profile(sc, e)) else { continue };
+
+            // Its run of pieces as a procedural wall's (the joints its line: a barbarian piece's footprint is a strip along its outer face
+            // only, which closes no outline); the caps, towers and bastions, which stand out of the wall's depth, from their logic files.
+            let run = layout.placed.iter().filter(|p| p.role != wce_walls::kit::Role::Cap).collect::<Vec<_>>();
+            let mut points = vec![];
+            for (k, pl) in run.iter().enumerate() {
+                let (a, b) = (pl.joints[0], pl.joints[1]);
+                let l = (b[0] - a[0]).hypot(b[1] - a[1]).max(1e-9);
+                let dir = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+                let z_axis = [-dir[1], dir[0]];
+                let foot = |c: [f64; 2]| [c[0] + z_axis[0] * profile.outer_face, c[1] + z_axis[1] * profile.outer_face];
+                // Every `solver::STEP` along, as a procedural wall's samples.
+                let n = (l / wce_walls::solver::STEP).ceil().max(1.0) as usize;
+                for i in usize::from(k > 0)..=n {
+                    let t = i as f64 / n as f64;
+                    let c = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                    points.push((c, foot(c), dir));
+                }
+            }
+
+            input.walls.extend(band(&points, profile));
+            for pl in layout.placed.iter().filter(|p| matches!(p.role, wce_walls::kit::Role::Cap | wce_walls::kit::Role::Defence)) {
+                let p = wce_walls::pieces::Piece { s: (0.0, 0.0), origin: pl.origin, yaw: pl.yaw, scale: 1.0, base: None, rigid: true };
+                input.walls.extend(game_piece(&pl.key, &p));
+            }
+
+            for plan in self.kit_stretch_plans(e, layout) {
+                input.walls.extend(along(&plan, profile));
+                for p in wce_walls::pieces::pieces(&plan, profile).into_iter().filter(|p| p.rigid) {
+                    input.walls.extend(p.base.and_then(|key| game_piece(key, &p)));
+                }
             }
         }
 
@@ -820,6 +875,8 @@ impl TileDocument {
     ///
     /// A tile without a scene graph, or an edit the text does not allow.
     pub fn generate_siege_ai(&mut self) -> Result<Layout, String> {
+        // The kit walls laid now where their previews have not been yet (a republish clears them until they are made again).
+        self.tile_mut().ensure_kit_layouts();
         let input = self.tile().siege_input();
         let layout = wce_siege::generate::generate(&input);
         if layout.perimeter.len() < 3 {
@@ -1093,6 +1150,14 @@ fn clip_to_rect(pts: &[wce_foundation::math::Float3], closed: bool, w: f32, h: f
     }
 
     out
+}
+
+
+/// A point of a wall's line for Siege AI (`siege_input_with`'s `band`).
+struct Sample {
+    centre: [f64; 2],
+    foot: [f64; 2],
+    dir: [f64; 2],
 }
 
 #[cfg(test)]
