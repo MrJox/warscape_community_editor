@@ -59,6 +59,8 @@ impl Tile {
         let flag = |name: &str, or: bool| doc.get(elem, name).map_or(or, |v| wce_tile::properties::parse_bool(&v));
         Settings {
             keys: parse_keys(&doc.get(elem, KEYS).unwrap_or_default()),
+            joiners: parse_keys(&doc.get(elem, wce_tile::building_spline::JOINERS).unwrap_or_default()),
+            joiner_ends: flag("bspline_joiner_ends", false),
             random: flag("bspline_random", false),
             seed: number("bspline_seed", 1.0).max(0.0) as u32,
             gap: number("bspline_gap", 0.0),

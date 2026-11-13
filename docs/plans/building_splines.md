@@ -21,6 +21,11 @@ A Create panel entry, *Building spline (fences, palisades)*, in the Buildings ca
 - **Random**: each building picked from the list by the seed, else the list repeats in order.
 - **Extras**: closed loop, damage chance (a random damaged `destruction_level`, as `road_fence_damage`), flip chance (end for end), turn
   and side jitter, side offset (to the right as the line runs from its first point; below 0 to its left).
+- **Joiners** (user, 2026-11-13): an optional second list of buildings (posts, pillars) laid on each joint between two of the others, to
+  hide the gap and make the line less regular. One in the middle of each gap, its middle on the joint, its long axis along the mean of the
+  two buildings' ways, tilted as they are; picked as the buildings are (in order, or by the seed), with the flip, turn and damage chances
+  but no side jitter. They do not change the spacing. A closed line has one on the joint that closes it; *Joiners at the ends* puts one at
+  each end of an open line too.
 
 ## Where it is
 
@@ -28,7 +33,7 @@ A Create panel entry, *Building spline (fences, palisades)*, in the Buildings ca
 - `wce_tile_editor::tile_document::building_splines`: settings from the attributes, the curve (handles as the roads'), extents, laying per
   frame when the document, the models or the ground changed, drawing, the export layer. `bspline_info` (script) logs what is laid.
 - `wce_tile_tool::building_spline_ui`: the Inspector below the grid: the list of buildings (remove, move), a search to add one, and the keys
-  of the buildings selected in the scene added in one click.
+  of the buildings selected in the scene added in one click; the same for the joiners.
 
 ## Open
 

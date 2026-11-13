@@ -19,6 +19,9 @@ pub const BUILDING_SPLINE: &str = "WceBuildingSpline";
 /// Its attributes: the buildings' keys, separated by commas, in the order they are laid when not random.
 pub const KEYS: &str = "bspline_keys";
 
+/// The joiners' keys (optional): a building laid on each joint between two of the others, to hide the gap and break the line up.
+pub const JOINERS: &str = "bspline_joiners";
+
 /// How far across a building the ground is read to tilt it (metres each way): as a road's fences.
 pub const TILT_ACROSS: f64 = 0.5;
 
@@ -61,6 +64,10 @@ pub const MAX_BUILDINGS: usize = 5000;
 pub struct Settings {
     /// The buildings it lays, in order.
     pub keys: Vec<String>,
+
+    /// The joiners laid on the joints (empty: none), and whether an open line has one at each end too.
+    pub joiners: Vec<String>,
+    pub joiner_ends: bool,
 
     /// Each building picked from `keys` by the seed (else they repeat in order).
     pub random: bool,
@@ -189,20 +196,19 @@ pub fn lay(
         }
     };
 
-    let n = settings.keys.len();
+    let pick = |list: &[String], i: usize, salt: u64| -> String {
+        let n = list.len();
+        if settings.random { list[((roll(settings.seed, i, salt) * n as f64) as usize).min(n - 1)].clone() } else { list[i % n].clone() }
+    };
+
+    // The buildings, end to end: each one's stretch (where it starts, how long) and the way its chord goes.
     let mut out = vec![];
+    let mut runs: Vec<(f64, f64, [f64; 2])> = vec![];
     let mut s = 0.0;
     for i in 0..MAX_BUILDINGS {
-        let key = if settings.random {
-            &settings.keys[((roll(settings.seed, i, 1) * n as f64) as usize).min(n - 1)]
-        } else {
-            &settings.keys[i % n]
-        };
-        let footprint = extent(key);
-        let (lo, hi) = footprint.along();
-        let (lo, hi) =
-            if hi - lo >= MIN_LENGTH { (lo, hi) } else { ((lo + hi) * 0.5 - MIN_LENGTH * 0.5, (lo + hi) * 0.5 + MIN_LENGTH * 0.5) };
-        let length = hi - lo;
+        let key = pick(&settings.keys, i, 1);
+        let footprint = extent(&key);
+        let length = along_length(&footprint);
 
         // A building more than half past the end is not laid (on a closed line: one that would cover the first).
         if s + length * 0.5 > total {
@@ -211,49 +217,105 @@ pub fn lay(
 
         // On the chord of its stretch, from where it starts to where it ends.
         let (a, b) = (point(s), point(s + length));
-        let mut dir = unit([b[0] - a[0], b[1] - a[1]]);
-        let right = [dir[1], -dir[0]];
+        let chord = unit([b[0] - a[0], b[1] - a[1]]);
+        let right = [chord[1], -chord[0]];
         let side = (roll(settings.seed, i, 2) * 2.0 - 1.0) * settings.side_jitter;
         let mid = [(a[0] + b[0]) * 0.5 + right[0] * side, (a[1] + b[1]) * 0.5 + right[1] * side];
-
-        if roll(settings.seed, i, 3) < settings.flip {
-            dir = [-dir[0], -dir[1]];
-        }
-
-        let yaw = (roll(settings.seed, i, 4) * 2.0 - 1.0) * settings.yaw_jitter.to_radians();
-        if yaw != 0.0 {
-            let (c, sn) = (yaw.cos(), yaw.sin());
-            dir = [dir[0] * c - dir[1] * sn, dir[0] * sn + dir[1] * c];
-        }
-
-        // The model's middle over the stretch's: its pivot is where its middle is not.
-        let centre = (lo + hi) * 0.5;
-        // Its long axis along the line: a building modelled along its z turned a quarter first (Ry(90) takes +z to +x).
-        let along_z = footprint.along_z();
-        let quarter = if along_z { std::f64::consts::FRAC_PI_2 } else { 0.0 };
-        let mut rotation = euler_matrix(Double3::new(heading(dir) + quarter, 0.0, 0.0));
-        let axis = if along_z { Double3::new(0.0, 0.0, 1.0) } else { Double3::new(1.0, 0.0, 0.0) };
-        let position = if settings.align {
-            rotation = ground_tilt(dir, mid, [length * 0.5, TILT_ACROSS], ground) * rotation;
-            let back = rotation * (axis * -centre);
-            [mid[0] + back.x, ground(mid[0], mid[1]) + back.y, mid[1] + back.z]
-        } else {
-            let at = [mid[0] - dir[0] * centre, mid[1] - dir[1] * centre];
-            [at[0], ground(at[0], at[1]), at[1]]
-        };
-
-        let max = levels(key);
-        let level = if max >= 2 && roll(settings.seed, i, 5) < settings.damage {
-            1 + (roll(settings.seed, i, 6) * f64::from(max - 1)).floor().min(f64::from(max - 2)) as u32
-        } else {
-            0
-        };
-
-        out.push(Laid { key: key.clone(), position, rotation, level });
+        out.push(stand(key, &footprint, mid, chord, settings, (i, 0), levels, ground));
+        runs.push((s, length, chord));
         s += (length + settings.gap).max(MIN_LENGTH);
     }
 
+    // The joiners: one on each joint, in the middle of the gap, turned between the two buildings it joins; on a closed line the joint that
+    // closes it too; at the ends of an open one when asked.
+    if !settings.joiners.is_empty() && !runs.is_empty() {
+        let mut joints = vec![];
+        let end_of = |r: &(f64, f64, [f64; 2])| r.0 + r.1;
+        for w in runs.windows(2) {
+            joints.push((end_of(&w[0]) + (w[1].0 - end_of(&w[0])) * 0.5, mean(w[0].2, w[1].2)));
+        }
+
+        let (first, last) = (runs[0], runs[runs.len() - 1]);
+        if settings.closed && runs.len() > 1 {
+            let s = (end_of(&last) + settings.gap.max(0.0) * 0.5).min(total + first.0);
+            joints.push((s, mean(last.2, first.2)));
+        } else if !settings.closed && settings.joiner_ends {
+            joints.insert(0, (first.0, first.2));
+            joints.push((end_of(&last), last.2));
+        }
+
+        for (j, (at, way)) in joints.into_iter().enumerate() {
+            let key = pick(&settings.joiners, j, 11);
+            let footprint = extent(&key);
+            out.push(stand(key, &footprint, point(at), way, settings, (j, 10), levels, ground));
+        }
+    }
+
     out
+}
+
+/// How long a footprint is along its long axis, at least [`MIN_LENGTH`].
+fn along_length(f: &Footprint) -> f64 {
+    let (lo, hi) = f.along();
+    (hi - lo).max(MIN_LENGTH)
+}
+
+/// The way between two (unit) ways.
+fn mean(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
+    let m = [a[0] + b[0], a[1] + b[1]];
+    if m[0].hypot(m[1]) < 1e-6 { a } else { unit(m) }
+}
+
+/// A building stood with its middle at `mid` (world metres, x and z) and its long axis along `way`: flipped, turned and damaged by its
+/// chances (rolled by `(index, salt base)`), tilted to the ground when the settings align.
+#[allow(clippy::too_many_arguments)]
+fn stand(
+    key: String,
+    footprint: &Footprint,
+    mid: [f64; 2],
+    way: [f64; 2],
+    settings: &Settings,
+    (i, base): (usize, u64),
+    levels: &dyn Fn(&str) -> u32,
+    ground: &dyn Fn(f64, f64) -> f64,
+) -> Laid {
+    let (lo, hi) = footprint.along();
+    let length = along_length(footprint);
+    let mut dir = way;
+    if roll(settings.seed, i, base + 3) < settings.flip {
+        dir = [-dir[0], -dir[1]];
+    }
+
+    let yaw = (roll(settings.seed, i, base + 4) * 2.0 - 1.0) * settings.yaw_jitter.to_radians();
+    if yaw != 0.0 {
+        let (c, sn) = (yaw.cos(), yaw.sin());
+        dir = [dir[0] * c - dir[1] * sn, dir[0] * sn + dir[1] * c];
+    }
+
+    // The model's middle over `mid`: its pivot is where its middle is not.
+    let centre = (lo + hi) * 0.5;
+    // Its long axis along the line: a building modelled along its z turned a quarter first (Ry(90) takes +z to +x).
+    let along_z = footprint.along_z();
+    let quarter = if along_z { std::f64::consts::FRAC_PI_2 } else { 0.0 };
+    let mut rotation = euler_matrix(Double3::new(heading(dir) + quarter, 0.0, 0.0));
+    let axis = if along_z { Double3::new(0.0, 0.0, 1.0) } else { Double3::new(1.0, 0.0, 0.0) };
+    let position = if settings.align {
+        rotation = ground_tilt(dir, mid, [length * 0.5, TILT_ACROSS], ground) * rotation;
+        let back = rotation * (axis * -centre);
+        [mid[0] + back.x, ground(mid[0], mid[1]) + back.y, mid[1] + back.z]
+    } else {
+        let at = [mid[0] - dir[0] * centre, mid[1] - dir[1] * centre];
+        [at[0], ground(at[0], at[1]), at[1]]
+    };
+
+    let max = levels(&key);
+    let level = if max >= 2 && roll(settings.seed, i, base + 5) < settings.damage {
+        1 + (roll(settings.seed, i, base + 6) * f64::from(max - 1)).floor().min(f64::from(max - 2)) as u32
+    } else {
+        0
+    };
+
+    Laid { key, position, rotation, level }
 }
 
 /// A building laid as an instance's text (`BUILDING_INSTANCE`, freeform at its height as the kit's tiles keep one, the height again in
@@ -408,6 +470,36 @@ mod tests {
         let s = Settings { closed: true, ..settings(&["f"]) };
         let laid = lay(&square, &s, &|_| fx(0.0, 5.0), &|_| 1, &flat);
         assert_eq!(laid.len(), 8);
+    }
+
+    #[test]
+    fn joiners_go_on_the_joints() {
+        // Fences 5 m long from their pivot, a gap of 1 m: joints at 5.5, 11.5 (the third fence ends at 17 of 20).
+        let line = [[0.0, 0.0], [20.0, 0.0]];
+        let post = Footprint::centred(0.4, 0.4);
+        let extent = |k: &str| if k == "post" { post } else { fx(0.0, 5.0) };
+        let s = Settings { gap: 1.0, joiners: vec!["post".into()], ..settings(&["f"]) };
+        let laid = lay(&line, &s, &extent, &|_| 1, &flat);
+        let posts = laid.iter().filter(|l| l.key == "post").map(|l| l.position[0]).collect::<Vec<_>>();
+        assert_eq!(laid.iter().filter(|l| l.key == "f").count(), 3);
+        assert_eq!(posts.len(), 2);
+        assert!((posts[0] - 5.5).abs() < 1e-9 && (posts[1] - 11.5).abs() < 1e-9, "{posts:?}");
+
+        // At the ends too: one where the line starts and one where the last fence ends.
+        let ends = Settings { joiner_ends: true, ..s.clone() };
+        let posts =
+            lay(&line, &ends, &extent, &|_| 1, &flat).into_iter().filter(|l| l.key == "post").map(|l| l.position[0]).collect::<Vec<_>>();
+        assert_eq!(posts.len(), 4);
+        assert!(posts[0].abs() < 1e-9 && (posts[3] - 17.0).abs() < 1e-9, "{posts:?}");
+
+        // A closed square of 40 m: 8 fences, 8 joints (the last one closes it).
+        let square = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0], [0.0, 0.0]];
+        let closed = Settings { closed: true, gap: 0.0, ..s };
+        let laid = lay(&square, &closed, &extent, &|_| 1, &flat);
+        assert_eq!(laid.iter().filter(|l| l.key == "post").count(), 8);
+
+        // No joiners, none laid.
+        assert!(lay(&line, &settings(&["f"]), &extent, &|_| 1, &flat).iter().all(|l| l.key == "f"));
     }
 
     #[test]

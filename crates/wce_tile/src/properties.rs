@@ -104,6 +104,8 @@ impl Prop {
             crate::export_as_prop::EXPORT_AS_PROP_ATTR => "Export as prop",
             crate::new_instances::WALL_PROCEDURAL => "Procedural",
             crate::building_spline::KEYS => "Buildings",
+            crate::building_spline::JOINERS => "Joiners",
+            "bspline_joiner_ends" => "Joiners at the ends",
             "bspline_random" => "Random",
             "bspline_seed" => "Seed",
             "bspline_gap" => "Gap",
@@ -352,6 +354,8 @@ const BUILDING_SPLINE: &[Prop] = &[
     p("line_colour", Kind::Colour),
     p("selected_line_colour", Kind::Colour),
     p(crate::building_spline::KEYS, Kind::Text),
+    p(crate::building_spline::JOINERS, Kind::Text),
+    p("bspline_joiner_ends", Kind::Bool),
     p("bspline_random", Kind::Bool),
     p("bspline_seed", Kind::Int(0, 9999)),
     p("bspline_gap", Kind::Slider(-5.0, 20.0)),
@@ -376,6 +380,11 @@ pub fn building_spline_tip(attr: &str) -> Option<&'static str> {
             "The buildings laid along the line, separated by commas (edit the list below the grid). Each is laid with its x along \
             the line, as long as its model"
         }
+        crate::building_spline::JOINERS => {
+            "Optional: buildings laid on each joint between two of the others (a post, a pillar), to hide the gap and break the \
+            line up; separated by commas (edit the list below the grid). Picked as the buildings are: in order, or by the seed"
+        }
+        "bspline_joiner_ends" => "A joiner at each end of the line too (an open line; a closed one has one on every joint already)",
         "bspline_random" => "On: each building is picked from the list at random, by the seed. Off: the list repeats in order",
         "bspline_seed" => "The seed of everything random here: the picks, the damage, the flips and the jitter",
         "bspline_gap" => "The space between one building and the next (metres; below 0 they overlap)",
