@@ -190,3 +190,24 @@ Tested (scratch `kitwall/k9.txt`, `k10.txt`, farm_western/1x1/ab):
   `lower_walls` as the others.
 
 Tools: `examples/building_list_dump` (wce_tile_io) prints a binary building list's buildings.
+
+## Review fixes (2026-11-13)
+
+From the user's first try on TDD's middle_men_port_a (a 530 m wall over hills down to the sea):
+- **Saving kept the tile modified**: a kit wall's layer made and taken out again (*Procedural* back on) left the tile's layers empty
+  but marked changed, and with no layers file to remove the save never cleared the mark (`TileProject::save`: empty layers are saved
+  by doing nothing).
+- **The wall's line vanished**: a kit wall drew no lines of its own (a procedural wall's walkway, foot, steps and ends,
+  `wall_overlay`), so only its centre line on the ground showed, under its pieces and its raised ground. It draws the same lines through
+  its pieces' joints as laid (foot at the level its layer sets, walkway, red uprights at the steps, green crosses at attached ends,
+  its stretches straight), redrawn when it is laid again; the polygons are draped again when a layer changes the ground.
+- ***Procedural* seemed to do nothing but the ground**: every polygon rebuild (models still loading, a layer changing the ground) marks
+  every wall changed, and each remake threw away the wall's pieces being made and started again: on a large tile the procedural
+  pieces were never finished, so the kit pieces stayed. A remake that wants what is being made lets it go on (`WallPreview::parked`).
+- **Barbarian walls under the ground**: steps went only in place of straight pieces, so along a curving line up a hill the wall kept
+  its level and the layer cut it up to 11 m into the slope. A step now also takes the place of a curve or a kink where the ground is a
+  whole step or more off and the step follows the line nearly as well (`STEP_DETOUR`: up to 0.3 of a straight worse): on the port the
+  deepest cut went from 11.1 m to 4.3 m; the fill (10.4 m) is where the line runs down a cliff to the sea faster than steps go.
+  Check platforms: 0 breaks in the wall walks.
+
+Tested (scratch `kitwall/p1..p7.txt` on a copy of middle_men_port_a with its database entry; k1, k3, k6 again: as before).

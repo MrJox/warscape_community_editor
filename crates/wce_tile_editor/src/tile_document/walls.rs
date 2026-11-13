@@ -72,6 +72,10 @@ pub(crate) struct WallPreview {
 
     /// The tile's structure the kit walls' height layers were last swept against (`sweep_wall_ground`: a wall deleted takes its layer out).
     swept: u64,
+
+    /// The job of the wall being remade, taken out while it is (`make_wall_pieces`): one making what is wanted again goes on instead of
+    /// starting over (the walls are remade whenever the polygons are, which on a large tile came often enough that its pieces never were).
+    parked: Option<(usize, WallJob)>,
 }
 
 /// A wall's pieces being made: the job and what applying its result needs.
@@ -268,7 +272,6 @@ impl Tile {
     /// The lines of a wall's layout (the document's world): the outer foot on the ground (orange), the walkway (yellow), the step sections
     /// (red uprights at their ends), the corners (magenta uprights), the attached ends (green crosses).
     pub(crate) fn wall_overlay(&self, elem: usize, o: &mut Overlay) {
-        let Some(l) = self.wall_layout(elem) else { return };
         let u = self.unit();
         let w = |x: f64, y: f64, z: f64| Float3::new((x / u) as f32, (y / u) as f32, (z / u) as f32);
         let (foot, walk, step, corner, end) = (
@@ -278,6 +281,40 @@ impl Tile {
             overlay_colour(1.0, 0.3, 1.0, 1.0),
             overlay_colour(0.3, 1.0, 0.3, 1.0),
         );
+
+        // A kit wall: the same lines through its pieces' joints as laid (its foot on the level its layer puts the ground at), its stretches
+        // straight from end to end.
+        if self.is_wall(elem) && !wce_walls::scene::is_procedural(self.tscene(), elem) {
+            let Some(l) = self.wall_preview.kit_layouts.get(&elem) else { return };
+            let upright = |o: &mut Overlay, p: [f64; 2], level: f64, rgba: u32| o.line(w(p[0], level, p[1]), w(p[0], level + l.walk + 2.0, p[1]), rgba);
+            for p in l.placed.iter().filter(|p| p.joints[0] != p.joints[1]) {
+                let (a, b) = (p.joints[0], p.joints[1]);
+                o.line(w(a[0], p.levels[0] + 0.2, a[1]), w(b[0], p.levels[1] + 0.2, b[1]), foot);
+                o.line(w(a[0], p.levels[0] + l.walk, a[1]), w(b[0], p.levels[1] + l.walk, b[1]), walk);
+                if p.role == wce_walls::kit::Role::Step {
+                    upright(o, a, p.levels[0], step);
+                    upright(o, b, p.levels[1], step);
+                }
+            }
+
+            for st in &l.stretches {
+                o.line(w(st.from[0], st.from_level + l.walk, st.from[1]), w(st.to[0], st.to_level + l.walk, st.to[1]), walk);
+            }
+
+            let ends = [l.placed.first().map(|p| (p.joints[0], p.levels[0])), l.placed.last().map(|p| (p.joints[1], p.levels[1]))];
+            for (k, e) in ends.into_iter().enumerate() {
+                if let (Some(_), Some((p, level))) = (l.attached[k], e) {
+                    let r = 2.0;
+                    o.line(w(p[0] - r, level + l.walk + 0.3, p[1]), w(p[0] + r, level + l.walk + 0.3, p[1]), end);
+                    o.line(w(p[0], level + l.walk + 0.3, p[1] - r), w(p[0], level + l.walk + 0.3, p[1] + r), end);
+                    upright(o, p, level, end);
+                }
+            }
+
+            return;
+        }
+
+        let Some(l) = self.wall_layout(elem) else { return };
 
         let s = &l.plan.samples;
         for p in s.windows(2) {
@@ -429,8 +466,13 @@ impl Tile {
     }
 
     fn make_wall_pieces(&mut self, scene: &mut RenderScene, elem: usize) {
-        // What was being made for it is not wanted any more.
-        self.wall_preview.jobs.remove(&elem);
+        // What was being made for it is wanted only if it is made again the same (`spawn_wall_job`).
+        self.wall_preview.parked = self.wall_preview.jobs.remove(&elem).map(|j| (elem, j));
+        self.make_wall_pieces_now(scene, elem);
+        self.wall_preview.parked = None;
+    }
+
+    fn make_wall_pieces_now(&mut self, scene: &mut RenderScene, elem: usize) {
         self.wall_preview.kit_layouts.remove(&elem);
 
         // A wall of kit pieces (*Procedural* off): laid with the game's own pieces (kit_walls.rs).
@@ -485,6 +527,15 @@ impl Tile {
     /// its door sections, by index among its warped pieces), made from the profile's base and warped; the game's pieces placed as they are
     /// (the plans' caps, towers and bastions, and `rigid`: a kit wall's pieces) drawn whole.
     pub(super) fn spawn_wall_job(&mut self, elem: usize, signature: u64, profile: &'static wce_walls::profile::Profile, plans: Vec<(wce_walls::solver::Plan, Vec<usize>)>, rigid: Vec<(String, wce_walls::pieces::Piece)>) {
+        // Already being made.
+        if let Some((e, job)) = self.wall_preview.parked.take()
+            && e == elem
+            && job.signature == signature
+        {
+            self.wall_preview.jobs.insert(elem, job);
+            return;
+        }
+
         let Some(base) = self.wall_base(profile.key) else { return };
         let (up, down) = (self.wall_base(profile.step_up), self.wall_base(profile.step_down));
         let door = (!profile.door.is_empty()).then(|| self.wall_base(profile.door)).flatten();

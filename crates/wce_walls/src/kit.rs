@@ -638,6 +638,9 @@ pub struct KitLayout {
 
     /// What could not be done (no straight, no cap of a side...).
     pub notes: Vec<String>,
+
+    /// The culture's walk over the level (scene units): a joint's walk is its level plus this.
+    pub walk: f64,
 }
 
 /// A polyline with its lengths.
@@ -776,6 +779,9 @@ const FINISH_REACH: f64 = 3.5;
 /// higher or lower.
 const WALK_SLACK: f64 = 0.5;
 
+/// How much worse (straights of straying) a step laid in place of a curve or kink may follow the line than the piece it replaces.
+const STEP_DETOUR: f64 = 0.3;
+
 /// A procedural stretch at an attached end: about a straight long (from half of one to one and a half).
 const STRETCH_MIN: f64 = 0.5;
 const STRETCH_MAX: f64 = 1.5;
@@ -881,6 +887,7 @@ fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: boo
 
     let straight = f64::from(longest.span);
     let walk = f64::from(longest.entry.at[1]);
+    out.walk = walk;
     let outer = |way: f64| {
         let o = outer_of([way.cos() as f32, way.sin() as f32]);
         if right { [-f64::from(o[0]), -f64::from(o[1])] } else { [f64::from(o[0]), f64::from(o[1])] }
@@ -984,19 +991,21 @@ fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: boo
             break;
         };
 
-        // A step in its place where the ground ahead is nearer the level it goes to (an in-line piece, a step that joins here and that a piece
-        // goes on from).
-        if let Some(g) = ground
-            && in_line(w)
-        {
+        // A step in its place where the ground ahead is nearer the level it goes to (a step that joins here and that a piece goes on from).
+        // In place of an in-line piece; in place of a curve or a kink too where the ground is a whole step or more off, when the step follows
+        // the line nearly as well (a long curve up a hill would otherwise keep its level and be cut into it).
+        if let Some(g) = ground {
             let level = walk_at - walk;
             let d = [heading.cos(), heading.sin()];
             let span = f64::from(w.span);
-            let ahead = [0.5, 0.75, 1.0, 1.25, 1.5].iter().map(|k| g(p[0] + d[0] * span * k, p[1] + d[1] * span * k)).sum::<f64>() / 5.0;
-            let off = |rise: f64| (ahead - level - rise).abs();
+            let there = [0.5, 0.75, 1.0, 1.25, 1.5].iter().map(|k| g(p[0] + d[0] * span * k, p[1] + d[1] * span * k)).sum::<f64>() / 5.0;
+            let off = |rise: f64| (there - level - rise).abs();
+            let cost = |x: &Way| ahead(&line, &laid, x, (p, heading), at, AHEAD);
+            let best_cost = if in_line(w) { None } else { cost(w) };
             let step = steps.iter().copied()
                 .filter(|s| meets(&edges, &s.entry_edges) && laid.iter().any(|n| meets(&s.exit_edges, &n.entry_edges)))
                 .filter(|s| off(f64::from(s.rise)) < off(0.0))
+                .filter(|s| in_line(w) || off(0.0) >= f64::from(s.rise.abs()) && best_cost.zip(cost(s)).is_some_and(|(b, c)| c <= b + straight * STEP_DETOUR))
                 .min_by(|a, b| off(f64::from(a.rise)).total_cmp(&off(f64::from(b.rise))));
             if let Some(s) = step {
                 w = s;
