@@ -718,8 +718,14 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     if let Some(frame) = tool_gizmo {
         gizmo_target = Some((SourceRef::default(), frame));
     } else if e.viewport.gizmo != GizmoMode::Off && !e.viewport.game_view && !claims && !e.selection.is_empty() {
+        // No gizmo on an item the mouse must not move (TEd's draggable flag off).
         let primary = e.selection.items()[0];
-        gizmo_target = e.docs.find(primary.doc).and_then(|d| d.item_transform(primary)).map(|world| (primary, world));
+        gizmo_target = e
+            .docs
+            .find(primary.doc)
+            .filter(|d| !d.item_locked(primary))
+            .and_then(|d| d.item_transform(primary))
+            .map(|world| (primary, world));
     }
 
     let mut using_gizmo = false;
@@ -859,9 +865,10 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             }
 
             let delta = moved * inverse(&frame);
-            let items = e.selection.items().to_vec();
+            let mut items = e.selection.items().to_vec();
             let gesture = e.viewport.gesture;
             if let Some(d) = e.docs.find_mut(primary.doc).filter(|_| !tools) {
+                items.retain(|&i| !d.item_locked(i));
                 if vp_gizmo == GizmoMode::Scale {
                     // ImGuizmo keeps the matrix the drag began with: its axes' lengths are the scale since then.
                     let m = &moved.m;

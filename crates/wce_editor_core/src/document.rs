@@ -188,6 +188,12 @@ pub trait Document: Any {
         None
     }
 
+    /// An item the mouse must not move (TEd's draggable flag off): the gizmo is not shown for it, and a move of a selection leaves it.
+    fn item_locked(&self, item: SourceRef) -> bool {
+        let _ = item;
+        false
+    }
+
     /// Moves items by a world-space delta. `gesture` is constant during one drag so that the commands merge into one undo entry.
     fn transform_items(&mut self, items: &[SourceRef], delta: &Float4x4, gesture: u64) {
         let _ = (items, delta, gesture);
