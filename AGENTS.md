@@ -12,6 +12,8 @@ Use "grill me" technique when a feature implementation request is submitted.
 
 ## Working rules
 
+- **Formatting:** after any change to Rust code, run `cargo fmt --all` before committing, and commit the formatted result.
+
 - **Byte-identical round trips are absolute**, unless the user explicitly says otherwise for a case (for example float precision in
   TEd files): a round trip and a minimal edit (only the edited spans change) never regress, BOB equivalence never regresses, unknown
   bytes are preserved, and no parser drops data to pass a gate.
