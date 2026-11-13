@@ -664,7 +664,7 @@ impl Tile {
     }
 
     /// How many destruction levels a building has: its piece files' `_destructNN` (1: one, intact).
-    fn building_levels(&self, key: &str) -> u32 {
+    pub(super) fn building_levels(&self, key: &str) -> u32 {
         let Some(files) = self.files.as_deref() else { return 1 };
         let folder = wce_walls::building::folder(key);
         files

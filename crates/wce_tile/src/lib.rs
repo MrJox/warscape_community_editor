@@ -6,6 +6,7 @@ pub mod blend_field;
 pub mod brush_image;
 pub mod building_db;
 pub mod building_pieces;
+pub mod building_spline;
 pub mod export_as_prop;
 pub mod falloff;
 pub mod ground_type_field;

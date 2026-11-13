@@ -20,7 +20,8 @@ pub fn is_spline(kind: &str) -> bool {
 /// The editor's own splines (procedural roads and walls): polygons whose points may carry handles as TEd's splines do (user 2026-11-08:
 /// to turn a point, not only move it). A handle not written (missing or empty) is the Catmull-Rom one ([`catmull_handles`]), the curve
 /// they had before handles: the road's exactly, the wall's (centripetal) near it.
-pub const OWN_KINDS: [&str; 2] = [crate::new_instances::ROAD_SPLINE, crate::new_instances::WALL_SPLINE];
+pub const OWN_KINDS: [&str; 3] =
+    [crate::new_instances::ROAD_SPLINE, crate::new_instances::WALL_SPLINE, crate::building_spline::BUILDING_SPLINE];
 
 /// Whether an element's points have handles: TEd's splines and the editor's own.
 pub fn has_handles(kind: &str) -> bool {

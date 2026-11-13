@@ -528,6 +528,7 @@ pub struct TileTool {
 
     /// The reference unit.
     pub(crate) ref_units: crate::ref_units::RefUnits,
+    pub(crate) bspline_ui: crate::building_spline_ui::BuildingSplineUi,
     pub(crate) draft: Option<wce_tile_editor::tile_document::Draft>,
     pub(crate) making: Option<String>,
     pub(crate) create: crate::create_panel::CreateUi,
@@ -832,6 +833,7 @@ impl Default for TileTool {
             point_drag: false,
             point_gesture: 0,
             ref_units: Default::default(),
+            bspline_ui: Default::default(),
             drawing: false,
             flip: None,
             flip_asked: false,
@@ -1912,10 +1914,11 @@ impl TileTool {
                 Ok(0) => {}
                 Ok(n) => {
                     log::info(format!(
-                        "Import from Assembly Kit: the layer '{}' replaced by the project's {n} procedural wall(s); edits of their pieces in TEd are not kept",
-                        wce_walls::export::KIT_LAYER
+                        "Import from Assembly Kit: the layers '{}' and '{}' replaced by the project's {n} procedural wall(s) and building spline(s); edits of their pieces in TEd are not kept",
+                        wce_walls::export::KIT_LAYER,
+                        wce_tile_editor::tile_document::building_splines::KIT_LAYER
                     ));
-                    msg += &format!("; {n} procedural wall(s) put back in place of their pieces");
+                    msg += &format!("; {n} procedural wall(s) and building spline(s) put back in place of their pieces");
                 }
                 Err(err) => log::warn(format!("Import from Assembly Kit: the procedural walls could not be put back: {err}")),
             }
@@ -4817,6 +4820,7 @@ impl Tool for TileTool {
             self.ref_units.draw(e, id);
             self.inspect_measure(e, id);
             self.inspect_angle(e, id);
+            self.inspect_building_spline(e, id);
         }
     }
 

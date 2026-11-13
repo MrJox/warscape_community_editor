@@ -441,6 +441,21 @@ fn up_to(n: Double3) -> Double3x3 {
     Double3x3 { m: [[c + t * kx * kx, -sn * kz, t * kx * kz], [sn * kz, c, -sn * kx], [t * kx * kz, sn * kx, c + t * kz * kz]] }
 }
 
+/// The turn that tilts something standing at `at` (world metres, x and z) with its x along `x` (a unit direction on the ground) onto the
+/// ground under it: the slope read `reach[0]` metres each way along it and `reach[1]` across, its up onto that plane's normal, its heading
+/// kept. Applied before its own turn (`ground_tilt(..) * rotation`).
+#[must_use]
+pub fn ground_tilt(x: [f64; 2], at: [f64; 2], [along, across]: [f64; 2], ground: &dyn Fn(f64, f64) -> f64) -> Double3x3 {
+    let c = [-x[1], x[0]];
+    let h = |d: [f64; 2], k: f64| ground(at[0] + d[0] * k, at[1] + d[1] * k);
+    let a = Double3::new(x[0] * 2.0 * along, h(x, along) - h(x, -along), x[1] * 2.0 * along);
+    let b = Double3::new(c[0] * 2.0 * across, h(c, across) - h(c, -across), c[1] * 2.0 * across);
+    let cross = Double3::new(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+    let len = (cross.x * cross.x + cross.y * cross.y + cross.z * cross.z).sqrt().max(1e-12);
+    let up = if cross.y < 0.0 { cross * (-1.0 / len) } else { cross * (1.0 / len) };
+    up_to(up)
+}
+
 /// [`fit`], its parts dressed as `dress` says.
 ///
 /// # Errors
@@ -472,15 +487,8 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
         let mut world_rot = euler_matrix(Double3::new(turn, 0.0, 0.0)) * part.rotation;
 
         // A building tilted to the ground under it: its slope along it (end to end) and across.
-        if let Some([along, across]) = dress.tilt.filter(|_| part.solid) {
-            let c = [-x[1], x[0]];
-            let h = |d: [f64; 2], k: f64| ground(tilt_at[0] + d[0] * k, tilt_at[1] + d[1] * k);
-            let a = Double3::new(x[0] * 2.0 * along, h(x, along) - h(x, -along), x[1] * 2.0 * along);
-            let b = Double3::new(c[0] * 2.0 * across, h(c, across) - h(c, -across), c[1] * 2.0 * across);
-            let cross = Double3::new(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
-            let len = (cross.x * cross.x + cross.y * cross.y + cross.z * cross.z).sqrt().max(1e-12);
-            let up = if cross.y < 0.0 { cross * (-1.0 / len) } else { cross * (1.0 / len) };
-            world_rot = up_to(up) * world_rot;
+        if let Some(reach) = dress.tilt.filter(|_| part.solid) {
+            world_rot = ground_tilt(x, tilt_at, reach, ground) * world_rot;
         }
 
         // Its own height in the piece kept over the ground (a bank's mesh sunk into it).

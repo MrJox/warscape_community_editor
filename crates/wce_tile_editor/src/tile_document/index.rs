@@ -164,6 +164,7 @@ pub fn polygon_colour(t: &str) -> [f32; 3] {
         "SEGMENTED_SPLINE_INSTANCE" => [0.8, 0.62, 0.4],
         "WceWallSpline" => [0.75, 0.75, 0.75],
         "WceRoadSpline" => [0.8, 0.62, 0.4],
+        "WceBuildingSpline" => [0.85, 0.55, 0.3],
         "WceMeasureLine" => [1.0, 0.95, 0.3],
         "WceAngleFinder" => [0.45, 0.85, 1.0],
         _ => [0.3, 0.9, 0.9],

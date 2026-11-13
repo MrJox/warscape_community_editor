@@ -965,6 +965,7 @@ impl TedScene {
             crate::new_instances::WALL_SPLINE
             | crate::new_instances::ROAD_SPLINE
             | crate::new_instances::ROAD_GUIDE
+            | crate::building_spline::BUILDING_SPLINE
             | crate::new_instances::MEASURE_LINE
             | crate::new_instances::ANGLE_FINDER => {
                 for (k, v) in crate::new_instances::template(kind).map_or(&[][..], |t| t.attrs) {
