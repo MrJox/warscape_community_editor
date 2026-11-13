@@ -526,6 +526,11 @@ impl Editor {
         Some((t.width(), t.height(), t.read_rgba8(&self.dev, &self.ctx)?))
     }
 
+    /// Starts copying the viewport's last image back without waiting for the GPU (`Readback::take` reads it a frame or more later).
+    pub fn start_viewport_readback(&self, rb: &mut wce_render::image_io::Readback) -> bool {
+        self.viewport.target().texture().is_some_and(|t| rb.start(&self.dev, &self.ctx, t))
+    }
+
     pub fn context(&self) -> &ID3D11DeviceContext {
         &self.ctx
     }
