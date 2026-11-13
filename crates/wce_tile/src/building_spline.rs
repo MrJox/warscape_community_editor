@@ -76,8 +76,10 @@ pub struct Settings {
     /// The space between one building and the next (metres; below 0 they overlap).
     pub gap: f64,
 
-    /// Each building tilted to the slope under it, end to end and across (else upright).
+    /// Each building tilted to the slope under it, end to end (else upright); and across too (else it stays level across, leaning only
+    /// along the line).
     pub align: bool,
+    pub tilt_across: bool,
 
     /// The line closes back to its first point.
     pub closed: bool,
@@ -203,7 +205,8 @@ pub fn lay(
 
     // The buildings, end to end: each one's stretch (where it starts, how long) and the way its chord goes.
     let mut out = vec![];
-    let mut runs: Vec<(f64, f64, [f64; 2])> = vec![];
+    // Each building's ends where it stands (jittered), and the way it runs from one to the other.
+    let mut stood: Vec<Stood> = vec![];
     let mut s = 0.0;
     for i in 0..MAX_BUILDINGS {
         let key = pick(&settings.keys, i, 1);
@@ -221,33 +224,32 @@ pub fn lay(
         let right = [chord[1], -chord[0]];
         let side = (roll(settings.seed, i, 2) * 2.0 - 1.0) * settings.side_jitter;
         let mid = [(a[0] + b[0]) * 0.5 + right[0] * side, (a[1] + b[1]) * 0.5 + right[1] * side];
-        out.push(stand(key, &footprint, mid, chord, settings, (i, 0), levels, ground));
-        runs.push((s, length, chord));
+        let (laid, ends) = stand(key, &footprint, mid, chord, settings, (i, 0, true), levels, ground);
+        out.push(laid);
+        stood.push(ends);
         s += (length + settings.gap).max(MIN_LENGTH);
     }
 
-    // The joiners: one on each joint, in the middle of the gap, turned between the two buildings it joins; on a closed line the joint that
-    // closes it too; at the ends of an open one when asked.
-    if !settings.joiners.is_empty() && !runs.is_empty() {
-        let mut joints = vec![];
-        let end_of = |r: &(f64, f64, [f64; 2])| r.0 + r.1;
-        for w in runs.windows(2) {
-            joints.push((end_of(&w[0]) + (w[1].0 - end_of(&w[0])) * 0.5, mean(w[0].2, w[1].2)));
-        }
-
-        let (first, last) = (runs[0], runs[runs.len() - 1]);
-        if settings.closed && runs.len() > 1 {
-            let s = (end_of(&last) + settings.gap.max(0.0) * 0.5).min(total + first.0);
-            joints.push((s, mean(last.2, first.2)));
+    // The joiners: one on each joint, between where the two buildings it joins end and start as they stand (turned and moved by their
+    // jitter), along the way from one to the other; on a closed line the joint that closes it too; at the ends of an open one when asked.
+    if !settings.joiners.is_empty() && !stood.is_empty() {
+        let joint = |a: &Stood, b: &Stood| {
+            let at = [(a.end[0] + b.start[0]) * 0.5, (a.end[1] + b.start[1]) * 0.5];
+            (at, mean(a.way, b.way))
+        };
+        let mut joints = stood.windows(2).map(|w| joint(&w[0], &w[1])).collect::<Vec<_>>();
+        let (first, last) = (&stood[0], &stood[stood.len() - 1]);
+        if settings.closed && stood.len() > 1 {
+            joints.push(joint(last, first));
         } else if !settings.closed && settings.joiner_ends {
-            joints.insert(0, (first.0, first.2));
-            joints.push((end_of(&last), last.2));
+            joints.insert(0, (first.start, first.way));
+            joints.push((last.end, last.way));
         }
 
         for (j, (at, way)) in joints.into_iter().enumerate() {
             let key = pick(&settings.joiners, j, 11);
             let footprint = extent(&key);
-            out.push(stand(key, &footprint, point(at), way, settings, (j, 10), levels, ground));
+            out.push(stand(key, &footprint, at, way, settings, (j, 10, false), levels, ground).0);
         }
     }
 
@@ -266,8 +268,16 @@ fn mean(a: [f64; 2], b: [f64; 2]) -> [f64; 2] {
     if m[0].hypot(m[1]) < 1e-6 { a } else { unit(m) }
 }
 
-/// A building stood with its middle at `mid` (world metres, x and z) and its long axis along `way`: flipped, turned and damaged by its
-/// chances (rolled by `(index, salt base)`), tilted to the ground when the settings align.
+/// Where a building stands along the line: its ends (world metres, x and z, in the line's order) and the way from one to the other.
+#[derive(Clone, Copy, Debug)]
+struct Stood {
+    start: [f64; 2],
+    end: [f64; 2],
+    way: [f64; 2],
+}
+
+/// A building stood with its middle at `mid` (world metres, x and z) and its long axis along `way`: flipped, damaged and (`jitter`) turned
+/// by its chances (rolled by `(index, salt base)`), tilted to the ground when the settings align. Also where its ends are.
 #[allow(clippy::too_many_arguments)]
 fn stand(
     key: String,
@@ -275,22 +285,24 @@ fn stand(
     mid: [f64; 2],
     way: [f64; 2],
     settings: &Settings,
-    (i, base): (usize, u64),
+    (i, base, jitter): (usize, u64, bool),
     levels: &dyn Fn(&str) -> u32,
     ground: &dyn Fn(f64, f64) -> f64,
-) -> Laid {
+) -> (Laid, Stood) {
     let (lo, hi) = footprint.along();
     let length = along_length(footprint);
-    let mut dir = way;
-    if roll(settings.seed, i, base + 3) < settings.flip {
-        dir = [-dir[0], -dir[1]];
+    // The way it runs along the line, turned by its jitter; its model's x (or z) that way or, flipped, the other.
+    let mut way = way;
+    let yaw = (roll(settings.seed, i, base + 4) * 2.0 - 1.0) * settings.yaw_jitter.to_radians();
+    if jitter && yaw != 0.0 {
+        let (c, sn) = (yaw.cos(), yaw.sin());
+        way = [way[0] * c - way[1] * sn, way[0] * sn + way[1] * c];
     }
 
-    let yaw = (roll(settings.seed, i, base + 4) * 2.0 - 1.0) * settings.yaw_jitter.to_radians();
-    if yaw != 0.0 {
-        let (c, sn) = (yaw.cos(), yaw.sin());
-        dir = [dir[0] * c - dir[1] * sn, dir[0] * sn + dir[1] * c];
-    }
+    let half = length * 0.5;
+    let ends =
+        Stood { start: [mid[0] - way[0] * half, mid[1] - way[1] * half], end: [mid[0] + way[0] * half, mid[1] + way[1] * half], way };
+    let dir = if roll(settings.seed, i, base + 3) < settings.flip { [-way[0], -way[1]] } else { way };
 
     // The model's middle over `mid`: its pivot is where its middle is not.
     let centre = (lo + hi) * 0.5;
@@ -300,7 +312,13 @@ fn stand(
     let mut rotation = euler_matrix(Double3::new(heading(dir) + quarter, 0.0, 0.0));
     let axis = if along_z { Double3::new(0.0, 0.0, 1.0) } else { Double3::new(1.0, 0.0, 0.0) };
     let position = if settings.align {
-        rotation = ground_tilt(dir, mid, [length * 0.5, TILT_ACROSS], ground) * rotation;
+        // Level across unless asked: the ground read on its own line only.
+        let along_only = |x: f64, z: f64| {
+            let d = (x - mid[0]) * dir[0] + (z - mid[1]) * dir[1];
+            ground(mid[0] + dir[0] * d, mid[1] + dir[1] * d)
+        };
+        let tilt_ground: &dyn Fn(f64, f64) -> f64 = if settings.tilt_across { ground } else { &along_only };
+        rotation = ground_tilt(dir, mid, [half, TILT_ACROSS], tilt_ground) * rotation;
         let back = rotation * (axis * -centre);
         [mid[0] + back.x, ground(mid[0], mid[1]) + back.y, mid[1] + back.z]
     } else {
@@ -315,7 +333,7 @@ fn stand(
         0
     };
 
-    Laid { key, position, rotation, level }
+    (Laid { key, position, rotation, level }, ends)
 }
 
 /// A building laid as an instance's text (`BUILDING_INSTANCE`, freeform at its height as the kit's tiles keep one, the height again in
@@ -500,6 +518,43 @@ mod tests {
 
         // No joiners, none laid.
         assert!(lay(&line, &settings(&["f"]), &extent, &|_| 1, &flat).iter().all(|l| l.key == "f"));
+    }
+
+    #[test]
+    fn joiners_follow_the_jittered_ends() {
+        // Turned up to 20 degrees and moved up to 1 m across: each post between the end of one fence and the start of the next.
+        let line = [[0.0, 0.0], [60.0, 0.0]];
+        let post = Footprint::centred(0.4, 0.4);
+        let extent = |k: &str| if k == "post" { post } else { Footprint::centred(5.0, 0.2) };
+        let s = Settings { joiners: vec!["post".into()], yaw_jitter: 20.0, side_jitter: 1.0, ..settings(&["f"]) };
+        let laid = lay(&line, &s, &extent, &|_| 1, &flat);
+        let (fences, posts): (Vec<_>, Vec<_>) = laid.iter().partition(|l| l.key == "f");
+        assert_eq!(posts.len(), fences.len() - 1);
+        let ends = |l: &Laid| {
+            let x = l.rotation * Double3::new(1.0, 0.0, 0.0);
+            let x = if x.x < 0.0 { x * -1.0 } else { x };
+            ([l.position[0] - x.x * 2.5, l.position[2] - x.z * 2.5], [l.position[0] + x.x * 2.5, l.position[2] + x.z * 2.5])
+        };
+        for (k, p) in posts.iter().enumerate() {
+            let (a, b) = (ends(fences[k]).1, ends(fences[k + 1]).0);
+            let m = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+            assert!((p.position[0] - m[0]).hypot(p.position[2] - m[1]) < 1e-6, "{k}: {:?} {m:?}", p.position);
+        }
+
+        assert!(fences.iter().any(|f| f.position[2].abs() > 0.1), "jittered across");
+    }
+
+    #[test]
+    fn tilting_across_is_optional() {
+        // A hillside rising across the line (+z), level along it.
+        let line = [[0.0, 0.0], [10.0, 0.0]];
+        let side = |_: f64, z: f64| z * 0.5;
+        let up = |l: &Laid| l.rotation * Double3::new(0.0, 1.0, 0.0);
+        let s = Settings { align: true, ..settings(&["f"]) };
+        let level = lay(&line, &s, &|_| fx(0.0, 5.0), &|_| 1, &side);
+        assert!(up(&level[0]).z.abs() < 1e-9, "{:?}", up(&level[0]));
+        let leaning = lay(&line, &Settings { tilt_across: true, ..s }, &|_| fx(0.0, 5.0), &|_| 1, &side);
+        assert!(up(&leaning[0]).z.abs() > 0.1, "{:?}", up(&leaning[0]));
     }
 
     #[test]

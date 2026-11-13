@@ -110,6 +110,7 @@ impl Prop {
             "bspline_seed" => "Seed",
             "bspline_gap" => "Gap",
             "bspline_align" => "Align to ground",
+            "bspline_tilt_across" => "Tilt across slope",
             "bspline_closed" => "Closed loop",
             "bspline_offset" => "Side offset",
             "bspline_damage" => "Damage chance",
@@ -360,6 +361,7 @@ const BUILDING_SPLINE: &[Prop] = &[
     p("bspline_seed", Kind::Int(0, 9999)),
     p("bspline_gap", Kind::Slider(-5.0, 20.0)),
     p("bspline_align", Kind::Bool),
+    p("bspline_tilt_across", Kind::Bool),
     p("bspline_closed", Kind::Bool),
     p("bspline_offset", Kind::Slider(-20.0, 20.0)),
     p("bspline_damage", Kind::Slider(0.0, 1.0)),
@@ -389,8 +391,12 @@ pub fn building_spline_tip(attr: &str) -> Option<&'static str> {
         "bspline_seed" => "The seed of everything random here: the picks, the damage, the flips and the jitter",
         "bspline_gap" => "The space between one building and the next (metres; below 0 they overlap)",
         "bspline_align" => {
-            "Tilts each building to the slope under it, end to end and across (as a road's fences), so a fence follows the ground. \
+            "Tilts each building to the slope under it, end to end, so a fence follows the ground (across too with Tilt across slope). \
             Off: upright, its pivot on the ground"
+        }
+        "bspline_tilt_across" => {
+            "With Align to ground: each building also leans with the slope across it (on a hillside, sideways). Off: it follows the \
+            slope along the line only and stays level across"
         }
         "bspline_closed" => "Closes the line back to its first point (a ring: a pen, an enclosure)",
         "bspline_offset" => "How far to the right of the line the buildings stand, as it runs from its first point (metres; below 0: left)",

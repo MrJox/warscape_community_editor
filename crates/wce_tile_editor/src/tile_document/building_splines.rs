@@ -65,6 +65,7 @@ impl Tile {
             seed: number("bspline_seed", 1.0).max(0.0) as u32,
             gap: number("bspline_gap", 0.0),
             align: flag("bspline_align", true),
+            tilt_across: flag("bspline_tilt_across", false),
             closed: self.building_spline_closed(elem),
             offset: number("bspline_offset", 0.0),
             damage: number("bspline_damage", 0.0).clamp(0.0, 1.0),
