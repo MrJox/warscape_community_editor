@@ -1773,8 +1773,10 @@ impl Tile {
         self.refresh_roads();
 
         // What the layers wrote is no edit of the history's, which is what the terrain follows otherwise.
+        // The polygons lie on it too (a kit wall's own layer raised the ground over its line, which was left under it).
         if std::mem::take(&mut self.layers_shown) {
             self.update_terrain(scene, false);
+            self.polygons_dirty = true;
         }
 
         self.show_road_items(scene);

@@ -161,7 +161,7 @@ impl Tile {
             }
 
             self.sweep_wall_ground();
-
+            self.covers_dirty.insert(elem);
             self.drop_unused_wall_pieces();
             return;
         };
@@ -203,7 +203,9 @@ impl Tile {
             h.finish()
         };
 
+        // Its lines (`wall_overlay`) drawn through the pieces as laid now.
         self.wall_preview.kit_layouts.insert(elem, layout);
+        self.covers_dirty.insert(elem);
 
         // As it was: its pieces stay where they are.
         if Some(signature) == before && !ids.is_empty() {

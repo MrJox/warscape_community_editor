@@ -644,6 +644,9 @@ impl TileProject {
                 wrote = true;
             }
 
+            // Emptied with no file to remove (a kit wall's layer made and swept again before any save): nothing to write, and saved.
+            Some(layers) if layers.is_empty() => layers.dirty = false,
+
             _ => {}
         }
 
