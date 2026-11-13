@@ -60,6 +60,9 @@ pub(crate) struct Visual {
     /// A sun drag going on: the history position it started at (its edits are one entry, made again each frame).
     sun_from: Option<usize>,
 
+    /// The disc is being dragged (`sun_from` is its start); else `sun_from` is Ctrl+L's.
+    sun_disc: bool,
+
     /// Ctrl+L's drag: the azimuth and elevation it has reached (degrees, the file's).
     sun_key: Option<(f32, f32)>,
 
@@ -223,6 +226,11 @@ impl Visual {
                     return false;
                 }
 
+                // Ctrl+L held owns the sun: the click is swallowed (no second drag of it, no camera turn).
+                if self.sun_key.is_some() {
+                    return true;
+                }
+
                 let at_wind = self.wind_tip.is_some_and(|s| (s.x - at.x).hypot(s.y - at.y) <= SUN_GRAB);
                 let at_sun = self.sun_screen.is_some_and(|s| (s.x - at.x).hypot(s.y - at.y) <= SUN_GRAB);
                 let here = e.docs.find(doc).map(|d| d.history().position());
@@ -230,9 +238,10 @@ impl Visual {
                     self.wind_from = here;
                 } else if at_sun {
                     self.sun_from = here;
+                    self.sun_disc = self.sun_from.is_some();
                 }
 
-                self.sun_from.is_some() || self.wind_from.is_some()
+                self.sun_disc || self.wind_from.is_some()
             }
 
             ViewportEventKind::Drag if self.wind_from.is_some() => {
@@ -241,7 +250,7 @@ impl Visual {
             }
 
             ViewportEventKind::Drag => {
-                let Some(from) = self.sun_from else { return false };
+                let Some(from) = self.sun_from.filter(|_| self.sun_disc) else { return self.sun_key.is_some() };
                 let Some((_, d)) = e.viewport.ray(ev.x, ev.y) else { return true };
                 let Some((_, _, yaw)) = Self::file_sun(e, doc, shown) else { return true };
                 let (az, el) = sun_angles(d);
@@ -249,8 +258,14 @@ impl Visual {
                 true
             }
 
+            // The disc's or the arrow's drag ends; a hold of Ctrl+L goes on (its own end is the key's release).
             ViewportEventKind::Release => {
-                if (self.sun_from.take().is_some() || self.wind_from.take().is_some())
+                let disc = std::mem::take(&mut self.sun_disc);
+                if disc {
+                    self.sun_from = None;
+                }
+
+                if (disc || self.wind_from.take().is_some())
                     && let Some(d) = e.docs.find_mut(doc)
                 {
                     d.history_mut().break_merge();
@@ -265,7 +280,8 @@ impl Visual {
 
     /// Ctrl+L held over the viewport: the mouse's motion turns the sun (sideways: azimuth, up and down: elevation), one undo entry per hold.
     fn sun_key_drag(&mut self, e: &mut Editor, doc: DocumentId, shown: &EnvironmentParams) {
-        let held = doc != 0 && self.handles() && !gui::io().WantTextInput && shortcuts::down(SUN_DRAG);
+        // A drag of the disc owns the sun until its release: Ctrl+L pressed meanwhile waits.
+        let held = doc != 0 && !self.sun_disc && self.handles() && !gui::io().WantTextInput && shortcuts::down(SUN_DRAG);
         if !held {
             if self.sun_key.take().is_some() {
                 self.sun_from = None;
