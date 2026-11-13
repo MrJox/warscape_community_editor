@@ -7,6 +7,7 @@ mod gallery;
 mod mix;
 pub mod picker;
 mod preview;
+mod sky_strip;
 pub mod tool;
 pub mod variation_editor;
 mod visual;

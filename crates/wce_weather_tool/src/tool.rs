@@ -143,6 +143,9 @@ pub struct WeatherTool {
     /// The Weather gallery window (gallery.rs).
     pub(crate) gallery: crate::gallery::Gallery,
 
+    /// The Inspector's sky strips (sky_strip.rs).
+    pub(crate) sky: crate::sky_strip::SkyStrips,
+
     /// A file to open once the panels are drawn (the mix just saved).
     open_after: Option<String>,
 }
@@ -176,6 +179,7 @@ impl Default for WeatherTool {
             visual: crate::visual::Visual::default(),
             mix: crate::mix::Mix::default(),
             gallery: crate::gallery::Gallery::default(),
+            sky: crate::sky_strip::SkyStrips::default(),
             open_after: None,
         }
     }
@@ -819,7 +823,18 @@ impl Tool for WeatherTool {
         let Some(d) = active_xml(e).filter(|d| d.is_environment()) else { return false };
         gui::text_colored(theme::dim(), &d.title());
         gui::text_colored(theme::dim(), "Hover a name for what it does. A dim name is not in the file yet: editing it adds it.");
-        d.inspect_environment(ins);
+        let strips = crate::sky_strip::SkyStrips::images(e);
+        let Some(d) = active_xml(e).filter(|d| d.is_environment()) else { return false };
+        d.inspect_environment_with(ins, &mut |section, ins| {
+            if section == "Sky" && !strips.is_empty() {
+                ins.hint(
+                    "The sky the game draws with this file (and the clouds and fog in it), looking up from the horizon towards the sun \
+                     and away from it, through the whole pipeline: each strip's exposure settles on what it sees, as the game's does when \
+                     the camera looks there.",
+                );
+                ins.images("sky_strips", "the sky, looking up", &strips);
+            }
+        });
         true
     }
 
@@ -938,6 +953,8 @@ impl Tool for WeatherTool {
         self.last_params = slot.resolved();
 
         self.gallery.update(e);
+        let shown = self.last_params.clone();
+        self.sky.update(e, self.env_doc != 0, &shown);
 
         // Edit state of the open documents the particle system reads (vfx/ and weather_definitions.xml).
         let mut rev = 0u64;

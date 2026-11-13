@@ -878,6 +878,12 @@ impl XmlFileDocument {
 
     /// The Inspector of an environment or lighting file: every section, then the attributes no section lists.
     pub fn inspect_environment(&mut self, ins: &mut dyn Inspector) {
+        self.inspect_environment_with(ins, &mut |_, _| {});
+    }
+
+    /// `inspect_environment`, with `extra` called at the end of each section (its title) for rows of the caller's (the Weather tool's
+    /// sky strips under Sky).
+    pub fn inspect_environment_with(&mut self, ins: &mut dyn Inspector, extra: &mut dyn FnMut(&str, &mut dyn Inspector)) {
         let id = self.id();
         ins.begin(id, 0);
         let defaults = EnvironmentParams::default();
@@ -921,6 +927,10 @@ impl XmlFileDocument {
 
                 if s.title == "Fog" {
                     self.fog_curve(ins);
+                }
+
+                if !s.each_element {
+                    extra(s.title, ins);
                 }
             }
         }

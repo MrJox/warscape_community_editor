@@ -119,6 +119,11 @@ pub trait Inspector {
         let _ = text;
     }
 
+    /// Pictures side by side under a label, each (texture id, width, height in points, caption under it). Read only. Nothing by default.
+    fn images(&mut self, field: &str, label: &str, images: &[(u64, f32, f32, &str)]) {
+        let _ = (field, label, images);
+    }
+
     /// A small chart under a label, full width: each series is its colour (RGBA) and its values from 0 to 1, evenly spaced along x;
     /// `x_end` names the right end of the x axis. Read only. Nothing by default.
     fn plot(&mut self, field: &str, label: &str, series: &[([f32; 4], Vec<f32>)], x_end: &str) {
