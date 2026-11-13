@@ -75,3 +75,21 @@ lead: four `vik_small_rocks_group_06` of category generic (vanilla's rocks there
 User, 2026-11-12: on port tiles Check platforms lists many `bridge_wood_1` pieces (piers: buildings of the bridge category that reach the
 ground on one side by design) as bridges units cannot cross, and they flood the list. Leave out (or list apart) the bridges that are piers.
 Not for now.
+
+## Tools sharing one scene: what each tool shows (to discuss)
+
+Noted 2026-11-13 (user: undecided, needs discussion). The Tile, Prefab, Terrain and Weather tools share one renderer and one scene. That is
+right most of the time: the Weather tool edits the weather of the open tile, and later a tile of the tilemap could be opened in the Tile
+tool from the map. But a tile open in the Tile tool is still drawn when the Terrain tool shows a tilemap: both at once, the tile at its own
+origin with no relation to the map. What is shared today:
+- **Scene layers**: every open document has a layer (`DocumentManager`), all drawn; only a stand-in (the Weather tool's sample map) hides
+  while a document with its own ground (`Document::shows_scene`: a tile, a map) is open. A Prefab tool stage is a tile document too.
+- **Weather light**: one editor-wide preview (`Editor::set_weather_preview`), set by both the Tile and the Terrain tool; the last one wins.
+- **Camera**: one, shared by every tool.
+- Also a global: the scene's ground overlay (`RenderScene::set_ground_overlay`, the Terrain tool's map panel).
+
+Options raised, none chosen:
+- Each scene tool shows only its own document (switching tools swaps them); the Weather tool lights the last scene tool's scene.
+- The Terrain tool draws an open tile at its placements on the map, in place of the map's copy (towards "click a tile, edit it in the
+  Tile tool"); the Tile tool's Map context already does the reverse.
+- A camera per tool or the shared one; a weather per scene tool or the shared one.
