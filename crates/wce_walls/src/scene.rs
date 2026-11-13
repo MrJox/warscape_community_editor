@@ -224,8 +224,8 @@ const INSTANCE_ATTRS: [(&str, &str); 15] = [
     ("dirt_level", "1"), ("dockable", "true"),
 ];
 
-/// Replaces a wall by the buildings of its pieces: a `BUILDING_INSTANCE` per piece (key, the piece's frame as its world transform) in
-/// the wall's layer, or in the top layer named `into` (made when there is none), the wall removed. Returns the new elements' count.
+/// Replaces a wall by the buildings of its pieces (`place_pieces`) in the wall's layer, or in the top layer named `into` (made when there
+/// is none), the wall removed. Returns the new elements' count.
 ///
 /// # Errors
 ///
@@ -233,9 +233,30 @@ const INSTANCE_ATTRS: [(&str, &str); 15] = [
 pub fn lower(scene: &mut TedScene, wall: usize, placed: &[(String, Piece)], into: Option<&str>) -> Result<usize, String> {
     let layer = match into {
         Some(name) => top_layer(scene, name)?,
-        None => scene.doc().elements()[wall].parent.and_then(|c| scene.doc().elements()[c].parent).or(scene.scene_graph()).ok_or("the wall is in no layer")?,
+        None => holder(scene, wall).or(scene.scene_graph()).ok_or("the wall is in no layer")?,
     };
     let name = scene.name(wall);
+    place_pieces(scene, layer, &name, placed)?;
+
+    // The layer comes after the wall (it is made at the end): its index stays.
+    scene.remove(wall)?;
+    Ok(placed.len())
+}
+
+/// The layer or group an element is in (the parent of its `children`).
+pub fn holder(scene: &TedScene, elem: usize) -> Option<usize> {
+    let els = scene.doc().elements();
+    els[elem].parent.and_then(|c| els[c].parent)
+}
+
+/// A `BUILDING_INSTANCE` per piece of a wall named `name` (key, the piece's frame as its world transform: scene units, its yaw) in `layer`
+/// (a layer or a group), as a placed fort wall is (breachable, dockable, intact, freeform). The new elements, in order.
+///
+/// # Errors
+///
+/// The layer has no children element, or the text can't be spliced.
+pub fn place_pieces(scene: &mut TedScene, layer: usize, name: &str, placed: &[(String, Piece)]) -> Result<Vec<usize>, String> {
+    let mut out = vec![];
     for (key, piece) in placed {
         let mut attrs = INSTANCE_ATTRS.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect::<Vec<_>>();
         attrs.push(("key".to_owned(), key.clone()));
@@ -243,11 +264,28 @@ pub fn lower(scene: &mut TedScene, wall: usize, placed: &[(String, Piece)], into
         let e = scene.add_instance(Some(layer), "BUILDING_INSTANCE", &attrs)?;
         set_world_position(scene, e, Double3::new(piece.origin[0], piece.origin[1], piece.origin[2]));
         set_world_rotation(scene, e, &euler_matrix(Double3::new(-piece.yaw, 0.0, 0.0)));
+        out.push(e);
     }
 
-    // The layer comes after the wall (it is made at the end): its index stays.
-    scene.remove(wall)?;
-    Ok(placed.len())
+    Ok(out)
+}
+
+/// A layer's export type that leaves it out of the game (TEd's *Don't Export*).
+pub const EXPORT_OFF: &str = "LayerExportType_Off";
+
+/// Whether an element goes into the game: no layer it is in is *Don't Export* (a wall converted to buildings is kept in one).
+pub fn exported(scene: &TedScene, elem: usize) -> bool {
+    let els = scene.doc().elements();
+    let mut p = els[elem].parent;
+    while let Some(q) = p {
+        if scene.doc().get(q, "export_type").as_deref() == Some(EXPORT_OFF) {
+            return false;
+        }
+
+        p = els[q].parent;
+    }
+
+    true
 }
 
 /// The layer of this name right under the scene graph, made at its end when there is none.

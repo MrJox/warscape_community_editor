@@ -3208,6 +3208,28 @@ impl TileDocument {
             }
         }
 
+        // A kit wall: made into the buildings of its pieces (kit_walls.rs).
+        if tag == super::WALL_SPLINE && !wce_walls::scene::is_procedural(self.tile().tscene(), e) {
+            let can = self.can_convert_wall(e);
+            ins.hint(&match &can {
+                Ok(n) => format!("Makes the wall's {n} pieces buildings of their own where they are (one undo). The wall is kept, hidden and not exported, \
+                    in a layer of its own inside its layer, and its ground becomes a height layer of yours"),
+                Err(why) => format!("Not now: {why}"),
+            });
+            if ins.button("convert_to_buildings", "Convert to buildings", can.is_ok()) {
+                match self.convert_wall_to_buildings(e) {
+                    Ok(msg) => {
+                        wce_foundation::log::info(&msg);
+                        self.tile_mut().last_message = msg;
+                    }
+
+                    Err(why) => wce_foundation::log::warn(format!("Convert to buildings: {why}")),
+                }
+
+                return;
+            }
+        }
+
         // What the file has and the grid does not show.
         let sc = self.tile().tscene();
         let rest = sc.doc().elements()[e].attrs.iter().enumerate().filter(|(_, a)| !shown.contains(&a.name.as_str())).collect::<Vec<_>>();
@@ -3393,6 +3415,11 @@ impl TileDocument {
         let access = wce_tile::properties::access(prop, &ctx);
         if access == Access::Hidden {
             return;
+        }
+
+        // What a wall's row does (its tooltip).
+        if tag == super::WALL_SPLINE && let Some(tip) = wce_tile::properties::wall_tip(prop.attr) {
+            ins.hint(tip);
         }
 
         // A property the instance lacks is not in the file (TEd writes only some of them when they have their default), but every instance

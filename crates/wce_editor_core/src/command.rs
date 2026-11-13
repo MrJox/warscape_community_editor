@@ -114,6 +114,28 @@ impl<M: 'static> CommandStack<M> {
         self.position = self.entries.len();
     }
 
+    /// The last `n` commands, all applied, as one entry named `name` (an edit made of edits of different kinds: a scene splice and a
+    /// terrain layer change): undone and redone together. Nothing when fewer than `n` are applied or some are undone.
+    pub fn join_last(&mut self, n: usize, name: &str) {
+        if n < 2 || self.position != self.entries.len() || self.entries.len() < n {
+            return;
+        }
+
+        let from = self.entries.len() - n;
+        if self.saved_valid && self.saved_position > from && self.saved_position < self.position {
+            self.saved_valid = false;
+        }
+
+        let parts = self.entries.split_off(from);
+        self.entries.push(Box::new(Joined { name: name.to_owned(), parts }));
+        if self.saved_valid && self.saved_position == self.position {
+            self.saved_position = self.entries.len();
+        }
+
+        self.position = self.entries.len();
+        self.merge_open = false;
+    }
+
     fn note(&mut self, items: Vec<u64>) {
         self.last_dirty.all = items.is_empty();
         if self.last_dirty.all {
@@ -124,6 +146,39 @@ impl<M: 'static> CommandStack<M> {
 
         self.last_dirty.items = items;
         self.version += 1;
+    }
+}
+
+/// Commands undone and redone as one (`CommandStack::join_last`): applied in order, reverted in reverse.
+struct Joined<M: 'static> {
+    name: String,
+    parts: Vec<Box<dyn Command<M>>>,
+}
+
+impl<M: 'static> Command<M> for Joined<M> {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn apply(&mut self, model: &mut M) {
+        for c in &mut self.parts {
+            c.apply(model);
+        }
+    }
+
+    fn revert(&mut self, model: &mut M) {
+        for c in self.parts.iter_mut().rev() {
+            c.revert(model);
+        }
+    }
+
+    fn dirty_items(&self) -> Vec<u64> {
+        let all = self.parts.iter().map(|c| c.dirty_items()).collect::<Vec<_>>();
+        if all.iter().any(Vec::is_empty) { vec![] } else { all.concat() }
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -269,5 +324,49 @@ impl<M: 'static> History for CommandStack<M> {
         self.last_dirty = Dirty::default();
         self.pending = Dirty::default();
         self.version += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Adds `by` to the model.
+    struct Add(i32);
+
+    impl Command<i32> for Add {
+        fn name(&self) -> String {
+            format!("add {}", self.0)
+        }
+
+        fn apply(&mut self, m: &mut i32) {
+            *m += self.0;
+        }
+
+        fn revert(&mut self, m: &mut i32) {
+            *m -= self.0;
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+    }
+
+    #[test]
+    fn commands_joined_are_undone_and_redone_together() {
+        let mut s = CommandStack::new(0);
+        s.push(Box::new(Add(1)));
+        s.mark_saved();
+        s.push(Box::new(Add(10)));
+        s.push(Box::new(Add(100)));
+        s.join_last(2, "both");
+        assert_eq!((*s.model(), s.size(), s.name(1).as_str()), (111, 2, "both"));
+        assert!(s.undo());
+        assert_eq!(*s.model(), 1);
+        assert!(!s.modified(), "back at the save");
+        assert!(s.redo());
+        assert_eq!(*s.model(), 111);
+        assert!(s.undo() && s.undo());
+        assert_eq!(*s.model(), 0);
     }
 }

@@ -272,6 +272,32 @@ const WALL: &[Prop] = &[
     p("wall_defence_every", Kind::Slider(0.0, 1000.0)),
 ];
 
+/// The tooltip of a wall's (`WceWallSpline`) Inspector row: what it does, for which kind of wall, in what units. `None` for a row without
+/// one. (Only the walls have them for now; docs/plans/kit_walls.md, follow-up 6.)
+#[must_use]
+pub fn wall_tip(attr: &str) -> Option<&'static str> {
+    Some(match attr {
+        "flags" => "visible: drawn in the editor (a hidden wall has no pieces, and a kit wall's ground goes with them); active: in the game; \
+            draggable: moved with the mouse in the viewport",
+        "position" => "Where the wall's line is (its points are relative to it): moving it moves the whole line",
+        crate::new_instances::WALL_PROCEDURAL => "On: the wall is generated from its base piece, bent and stretched along the line, stepped where the \
+            ground changes level (any shape, any slope). Off: it is laid with its culture's own fort pieces, whole (straights, curves, \
+            steps, towers, caps), with a ground layer of its own under them; an end the pieces can't meet gets a short generated stretch",
+        "line_colour" => "The colour of the wall's line in the viewport",
+        "selected_line_colour" => "The colour of the wall's line while it is selected",
+        "wall_base" => "The wall's culture: its straight piece (8 m or 15 m high walls). A procedural wall is made from it; a kit wall is laid \
+            with the pieces of the same culture",
+        "wall_tolerance" => "How far the ground may rise or fall under a level stretch of a procedural wall before it steps (scene units). \
+            A kit wall uses it for its generated stretches only",
+        "wall_flip" => "Which side of the line is the wall's outer face: off, the left going from the first point to the last; on, the right",
+        "wall_access_every" => "The spacing of the door sections along the wall, the first at half of it (scene units: 2 a metre on battle maps, \
+            200 = 100 m; 0 = none). Only cultures with a door section (the 15 m walls) have them",
+        "wall_defence_every" => "The spacing of the towers and bastions along the wall, the first at half of it (scene units: 2 a metre on \
+            battle maps; 0 = none). They go only where the wall is straight and level",
+        _ => return None,
+    })
+}
+
 const ROAD: &[Prop] = &[
     p("flags", Kind::Flags),
     p("position", Kind::Position),
@@ -500,6 +526,13 @@ pub fn format_seasons(on: [bool; 4]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_row_of_a_wall_has_a_tooltip() {
+        for p in WALL {
+            assert!(wall_tip(p.attr).is_some_and(|t| !t.is_empty()), "{} has no tooltip", p.attr);
+        }
+    }
 
     #[test]
     fn colours_keep_one_decimal_like_ted() {
