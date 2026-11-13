@@ -144,12 +144,14 @@ impl TileDocument {
         let now = d.attrs.get(shape_key).and_then(|v| boundary_kind(v)).unwrap_or(BoundaryKind::Circle);
         let mut idx = kinds.iter().position(|&k| k == now).unwrap_or(0) as i32;
         let mut changed = false;
+        ins.hint("The shape of the boundary the new capture location gets.");
         if ins.edit_choice(shape_key, "shape", &mut idx, &names) {
             d.attrs.insert(shape_key.to_owned(), kinds[idx.clamp(0, 2) as usize].label().to_owned());
             changed = true;
         }
 
         let mut size = d.attrs.get(size_key).and_then(|v| v.parse::<f32>().ok()).unwrap_or(20.0);
+        ins.hint("The boundary's size in metres: a circle's radius, half a square's side.");
         if ins.edit_float(size_key, "size (m: radius or half side)", &mut size, 0.1, 0.5, 500.0) {
             d.attrs.insert(size_key.to_owned(), size.max(0.5).to_string());
             d.attrs.entry(shape_key.to_owned()).or_insert_with(|| now.label().to_owned());
@@ -159,6 +161,7 @@ impl TileDocument {
         let kind = d.attrs.get(shape_key).and_then(|v| boundary_kind(v)).unwrap_or(now);
         if kind.turns() {
             let mut turn = d.attrs.get(turn_key).and_then(|v| v.parse::<f32>().ok()).unwrap_or_else(|| draft_flag_degrees(&d.attrs) as f32);
+            ins.hint("Which way the boundary faces, in degrees (0: +z); left alone, the way the flag faces.");
             if ins.edit_float(turn_key, "turn (deg; 0: +z; default: the flag's facing)", &mut turn, 1.0, -360.0, 360.0) {
                 d.attrs.insert(turn_key.to_owned(), turn.to_string());
                 changed = true;
@@ -185,6 +188,10 @@ impl TileDocument {
         };
         let before = d.yaw;
         let mut yaw = d.yaw;
+        if turnable {
+            ins.hint("The turn the new item is placed with, in degrees; R and Shift+R turn it too.");
+        }
+
         if turnable && ins.edit_float("yaw", "turn (deg; R / Shift+R)", &mut yaw, 1.0, -360.0, 360.0) {
             d.yaw = yaw;
         }
@@ -230,7 +237,8 @@ impl TileDocument {
                 Kind::Placement => {
                     let modes = ["Landscape: Above", "Freeform"].map(str::to_owned);
                     let mut idx = i32::from(cur == "MSM_FREEFORM");
-                    ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes)
+                    let tips = [super::edits::SURFACE_TIPS[0], super::edits::SURFACE_TIPS[1]].map(str::to_owned);
+                    ins.edit_choice_tips("surface_mode", "surface_mode", &mut idx, &modes, &tips)
                         .then(|| if idx == 1 { "MSM_FREEFORM" } else { "MSM_LANDSCAPE" }.to_owned())
                 }
 

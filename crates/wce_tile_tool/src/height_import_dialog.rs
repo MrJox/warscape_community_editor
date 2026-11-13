@@ -50,8 +50,17 @@ impl TileTool {
         );
         gui::set_next_item_width(360.0);
         gui::input_text("##heightfile", Some("picture"), &mut d.path, 1024, 0);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The picture's path on disk (PNG or DDS).");
+        }
+
         gui::same_line();
-        if gui::button("Browse...") {
+        let browse = gui::button("Browse...");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Picks the picture in a file dialog.");
+        }
+
+        if browse {
             let filters = [("Picture (PNG, DDS)".to_owned(), "*.png *.dds".to_owned()), ("All files".to_owned(), "*.*".to_owned())];
             if let Some(p) = file_dialog(false, Path::new(&d.path), &filters) {
                 d.path = p.display().to_string();
@@ -85,6 +94,9 @@ impl TileTool {
 
         gui::separator();
         let import = gui::button("Import");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Sets the tile's heights from the picture, in one undo step.");
+        }
         gui::same_line();
         let cancel = gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true);
         if import {

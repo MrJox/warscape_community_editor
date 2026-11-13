@@ -173,10 +173,18 @@ impl TileTool {
             d.tile_mut().display_changed();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Draws the tile's rivers.");
+        }
+
         note(d.tile().water_note());
         let mut sea = d.tile().display().show_sea;
         if gui::checkbox("Sea at 0 m##ground", &mut sea) {
             self.set_show_sea(e, id, sea);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Draws the sea at height 0, as on a coastal map. Kept in the settings.");
         }
 
         // The battle's wind picks the sea's waves and whitecaps.
@@ -188,6 +196,10 @@ impl TileTool {
                 if gui::combo("Sea state (battle wind)##ground", &mut k, &states.iter().map(String::as_str).collect::<Vec<_>>()) {
                     let key = states[k as usize].clone();
                     set_sea_state(e, &key);
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The battle wind whose waves and whitecaps the sea shows. Kept in the settings.");
                 }
             }
         }
@@ -214,6 +226,10 @@ impl TileTool {
                 d.tile_mut().reload_tree_list();
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Generates the procedural trees again from the tile as it is now (after editing seeds, exclusions...).");
+            }
+
             gui::same_line();
             gui::text_disabled(&d.tile().tree_category().unwrap_or_default());
         }
@@ -238,6 +254,10 @@ impl TileTool {
             gui::same_line();
             if gui::small_button("Regenerate##grass") {
                 d.tile_mut().reload_grass();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Generates the grass again from the tile as it is now (after editing its seed or the painting).");
             }
         }
 

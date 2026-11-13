@@ -127,6 +127,10 @@ impl TileTool {
         }
 
         gui::checkbox("snap to grid", &mut self.snap_grid);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("What is grabbed, moved with the gizmo or placed goes to the grid below. After the points and the edges.");
+        }
+
         gui::same_line();
         gui::checkbox("heights too", &mut self.snap_heights);
         if gui::is_item_hovered() {
@@ -137,6 +141,10 @@ impl TileTool {
 
         gui::set_next_item_width(120.0);
         gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The grid's step in metres (0.5 to 64).");
+        }
+
         gui::checkbox("snap to points", &mut self.snap_vertices);
         if gui::is_item_hovered() {
             gui::set_tooltip(
@@ -441,6 +449,10 @@ impl TileTool {
             self.request_quick_add();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Opens the quick add search: what you pick is placed here.");
+        }
+
         gui::separator();
         self.selection_items(e);
         gui::end_popup();
@@ -461,6 +473,10 @@ impl TileTool {
             return;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Moves the selection with the mouse over the ground; a click drops it, Esc or a right click puts it back.");
+        }
+
         self.select_menu(e);
         let Some(d) = document(e) else { return };
 
@@ -469,10 +485,18 @@ impl TileTool {
             self.status = if n != 0 { format!("on the terrain: {n} item(s)") } else { "already on the terrain".to_owned() };
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Puts the selected items on the ground, the freeform ones too; their placement does not change.");
+        }
+
         if gui::begin_menu_enabled("Placement", some) {
             if gui::menu_item("Landscape (stands on the terrain)", None, false, true) {
                 let n = d.set_placement(&all, Placement::Landscape);
                 self.status = format!("{n} set to landscape (snapped to the terrain)");
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Sets the selected items to landscape: they are snapped to the terrain and follow it when it changes.");
             }
 
             if gui::menu_item("Freeform (keeps its height)", None, false, true) {
@@ -480,9 +504,17 @@ impl TileTool {
                 self.status = format!("{n} set to freeform");
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Sets the selected items to freeform: they keep their height whatever the terrain does.");
+            }
+
             if gui::menu_item("Snap the landscape ones to the terrain", None, false, true) {
                 let n = d.snap_to_terrain(&all, false);
                 self.status = format!("{n} landscape item(s) snapped");
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Puts the selected landscape items back on the ground; the freeform ones keep their height.");
             }
 
             gui::end_menu();
@@ -554,6 +586,10 @@ impl TileTool {
             return;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Pastes the copied items with the first one at the mouse on the ground, the rest around it as they were.");
+        }
+
         if gui::menu_item(
             &one("Paste in place", icons::CLIPBOARD),
             wce_editor::shortcuts::label("tile.paste_in_place").as_deref(),
@@ -564,6 +600,10 @@ impl TileTool {
             return;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Pastes the copied items where they were copied from.");
+        }
+
         let Some(d) = document(e) else { return };
         if gui::menu_item(&one("Duplicate", icons::COPY), wce_editor::shortcuts::label("tile.duplicate").as_deref(), false, some)
             && let Some(s) = sel
@@ -572,8 +612,16 @@ impl TileTool {
             self.status = err;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("A copy of the selected item, 4 m along x from it.");
+        }
+
         if gui::menu_item(&one("Flip...", icons::SPLIT), wce_editor::shortcuts::label("tile.flip").as_deref(), false, true) {
             self.flip_asked = true;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Flip mode: mirror the selection, or the whole tile, across a plane (settings in the Inspector).");
         }
 
         if gui::menu_item(&one("Turn", icons::ROTATE_CW), wce_editor::shortcuts::label("tile.turn").as_deref(), false, some)
@@ -582,9 +630,17 @@ impl TileTool {
             d.rotate(s, self.angle_step);
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Turns the selected item by the rotate step of the snap settings.");
+        }
+
         if gui::menu_item(&one("Group", icons::GROUP), wce_editor::shortcuts::label("tile.group").as_deref(), false, some) {
             self.status = self.group_selection(e).unwrap_or_else(|err| err);
             return;
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Puts the selection into a new instance group in the working layer.");
         }
 
         if gui::menu_item(&one("Ungroup", icons::UNGROUP), wce_editor::shortcuts::label("tile.ungroup").as_deref(), false, some) {
@@ -592,8 +648,16 @@ impl TileTool {
             return;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Takes the selected instance groups apart into the working layer.");
+        }
+
         if gui::menu_item(&one("New vegetation set from the selected trees...", icons::TREES), None, false, self.trees_selected(e)) {
             self.request_new_vegetation_set();
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Makes a new vegetation set out of the selected trees (asks for its name).");
         }
 
         gui::separator();

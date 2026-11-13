@@ -146,6 +146,10 @@ impl TileTool {
                 c.points = points.to_vec();
                 c.on = true;
             }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("Replaces the curve's points with the {name} preset and turns the curve on."));
+            }
         }
 
         gui::text_disabled("Drag a point; double-click adds one; right-click takes one away.");

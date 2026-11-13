@@ -485,6 +485,10 @@ impl TileTool {
             gui::close_current_popup();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Writes the group as a new prefab file; the group becomes a reference to it.");
+        }
+
         gui::same_line();
         if gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true) {
             self.prefab_save = None;

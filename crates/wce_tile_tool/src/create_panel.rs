@@ -576,6 +576,10 @@ impl TileTool {
                     preset = Some((b, kind));
                 }
 
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Makes the capture location's boundary this preset shape (TEd's).");
+                }
+
                 if on {
                     gui::pop_style_color(1);
                 }
@@ -1189,6 +1193,10 @@ impl TileTool {
             self.keep_draft();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Puts the settings of what you are making back to their defaults, its turn too.");
+        }
+
         // Where it goes: the holder's own values, as they are now (changed here as when it is selected).
         match holder {
             Some(h) if self.drawing => {
@@ -1439,6 +1447,10 @@ impl TileTool {
         };
         gui::push_style_color(gui::COL_TEXT, colour);
         let star = gui::small_button(&format!("{}##star{uid}", icons::STAR));
+        if gui::is_item_hovered() {
+            gui::set_tooltip(if favourite { "Takes it out of the favourites." } else { "Adds it to the favourites." });
+        }
+
         gui::pop_style_color(2);
         (clicked, star, hovered)
     }
@@ -1513,8 +1525,14 @@ impl TileTool {
         }
 
         // A set from the selected trees.
-        if self.trees_selected(e) && gui::small_button(&format!("{}  New vegetation set from the selected trees", icons::TREES)) {
-            self.request_new_vegetation_set();
+        if self.trees_selected(e) {
+            if gui::small_button(&format!("{}  New vegetation set from the selected trees", icons::TREES)) {
+                self.request_new_vegetation_set();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Saves the selected trees as a vegetation set, each kind weighted by how many there are.");
+            }
         }
 
         gui::set_next_item_width(-1.0);
@@ -1576,6 +1594,10 @@ impl TileTool {
             gui::same_line();
             if gui::small_button("Cancel##thumbs") {
                 self.thumbs.cancel();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Stops making the thumbnails; the ones made are kept.");
             }
         } else if gui::small_button(&format!("{}  Make thumbnails of the list", icons::IMAGE)) {
             let rows = self
@@ -1772,6 +1794,14 @@ impl TileTool {
 
             if gui::button("Stop (Esc)") {
                 self.stop_making();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(if self.drawing {
+                    "Stops drawing; points not finished are dropped."
+                } else {
+                    "Stops placing; what was placed stays."
+                });
             }
         }
         gui::end();

@@ -63,9 +63,16 @@ impl TileTool {
         gui::text_wrapped(
             "The tile as a battle tile of the projects folder: terrain/tiles/battle/<tile set>/<name>/<variation>, with an entry of its own. A tile of that name and size takes it as one more variation (keeping its other properties); one of another size is refused, as TEd does.",
         );
-        for (label, v) in [("tile set", &mut ui.set), ("name", &mut ui.name), ("variation", &mut ui.variation)] {
+        for (label, v, tip) in [
+            ("tile set", &mut ui.set, "The tile set the tile goes into (a folder under terrain/tiles/battle)."),
+            ("name", &mut ui.name, "The tile's name: its folder in the set (lower case, no spaces)."),
+            ("variation", &mut ui.variation, "The variation's name: its folder in the tile's (lower case, no spaces)."),
+        ] {
             gui::set_next_item_width(240.0);
             gui::input_text(label, None, v, 64, 0);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(tip);
+            }
         }
 
         if !ui.error.is_empty() {
@@ -73,7 +80,12 @@ impl TileTool {
         }
 
         let mut keep = true;
-        if gui::button("Save") {
+        let save = gui::button("Save");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Writes the tile there in the projects folder, with its entry.");
+        }
+
+        if save {
             let id = document_id(e);
             match id.map(|id| self.save_tile_as(e, id, &ui.set, &ui.name, &ui.variation)) {
                 Some(Ok(msg)) => {

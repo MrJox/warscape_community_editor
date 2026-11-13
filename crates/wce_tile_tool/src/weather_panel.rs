@@ -503,6 +503,10 @@ impl WeatherUi {
                     open = Some(file.clone());
                 }
 
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Opens the file in the Weather tool.");
+                }
+
                 gui::end_popup();
             }
 
@@ -636,6 +640,10 @@ impl WeatherUi {
                     gui::begin_disabled(!ok);
                     if gui::selectable(v, *v == value, 0) {
                         changed = Some((category, v.clone()));
+                    }
+
+                    if !ok && gui::is_item_hovered_allow_disabled() {
+                        gui::set_tooltip("No weather file has this value with the other filters as they are.");
                     }
 
                     gui::end_disabled();
