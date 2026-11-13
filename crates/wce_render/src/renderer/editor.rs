@@ -1035,6 +1035,10 @@ impl Renderer {
 
         // What goes into the mask: the selected entities (meshes and terrain through their draw sets, overlays as triangles and lines) and the
         // overlays that stand for selected items.
+        let prof_select = {
+            static SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
+            wce_foundation::profile::Scope::new(SLOT.get_or_init(|| wce_foundation::profile::slot("outline.select")))
+        };
         let selected = self
             .settings
             .selection
@@ -1042,6 +1046,7 @@ impl Renderer {
             .copied()
             .filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e)))
             .collect::<std::collections::HashSet<_>>();
+        drop(prof_select);
         let key = (std::ptr::from_ref(scene) as usize, scene.overlay_revision());
         if self.editor.outline_overlays.0 != key {
             self.editor.outline_overlays =
@@ -1126,10 +1131,30 @@ impl Renderer {
         let mut sets: Vec<(&crate::draw_set::DrawSet, Visible, u32)> = vec![];
         let mut instances: Vec<RigidInstance> = vec![];
         if meshes {
-            for set in [&draws, &terrain_draws] {
+            wce_prof!("outline.cull_gather");
+            // The meshes: the selected entities' own items (each drawable mesh entity is one item of `draws`), not a cull of the whole
+            // scene filtered down to them (8 ms a frame in a debug build on a port, with anything meshed selected). The terrain set,
+            // rarely selected, has no such index: culled whole, only when a terrain is selected.
+            let mut items = selected
+                .iter()
+                .filter_map(|&id| self.draw_lists.item_of_entity.get(id as usize).copied().filter(|&i| i != super::draws::NO_ITEM))
+                .collect::<Vec<_>>();
+            items.sort_unstable();
+            items.dedup();
+            let terrain = selected.iter().any(|&id| scene.find(id).is_some_and(|e| matches!(e.payload, Payload::Terrain(_))));
+            for (set, whole) in [(&draws, false), (&terrain_draws, true)] {
+                if whole && !terrain {
+                    continue;
+                }
+
                 let mut vis = Visible::default();
-                set.cull(&view, &mut vis);
-                set.retain(&mut vis, |id| selected.contains(&id));
+                if whole {
+                    set.cull(&view, &mut vis);
+                    set.retain(&mut vis, |id| selected.contains(&id));
+                } else {
+                    set.cull_items(&view, &items, &mut vis);
+                }
+
                 let n = vis.instances();
                 if n != 0 {
                     let first = instances.len();
@@ -1141,6 +1166,10 @@ impl Renderer {
         }
 
         // Uploads: the gathered instances, the overlays' triangles then lines (when they were made again).
+        let prof_upload = {
+            static SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
+            wce_foundation::profile::Scope::new(SLOT.get_or_init(|| wce_foundation::profile::slot("outline.upload")))
+        };
         if self.editor.mask_inst_capacity < instances.len() {
             self.editor.mask_inst_capacity = (instances.len() * 2).max(1024);
             self.editor.mask_inst_vb =
@@ -1160,11 +1189,16 @@ impl Renderer {
         }
 
         write_dynamic(&self.ctx, &cb, &frame_cb(&vp_m));
+        drop(prof_upload);
 
         // The mask: everything in red without the depth test, then the parts in front of the scene in green.
         self.ctx.clear_render_target_view(&rtv, [0.0; 4]);
         self.ctx.set_render_targets(&[Some(rtv)], self.gbuffer.dsv.as_ref());
         self.ctx.set_viewports(&[viewport(0.0, 0.0, w as f32, h as f32)]);
+        let prof_mask = {
+            static SLOT: std::sync::OnceLock<&'static wce_foundation::profile::Slot> = std::sync::OnceLock::new();
+            wce_foundation::profile::Scope::new(SLOT.get_or_init(|| wce_foundation::profile::slot("outline.mask_draws")))
+        };
         let e = &self.editor;
         for visible in [false, true] {
             self.ctx.set_blend_state(if visible { e.mask_bs_visible.as_ref() } else { e.mask_bs_all.as_ref() });
@@ -1208,6 +1242,7 @@ impl Renderer {
             }
         }
 
+        drop(prof_mask);
         drop(sets);
         self.draw_lists.draws = draws;
         self.draw_lists.terrain_draws = terrain_draws;
