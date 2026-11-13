@@ -39,6 +39,10 @@ pub struct MinimapSiege {
 
     /// (alliance_id, zone), every group.
     pub zones: Vec<(String, Deployment)>,
+
+    /// The walls' footprints (`input.walls`) cut into triangles once, with whether each is a gate's: a procedural wall's is one strip of
+    /// thousands of points along its walkway, which a fill of the polygon cut again every frame (100 ms a frame on a 1 km wall).
+    pub wall_fills: Vec<(bool, Vec<[[f32; 2]; 3]>)>,
 }
 
 /// A picture of the ground to bake away from the UI thread (the colour reads the blend map and the climate's textures: seconds on a big
@@ -170,8 +174,36 @@ impl Tile {
 
     /// The siege AI and the deployment zones for the minimap.
     pub fn minimap_siege(&self) -> MinimapSiege {
-        MinimapSiege { unit: self.unit(), input: self.siege_input_with(false), layout: self.current_siege_layout(), zones: self.deployment_zones() }
+        let input = self.siege_input_with(false);
+        let wall_fills = input.walls.iter().flat_map(|w| w.footprint.iter().map(move |r| {
+            let ring = r.iter().map(|q| [q[0] as f32, q[1] as f32]).collect::<Vec<_>>();
+            (w.gate, strip_triangles(&ring).unwrap_or_else(|| super::cover::ear_clip(&ring)))
+        })).collect();
+        MinimapSiege { unit: self.unit(), input, layout: self.current_siege_layout(), zones: self.deployment_zones(), wall_fills }
     }
+}
+
+/// A wall's band (`siege_input_with`: its one side along the walkway, then the other side back, a point of each per sample) cut into
+/// the quads between its samples: `None` for a ring that is not such a band (small, odd, or its sides not about as far apart all along).
+fn strip_triangles(ring: &[[f32; 2]]) -> Option<Vec<[[f32; 2]; 3]>> {
+    if ring.len() < 64 || ring.len() % 2 == 1 {
+        return None;
+    }
+
+    let n = ring.len() / 2;
+    let across = |i: usize| {
+        let (a, b) = (ring[i], ring[2 * n - 1 - i]);
+        (a[0] - b[0]).hypot(a[1] - b[1])
+    };
+    let first = across(0);
+    if first <= 1e-3 || (0..n).any(|i| !(first * 0.5..=first * 2.0).contains(&across(i))) {
+        return None;
+    }
+
+    Some((0..n - 1).flat_map(|i| {
+        let (a, b, c, d) = (ring[i], ring[i + 1], ring[2 * n - 2 - i], ring[2 * n - 1 - i]);
+        [[a, b, c], [a, c, d]]
+    }).collect())
 }
 
 /// Land at `t` (0 the lowest, 1 the highest): green lowlands, olive, brown hills, grey-white tops.
@@ -188,4 +220,26 @@ fn land_colour(t: f64) -> [f64; 3] {
 fn sea_colour(depth: f64) -> [f64; 3] {
     let f = (depth / 30.0).clamp(0.0, 1.0);
     [70.0 - 40.0 * f, 130.0 - 60.0 * f, 170.0 - 40.0 * f]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_wall_band_is_cut_into_the_quads_between_its_samples() {
+        // 40 samples along x, 3 across: 39 quads, 78 triangles, area 39 x 3.
+        let mut ring = (0..40).map(|i| [i as f32, 0.0]).collect::<Vec<_>>();
+        ring.extend((0..40).rev().map(|i| [i as f32, 3.0]));
+        let tris = strip_triangles(&ring).unwrap();
+        let area = |t: &[[f32; 2]; 3]| ((t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1])).abs() / 2.0;
+        assert_eq!(tris.len(), 78);
+        assert!((tris.iter().map(area).sum::<f32>() - 117.0).abs() < 1e-3);
+
+        // A small ring, or one whose sides are not a band: not this way.
+        assert!(strip_triangles(&ring[..8]).is_none());
+        let mut odd = ring.clone();
+        odd[50] = [20.0, 40.0];
+        assert!(strip_triangles(&odd).is_none());
+    }
 }
