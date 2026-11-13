@@ -4693,7 +4693,16 @@ impl Tool for TileTool {
 
                 // Select: the model piece under the cursor (exact), else the nearest instance sphere along the ray.
                 let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-                let mut hit = (ev.hit_source.doc == id && ev.hit_source.item != TERRAIN).then(|| elem_of(ev.hit_source.item)).flatten();
+                let mut hit = (ev.hit_source.doc == id && ev.hit_source.item != TERRAIN)
+                    .then(|| {
+                        // A building a building spline lays is drawn as a piece of the spline: it picks the spline.
+                        elem_of(ev.hit_source.item).or_else(|| {
+                            wce_tile_editor::tile_document::piece_of(ev.hit_source.item)
+                                .map(|(el, _)| el)
+                                .filter(|&el| d.tile().is_building_spline(el))
+                        })
+                    })
+                    .flatten();
                 if hit.is_none()
                     && let Some((o, dir)) = ray
                 {

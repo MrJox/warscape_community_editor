@@ -1244,11 +1244,16 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "tile_select",
-        "tile_select <type | element index> [add]",
-        "select the first instance of a type, or an element by index",
+        "tile_select <type | element index | none> [add]",
+        "select the first instance of a type, or an element by index; `none` clears the selection",
         |e, a| {
             let Some(d) = document(e) else { return no_tile() };
-            let Some(what) = a.first() else { return fail("usage: tile_select <type | element index> [add]") };
+            let Some(what) = a.first() else { return fail("usage: tile_select <type | element index | none> [add]") };
+            if what == "none" {
+                select_elem(e, None, false);
+                return ok("nothing selected");
+            }
+
             let add = a.get(1).is_some_and(|x| x == "add");
             let found = match what.parse::<i64>() {
                 Ok(i) => usize::try_from(i).ok(),
