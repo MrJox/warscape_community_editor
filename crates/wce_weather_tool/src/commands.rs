@@ -182,6 +182,32 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add(
+        "weather_fog_rings",
+        "weather_fog_rings [on|off]",
+        "draw where the fog over the ground reaches 25, 50 and 75 % (on / off); no argument: log those distances from the camera's spot",
+        |e, a| {
+            let on = match a.first().map(String::as_str) {
+                Some("on") => Some(true),
+                Some("off") => Some(false),
+                None => None,
+                _ => return fail("usage: weather_fog_rings [on|off]"),
+            };
+            with_weather(e, |t, e| {
+                if let Some(on) = on {
+                    t.visual.fog_rings = on;
+                    return ok("");
+                }
+
+                let cam = e.viewport.camera();
+                let ground = cam.target.y;
+                let (rings, strongest) = crate::visual::fog_rings(&t.last_params, (cam.eye.y - ground).max(0.0), ground);
+                let m = |x: Option<f32>| x.map_or_else(|| "-".to_owned(), |x| format!("{x:.0}"));
+                ok(format!("25% {} m, 50% {} m, 75% {} m, strongest {:.0}%", m(rings[0]), m(rings[1]), m(rings[2]), strongest * 100.0))
+            })
+        },
+    );
+
     c.add("weather_compare", "weather_compare on|off", "light the scene with the file as saved instead of the edits", |e, a| {
         let on = match a.first().map(String::as_str) {
             Some("on") => true,

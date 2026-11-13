@@ -81,6 +81,9 @@ pub(crate) struct Visual {
     /// The mouse was over the viewport last frame.
     hovered: bool,
 
+    /// Where the fog over the ground reaches 25, 50 and 75 %, as rings around the camera (the Fog distances check box, `weather_fog_rings`).
+    pub(crate) fog_rings: bool,
+
     /// The next click in the viewport sets the depth of field's focus.
     pub(crate) focus_armed: bool,
 
@@ -460,6 +463,10 @@ impl Visual {
             }
         }
 
+        if doc != 0 && self.fog_rings {
+            draw_fog_rings(e, shown, origin, &dl);
+        }
+
         let top = gui::v2(origin.x + size.x * 0.5, origin.y + 40.0);
         let banner = if self.comparing() {
             Some(("THE SAVED FILE (comparing: uncheck Compare, or let go of C, for the edits)".to_owned(), theme::warning()))
@@ -507,6 +514,14 @@ impl Visual {
         if gui::is_item_hovered_allow_disabled() {
             gui::set_tooltip(
                 "Then click what should be sharp in the viewport: its distance becomes the depth of field's focus (DOF_focus).",
+            );
+        }
+
+        gui::same_line();
+        gui::checkbox("Fog distances", &mut self.fog_rings);
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(
+                "Rings on the ground around the camera where the fog over it reaches 25, 50 and 75 %, as the game's fog shader works it out from the Fog section (the distance fog, the height fog over the ground, the clear distance's fade-in). They follow the camera, as the fog does.",
             );
         }
 
@@ -623,5 +638,94 @@ impl Visual {
                  with a channel at full white; crushed: pixels at black. Detail is lost at either end (over 2% shows in amber).",
             );
         }
+    }
+}
+
+/// The battle fog's opacity over the ground (battlefog.hlsl ps30_main, its DXBC and GLSL listing agree; docs/re/renderer.md, "Battle
+/// fog") at `r` metres from the point below the camera, the camera `h` metres over a ground at height `y`:
+/// saturate((height_strength * smoothstep((top - y - bottom) / (top - bottom)) + saturate(scale * (1 - exp(-(d / L - S))))) * smoothstep(min(r /
+/// clear, 1))), with d the distance from the camera, L = (1 - saturate(strength)) * 1000 metres, S = 8 * saturate(start) - 4 (start less
+/// the precipitation modifier) and bottom 0 (as the renderer sets it).
+pub(crate) fn fog_opacity(p: &EnvironmentParams, r: f32, h: f32, y: f32) -> f32 {
+    let smooth = |x: f32| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let top = p.fog_height_top.max(0.001);
+    let height = smooth((top - y) / top);
+    let l = (1.0 - p.fog_distance_strength.clamp(0.0, 1.0)) * 1000.0;
+    let s = 8.0 * (p.fog_distance_start - p.fog_precipitation_distance_modifier).clamp(0.0, 1.0) - 4.0;
+    let d = r.hypot(h);
+    let distance =
+        if l > 1e-6 { (p.fog_distance_scale * (1.0 - (-(d / l - s)).exp())).clamp(0.0, 1.0) } else { p.fog_distance_scale.clamp(0.0, 1.0) };
+    let clear = smooth((r / p.fog_clear_distance.max(0.001)).min(1.0));
+    ((p.fog_height_strength * height + distance) * clear).clamp(0.0, 1.0)
+}
+
+/// The fog's opacity steps the rings show.
+pub(crate) const FOG_STEPS: [f32; 3] = [0.25, 0.5, 0.75];
+
+/// The distances along the ground from the point below the camera where the fog's opacity first reaches each of `FOG_STEPS` (`None`: not
+/// within 30 km), and the strongest it gets there.
+pub(crate) fn fog_rings(p: &EnvironmentParams, h: f32, y: f32) -> ([Option<f32>; 3], f32) {
+    let mut out = [None; 3];
+    let mut strongest = 0.0f32;
+    let mut r = 0.0f32;
+    while r <= 30_000.0 {
+        let a = fog_opacity(p, r, h, y);
+        strongest = strongest.max(a);
+        for (slot, step) in out.iter_mut().zip(FOG_STEPS) {
+            if slot.is_none() && a >= step {
+                *slot = Some(r);
+            }
+        }
+
+        // Finer near the camera, where the ring is read most closely.
+        r += (r * 0.01).max(0.5);
+    }
+
+    (out, strongest)
+}
+
+/// The fog rings on the ground (the height of the camera's target) around the point below the camera, labelled where they cross the
+/// camera's forward direction.
+fn draw_fog_rings(e: &Editor, p: &EnvironmentParams, origin: gui::Vec2, dl: &gui::DrawList) {
+    let density = gui::io().DisplayFramebufferScale.x.max(1e-3);
+    let cam = e.viewport.camera();
+    let ground = cam.target.y;
+    let (rings, strongest) = fog_rings(p, (cam.eye.y - ground).max(0.0), ground);
+    let colours = [gui::col32(150, 230, 255, 230), gui::col32(200, 210, 255, 230), gui::col32(245, 245, 245, 230)];
+    let (fx, fz) = (cam.target.x - cam.eye.x, cam.target.z - cam.eye.z);
+    let fl = fx.hypot(fz).max(1e-6);
+    for (i, (radius, colour)) in rings.iter().zip(colours).enumerate() {
+        let Some(r) = radius.filter(|r| *r > 0.5) else { continue };
+
+        // The ring in runs of the points in front of the camera.
+        let mut run: Vec<gui::Vec2> = vec![];
+        for k in 0..=97 {
+            let a = k as f32 / 96.0 * std::f32::consts::TAU;
+            let w = Float3::new(cam.eye.x + a.cos() * r, ground, cam.eye.z + a.sin() * r);
+            match e.viewport.project(w).filter(|_| k <= 96) {
+                Some((x, y)) => run.push(gui::v2(origin.x + x / density, origin.y + y / density)),
+                None => {
+                    if run.len() > 1 {
+                        dl.polyline(&run, colour, false, 1.5);
+                    }
+
+                    run.clear();
+                }
+            }
+        }
+
+        let w = Float3::new(cam.eye.x + fx / fl * r, ground, cam.eye.z + fz / fl * r);
+        if let Some((x, y)) = e.viewport.project(w) {
+            let text = format!("fog {:.0} %  {r:.0} m", FOG_STEPS[i] * 100.0);
+            dl.text(gui::v2(origin.x + x / density + 4.0, origin.y + y / density - 16.0 - 14.0 * i as f32), colour, &text);
+        }
+    }
+
+    if rings.iter().all(Option::is_none) {
+        let text = format!("fog over the ground: at most {:.0} %", strongest * 100.0);
+        dl.text(gui::v2(origin.x + 10.0, origin.y + 64.0), gui::col32(200, 210, 255, 230), &text);
     }
 }

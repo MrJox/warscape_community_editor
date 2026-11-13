@@ -36,8 +36,8 @@ weather and particle code: docs/plans/weather_current_state.md.
    histogram, `wce_weather_tool` `visual.rs`, docs/editor.md). Raised with the user, not started:
    - Done 2026-11-13: the wind arrow (direction; the strength comes from the weather definition, not the file) and Mix with another file
      (`mix.rs`).
-   - Fog rings at the fog's start and end: not done, the unit of fog_distance_start / fog_distance_scale is not known (0.52 in
-     med_sp_land_day_dry), so where the rings go would be a guess; needs the fog shader's formula first.
+   - Done 2026-11-13: fog rings, where the fog over the ground reaches 25, 50 and 75 % (the formula: docs/re/renderer.md, "Battle fog";
+     fog_distance_start is an offset, not a distance).
    - A colour eyedropper: not done from the viewport, as a picked pixel is lit and tone-mapped while the files' colours are inputs
      (scaled, gamma 2.2, then lit), so the picked value would not give back the picked look; worth it with the screenshot overlay below,
      for matching a reference, with the conversion made explicit.
