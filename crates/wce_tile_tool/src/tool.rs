@@ -5076,6 +5076,7 @@ impl TileTool {
         }
 
         doc.set_projects_root(Some(projects));
+        doc.set_colour_kit(self.battle_database_root(e));
 
         if let Some(w) = doc.exclusion_warning() {
             log::error(format!("{}: {w}", doc.title()));

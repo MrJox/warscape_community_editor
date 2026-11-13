@@ -648,12 +648,16 @@ impl TileProject {
             wrote = true;
         }
 
+        // The range follows the heights, as TEd saves them; the entry gets it. A folder the entry does not point to (Save as somewhere else,
+        // a tile without an entry) has no entry to hold a new range: the heights keep the one they are stored with unless they have left
+        // it, and no entry is written (the tile's own entry stays right for its own folder).
+        let home = self.range_home(out_dir);
         if let (Some(field), Some(base)) = (&mut self.height, &self.height_png)
             && (self.height_dirty || force_height || (elsewhere && !out_dir.join("height_map_0.png").exists()))
         {
-            // The range follows the heights, as TEd saves them; the entry gets it.
-            let (min, scale) = field.fit_range();
-            if (min, scale) != (field.min_height(), field.scale()) {
+            let (min, scale) = if home.is_some() || !field.holds_range() { field.fit_range() } else { (field.min_height(), field.scale()) };
+            let kept = (min, scale) == (field.min_height(), field.scale());
+            if !kept {
                 msg += &format!(
                     "height range {:.3} .. {:.3} (was {:.3} .. {:.3}). ",
                     min,
@@ -673,7 +677,10 @@ impl TileProject {
                 "height_map_0.png saved. "
             };
             wrote = true;
-            msg += &self.save_height_range(out_dir, min, scale)?;
+            msg += &match home {
+                Some(entry_file) => self.save_height_range(&entry_file, min, scale)?,
+                None => self.unhomed_range_note(out_dir, min, scale, kept),
+            };
         }
 
         for part in [self.save_texture_groups(out_dir)?, self.save_links(out_dir)?, self.save_properties(out_dir)?] {
@@ -790,17 +797,55 @@ impl TileProject {
         Some(kit_raw_root(out_dir)?.join(relative))
     }
 
-    /// The variation's height range into the entry, and the entry file next to a tile saved into `out_dir` when its text differs; the
-    /// message says what was written.
-    fn save_height_range(&mut self, out_dir: &Path, min: f64, scale: f64) -> Result<String> {
+    /// The entry file that holds the height range of a tile saved into `out_dir`: the entry's copy next to it (`entry_file_for`) when the
+    /// entry points to that folder (`out_dir` is the entry's location with this variation, under a kit's layout); `None` otherwise (Save as
+    /// into another folder, a tile without an entry), where no entry would read the range back.
+    fn range_home(&self, out_dir: &Path) -> Option<PathBuf> {
+        let entry = self.entry.as_ref()?;
+        let variation = entry.variations().get(self.variation?)?.location.clone();
+        let own = format!("{}/{}", entry.location().replace('\\', "/"), variation);
+        let g = out_dir.to_string_lossy().replace('\\', "/");
+        let folder = &g[g.to_lowercase().find("terrain/tiles/")?..];
+        if !folder.trim_end_matches('/').eq_ignore_ascii_case(&own) {
+            return None;
+        }
+
+        self.entry_file_for(out_dir)
+    }
+
+    /// What a save into a folder no entry points to (`range_home` none) says about the heights' range, which no file holds there.
+    /// `kept`: the range is the one the heights were stored with before.
+    fn unhomed_range_note(&mut self, out_dir: &Path, min: f64, scale: f64, kept: bool) -> String {
         self.info.min_height = min;
         self.info.scale = scale;
-        let target = self.entry_file_for(out_dir);
+        let range = format!("min_height {min:.6}, scale {scale:.6}");
+        let heights = if kept {
+            format!("the heights keep the range they were stored with ({range})")
+        } else {
+            format!("the heights left the range they were stored with: they are stored with {range} now")
+        };
+
+        let own = self.entry.as_ref().and_then(|e| Some((e.location(), e.variations().get(self.variation?)?.location.clone())));
+        match own {
+            Some((location, variation)) => format!(
+                "no tile database entry points to {} (the tile's entry is {location}, variation {variation}): it opens again without its \
+                 height range, size and colour; {heights}. Tile > Save tile as... makes a new tile with its own entry. ",
+                out_dir.display()
+            ),
+            None => {
+                format!("the tile has no database entry: {heights}, which no file holds (an entry needs them to read the heights right). ")
+            }
+        }
+    }
+
+    /// The variation's height range into the entry, and into the entry file `target` (the entry's copy next to the tile saved, see
+    /// `range_home`) when its text differs; the message says what was written.
+    fn save_height_range(&mut self, target: &Path, min: f64, scale: f64) -> Result<String> {
+        self.info.min_height = min;
+        self.info.scale = scale;
         let (Some(entry), Some(v)) = (self.entry.as_mut(), self.variation) else { return Ok(String::new()) };
         entry.set_height_range(v, min, scale);
-        let Some(target) = target else {
-            return Ok("the tile database entry is not next to it: its height range is not saved. ".to_owned());
-        };
+        let target = target.to_path_buf();
 
         // Only this variation's numbers change in the file there: the others are the ones their own saves wrote.
         let mut there = if target.is_file() { TileEntry::load(&target).map_err(|error| error.to_string())? } else { entry.clone() };
@@ -1396,5 +1441,53 @@ mod tests {
         assert!(fit_baked_heights(&flat).is_none());
         let noise = (0..2000).map(|i| (f64::from((i * 31) % 97), f64::from((i * 57) % 101) * 0.37)).collect::<Vec<_>>();
         assert!(fit_baked_heights(&noise).is_none());
+    }
+
+    /// A new tile (its entry in the projects) with one sample raised to `metres` (its range is 10 .. 60 m).
+    fn edited_tile(raw: &std::path::Path, metres: f64) -> (super::TileProject, std::path::PathBuf, std::path::PathBuf) {
+        let t = crate::new_tile::NewTile { name: "range_home".to_owned(), cells_x: 1, cells_y: 1, height: 10.0, density: 32, seed: 1 };
+        let dir = crate::new_tile::create(&t, raw, None).unwrap();
+        let mut p = super::TileProject::open(&dir).unwrap();
+        let field = p.height.as_mut().unwrap();
+        field.begin_edit().unwrap();
+        field.set_metres(40, 40, metres).unwrap();
+        field.end_edit();
+        p.height_dirty = true;
+        (p, dir, t.entry_file(raw))
+    }
+
+    #[test]
+    fn a_save_where_the_entry_does_not_point_keeps_the_range_and_leaves_the_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let raw = tmp.path().join("assembly_kit/raw_data");
+        let (mut p, _, entry_file) = edited_tile(&raw, 30.0);
+        let entry = std::fs::read(&entry_file).unwrap();
+
+        // Save as into a folder no entry points to (the user's `battle/<name>`): the heights keep 10 .. 60 (fitted they would be
+        // 10 .. 30, which nothing would read back), and the tile's own entry is not given another range.
+        let other = raw.join("terrain/tiles/battle/elsewhere");
+        let (_, msg) = p.save(&other, false, false).unwrap();
+        assert!(msg.contains("no tile database entry points to") && msg.contains("keep the range"), "{msg}");
+        assert_eq!(std::fs::read(&entry_file).unwrap(), entry, "the tile's own entry is untouched");
+        let png = wce_formats::png_file::PngFile::parse(&std::fs::read(other.join("height_map_0.png")).unwrap()).unwrap();
+        let field = crate::height_field::HeightField::from_png(&png, 10.0, 50.0).unwrap();
+        assert!((field.metres(40, 40) - 30.0).abs() < 1e-3 && (field.metres(0, 0) - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn heights_out_of_the_range_are_fitted_but_only_the_entrys_own_folder_writes_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let raw = tmp.path().join("assembly_kit/raw_data");
+        let (mut p, dir, entry_file) = edited_tile(&raw, 80.0);
+        let entry = std::fs::read(&entry_file).unwrap();
+        let (_, msg) = p.save(&raw.join("terrain/tiles/battle/elsewhere"), false, false).unwrap();
+        assert!(msg.contains("left the range") && msg.contains("scale 70.000000"), "{msg}");
+        assert_eq!(std::fs::read(&entry_file).unwrap(), entry, "the tile's own entry is untouched");
+
+        // Saved in place: the entry follows the heights.
+        p.height_dirty = true;
+        p.save(&dir, false, false).unwrap();
+        let e = wce_formats::tile_entry::TileEntry::load(&entry_file).unwrap();
+        assert!((e.variations()[0].min_height - 10.0).abs() < 1e-3 && (e.variations()[0].scale - 70.0).abs() < 1e-3);
     }
 }

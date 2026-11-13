@@ -75,6 +75,35 @@ impl TileDocument {
         tile.building_db = std::cell::OnceCell::new();
     }
 
+    /// The Assembly Kit whose battle tiles' colours a tile made by Save as must differ from (`save_as_new_tile`).
+    pub fn set_colour_kit(&mut self, kit: Option<PathBuf>) {
+        self.tile_mut().colour_kit = kit;
+    }
+
+    /// The tile set, name and variation a Save as into `target` makes, when it makes a new tile: a battle tile's variation folder in the
+    /// projects (`<projects>/raw_data/terrain/tiles/battle/<set>/<name>/<variation>`, or a file in one) that is not the open tile's own, the
+    /// open tile having a database entry to make the new one's from. Saved there as is, the folder would hold a tile no entry points to:
+    /// it would open again without its height range, size and colour.
+    pub fn save_as_new_tile(&self, target: &Path) -> Option<(String, String, String)> {
+        let folder = if target.extension().is_some() { target.parent()? } else { target };
+        let raw = self.projects_root()?.join("raw_data");
+        let rel = folder.strip_prefix(&raw).ok()?.to_string_lossy().replace('\\', "/");
+        let parts = rel.trim_matches('/').split('/').collect::<Vec<_>>();
+        let [terrain, tiles, kind, set, name, variation] = parts[..] else { return None };
+        if !terrain.eq_ignore_ascii_case("terrain") || !tiles.eq_ignore_ascii_case("tiles") || !kind.eq_ignore_ascii_case("battle") {
+            return None;
+        }
+
+        let p = self.project();
+        let entry = p.entry.as_ref()?;
+        let own = format!("{}/{}", entry.location().replace('\\', "/"), entry.variations().get(p.variation?)?.location);
+        if own.eq_ignore_ascii_case(rel.trim_matches('/')) {
+            return None;
+        }
+
+        Some((set.to_owned(), name.to_owned(), variation.to_owned()))
+    }
+
     pub fn projects_root(&self) -> Option<&Path> {
         self.tile().projects_root.as_deref()
     }
