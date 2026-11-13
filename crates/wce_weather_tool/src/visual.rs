@@ -280,8 +280,14 @@ impl Visual {
         let Some(x) = e.docs.find_as_mut::<XmlFileDocument>(doc) else { return };
         match x.edit_setting("DEPTH_OF_FIELD", "DOF_focus", 0, |f| f[0] = depth) {
             Ok(()) => {
-                let on = read_environment(x.xml()).use_dof;
-                let note = if on { "" } else { " (use_DOF is off: turn it on in the Inspector's Depth of field to see it)" };
+                let p = read_environment(x.xml());
+                let note = if !p.use_dof {
+                    " (use_DOF is off: turn it on in the Inspector's Depth of field to see it)".to_owned()
+                } else if p.dof_blur_size > 1.0 {
+                    format!(" (DOF_blur_size {} is above 1: the game's shader overshoots, with halos out of focus)", p.dof_blur_size)
+                } else {
+                    String::new()
+                };
                 e.status(&format!("focus: {depth} m{note}"), false);
             }
 

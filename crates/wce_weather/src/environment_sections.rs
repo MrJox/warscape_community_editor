@@ -332,8 +332,22 @@ pub static SECTIONS: &[Section] = &[
                 Kind::Bool,
                 "Blurs what is out of focus. The game only does it when 'Depth of field' is on in its graphics options (Settings menu).",
             ),
-            f("DEPTH_OF_FIELD", "DOF_focus", "DOF_focus", Kind::Pair, "Focus distance (first) and focal length (second)."),
-            f("DEPTH_OF_FIELD", "DOF_blur_size", "DOF_blur_size", Kind::Number, "How big the blur is outside the focus."),
+            f(
+                "DEPTH_OF_FIELD",
+                "DOF_focus",
+                "DOF_focus",
+                Kind::Pair,
+                "First: the distance in focus, in metres from the camera (the shader caps it at 500; Pick focus in the Weather scene panel \
+                 sets it with a click). Second: how far either side of it stays sharp, in metres; the blur grows past that.",
+            ),
+            f(
+                "DEPTH_OF_FIELD",
+                "DOF_blur_size",
+                "DOF_blur_size",
+                Kind::Number,
+                "How much of the blurred image is mixed in out of focus, 0 to 1 (the game's own file with depth of field on uses 0.25). Above \
+                 1 the game's shader overshoots: edges out of focus get bright and dark halos.",
+            ),
         ],
     },
     Section {

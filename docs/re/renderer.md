@@ -247,6 +247,9 @@ Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_
   otherwise the battle camera's values (dumps: 0, 1000, 1) with the plain hdr_to_screen.
 - sample_data_3x3/5x5/9x9 (dump): offsets x / width, y / height, Gaussian weights exp(-(x^2 + y^2) / 8) normalised per
   kernel, w = 1. Only use_DOF='true' files: campaign/porthole lightings and weather/charlemagne/day/1.environment.
+- blur_kernel_scale (DOF_blur_size) is the lerp's factor, so above 1 the composite extrapolates past the blur: halos on edges out of
+  focus (2026-11-13, seen in the editor with at_au_land_day_rain's 6.3, a file that ships with use_DOF off). The shipped file with it on,
+  weather/charlemagne/day/1.environment, has DOF_blur_size 0.25 and DOF_focus variance(0,0).
 
 ## Environment cube (2026-10-08)
 
