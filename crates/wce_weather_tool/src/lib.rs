@@ -5,6 +5,7 @@
 pub mod commands;
 mod mix;
 pub mod picker;
+mod preview;
 pub mod tool;
 pub mod variation_editor;
 mod visual;

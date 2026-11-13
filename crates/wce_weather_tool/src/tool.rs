@@ -781,6 +781,10 @@ impl Tool for WeatherTool {
         crate::visual::SHORTCUTS
     }
 
+    fn viewport_underlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        self.visual.draw_wipe(e, self.env_doc, origin, size);
+    }
+
     fn viewport_overlay(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
         let shown = self.last_params.clone();
         self.visual.overlay(e, self.env_doc, &shown, origin, size);
