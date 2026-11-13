@@ -918,10 +918,36 @@ impl XmlFileDocument {
                 for elem in missing {
                     ins.text("missing", &format!("no <{elem}>"), "this file has none");
                 }
+
+                if s.title == "Fog" {
+                    self.fog_curve(ins);
+                }
             }
         }
 
         self.inspect_other_attributes(ins, &mut n, gesture_base);
+    }
+
+    /// The Fog section's curve: the fog's opacity over flat ground by the distance from the point below a battle camera 25 m up, as the game's
+    /// fog shader works it out (`wce_scene::environment::fog_opacity`), out to where it levels off.
+    fn fog_curve(&self, ins: &mut dyn Inspector) {
+        const CAMERA_HEIGHT: f32 = 25.0;
+        const SAMPLES: usize = 96;
+        let p = wce_scene::environment::read_environment(self.xml());
+        let at = |r: f32| wce_scene::environment::fog_opacity(&p, r, CAMERA_HEIGHT, 0.0);
+
+        // The x axis: past where the fog reaches 95 % of its strongest (or the clear distance), in round metres.
+        let strongest = (0..=300).map(|k| at(k as f32 * 100.0)).fold(0.0f32, f32::max);
+        let reach = (0..=300).map(|k| k as f32 * 100.0).find(|&r| at(r) >= strongest * 0.95).unwrap_or(30_000.0);
+        let end = (reach.max(p.fog_clear_distance) * 1.2).clamp(500.0, 30_000.0);
+        let end = (end / 500.0).ceil() * 500.0;
+        let values = (0..=SAMPLES).map(|k| at(end * k as f32 / SAMPLES as f32)).collect::<Vec<_>>();
+        ins.hint(
+            "How thick the fog is over flat ground, by the distance from the spot below a battle camera 25 m up (0: none, top: \
+             opaque), as the game's fog shader works it out from these settings: the distance fog, the height fog at the ground and the \
+             clear distance's fade-in. The Weather scene panel's Fog distances rings the ground where it reaches 25, 50 and 75 %.",
+        );
+        ins.plot("fog_curve", "fog by distance", &[([0.75, 0.82, 1.0, 1.0], values)], &format!("{end:.0} m"));
     }
 
     /// The elements of a name, in file order.

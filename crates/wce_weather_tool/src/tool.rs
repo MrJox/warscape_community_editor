@@ -894,6 +894,9 @@ impl Tool for WeatherTool {
             params = saved;
         }
 
+        // The preview switches (the viewport's light only).
+        self.visual.apply_switches(&mut params);
+
         params.output_gamma = self.output_gamma;
         params.output_brightness = self.output_brightness;
         let slot = &mut e.scene.environment;
@@ -905,7 +908,8 @@ impl Tool for WeatherTool {
         // The Mix section open: the viewport cross-fades to the other file (not while comparing with the saved file).
         let preview = if self.visual.comparing() { None } else { self.mix.preview(e, self.env_doc) };
         self.visual.mixing = preview.is_some();
-        if let Some((other, t)) = preview {
+        if let Some((mut other, t)) = preview {
+            self.visual.apply_switches(&mut other);
             let slot = &mut e.scene.environment;
             slot.blend = Some(other);
             slot.blend_t = t;
