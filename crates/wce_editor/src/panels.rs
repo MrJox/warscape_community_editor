@@ -164,6 +164,10 @@ impl Inspector for ImGuiInspector {
         gui::separator_text(title);
     }
 
+    fn open_section(&mut self, title: &str) -> bool {
+        gui::collapsing_header(title, gui::TREE_DEFAULT_OPEN)
+    }
+
     fn text(&mut self, field: &str, label: &str, value: &str) {
         self.draw_label(field, label, true);
         gui::same_line_at(label_column());

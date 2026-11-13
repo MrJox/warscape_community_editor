@@ -41,6 +41,13 @@ pub trait Inspector {
 
     fn section(&mut self, title: &str);
 
+    /// A section that can be folded: its title (what follows `##` is only its identity), and whether its rows are drawn (false: the
+    /// caller skips them). Open by default; an inspector that cannot fold draws `section` and says true.
+    fn open_section(&mut self, title: &str) -> bool {
+        self.section(title.split("##").next().unwrap_or(title));
+        true
+    }
+
     /// Positions and rotations relative to the item's parent (its group, prefab or layer), as the file holds them; false: in the world. The
     /// editor's Inspector follows the toolbar's Global / Local; the ones that dump or test the rows keep the file's.
     fn local_coordinates(&self) -> bool {

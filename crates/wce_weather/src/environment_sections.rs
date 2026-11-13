@@ -893,14 +893,22 @@ impl XmlFileDocument {
             let element = s.fields[0].elem;
             let elems = self.elements_named(element);
             if elems.is_empty() {
-                ins.section(s.title);
-                ins.text("missing", &format!("no <{element}>"), "this file has none");
+                if ins.open_section(s.title) {
+                    ins.text("missing", &format!("no <{element}>"), "this file has none");
+                }
+
                 continue;
             }
 
             for (k, &e) in elems.iter().enumerate().take(if s.each_element { usize::MAX } else { 1 }) {
                 let name = self.xml().get(e, "name").filter(|_| s.each_element);
-                ins.section(&name.map_or_else(|| s.title.to_owned(), |name| format!("{} '{name}'", s.title)));
+                // A folded section skips its rows (their numbering, which keys the gestures, goes on as if drawn).
+                let title = name.map_or_else(|| s.title.to_owned(), |name| format!("{} '{name}'", s.title));
+                if !ins.open_section(&format!("{title}##{e}")) {
+                    n += s.fields.len() as u64;
+                    continue;
+                }
+
                 let mut missing = vec![];
                 for fld in s.fields {
                     // A section may span elements (the Sun: LIGHTING and SUN_MESH).
@@ -995,7 +1003,10 @@ impl XmlFileDocument {
             return;
         }
 
-        ins.section("Other attributes");
+        if !ins.open_section("Other attributes") {
+            return;
+        }
+
         for (e, elem, attr) in rows {
             let Some((_, mut v)) = self.attr_value(e, &attr) else { continue };
             *n += 1;

@@ -127,6 +127,9 @@ pub(crate) struct Visual {
     hist_clipped: u32,
     hist_crushed: u32,
     hist_at: f64,
+
+    /// The frame's copy on its way back from the GPU (read once it is there: no wait).
+    hist_readback: wce_render::image_io::Readback,
 }
 
 /// The file's parameters as saved: the project's loose copy or the packs' (a file of the game), else the file on disk.
@@ -689,8 +692,11 @@ impl Visual {
             return;
         }
 
+        // A copy of the frame is started twice a second and binned once the GPU has made it (no wait).
+        self.read_histogram(e);
         if gui::time() - self.hist_at >= HISTOGRAM_EVERY {
-            self.read_histogram(e);
+            self.hist_at = gui::time();
+            e.start_viewport_readback(&mut self.hist_readback);
         }
 
         self.draw_curve(shown);
@@ -738,10 +744,9 @@ impl Visual {
         }
     }
 
-    /// Reads the viewport's image back and bins its brightness.
+    /// Bins the brightness of the viewport's image once its copy is back from the GPU.
     fn read_histogram(&mut self, e: &Editor) {
-        self.hist_at = gui::time();
-        let Some((w, h, px)) = e.read_viewport_rgba8() else { return };
+        let Some((w, h, px)) = self.hist_readback.take(e.context()) else { return };
         let mut bins = vec![0u32; BINS];
         let (mut total, mut clipped, mut crushed) = (0u32, 0u32, 0u32);
         let step = 3;
