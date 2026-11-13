@@ -13,9 +13,9 @@ use std::io::Cursor;
 use std::path::PathBuf;
 
 use rpfm_lib::files::{Decodeable, fxc::Fxc};
-use windows_core::Interface;
 use wce_d3d11::*;
 use wce_vfs::{Config, GameProfile, Vfs};
+use windows_core::Interface;
 
 fn name(p: windows_core::PCSTR) -> String {
     // SAFETY: the reflection's names are NUL-terminated strings alive with it.
@@ -52,7 +52,14 @@ fn read(vfs: &Vfs, path: &str) -> Option<Shader> {
         for i in 0..desc.BoundResources {
             let mut b = D3D11_SHADER_INPUT_BIND_DESC::default();
             if r.GetResourceBindingDesc(i, &mut b).is_ok() {
-                facts.insert(format!("resource {:?} {} slot {} count {} dim {:?}", b.Type, name(b.Name), b.BindPoint, b.BindCount, b.Dimension));
+                facts.insert(format!(
+                    "resource {:?} {} slot {} count {} dim {:?}",
+                    b.Type,
+                    name(b.Name),
+                    b.BindPoint,
+                    b.BindCount,
+                    b.Dimension
+                ));
             }
         }
 
@@ -70,7 +77,13 @@ fn read(vfs: &Vfs, path: &str) -> Option<Shader> {
                 if let Some(var) = cb.GetVariableByIndex(v)
                     && var.GetDesc(&mut vd).is_ok()
                 {
-                    facts.insert(format!("cbuffer {cb_name} +{} {} {}{}", vd.StartOffset, vd.Size, name(vd.Name), if vd.uFlags & 2 != 0 { "" } else { " (unused)" }));
+                    facts.insert(format!(
+                        "cbuffer {cb_name} +{} {} {}{}",
+                        vd.StartOffset,
+                        vd.Size,
+                        name(vd.Name),
+                        if vd.uFlags & 2 != 0 { "" } else { " (unused)" }
+                    ));
                 }
             }
         }
@@ -78,7 +91,14 @@ fn read(vfs: &Vfs, path: &str) -> Option<Shader> {
         for i in 0..desc.InputParameters {
             let mut p = D3D11_SIGNATURE_PARAMETER_DESC::default();
             if r.GetInputParameterDesc(i, &mut p).is_ok() {
-                facts.insert(format!("in {}{} reg {} mask {:#x} used {:#x}", name(p.SemanticName), p.SemanticIndex, p.Register, p.Mask, p.ReadWriteMask));
+                facts.insert(format!(
+                    "in {}{} reg {} mask {:#x} used {:#x}",
+                    name(p.SemanticName),
+                    p.SemanticIndex,
+                    p.Register,
+                    p.Mask,
+                    p.ReadWriteMask
+                ));
             }
         }
 
@@ -109,7 +129,13 @@ fn main() {
     let (a, b) = (mount(dir_a, key_a), mount(dir_b, key_b));
     let names = |vfs: &Vfs| -> BTreeSet<String> {
         match parts.first().and_then(|p| p.strip_prefix('@')) {
-            Some(file) => std::fs::read_to_string(file).expect("the list").lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect(),
+            Some(file) => std::fs::read_to_string(file)
+                .expect("the list")
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_owned)
+                .collect(),
             None => vfs
                 .list("fxc/", ".fxc")
                 .into_iter()
@@ -128,7 +154,10 @@ fn main() {
             (Some(x), Some(y)) if x.bytecode == y.bytecode => same += 1,
             (Some(x), Some(y)) if x.facts == y.facts => same_reflection += 1,
             (Some(x), Some(y)) => {
-                differ.insert(n.clone(), (x.facts.difference(&y.facts).cloned().collect::<Vec<_>>(), y.facts.difference(&x.facts).cloned().collect::<Vec<_>>()));
+                differ.insert(
+                    n.clone(),
+                    (x.facts.difference(&y.facts).cloned().collect::<Vec<_>>(), y.facts.difference(&x.facts).cloned().collect::<Vec<_>>()),
+                );
             }
 
             (Some(_), None) => only_a.push(n.clone()),
@@ -137,8 +166,13 @@ fn main() {
         }
     }
 
-    println!("{} shaders: {same} the same bytecode, {same_reflection} another bytecode with the same reflection, {} another reflection, {} only in {key_a}, {} only in {key_b}",
-        all.len(), differ.len(), only_a.len(), only_b.len());
+    println!(
+        "{} shaders: {same} the same bytecode, {same_reflection} another bytecode with the same reflection, {} another reflection, {} only in {key_a}, {} only in {key_b}",
+        all.len(),
+        differ.len(),
+        only_a.len(),
+        only_b.len()
+    );
     for n in &only_a {
         println!("only in {key_a}: {n}");
     }

@@ -147,7 +147,6 @@ fn root(bytes: &[u8]) -> Element {
 }
 
 impl TileDatabase {
-
     /// Reads `<folder>/_settings.xml` and `<folder>/TILES/*.xml` (`folder`: the kit's `terrain/tiles/battle/_tile_database`).
     ///
     /// # Errors
@@ -166,7 +165,8 @@ impl TileDatabase {
     /// Fails when no folder has a `_settings.xml` that reads.
     pub fn load_layered(folders: &[&Path]) -> Result<Self, String> {
         let folder = folders.iter().find(|f| f.join("_settings.xml").is_file()).or(folders.first()).ok_or("no tile database")?;
-        let settings = std::fs::read(folder.join("_settings.xml")).map_err(|e| format!("{}: {e}", folder.join("_settings.xml").display()))?;
+        let settings =
+            std::fs::read(folder.join("_settings.xml")).map_err(|e| format!("{}: {e}", folder.join("_settings.xml").display()))?;
         let mut db = Self::default();
         let settings = root(&settings);
         for c in settings.child("CLIMATES").map(|c| c.children.as_slice()).unwrap_or_default().iter().filter(|c| c.name == "CLIMATE") {
@@ -207,8 +207,13 @@ impl TileDatabase {
         for name in ["user", "assembly_kit"] {
             if !db.sets.iter().any(|s| s.name == name) {
                 db.sets.push(TileSet {
-                    name: name.to_owned(), colour: [0.0; 3], link_as_set: String::new(), linking_tile: String::new(), shared_geometry: String::new(),
-                    also_place_tile_set: String::new(), id: 0,
+                    name: name.to_owned(),
+                    colour: [0.0; 3],
+                    link_as_set: String::new(),
+                    linking_tile: String::new(),
+                    shared_geometry: String::new(),
+                    also_place_tile_set: String::new(),
+                    id: 0,
                 });
             }
         }
@@ -217,10 +222,15 @@ impl TileDatabase {
         let (mut names, mut locations) = (std::collections::HashSet::new(), std::collections::HashSet::new());
         let mut files = vec![];
         for f in folders {
-            let mut own = std::fs::read_dir(f.join("TILES")).map(|d| d.filter_map(Result::ok).map(|e| e.path()).collect::<Vec<_>>()).unwrap_or_default();
+            let mut own = std::fs::read_dir(f.join("TILES"))
+                .map(|d| d.filter_map(Result::ok).map(|e| e.path()).collect::<Vec<_>>())
+                .unwrap_or_default();
             own.retain(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("xml")));
             own.sort();
-            files.extend(own.into_iter().filter(|p| names.insert(p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default())));
+            files.extend(
+                own.into_iter()
+                    .filter(|p| names.insert(p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default())),
+            );
         }
 
         for path in files {
@@ -231,7 +241,9 @@ impl TileDatabase {
             }
 
             let set_of = |name: &str| db.sets.iter().position(|s| s.name == name);
-            let list = |parent: &str, child: &str| t.child(parent).map(|c| c.children.iter().filter(|e| e.name == child).cloned().collect::<Vec<_>>()).unwrap_or_default();
+            let list = |parent: &str, child: &str| {
+                t.child(parent).map(|c| c.children.iter().filter(|e| e.name == child).cloned().collect::<Vec<_>>()).unwrap_or_default()
+            };
             let tile = Tile {
                 location: attr(&t, "location").to_owned(),
                 set: set_of(attr(&t, "tile_set")),
@@ -241,19 +253,28 @@ impl TileDatabase {
                 mask: attr(&t, "mask").bytes().map(|c| c == b'1').collect(),
                 random_rotatable: flag(&t, "random_rotatable"),
                 encampable: flag(&t, "encampable"),
-                variations: list("VARIATIONS", "VARIATION").iter().map(|v| Variation { location: attr(v, "location").to_owned(), colour: colour(v), barbarian: flag(v, "barbarian") }).collect(),
-                links: list("TILE_LINKS", "TILE_LINK").iter().map(|l| Link {
-                    set: set_of(attr(l, "link_set")),
-                    x: attr(l, "x").trim().parse().unwrap_or(0),
-                    y: attr(l, "y").trim().parse().unwrap_or(0),
-                    test: if attr(l, "test") == "TLT_EQUALS" { LinkTest::Equals } else { LinkTest::NotEquals },
-                    is_entry: flag(l, "is_entry"),
-                }).collect(),
-                link_targets: list("TILE_LINK_TARGETS", "TILE_LINK_TARGET").iter().map(|l| LinkTarget {
-                    set: set_of(attr(l, "tile_set")),
-                    x: attr(l, "x").trim().parse().unwrap_or(0),
-                    y: attr(l, "y").trim().parse().unwrap_or(0),
-                }).collect(),
+                variations: list("VARIATIONS", "VARIATION")
+                    .iter()
+                    .map(|v| Variation { location: attr(v, "location").to_owned(), colour: colour(v), barbarian: flag(v, "barbarian") })
+                    .collect(),
+                links: list("TILE_LINKS", "TILE_LINK")
+                    .iter()
+                    .map(|l| Link {
+                        set: set_of(attr(l, "link_set")),
+                        x: attr(l, "x").trim().parse().unwrap_or(0),
+                        y: attr(l, "y").trim().parse().unwrap_or(0),
+                        test: if attr(l, "test") == "TLT_EQUALS" { LinkTest::Equals } else { LinkTest::NotEquals },
+                        is_entry: flag(l, "is_entry"),
+                    })
+                    .collect(),
+                link_targets: list("TILE_LINK_TARGETS", "TILE_LINK_TARGET")
+                    .iter()
+                    .map(|l| LinkTarget {
+                        set: set_of(attr(l, "tile_set")),
+                        x: attr(l, "x").trim().parse().unwrap_or(0),
+                        y: attr(l, "y").trim().parse().unwrap_or(0),
+                    })
+                    .collect(),
                 id: 0,
             };
 
@@ -278,14 +299,22 @@ impl TileDatabase {
             mask: e.mask().bytes().map(|c| c == b'1').collect(),
             random_rotatable: e.random_rotatable(),
             encampable: e.encampable(),
-            variations: e.variations().iter().map(|v| Variation { location: v.location.clone(), colour: [0.0; 3], barbarian: false }).collect(),
-            links: e.links().iter().map(|l| Link {
-                set: set_of(&l.link_set),
-                x: l.x,
-                y: l.y,
-                test: if l.test == "TLT_EQUALS" { LinkTest::Equals } else { LinkTest::NotEquals },
-                is_entry: l.is_entry,
-            }).collect(),
+            variations: e
+                .variations()
+                .iter()
+                .map(|v| Variation { location: v.location.clone(), colour: [0.0; 3], barbarian: false })
+                .collect(),
+            links: e
+                .links()
+                .iter()
+                .map(|l| Link {
+                    set: set_of(&l.link_set),
+                    x: l.x,
+                    y: l.y,
+                    test: if l.test == "TLT_EQUALS" { LinkTest::Equals } else { LinkTest::NotEquals },
+                    is_entry: l.is_entry,
+                })
+                .collect(),
             link_targets: e.link_targets().iter().map(|t| LinkTarget { set: set_of(&t.tile_set), x: t.x, y: t.y }).collect(),
             id: u32::MAX,
         }
@@ -360,7 +389,8 @@ mod tests {
         let write = |folder: &str, set: &str, tile: &str, tile_set: &str| {
             let at = dir.join(folder);
             std::fs::create_dir_all(at.join("TILES")).unwrap();
-            std::fs::write(at.join("_settings.xml"), format!("<SETTINGS><TILE_SETS><TILE_SET name='{set}'/></TILE_SETS></SETTINGS>")).unwrap();
+            std::fs::write(at.join("_settings.xml"), format!("<SETTINGS><TILE_SETS><TILE_SET name='{set}'/></TILE_SETS></SETTINGS>"))
+                .unwrap();
             let xml = format!("<TILE location='terrain\\tiles\\battle\\{tile}' tile_set='{tile_set}' width='1' height='1'/>");
             std::fs::write(at.join("TILES").join(format!("{tile}.xml")), xml).unwrap();
         };
@@ -372,7 +402,8 @@ mod tests {
         let db = TileDatabase::load_layered(&[a.as_path(), b.as_path(), c.as_path()]).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
 
-        let set_of = |name: &str| db.tiles.iter().find(|t| t.location.ends_with(name)).and_then(|t| t.set).map(|s| db.sets[s].name.as_str());
+        let set_of =
+            |name: &str| db.tiles.iter().find(|t| t.location.ends_with(name)).and_then(|t| t.set).map(|s| db.sets[s].name.as_str());
         assert_eq!(set_of("only_mod"), Some("mod_set"), "a mod's set is known, so its tiles match");
         assert_eq!(set_of("shared"), Some("kit_set"), "the first layer's tile wins");
     }

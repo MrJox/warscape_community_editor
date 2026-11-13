@@ -72,7 +72,8 @@ pub fn resize_maps(dir: &Path, old_cells: (u32, u32), density: u32, r: &Resize) 
         std::fs::copy(p, &bak).map(|_| ()).map_err(|e| format!("{}: {e}", bak.display()))
     };
 
-    let mut files = std::fs::read_dir(dir).map_err(|e| e.to_string())?.flatten().map(|f| f.path()).filter(|p| p.is_file()).collect::<Vec<_>>();
+    let mut files =
+        std::fs::read_dir(dir).map_err(|e| e.to_string())?.flatten().map(|f| f.path()).filter(|p| p.is_file()).collect::<Vec<_>>();
     files.sort();
     for path in files {
         let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();

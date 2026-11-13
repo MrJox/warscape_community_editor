@@ -11,12 +11,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use wce_foundation::log;
-use wce_scene::render_scene::RenderScene;
 use wce_foundation::math::Double3;
+use wce_scene::render_scene::RenderScene;
+use wce_tile::new_instances::WALL_ID;
 use wce_tile::terrain_layers::{Stack, TerrainLayers};
 use wce_walls::kit::{Catalogue, EndJoint, KitLayout, LayOptions, catalogue, culture_keys, lay_on};
 use wce_walls::pieces::Piece;
-use wce_tile::new_instances::WALL_ID;
 use wce_walls::solver::Plan;
 
 use super::Tile;
@@ -32,7 +32,11 @@ impl Tile {
         let all = match &self.wall_preview.building_keys {
             Some(k) => k.clone(),
             None => {
-                let k = files.list("rigidmodels/buildings/", "_tech.cs2.parsed").into_iter().filter_map(|p| p.rsplit('/').next()?.strip_suffix("_tech.cs2.parsed").map(str::to_owned)).collect::<Vec<_>>();
+                let k = files
+                    .list("rigidmodels/buildings/", "_tech.cs2.parsed")
+                    .into_iter()
+                    .filter_map(|p| p.rsplit('/').next()?.strip_suffix("_tech.cs2.parsed").map(str::to_owned))
+                    .collect::<Vec<_>>();
                 let k = Arc::new(k);
                 self.wall_preview.building_keys = Some(k.clone());
                 k
@@ -68,9 +72,12 @@ impl Tile {
         // Its joints as the kit's pieces' are read (`kit::joints`: its end caps, else its walk's ends: the 8 m cultures' gates have no caps),
         // else `piece_ends` (its frame's ends).
         // Its platforms' edges on the joint (`kit::joint_edges`): which pieces join it.
-        let logic = self.files.as_deref().and_then(|f| f.read(&format!("{}{}_tech.cs2.parsed", wce_walls::building::folder(&a.key), a.key)).ok());
+        let logic =
+            self.files.as_deref().and_then(|f| f.read(&format!("{}{}_tech.cs2.parsed", wce_walls::building::folder(&a.key), a.key)).ok());
         let ends = logic.as_deref().map(wce_walls::kit::joints).filter(|e| !e.is_empty()).unwrap_or_else(|| self.piece_ends(&a.key));
-        let world = |e: &wce_walls::logic::PieceEnd| w.position + w.rotation * Double3::new(f64::from(e.at[0]), f64::from(e.at[1]), f64::from(e.at[2]));
+        let world = |e: &wce_walls::logic::PieceEnd| {
+            w.position + w.rotation * Double3::new(f64::from(e.at[0]), f64::from(e.at[1]), f64::from(e.at[2]))
+        };
         let e = ends.into_iter().min_by(|x, y| {
             let d = |e: &wce_walls::logic::PieceEnd| {
                 let p = world(e);
@@ -103,7 +110,8 @@ impl Tile {
 
         let handles = wce_walls::scene::wall_handles(sc, elem);
         let flip = sc.doc().get(elem, "wall_flip").is_some_and(|v| wce_tile::properties::parse_bool(&v));
-        let every = |attr: &str, default: f64| sc.doc().get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);
+        let every =
+            |attr: &str, default: f64| sc.doc().get(elem, attr).and_then(|t| t.trim().parse::<f64>().ok()).unwrap_or(default).max(0.0);
         let (defence_every, access_every) = (every("wall_defence_every", 0.0), every("wall_access_every", wce_walls::pieces::DOOR_EVERY));
         let anchors = self.wall_anchors();
         let mut ends = [self.kit_end_joint(&anchors, points[0]), self.kit_end_joint(&anchors, points[points.len() - 1])];
@@ -127,7 +135,13 @@ impl Tile {
         let key = self.wall_layer_key(elem);
         let ground = self.ground_below(key.as_deref());
         let level = ground(line[0][0], line[0][1]);
-        let options = LayOptions { level, defence_every, access_every, caps: [true, true], ends: [ends[0].as_ref().map(|e| e.0.clone()), ends[1].as_ref().map(|e| e.0.clone())] };
+        let options = LayOptions {
+            level,
+            defence_every,
+            access_every,
+            caps: [true, true],
+            ends: [ends[0].as_ref().map(|e| e.0.clone()), ends[1].as_ref().map(|e| e.0.clone())],
+        };
         let mut laid = lay_on(&line, &cat, options, Some(&ground));
         for (k, e) in ends.iter().enumerate() {
             if let Some((_, key)) = e {
@@ -170,14 +184,17 @@ impl Tile {
             log::warn(format!("kit wall {}: {n}", self.tscene().name(elem)));
         }
 
-
         // Its height layer: the ground to its pieces' levels (made again only when it or the ground below it changed); the other walls
         // stand on what it changed.
         if self.kit_wall_ground(elem, &layout) {
             self.walls_changed();
         }
 
-        let placed = layout.placed.iter().map(|p| (p.key.clone(), Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true })).collect::<Vec<_>>();
+        let placed = layout
+            .placed
+            .iter()
+            .map(|p| (p.key.clone(), Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true }))
+            .collect::<Vec<_>>();
         let plans = self.kit_stretch_plans(elem, &layout);
         let profile = wce_walls::scene::wall_profile(self.tscene(), elem);
 
@@ -224,7 +241,9 @@ impl Tile {
 
                 let mut own = HashMap::new();
                 for (key, _) in &placed {
-                    if !own.contains_key(key) && let Some(b) = self.wall_base(key) {
+                    if !own.contains_key(key)
+                        && let Some(b) = self.wall_base(key)
+                    {
                         own.insert(key.clone(), b);
                     }
                 }
@@ -253,7 +272,10 @@ impl Tile {
     /// from `&self` (Generate SiegeAI).
     pub(crate) fn ensure_kit_layouts(&mut self) {
         let sc = self.tscene();
-        let walls = wce_walls::scene::all_walls(sc).into_iter().filter(|&e| !wce_walls::scene::is_procedural(sc, e) && !self.wall_preview.kit_layouts.contains_key(&e)).collect::<Vec<_>>();
+        let walls = wce_walls::scene::all_walls(sc)
+            .into_iter()
+            .filter(|&e| !wce_walls::scene::is_procedural(sc, e) && !self.wall_preview.kit_layouts.contains_key(&e))
+            .collect::<Vec<_>>();
         for e in walls {
             if let Some(l) = self.kit_layout(e) {
                 self.wall_preview.kit_layouts.insert(e, l);
@@ -273,16 +295,26 @@ impl Tile {
         let key = self.wall_layer_key(elem);
         let below = self.ground_below(key.as_deref());
         let u = self.unit();
-        l.placed.iter().map(|p| {
-            let m = [(p.joints[0][0] + p.joints[1][0]) / 2.0, (p.joints[0][1] + p.joints[1][1]) / 2.0];
-            (p.key.clone(), p.levels, below(m[0], m[1]), self.project.height_at(m[0] / u, m[1] / u), p.joints.map(|j| [j[0] / u, j[1] / u]))
-        }).collect()
+        l.placed
+            .iter()
+            .map(|p| {
+                let m = [(p.joints[0][0] + p.joints[1][0]) / 2.0, (p.joints[0][1] + p.joints[1][1]) / 2.0];
+                (
+                    p.key.clone(),
+                    p.levels,
+                    below(m[0], m[1]),
+                    self.project.height_at(m[0] / u, m[1] / u),
+                    p.joints.map(|j| [j[0] / u, j[1] / u]),
+                )
+            })
+            .collect()
     }
 
     /// An id for a new wall (`WALL_ID`): after the highest.
     pub(super) fn next_wall_id(&self) -> u32 {
         let sc = self.tscene();
-        wce_walls::scene::all_walls(sc).into_iter().filter_map(|e| sc.doc().get(e, WALL_ID)?.trim().parse::<u32>().ok()).max().unwrap_or(0) + 1
+        wce_walls::scene::all_walls(sc).into_iter().filter_map(|e| sc.doc().get(e, WALL_ID)?.trim().parse::<u32>().ok()).max().unwrap_or(0)
+            + 1
     }
 
     /// What a kit wall's height layer is known by (`wce_walls::scene::wall_key`).
@@ -295,11 +327,18 @@ impl Tile {
     /// (the export leaves it out, noted).
     pub fn kit_walls_for_export(&mut self) -> Vec<wce_walls::export::KitWall> {
         let sc = self.tscene();
-        let walls = wce_walls::scene::all_walls(sc).into_iter().filter(|&e| !wce_walls::scene::is_procedural(sc, e) && wce_walls::scene::exported(sc, e)).collect::<Vec<_>>();
+        let walls = wce_walls::scene::all_walls(sc)
+            .into_iter()
+            .filter(|&e| !wce_walls::scene::is_procedural(sc, e) && wce_walls::scene::exported(sc, e))
+            .collect::<Vec<_>>();
         let mut out = vec![];
         for e in walls {
             let (Some(key), Some(layout)) = (self.wall_layer_key(e), self.kit_layout(e)) else { continue };
-            let placed = layout.placed.iter().map(|p| (p.key.clone(), Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true })).collect();
+            let placed = layout
+                .placed
+                .iter()
+                .map(|p| (p.key.clone(), Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true }))
+                .collect();
             let stretches = self.kit_stretch_plans(e, &layout);
             out.push(wce_walls::export::KitWall { key, placed, stretches });
         }
@@ -356,10 +395,14 @@ impl Tile {
             let Some(piece) = cat.pieces.iter().find(|k| k.key == pl.key) else { continue };
             let (sn, cs) = pl.yaw.sin_cos();
             if piece.area.len() >= 3 {
-                let world = piece.area.iter().map(|q| {
-                    let (x, z) = (f64::from(q[0]), f64::from(q[1]));
-                    [pl.origin[0] + x * cs - z * sn, pl.origin[2] + x * sn + z * cs]
-                }).collect();
+                let world = piece
+                    .area
+                    .iter()
+                    .map(|q| {
+                        let (x, z) = (f64::from(q[0]), f64::from(q[1]));
+                        [pl.origin[0] + x * cs - z * sn, pl.origin[2] + x * sn + z * cs]
+                    })
+                    .collect();
                 pads.push((world, pl.joints, pl.levels));
             }
         }
@@ -386,18 +429,22 @@ impl Tile {
         for y in rect[1]..rect[3] {
             for x in rect[0]..rect[2] {
                 let q = world_of(x, y);
-                let best = pads.iter().filter_map(|(ring, joints, levels)| {
-                    let d = if inside(q, ring) { 0.0 } else { ring_distance(q, ring) };
-                    (d < feather).then(|| {
-                        let (a, b) = (joints[0], joints[1]);
-                        let ab = [b[0] - a[0], b[1] - a[1]];
-                        let len2 = ab[0] * ab[0] + ab[1] * ab[1];
-                        let t = if len2 > 1e-9 { (((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
-                        let s = 1.0 - d / feather;
-                        let off = (q[0] - a[0] - ab[0] * t).hypot(q[1] - a[1] - ab[1] * t);
-                        (s * s * (3.0 - 2.0 * s), -off, levels[0] + (levels[1] - levels[0]) * t)
+                let best = pads
+                    .iter()
+                    .filter_map(|(ring, joints, levels)| {
+                        let d = if inside(q, ring) { 0.0 } else { ring_distance(q, ring) };
+                        (d < feather).then(|| {
+                            let (a, b) = (joints[0], joints[1]);
+                            let ab = [b[0] - a[0], b[1] - a[1]];
+                            let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+                            let t =
+                                if len2 > 1e-9 { (((q[0] - a[0]) * ab[0] + (q[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
+                            let s = 1.0 - d / feather;
+                            let off = (q[0] - a[0] - ab[0] * t).hypot(q[1] - a[1] - ab[1] * t);
+                            (s * s * (3.0 - 2.0 * s), -off, levels[0] + (levels[1] - levels[0]) * t)
+                        })
                     })
-                }).max_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+                    .max_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
                 if let Some((weight, _, level)) = best {
                     wants.push((x, y, weight, level));
                 }
@@ -461,7 +508,11 @@ impl Tile {
                     let layer = height.layers.pop().expect("the layer just added");
                     let rank = |o: &str| parse_owner(o).and_then(|(k, _)| order.iter().position(|q| q == k));
                     let mine = order.iter().position(|q| *q == key);
-                    let at = height.layers.iter().position(|l| rank(&l.owner).zip(mine).is_some_and(|(r, m)| r > m)).unwrap_or(height.layers.len());
+                    let at = height
+                        .layers
+                        .iter()
+                        .position(|l| rank(&l.owner).zip(mine).is_some_and(|(r, m)| r > m))
+                        .unwrap_or(height.layers.len());
                     height.layers.insert(at, layer);
                     new_id
                 }
@@ -488,7 +539,10 @@ impl Tile {
         p.height_dirty = true;
         self.layers_shown = true;
         if cut.max(fill) > MOVED_WARN_M {
-            log::warn(format!("kit wall {}: the ground under its pieces is cut by up to {cut:.1} m and filled by up to {fill:.1} m (its steps can't follow it closer)", self.tscene().name(elem)));
+            log::warn(format!(
+                "kit wall {}: the ground under its pieces is cut by up to {cut:.1} m and filled by up to {fill:.1} m (its steps can't follow it closer)",
+                self.tscene().name(elem)
+            ));
         }
 
         true
@@ -508,11 +562,20 @@ impl Tile {
     /// The walls' height layers that no shown kit wall owns (a wall gone, hidden, made procedural) taken out.
     pub(super) fn sweep_wall_ground(&mut self) {
         let sc = self.tscene();
-        let live = wce_walls::scene::all_walls(sc).into_iter().filter(|&e| !wce_walls::scene::is_procedural(sc, e) && self.shown(e)).filter_map(|e| self.wall_layer_key(e)).collect::<Vec<_>>();
+        let live = wce_walls::scene::all_walls(sc)
+            .into_iter()
+            .filter(|&e| !wce_walls::scene::is_procedural(sc, e) && self.shown(e))
+            .filter_map(|e| self.wall_layer_key(e))
+            .collect::<Vec<_>>();
         let p = &mut self.project;
         let (Some(hf), Some(layers)) = (p.height.as_mut(), p.layers.as_mut()) else { return };
         let Some(height) = layers.height.as_mut() else { return };
-        let gone = height.layers.iter().filter(|l| parse_owner(&l.owner).is_some_and(|(k, _)| !live.iter().any(|q| q == k))).map(|l| (l.id, l.extent())).collect::<Vec<_>>();
+        let gone = height
+            .layers
+            .iter()
+            .filter(|l| parse_owner(&l.owner).is_some_and(|(k, _)| !live.iter().any(|q| q == k)))
+            .map(|l| (l.id, l.extent()))
+            .collect::<Vec<_>>();
         if gone.is_empty() {
             return;
         }
@@ -564,13 +627,15 @@ fn inside(p: [f64; 2], ring: &[[f64; 2]]) -> bool {
 }
 
 fn ring_distance(p: [f64; 2], ring: &[[f64; 2]]) -> f64 {
-    (0..ring.len()).map(|i| {
-        let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
-        let ab = [b[0] - a[0], b[1] - a[1]];
-        let len2 = ab[0] * ab[0] + ab[1] * ab[1];
-        let t = if len2 > 1e-12 { (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
-        (p[0] - a[0] - ab[0] * t).hypot(p[1] - a[1] - ab[1] * t)
-    }).fold(f64::MAX, f64::min)
+    (0..ring.len())
+        .map(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+            let ab = [b[0] - a[0], b[1] - a[1]];
+            let len2 = ab[0] * ab[0] + ab[1] * ab[1];
+            let t = if len2 > 1e-12 { (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            (p[0] - a[0] - ab[0] * t).hypot(p[1] - a[1] - ab[1] * t)
+        })
+        .fold(f64::MAX, f64::min)
 }
 
 /// What a wall converted to buildings is kept in: a child layer of its own, hidden and not exported (docs/plans/kit_walls.md, follow-up 7).
@@ -586,7 +651,10 @@ impl super::TileDocument {
 
         let Some(l) = t.kit_wall_report(elem) else { return Err("the wall is not laid (hidden, or still being made)".to_owned()) };
         if !l.stretches.is_empty() {
-            return Err(format!("it has {} generated stretch(es) at its ends, which are no game pieces: move its ends until the pieces meet them", l.stretches.len()));
+            return Err(format!(
+                "it has {} generated stretch(es) at its ends, which are no game pieces: move its ends until the pieces meet them",
+                l.stretches.len()
+            ));
         }
 
         if l.placed.is_empty() {
@@ -616,7 +684,11 @@ impl super::TileDocument {
             return Err("the wall has generated stretches or no pieces".to_owned());
         }
 
-        let placed = layout.placed.iter().map(|p| (p.key.clone(), Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true })).collect::<Vec<_>>();
+        let placed = layout
+            .placed
+            .iter()
+            .map(|p| (p.key.clone(), Piece { s: (0.0, 0.0), origin: p.origin, yaw: p.yaw, scale: 1.0, base: None, rigid: true }))
+            .collect::<Vec<_>>();
         let t = self.tile();
         let sc = t.tscene();
         let name = sc.name(elem);
@@ -635,7 +707,8 @@ impl super::TileDocument {
         // Its towers' capture locations, as an export makes them (each tower naming its own).
         let captures = {
             let key = ground_key.clone().unwrap_or_else(|| format!("e{elem}"));
-            let read = |k: &str| t.files.as_deref().and_then(|f| f.read(&format!("{}{k}_tech.cs2.parsed", wce_walls::building::folder(k))).ok());
+            let read =
+                |k: &str| t.files.as_deref().and_then(|f| f.read(&format!("{}{k}_tech.cs2.parsed", wce_walls::building::folder(k))).ok());
             wce_walls::towers::tower_captures(&key, &placed, &read)
         };
         let w = wce_tile::world_transform::world_transform(sc, elem);
@@ -667,7 +740,12 @@ impl super::TileDocument {
             }
         };
 
-        self.push_splice("Convert to buildings".to_owned(), mark, vec![super::item_of(elem)], made.iter().map(|&e| super::item_of(e)).collect());
+        self.push_splice(
+            "Convert to buildings".to_owned(),
+            mark,
+            vec![super::item_of(elem)],
+            made.iter().map(|&e| super::item_of(e)).collect(),
+        );
 
         // Its ground: no longer the wall's (which would take it out with the wall hidden), the user's.
         let ground = ground_key.as_deref().and_then(|k| self.tile().wall_layer_id(k));
@@ -683,8 +761,13 @@ impl super::TileDocument {
 
         let pushed = self.history.size() - before;
         self.history.join_last(pushed, "Convert to buildings");
-        let ground = if ground.is_some() { format!(", its ground kept as the height layer \"Kit wall {name} (converted)\"") } else { String::new() };
-        let towers = if captures.is_empty() { String::new() } else { format!(" ({} tower capture location(s) among them)", captures.len()) };
-        Ok(format!("{name}: {} element(s) made{towers}; the wall is in the hidden, not exported layer \"{CONVERTED_LAYER} {name}\"{ground}", made.len()))
+        let ground =
+            if ground.is_some() { format!(", its ground kept as the height layer \"Kit wall {name} (converted)\"") } else { String::new() };
+        let towers =
+            if captures.is_empty() { String::new() } else { format!(" ({} tower capture location(s) among them)", captures.len()) };
+        Ok(format!(
+            "{name}: {} element(s) made{towers}; the wall is in the hidden, not exported layer \"{CONVERTED_LAYER} {name}\"{ground}",
+            made.len()
+        ))
     }
 }

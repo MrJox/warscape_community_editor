@@ -145,8 +145,10 @@ impl<K: CaKey, V> CaMap<K, V> {
         }
 
         let b = (k.ca_hash() % self.heads.len() as u32) as usize;
-        let in_bucket = |s: u32| self.slots[s as usize].entry.as_ref().is_some_and(|(kk, _)| (kk.ca_hash() % self.heads.len() as u32) as usize == b);
-        let found: Vec<u32> = exact.into_iter().chain(others.iter().filter_map(|id| self.index.get(id).copied())).filter(|&s| in_bucket(s)).collect();
+        let in_bucket =
+            |s: u32| self.slots[s as usize].entry.as_ref().is_some_and(|(kk, _)| (kk.ca_hash() % self.heads.len() as u32) as usize == b);
+        let found: Vec<u32> =
+            exact.into_iter().chain(others.iter().filter_map(|id| self.index.get(id).copied())).filter(|&s| in_bucket(s)).collect();
         if found.len() < 2 {
             return found.first().copied();
         }
@@ -419,7 +421,8 @@ mod tests {
                 assert_eq!(m.len(), r.count);
                 if step % 997 == 0 {
                     let ours: Vec<(u32, u32, u32)> = m.iter().map(|(k, v)| (k.0.to_bits(), k.1.to_bits(), *v)).collect();
-                    let theirs: Vec<(u32, u32, u32)> = r.buckets.iter().flatten().map(|(k, v)| (k.0.to_bits(), k.1.to_bits(), *v)).collect();
+                    let theirs: Vec<(u32, u32, u32)> =
+                        r.buckets.iter().flatten().map(|(k, v)| (k.0.to_bits(), k.1.to_bits(), *v)).collect();
                     assert_eq!(ours, theirs, "round {round} step {step}: the order");
                     assert_eq!(m.heads.len(), r.buckets.len());
                 }

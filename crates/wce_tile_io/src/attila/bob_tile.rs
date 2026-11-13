@@ -39,7 +39,13 @@ pub fn blend_and_index(weights: &[u16], w: usize, h: usize) -> (Vec<u8>, Vec<u8>
 /// `ground_types.dds`'s pixels (the tile without its 128-pixel border): per pixel the strongest group of the blend map (ties to red,
 /// green, blue, alpha) as the entry's ground types of the four groups, then the painted ground types (`ground_type_map.png`, any colour
 /// but black: `ground_type_of` gives its type) over them.
-pub fn ground_types(blend: &[u8], w: usize, h: usize, group_types: [u8; 4], painted: Option<&dyn Fn(usize, usize) -> Option<u8>>) -> Vec<u8> {
+pub fn ground_types(
+    blend: &[u8],
+    w: usize,
+    h: usize,
+    group_types: [u8; 4],
+    painted: Option<&dyn Fn(usize, usize) -> Option<u8>>,
+) -> Vec<u8> {
     wce_foundation::wce_prof!("stage_b.ground_types");
     let (ow, oh) = (w - 256, h - 256);
     let mut out = vec![0u8; ow * oh];
@@ -434,7 +440,13 @@ fn influence_pass(k: usize, cw: usize, ch: usize, links: &[(i32, i32)], extra: O
 /// # Errors
 ///
 /// The height map is not `(cells + 2) x T` samples each way (a border subtile of T samples all round).
-pub fn final_heights(heights: &[u16], w: usize, h: usize, n: &HeightNumbers, links: &InfluenceLinks) -> Result<(Vec<f32>, usize, usize), String> {
+pub fn final_heights(
+    heights: &[u16],
+    w: usize,
+    h: usize,
+    n: &HeightNumbers,
+    links: &InfluenceLinks,
+) -> Result<(Vec<f32>, usize, usize), String> {
     wce_foundation::wce_prof!("stage_b.final_heights");
     let (t, scale, min_height) = (n.tri_density, n.scale, n.min_height);
     if heights.len() != w * h || !w.is_multiple_of(t) || !h.is_multiple_of(t) || w < 3 * t || h < 3 * t {
@@ -519,8 +531,15 @@ pub fn dds_l8(px: &[u8], w: usize, h: usize) -> Vec<u8> {
 
 /// The tile's files BOB's Tile processor declares (BOB_Tile `FUN_100095b0`), whether it writes them or not, as `tile.agf` lists them.
 const TILE_OUTPUTS: [&str; 9] = [
-    "blend.dds", "ground_types.dds", "hf_height_map.data", "hf_water_map.data", "index.dds", "mesh.rigid_model_v2", "normal.dds",
-    "outfield_mesh.rigid_model_v2", "terrain_outlines.xml",
+    "blend.dds",
+    "ground_types.dds",
+    "hf_height_map.data",
+    "hf_water_map.data",
+    "index.dds",
+    "mesh.rigid_model_v2",
+    "normal.dds",
+    "outfield_mesh.rigid_model_v2",
+    "terrain_outlines.xml",
 ];
 
 /// `tile.agf`, the tile's asset graph file (BOB's "Create tile agf"): `##<folder>`, then `#all` (the entities and files, sorted),
@@ -577,12 +596,22 @@ impl HeightNumbers {
     /// The project's variation's (its tile database entry), TEd's defaults when missing.
     pub fn of(raw: &Tile) -> Self {
         let entry = raw.entry.as_ref().map(|e| &e.root);
-        let variation = entry.and_then(|e| e.child("VARIATIONS")).and_then(|vs| {
-            vs.children.iter().find(|v| v.get("location").and_then(|l| l.as_str()) == raw.variation.as_deref())
-        });
-        let num = |k: &str, d: f32| variation.and_then(|v| v.get(k)).and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|t| t.parse().ok()))).map_or(d, |v| v as f32);
+        let variation = entry
+            .and_then(|e| e.child("VARIATIONS"))
+            .and_then(|vs| vs.children.iter().find(|v| v.get("location").and_then(|l| l.as_str()) == raw.variation.as_deref()));
+        let num = |k: &str, d: f32| {
+            variation
+                .and_then(|v| v.get(k))
+                .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|t| t.parse().ok())))
+                .map_or(d, |v| v as f32)
+        };
         let density = num("raw_data_tri_density", CELL as f32) as usize;
-        Self { scale: num("scale", 1.0), min_height: num("min_height", 0.0), normal_strength: num("normal_strength", 1.0), tri_density: density.max(1) }
+        Self {
+            scale: num("scale", 1.0),
+            min_height: num("min_height", 0.0),
+            normal_strength: num("normal_strength", 1.0),
+            tri_density: density.max(1),
+        }
     }
 }
 

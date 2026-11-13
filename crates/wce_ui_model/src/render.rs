@@ -43,7 +43,18 @@ impl RenderOptions {
     pub fn fit(model: &UiModel, scale: f32) -> Self {
         let e = model.entries();
         let (w, h) = e.first().map(|r| (r.w.max(1), r.h.max(1))).unwrap_or((640, 480));
-        Self { scale, origin: (0.0, 0.0), width: (w as f32 * scale).ceil() as u32, height: (h as f32 * scale).ceil() as u32, background: [24, 24, 28, 255], outlines: false, selected: None, draw: DrawOptions::default(), below: vec![], above: vec![] }
+        Self {
+            scale,
+            origin: (0.0, 0.0),
+            width: (w as f32 * scale).ceil() as u32,
+            height: (h as f32 * scale).ceil() as u32,
+            background: [24, 24, 28, 255],
+            outlines: false,
+            selected: None,
+            draw: DrawOptions::default(),
+            below: vec![],
+            above: vec![],
+        }
     }
 }
 
@@ -144,7 +155,9 @@ impl Canvas {
     pub fn to_png(&self) -> Result<Vec<u8>, String> {
         use image::ImageEncoder;
         let mut out = Vec::new();
-        image::codecs::png::PngEncoder::new(&mut out).write_image(&self.px, self.w, self.h, image::ExtendedColorType::Rgba8).map_err(|e| e.to_string())?;
+        image::codecs::png::PngEncoder::new(&mut out)
+            .write_image(&self.px, self.w, self.h, image::ExtendedColorType::Rgba8)
+            .map_err(|e| e.to_string())?;
         Ok(out)
     }
 }
@@ -165,7 +178,16 @@ fn sample(img: &Rgba8Image, u: f32, v: f32) -> [u8; 4] {
     out
 }
 
-fn draw_image(c: &mut Canvas, o: &RenderOptions, it: &DrawItem, img: &Rgba8Image, tiled: bool, flip: (bool, bool), tint: [u8; 4], margins: [f32; 4]) {
+fn draw_image(
+    c: &mut Canvas,
+    o: &RenderOptions,
+    it: &DrawItem,
+    img: &Rgba8Image,
+    tiled: bool,
+    flip: (bool, bool),
+    tint: [u8; 4],
+    margins: [f32; 4],
+) {
     if img.w == 0 || img.h == 0 {
         return;
     }
@@ -190,7 +212,12 @@ fn draw_image(c: &mut Canvas, o: &RenderOptions, it: &DrawItem, img: &Rgba8Image
                 }
 
                 let t = sample(img, fu * img.w as f32, fv * img.h as f32);
-                let col = [(t[0] as u32 * tint[0] as u32 / 255) as u8, (t[1] as u32 * tint[1] as u32 / 255) as u8, (t[2] as u32 * tint[2] as u32 / 255) as u8, (t[3] as u32 * tint[3] as u32 / 255) as u8];
+                let col = [
+                    (t[0] as u32 * tint[0] as u32 / 255) as u8,
+                    (t[1] as u32 * tint[1] as u32 / 255) as u8,
+                    (t[2] as u32 * tint[2] as u32 / 255) as u8,
+                    (t[3] as u32 * tint[3] as u32 / 255) as u8,
+                ];
                 c.blend(px, py, col);
             }
         }
@@ -199,7 +226,17 @@ fn draw_image(c: &mut Canvas, o: &RenderOptions, it: &DrawItem, img: &Rgba8Image
 
 /// Text with the game's bitmap font: glyph alpha times the colour, at the canvas scale.
 #[allow(clippy::too_many_arguments)]
-fn draw_game_text(c: &mut Canvas, o: &RenderOptions, it: &DrawItem, cuf: &Cuf, text: &str, color: [u8; 4], halign: i32, valign: i32, inset: [i32; 4]) {
+fn draw_game_text(
+    c: &mut Canvas,
+    o: &RenderOptions,
+    it: &DrawItem,
+    cuf: &Cuf,
+    text: &str,
+    color: [u8; 4],
+    halign: i32,
+    valign: i32,
+    inset: [i32; 4],
+) {
     let (bw, bh) = (it.w as i32 - inset[0] - inset[2], it.h as i32 - inset[1] - inset[3]);
     let s = o.scale;
     for p in cuf.layout(text, bw, bh, halign, valign) {

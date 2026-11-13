@@ -56,10 +56,14 @@ impl Renderer {
 
             let first = indices.len() as u32;
             for line in &r.lines {
-                let nodes: Vec<[f32; 3]> = line.nodes.iter().map(|p| {
-                    let w = e.world.transform_point(Float3::new(p[0], p[1], p[2]));
-                    [(w.x - o.x) * u, (w.y - o.y) * u, (w.z - o.z) * u]
-                }).collect();
+                let nodes: Vec<[f32; 3]> = line
+                    .nodes
+                    .iter()
+                    .map(|p| {
+                        let w = e.world.transform_point(Float3::new(p[0], p[1], p[2]));
+                        [(w.x - o.x) * u, (w.y - o.y) * u, (w.z - o.z) * u]
+                    })
+                    .collect();
                 let Some((v, i, ..)) = rope_geometry(&nodes, &line.v, line.radius) else { continue };
                 let base = (vertices.len() / ROPE_STRIDE as usize) as u32;
                 vertices.extend_from_slice(&v);
@@ -77,13 +81,17 @@ impl Renderer {
         }
 
         let index_bytes: Vec<u8> = indices.iter().flat_map(|i| i.to_le_bytes()).collect();
-        for (bytes, buffer, size, bind) in [(&vertices, &mut self.ropes.vb, &mut self.ropes.vb_bytes, D3D11_BIND_VERTEX_BUFFER), (&index_bytes, &mut self.ropes.ib, &mut self.ropes.ib_bytes, D3D11_BIND_INDEX_BUFFER)] {
+        for (bytes, buffer, size, bind) in [
+            (&vertices, &mut self.ropes.vb, &mut self.ropes.vb_bytes, D3D11_BIND_VERTEX_BUFFER),
+            (&index_bytes, &mut self.ropes.ib, &mut self.ropes.ib_bytes, D3D11_BIND_INDEX_BUFFER),
+        ] {
             if bytes.len() > *size || buffer.is_none() {
                 *size = bytes.len().next_power_of_two().max(1 << 14);
                 *buffer = dynamic_buffer(&self.dev, *size, bind);
             }
 
-            let written = buffer.as_ref().is_some_and(|b| self.ctx.map(b, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut m| m.write(0, bytes)));
+            let written =
+                buffer.as_ref().is_some_and(|b| self.ctx.map(b, 0, D3D11_MAP_WRITE_DISCARD, 0).is_ok_and(|mut m| m.write(0, bytes)));
             if !written {
                 self.ropes.draws.clear();
                 return;

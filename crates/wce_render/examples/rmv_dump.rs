@@ -24,7 +24,15 @@ fn main() {
             }
 
             let pv = material.v_pivot();
-            println!("lod {l} type {:?} format {:?} verts {} pivot {} {} {} decoded bounds {lo:?} {hi:?}", mesh.material_type(), material.vertex_format(), mesh.vertices().len(), pv.x, pv.y, pv.z);
+            println!(
+                "lod {l} type {:?} format {:?} verts {} pivot {} {} {} decoded bounds {lo:?} {hi:?}",
+                mesh.material_type(),
+                material.vertex_format(),
+                mesh.vertices().len(),
+                pv.x,
+                pv.y,
+                pv.z
+            );
         }
     }
 }

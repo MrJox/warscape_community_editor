@@ -330,7 +330,16 @@ pub struct Particle {
 
 impl Default for Particle {
     fn default() -> Self {
-        Self { rec: [0.0; RECORD], size: [1.0; 6], vel: [0.0; 3], decel_start: 0.0, decel_amount: 0.0, gravity: 0.0, rotational: 0.0, central: 0.0 }
+        Self {
+            rec: [0.0; RECORD],
+            size: [1.0; 6],
+            vel: [0.0; 3],
+            decel_start: 0.0,
+            decel_amount: 0.0,
+            gravity: 0.0,
+            rotational: 0.0,
+            central: 0.0,
+        }
     }
 }
 
@@ -395,9 +404,38 @@ pub struct Emitter {
 impl Emitter {
     pub fn new(desc: Desc, index: u32, packed: u32, tint: [f32; 4]) -> Self {
         Self {
-            desc, index, packed, tint, view: 0, scale: 1.0, pos: [0.0; 3], quat: [0.0, 0.0, 0.0, 1.0], vel: [0.0; 3], prev_pos: [0.0; 3], prev_quat: [0.0, 0.0, 0.0, 1.0],
-            rot_quat: [0.0, 0.0, 0.0, 1.0], spin_angle: 0.0, wind_phase: 0.0, last: 0.0, state: 0, delay: 0.0, start: 0.0, life: 0.0, bursts_left: 0, rate: 0.0,
-            accum: 0.0, fade: 1.0, lod: 1.0, visible: true, done: false, hidden: false, stopped: false, alive: false, halted: false, parts: Vec::new(), first: 0,
+            desc,
+            index,
+            packed,
+            tint,
+            view: 0,
+            scale: 1.0,
+            pos: [0.0; 3],
+            quat: [0.0, 0.0, 0.0, 1.0],
+            vel: [0.0; 3],
+            prev_pos: [0.0; 3],
+            prev_quat: [0.0, 0.0, 0.0, 1.0],
+            rot_quat: [0.0, 0.0, 0.0, 1.0],
+            spin_angle: 0.0,
+            wind_phase: 0.0,
+            last: 0.0,
+            state: 0,
+            delay: 0.0,
+            start: 0.0,
+            life: 0.0,
+            bursts_left: 0,
+            rate: 0.0,
+            accum: 0.0,
+            fade: 1.0,
+            lod: 1.0,
+            visible: true,
+            done: false,
+            hidden: false,
+            stopped: false,
+            alive: false,
+            halted: false,
+            parts: Vec::new(),
+            first: 0,
         }
     }
 
@@ -476,7 +514,8 @@ impl Emitter {
     /// FUN_115186a0: EmitterRotation turned by the spin about its own Y.
     fn spin_quat(&self) -> Quat {
         let q = self.rot_quat;
-        let axis = [2.0 * q[0] * q[1] - 2.0 * q[3] * q[2], 1.0 - 2.0 * q[0] * q[0] - 2.0 * q[2] * q[2], 2.0 * q[1] * q[2] + 2.0 * q[3] * q[0]];
+        let axis =
+            [2.0 * q[0] * q[1] - 2.0 * q[3] * q[2], 1.0 - 2.0 * q[0] * q[0] - 2.0 * q[2] * q[2], 2.0 * q[1] * q[2] + 2.0 * q[3] * q[0]];
         let (s, c) = (self.spin_angle * 0.5).sin_cos();
         qmul([axis[0] * s, axis[1] * s, axis[2] * s, c], q)
     }
@@ -497,11 +536,7 @@ impl Emitter {
         self.lod = if r <= 1.0 { 1.0 - r * r * r * r } else { 0.0 };
         self.fade = if x <= d && d <= w {
             if y < d {
-                if z <= d {
-                    if w - z != 0.0 { 1.0 - (d - z) / (w - z) } else { 0.0 }
-                } else {
-                    1.0
-                }
+                if z <= d { if w - z != 0.0 { 1.0 - (d - z) / (w - z) } else { 0.0 } } else { 1.0 }
             } else if y - x != 0.0 {
                 (d - x) / (y - x)
             } else {
@@ -1147,7 +1182,9 @@ mod tests {
     #[test]
     fn candle_flame_burns() {
         // action_vfx_candle_flame_loop's emitter_fire_loop: one particle a second, 1.1 s each, on the spot.
-        let d = Desc::from_def(&emitter_def("continuous_mesh", r#"
+        let d = Desc::from_def(&emitter_def(
+            "continuous_mesh",
+            r#"
             <property name="CullDistances" x="0.00" y="0.00" z="25.00" w="40.00"/>
             <property name="ParticleCullDistances" x="0.00" y="0.00" z="500.00" w="550.00"/>
             <ranged_property name="SpawnSpeed" min="0.00" max="0.00"/>
@@ -1158,7 +1195,9 @@ mod tests {
             <ranged_property name="LifeTime" min="50.00" max="50.00"/>
             <property name="InfiniteLife" value="true"/>
             <ranged_property name="ParticlesPerSecond" min="1.00" max="1.00"/>
-            <ranged_property name="ParticleLifeTime" min="1.10" max="1.10"/>"#)).unwrap();
+            <ranged_property name="ParticleLifeTime" min="1.10" max="1.10"/>"#,
+        ))
+        .unwrap();
         let owner = Owner { scale: 1.0, colour: [1.0; 4], reference: None };
         let mut inst = Instance::new(owner, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0], vec![Emitter::new(d, 0, 0, [1.0; 4])], false);
         let mut rng = Rng(12345);
@@ -1185,7 +1224,9 @@ mod tests {
 
     #[test]
     fn bursts_spawn_their_counts() {
-        let d = Desc::from_def(&emitter_def("burst_mesh", r#"
+        let d = Desc::from_def(&emitter_def(
+            "burst_mesh",
+            r#"
             <property name="CullDistances" x="0.00" y="0.00" z="100.00" w="200.00"/>
             <property name="ParticleCullDistances" x="0.00" y="0.00" z="100.00" w="200.00"/>
             <ranged_property name="Bursts" min="3.00" max="3.00"/>
@@ -1193,7 +1234,9 @@ mod tests {
             <ranged_property name="BurstIntervalLength" min="0.10" max="0.10"/>
             <ranged_property name="ParticlesPerBurst" min="4.00" max="4.00"/>
             <ranged_property name="ParticleLifeTime" min="0.50" max="0.50"/>
-            <ranged_property name="SpawnSpeed" min="2.00" max="2.00"/>"#)).unwrap();
+            <ranged_property name="SpawnSpeed" min="2.00" max="2.00"/>"#,
+        ))
+        .unwrap();
         let owner = Owner { scale: 1.0, colour: [1.0; 4], reference: None };
         let mut inst = Instance::new(owner, [0.0; 3], [0.0, 0.0, 0.0, 1.0], vec![Emitter::new(d, 0, 0, [1.0; 4])], false);
         let mut rng = Rng(7);

@@ -5,7 +5,6 @@
 
 use std::path::{Path, PathBuf};
 
-
 use super::TileDocument;
 
 /// The tile folder of a path (`terrain/tiles/<kind>/.../<variation>`, `/` separated), if it has one.
@@ -162,7 +161,13 @@ impl TileDocument {
         let (mut there, index) = if entry_path.is_file() {
             let mut there = TileEntry::load(&entry_path).map_err(|e| e.to_string())?;
             if (there.width(), there.height()) != (entry.width(), entry.height()) {
-                return Err(format!("{set}/{name} is a {} x {} tile: a {} x {} tile can't be saved as a variation of it", there.width(), there.height(), entry.width(), entry.height()));
+                return Err(format!(
+                    "{set}/{name} is a {} x {} tile: a {} x {} tile can't be saved as a variation of it",
+                    there.width(),
+                    there.height(),
+                    entry.width(),
+                    entry.height()
+                ));
             }
 
             if there.find_variation(&variation).is_some() {
@@ -239,18 +244,21 @@ impl TileDocument {
         let all = t.instances.clone();
         let set = all.iter().copied().collect::<std::collections::HashSet<_>>();
         let sc = t.tscene();
-        let top = all.into_iter().filter(|&e| {
-            let mut p = sc.doc().elements()[e].parent;
-            while let Some(q) = p {
-                if set.contains(&q) {
-                    return false;
+        let top = all
+            .into_iter()
+            .filter(|&e| {
+                let mut p = sc.doc().elements()[e].parent;
+                while let Some(q) = p {
+                    if set.contains(&q) {
+                        return false;
+                    }
+
+                    p = sc.doc().elements()[q].parent;
                 }
 
-                p = sc.doc().elements()[q].parent;
-            }
-
-            true
-        }).collect::<Vec<_>>();
+                true
+            })
+            .collect::<Vec<_>>();
 
         if delta != wce_foundation::math::Double3::ZERO && !top.is_empty() {
             let mark = self.begin()?;
@@ -290,7 +298,10 @@ impl TileDocument {
         self.tile_mut().finish_road_jobs();
         let files = self.tile().files.as_deref();
         let models_in = |folder: &str| files.map_or_else(Vec::new, |f| f.list(folder, ".rigid_model_v2"));
-        let (text, report) = wce_tile::export_as_prop::apply(self.tile().tscene().save(), files.is_some().then_some(&models_in as wce_tile::export_as_prop::ModelsIn))?;
+        let (text, report) = wce_tile::export_as_prop::apply(
+            self.tile().tscene().save(),
+            files.is_some().then_some(&models_in as wce_tile::export_as_prop::ModelsIn),
+        )?;
         for line in if for_kit { report.kit_notes() } else { report.notes() } {
             wce_foundation::log::info(line);
         }
@@ -307,24 +318,33 @@ impl TileDocument {
     /// The tile is not in a kit's layout, it has walls and no `walls` sources, a wall can't be made, or a file can't be written.
     pub fn save_for_kit(&mut self, kit_raw: &Path, walls: Option<WallSources>) -> Result<String, String> {
         self.end_stroke();
-        let folder = tile_folder(&self.project().dir).ok_or_else(|| format!("{} is not under terrain/tiles/", self.project().dir.display()))?;
+        let folder =
+            tile_folder(&self.project().dir).ok_or_else(|| format!("{} is not under terrain/tiles/", self.project().dir.display()))?;
         let target = kit_raw.join(&folder);
         let text = self.text_for_export(true)?;
         let (msg, report) = match walls {
             Some(w) if self.tile().has_generated_buildings() => {
                 let kit_walls = self.tile_mut().kit_walls_for_export();
-                let (scene, n, notes) = wce_walls::export::walls_for_kit(self.project(), text, w.files, w.schema, &folder, w.data, &kit_walls)?;
+                let (scene, n, notes) =
+                    wce_walls::export::walls_for_kit(self.project(), text, w.files, w.schema, &folder, w.data, &kit_walls)?;
                 for line in &notes {
                     wce_foundation::log::info(format!("Save for Assembly Kit: {line}"));
                 }
 
-                let polyfill = format!("{n} wall(s) written as their pieces in the layer '{}' ({})", wce_walls::export::KIT_LAYER, wce_walls::pack::PROC_PACK);
+                let polyfill = format!(
+                    "{n} wall(s) written as their pieces in the layer '{}' ({})",
+                    wce_walls::export::KIT_LAYER,
+                    wce_walls::pack::PROC_PACK
+                );
                 let maps = self.tile_mut().project.export_maps()?;
                 self.project().save_for_kit_scene(&target, scene, vec![polyfill], &maps)?
             }
 
             None if self.tile().has_generated_buildings() => {
-                return Err(format!("the procedural walls need the game's files and rpfm's schema to be written for TEd (as their pieces, in {})", wce_walls::pack::PROC_PACK));
+                return Err(format!(
+                    "the procedural walls need the game's files and rpfm's schema to be written for TEd (as their pieces, in {})",
+                    wce_walls::pack::PROC_PACK
+                ));
             }
 
             w => {
@@ -358,7 +378,8 @@ impl TileDocument {
             if ours != kits && ours.is_file() && kits.is_file() {
                 let added = wce_tile::tile_sets::merge_into(&ours, &kits, &names)?;
                 if !added.is_empty() {
-                    msg += &format!("; the kit's tile database takes the tile set(s) {} (_settings.xml, a .bak beside it)", added.join(", "));
+                    msg +=
+                        &format!("; the kit's tile database takes the tile set(s) {} (_settings.xml, a .bak beside it)", added.join(", "));
                 }
             }
         }
@@ -381,7 +402,8 @@ impl TileDocument {
     pub fn restore_walls(&mut self, walls: &[(String, Vec<u8>)]) -> Result<usize, String> {
         let sc = self.tile().tscene();
         let graph = sc.scene_graph().ok_or("this tile has no scene graph")?;
-        let pieces = sc.children(graph).into_iter().filter(|&c| sc.is_layer(c) && sc.name(c) == wce_walls::export::KIT_LAYER).collect::<Vec<_>>();
+        let pieces =
+            sc.children(graph).into_iter().filter(|&c| sc.is_layer(c) && sc.name(c) == wce_walls::export::KIT_LAYER).collect::<Vec<_>>();
         if walls.is_empty() && pieces.is_empty() {
             return Ok(0);
         }
@@ -420,6 +442,8 @@ impl TileDocument {
     /// The warning about them, if there are any.
     pub fn exclusion_warning(&self) -> Option<String> {
         let n = self.trees_outside_exclusions().len();
-        (n != 0).then(|| format!("{n} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out (Tile panel > Problems)"))
+        (n != 0).then(|| {
+            format!("{n} manual tree(s) are outside every vegetation exclusion polygon: the game leaves them out (Tile panel > Problems)")
+        })
     }
 }

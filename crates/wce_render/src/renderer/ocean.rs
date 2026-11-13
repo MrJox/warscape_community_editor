@@ -48,11 +48,13 @@ fn ocean_ps(quality: i32, rome2: bool) -> String {
     format!("dx11_sm_{}_0_ocean.hlsl_ps_ps30_main_{}_water_quality", if rome2 { 3 } else { 4 }, super::water::water_level(quality))
 }
 
-
 /// Rome 2's sea with the sun's shadows, the variant its lighting uses (hardware gather, shader model 5): the plain one's inputs plus
 /// `shadowmap_PS`, `g_tShadowBuffer_SM50` and the baked shadows (out of reach: `g_vBakedShadowmapParams`).
 fn r2_ocean_ps_shadows(quality: i32) -> String {
-    format!("dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_ocean.hlsl_ps_ps30_main_{}_water_quality", super::water::water_level(quality))
+    format!(
+        "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_ocean.hlsl_ps_ps30_main_{}_water_quality",
+        super::water::water_level(quality)
+    )
 }
 
 /// The sea bed info texture: its size and the square it covers (the vertex shader's `(x + 1024) / 2048`); the game's is 1024 x 1024
@@ -286,8 +288,16 @@ fn ground_at(terrains: &[(&Entity, &wce_scene::render_scene::Terrain)], x: f32, 
 /// A dynamic R16G16 texture the CPU writes every frame.
 fn dynamic_rg16(dev: &ID3D11Device, n: u32) -> Option<(ID3D11Texture2D, ID3D11ShaderResourceView)> {
     let td = D3D11_TEXTURE2D_DESC {
-        Width: n, Height: n, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R16G16_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Usage: D3D11_USAGE_DYNAMIC, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, MiscFlags: 0,
+        Width: n,
+        Height: n,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_R16G16_UNORM,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_DYNAMIC,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32,
+        MiscFlags: 0,
     };
 
     let tex = dev.create_texture_2d(&td, None).ok()?;
@@ -300,12 +310,24 @@ fn whitecap_array(dev: &ID3D11Device, n: u32, slices: &[u8]) -> Option<ID3D11Sha
     let size = (n * n * 2) as usize;
     let count = slices.len() / size;
     let td = D3D11_TEXTURE2D_DESC {
-        Width: n, Height: n, MipLevels: 1, ArraySize: count as u32, Format: DXGI_FORMAT_R8G8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: n,
+        Height: n,
+        MipLevels: 1,
+        ArraySize: count as u32,
+        Format: DXGI_FORMAT_R8G8_UNORM,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     let init = slices.chunks_exact(size).map(|s| InitData::new(s, n * 2)).collect::<Vec<_>>();
-    let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: DXGI_FORMAT_R8G8_UNORM, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
+    let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC {
+        Format: DXGI_FORMAT_R8G8_UNORM,
+        ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY),
+        ..Default::default()
+    };
     sd.Anonymous.Texture2DArray.MipLevels = 1;
     sd.Anonymous.Texture2DArray.ArraySize = count as u32;
     dev.create_texture_2d(&td, Some(&init)).and_then(|tex| dev.create_shader_resource_view(&tex, Some(&sd))).ok()
@@ -321,7 +343,6 @@ fn write_rows(ctx: &ID3D11DeviceContext, tex: &ID3D11Texture2D, texels: &[u16], 
 }
 
 impl Renderer {
-
     /// The game shaders' constant buffers as the last frame left them (for comparisons with the game's: a memory dump, a capture).
     pub fn constant_buffers(&self) -> &crate::cbuffers::ConstantBuffers {
         &self.cbs
@@ -368,9 +389,12 @@ impl Renderer {
             let winds = parse_wind_levels(&read("db/wind_levels_tables/wind_levels")?).ok_or("wind_levels_tables: not read")?;
             let wind = winds.iter().find(|w| w.key == key).ok_or_else(|| format!("no wind level '{key}'"))?;
             let rows = parse_sea_surfaces(&read("db/sea_surfaces_tables/sea_surfaces")?).ok_or("sea_surfaces_tables: not read")?;
-            let row = rows.into_iter().find(|r| r.key == wind.sea_surface).ok_or_else(|| format!("no sea surface '{}'", wind.sea_surface))?;
-            let sea = SeaSurface::parse(&read(&format!("{}_sea", row.key))?).ok_or_else(|| format!("{}_sea: not a sea surface", row.key))?;
-            let swell = SeaSurface::parse(&read(&format!("{}_swell", row.key))?).ok_or_else(|| format!("{}_swell: not a sea surface", row.key))?;
+            let row =
+                rows.into_iter().find(|r| r.key == wind.sea_surface).ok_or_else(|| format!("no sea surface '{}'", wind.sea_surface))?;
+            let sea =
+                SeaSurface::parse(&read(&format!("{}_sea", row.key))?).ok_or_else(|| format!("{}_sea: not a sea surface", row.key))?;
+            let swell =
+                SeaSurface::parse(&read(&format!("{}_swell", row.key))?).ok_or_else(|| format!("{}_swell: not a sea surface", row.key))?;
             Ok((row, sea, swell))
         };
 
@@ -382,8 +406,11 @@ impl Renderer {
             }
         };
 
-        let (Some(sea_tex), Some(swell_tex)) = (dynamic_rg16(&self.dev, sea.n as u32), dynamic_rg16(&self.dev, swell.n as u32)) else { return };
-        let whitecaps = if row.foam_enabled { whitecap_array(&self.dev, sea.n as u32, &sea.foam_slices(row.foam_decay_rate)) } else { None };
+        let (Some(sea_tex), Some(swell_tex)) = (dynamic_rg16(&self.dev, sea.n as u32), dynamic_rg16(&self.dev, swell.n as u32)) else {
+            return;
+        };
+        let whitecaps =
+            if row.foam_enabled { whitecap_array(&self.dev, sea.n as u32, &sea.foam_slices(row.foam_decay_rate)) } else { None };
         self.water.ocean.sea = Some(SeaAssets { row, sea, swell, sea_tex, swell_tex, whitecaps });
     }
 
@@ -424,14 +451,18 @@ impl Renderer {
             hi[0] >= o.x - half && lo[0] <= o.x + half && hi[1] >= o.z - half && lo[1] <= o.z + half
         };
 
-        let terrains = || scene.entities().iter()
-            .filter(|e| scene.drawable(e))
-            .filter_map(|e| match &e.payload {
-                // A custom-mesh tile's own terrain is not its ground (its heights draw nothing; its floor is a terrain of its own).
-                Payload::Terrain(t) if t.custom.is_none() => Some((e, t)),
-                _ => None,
-            })
-            .filter(|(e, t)| over(e, t));
+        let terrains = || {
+            scene
+                .entities()
+                .iter()
+                .filter(|e| scene.drawable(e))
+                .filter_map(|e| match &e.payload {
+                    // A custom-mesh tile's own terrain is not its ground (its heights draw nothing; its floor is a terrain of its own).
+                    Payload::Terrain(t) if t.custom.is_none() => Some((e, t)),
+                    _ => None,
+                })
+                .filter(|(e, t)| over(e, t))
+        };
 
         // Which they are, as of a structure revision (a streamed map context adds and drops terrains without touching the terrain revision).
         if self.water.ocean.sea_bed_terrains.0 != scene.structure_revision() {
@@ -439,10 +470,16 @@ impl Renderer {
             self.water.ocean.sea_bed_terrains = (scene.structure_revision(), ids);
         }
 
-        let key = (scene as *const RenderScene as usize, self.water.ocean.sea_bed_terrains.1, o.x.to_bits(), o.y.to_bits() ^ o.z.to_bits().rotate_left(16));
+        let key = (
+            scene as *const RenderScene as usize,
+            self.water.ocean.sea_bed_terrains.1,
+            o.x.to_bits(),
+            o.y.to_bits() ^ o.z.to_bits().rotate_left(16),
+        );
         let terrains = terrains().collect::<Vec<_>>();
         let ground = terrains.iter().map(|(e, t)| SeaBedGround::of(e, t)).collect::<Vec<_>>();
-        let same_ground = ground.len() == self.water.ocean.sea_bed_ground.len() && ground.iter().zip(&self.water.ocean.sea_bed_ground).all(|(a, b)| a.same(b));
+        let same_ground = ground.len() == self.water.ocean.sea_bed_ground.len()
+            && ground.iter().zip(&self.water.ocean.sea_bed_ground).all(|(a, b)| a.same(b));
         if self.water.ocean.sea_bed.is_some() && self.water.ocean.sea_bed_key == key && same_ground {
             return;
         }
@@ -478,14 +515,28 @@ impl Renderer {
 
         if o.no_foam.is_none() {
             let td = D3D11_TEXTURE2D_DESC {
-                Width: 1, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: 1,
+                Height: 1,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_IMMUTABLE,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
 
-            let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: DXGI_FORMAT_R8G8B8A8_UNORM, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY), ..Default::default() };
+            let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC {
+                Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2DARRAY),
+                ..Default::default()
+            };
             sd.Anonymous.Texture2DArray.MipLevels = 1;
             sd.Anonymous.Texture2DArray.ArraySize = 1;
-            o.no_foam = self.dev.create_texture_2d(&td, Some(&[InitData::new(&[0u8; 4], 4)]))
+            o.no_foam = self
+                .dev
+                .create_texture_2d(&td, Some(&[InitData::new(&[0u8; 4], 4)]))
                 .and_then(|tex| self.dev.create_shader_resource_view(&tex, Some(&sd)))
                 .ok();
         }
@@ -494,7 +545,8 @@ impl Renderer {
     /// Draws the sea planes of the scene with the ocean shaders, into the same targets as the other water (the G-buffer channels 1 .. 3 and
     /// the lit colour), stencil 1. The caller has made the refraction copy and set the depth-stencil state.
     pub(crate) fn draw_ocean(&mut self, scene: &RenderScene, seas: &[&Entity]) -> bool {
-        let seas = seas.iter().copied().filter(|e| matches!(&e.payload, Payload::Water(w) if !w.river) && scene.drawable(e)).collect::<Vec<_>>();
+        let seas =
+            seas.iter().copied().filter(|e| matches!(&e.payload, Payload::Water(w) if !w.river) && scene.drawable(e)).collect::<Vec<_>>();
         if seas.is_empty() {
             return false;
         }
@@ -512,7 +564,8 @@ impl Renderer {
         // flat, coloured from the map's lf_sea_colour; on the same chunks (their rest positions).
         let campaign = scene.campaign_sea.clone().filter(|_| !rome2).and_then(|c| {
             let vs = self.shader(CAMPAIGN_SEA_VS)?;
-            let ps = self.shader(&format!("dx11_sm_3_0_waterplane.hlsl_ps_ps30_campaign_{}_water_quality", super::water::water_level(quality)))?;
+            let ps =
+                self.shader(&format!("dx11_sm_3_0_waterplane.hlsl_ps_ps30_campaign_{}_water_quality", super::water::water_level(quality)))?;
             Some((c, vs, ps))
         });
         let (vs, ps) = match &campaign {
@@ -526,7 +579,11 @@ impl Renderer {
         let layout = if campaign.is_some() {
             self.layout(&vs, "campaign_sea", &[element(c"POSITION", 0, f4, 0, 16, false)])
         } else {
-            let el = [element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 32, false)];
+            let el = [
+                element(c"POSITION", 0, f4, 0, 0, false),
+                element(c"POSITION", 1, f4, 0, 16, false),
+                element(c"TEXCOORD", 0, DXGI_FORMAT_R32_FLOAT, 0, 32, false),
+            ];
             self.layout(&vs, if rome2 { "ocean_rome2" } else { "ocean" }, &el)
         };
         let Some(layout) = layout else { return false };
@@ -574,7 +631,10 @@ impl Renderer {
             }
 
             let (nx, nz) = (((x1 - x0) / CHUNK_SIZE).ceil().max(1.0) as u32, ((z1 - z0) / CHUNK_SIZE).ceil().max(1.0) as u32);
-            keep.insert(e.id, OceanPlane { version: w.version, x0, z0, y: y * u, nx, nz, cw: (x1 - x0) / nx as f32, ch: (z1 - z0) / nz as f32 });
+            keep.insert(
+                e.id,
+                OceanPlane { version: w.version, x0, z0, y: y * u, nx, nz, cw: (x1 - x0) / nx as f32, ch: (z1 - z0) / nz as f32 },
+            );
         }
 
         self.water.ocean.planes = keep;
@@ -616,10 +676,14 @@ impl Renderer {
                 // Per edge (west, east, south, north): how many of this chunk's cells one of the neighbour's spans (the neighbour leaf at
                 // the edge's middle; a larger one spans the whole edge).
                 let (step, half) = (0.25 * MIN_CHUNK / CHUNK_CELLS as f32, (0.5 * n.w, 0.5 * n.h));
-                let ratio = |x: f32, z: f32| leaf_width_at(root, x, z, eye, p.y).filter(|&w| w > n.w * 1.001).map_or(1, |w| (w / n.w).round() as u32);
+                let ratio = |x: f32, z: f32| {
+                    leaf_width_at(root, x, z, eye, p.y).filter(|&w| w > n.w * 1.001).map_or(1, |w| (w / n.w).round() as u32)
+                };
                 let edges = [
-                    ratio(n.x0 - step, n.z0 + half.1), ratio(n.x0 + n.w + step, n.z0 + half.1),
-                    ratio(n.x0 + half.0, n.z0 - step), ratio(n.x0 + half.0, n.z0 + n.h + step),
+                    ratio(n.x0 - step, n.z0 + half.1),
+                    ratio(n.x0 + n.w + step, n.z0 + half.1),
+                    ratio(n.x0 + half.0, n.z0 - step),
+                    ratio(n.x0 + half.0, n.z0 + n.h + step),
                 ];
 
                 let cells = CHUNK_CELLS;
@@ -634,7 +698,9 @@ impl Renderer {
             wce_prof!("render.ocean_chunks");
             // The surfaces only (the textures beside them are not shared across threads).
             let sea = self.water.ocean.sea.as_ref().map(|s| (&s.sea, &s.swell)).zip(at);
-            let height = |x: f32, z: f32| sea.map_or(0.0, |((sea, swell), (sea_at, swell_at))| sea.height_at(sea_at, x, z) + swell.height_at(swell_at, x, z));
+            let height = |x: f32, z: f32| {
+                sea.map_or(0.0, |((sea, swell), (sea_at, swell_at))| sea.height_at(sea_at, x, z) + swell.height_at(swell_at, x, z))
+            };
             let mut parts = vec![];
             let mut rest = verts.as_mut_slice();
             for job in &jobs {
@@ -661,7 +727,11 @@ impl Renderer {
 
         // Without the sea's files: the calm row's values (the dumps').
         let row = self.water.ocean.sea.as_ref().map(|s| s.row.clone()).unwrap_or_else(|| SeaRow {
-            froth_distortion_speed: 0.35, froth_distortion_amount: 0.05, sea_decay: 0.0006, detail_normal: [7.8, 6.8, 15.8, 5.0], ..Default::default()
+            froth_distortion_speed: 0.35,
+            froth_distortion_amount: 0.05,
+            sea_decay: 0.0006,
+            detail_normal: [7.8, 6.8, 15.8, 5.0],
+            ..Default::default()
         });
 
         let (sea_uv, swell_uv, heights) = self.water.ocean.sea.as_ref().map_or((1.0 / 70.0, 1.0 / 800.0, [0.0, 0.0]), |s| {
@@ -748,7 +818,8 @@ impl Renderer {
 
         bind_sampler(ctx, &ps, "gbuffer_channel_4_sampler", self.states.s_clamp_point.as_ref());
         bind_srv(ctx, &ps, "detail_normal_sampler", detail.as_ref());
-        let (sea_srv, swell_srv) = o.sea.as_ref().map_or((o.neutral.clone(), o.neutral.clone()), |s| (Some(s.sea_tex.1.clone()), Some(s.swell_tex.1.clone())));
+        let (sea_srv, swell_srv) =
+            o.sea.as_ref().map_or((o.neutral.clone(), o.neutral.clone()), |s| (Some(s.sea_tex.1.clone()), Some(s.swell_tex.1.clone())));
         let whitecaps = o.sea.as_ref().and_then(|s| s.whitecaps.clone()).or_else(|| o.no_foam.clone());
         bind_srv(ctx, &ps, "sea_surface_sampler", sea_srv.as_ref());
         bind_srv(ctx, &ps, "swell_surface_sampler", swell_srv.as_ref());

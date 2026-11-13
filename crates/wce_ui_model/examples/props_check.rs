@@ -60,7 +60,9 @@ fn main() {
                 for pr in &props.items {
                     total += 1;
                     if pr.name.starts_with("Unknown") || pr.label.is_empty() && matches!(pr.control, Control::Info) {
-                        if list && pr.name.starts_with("Unknown yes") { println!("{path} v{} {:?} after-label {:?}", m.version, p, pr.label); }
+                        if list && pr.name.starts_with("Unknown yes") {
+                            println!("{path} v{} {:?} after-label {:?}", m.version, p, pr.label);
+                        }
                         *unknown.entry(format!("{} / {} / {:?}", props.kind, pr.name, pr.label)).or_default() += 1;
                     }
 
@@ -74,8 +76,13 @@ fn main() {
 
                 // an edit that writes the value it already has must not change the tree
                 tried += 1;
-                if tried > 40 { continue; }
-                if let Some(pr) = props.items.iter().find(|x| matches!(x.control, Control::Check | Control::Int | Control::Text | Control::Float | Control::Choice(_)) && !x.value.is_empty()) {
+                if tried > 40 {
+                    continue;
+                }
+                if let Some(pr) = props.items.iter().find(|x| {
+                    matches!(x.control, Control::Check | Control::Int | Control::Text | Control::Float | Control::Choice(_))
+                        && !x.value.is_empty()
+                }) {
                     let mut m2 = m.clone();
                     let value = if matches!(pr.control, Control::Check) { pr.value.clone() } else { pr.value.clone() };
                     if m2.edit_prop(&p, pr.idx, PropEdit::Value(value)).is_err() || m2.dom != m.dom {

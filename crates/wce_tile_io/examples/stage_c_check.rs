@@ -47,10 +47,12 @@ fn mask_uninitialised(name: &str, theirs: &[u8], ours: &[u8]) -> Option<Vec<u8>>
         }
 
         let fields = ["decal_params_parallax", "decal_params_scalex", "decal_params_scaley", "decal_params_scalez"];
-        let attr = |line: &str, k: &str| line.find(&format!(" {k}='")).map(|i| {
-            let start = i + k.len() + 3;
-            (start, start + line[start..].find('\'').unwrap_or(0))
-        });
+        let attr = |line: &str, k: &str| {
+            line.find(&format!(" {k}='")).map(|i| {
+                let start = i + k.len() + 3;
+                (start, start + line[start..].find('\'').unwrap_or(0))
+            })
+        };
         let out = la
             .iter()
             .zip(&lb)

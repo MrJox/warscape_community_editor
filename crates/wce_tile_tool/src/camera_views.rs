@@ -45,7 +45,8 @@ impl TileTool {
     pub(crate) fn go_to_camera_view(&mut self, e: &mut Editor, name: &str) -> bool {
         let Some(v) = self.camera_views(e).and_then(|(_, views)| views.into_iter().find(|v| v.name == name)) else { return false };
         let cam = e.viewport.controller().handoff();
-        let cam = Camera { eye: Float3::new(v.eye[0], v.eye[1], v.eye[2]), target: Float3::new(v.target[0], v.target[1], v.target[2]), ..cam };
+        let cam =
+            Camera { eye: Float3::new(v.eye[0], v.eye[1], v.eye[2]), target: Float3::new(v.target[0], v.target[1], v.target[2]), ..cam };
         e.viewport.controller().set_camera(&cam);
         true
     }

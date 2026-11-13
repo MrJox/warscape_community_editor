@@ -54,11 +54,24 @@ pub struct PixelLayer<T> {
 }
 
 impl<T: Copy + PartialEq> PixelLayer<T> {
-
     /// `v` holds `channels` samples per pixel, row by row.
     pub fn new(w: u32, h: u32, channels: usize, v: Vec<T>) -> Self {
         debug_assert_eq!(v.len(), w as usize * h as usize * channels);
-        Self { w, h, channels, v, editing: false, saved: vec![], touched: vec![], undo: vec![], redo: vec![], changed: None, edited: None, serial: 0, changes: 0 }
+        Self {
+            w,
+            h,
+            channels,
+            v,
+            editing: false,
+            saved: vec![],
+            touched: vec![],
+            undo: vec![],
+            redo: vec![],
+            changed: None,
+            edited: None,
+            serial: 0,
+            changes: 0,
+        }
     }
 
     pub fn width(&self) -> u32 {
@@ -289,11 +302,14 @@ impl<T: Copy + PartialEq> PixelLayer<T> {
 
         let mut touched = std::mem::take(&mut self.touched);
         touched.sort_unstable();
-        let blocks = touched.into_iter().map(|b| {
-            let before = self.saved[b as usize].take().expect("a saved block").into_vec();
-            let after = self.block_samples(b);
-            (b, before, after)
-        }).collect::<Vec<_>>();
+        let blocks = touched
+            .into_iter()
+            .map(|b| {
+                let before = self.saved[b as usize].take().expect("a saved block").into_vec();
+                let after = self.block_samples(b);
+                (b, before, after)
+            })
+            .collect::<Vec<_>>();
 
         self.serial += 1;
         self.undo.push(Record { blocks, serial: self.serial });

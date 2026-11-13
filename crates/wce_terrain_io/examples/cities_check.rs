@@ -16,13 +16,21 @@ fn main() {
     let (campaign, map) = (&a[1], &a[2]);
     let (lf_height, offset): (f64, f64) = (a[3].parse().expect("lf_height"), a[4].parse().expect("offset"));
     let filter = a.get(5).cloned().unwrap_or_default();
-    let schema = rpfm_lib::schema::Schema::load(&wce_foundation::settings::rpfm_schema_path(&game).expect("an rpfm schema"), None).expect("schema");
+    let schema =
+        rpfm_lib::schema::Schema::load(&wce_foundation::settings::rpfm_schema_path(&game).expect("an rpfm schema"), None).expect("schema");
     let list = |p: &str| vfs.list(p, "").iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
     let read_vfs = |p: &str| vfs.read(p).ok().map(|b| b.to_vec());
     let tables = DisplayTables::read(&schema, &list, &read_vfs);
-    println!("tables: {} factions, {} subcultures, {} building levels, {} models", tables.subculture.len(), tables.culture.len(), tables.ids.len(), tables.models.len());
+    println!(
+        "tables: {} factions, {} subcultures, {} building levels, {} models",
+        tables.subculture.len(),
+        tables.culture.len(),
+        tables.ids.len(),
+        tables.models.len()
+    );
     let map_data = vfs.read(&format!("campaign_maps/{map}/map_data.esf")).expect("map_data.esf");
-    let startpos = std::fs::read(std::path::Path::new(&a[0]).join(format!("data/campaigns/{campaign}/startpos.esf"))).expect("startpos.esf");
+    let startpos =
+        std::fs::read(std::path::Path::new(&a[0]).join(format!("data/campaigns/{campaign}/startpos.esf"))).expect("startpos.esf");
     let cities = read(&map_data, &startpos, &tables).expect("cities");
     println!("world {:?}, grid {:?}, {} slots", cities.world, cities.grid, cities.slots.len());
     for n in &cities.notes {
@@ -45,7 +53,10 @@ fn main() {
         } else {
             sea += 1;
             if s.model.is_some() {
-                println!("  in the sea: {} #{} {} cell {:?} world ({:.2}, {:.2}) {m:.0} m {:?}", s.region, s.index, s.kind, s.cell, s.world.0, s.world.1, s.model);
+                println!(
+                    "  in the sea: {} #{} {} cell {:?} world ({:.2}, {:.2}) {m:.0} m {:?}",
+                    s.region, s.index, s.kind, s.cell, s.world.0, s.world.1, s.model
+                );
             }
         }
         if let Some(model) = &s.model {
@@ -53,7 +64,10 @@ fn main() {
         }
 
         if !filter.is_empty() && s.region.contains(&filter) {
-            println!("  {} #{} {} cell {:?} world ({:.2}, {:.2}) {:.0} m: {:?} -> {:?}", s.region, s.index, s.kind, s.cell, s.world.0, s.world.1, m, s.building, s.model);
+            println!(
+                "  {} #{} {} cell {:?} world ({:.2}, {:.2}) {:.0} m: {:?} -> {:?}",
+                s.region, s.index, s.kind, s.cell, s.world.0, s.world.1, m, s.building, s.model
+            );
         }
     }
 
@@ -66,7 +80,12 @@ fn main() {
     }
     println!("sprawl pieces (count, with a model): {pieces:?}");
     if !filter.is_empty() {
-        let walls: Vec<(u16, u16)> = cities.sprawl.iter().filter(|p| p.region.contains(&filter) && (p.piece.starts_with("wall_") || p.piece.contains("gatehouse"))).map(|p| p.cell).collect();
+        let walls: Vec<(u16, u16)> = cities
+            .sprawl
+            .iter()
+            .filter(|p| p.region.contains(&filter) && (p.piece.starts_with("wall_") || p.piece.contains("gatehouse")))
+            .map(|p| p.cell)
+            .collect();
         let span = |f: fn(&(u16, u16)) -> u16| (walls.iter().map(f).min(), walls.iter().map(f).max());
         println!("walls of {filter}: {} cells, columns {:?}, rows {:?}", walls.len(), span(|c| c.0), span(|c| c.1));
     }

@@ -131,7 +131,14 @@ fn find(t: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
 
 /// Reads the elements of `t[begin..n]` into `elems` (indices continue from its length; top-level ones get no parent and are listed
 /// in `roots`). Returns the offset after the last construct read. With a `tail` the range may start and stop in the middle of the tree.
-pub(super) fn parse_range(t: &[u8], begin: usize, n: usize, elems: &mut Vec<XmlElement>, roots: &mut Vec<usize>, mut tail: Option<&mut ChunkTail>) -> Result<usize> {
+pub(super) fn parse_range(
+    t: &[u8],
+    begin: usize,
+    n: usize,
+    elems: &mut Vec<XmlElement>,
+    roots: &mut Vec<usize>,
+    mut tail: Option<&mut ChunkTail>,
+) -> Result<usize> {
     let skip_to = |i: usize, end: &str| match find(t, i, end.as_bytes()) {
         Some(p) => Ok(p + end.len()),
         None => fail(i, format!("unterminated '{end}'")),
@@ -281,14 +288,16 @@ fn parse_in_pieces(t: &[u8], pieces: usize) -> Option<(Vec<XmlElement>, Vec<usiz
     }
 
     let read = std::thread::scope(|scope| {
-        let handles = (0..count).map(|k| {
-            let (begin, end) = (cut[k], cut[k + 1]);
-            scope.spawn(move || {
-                let mut piece = Piece { elems: Vec::with_capacity((end - begin) / 256 + 16), ..Default::default() };
-                let stop = parse_range(t, begin, end, &mut piece.elems, &mut piece.tops, Some(&mut piece.tail)).ok()?;
-                (stop <= end).then_some(piece)
+        let handles = (0..count)
+            .map(|k| {
+                let (begin, end) = (cut[k], cut[k + 1]);
+                scope.spawn(move || {
+                    let mut piece = Piece { elems: Vec::with_capacity((end - begin) / 256 + 16), ..Default::default() };
+                    let stop = parse_range(t, begin, end, &mut piece.elems, &mut piece.tops, Some(&mut piece.tail)).ok()?;
+                    (stop <= end).then_some(piece)
+                })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
 
         handles.into_iter().map(|handle| handle.join().ok().flatten()).collect::<Option<Vec<_>>>()
     })?;
@@ -342,4 +351,3 @@ fn parse_in_pieces(t: &[u8], pieces: usize) -> Option<(Vec<XmlElement>, Vec<usiz
 
     open.is_empty().then_some((out, roots))
 }
-

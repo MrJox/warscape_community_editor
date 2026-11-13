@@ -108,14 +108,23 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
     progress(Msg::Step(COMPILE));
     let walls = plan.inputs.has_walls();
     let (exported, _) = plan.inputs.run(&plan.staging)?;
-    let folder = wce_tile_io::attila::workflow::tile_folder(&exported.dir).ok_or_else(|| format!("{} is not under terrain/tiles/", exported.dir.display()))?;
+    let folder = wce_tile_io::attila::workflow::tile_folder(&exported.dir)
+        .ok_or_else(|| format!("{} is not under terrain/tiles/", exported.dir.display()))?;
     let mut files = match &exported.pack {
         Some(p) => wce_walls::pack::read_pack_files(p, plan.game.key)?,
         None => wce_walls::export::exported_pack_files(&plan.staging, &folder)?,
     };
 
     let map = plan.position.take().unwrap_or_else(|| BattleMap::Tile(folder.clone()));
-    let xml = launch::battle_xml(&Battle { map, cells: plan.cells, weather: plan.weather.clone(), sea_surface: plan.sea_surface.clone(), army: &plan.army, facts: &plan.game.launch, zones: &plan.zones });
+    let xml = launch::battle_xml(&Battle {
+        map,
+        cells: plan.cells,
+        weather: plan.weather.clone(),
+        sea_surface: plan.sea_surface.clone(),
+        army: &plan.army,
+        facts: &plan.game.launch,
+        zones: &plan.zones,
+    });
     files.push((launch::BATTLE_XML.to_owned(), xml.as_bytes().to_vec()));
 
     // Loose files, with the mod packs their assets need; the pack when loose files would lose to one of them.
@@ -177,7 +186,11 @@ fn prepare(mut plan: Plan, progress: &dyn Fn(Msg)) -> Result<Prepared, String> {
             "launch in game: {} building(s), {} file(s) followed; mod packs the tile needs: {}",
             buildings.len(),
             needs.followed,
-            if needs.mods.is_empty() { "none".to_owned() } else { needs.mods.iter().map(|(m, why)| format!("{m} ({why})")).collect::<Vec<_>>().join(", ") }
+            if needs.mods.is_empty() {
+                "none".to_owned()
+            } else {
+                needs.mods.iter().map(|(m, why)| format!("{m} ({why})")).collect::<Vec<_>>().join(", ")
+            }
         ));
 
         overlay = needs.overlay.clone();
@@ -349,7 +362,11 @@ impl TileTool {
             }
 
             if !cfg!(windows) && crate::proton::build_of(&game_dir, profile.exe) == crate::proton::Build::Linux {
-                return Err(format!("{} has no {}: a native Linux build, which Launch in game does not start (it starts the Windows build through Proton)", game_dir.display(), profile.exe));
+                return Err(format!(
+                    "{} has no {}: a native Linux build, which Launch in game does not start (it starts the Windows build through Proton)",
+                    game_dir.display(),
+                    profile.exe
+                ));
             }
 
             let running = launch::processes_running(&[profile.exe, "steam.exe"]);
@@ -403,25 +420,63 @@ impl TileTool {
         let before = STEPS.map(|(k, _)| settings.step_seconds.get(k).copied());
 
         // The tile's deployment zones, from its centre (a tile alone; at a map position the map has its own).
-        let zones = if position.is_some() { vec![] } else {
+        let zones = if position.is_some() {
+            vec![]
+        } else {
             let d = e.docs.find_as::<TileDocument>(id).ok_or("no tile is open")?;
             let centre = (f64::from(info.cells_x) * launch::CELL_UNITS / 2.0, f64::from(info.cells_y) * launch::CELL_UNITS / 2.0);
-            d.tile().deployment_zones().into_iter().filter_map(|(alliance, z)| Some(launch::Zone {
-                alliance: alliance.parse().ok()?,
-                polygons: z.polygons.into_iter().map(|(k, p)| (launch::Zone::boundary_type(k), p.into_iter().map(|q| [q[0] - centre.0, q[1] - centre.1]).collect())).collect(),
-            })).collect()
+            d.tile()
+                .deployment_zones()
+                .into_iter()
+                .filter_map(|(alliance, z)| {
+                    Some(launch::Zone {
+                        alliance: alliance.parse().ok()?,
+                        polygons: z
+                            .polygons
+                            .into_iter()
+                            .map(|(k, p)| {
+                                (launch::Zone::boundary_type(k), p.into_iter().map(|q| [q[0] - centre.0, q[1] - centre.1]).collect())
+                            })
+                            .collect(),
+                    })
+                })
+                .collect()
         };
         let loose = settings.delivery == LaunchDelivery::Loose;
         let plan = Plan {
-            inputs: self.export_inputs(e)?, staging: staging.clone(), cells: (info.cells_x, info.cells_y), weather: BattleWeather::from_tile(self.weather.choice()),
-            sea_surface: sea_surface.unwrap_or_default(), settings, game: profile, army, position, zones, vfs: e.vfs().cloned(), mods, copy_to: (!dry_run).then(|| data.join(LAUNCH_PACK)),
+            inputs: self.export_inputs(e)?,
+            staging: staging.clone(),
+            cells: (info.cells_x, info.cells_y),
+            weather: BattleWeather::from_tile(self.weather.choice()),
+            sea_surface: sea_surface.unwrap_or_default(),
+            settings,
+            game: profile,
+            army,
+            position,
+            zones,
+            vfs: e.vfs().cloned(),
+            mods,
+            copy_to: (!dry_run).then(|| data.join(LAUNCH_PACK)),
         };
 
         activity::clear();
         let now = Instant::now();
         let first = if plan.inputs.game.is_none() { GAME } else { COMPILE };
         let mut job = LaunchJob {
-            rx: channel().1, game: profile, tile: tile.clone(), dry_run, loose, game_dir, staging, note, proton, started: now, step: first, step_started: now, took: [None; 5], before,
+            rx: channel().1,
+            game: profile,
+            tile: tile.clone(),
+            dry_run,
+            loose,
+            game_dir,
+            staging,
+            note,
+            proton,
+            started: now,
+            step: first,
+            step_started: now,
+            took: [None; 5],
+            before,
         };
 
         if !ask {
@@ -471,7 +526,11 @@ impl TileTool {
         };
 
         if job.dry_run {
-            return Ok(format!("dry run: {how}, {} mod pack(s), {}; the command line is in the log", prepared.mods.len(), prepared.xml.display()));
+            return Ok(format!(
+                "dry run: {how}, {} mod pack(s), {}; the command line is in the log",
+                prepared.mods.len(),
+                prepared.xml.display()
+            ));
         }
 
         // The launch pack is in data\ already (the work copied it).
@@ -668,7 +727,11 @@ impl TileTool {
 
         gui::text(&format!("{} in a battle", job.tile));
         let how = if job.loose { "loose files" } else { "the launch pack" };
-        gui::text_disabled(&if job.dry_run { format!("dry run ({how}): the game is not started") } else { format!("{how}; the game starts when they are ready") });
+        gui::text_disabled(&if job.dry_run {
+            format!("dry run ({how}): the game is not started")
+        } else {
+            format!("{how}; the game starts when they are ready")
+        });
         gui::separator();
         let line = gui::text_line_height();
         for (i, (_, label)) in STEPS.iter().enumerate().filter(|&(i, _)| job.runs(i)) {
@@ -693,13 +756,19 @@ impl TileTool {
         gui::spacing();
         let elapsed = job.started.elapsed().as_secs_f32();
         let (fraction, overlay) = match job.left() {
-            Some(left) => (elapsed / (elapsed + left).max(0.001), if left > 0.5 { format!("{elapsed:.0} s, about {left:.0} s left") } else { format!("{elapsed:.0} s, almost done") }),
+            Some(left) => (
+                elapsed / (elapsed + left).max(0.001),
+                if left > 0.5 { format!("{elapsed:.0} s, about {left:.0} s left") } else { format!("{elapsed:.0} s, almost done") },
+            ),
             None => {
                 // No times yet: the steps done, and the current one creeping on (never quite full) so that the bar moves.
                 let runs: Vec<usize> = (0..STEPS.len()).filter(|&i| job.runs(i)).collect();
                 let done = runs.iter().filter(|&&i| i < job.step).count() as f32;
                 let within = 1.0 - 1.0 / (1.0 + job.step_started.elapsed().as_secs_f32() / 4.0);
-                ((done + within * 0.9) / runs.len() as f32, format!("{elapsed:.0} s (the first launch: the time is learned for the next ones)"))
+                (
+                    (done + within * 0.9) / runs.len() as f32,
+                    format!("{elapsed:.0} s (the first launch: the time is learned for the next ones)"),
+                )
             }
         };
 
@@ -737,7 +806,10 @@ impl TileTool {
             gui::text_disabled(&format!("  {p}"));
         }
 
-        gui::text_colored(theme::warning(), "The game loads them whatever the mod list says; a stale one shadows the mods' files and can crash the battle.");
+        gui::text_colored(
+            theme::warning(),
+            "The game loads them whatever the mod list says; a stale one shadows the mods' files and can crash the battle.",
+        );
         gui::text("Move them out of data\\ to test the tile as the mods have it.");
         gui::separator();
         let mut close = false;

@@ -10,7 +10,7 @@ mod placements;
 mod prop_models;
 mod refill;
 mod terry_view;
-mod validate;
 mod tool;
+mod validate;
 
 pub use tool::TerrainTool;

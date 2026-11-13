@@ -44,7 +44,9 @@ fn apply(shown: &mut HashMap<ChunkKey, Vec<(Float4x4, Payload)>>, changes: Vec<C
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let (Some(game), Some(tile), Some(map)) = (a.first(), a.get(1), a.get(2)) else {
-        eprintln!("context_check <game dir> <tile folder> <map | campaign> [placement] [near] [mid] [far] [--no-cache | --clear-cache] [--walk <cells>]");
+        eprintln!(
+            "context_check <game dir> <tile folder> <map | campaign> [placement] [near] [mid] [far] [--no-cache | --clear-cache] [--walk <cells>]"
+        );
         std::process::exit(2);
     };
 
@@ -68,7 +70,13 @@ fn main() {
     let t0 = std::time::Instant::now();
     let m = if map == "campaign" {
         let r = |f: &str| vfs.read(&format!("terrain/battles/main_attila_map/{f}"));
-        load_game_map(map, &db, &r("tile_map.index").expect("index"), &r("tile_map.tiles").expect("tiles"), r("lf_height_map.dds").ok().as_deref())
+        load_game_map(
+            map,
+            &db,
+            &r("tile_map.index").expect("index"),
+            &r("tile_map.tiles").expect("tiles"),
+            r("lf_height_map.dds").ok().as_deref(),
+        )
     } else {
         load_kit_map(&db, &raw.join("terrain/battles").join(map))
     }
@@ -94,8 +102,24 @@ fn main() {
     }
 
     let rq = ContextRequest {
-        map: Arc::new(m), spot, cells: (project.info.cells_x as i32, project.info.cells_y as i32), unit: project.unit_scale, near: n(4, 8), mid: n(5, 24),
-        ground: 0, far: n(6, 64), raw_root: raw, tile_roots: vec![], game_kit: None, look: TerrainLook::default(), trees: true, bake_ground: false, plain: None, groups: None, cache: (!a.iter().any(|v| v == "--no-cache")).then_some(dir), provider: None,
+        map: Arc::new(m),
+        spot,
+        cells: (project.info.cells_x as i32, project.info.cells_y as i32),
+        unit: project.unit_scale,
+        near: n(4, 8),
+        mid: n(5, 24),
+        ground: 0,
+        far: n(6, 64),
+        raw_root: raw,
+        tile_roots: vec![],
+        game_kit: None,
+        look: TerrainLook::default(),
+        trees: true,
+        bake_ground: false,
+        plain: None,
+        groups: None,
+        cache: (!a.iter().any(|v| v == "--no-cache")).then_some(dir),
+        provider: None,
     };
 
     drop(project);
@@ -109,9 +133,20 @@ fn main() {
     // The LF map against the map's own LF, at the open tile's corners and centre and a chunk away: the same heights (scene units).
     if let Some(lf) = &s.frame().lf {
         let f = s.frame();
-        println!("LF map {} x {} from ({:.0}, {:.0}) every {}, normals {} x {}", lf.nx, lf.nz, lf.x0, lf.z0, lf.step, lf.normal.w, lf.normal.h);
+        println!(
+            "LF map {} x {} from ({:.0}, {:.0}) every {}, normals {} x {}",
+            lf.nx, lf.nz, lf.x0, lf.z0, lf.step, lf.normal.w, lf.normal.h
+        );
         let o = f.open;
-        for (cx, cy) in [(o[0], o[1]), (o[2], o[1]), (o[0], o[3]), (o[2], o[3]), ((o[0] + o[2]) / 2, (o[1] + o[3]) / 2), (o[0] - CHUNK, o[1]), (o[2] + CHUNK, o[3])] {
+        for (cx, cy) in [
+            (o[0], o[1]),
+            (o[2], o[1]),
+            (o[0], o[3]),
+            (o[2], o[3]),
+            ((o[0] + o[2]) / 2, (o[1] + o[3]) / 2),
+            (o[0] - CHUNK, o[1]),
+            (o[2] + CHUNK, o[3]),
+        ] {
             let (x, z) = f.from_map.apply(f64::from(cx) + 0.3, f64::from(cy) + 0.6);
             let want = (f.map.lf_metres(f64::from(cx) + 0.3, f64::from(cy) + 0.6) - f.lf_level) / f.unit;
             println!("  cell ({cx}, {cy}) at ({x:.0}, {z:.0}): {:.2} (map {want:.2})", lf.height_at(x as f32, z as f32));
@@ -172,7 +207,16 @@ fn main() {
             let Payload::MeshInstance(mi) = p else { continue };
             if mi.model.contains(pat.as_str()) {
                 let sc = |r: usize| (w.m[r][0].powi(2) + w.m[r][1].powi(2) + w.m[r][2].powi(2)).sqrt();
-                println!("  {} at ({:.0}, {:.1}, {:.0}) scale ~({:.1}, {:.1}, {:.1})", mi.model, w.m[0][3], w.m[1][3], w.m[2][3], sc(0), sc(1), sc(2));
+                println!(
+                    "  {} at ({:.0}, {:.1}, {:.0}) scale ~({:.1}, {:.1}, {:.1})",
+                    mi.model,
+                    w.m[0][3],
+                    w.m[1][3],
+                    w.m[2][3],
+                    sc(0),
+                    sc(1),
+                    sc(2)
+                );
             }
         }
     }
@@ -187,7 +231,10 @@ fn main() {
             for j in 0..=n {
                 let mut row = String::new();
                 for i in 0..=n {
-                    let (cx, cy) = (f64::from(p.x) + f64::from(p.w) * f64::from(i) / f64::from(n), f64::from(p.y) + f64::from(p.h) * f64::from(j) / f64::from(n));
+                    let (cx, cy) = (
+                        f64::from(p.x) + f64::from(p.w) * f64::from(i) / f64::from(n),
+                        f64::from(p.y) + f64::from(p.h) * f64::from(j) / f64::from(n),
+                    );
                     let (x, z) = f.from_map.apply(cx, cy);
                     let h = f.lift(x, z);
                     (lo, hi) = (lo.min(h), hi.max(h));
@@ -211,9 +258,18 @@ fn main() {
         }
 
         println!("climates within {r} cells: {count:?}");
-        let near: Vec<usize> = (0..f.map.placements.len()).filter(|&i| (f.map.placements[i].x - sx).abs() <= 16 && (f.map.placements[i].y - sy).abs() <= 16).take(3).collect();
+        let near: Vec<usize> = (0..f.map.placements.len())
+            .filter(|&i| (f.map.placements[i].x - sx).abs() <= 16 && (f.map.placements[i].y - sy).abs() <= 16)
+            .take(3)
+            .collect();
         for i in near {
-            println!("  {} {}: map {:?}, drawn with {}", f.map.placements[i].location, f.map.placements[i].variation, f.map.climate_of(&f.map.placements[i]), f.climate_name(i));
+            println!(
+                "  {} {}: map {:?}, drawn with {}",
+                f.map.placements[i].location,
+                f.map.placements[i].variation,
+                f.map.climate_of(&f.map.placements[i]),
+                f.climate_name(i)
+            );
         }
     }
 
@@ -228,8 +284,20 @@ fn main() {
                 let (x, z) = f.from_map.apply(f64::from(cx), f64::from(cy));
                 let a = f.from_map.then_after(&p.to_map());
                 let (o, ex, ez) = (a.apply(0.0, 0.0), a.apply(1.0, 0.0), a.apply(0.0, 1.0));
-                println!("  {} {} at cell ({}, {}): frame ({x:.0}, {z:.0}); tile origin ({:.1}, {:.1}), tile x -> ({:.3}, {:.3}), tile z -> ({:.3}, {:.3}), lift there {:.2}",
-                    p.location, p.variation, p.x, p.y, o.0, o.1, ex.0 - o.0, ex.1 - o.1, ez.0 - o.0, ez.1 - o.1, f.lift(x, z));
+                println!(
+                    "  {} {} at cell ({}, {}): frame ({x:.0}, {z:.0}); tile origin ({:.1}, {:.1}), tile x -> ({:.3}, {:.3}), tile z -> ({:.3}, {:.3}), lift there {:.2}",
+                    p.location,
+                    p.variation,
+                    p.x,
+                    p.y,
+                    o.0,
+                    o.1,
+                    ex.0 - o.0,
+                    ex.1 - o.1,
+                    ez.0 - o.0,
+                    ez.1 - o.1,
+                    f.lift(x, z)
+                );
             }
         }
     }
@@ -244,7 +312,17 @@ fn main() {
                 hi = [hi[0].max(q.x), hi[1].max(q.y), hi[2].max(q.z)];
             }
 
-            println!("  water river={} x {:.0}..{:.0} y {:.0}..{:.0} z {:.0}..{:.0} ({} verts)", water.river, lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], water.verts.len());
+            println!(
+                "  water river={} x {:.0}..{:.0} y {:.0}..{:.0} z {:.0}..{:.0} ({} verts)",
+                water.river,
+                lo[0],
+                hi[0],
+                lo[1],
+                hi[1],
+                lo[2],
+                hi[2],
+                water.verts.len()
+            );
         }
     }
 

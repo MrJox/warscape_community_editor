@@ -120,7 +120,6 @@ pub struct HeightField {
 }
 
 impl HeightField {
-
     /// # Errors
     ///
     /// The image is not 16-bit grey.
@@ -129,7 +128,14 @@ impl HeightField {
             return Err("height map must be 16-bit grey".to_owned());
         }
 
-        let v = png.pixels.as_chunks::<2>().0.iter().take(png.width as usize * png.height as usize).map(|p| (f64::from(u16::from_be_bytes(*p)) / 65535.0 * scale) as f32).collect();
+        let v = png
+            .pixels
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .take(png.width as usize * png.height as usize)
+            .map(|p| (f64::from(u16::from_be_bytes(*p)) / 65535.0 * scale) as f32)
+            .collect();
         Ok(Self { w: png.width, h: png.height, min: min_height, scale, base: min_height, v, ..Default::default() })
     }
 
@@ -396,7 +402,11 @@ impl HeightField {
         let mut changed = 0;
         for y in 0..h {
             for x in 0..w {
-                let (sx, sy) = if across_x { (crate::pixel_layer::mirror_source(w, x, corners), y) } else { (x, crate::pixel_layer::mirror_source(h, y, corners)) };
+                let (sx, sy) = if across_x {
+                    (crate::pixel_layer::mirror_source(w, x, corners), y)
+                } else {
+                    (x, crate::pixel_layer::mirror_source(h, y, corners))
+                };
                 let v = src[sy as usize * w as usize + sx as usize];
                 let i = y as usize * w as usize + x as usize;
                 if self.v[i] != v {

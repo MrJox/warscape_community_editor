@@ -5,8 +5,8 @@
 
 use wce_editor::editor::Editor;
 use wce_editor::gui;
-use wce_scene::render_scene::DocumentId;
 use wce_foundation::math::Float3;
+use wce_scene::render_scene::DocumentId;
 use wce_scene::render_scene::{Overlay, overlay_colour};
 use wce_tile::measure::{Angle, Lengths, Measure, angle, format_length, measure};
 use wce_tile_editor::tile_document::{ANGLE_FINDER, MEASURE_LINE, Tile, TileDocument};
@@ -42,7 +42,8 @@ pub fn summary(m: &Measure) -> Vec<(&'static str, String)> {
 
 /// What the Inspector and `tile_angle` say of an angle finder.
 pub fn angle_summary(a: &Angle) -> Vec<(&'static str, String)> {
-    let arm = |l: &Lengths| format!("{} ({} on the map), {} %", format_length(l.ground), format_length(l.horizontal), signed1(l.grade_percent()));
+    let arm =
+        |l: &Lengths| format!("{} ({} on the map), {} %", format_length(l.ground), format_length(l.horizontal), signed1(l.grade_percent()));
     vec![
         ("Angle on the map", format!("{:.1} deg", a.on_map)),
         ("Angle in space", format!("{:.1} deg", a.in_space)),
@@ -53,7 +54,11 @@ pub fn angle_summary(a: &Angle) -> Vec<(&'static str, String)> {
 
 /// An angle finder's label: the angle on the map, and in space when that differs by a tenth of a degree or more.
 fn angle_text(a: &Angle) -> String {
-    if (a.on_map - a.in_space).abs() >= 0.05 { format!("{:.1} deg (in space {:.1})", a.on_map, a.in_space) } else { format!("{:.1} deg", a.on_map) }
+    if (a.on_map - a.in_space).abs() >= 0.05 {
+        format!("{:.1} deg (in space {:.1})", a.on_map, a.in_space)
+    } else {
+        format!("{:.1} deg", a.on_map)
+    }
 }
 
 /// The angle at the middle of three points (world metres) on the tile's ground.
@@ -103,7 +108,11 @@ impl TileTool {
 
     /// The angle finder being drawn, with the mouse as its last point: its three points.
     fn drawn_angle(&self, e: &Editor) -> Option<Vec<Float3>> {
-        if !self.drawing || !self.draft.as_ref().is_some_and(|d| d.kind == ANGLE_FINDER) || self.draw_pts.len() != 2 || !(self.terrain_hit && e.viewport.hovered) {
+        if !self.drawing
+            || !self.draft.as_ref().is_some_and(|d| d.kind == ANGLE_FINDER)
+            || self.draw_pts.len() != 2
+            || !(self.terrain_hit && e.viewport.hovered)
+        {
             return None;
         }
 
@@ -150,7 +159,13 @@ impl TileTool {
                 for (i, s) in m.stretches.iter().enumerate() {
                     gui::table_next_row();
                     let lit = self.poly_point.is_some_and(|p| p == i || p == i + 1);
-                    let cells = [format!("{i}-{}", i + 1), format_length(s.ground), format_length(s.straight), format_length(s.horizontal), format!("{} %", signed1(s.grade_percent()))];
+                    let cells = [
+                        format!("{i}-{}", i + 1),
+                        format_length(s.ground),
+                        format_length(s.straight),
+                        format_length(s.horizontal),
+                        format!("{} %", signed1(s.grade_percent())),
+                    ];
                     for c in cells {
                         gui::table_next_column();
                         if lit { gui::text_colored([1.0, 0.95, 0.45, 1.0], &c) } else { gui::text(&c) }

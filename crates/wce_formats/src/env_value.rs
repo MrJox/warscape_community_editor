@@ -74,7 +74,9 @@ fn parse_float(s: &str) -> Option<f32> {
 
     // `nan(chars)`.
     let unsigned = s.strip_prefix('-').unwrap_or(s);
-    if unsigned.len() > 4 && unsigned.as_bytes()[..4].eq_ignore_ascii_case(b"nan(") && unsigned.ends_with(')')
+    if unsigned.len() > 4
+        && unsigned.as_bytes()[..4].eq_ignore_ascii_case(b"nan(")
+        && unsigned.ends_with(')')
         && unsigned.as_bytes()[4..unsigned.len() - 1].iter().all(|b| b.is_ascii_alphanumeric() || *b == b'_')
     {
         return Some(if s.starts_with('-') { -f32::NAN } else { f32::NAN });
@@ -121,7 +123,8 @@ fn candidate_styles(sample: &str) -> Vec<NumStyle> {
 
 /// The first style that reproduces the text of every component exactly.
 fn detect_style(texts: &[&str], values: &[f32]) -> NumStyle {
-    texts.iter()
+    texts
+        .iter()
         .flat_map(|sample| candidate_styles(sample))
         .find(|style| values.iter().zip(texts).all(|(value, text)| format_number(*value, *style) == *text))
         .unwrap_or_default()
@@ -157,10 +160,16 @@ fn shortest(v: f32) -> String {
     let exp = exp.parse::<i32>().unwrap_or_default();
     let sign = if v < 0.0 { "-" } else { "" };
 
-    let scientific = format!("{sign}{}{}{}e{}{:02}", &digits[..1], if digits.len() > 1 { "." } else { "" }, &digits[1..], if exp < 0 { '-' } else { '+' }, exp.unsigned_abs());
+    let scientific = format!(
+        "{sign}{}{}{}e{}{:02}",
+        &digits[..1],
+        if digits.len() > 1 { "." } else { "" },
+        &digits[1..],
+        if exp < 0 { '-' } else { '+' },
+        exp.unsigned_abs()
+    );
     let count = digits.len() as i32;
     let fixed = if exp >= count - 1 {
-
         // A whole number: its exact digits (every whole f32 that's shorter in fixed notation is exact in f64).
         format!("{sign}{}", f64::from(v.abs()))
     } else if exp >= 0 {

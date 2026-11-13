@@ -20,10 +20,16 @@ fn main() {
         let Some(groups) = doc.root.child("groups") else { continue };
         for (i, g) in groups.children.iter().enumerate() {
             let idx = g.get("indices").and_then(Value::as_ints).unwrap_or_default();
-            let parts = g.children.iter().map(|k| k.get("value").map_or_else(String::new, |v| match v {
-                Value::Str(s) => s.clone(),
-                other => format!("{other:?}"),
-            })).collect::<Vec<_>>();
+            let parts = g
+                .children
+                .iter()
+                .map(|k| {
+                    k.get("value").map_or_else(String::new, |v| match v {
+                        Value::Str(s) => s.clone(),
+                        other => format!("{other:?}"),
+                    })
+                })
+                .collect::<Vec<_>>();
             println!("{path}\t{i}\t{}\t{}\t{}", idx.iter().min().copied().unwrap_or(-1), idx.len(), parts.join("\u{1}"));
         }
     }

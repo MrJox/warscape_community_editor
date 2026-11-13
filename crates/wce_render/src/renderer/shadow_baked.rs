@@ -70,17 +70,32 @@ impl BakedShadow {
     fn make(&mut self, dev: &ID3D11Device, size: u32) {
         self.size = size;
         let td = D3D11_TEXTURE2D_DESC {
-            Width: size, Height: size, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32_TYPELESS, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: size,
+            Height: size,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R32_TYPELESS,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         let Ok(tex) = dev.create_texture_2d(&td, None) else { return };
-        let dd = D3D11_DEPTH_STENCIL_VIEW_DESC { Format: DXGI_FORMAT_D32_FLOAT, ViewDimension: D3D11_DSV_DIMENSION_TEXTURE2D, ..Default::default() };
-        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: DXGI_FORMAT_R32_FLOAT, ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2D), ..Default::default() };
+        let dd = D3D11_DEPTH_STENCIL_VIEW_DESC {
+            Format: DXGI_FORMAT_D32_FLOAT,
+            ViewDimension: D3D11_DSV_DIMENSION_TEXTURE2D,
+            ..Default::default()
+        };
+        let mut sd = D3D11_SHADER_RESOURCE_VIEW_DESC {
+            Format: DXGI_FORMAT_R32_FLOAT,
+            ViewDimension: D3D11_SRV_DIMENSION(D3D11_SRV_DIMENSION_TEXTURE2D),
+            ..Default::default()
+        };
         sd.Anonymous.Texture2D.MipLevels = 1;
         self.dsv = dev.create_depth_stencil_view(&tex, Some(&dd)).ok();
         self.srv = dev.create_shader_resource_view(&tex, Some(&sd)).ok();
-
     }
 }
 
@@ -128,8 +143,13 @@ impl Renderer {
         let snapped = [(cam.eye.x / cell).round() as i32, (cam.eye.z / cell).round() as i32];
         let o = self.camera.origin;
         let key = (
-            scene.revision(), scene.structure_revision(), snapped, [light_dir.x.to_bits(), light_dir.y.to_bits(), light_dir.z.to_bits()],
-            [o.x.to_bits(), o.y.to_bits(), o.z.to_bits()], u.to_bits(), self.draw_lists.waiting,
+            scene.revision(),
+            scene.structure_revision(),
+            snapped,
+            [light_dir.x.to_bits(), light_dir.y.to_bits(), light_dir.z.to_bits()],
+            [o.x.to_bits(), o.y.to_bits(), o.z.to_bits()],
+            u.to_bits(),
+            self.draw_lists.waiting,
         );
 
         // Kept while the terrain's material is not ready (a map context's chunks still uploading after the camera jumped): the draw lists
@@ -218,7 +238,9 @@ impl Renderer {
 
         let firsts = self.upload_instances([&terrain_draws, &draws], [&vis_terrain, &vis]);
         self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<RigidInstance>() as u32)], &[0]);
-        let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope));
+        let (instances, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| {
+            !m.kind.is_tree() && !matches!(m.kind, MeshKind::Water | MeshKind::Rope)
+        });
         self.draw_stats.shadow_instances += instances;
         self.draw_stats.shadow_triangles += triangles;
 

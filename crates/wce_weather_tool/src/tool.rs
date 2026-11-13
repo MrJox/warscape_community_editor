@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use wce_editor::editor::Editor;
-use wce_editor::{gui, theme};
 use wce_editor::tool::Tool;
+use wce_editor::{gui, theme};
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
 use wce_editor_core::document::Document;
 use wce_editor_core::selection::Selection;
@@ -42,8 +42,17 @@ const CATEGORIES: [Category; 4] = [
 ];
 
 const VIEWS: [(View, &str); 11] = [
-    (View::Final, "Final"), (View::HdrRaw, "HDR raw"), (View::Albedo, "Albedo"), (View::Normal, "Normal"), (View::Specular, "Specular"), (View::Depth, "Depth"),
-    (View::SkyCube, "Sky cube"), (View::Bloom, "Bloom"), (View::Quarter, "Quarter"), (View::ToneMapped, "Tone mapped"), (View::Ao, "AO"),
+    (View::Final, "Final"),
+    (View::HdrRaw, "HDR raw"),
+    (View::Albedo, "Albedo"),
+    (View::Normal, "Normal"),
+    (View::Specular, "Specular"),
+    (View::Depth, "Depth"),
+    (View::SkyCube, "Sky cube"),
+    (View::Bloom, "Bloom"),
+    (View::Quarter, "Quarter"),
+    (View::ToneMapped, "Tone mapped"),
+    (View::Ao, "AO"),
 ];
 
 /// Renderer view `n` (0 final ... 10 AO), clamped.
@@ -129,10 +138,29 @@ pub struct WeatherTool {
 impl Default for WeatherTool {
     fn default() -> Self {
         Self {
-            tile_was_open: false, default_env: EnvironmentParams::default(), default_env_loaded: false, env_doc: 0, last_env: None, output_gamma: 2.2,
-            output_brightness: 1.0, last_params: EnvironmentParams::default(), overlay: Overlay::default(), overlay_rev: None, category: 0, filter: String::new(),
-            listing: vec![], listing_dirty: true, attr_filter: String::new(), new_name: String::new(), new_value: String::new(), gesture: 1, select_after: None,
-            pending: None, scene_seed: 1, scene_count: 16, picker: WeatherPicker::default(),
+            tile_was_open: false,
+            default_env: EnvironmentParams::default(),
+            default_env_loaded: false,
+            env_doc: 0,
+            last_env: None,
+            output_gamma: 2.2,
+            output_brightness: 1.0,
+            last_params: EnvironmentParams::default(),
+            overlay: Overlay::default(),
+            overlay_rev: None,
+            category: 0,
+            filter: String::new(),
+            listing: vec![],
+            listing_dirty: true,
+            attr_filter: String::new(),
+            new_name: String::new(),
+            new_value: String::new(),
+            gesture: 1,
+            select_after: None,
+            pending: None,
+            scene_seed: 1,
+            scene_count: 16,
+            picker: WeatherPicker::default(),
         }
     }
 }
@@ -260,7 +288,12 @@ impl WeatherTool {
             }
 
             if gui::is_item_hovered() {
-                let tip = vfs.owners(p).iter().enumerate().map(|(k, &o)| format!("{}{}", vfs.packs()[o].name, if k == 0 { "  (wins)" } else { "" })).collect::<Vec<_>>();
+                let tip = vfs
+                    .owners(p)
+                    .iter()
+                    .enumerate()
+                    .map(|(k, &o)| format!("{}{}", vfs.packs()[o].name, if k == 0 { "  (wins)" } else { "" }))
+                    .collect::<Vec<_>>();
                 gui::set_tooltip(&tip.join("\n"));
             }
         });
@@ -430,7 +463,8 @@ impl WeatherTool {
         }
 
         if gui::begin_popup_context_item("elctx") {
-            let pending = |op, name: &str, value: &str| Some(Pending { op, elem: e, attr: 0, name: name.to_owned(), value: value.to_owned() });
+            let pending =
+                |op, name: &str, value: &str| Some(Pending { op, elem: e, attr: 0, name: name.to_owned(), value: value.to_owned() });
             gui::text_disabled(&el.name);
             gui::separator();
             if gui::menu_item("Duplicate", None, false, true) {
@@ -565,7 +599,9 @@ impl WeatherTool {
             ValueKind::Rgb => edit_array::<3>(&mut v.f, |f| gui::color_edit3("##v", f, gui::COLOR_FLOAT | gui::COLOR_HDR)),
 
             // "argb(...)" lists r, g, b, a (verified against the game's fog colour).
-            ValueKind::Argb => edit_array::<4>(&mut v.f, |f| gui::color_edit4("##v", f, gui::COLOR_FLOAT | gui::COLOR_HDR | gui::COLOR_ALPHA_BAR)),
+            ValueKind::Argb => {
+                edit_array::<4>(&mut v.f, |f| gui::color_edit4("##v", f, gui::COLOR_FLOAT | gui::COLOR_HDR | gui::COLOR_ALPHA_BAR))
+            }
             ValueKind::Variance => edit_array::<2>(&mut v.f, |f| gui::drag_float2("##v", f, 0.01, "%.6g")),
             ValueKind::Euler => edit_array::<3>(&mut v.f, |f| gui::drag_float3("##v", f, 0.01, "%.6g")),
             ValueKind::String => {
@@ -651,7 +687,10 @@ fn draw_changes(d: &XmlFileDocument) {
     if xml.structural_edits() > 0 {
         gui::text_colored(
             theme::modified(),
-            &format!("{} structural edit(s): elements or attributes added, removed or moved. Attribute changes below are relative to the last of them.", xml.structural_edits()),
+            &format!(
+                "{} structural edit(s): elements or attributes added, removed or moved. Attribute changes below are relative to the last of them.",
+                xml.structural_edits()
+            ),
         );
     }
 
@@ -755,7 +794,11 @@ impl Tool for WeatherTool {
         self.output_gamma = go.gamma;
         self.output_brightness = go.brightness;
         if !self.default_env_loaded {
-            match vfs.read(e.game().default_environment).map_err(|e| e.to_string()).and_then(|b| XmlDoc::parse(b).map_err(|e| e.to_string())) {
+            match vfs
+                .read(e.game().default_environment)
+                .map_err(|e| e.to_string())
+                .and_then(|b| XmlDoc::parse(b).map_err(|e| e.to_string()))
+            {
                 Ok(doc) => {
                     self.default_env = read_environment(&doc);
                     self.default_env_loaded = true;
@@ -831,7 +874,11 @@ impl Tool for WeatherTool {
             if path.starts_with("vfx/") || (path.starts_with("weather/") && x.kind() != "environment") {
                 let mut h = DefaultHasher::new();
                 path.hash(&mut h);
-                rev = rev.wrapping_mul(1_000_003).wrapping_add(h.finish()).wrapping_add(x.history().version().wrapping_mul(7919)).wrapping_add(u64::from(x.modified()));
+                rev = rev
+                    .wrapping_mul(1_000_003)
+                    .wrapping_add(h.finish())
+                    .wrapping_add(x.history().version().wrapping_mul(7919))
+                    .wrapping_add(u64::from(x.modified()));
                 live.push(id);
             }
         }
@@ -922,7 +969,12 @@ impl Tool for WeatherTool {
         let notes = fx.notes.clone();
         let (alive, capacity, errors) = (p.alive(), p.capacity(), p.errors().to_vec());
         gui::separator();
-        gui::text(&format!("Weather definition: {} ({}, severity {})", if d.name.is_empty() { "(none)" } else { &d.name }, d.kind, d.severity));
+        gui::text(&format!(
+            "Weather definition: {} ({}, severity {})",
+            if d.name.is_empty() { "(none)" } else { &d.name },
+            d.kind,
+            d.severity
+        ));
         let mut effects = if d.vfx1.is_empty() { "(none)".to_owned() } else { format!("vfx/{}.xml", d.vfx1) };
         if !d.vfx2.is_empty() {
             effects += &format!(", vfx/{}.xml", d.vfx2);
@@ -931,7 +983,9 @@ impl Tool for WeatherTool {
         gui::text(&format!("Effect: {effects}"));
         let random = self.last_params.wind_dir_random;
         gui::text(&format!(
-            "Wind direction {:.1} deg{}", r.wind_direction_degrees(&self.last_params), if random { " (wind_dir_random: random per battle)" } else { "" },
+            "Wind direction {:.1} deg{}",
+            r.wind_direction_degrees(&self.last_params),
+            if random { " (wind_dir_random: random per battle)" } else { "" },
         ));
         if random {
             gui::same_line();
@@ -942,11 +996,17 @@ impl Tool for WeatherTool {
 
         let w = r.wind();
         gui::text(&format!(
-            "Wind {:.3} (min {}, max {}), last gust {:.3} for {:.2} s, next roll in {:.2} s", w.strength, printf_g_prec(f64::from(d.wind_size_min), 3),
-            printf_g_prec(f64::from(d.wind_size_max), 3), w.gust_size, w.gust_duration, w.cooldown.max(0.0),
+            "Wind {:.3} (min {}, max {}), last gust {:.3} for {:.2} s, next roll in {:.2} s",
+            w.strength,
+            printf_g_prec(f64::from(d.wind_size_min), 3),
+            printf_g_prec(f64::from(d.wind_size_max), 3),
+            w.gust_size,
+            w.gust_duration,
+            w.cooldown.max(0.0),
         ));
         gui::text(&format!(
-            "VFX wind ({:.2}, {:.2}, {:.2}), g_wind ({:.3}, {:.3})", w.vfx_velocity.x, w.vfx_velocity.y, w.vfx_velocity.z, w.smoothed.x, w.smoothed.y,
+            "VFX wind ({:.2}, {:.2}, {:.2}), g_wind ({:.3}, {:.3})",
+            w.vfx_velocity.x, w.vfx_velocity.y, w.vfx_velocity.z, w.smoothed.x, w.smoothed.y,
         ));
         gui::separator();
         gui::text("Battle (not stored in the weather files):");

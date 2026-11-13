@@ -94,7 +94,8 @@ pub fn write_png(raster: &Raster, trivia: Option<&ImageTrivia>) -> Result<(Vec<u
         Samples::F32(_) => return Err("a PNG cannot hold float samples".to_owned()),
     };
 
-    let png = PngFile { width: raster.width, height: raster.height, bit_depth, color_type, idat_chunk_size: chunk, pixels, ..Default::default() };
+    let png =
+        PngFile { width: raster.width, height: raster.height, bit_depth, color_type, idat_chunk_size: chunk, pixels, ..Default::default() };
     Ok((png.encode().map_err(|e| e.to_string())?, Encoded::Encoded))
 }
 
@@ -123,12 +124,17 @@ pub fn read_tiff(bytes: &[u8]) -> Result<(Raster, ImageTrivia), String> {
         let counts = t.entries.iter().find(|e| e.tag == 279).ok_or("no strip byte counts")?;
         let read = |at: u32, i: u32, kind: u16| -> Option<u32> {
             let o = at as usize + i as usize * if kind == 3 { 2 } else { 4 };
-            Some(if kind == 3 { u32::from(u16::from_le_bytes(bytes.get(o..o + 2)?.try_into().ok()?)) } else { u32::from_le_bytes(bytes.get(o..o + 4)?.try_into().ok()?) })
+            Some(if kind == 3 {
+                u32::from(u16::from_le_bytes(bytes.get(o..o + 2)?.try_into().ok()?))
+            } else {
+                u32::from_le_bytes(bytes.get(o..o + 4)?.try_into().ok()?)
+            })
         };
 
         let mut next = t.strip_offset;
         for i in 0..e.count {
-            let (off, len) = (read(e.value, i, e.kind).ok_or("bad strip table")?, read(counts.value, i, counts.kind).ok_or("bad strip table")?);
+            let (off, len) =
+                (read(e.value, i, e.kind).ok_or("bad strip table")?, read(counts.value, i, counts.kind).ok_or("bad strip table")?);
             if off != next {
                 return Err("strips are not contiguous".to_owned());
             }

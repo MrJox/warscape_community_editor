@@ -119,7 +119,10 @@ pub fn scene(blm: &BattleLocations, deployments: &BTreeMap<u32, Element>) -> Res
                     zone_ids.push(zid);
                     let category = attr(area, "category");
                     let category = format!("DZC_{}", category.strip_prefix("DAC_").unwrap_or(category));
-                    let orientation = area.children.iter().find(|x| x.name == "orientation")
+                    let orientation = area
+                        .children
+                        .iter()
+                        .find(|x| x.name == "orientation")
                         .map_or(String::new(), |o| format!(" orientation=\"{}\"", attr(o, "radians")));
                     let mut regions = String::new();
                     let mut region_ids = vec![];
@@ -127,14 +130,25 @@ pub fn scene(blm: &BattleLocations, deployments: &BTreeMap<u32, Element>) -> Res
                         let rid = id();
                         region_ids.push(rid);
                         let kind = if attr(b, "type").contains("subtractive") { "DZRT_SUBTRACTIVE" } else { "DZRT_ADDITIVE" };
-                        let points: String = b.children.iter().filter(|x| x.name == "position")
-                            .map(|q| format!("{{i}}{{i}}{{i}}{{i}}<point x=\"{}\" y=\"{}\"/>\n", attr(q, "x").parse::<f32>().map_or_else(|_| "0".to_owned(), |v| n(f64::from(v))), attr(q, "y").parse::<f32>().map_or_else(|_| "0".to_owned(), |v| n(f64::from(v)))))
+                        let points: String = b
+                            .children
+                            .iter()
+                            .filter(|x| x.name == "position")
+                            .map(|q| {
+                                format!(
+                                    "{{i}}{{i}}{{i}}{{i}}<point x=\"{}\" y=\"{}\"/>\n",
+                                    attr(q, "x").parse::<f32>().map_or_else(|_| "0".to_owned(), |v| n(f64::from(v))),
+                                    attr(q, "y").parse::<f32>().map_or_else(|_| "0".to_owned(), |v| n(f64::from(v)))
+                                )
+                            })
                             .collect();
                         regions += &format!(
                             "<entity id=\"{rid:x}\" name=\"DZR {}\">\n{{i}}<components>\n{{i}}{{i}}<ECDeploymentZoneRegion active=\"true\" region_type=\"{kind}\"/>\n\
 {{i}}{{i}}<ECPolyline active=\"true\">\n{{i}}{{i}}{{i}}<polyline closed=\"true\">\n{points}{{i}}{{i}}{{i}}</polyline>\n{{i}}{{i}}</ECPolyline>\n\
 {{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{} 0 {}\"/>\n{{i}}</components>\n{{i}}<children/>\n</entity>\n",
-                            region_ids.len() - 1, n(bx), n(bz)
+                            region_ids.len() - 1,
+                            n(bx),
+                            n(bz)
                         );
                     }
 
@@ -143,20 +157,29 @@ pub fn scene(blm: &BattleLocations, deployments: &BTreeMap<u32, Element>) -> Res
                         "<entity id=\"{zid:x}\" name=\"DZ {}/{alliance}\">\n{{i}}<components>\n\
 {{i}}{{i}}<ECDeploymentZone deployment_category=\"{category}\" deployment_type=\"DZT_1V1\" active=\"true\" facing_direction=\"0\" deployment_zone_id=\"{}\" alliance_id=\"{alliance}\" configuration=\"0\"{orientation}/>\n\
 {{i}}</components>\n{{i}}<children>\n{kids}{{i}}</children>\n</entity>\n{regions}",
-                        attr(area, "id"), attr(area, "id")
+                        attr(area, "id"),
+                        attr(area, "id")
                     );
                 }
             }
         }
 
-        let kids: String = std::iter::once(region).chain(zone_ids.iter().copied()).map(|c| format!("{{i}}{{i}}<child id=\"{c:x}\"/>\n")).collect();
+        let kids: String =
+            std::iter::once(region).chain(zone_ids.iter().copied()).map(|c| format!("{{i}}{{i}}<child id=\"{c:x}\"/>\n")).collect();
         xml += &format!(
             "<entity id=\"{bca:x}\" name=\"{kind} {i}\">\n{{i}}<components>\n{{i}}{{i}}<ECRectangle width=\"{}\" height=\"{}\" active=\"true\"/>\n\
 {{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{} 0 {}\">\n{{i}}{{i}}{{i}}<children>\n{{i}}{{i}}{{i}}{{i}}<child id=\"{region:x}\"/>\n{{i}}{{i}}{{i}}</children>\n{{i}}{{i}}</ECTransform>\n\
 {{i}}{{i}}<ECLandscapeAbove active=\"true\"/>\n{{i}}{{i}}<ECBattleCatchmentArea catchment_type=\"{kind}\" active=\"true\"{deployment}/>\n{{i}}</components>\n{{i}}<children>\n{kids}{{i}}</children>\n</entity>\n\
 <entity id=\"{region:x}\" name=\"Catchment Region\">\n{{i}}<components>\n{{i}}{{i}}<ECRectangle width=\"{}\" height=\"{}\" active=\"true\"/>\n\
 {{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{} 0 {}\"/>\n{{i}}{{i}}<ECLandscapeAbove active=\"true\"/>\n{{i}}</components>\n{{i}}<children/>\n</entity>\n{zones}",
-            n((rw - CELL).max(0.0)), n((rh - CELL).max(0.0)), n(bx), n(bz), n(rw), n(rh), n(rx - bx), n(rz - bz)
+            n((rw - CELL).max(0.0)),
+            n((rh - CELL).max(0.0)),
+            n(bx),
+            n(bz),
+            n(rw),
+            n(rh),
+            n(rx - bx),
+            n(rz - bz)
         );
     }
 
@@ -167,14 +190,20 @@ pub fn scene(blm: &BattleLocations, deployments: &BTreeMap<u32, Element>) -> Res
 
 /// The entities' `{i}` marks as the kit's indent (four spaces a level), each entity two levels in.
 fn indent(xml: &str) -> String {
-    xml.lines().map(|l| {
-        if l.starts_with("<project") || l.starts_with("</project") || l.trim_start().starts_with("<scene") || l.trim_start().starts_with("</scene") {
-            return format!("{l}\n");
-        }
+    xml.lines()
+        .map(|l| {
+            if l.starts_with("<project")
+                || l.starts_with("</project")
+                || l.trim_start().starts_with("<scene")
+                || l.trim_start().starts_with("</scene")
+            {
+                return format!("{l}\n");
+            }
 
-        let depth = l.matches("{i}").count();
-        format!("        {}{}\n", "    ".repeat(depth), l.replace("{i}", ""))
-    }).collect()
+            let depth = l.matches("{i}").count();
+            format!("        {}{}\n", "    ".repeat(depth), l.replace("{i}", ""))
+        })
+        .collect()
 }
 
 /// Whether a BCA has a deployment file: zones, or the mark of a location that had one (Rome 2's files with no areas).
@@ -205,7 +234,12 @@ fn records(p: &TerryProject, w: u32, h: u32) -> Vec<(String, Vec<Location>)> {
         let region = e.children.iter().filter_map(|&c| p.entity(c)).find(|c| matches!(p.kind(c), EntityKind::CatchmentRegion)).unwrap_or(e);
         let size = p.rectangle(region).unwrap_or([0.0, 0.0]);
         let rp = p.world_position(region.id);
-        let rect = [cell(rp[0] - size[0] / 2.0, cx), cell(-(rp[2] + size[1] / 2.0), cy), cell(rp[0] + size[0] / 2.0, cx), cell(-(rp[2] - size[1] / 2.0), cy)];
+        let rect = [
+            cell(rp[0] - size[0] / 2.0, cx),
+            cell(-(rp[2] + size[1] / 2.0), cy),
+            cell(rp[0] + size[0] / 2.0, cx),
+            cell(-(rp[2] - size[1] / 2.0), cy),
+        ];
         let loc = Location { rect, centre: [cell(pos[0], cx), cell(-pos[2], cy)], id, extra: [0, 0] };
         match types.iter_mut().find(|t| t.0 == kind) {
             Some(t) => t.1.push(loc),
@@ -227,7 +261,8 @@ fn deployments(p: &TerryProject) -> Vec<(String, Vec<u8>)> {
             continue;
         }
 
-        let zones: Vec<_> = e.children.iter().filter_map(|&c| p.entity(c)).filter(|z| matches!(p.kind(z), EntityKind::DeploymentZone)).collect();
+        let zones: Vec<_> =
+            e.children.iter().filter_map(|&c| p.entity(c)).filter(|z| matches!(p.kind(z), EntityKind::DeploymentZone)).collect();
         let origin = p.world_position(e.id);
         let mut x = String::from("<BATTLE_DEPLOYMENT_AREA_HASH_TABLE>\n\t<BATTLE_DEPLOYMENT_AREAS>\n");
         for alliance in 0..2 {
@@ -280,9 +315,11 @@ fn deployments(p: &TerryProject) -> Vec<(String, Vec<u8>)> {
 /// A candidate BLM name or count cannot be represented in the native format.
 pub fn write(p: &TerryProject, original: &BattleLocations) -> crate::Result<(Vec<u8>, Vec<(String, Vec<u8>)>)> {
     let records = records(p, original.width, original.height);
-    let mut types: Vec<(String, Vec<Location>)> = original.types.iter().filter_map(|(t, _)| records.iter().find(|r| &r.0 == t).cloned()).collect();
+    let mut types: Vec<(String, Vec<Location>)> =
+        original.types.iter().filter_map(|(t, _)| records.iter().find(|r| &r.0 == t).cloned()).collect();
     types.extend(records.iter().filter(|r| !original.types.iter().any(|(t, _)| t == &r.0)).cloned());
-    let blm = BattleLocations { version: original.version, width: original.width, height: original.height, types, tail: original.tail.clone() };
+    let blm =
+        BattleLocations { version: original.version, width: original.width, height: original.height, types, tail: original.tail.clone() };
     let bytes = blm.write().map_err(|e| crate::file_error("locations.blm", e))?;
     Ok((bytes, deployments(p)))
 }

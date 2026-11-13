@@ -23,8 +23,8 @@ use std::time::Instant;
 
 use wce_formats::anim::Animation;
 use wce_formats::anim_meta::{MetaEffect, meta_effects};
-use wce_foundation::math::{Float3, Float4x4, translation};
 use wce_foundation::log;
+use wce_foundation::math::{Float3, Float4x4, translation};
 use wce_scene::render_scene::{EmitMesh, EntityId, LayerId, MODEL_BONE_SUFFIX, MeshInstance, Payload, RenderScene, VfxEmitter};
 
 use super::columns::quat_matrix;
@@ -237,7 +237,8 @@ impl Tile {
 
     /// Whether the building of `elem` (or the piece) burns.
     fn burning(&self, elem: usize, piece: usize) -> bool {
-        self.tscene().doc().get(elem, "burn").is_some_and(|v| v.trim() == "true") || self.piece_props.get(&(elem, piece)).is_some_and(|p| p.burn)
+        self.tscene().doc().get(elem, "burn").is_some_and(|v| v.trim() == "true")
+            || self.piece_props.get(&(elem, piece)).is_some_and(|p| p.burn)
     }
 
     /// The step from `level`: its animation and its effects (it starts playing once its bones' models are loaded).
@@ -369,14 +370,18 @@ impl Tile {
     /// which mesh a VOLUMETRIC_EFFECT gives it, and how the volume selects its triangles, were not traced.
     fn emit_mesh(&mut self, file: &str, fx: &MetaEffect) -> Option<EmitMesh> {
         let size = fx.volume?;
-        let key = (file.to_owned(), [fx.position, size].concat().into_iter().chain(fx.rotation).map(f32::to_bits).collect::<Vec<_>>().try_into().ok()?);
+        let key = (
+            file.to_owned(),
+            [fx.position, size].concat().into_iter().chain(fx.rotation).map(f32::to_bits).collect::<Vec<_>>().try_into().ok()?,
+        );
         if let Some(m) = self.collapses.emit_meshes.get(&key) {
             return m.clone();
         }
 
         // The volume's frame: its centre and rotation (an all-zero rotation is the identity).
         let q = if fx.rotation.iter().all(|&v| v == 0.0) { [0.0, 0.0, 0.0, 1.0] } else { fx.rotation };
-        let to_local = wce_foundation::math::inverse(&(translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(q)));
+        let to_local =
+            wce_foundation::math::inverse(&(translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(q)));
         let half = size.map(|v| 0.5 * v.abs());
         let found = self.piece_triangles(file).and_then(|all| {
             let mut tris = vec![];
@@ -412,7 +417,10 @@ impl Tile {
             for block in model.lods().first()?.mesh_blocks() {
                 let decal = matches!(
                     block.mesh().material_type(),
-                    MaterialType::ProjectedDecal | MaterialType::ProjectedDecalV2 | MaterialType::ProjectedDecalV3 | MaterialType::ProjectedDecalV4
+                    MaterialType::ProjectedDecal
+                        | MaterialType::ProjectedDecalV2
+                        | MaterialType::ProjectedDecalV3
+                        | MaterialType::ProjectedDecalV4
                 );
                 if decal {
                     continue;
@@ -420,10 +428,12 @@ impl Tile {
 
                 let pivot = block.material().v_pivot();
                 let (vs, idx) = (block.mesh().vertices(), block.mesh().indices());
-                let at = |i: u16| vs.get(usize::from(i)).map(|v| {
-                    let p = v.position();
-                    [p.x + pivot.x, p.y + pivot.y, p.z + pivot.z]
-                });
+                let at = |i: u16| {
+                    vs.get(usize::from(i)).map(|v| {
+                        let p = v.position();
+                        [p.x + pivot.x, p.y + pivot.y, p.z + pivot.z]
+                    })
+                };
 
                 for t in idx.chunks_exact(3) {
                     let (Some(a), Some(b), Some(c)) = (at(t[0]), at(t[1]), at(t[2])) else { continue };
@@ -439,7 +449,16 @@ impl Tile {
     }
 
     /// Spawns a collapse's effect on a piece; `source` is the standing piece file the collapse starts from (a volumetric effect's mesh).
-    fn spawn_effect(&mut self, scene: &mut RenderScene, layer: LayerId, elem: usize, world: Float4x4, fx: &MetaEffect, source: Option<&str>, now: Instant) {
+    fn spawn_effect(
+        &mut self,
+        scene: &mut RenderScene,
+        layer: LayerId,
+        elem: usize,
+        world: Float4x4,
+        fx: &MetaEffect,
+        source: Option<&str>,
+        now: Instant,
+    ) {
         let q = if fx.rotation.iter().all(|&v| v == 0.0) { [0.0, 0.0, 0.0, 1.0] } else { fx.rotation };
         let at = world * translation(Float3::new(fx.position[0], fx.position[1], fx.position[2])) * quat_matrix(q);
         let mesh = source.and_then(|f| self.emit_mesh(f, fx));

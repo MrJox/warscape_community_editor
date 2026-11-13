@@ -45,11 +45,34 @@ fn kind_of(name: &str) -> Option<Kind> {
         "uuid" => Kind::Text(Text::Uuid),
         "yes" => Kind::Yes,
         "no" => Kind::No,
-        "images" | "states" | "image_uses" | "transitions" | "effects" | "children" | "phases" | "table" | "row" | "dynamics" | "funcs" | "anims"
-        | "anim_attrs" | "mouse_states" | "mouse_state_data" | "subtemplates" | "properties" | "materialdata" | "array" => Kind::Array,
-        "fcentry" | "image" | "state" | "image_use" | "transition" | "effect" | "phase" | "col" | "color" | "dynamic" | "func" | "anim" | "anim_attr"
-        | "mouse_state" | "mouse_state_datapoint" | "model" | "models" | "template" | "subtemplate" | "event" | "property" | "material"
-        | "materialdatapoint" | "sound" => Kind::Pass,
+        "images" | "states" | "image_uses" | "transitions" | "effects" | "children" | "phases" | "table" | "row" | "dynamics" | "funcs"
+        | "anims" | "anim_attrs" | "mouse_states" | "mouse_state_data" | "subtemplates" | "properties" | "materialdata" | "array" => {
+            Kind::Array
+        }
+        "fcentry"
+        | "image"
+        | "state"
+        | "image_use"
+        | "transition"
+        | "effect"
+        | "phase"
+        | "col"
+        | "color"
+        | "dynamic"
+        | "func"
+        | "anim"
+        | "anim_attr"
+        | "mouse_state"
+        | "mouse_state_datapoint"
+        | "model"
+        | "models"
+        | "template"
+        | "subtemplate"
+        | "event"
+        | "property"
+        | "material"
+        | "materialdatapoint"
+        | "sound" => Kind::Pass,
         "events" => Kind::Events,
         "uientry" => Kind::Uientry,
         "additional_data" => Kind::AdditionalData,

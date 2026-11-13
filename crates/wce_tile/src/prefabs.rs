@@ -88,10 +88,24 @@ impl PrefabLibrary {
 
                     if path.is_dir() {
                         stack.push(path);
-                    } else if let Some((key, wce)) = name.strip_suffix(".wce").map(|k| (k, true)).or_else(|| name.strip_suffix(".xml").or_else(|| name.strip_suffix(".XML")).map(|k| (k, false))) {
+                    } else if let Some((key, wce)) = name
+                        .strip_suffix(".wce")
+                        .map(|k| (k, true))
+                        .or_else(|| name.strip_suffix(".xml").or_else(|| name.strip_suffix(".XML")).map(|k| (k, false)))
+                    {
                         // The editor's .wce sorts before the .xml of the same key in a folder, and takes its place.
-                        let folder = path.parent().and_then(|p| p.strip_prefix(&root).ok()).map(|p| p.to_string_lossy().replace('\\', "/")).unwrap_or_default();
-                        lib.entries.entry(key.to_lowercase()).or_insert(PrefabEntry { key: key.to_owned(), path: path.clone(), folder, root: root.clone(), wce });
+                        let folder = path
+                            .parent()
+                            .and_then(|p| p.strip_prefix(&root).ok())
+                            .map(|p| p.to_string_lossy().replace('\\', "/"))
+                            .unwrap_or_default();
+                        lib.entries.entry(key.to_lowercase()).or_insert(PrefabEntry {
+                            key: key.to_owned(),
+                            path: path.clone(),
+                            folder,
+                            root: root.clone(),
+                            wce,
+                        });
                     }
                 }
             }
@@ -155,7 +169,8 @@ impl PrefabLibrary {
         }
 
         let scene = TedScene::parse_any(text).map_err(|e| format!("{}: {e}", entry.path.display()))?;
-        let group = *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", entry.path.display()))?;
+        let group =
+            *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", entry.path.display()))?;
         Ok(Prefab { group_text: scene.element_text(group), children_text: scene.children_text(group) })
     }
 
@@ -185,12 +200,24 @@ impl PrefabLibrary {
     /// # Errors
     ///
     /// No such prefab, or a file can't be read or written.
-    pub fn save_with_terrain(&self, key: &str, projects_root: &Path, children_text: &[u8], terrain: Option<&PrefabTerrain>) -> Result<PathBuf, String> {
+    pub fn save_with_terrain(
+        &self,
+        key: &str,
+        projects_root: &Path,
+        children_text: &[u8],
+        terrain: Option<&PrefabTerrain>,
+    ) -> Result<PathBuf, String> {
         self.save_with(key, projects_root, children_text, Some(terrain))
     }
 
     /// `terrain`: none keeps the file's layer.
-    fn save_with(&self, key: &str, projects_root: &Path, children_text: &[u8], terrain: Option<Option<&PrefabTerrain>>) -> Result<PathBuf, String> {
+    fn save_with(
+        &self,
+        key: &str,
+        projects_root: &Path,
+        children_text: &[u8],
+        terrain: Option<Option<&PrefabTerrain>>,
+    ) -> Result<PathBuf, String> {
         let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
         let target = if entry.wce && entry.path.starts_with(projects_root) {
             entry.path.clone()
@@ -199,8 +226,10 @@ impl PrefabLibrary {
             folder.join(format!("{}.wce", entry.key))
         };
 
-        let mut scene = TedScene::parse_any(std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?).map_err(|e| format!("{}: {e}", entry.path.display()))?;
-        let group = *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", entry.path.display()))?;
+        let mut scene = TedScene::parse_any(std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?)
+            .map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        let group =
+            *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", entry.path.display()))?;
         scene.set_children_text(group, children_text)?;
         if let Some(dir) = target.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -229,9 +258,15 @@ impl PrefabLibrary {
 
         let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
         let folder = folder.trim().trim_matches(['/', '\\']);
-        let target = if folder.is_empty() { projects_root.join(format!("{new_key}.wce")) } else { projects_root.join(folder).join(format!("{new_key}.wce")) };
-        let mut scene = TedScene::parse_any(std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?).map_err(|e| format!("{}: {e}", entry.path.display()))?;
-        let group = *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", entry.path.display()))?;
+        let target = if folder.is_empty() {
+            projects_root.join(format!("{new_key}.wce"))
+        } else {
+            projects_root.join(folder).join(format!("{new_key}.wce"))
+        };
+        let mut scene = TedScene::parse_any(std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?)
+            .map_err(|e| format!("{}: {e}", entry.path.display()))?;
+        let group =
+            *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", entry.path.display()))?;
         scene.set_attr(group, "name", &new_key);
         if let Some(dir) = target.parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -281,7 +316,12 @@ impl PrefabLibrary {
     /// # Errors
     ///
     /// No such prefab, or a file can't be read, converted or written.
-    pub fn save_for_kit(&self, key: &str, kit_root: &Path, models_in: Option<crate::export_as_prop::ModelsIn>) -> Result<(PathBuf, crate::project_files::TedReport), String> {
+    pub fn save_for_kit(
+        &self,
+        key: &str,
+        kit_root: &Path,
+        models_in: Option<crate::export_as_prop::ModelsIn>,
+    ) -> Result<(PathBuf, crate::project_files::TedReport), String> {
         let entry = self.get(key).ok_or_else(|| format!("no prefab '{key}'"))?;
         let text = std::fs::read(&entry.path).map_err(|e| format!("{}: {e}", entry.path.display()))?;
         let (text, _) = crate::project_files::expand_prefabs(text, &|k| self.contents(k))?;
@@ -338,7 +378,8 @@ pub struct Prefab {
 ///
 /// The file can't be read, is not XML, or holds no `UserInstanceGroup`.
 pub fn load(path: &Path) -> Result<Prefab, String> {
-    let scene = TedScene::parse_any(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?).map_err(|e| format!("{}: {e}", path.display()))?;
+    let scene = TedScene::parse_any(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     let group = *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", path.display()))?;
     Ok(Prefab { group_text: scene.element_text(group), children_text: scene.children_text(group) })
 }
@@ -381,7 +422,8 @@ pub fn write(path: &Path, group_text: &[u8], base: Option<crate::project_files::
 ///
 /// The file can't be read or written, or holds no `UserInstanceGroup`.
 pub fn update_children(path: &Path, children_text: &[u8]) -> Result<(), String> {
-    let mut scene = TedScene::parse_any(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut scene = TedScene::parse_any(std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     let group = *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", path.display()))?;
     scene.set_children_text(group, children_text)?;
     std::fs::write(path, scene.save()).map_err(|e| format!("{}: {e}", path.display()))
@@ -429,7 +471,13 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, FILE).unwrap();
         let lib = PrefabLibrary::scan(&[projects.path().to_path_buf(), kit.path().to_path_buf()]);
-        let saved = lib.save_edit("rocks", &prefab_root(projects.path()), b"<BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"rock\" name=\"rock\"/>\n").unwrap();
+        let saved = lib
+            .save_edit(
+                "rocks",
+                &prefab_root(projects.path()),
+                b"<BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"rock\" name=\"rock\"/>\n",
+            )
+            .unwrap();
         assert_eq!(saved, prefab_root(projects.path()).join("global").join("rocks.wce"));
         assert_eq!(std::fs::read(&path).unwrap(), FILE.as_bytes(), "the kit's file is not touched");
         let text = String::from_utf8(std::fs::read(&saved).unwrap()).unwrap();
@@ -466,7 +514,12 @@ mod tests {
         assert_eq!(lib.contents("rocks").unwrap(), children, "the layer is not part of the contents");
 
         // An edit of the contents keeps the layer; one that sets none takes it away.
-        lib.save_edit("rocks", &prefab_root(projects.path()), b"<BUILDING_INSTANCE position=\"vector(3,0,0)\" key=\"rock\" name=\"rock\"/>\n").unwrap();
+        lib.save_edit(
+            "rocks",
+            &prefab_root(projects.path()),
+            b"<BUILDING_INSTANCE position=\"vector(3,0,0)\" key=\"rock\" name=\"rock\"/>\n",
+        )
+        .unwrap();
         assert_eq!(lib.terrain("rocks").unwrap().as_ref(), Some(&kept));
 
         let (ted, report) = lib.save_for_kit("rocks", &prefab_root(kit.path()), None).unwrap();
@@ -515,13 +568,22 @@ mod tests {
         let text = "<INSTANCE_SELECTION version=\"17\" wce_version=\"1\">\n    <BUILDING_INSTANCE position=\"vector(2,0,0)\" key=\"house\" name=\"house\" wce_export_as_prop=\"true\"/>\n    <BUILDING_INSTANCE position=\"vector(3,0,0)\" key=\"tower\" name=\"tower\" capture_location=\"cl\" wce_export_as_prop=\"true\"/>\n</INSTANCE_SELECTION>\n";
         std::fs::write(root.join("pair.wce"), text).unwrap();
         let lib = PrefabLibrary::scan(&[projects.path().to_path_buf()]);
-        let models_in = |folder: &str| vec![format!("{folder}house_piece01_destruct01.rigid_model_v2"), format!("{folder}house_piece02_destruct01.rigid_model_v2")];
+        let models_in = |folder: &str| {
+            vec![format!("{folder}house_piece01_destruct01.rigid_model_v2"), format!("{folder}house_piece02_destruct01.rigid_model_v2")]
+        };
         let (path, report) = lib.save_for_kit("pair", &prefab_root(kit.path()), Some(&models_in)).unwrap();
         let ted = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(ted.matches("<SIMPLE_MESH_INSTANCE").count(), 2, "{ted}");
-        assert!(ted.contains("key=\"rigidmodels/buildings/house/house_piece02_destruct01.rigid_model_v2\"") && ted.contains("key=\"tower\""), "{ted}");
+        assert!(
+            ted.contains("key=\"rigidmodels/buildings/house/house_piece02_destruct01.rigid_model_v2\"") && ted.contains("key=\"tower\""),
+            "{ted}"
+        );
         assert!(!ted.contains("wce_export_as_prop"), "{ted}");
-        assert!(report.polyfilled.iter().any(|l| l.contains("1 building(s) written as 2 model(s)")) && report.polyfilled.iter().any(|l| l.contains("water planes")), "{report:?}");
+        assert!(
+            report.polyfilled.iter().any(|l| l.contains("1 building(s) written as 2 model(s)"))
+                && report.polyfilled.iter().any(|l| l.contains("water planes")),
+            "{report:?}"
+        );
         assert!(report.dropped.iter().any(|l| l.contains("'tower'") && l.contains("capture location")), "{report:?}");
 
         // Without the game's files both stay buildings, and the report says so.

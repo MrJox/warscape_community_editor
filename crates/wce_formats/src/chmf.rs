@@ -104,7 +104,8 @@ fn bits(data: &[u8], pos: usize, n: u32) -> Result<u32, ChmfError> {
 /// An unknown mode, or a block shorter than its samples need.
 pub fn decode_block(block: &[u8], count: usize, out: &mut Vec<u16>) -> Result<(), ChmfError> {
     let Some(&k) = block.first() else { return fail("empty block") };
-    let rd16 = |o: usize| block.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]])).ok_or_else(|| ChmfError("block too short".to_owned()));
+    let rd16 =
+        |o: usize| block.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]])).ok_or_else(|| ChmfError("block too short".to_owned()));
     let (n, palette) = mode(k)?;
     if k == 143 {
         for i in 0..count {
@@ -136,7 +137,6 @@ pub fn decode_block(block: &[u8], count: usize, out: &mut Vec<u16>) -> Result<()
 }
 
 impl ChmfFile {
-
     /// # Errors
     ///
     /// Not a version 4 or 5 CHMF file, or a truncated one.
@@ -159,7 +159,9 @@ impl ChmfFile {
             return fail("region count");
         }
 
-        let mut regions = (0..n).map(|_| Ok(ChmfRegion { rect: [r.u32()?, r.u32()?, r.u32()?, r.u32()?], ..Default::default() })).collect::<Result<Vec<_>, ChmfError>>()?;
+        let mut regions = (0..n)
+            .map(|_| Ok(ChmfRegion { rect: [r.u32()?, r.u32()?, r.u32()?, r.u32()?], ..Default::default() }))
+            .collect::<Result<Vec<_>, ChmfError>>()?;
         for region in &mut regions {
             region.tag = [r.u16()?, r.u16()?];
             let (blocks, size) = (r.u32()? as usize, r.u32()? as usize);

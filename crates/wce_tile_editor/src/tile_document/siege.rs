@@ -29,7 +29,8 @@ pub const OLD_LAYER: &str = "(OLD) SiegeAI Layout";
 const OFF: &str = "LayerExportType_Off";
 
 /// The hints that belong to the siege layout (the generator makes them).
-const LAYOUT_HINTS: [&str; 5] = ["AIH_FORT_PERIMETER", "AIH_FORT_APPROACH", "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_BEACH_LANDING", "AIH_BEACH_LANDING_FORT_APPROACH"];
+const LAYOUT_HINTS: [&str; 5] =
+    ["AIH_FORT_PERIMETER", "AIH_FORT_APPROACH", "AIH_DEFAULT_DEPLOYMENT_LINE", "AIH_BEACH_LANDING", "AIH_BEACH_LANDING_FORT_APPROACH"];
 
 /// What the generator needs of a building's logic file (`<key>_tech.cs2.parsed`), in the building's frame.
 #[derive(Clone, Debug, Default)]
@@ -71,32 +72,47 @@ pub fn logic_summary(bytes: &[u8]) -> Option<LogicSummary> {
     for piece in v["pieces"].as_array().into_iter().flatten() {
         let m = piece_matrix(&piece["node_transform"]);
         let at = |x: f64, y: f64, z: f64| -> [f64; 3] {
-            [x * m[0][0] + y * m[1][0] + z * m[2][0] + m[3][0], x * m[0][1] + y * m[1][1] + z * m[2][1] + m[3][1], x * m[0][2] + y * m[1][2] + z * m[2][2] + m[3][2]]
+            [
+                x * m[0][0] + y * m[1][0] + z * m[2][0] + m[3][0],
+                x * m[0][1] + y * m[1][1] + z * m[2][1] + m[3][1],
+                x * m[0][2] + y * m[1][2] + z * m[2][2] + m[3][2],
+            ]
         };
         let ds = piece["destructs"].as_array().map_or(&[][..], Vec::as_slice);
         let Some(d) = ds.iter().find(|d| d["index"].as_u64() == Some(0)).or(ds.first()) else { continue };
         for ring in d["orange_thingies"].as_array().into_iter().flatten() {
-            let r: Vec<P> = ring.as_array().into_iter().flatten().map(|q| {
-                let p = at(f(&q["vertex"]["x"]), 0.0, f(&q["vertex"]["y"]));
-                [p[0], p[2]]
-            }).collect();
+            let r: Vec<P> = ring
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|q| {
+                    let p = at(f(&q["vertex"]["x"]), 0.0, f(&q["vertex"]["y"]));
+                    [p[0], p[2]]
+                })
+                .collect();
             if r.len() >= 3 {
                 orange.push(r);
             }
         }
 
         for o in d["collision_outlines"].as_array().into_iter().flatten() {
-            let r: Vec<P> = o["vertices"]["outline"].as_array().into_iter().flatten().map(|q| {
-                let p = at(f(&q["x"]), f(&q["y"]), f(&q["z"]));
-                [p[0], p[2]]
-            }).collect();
+            let r: Vec<P> = o["vertices"]["outline"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|q| {
+                    let p = at(f(&q["x"]), f(&q["y"]), f(&q["z"]));
+                    [p[0], p[2]]
+                })
+                .collect();
             if r.len() >= 3 {
                 outlines.push(r);
             }
         }
 
         let c3 = &d["collision_3d"];
-        let verts: Vec<[f64; 3]> = c3["vertices"].as_array().into_iter().flatten().map(|q| at(f(&q["x"]), f(&q["y"]), f(&q["z"]))).collect();
+        let verts: Vec<[f64; 3]> =
+            c3["vertices"].as_array().into_iter().flatten().map(|q| at(f(&q["x"]), f(&q["y"]), f(&q["z"]))).collect();
         for t in c3["triangles"].as_array().into_iter().flatten() {
             let idx = ["vertex_1", "vertex_2", "vertex_3"].map(|k| t[k].as_u64().map(|i| i as usize).filter(|&i| i < verts.len()));
             let [Some(a), Some(b), Some(c)] = idx else { continue };
@@ -116,7 +132,8 @@ pub fn logic_summary(bytes: &[u8]) -> Option<LogicSummary> {
                 continue;
             }
 
-            let pts: Vec<[f64; 3]> = p["vertices"]["outline"].as_array().into_iter().flatten().map(|q| at(f(&q["x"]), f(&q["y"]), f(&q["z"]))).collect();
+            let pts: Vec<[f64; 3]> =
+                p["vertices"]["outline"].as_array().into_iter().flatten().map(|q| at(f(&q["x"]), f(&q["y"]), f(&q["z"]))).collect();
             if pts.len() >= 3 {
                 let y = pts.iter().map(|q| q[1]).sum::<f64>() / pts.len() as f64;
                 if y >= 3.0 {
@@ -132,7 +149,8 @@ pub fn logic_summary(bytes: &[u8]) -> Option<LogicSummary> {
     out.footprint = orange;
 
     let top = tops.iter().map(|t| t.0).fold(f64::MIN, f64::max);
-    let (z0, z1) = tops.iter().filter(|t| t.0 >= top - 1.0).flat_map(|t| &t.1).fold((f64::MAX, f64::MIN), |(a, b), q| (a.min(q[2]), b.max(q[2])));
+    let (z0, z1) =
+        tops.iter().filter(|t| t.0 >= top - 1.0).flat_map(|t| &t.1).fold((f64::MAX, f64::MIN), |(a, b), q| (a.min(q[2]), b.max(q[2])));
     let z = if top >= 3.0 && z1 >= z0 { (z0 + z1) / 2.0 } else { 0.0 };
     out.ends = (f(&bb["min_x"]), f(&bb["max_x"]), z);
 
@@ -190,7 +208,11 @@ fn is_container(kind: &str) -> bool {
 /// The layer named `name` directly under the scene graph.
 fn top_layer(scene: &TedScene, name: &str) -> Option<usize> {
     let root = scene.scene_graph()?;
-    let list = scene.children(root).into_iter().find(|&c| scene.type_of(c) == "children").map_or_else(|| scene.children(root), |c| scene.children(c));
+    let list = scene
+        .children(root)
+        .into_iter()
+        .find(|&c| scene.type_of(c) == "children")
+        .map_or_else(|| scene.children(root), |c| scene.children(c));
     list.into_iter().find(|&c| scene.type_of(c) == "LayerInstance" && scene.name(c) == name)
 }
 
@@ -206,7 +228,11 @@ pub(crate) struct BuildingSiege {
 /// What the siege overlays are read from (a building's logic, a polygon, a wall, a capture, what hides them when it is not exported).
 fn feeds_siege(sc: &TedScene, e: usize) -> bool {
     let t = sc.type_of(e);
-    sc.is_layer(e) || t.starts_with("SiegeAI") || t.starts_with("SIEGE_AI") || t.starts_with("DeploymentZone") || t.starts_with("DEPLOYMENT_ZONE")
+    sc.is_layer(e)
+        || t.starts_with("SiegeAI")
+        || t.starts_with("SIEGE_AI")
+        || t.starts_with("DeploymentZone")
+        || t.starts_with("DEPLOYMENT_ZONE")
         || matches!(t, "BUILDING_INSTANCE" | "NOGO_REGION_POLYGON_INSTANCE" | "CaptureLocationInstance" | super::WALL_SPLINE)
 }
 
@@ -246,10 +272,14 @@ impl Tile {
             return l.clone();
         }
 
-        self.logic_summaries.borrow_mut().entry(key.to_owned()).or_insert_with(|| {
-            let bytes = self.files.as_deref()?.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok()?;
-            logic_summary(&bytes).map(Arc::new)
-        }).clone()
+        self.logic_summaries
+            .borrow_mut()
+            .entry(key.to_owned())
+            .or_insert_with(|| {
+                let bytes = self.files.as_deref()?.read(&format!("{}{key}_tech.cs2.parsed", folder(key))).ok()?;
+                logic_summary(&bytes).map(Arc::new)
+            })
+            .clone()
     }
 
     fn building_siege(&self, e: usize) -> BuildingSiege {
@@ -266,10 +296,17 @@ impl Tile {
                 let at = [w.position.x, w.position.z];
                 part.palisade = Some(wce_siege::PalisadePiece { at });
                 let hard = self.logic_of(&key).map(|l| l.hard.clone()).unwrap_or_default();
-                let footprint = hard.iter().map(|r| r.iter().map(|p| {
-                    let q = w.position + w.rotation * Double3::new(p[0], 0.0, p[1]);
-                    [q.x, q.z]
-                }).collect()).collect();
+                let footprint = hard
+                    .iter()
+                    .map(|r| {
+                        r.iter()
+                            .map(|p| {
+                                let q = w.position + w.rotation * Double3::new(p[0], 0.0, p[1]);
+                                [q.x, q.z]
+                            })
+                            .collect()
+                    })
+                    .collect();
                 part.wall = Some(WallPiece { footprint, platforms: vec![], walkway: vec![], gate: false, ends: [at, at] });
             }
 
@@ -352,7 +389,6 @@ impl Tile {
             raised.extend(part.raised.iter().cloned());
         }
 
-
         // Raised buildings touching the fort (towers, corners without firing positions) are part of it.
         let boxes: Vec<(P, P)> = input.walls.iter().map(|w| bounds(w.footprint.iter().chain(&w.platforms).flatten())).collect();
         for piece in raised {
@@ -388,7 +424,9 @@ impl Tile {
             let ends = [walk[0], walk[walk.len() - 1]];
             Some(WallPiece { footprint: vec![left], platforms: vec![], walkway: walk, gate: false, ends })
         };
-        let along = |plan: &wce_walls::solver::Plan, profile: &wce_walls::profile::Profile| band(&plan.samples.iter().map(|s| (s.centre, s.foot, s.dir)).collect::<Vec<_>>(), profile);
+        let along = |plan: &wce_walls::solver::Plan, profile: &wce_walls::profile::Profile| {
+            band(&plan.samples.iter().map(|s| (s.centre, s.foot, s.dir)).collect::<Vec<_>>(), profile)
+        };
 
         // A game's piece placed as it is (a tower, a bastion, a cap, a kit wall's piece): what blocks of it, from its logic file, as a fort
         // building's.
@@ -483,7 +521,8 @@ impl Tile {
         // Ground under the sea: the heights, sampled every 4 units (the generator keeps the water joined to the map's edge).
         let height = |x: f64, z: f64| self.project.height_at(x / u, z / u);
         let (hx, hz) = (input.bounds.1[0], input.bounds.1[1]);
-        let any_sea = sea && (0..=32).any(|i| (0..=32).any(|j| height(hx * f64::from(i) / 32.0, hz * f64::from(j) / 32.0) < wce_siege::Sea::WATER));
+        let any_sea =
+            sea && (0..=32).any(|i| (0..=32).any(|j| height(hx * f64::from(i) / 32.0, hz * f64::from(j) / 32.0) < wce_siege::Sea::WATER));
         if any_sea {
             let cell = 4.0;
             let (w, h) = ((hx / cell).ceil() as usize, (hz / cell).ceil() as usize);
@@ -516,10 +555,16 @@ impl Tile {
         let u = self.unit();
         let c = sc.children(e).into_iter().find(|&c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == name)?;
         let w = world_transform(sc, c);
-        Some(sc.polygon_points(c).iter().filter_map(|&p| sc.point_position(p)).map(|v| {
-            let p = w.position + w.rotation * v;
-            wce_foundation::math::Float3::new((p.x / u) as f32, 0.0, (p.z / u) as f32)
-        }).collect())
+        Some(
+            sc.polygon_points(c)
+                .iter()
+                .filter_map(|&p| sc.point_position(p))
+                .map(|v| {
+                    let p = w.position + w.rotation * v;
+                    wce_foundation::math::Float3::new((p.x / u) as f32, 0.0, (p.z / u) as f32)
+                })
+                .collect(),
+        )
     }
 
     /// A siege edge's Street (world metres, y 0).
@@ -540,9 +585,11 @@ impl Tile {
     /// The exported siege nodes with a rectangle: element, whether a wall area node, its rectangle.
     pub fn siege_nodes(&self) -> Vec<(usize, bool, [wce_foundation::math::Float3; 4])> {
         let sc = self.tscene();
-        sc.find_all("SiegeAINodeInstance").into_iter().filter(|&n| exported(sc, n)).filter_map(|n| {
-            Some((n, sc.doc().get(n, "type").as_deref() == Some("SANT_WALL_AREA"), self.siege_node_rect(n)?))
-        }).collect()
+        sc.find_all("SiegeAINodeInstance")
+            .into_iter()
+            .filter(|&n| exported(sc, n))
+            .filter_map(|n| Some((n, sc.doc().get(n, "type").as_deref() == Some("SANT_WALL_AREA"), self.siege_node_rect(n)?)))
+            .collect()
     }
 
     /// Which nodes a siege edge joins (`SiegeEdgeEnds`); `None` for anything else or an edge without a Street.
@@ -562,7 +609,8 @@ impl Tile {
         let walls = matches!(sc.doc().get(edge, "type").as_deref(), Some("SAET_WALL" | "SAET_PALISADE"));
         let inside = |r: &[wce_foundation::math::Float3; 4], p: wce_foundation::math::Float3| {
             // In the quad when on the same side of its four edges (it is a rectangle, its points in order).
-            let side = |a: wce_foundation::math::Float3, b: wce_foundation::math::Float3| (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
+            let side =
+                |a: wce_foundation::math::Float3, b: wce_foundation::math::Float3| (b.x - a.x) * (p.z - a.z) - (b.z - a.z) * (p.x - a.x);
             let s = [side(r[0], r[1]), side(r[1], r[2]), side(r[2], r[3]), side(r[3], r[0])];
             s.iter().all(|&v| v >= 0.0) || s.iter().all(|&v| v <= 0.0)
         };
@@ -603,7 +651,9 @@ impl Tile {
                     continue;
                 }
 
-                let same = |a: &wce_foundation::math::Float3, b: &wce_foundation::math::Float3| (a.x - b.x).abs() < 1e-3 && (a.z - b.z).abs() < 1e-3;
+                let same = |a: &wce_foundation::math::Float3, b: &wce_foundation::math::Float3| {
+                    (a.x - b.x).abs() < 1e-3 && (a.z - b.z).abs() < 1e-3
+                };
                 let mut distinct = inside.windows(2).filter(|p| !same(&p[0], &p[1])).count() + 1;
                 if closed && inside.len() > 1 && same(&inside[0], &inside[inside.len() - 1]) {
                     distinct -= 1;
@@ -633,13 +683,19 @@ impl Tile {
                         out.push((e, "Siege AI Edge should have a main street shape".to_owned()));
                     }
 
-                    let sides = sc.children(e).into_iter().filter(|&c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == "Street boundary").count();
+                    let sides = sc
+                        .children(e)
+                        .into_iter()
+                        .filter(|&c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == "Street boundary")
+                        .count();
                     if sc.doc().get(e, "type").as_deref() == Some("SAET_STREET") && sides != 2 {
                         out.push((e, format!("Street Edge needs to have two boundary splines (it has {sides})")));
                     }
                 }
 
-                "DeploymentZonePolygonInstanceGroup" if !sc.children(e).into_iter().any(|c| sc.type_of(c) == "DEPLOYMENT_ZONE_POLYGON_INSTANCE") => {
+                "DeploymentZonePolygonInstanceGroup"
+                    if !sc.children(e).into_iter().any(|c| sc.type_of(c) == "DEPLOYMENT_ZONE_POLYGON_INSTANCE") =>
+                {
                     out.push((e, "Deployment Zone must have at least one polygon".to_owned()));
                 }
 
@@ -711,20 +767,28 @@ impl Tile {
             _ => wce_siege::ZoneKind::Additive,
         };
 
-        sc.find_all("DeploymentZonePolygonInstanceGroup").into_iter().filter(|&e| exported(sc, e)).map(|e| {
-            let d = wce_siege::Deployment { polygons: polys(sc, e).into_iter().map(|(t, p)| (zone(&t), p)).collect() };
-            (sc.doc().get(e, "alliance_id").unwrap_or_default(), d)
-        }).collect()
+        sc.find_all("DeploymentZonePolygonInstanceGroup")
+            .into_iter()
+            .filter(|&e| exported(sc, e))
+            .map(|e| {
+                let d = wce_siege::Deployment { polygons: polys(sc, e).into_iter().map(|(t, p)| (zone(&t), p)).collect() };
+                (sc.doc().get(e, "alliance_id").unwrap_or_default(), d)
+            })
+            .collect()
     }
 }
 
 /// A polygon's points on the ground (x, z), scene units.
 fn world_points(sc: &TedScene, e: usize) -> Vec<P> {
     let w = world_transform(sc, e);
-    sc.polygon_points(e).iter().filter_map(|&p| sc.point_position(p)).map(|v| {
-        let p = w.position + w.rotation * v;
-        [p.x, p.z]
-    }).collect()
+    sc.polygon_points(e)
+        .iter()
+        .filter_map(|&p| sc.point_position(p))
+        .map(|v| {
+            let p = w.position + w.rotation * v;
+            [p.x, p.z]
+        })
+        .collect()
 }
 
 /// A siege AI node as the generator reads it: its type, its Bounding Box (its first 4 points) and its Boundary. None without a Bounding
@@ -752,7 +816,9 @@ fn polys(sc: &TedScene, e: usize) -> Vec<(String, Vec<P>)> {
     while let Some(c) = stack.pop() {
         match els[c].name.as_str() {
             "SIEGE_AI_POLYGON_INSTANCE" => siege.push((sc.name(c), world_points(sc, c))),
-            "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => zones.push((sc.doc().get(c, "deployment_polygon_type").unwrap_or_default(), world_points(sc, c))),
+            "DEPLOYMENT_ZONE_POLYGON_INSTANCE" => {
+                zones.push((sc.doc().get(c, "deployment_polygon_type").unwrap_or_default(), world_points(sc, c)))
+            }
             _ => {}
         }
 
@@ -775,7 +841,12 @@ impl TileDocument {
 
         let line = polys(sc, edge).into_iter().find(|p| p.0 == "Street").map(|p| p.1)?;
         let (first, last) = (*line.first()?, *line.last()?);
-        let nodes = sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| exported(sc, e)).filter_map(|e| node_of(sc, e).map(|n| (e, n))).collect::<Vec<_>>();
+        let nodes = sc
+            .find_all("SiegeAINodeInstance")
+            .into_iter()
+            .filter(|&e| exported(sc, e))
+            .filter_map(|e| node_of(sc, e).map(|n| (e, n)))
+            .collect::<Vec<_>>();
         let holding = |p: P| nodes.iter().rev().find(|(_, n)| wce_siege::raster::inside(p, &n.bbox)).map(|(e, _)| *e);
         let (a, b) = (holding(first)?, holding(last)?);
         (a != b).then_some((a, b))
@@ -800,24 +871,43 @@ impl TileDocument {
             return Err("only a street edge has boundaries (an area connection, a wall or a palisade edge has none)".to_owned());
         }
 
-        let (a, b) = self.street_nodes(edge).ok_or("the street joins no two nodes: its Street's ends must be in two nodes' Bounding Boxes")?;
+        let (a, b) =
+            self.street_nodes(edge).ok_or("the street joins no two nodes: its Street's ends must be in two nodes' Bounding Boxes")?;
         let line = polys(sc, edge).into_iter().find(|p| p.0 == "Street").map(|p| p.1).unwrap_or_default();
         let (na, nb) = (node_of(sc, a).ok_or("a node without a Bounding Box")?, node_of(sc, b).ok_or("a node without a Bounding Box")?);
-        let others = sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| e != a && e != b && exported(sc, e)).filter_map(|e| node_of(sc, e)).collect::<Vec<_>>();
-        let sides = wce_siege::generate::street_sides(&t.siege_input(), &line, &na, &nb, &others).ok_or("no corridor between the two nodes")?;
+        let others = sc
+            .find_all("SiegeAINodeInstance")
+            .into_iter()
+            .filter(|&e| e != a && e != b && exported(sc, e))
+            .filter_map(|e| node_of(sc, e))
+            .collect::<Vec<_>>();
+        let sides =
+            wce_siege::generate::street_sides(&t.siege_input(), &line, &na, &nb, &others).ok_or("no corridor between the two nodes")?;
 
         // The new sides, local to the edge (each at the centre of its points, as a drawn one).
         let u = t.unit();
-        let texts = sides.iter().map(|side| {
-            let local = side.iter().map(|p| {
-                let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
-                t.to_local(edge, wce_foundation::math::Float3::new(x, t.terrain_height(x, z), z))
-            }).collect::<Vec<_>>();
-            let c = local.iter().fold(Double3::default(), |s, &p| s + p) * (1.0 / local.len().max(1) as f64);
-            let n = super::edits::new_polygon("SIEGE_AI_POLYGON_INSTANCE", local.into_iter().map(|p| p - c).collect(), false).position(c).attr("name", "Street boundary");
-            wce_tile::new_instances::element_text(&n)
-        }).collect::<Result<Vec<_>, _>>()?;
-        let old = sc.children(edge).into_iter().filter(|&c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == "Street boundary").collect::<Vec<_>>();
+        let texts = sides
+            .iter()
+            .map(|side| {
+                let local = side
+                    .iter()
+                    .map(|p| {
+                        let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
+                        t.to_local(edge, wce_foundation::math::Float3::new(x, t.terrain_height(x, z), z))
+                    })
+                    .collect::<Vec<_>>();
+                let c = local.iter().fold(Double3::default(), |s, &p| s + p) * (1.0 / local.len().max(1) as f64);
+                let n = super::edits::new_polygon("SIEGE_AI_POLYGON_INSTANCE", local.into_iter().map(|p| p - c).collect(), false)
+                    .position(c)
+                    .attr("name", "Street boundary");
+                wce_tile::new_instances::element_text(&n)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let old = sc
+            .children(edge)
+            .into_iter()
+            .filter(|&c| sc.type_of(c) == "SIEGE_AI_POLYGON_INSTANCE" && sc.name(c) == "Street boundary")
+            .collect::<Vec<_>>();
 
         let mark = self.begin()?;
         let result = (|| -> Result<(), String> {
@@ -863,7 +953,12 @@ impl TileDocument {
         }
 
         let me = node_of(sc, node).ok_or("the node has no Bounding Box of 4 points")?;
-        let others = sc.find_all("SiegeAINodeInstance").into_iter().filter(|&e| e != node && exported(sc, e)).filter_map(|e| node_of(sc, e)).collect::<Vec<_>>();
+        let others = sc
+            .find_all("SiegeAINodeInstance")
+            .into_iter()
+            .filter(|&e| e != node && exported(sc, e))
+            .filter_map(|e| node_of(sc, e))
+            .collect::<Vec<_>>();
         let reach = reach.filter(|&r| r > 0.0).map(|r| f64::from(r) * t.unit());
         let pts = wce_siege::generate::node_boundary(&t.siege_input(), &me, &others, reach);
         if pts.len() < 3 {
@@ -871,10 +966,13 @@ impl TileDocument {
         }
 
         let u = t.unit();
-        let world = pts.iter().map(|p| {
-            let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
-            wce_foundation::math::Float3::new(x, t.terrain_height(x, z), z)
-        }).collect();
+        let world = pts
+            .iter()
+            .map(|p| {
+                let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
+                wce_foundation::math::Float3::new(x, t.terrain_height(x, z), z)
+            })
+            .collect();
         let attrs = BTreeMap::from([("name".to_owned(), "Boundary".to_owned())]);
         self.create_with("SIEGE_AI_POLYGON_INSTANCE", node, &super::Create::Line(world), "", &attrs)
     }
@@ -927,46 +1025,68 @@ impl TileDocument {
         let u = self.tile().unit();
         let tile = self.tile();
         let height = |p: P| tile.project.height_at(p[0] / u, p[1] / u);
-        let pts3 = |pts: &[P], origin: P| -> Vec<Double3> { pts.iter().map(|&p| Double3::new(p[0] - origin[0], height(p), p[1] - origin[1])).collect() };
+        let pts3 = |pts: &[P], origin: P| -> Vec<Double3> {
+            pts.iter().map(|&p| Double3::new(p[0] - origin[0], height(p), p[1] - origin[1])).collect()
+        };
         let s = |k: &str, v: &str| (k.to_owned(), v.to_owned());
 
         // Prepared first (the document is borrowed while writing).
-        let nodes: Vec<_> = layout.nodes.iter().map(|n| (n.kind.ted(), n.centre, pts3(&n.bbox, n.centre), pts3(&n.boundary, n.centre))).collect();
-        let edges: Vec<_> = layout.edges.iter().map(|e| (e.kind, pts3(&e.line, [0.0, 0.0]), e.sides.iter().map(|s| pts3(s, [0.0, 0.0])).collect::<Vec<_>>())).collect();
+        let nodes: Vec<_> =
+            layout.nodes.iter().map(|n| (n.kind.ted(), n.centre, pts3(&n.bbox, n.centre), pts3(&n.boundary, n.centre))).collect();
+        let edges: Vec<_> = layout
+            .edges
+            .iter()
+            .map(|e| (e.kind, pts3(&e.line, [0.0, 0.0]), e.sides.iter().map(|s| pts3(s, [0.0, 0.0])).collect::<Vec<_>>()))
+            .collect();
         let perimeter = pts3(&layout.perimeter, [0.0, 0.0]);
         let approaches: Vec<_> = layout.approaches.iter().map(|a| pts3(a, [0.0, 0.0])).collect();
         let separators: Vec<_> = layout.separators.iter().map(|l| pts3(l, [0.0, 0.0])).collect();
         let wall_zones: Vec<_> = layout.wall_zones.iter().map(|z| pts3(z, [0.0, 0.0])).collect();
-        let mut coast: Vec<(&str, Vec<Double3>)> = layout.deployment_lines.iter().map(|l| ("AIH_DEFAULT_DEPLOYMENT_LINE", pts3(l, [0.0, 0.0]))).collect();
+        let mut coast: Vec<(&str, Vec<Double3>)> =
+            layout.deployment_lines.iter().map(|l| ("AIH_DEFAULT_DEPLOYMENT_LINE", pts3(l, [0.0, 0.0]))).collect();
         coast.extend(layout.beaches.iter().map(|l| ("AIH_BEACH_LANDING", pts3(l, [0.0, 0.0]))));
         coast.extend(layout.beach_approaches.iter().map(|l| ("AIH_BEACH_LANDING_FORT_APPROACH", pts3(l, [0.0, 0.0]))));
         let zones: Vec<_> = [(1, &layout.defender, "argb(0.0,0.0,1.0,0.7)"), (0, &layout.attacker, "argb(1.0,0.0,0.0,0.7)")]
             .into_iter()
-            .map(|(alliance, d, colour)| (alliance, colour, d.polygons.iter().map(|(k, p)| (k.ted(), pts3(p, [0.0, 0.0]))).collect::<Vec<_>>()))
+            .map(|(alliance, d, colour)| {
+                (alliance, colour, d.polygons.iter().map(|(k, p)| (k.ted(), pts3(p, [0.0, 0.0]))).collect::<Vec<_>>())
+            })
             .collect();
 
         let sc = self.tscene_mut();
         let top = sc.add_layer(Some(root), AUTOGEN_LAYER)?;
-        let polygon = |sc: &mut TedScene, parent: usize, kind: &str, name: &str, pts: &[Double3], extra: &[(&str, &str)]| -> Result<usize, String> {
-            let extra: BTreeMap<String, String> = extra.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
-            sc.add_polygon(Some(parent), kind, name, pts, &extra)
-        };
+        let polygon =
+            |sc: &mut TedScene, parent: usize, kind: &str, name: &str, pts: &[Double3], extra: &[(&str, &str)]| -> Result<usize, String> {
+                let extra: BTreeMap<String, String> = extra.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
+                sc.add_polygon(Some(parent), kind, name, pts, &extra)
+            };
 
         let streets = sc.add_layer(Some(top), "Streets")?;
         for (ty, c, bbox, boundary) in &nodes {
             let attrs = [
-                s("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), s("lf_offset", "0"), s("position", &format!("vector({},0,{})", c[0], c[1])),
-                s("add_boundary", "0"), s("type", ty), s("name", "Siege AI Node"), s("surface_mode", "MSM_FREEFORM"),
+                s("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+                s("lf_offset", "0"),
+                s("position", &format!("vector({},0,{})", c[0], c[1])),
+                s("add_boundary", "0"),
+                s("type", ty),
+                s("name", "Siege AI Node"),
+                s("surface_mode", "MSM_FREEFORM"),
             ];
             let n = sc.add_container_instance(Some(streets), "SiegeAINodeInstance", &attrs)?;
             polygon(sc, n, "SIEGE_AI_POLYGON_INSTANCE", "Bounding Box", bbox, &[("polygon_closed", "1")])?;
             polygon(sc, n, "SIEGE_AI_POLYGON_INSTANCE", "Boundary", boundary, &[("polygon_closed", "1")])?;
         }
 
-        let edge_attrs = |ty: &str| [
-            s("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), s("lf_offset", "0"), s("add_boundary", "0"), s("type", ty), s("name", "Siege AI Edge"),
-            s("surface_mode", "MSM_FREEFORM"),
-        ];
+        let edge_attrs = |ty: &str| {
+            [
+                s("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+                s("lf_offset", "0"),
+                s("add_boundary", "0"),
+                s("type", ty),
+                s("name", "Siege AI Edge"),
+                s("surface_mode", "MSM_FREEFORM"),
+            ]
+        };
         let on_walls = |k: wce_siege::EdgeKind| matches!(k, wce_siege::EdgeKind::Wall | wce_siege::EdgeKind::Palisade);
         for (kind, line, sides) in edges.iter().filter(|e| !on_walls(e.0)) {
             let e = sc.add_container_instance(Some(streets), "SiegeAIEdgeInstance", &edge_attrs(kind.ted()))?;
@@ -991,15 +1111,27 @@ impl TileDocument {
         }
 
         let fort = sc.add_layer(Some(top), "Fort")?;
-        polygon(sc, fort, "AI_HINT_POLYGON_INSTANCE", "AI hint polygon", &perimeter, &[("hint_type", "AIH_FORT_PERIMETER"), ("polygon_closed", "1")])?;
+        polygon(
+            sc,
+            fort,
+            "AI_HINT_POLYGON_INSTANCE",
+            "AI hint polygon",
+            &perimeter,
+            &[("hint_type", "AIH_FORT_PERIMETER"), ("polygon_closed", "1")],
+        )?;
         for a in &approaches {
             polygon(sc, fort, "AI_HINT_POLYGON_INSTANCE", "AI hint polygon", a, &[("hint_type", "AIH_FORT_APPROACH")])?;
         }
 
         for l in &separators {
-            polygon(sc, fort, "AISeparatorInstance", "AI Separator", l, &[
-                ("type", "PALT_FORT"), ("polygon_closed", "0"), ("subdivision_length", "5"), ("max_subdivisions", "100"),
-            ])?;
+            polygon(
+                sc,
+                fort,
+                "AISeparatorInstance",
+                "AI Separator",
+                l,
+                &[("type", "PALT_FORT"), ("polygon_closed", "0"), ("subdivision_length", "5"), ("max_subdivisions", "100")],
+            )?;
         }
 
         if !coast.is_empty() {
@@ -1012,15 +1144,28 @@ impl TileDocument {
         let deploy = sc.add_layer(Some(top), "Deployment_Zones")?;
         for (alliance, colour, polys) in &zones {
             let attrs = [
-                s("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"), s("deployment_category", "DAC_DEFAULT"), s("lf_offset", "0"), s("deployment_type", "EDZT_1V1"),
-                s("new_polygon_type", "PDM_POLYGON"), s("facing_direction", "0"), s("deployment_zone_id", "0"), s("name", "Deployment Zone"), s("add_polygon", "0"),
-                s("alliance_id", &alliance.to_string()), s("surface_mode", "MSM_FREEFORM"),
+                s("flags", " OIF_VISIBLE|OIF_ACTIVE|OIF_DRAGGABLE"),
+                s("deployment_category", "DAC_DEFAULT"),
+                s("lf_offset", "0"),
+                s("deployment_type", "EDZT_1V1"),
+                s("new_polygon_type", "PDM_POLYGON"),
+                s("facing_direction", "0"),
+                s("deployment_zone_id", "0"),
+                s("name", "Deployment Zone"),
+                s("add_polygon", "0"),
+                s("alliance_id", &alliance.to_string()),
+                s("surface_mode", "MSM_FREEFORM"),
             ];
             let g = sc.add_container_instance(Some(deploy), "DeploymentZonePolygonInstanceGroup", &attrs)?;
             for (ty, pts) in polys {
-                polygon(sc, g, "DEPLOYMENT_ZONE_POLYGON_INSTANCE", "Deployment Zone Polygon", pts, &[
-                    ("line_colour", colour), ("subdivision_length", "5"), ("max_subdivisions", "100"), ("deployment_polygon_type", ty),
-                ])?;
+                polygon(
+                    sc,
+                    g,
+                    "DEPLOYMENT_ZONE_POLYGON_INSTANCE",
+                    "Deployment Zone Polygon",
+                    pts,
+                    &[("line_colour", colour), ("subdivision_length", "5"), ("max_subdivisions", "100"), ("deployment_polygon_type", ty)],
+                )?;
             }
         }
 
@@ -1163,7 +1308,6 @@ fn clip_to_rect(pts: &[wce_foundation::math::Float3], closed: bool, w: f32, h: f
     out
 }
 
-
 /// A point of a wall's line for Siege AI (`siege_input_with`'s `band`).
 struct Sample {
     centre: [f64; 2],
@@ -1209,7 +1353,15 @@ mod tests {
         std::fs::write(dir.join("tile.ted"), TED).unwrap();
         let (w, h) = (64u32, 64u32);
         let pixels = (0..h).flat_map(|y| (0..w).flat_map(move |x| ((x * 300 + y * 200) as u16).to_be_bytes())).collect();
-        let png = wce_formats::png_file::PngFile { width: w, height: h, bit_depth: 16, color_type: 0, pixels, pixels_edited: true, ..Default::default() };
+        let png = wce_formats::png_file::PngFile {
+            width: w,
+            height: h,
+            bit_depth: 16,
+            color_type: 0,
+            pixels,
+            pixels_edited: true,
+            ..Default::default()
+        };
         std::fs::write(dir.join("height_map_0.png"), png.write().unwrap()).unwrap();
         let d = TileDocument::new(TileProject::open(dir).unwrap(), None);
         let logic = LogicSummary { hard: vec![vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]], ..LogicSummary::default() };
@@ -1238,7 +1390,8 @@ mod tests {
         check(&d, "first read");
         assert_eq!(d.tile().siege_buildings.borrow().len(), 2);
         let sc = d.tile().tscene();
-        let (a, light, later) = (sc.find_all("BUILDING_INSTANCE")[0], sc.find_all("POINT_LIGHT_INSTANCE")[0], sc.find_all("LayerInstance")[1]);
+        let (a, light, later) =
+            (sc.find_all("BUILDING_INSTANCE")[0], sc.find_all("POINT_LIGHT_INSTANCE")[0], sc.find_all("LayerInstance")[1]);
 
         let version = d.tile().siege_version();
         assert!(d.set_local(light, Some(Double3::new(25.0, 0.0, 25.0)), None, 0));

@@ -20,7 +20,20 @@ fn main() {
                 }
             }
 
-            println!("water river {} verts {}: x {:.1} .. {:.1}, y {:.2} .. {:.2}, z {:.1} .. {:.1}; matrix translation {:.1} {:.1} {:.1}", water.river, water.verts.len(), lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], w.m[0][3], w.m[1][3], w.m[2][3]);
+            println!(
+                "water river {} verts {}: x {:.1} .. {:.1}, y {:.2} .. {:.2}, z {:.1} .. {:.1}; matrix translation {:.1} {:.1} {:.1}",
+                water.river,
+                water.verts.len(),
+                lo[0],
+                hi[0],
+                lo[1],
+                hi[1],
+                lo[2],
+                hi[2],
+                w.m[0][3],
+                w.m[1][3],
+                w.m[2][3]
+            );
         }
     }
 }

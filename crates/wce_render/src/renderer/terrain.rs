@@ -20,11 +20,11 @@ use wce_foundation::math::{Float3, Float4x4};
 use wce_foundation::wce_prof;
 use wce_scene::render_scene::{EntityId, LfMap, Payload, RenderScene, Terrain, TerrainImage, TerrainMaterial};
 
+use super::terrain_custom::CustomDraw;
 use super::*;
 use crate::shader_lib::{bind_sampler, bind_srv};
-use super::terrain_custom::CustomDraw;
-use wce_foundation::jobs::io_pool;
 use crate::texture::{Texture, load_dds_array, make_rgba_texture, make_solid_texture};
+use wce_foundation::jobs::io_pool;
 
 const GEOM_VS: &str = "dx11_sm_4_0_rigidterrain.hlsl_vs_vs30_geom_new";
 const GEOM_PS: &str = "dx11_sm_3_0_rigidterrain.hlsl_ps_ps30_geom";
@@ -198,7 +198,13 @@ impl HfGeo {
     }
 
     fn same_grid(&self, t: &Terrain) -> bool {
-        self.cells == patch_cells(t) && self.nx == t.nx && self.nz == t.nz && self.step == t.step && self.ox == t.origin_x && self.oz == t.origin_z && self.heights.len() == t.heights.len()
+        self.cells == patch_cells(t)
+            && self.nx == t.nx
+            && self.nz == t.nz
+            && self.step == t.step
+            && self.ox == t.origin_x
+            && self.oz == t.origin_z
+            && self.heights.len() == t.heights.len()
     }
 }
 
@@ -333,26 +339,37 @@ fn fill_hf(dev: &ID3D11Device, mut g: HfGeo, t: &Terrain) -> HfGeo {
 
     let (old_h, nx) = (g.heights.clone(), t.nx as usize);
     let patches = std::mem::take(&mut g.patches);
-    g.patches = patches.into_iter().map(|mut p| {
-        let (i0, i1) = ((p.pi * cells) as usize, (p.pi * cells + p.cx) as usize);
-        let (j0, j1) = ((p.pj * cells) as usize, (p.pj * cells + p.cz) as usize);
-        let dirty = !reuse || p.vb.is_none() || t.heights.is_empty() || old_h.len() != t.heights.len()
-            || (j0..=j1).any(|j| t.heights[j * nx + i0..=j * nx + i1].iter().zip(&old_h[j * nx + i0..=j * nx + i1]).any(|(a, b)| a.to_bits() != b.to_bits()));
-        if dirty {
-            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-            for j in j0..=j1 {
-                for i in i0..=i1 {
-                    let h = t.height_at(i as i32, j as i32);
-                    (lo, hi) = (lo.min(h), hi.max(h));
+    g.patches = patches
+        .into_iter()
+        .map(|mut p| {
+            let (i0, i1) = ((p.pi * cells) as usize, (p.pi * cells + p.cx) as usize);
+            let (j0, j1) = ((p.pj * cells) as usize, (p.pj * cells + p.cz) as usize);
+            let dirty = !reuse
+                || p.vb.is_none()
+                || t.heights.is_empty()
+                || old_h.len() != t.heights.len()
+                || (j0..=j1).any(|j| {
+                    t.heights[j * nx + i0..=j * nx + i1]
+                        .iter()
+                        .zip(&old_h[j * nx + i0..=j * nx + i1])
+                        .any(|(a, b)| a.to_bits() != b.to_bits())
+                });
+            if dirty {
+                let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+                for j in j0..=j1 {
+                    for i in i0..=i1 {
+                        let h = t.height_at(i as i32, j as i32);
+                        (lo, hi) = (lo.min(h), hi.max(h));
+                    }
                 }
+
+                (p.lo, p.hi) = (lo, hi);
+                (p.vb, p.level) = hf_patch_vb(dev, t, p.pi, p.pj, cells);
             }
 
-            (p.lo, p.hi) = (lo, hi);
-            (p.vb, p.level) = hf_patch_vb(dev, t, p.pi, p.pj, cells);
-        }
-
-        p
-    }).collect();
+            p
+        })
+        .collect();
 
     g.heights = t.heights.clone();
     g
@@ -368,7 +385,12 @@ struct MaterialBuilt {
 
 /// The GPU side of a terrain material: the tile's maps (mipmapped), the climate's texture arrays (`have` gives the ones already made), the
 /// light parameter texture. The device is free-threaded: a loading thread may run it.
-fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &TerrainMaterial, have: &dyn Fn(&(String, bool)) -> Option<Texture>) -> MaterialBuilt {
+fn material_gpu(
+    dev: &ID3D11Device,
+    files: &dyn crate::files::Files,
+    m: &TerrainMaterial,
+    have: &dyn Fn(&(String, bool)) -> Option<Texture>,
+) -> MaterialBuilt {
     let mut errors = vec![];
     let mut img = |im: &TerrainImage, what: &str| {
         let t = im.rgba.as_ref().map(|rgba| make_rgba_texture(dev, im.w, im.h, rgba, false)).unwrap_or_default();
@@ -381,7 +403,8 @@ fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &Terrain
 
     // The blend and index maps change under a paint stroke: written in place, not made again.
     let patchable = match (&m.blend.rgba, &m.index.rgba) {
-        (Some(b), Some(i)) if !m.baked => crate::texture::PatchableRgba::new(dev, m.blend.w, m.blend.h, b).zip(crate::texture::PatchableRgba::new(dev, m.index.w, m.index.h, i)),
+        (Some(b), Some(i)) if !m.baked => crate::texture::PatchableRgba::new(dev, m.blend.w, m.blend.h, b)
+            .zip(crate::texture::PatchableRgba::new(dev, m.index.w, m.index.h, i)),
         _ => None,
     };
 
@@ -403,7 +426,11 @@ fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &Terrain
         normal,
 
         // The tile's weight where it overlaps its neighbours (a map context's); alone, 1 over the whole rectangle.
-        alpha: m.alpha.rgba.as_ref().map_or_else(|| make_solid_texture(dev, 0xFFFF_FFFF), |rgba| make_rgba_texture(dev, m.alpha.w, m.alpha.h, rgba, false)),
+        alpha: m
+            .alpha
+            .rgba
+            .as_ref()
+            .map_or_else(|| make_solid_texture(dev, 0xFFFF_FFFF), |rgba| make_rgba_texture(dev, m.alpha.w, m.alpha.h, rgba, false)),
 
         // A flat normal (the far-distance normal map is switched off with g_far_tile_distance).
         lf_normal: make_solid_texture(dev, 0x7F00_7FFF),
@@ -434,7 +461,9 @@ fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &Terrain
         let slices = bytes.iter().map(|b| b.as_deref()).collect::<Vec<_>>();
         let (t, bad) = load_dds_array(dev, &slices, srgb, !srgb);
         if bad > 0 {
-            errors.push(format!("terrain material: {bad} texture(s) of the climate differ in size / format from the others and are drawn neutral"));
+            errors.push(format!(
+                "terrain material: {bad} texture(s) of the climate differ in size / format from the others and are drawn neutral"
+            ));
         }
 
         arrays.push((key, t.clone()));
@@ -452,8 +481,16 @@ fn material_gpu(dev: &ID3D11Device, files: &dyn crate::files::Files, m: &Terrain
     // s_light_params: 16 texels (smoothness, reflectivity) per slot.
     let lp: Vec<f32> = (0..16).flat_map(|i| [m.smoothness[i], m.reflectivity[i]]).collect();
     let td = D3D11_TEXTURE2D_DESC {
-        Width: 16, Height: 1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32G32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: 16,
+        Height: 1,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_R32G32_FLOAT,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     let sd = [InitData::new(bytemuck::cast_slice(&lp), 16 * 8)];
@@ -484,14 +521,21 @@ fn hf_key(t: &Terrain) -> usize {
     Arc::as_ptr(&t.heights) as usize
 }
 
-
 /// The rotation index of the blend shader's table (`icb`: 0 none, 1 (u, v) -> (-v, u), 2 (-u, -v), 3 (v, -u)) that takes a world point of a
 /// box back to the material's own uv under a world matrix (a turn about y in steps of 90 degrees).
 fn rotation_index(w: &Float4x4) -> f32 {
     let (a, c) = (w.m[0][0], w.m[2][0]);
     let l = (a * a + c * c).sqrt().max(1e-12);
     let (a, c) = (a / l, c / l);
-    if a > 0.5 { 0.0 } else if a < -0.5 { 2.0 } else if c < 0.0 { 1.0 } else { 3.0 }
+    if a > 0.5 {
+        0.0
+    } else if a < -0.5 {
+        2.0
+    } else if c < 0.0 {
+        1.0
+    } else {
+        3.0
+    }
 }
 
 /// The GPU side of a terrain material.
@@ -697,7 +741,11 @@ pub(crate) fn box_in_frustum(vp: &Float4x4, bmin: [f32; 3], bmax: [f32; 3]) -> b
             }
         });
 
-        let (x, y, z) = (if p[0] >= 0.0 { bmax[0] } else { bmin[0] }, if p[1] >= 0.0 { bmax[1] } else { bmin[1] }, if p[2] >= 0.0 { bmax[2] } else { bmin[2] });
+        let (x, y, z) = (
+            if p[0] >= 0.0 { bmax[0] } else { bmin[0] },
+            if p[1] >= 0.0 { bmax[1] } else { bmin[1] },
+            if p[2] >= 0.0 { bmax[2] } else { bmin[2] },
+        );
         p[0] * x + p[1] * y + p[2] * z + p[3] >= 0.0
     })
 }
@@ -707,7 +755,12 @@ pub(crate) fn box_in_frustum(vp: &Float4x4, bmin: [f32; 3], bmax: [f32; 3]) -> b
 fn is_ground_world(w: &Float4x4) -> bool {
     let m = &w.m;
     let det = m[0][0] * m[2][2] - m[0][2] * m[2][0];
-    m[0][1].abs() < 1e-5 && m[2][1].abs() < 1e-5 && m[1][0].abs() < 1e-5 && m[1][2].abs() < 1e-5 && (m[1][1] - 1.0).abs() < 1e-5 && det > 1e-8
+    m[0][1].abs() < 1e-5
+        && m[2][1].abs() < 1e-5
+        && m[1][0].abs() < 1e-5
+        && m[1][2].abs() < 1e-5
+        && (m[1][1] - 1.0).abs() < 1e-5
+        && det > 1e-8
 }
 
 fn depth_stencil(dev: &ID3D11Device, d: &D3D11_DEPTH_STENCIL_DESC) -> Option<ID3D11DepthStencilState> {
@@ -715,7 +768,6 @@ fn depth_stencil(dev: &ID3D11Device, d: &D3D11_DEPTH_STENCIL_DESC) -> Option<ID3
 }
 
 impl Renderer {
-
     fn make_terrain_states(&mut self) {
         if self.terrain.ds_depth.is_some() {
             return;
@@ -723,23 +775,61 @@ impl Renderer {
 
         let dev = self.dev.clone();
         let t = &mut self.terrain;
-        let replace = D3D11_DEPTH_STENCILOP_DESC { StencilFailOp: D3D11_STENCIL_OP_KEEP, StencilDepthFailOp: D3D11_STENCIL_OP_KEEP, StencilPassOp: D3D11_STENCIL_OP_REPLACE, StencilFunc: D3D11_COMPARISON_ALWAYS };
+        let replace = D3D11_DEPTH_STENCILOP_DESC {
+            StencilFailOp: D3D11_STENCIL_OP_KEEP,
+            StencilDepthFailOp: D3D11_STENCIL_OP_KEEP,
+            StencilPassOp: D3D11_STENCIL_OP_REPLACE,
+            StencilFunc: D3D11_COMPARISON_ALWAYS,
+        };
 
         // The surface wins where it is nearest: stencil 2 (ref).
-        t.ds_depth = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC {
-            DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ALL, DepthFunc: D3D11_COMPARISON_LESS, StencilEnable: true.into(),
-            StencilReadMask: 0xFF, StencilWriteMask: 0xFF, FrontFace: replace, BackFace: replace,
-        });
+        t.ds_depth = depth_stencil(
+            &dev,
+            &D3D11_DEPTH_STENCIL_DESC {
+                DepthEnable: true.into(),
+                DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ALL,
+                DepthFunc: D3D11_COMPARISON_LESS,
+                StencilEnable: true.into(),
+                StencilReadMask: 0xFF,
+                StencilWriteMask: 0xFF,
+                FrontFace: replace,
+                BackFace: replace,
+            },
+        );
 
         // The same surface again (view-space depth): exactly the pixels it won.
-        t.ds_equal = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_EQUAL, ..Default::default() });
+        t.ds_equal = depth_stencil(
+            &dev,
+            &D3D11_DEPTH_STENCIL_DESC {
+                DepthEnable: true.into(),
+                DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO,
+                DepthFunc: D3D11_COMPARISON_EQUAL,
+                ..Default::default()
+            },
+        );
 
         // The terrain-blend meshes' view-space depth comes from another vertex shader than their G-buffer pass: not bit for bit the same depth.
-        t.ds_lequal = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, ..Default::default() });
+        t.ds_lequal = depth_stencil(
+            &dev,
+            &D3D11_DEPTH_STENCIL_DESC {
+                DepthEnable: true.into(),
+                DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO,
+                DepthFunc: D3D11_COMPARISON_LESS_EQUAL,
+                ..Default::default()
+            },
+        );
 
         // Only the terrain pixels (stencil 2, or 3 once a snowy tile marked them: bit 1 is what is tested) ...
         let keep = D3D11_DEPTH_STENCILOP_DESC { StencilPassOp: D3D11_STENCIL_OP_KEEP, StencilFunc: D3D11_COMPARISON_EQUAL, ..replace };
-        let mut s = D3D11_DEPTH_STENCIL_DESC { DepthEnable: false.into(), StencilEnable: true.into(), StencilReadMask: 0x02, StencilWriteMask: 0xFF, FrontFace: keep, BackFace: keep, ..Default::default() };
+        let mut s = D3D11_DEPTH_STENCIL_DESC {
+            DepthEnable: false.into(),
+            StencilEnable: true.into(),
+            StencilReadMask: 0x02,
+            StencilWriteMask: 0xFF,
+            FrontFace: keep,
+            BackFace: keep,
+            ..Default::default()
+        };
         t.ds_stencil = depth_stencil(&dev, &s);
 
         // A snowy tile's boxes (ref 3) also set bit 0 of the pixels they draw.
@@ -753,24 +843,48 @@ impl Renderer {
         s.BackFace = s.FrontFace;
         t.ds_resolve = depth_stencil(&dev, &s);
         let clear = D3D11_DEPTH_STENCILOP_DESC { StencilPassOp: D3D11_STENCIL_OP_ZERO, ..keep };
-        t.ds_resolve_snow = depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { StencilWriteMask: 0x02, FrontFace: clear, BackFace: clear, ..s });
+        t.ds_resolve_snow =
+            depth_stencil(&dev, &D3D11_DEPTH_STENCIL_DESC { StencilWriteMask: 0x02, FrontFace: clear, BackFace: clear, ..s });
 
         // The tiles accumulate (premultiplied by their alpha).
-        t.bs_add = crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
-            BlendEnable: true.into(), SrcBlend: D3D11_BLEND_ONE, DestBlend: D3D11_BLEND_ONE, BlendOp: D3D11_BLEND_OP_ADD, SrcBlendAlpha: D3D11_BLEND_ONE,
-            DestBlendAlpha: D3D11_BLEND_ONE, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
-        });
+        t.bs_add = crate::particles::blend_state(
+            &dev,
+            D3D11_RENDER_TARGET_BLEND_DESC {
+                BlendEnable: true.into(),
+                SrcBlend: D3D11_BLEND_ONE,
+                DestBlend: D3D11_BLEND_ONE,
+                BlendOp: D3D11_BLEND_OP_ADD,
+                SrcBlendAlpha: D3D11_BLEND_ONE,
+                DestBlendAlpha: D3D11_BLEND_ONE,
+                BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
+            },
+        );
 
-        t.bs_r2_overlay = crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
-            BlendEnable: true.into(), SrcBlend: D3D11_BLEND_SRC_ALPHA, DestBlend: D3D11_BLEND_INV_SRC_ALPHA, BlendOp: D3D11_BLEND_OP_ADD, SrcBlendAlpha: D3D11_BLEND_ZERO,
-            DestBlendAlpha: D3D11_BLEND_ONE, BlendOpAlpha: D3D11_BLEND_OP_ADD,
-            RenderTargetWriteMask: (D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE) as u8,
-        });
+        t.bs_r2_overlay = crate::particles::blend_state(
+            &dev,
+            D3D11_RENDER_TARGET_BLEND_DESC {
+                BlendEnable: true.into(),
+                SrcBlend: D3D11_BLEND_SRC_ALPHA,
+                DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
+                BlendOp: D3D11_BLEND_OP_ADD,
+                SrcBlendAlpha: D3D11_BLEND_ZERO,
+                DestBlendAlpha: D3D11_BLEND_ONE,
+                BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                RenderTargetWriteMask: (D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE)
+                    as u8,
+            },
+        );
 
         // The blend boxes: their back faces cover the pixels once, also from inside the box. Not clipped by depth (clamped instead): the
         // back face of a box at the horizon lies past the far plane, and clipped, the ground there got no material (black: the light
         // pass's 0, which Rome 2's log-luminance tone mapping spread into dark blocks).
-        let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_FRONT, DepthClipEnable: false.into(), ..Default::default() };
+        let rd = D3D11_RASTERIZER_DESC {
+            FillMode: D3D11_FILL_SOLID,
+            CullMode: D3D11_CULL_FRONT,
+            DepthClipEnable: false.into(),
+            ..Default::default()
+        };
         t.rs_front_cull = dev.create_rasterizer_state(&rd).ok();
 
         // The unit box: corner i = (i & 1, i >> 1 & 1, i >> 2 & 1); triangles wound so that (b - a) x (c - a) points outwards, which is clockwise
@@ -802,7 +916,14 @@ impl Renderer {
         t.box_ib = immutable_buffer(&dev, &bi.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER);
 
         // x y z w u v.
-        let tri: [[f32; 6]; 6] = [[-1.0, -1.0, 0.0, 1.0, 0.0, 1.0], [-1.0, 1.0, 0.0, 1.0, 0.0, 0.0], [1.0, 1.0, 0.0, 1.0, 1.0, 0.0], [-1.0, -1.0, 0.0, 1.0, 0.0, 1.0], [1.0, 1.0, 0.0, 1.0, 1.0, 0.0], [1.0, -1.0, 0.0, 1.0, 1.0, 1.0]];
+        let tri: [[f32; 6]; 6] = [
+            [-1.0, -1.0, 0.0, 1.0, 0.0, 1.0],
+            [-1.0, 1.0, 0.0, 1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0, 1.0, 1.0, 0.0],
+            [-1.0, -1.0, 0.0, 1.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0, 1.0, 1.0, 0.0],
+            [1.0, -1.0, 0.0, 1.0, 1.0, 1.0],
+        ];
         t.resolve_vb = immutable_buffer(&dev, &f32_bytes(tri.as_flattened()), D3D11_BIND_VERTEX_BUFFER);
         t.inst_vb = dynamic_buffer(&dev, INSTANCE_BYTES, D3D11_BIND_VERTEX_BUFFER);
     }
@@ -838,9 +959,9 @@ impl Renderer {
     fn place_terrain(&mut self, id: EntityId, world: &Float4x4, t: &Terrain) {
         let (key, lf, units) = (hf_key(t), t.lf.as_ref().map_or(0, |lf| lf.id), self.camera.units);
         let material = t.material.as_ref().map(|m| m.id);
-        if self.terrain.placed.get(&id).is_some_and(|p| p.key == key && p.world == *world && p.lf == lf && p.units == units && p.lod == t.lod
-            && p.blend_box.map(|b| b.0) == material)
-        {
+        if self.terrain.placed.get(&id).is_some_and(|p| {
+            p.key == key && p.world == *world && p.lf == lf && p.units == units && p.lod == t.lod && p.blend_box.map(|b| b.0) == material
+        }) {
             return;
         }
 
@@ -848,7 +969,16 @@ impl Renderer {
         wce_prof!("terrain.place");
         let w = &world.m;
         let mut placed = Placed {
-            key, world: *world, lf, units, lod: t.lod, step: g.step, patches: Vec::with_capacity(g.patches.len()), bmin: [f32::MAX; 3], bmax: [f32::MIN; 3], blend_box: None,
+            key,
+            world: *world,
+            lf,
+            units,
+            lod: t.lod,
+            step: g.step,
+            patches: Vec::with_capacity(g.patches.len()),
+            bmin: [f32::MAX; 3],
+            bmax: [f32::MIN; 3],
+            blend_box: None,
         };
         for (k, p) in g.patches.iter().enumerate() {
             if p.vb.is_none() {
@@ -860,13 +990,25 @@ impl Renderer {
             let mut row = [0.0f32; 12];
             let level = p.level.unwrap_or(0.0);
             for r in 0..3 {
-                row[r * 4..r * 4 + 4].copy_from_slice(&[w[r][0] * g.step, w[r][1], w[r][2] * g.step, w[r][0] * ox + w[r][1] * level + w[r][2] * oz + w[r][3]].map(|v| v * units));
+                row[r * 4..r * 4 + 4].copy_from_slice(
+                    &[w[r][0] * g.step, w[r][1], w[r][2] * g.step, w[r][0] * ox + w[r][1] * level + w[r][2] * oz + w[r][3]]
+                        .map(|v| v * units),
+                );
             }
 
             // The world box of the patch's corners; the shader moves the surface by up to 9 cm.
             let (x1, z1) = (ox + p.cx as f32 * g.step, oz + p.cz as f32 * g.step);
             let (mut bmin, mut bmax) = ([f32::MAX; 3], [f32::MIN; 3]);
-            for (x, y, z) in [(ox, p.lo, oz), (x1, p.lo, oz), (ox, p.lo, z1), (x1, p.lo, z1), (ox, p.hi, oz), (x1, p.hi, oz), (ox, p.hi, z1), (x1, p.hi, z1)] {
+            for (x, y, z) in [
+                (ox, p.lo, oz),
+                (x1, p.lo, oz),
+                (ox, p.lo, z1),
+                (x1, p.lo, z1),
+                (ox, p.hi, oz),
+                (x1, p.hi, oz),
+                (ox, p.hi, z1),
+                (x1, p.hi, z1),
+            ] {
                 for r in 0..3 {
                     let v = w[r][0] * x + w[r][1] * y + w[r][2] * z + w[r][3];
                     (bmin[r], bmax[r]) = (bmin[r].min(v), bmax[r].max(v));
@@ -926,8 +1068,16 @@ impl Renderer {
             // and a level can be rolled exactly by any whole number of texels.
             // DEFAULT: an edit of the samples updates its texels.
             let mut td = D3D11_TEXTURE2D_DESC {
-                Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: w,
+                Height: h,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
 
             g.normal_src = self.dev.create_texture_2d(&td, Some(&[InitData::new(&rgba[..(w * h * 4) as usize], w * 4)])).ok();
@@ -984,7 +1134,8 @@ impl Renderer {
         // The camera's sample; the window whole when the map fits, else centred on it once it is a quarter of the window off its middle.
         let (ci, cj) = (((eye.x - lf.x0) / s).round() as i32, ((eye.z - lf.z0) / s).round() as i32);
         let whole = n >= lf.nx && n >= lf.nz;
-        let stale = g.window.is_none() || g.n != n || (!whole && ((ci - (g.i0 + n / 2)).abs() > n / 4 || (cj - (g.j0 + n / 2)).abs() > n / 4));
+        let stale =
+            g.window.is_none() || g.n != n || (!whole && ((ci - (g.i0 + n / 2)).abs() > n / 4 || (cj - (g.j0 + n / 2)).abs() > n / 4));
         let g = if stale {
             let (i0, j0) = if whole { (0, 0) } else { (ci - n / 2, cj - n / 2) };
             let mut tex = vec![0u16; (n * n) as usize];
@@ -1002,8 +1153,16 @@ impl Renderer {
 
             // DEFAULT: an edit of the samples updates its rows (`window_dirty`).
             let td = D3D11_TEXTURE2D_DESC {
-                Width: n as u32, Height: n as u32, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R16_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: n as u32,
+                Height: n as u32,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R16_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
 
             let sd = [InitData::new(bytemuck::cast_slice(&tex), (n * 2) as u32)];
@@ -1030,7 +1189,15 @@ impl Renderer {
         // Column 0 at x_t, the row past the last at z_t; the shift is the point of the diagonal through them nearest the camera.
         let (x_t, z_t, w) = (lf.x0 + g.i0 as f32 * s, lf.z0 + (g.j0 - 1) as f32 * s, n as f32 * s);
         let uv_offset = ((eye.x - x_t) + (eye.z - z_t)) / (2.0 * w);
-        LfDraw { srv: g.window, n: n as f32, width: w, scale: lf.scale, offset: lf.offset, uv_offset, shift: [x_t + uv_offset * w, z_t + uv_offset * w] }
+        LfDraw {
+            srv: g.window,
+            n: n as f32,
+            width: w,
+            scale: lf.scale,
+            offset: lf.offset,
+            uv_offset,
+            shift: [x_t + uv_offset * w, z_t + uv_offset * w],
+        }
     }
 
     /// Edited samples (i0, j0, i1, j1; end exclusive) into an LF window: the rows and columns of them it holds.
@@ -1102,17 +1269,31 @@ impl Renderer {
                 }
             }
 
-            let slices: Vec<Option<Vec<u8>>> = (0..4).map(|v| {
-                // The variations are the snow's amounts (their alpha: Attila's 1, 55, 189, 255), so a missing season takes the same
-                // variation's summer (the group ships only `_su`).
-                [format!("{}/{v}_{}_diffuse.dds", s.group, s.season), format!("{}/{v}_su_diffuse.dds", s.group), format!("{}/0_{}_diffuse.dds", s.group, s.season)]
-                    .iter().find_map(|p| self.files.read(p).ok())
-            }).collect();
+            let slices: Vec<Option<Vec<u8>>> = (0..4)
+                .map(|v| {
+                    // The variations are the snow's amounts (their alpha: Attila's 1, 55, 189, 255), so a missing season takes the same
+                    // variation's summer (the group ships only `_su`).
+                    [
+                        format!("{}/{v}_{}_diffuse.dds", s.group, s.season),
+                        format!("{}/{v}_su_diffuse.dds", s.group),
+                        format!("{}/0_{}_diffuse.dds", s.group, s.season),
+                    ]
+                    .iter()
+                    .find_map(|p| self.files.read(p).ok())
+                })
+                .collect();
             let refs: Vec<Option<&[u8]>> = slices.iter().map(|b| b.as_deref()).collect();
             let (t, bad) = crate::texture::load_dds_array(&self.dev, &refs, true, false);
             c.array = t.srv;
-            wce_foundation::log::info(format!("campaign snow: {} {} x {}, the {} group's {} of 4 variations ({bad} unusable), array {}", s.mask, c.w, c.h, s.group,
-                slices.iter().filter(|b| b.is_some()).count(), if c.array.is_some() { "made" } else { "not made" }));
+            wce_foundation::log::info(format!(
+                "campaign snow: {} {} x {}, the {} group's {} of 4 variations ({bad} unusable), array {}",
+                s.mask,
+                c.w,
+                c.h,
+                s.group,
+                slices.iter().filter(|b| b.is_some()).count(),
+                if c.array.is_some() { "made" } else { "not made" }
+            ));
             self.terrain.campaign_snow = Some(c);
         }
 
@@ -1136,26 +1317,53 @@ impl Renderer {
             }
 
             let td = D3D11_TEXTURE2D_DESC {
-                Width: c.w, Height: c.h, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: c.w,
+                Height: c.h,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_IMMUTABLE,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
-            c.mask_srv = self.dev.create_texture_2d(&td, Some(&[InitData::new(&px, c.w)])).ok().and_then(|t| self.dev.create_shader_resource_view(&t, None).ok());
+            c.mask_srv = self
+                .dev
+                .create_texture_2d(&td, Some(&[InitData::new(&px, c.w)]))
+                .ok()
+                .and_then(|t| self.dev.create_shader_resource_view(&t, None).ok());
             c.roll = Some(roll);
         }
 
-        Some(SnowLayer { mask: c.mask_srv.clone(), array: c.array.clone(), world: [w * u, h * u], offset, repeat: super::tiling(s.pixel_scale, super::ORIGIN_REACH * u) })
+        Some(SnowLayer {
+            mask: c.mask_srv.clone(),
+            array: c.array.clone(),
+            world: [w * u, h * u],
+            offset,
+            repeat: super::tiling(s.pixel_scale, super::ORIGIN_REACH * u),
+        })
     }
 
     /// The height texture of the terrains without an LF map: zero everywhere.
     fn lf_zero(&mut self) -> Option<ID3D11ShaderResourceView> {
         if self.terrain.lf_zero.is_none() {
             let td = D3D11_TEXTURE2D_DESC {
-                Width: 2, Height: 2, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R16_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: 2,
+                Height: 2,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R16_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_IMMUTABLE,
+                BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
 
             let sd = [InitData::new(bytemuck::cast_slice(&[0u16; 4]), 4)];
-            self.terrain.lf_zero = self.dev.create_texture_2d(&td, Some(&sd)).and_then(|tx| self.dev.create_shader_resource_view(&tx, None)).ok();
+            self.terrain.lf_zero =
+                self.dev.create_texture_2d(&td, Some(&sd)).and_then(|tx| self.dev.create_shader_resource_view(&tx, None)).ok();
         }
 
         self.terrain.lf_zero.clone()
@@ -1230,20 +1438,23 @@ impl Renderer {
             if have.blend_id != m.blend_id
                 && let (Some(b), Some(i)) = (&m.blend.rgba, &m.index.rgba)
             {
-                let patched = m.blend_dirty.filter(|&(from, _)| from == have.blend_id).zip(have.patchable.as_ref()).is_some_and(|((_, rect), p)| {
-                    let mut p = p.lock().unwrap_or_else(|e| e.into_inner());
-                    if !p.0.fits(m.blend.w, m.blend.h) || !p.1.fits(m.index.w, m.index.h) {
-                        return false;
-                    }
+                let patched =
+                    m.blend_dirty.filter(|&(from, _)| from == have.blend_id).zip(have.patchable.as_ref()).is_some_and(|((_, rect), p)| {
+                        let mut p = p.lock().unwrap_or_else(|e| e.into_inner());
+                        if !p.0.fits(m.blend.w, m.blend.h) || !p.1.fits(m.index.w, m.index.h) {
+                            return false;
+                        }
 
-                    p.0.patch(&self.ctx, b, rect);
-                    p.1.patch(&self.ctx, i, rect);
-                    true
-                });
+                        p.0.patch(&self.ctx, b, rect);
+                        p.1.patch(&self.ctx, i, rect);
+                        true
+                    });
 
                 if patched {
                     have.blend_id = m.blend_id;
-                } else if let Some((pb, pi)) = crate::texture::PatchableRgba::new(&self.dev, m.blend.w, m.blend.h, b).zip(crate::texture::PatchableRgba::new(&self.dev, m.index.w, m.index.h, i)) {
+                } else if let Some((pb, pi)) = crate::texture::PatchableRgba::new(&self.dev, m.blend.w, m.blend.h, b)
+                    .zip(crate::texture::PatchableRgba::new(&self.dev, m.index.w, m.index.h, i))
+                {
                     (have.blend, have.index) = (pb.texture.clone(), pi.texture.clone());
                     have.patchable = Some(std::sync::Arc::new(std::sync::Mutex::new((pb, pi))));
                     have.blend_id = m.blend_id;
@@ -1255,13 +1466,15 @@ impl Renderer {
             if have.normal_id != m.normal_id
                 && let Some(rgba) = &m.normal.rgba
             {
-                let patched = m.normal_dirty.filter(|&(from, _)| from == have.normal_id).zip(have.patchable_normal.as_ref()).is_some_and(|((_, rect), p)| {
-                    let mut p = p.lock().unwrap_or_else(|e| e.into_inner());
-                    p.fits(m.normal.w, m.normal.h) && {
-                        p.patch(&self.ctx, rgba, rect);
-                        true
-                    }
-                });
+                let patched = m.normal_dirty.filter(|&(from, _)| from == have.normal_id).zip(have.patchable_normal.as_ref()).is_some_and(
+                    |((_, rect), p)| {
+                        let mut p = p.lock().unwrap_or_else(|e| e.into_inner());
+                        p.fits(m.normal.w, m.normal.h) && {
+                            p.patch(&self.ctx, rgba, rect);
+                            true
+                        }
+                    },
+                );
 
                 if patched {
                     have.normal_id = m.normal_id;
@@ -1326,22 +1539,32 @@ impl Renderer {
         let hf = self.terrain.hf.contains_key(&key);
         if !hf && t.nx >= 2 && t.nz >= 2 && self.terrain.hf_pending.insert(key) {
             let (dev, t, jobs) = (crate::model_cache::SharedDevice(self.dev.clone()), t.clone(), self.terrain.jobs.clone());
-            io_pool().post(move || {
-                let g = fill_hf(dev.device(), HfGeo::new(&t), &t);
-                jobs.lock().unwrap_or_else(|p| p.into_inner()).hf.push((key, g));
-            }, 0.0);
+            io_pool().post(
+                move || {
+                    let g = fill_hf(dev.device(), HfGeo::new(&t), &t);
+                    jobs.lock().unwrap_or_else(|p| p.into_inner()).hf.push((key, g));
+                },
+                0.0,
+            );
         }
 
         let Some(m) = &t.material else { return hf };
         let ready = self.terrain.mat.contains_key(&m.id);
         if !ready && self.terrain.mat_pending.insert(m.id) {
-            let have: Vec<((String, bool), Texture)> = [(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)].into_iter()
-                .filter_map(|k| self.terrain.arrays.get(&k).cloned().map(|t| (k, t))).collect();
-            let (dev, files, m, jobs) = (crate::model_cache::SharedDevice(self.dev.clone()), self.files.clone(), m.clone(), self.terrain.jobs.clone());
-            io_pool().post(move || {
-                let built = material_gpu(dev.device(), files.as_ref(), &m, &|k| have.iter().find(|(h, _)| h == k).map(|(_, t)| t.clone()));
-                jobs.lock().unwrap_or_else(|p| p.into_inner()).materials.push(built);
-            }, 0.0);
+            let have: Vec<((String, bool), Texture)> = [(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)]
+                .into_iter()
+                .filter_map(|k| self.terrain.arrays.get(&k).cloned().map(|t| (k, t)))
+                .collect();
+            let (dev, files, m, jobs) =
+                (crate::model_cache::SharedDevice(self.dev.clone()), self.files.clone(), m.clone(), self.terrain.jobs.clone());
+            io_pool().post(
+                move || {
+                    let built =
+                        material_gpu(dev.device(), files.as_ref(), &m, &|k| have.iter().find(|(h, _)| h == k).map(|(_, t)| t.clone()));
+                    jobs.lock().unwrap_or_else(|p| p.into_inner()).materials.push(built);
+                },
+                0.0,
+            );
         }
 
         hf && ready
@@ -1374,8 +1597,16 @@ impl Renderer {
                     if !t.legacy && self.terrain.unusable_logged.insert(e.id) {
                         let (m, ok) = (&e.world.m, t.material.is_some());
                         wce_foundation::log::warn(format!(
-                            "terrain: a map context terrain at ({:.0}, {:.0}) is left out: {}", m[0][3], m[2][3],
-                            if !ok { "no material" } else if t.heights.is_empty() || t.nx < 2 || t.nz < 2 { "no heights" } else { "not a ground transform" }
+                            "terrain: a map context terrain at ({:.0}, {:.0}) is left out: {}",
+                            m[0][3],
+                            m[2][3],
+                            if !ok {
+                                "no material"
+                            } else if t.heights.is_empty() || t.nx < 2 || t.nz < 2 {
+                                "no heights"
+                            } else {
+                                "not a ground transform"
+                            }
                         ));
                     }
 
@@ -1394,21 +1625,27 @@ impl Renderer {
         if key != self.terrain.prune_key {
             self.terrain.prune_key = key;
             let mut lfs = std::collections::BTreeSet::new();
-            let alive: std::collections::BTreeSet<EntityId> = KindIndex::entities(&self.kinds.terrain, scene).into_iter().filter_map(|e| match &e.payload {
-                Payload::Terrain(t) => {
-                    lfs.extend(t.lf.as_ref().map(|lf| lf.id));
-                    Some(e.id)
-                }
+            let alive: std::collections::BTreeSet<EntityId> = KindIndex::entities(&self.kinds.terrain, scene)
+                .into_iter()
+                .filter_map(|e| match &e.payload {
+                    Payload::Terrain(t) => {
+                        lfs.extend(t.lf.as_ref().map(|lf| lf.id));
+                        Some(e.id)
+                    }
 
-                _ => None,
-            }).collect();
+                    _ => None,
+                })
+                .collect();
 
             self.terrain.placed.retain(|id, _| alive.contains(id));
             // The buffers the entities hold, and the ones they held (a new buffer is built from its entity's old one).
-            let mut keys: std::collections::HashSet<usize> = KindIndex::entities(&self.kinds.terrain, scene).into_iter().filter_map(|e| match &e.payload {
-                Payload::Terrain(t) => Some(hf_key(t)),
-                _ => None,
-            }).collect();
+            let mut keys: std::collections::HashSet<usize> = KindIndex::entities(&self.kinds.terrain, scene)
+                .into_iter()
+                .filter_map(|e| match &e.payload {
+                    Payload::Terrain(t) => Some(hf_key(t)),
+                    _ => None,
+                })
+                .collect();
 
             keys.extend(self.terrain.placed.values().map(|p| p.key));
 
@@ -1491,7 +1728,12 @@ impl Renderer {
             return;
         }
 
-        self.draw_terrain_material(&ents, scene.snow(), scene.campaign_snow.as_ref(), [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps]);
+        self.draw_terrain_material(
+            &ents,
+            scene.snow(),
+            scene.campaign_snow.as_ref(),
+            [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps],
+        );
     }
 
     /// Brings the GPU materials and texture arrays up to date with the scene's terrains (dropping those no terrain uses).
@@ -1503,10 +1745,13 @@ impl Renderer {
         // Each material once (a campaign view has thousands of terrains over a few hundred materials; per terrain, joining its texture
         // paths below cost 11 ms a frame while the camera moved).
         let mut seen = std::collections::HashSet::new();
-        let materials: Vec<&Arc<TerrainMaterial>> = ents.iter().filter_map(|e| match &e.payload {
-            Payload::Terrain(Terrain { material: Some(m), .. }) => seen.insert(m.id).then_some(m),
-            _ => None,
-        }).collect();
+        let materials: Vec<&Arc<TerrainMaterial>> = ents
+            .iter()
+            .filter_map(|e| match &e.payload {
+                Payload::Terrain(Terrain { material: Some(m), .. }) => seen.insert(m.id).then_some(m),
+                _ => None,
+            })
+            .collect();
         for material in &materials {
             self.build_terrain_material(material);
             if let Some(g) = self.terrain.mat.get_mut(&material.id) {
@@ -1524,12 +1769,19 @@ impl Renderer {
         self.terrain.custom.retain(|_, g| g.used + MATERIAL_KEEP > epoch);
         self.terrain.made += 1;
 
-        let arrays: std::collections::HashSet<(String, bool)> = materials.iter().flat_map(|m| [(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)]).collect();
+        let arrays: std::collections::HashSet<(String, bool)> =
+            materials.iter().flat_map(|m| [(m.diffuse.join("|"), true), (m.normal_tex.join("|"), false)]).collect();
         self.terrain.arrays.retain(|k, _| arrays.contains(k));
     }
 
     /// The material terrain's passes (surface, blend boxes, resolve) over its entities.
-    fn draw_terrain_material(&mut self, ents: &[&wce_scene::render_scene::Entity], snow: Option<&wce_scene::render_scene::SnowRegions>, campaign_snow: Option<&wce_scene::render_scene::CampaignSnow>, shaders: [std::rc::Rc<GameShader>; 7]) {
+    fn draw_terrain_material(
+        &mut self,
+        ents: &[&wce_scene::render_scene::Entity],
+        snow: Option<&wce_scene::render_scene::SnowRegions>,
+        campaign_snow: Option<&wce_scene::render_scene::CampaignSnow>,
+        shaders: [std::rc::Rc<GameShader>; 7],
+    ) {
         let all = ents.to_vec();
         let ents = self.terrain_in_view(ents, &self.camera.main_view_proj);
         let [geom_vs, geom_ps, depth_ps, blend_vs, blend_ps, res_vs, res_ps] = shaders;
@@ -1562,7 +1814,11 @@ impl Renderer {
         let firsts = self.draw_lists.gbuffer_firsts;
         let d = blend_mesh::BlendDraw {
             dsv: self.gbuffer.dsv.clone(),
-            vs: blend_mesh::BLEND_GEOM_VS, ps: blend_mesh::BLEND_GEOM_PS, targets: vec![viewz_rtv.clone()], depth_stencil: self.terrain.ds_lequal.clone(), stencil_ref: 0,
+            vs: blend_mesh::BLEND_GEOM_VS,
+            ps: blend_mesh::BLEND_GEOM_PS,
+            targets: vec![viewz_rtv.clone()],
+            depth_stencil: self.terrain.ds_lequal.clone(),
+            stencil_ref: 0,
             blend: self.states.bs_opaque.clone(),
         };
 
@@ -1605,7 +1861,9 @@ impl Renderer {
         let (u, view_proj) = (self.camera.units, self.camera.main_view_proj);
         for e in &ents {
             let Payload::Terrain(t) = &e.payload else { continue };
-            let (Some(m), Some((_, b, rot))) = (t.material.clone(), self.terrain.placed.get(&e.id).and_then(|p| p.blend_box)) else { continue };
+            let (Some(m), Some((_, b, rot))) = (t.material.clone(), self.terrain.placed.get(&e.id).and_then(|p| p.blend_box)) else {
+                continue;
+            };
             if !box_in_frustum(&view_proj, [b[0], b[1], b[2]], [b[3], b[4], b[5]]) {
                 continue;
             }
@@ -1613,7 +1871,24 @@ impl Renderer {
             // One instance: the layer mapping indices (T0), the box corners (T1 min, T2 max, game units), the rotation index of the material's
             // maps and the layer base 0 (T3).
             let o = self.camera.origin;
-            let inst = [0.0, 1.0, 2.0, 3.0, (b[0] - o.x) * u, (b[1] - o.y) * u, (b[2] - o.z) * u, 0.0, (b[3] - o.x) * u, (b[4] - o.y) * u, (b[5] - o.z) * u, 0.0, rot, 0.0, 0.0, 0.0];
+            let inst = [
+                0.0,
+                1.0,
+                2.0,
+                3.0,
+                (b[0] - o.x) * u,
+                (b[1] - o.y) * u,
+                (b[2] - o.z) * u,
+                0.0,
+                (b[3] - o.x) * u,
+                (b[4] - o.y) * u,
+                (b[5] - o.z) * u,
+                0.0,
+                rot,
+                0.0,
+                0.0,
+                0.0,
+            ];
             // In snow regions: whether the tile's cell (its box's centre) has snow.
             let snowy = snow.is_some_and(|s| s.at(0.5 * (b[0] + b[3]), 0.5 * (b[2] + b[5])));
             let key = (m.id, t.lf.as_ref().map_or(0, |lf| lf.id), snowy);
@@ -1628,7 +1903,11 @@ impl Renderer {
 
         // The baked materials last: they change the shader once.
         by_material.sort_by_key(|(m, _, _, _)| m.baked);
-        let baked_ps = if by_material.iter().any(|(m, _, _, _)| m.baked) { self.own_shader("wce_terrain_baked_blend", BAKED_BLEND_PS, "main", "ps_4_0") } else { None };
+        let baked_ps = if by_material.iter().any(|(m, _, _, _)| m.baked) {
+            self.own_shader("wce_terrain_baked_blend", BAKED_BLEND_PS, "main", "ps_4_0")
+        } else {
+            None
+        };
 
         // The constants every material shares, set once (they were rebuilt per material: a map context's 192 tiles spent 11 ms a frame
         // building and comparing the 32 KB mapping array); per material only its four layers' scales change below.
@@ -1745,8 +2024,13 @@ impl Renderer {
             }
 
             // The LF map's normals, at uv = (x, -z) / g_world_dimensions (wrapping); a flat normal without one.
-            let lf_normal = lf.as_ref().and_then(|lf| self.terrain.lf.get(&lf.id)).and_then(|l| l.normal.srv.clone()).or_else(|| g.lf_normal.srv.clone());
-            let world = lf.as_ref().filter(|lf| lf.normal.w > 0).map_or([1.0e6, 1.0e6], |lf| [lf.normal_world[0] * u, lf.normal_world[1] * u]);
+            let lf_normal = lf
+                .as_ref()
+                .and_then(|lf| self.terrain.lf.get(&lf.id))
+                .and_then(|l| l.normal.srv.clone())
+                .or_else(|| g.lf_normal.srv.clone());
+            let world =
+                lf.as_ref().filter(|lf| lf.normal.w > 0).map_or([1.0e6, 1.0e6], |lf| [lf.normal_world[0] * u, lf.normal_world[1] * u]);
             match baked_ps.as_ref().filter(|_| m.baked) {
                 Some(ps) => {
                     // The first of them: the shader and what they share. They read no scales, and their LF rarely changes.
@@ -1820,8 +2104,12 @@ impl Renderer {
             let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
             let d = blend_mesh::BlendDraw {
                 dsv: self.gbuffer.dsv.clone(),
-                vs: blend_mesh::BLEND_VS, ps: blend_mesh::BLEND_MATERIAL_PS, targets: self.terrain.acc.iter().map(|a| a.rtv.clone()).collect(),
-                depth_stencil: self.terrain.ds_equal.clone(), stencil_ref: 0, blend: self.terrain.bs_add.clone(),
+                vs: blend_mesh::BLEND_VS,
+                ps: blend_mesh::BLEND_MATERIAL_PS,
+                targets: self.terrain.acc.iter().map(|a| a.rtv.clone()).collect(),
+                depth_stencil: self.terrain.ds_equal.clone(),
+                stencil_ref: 0,
+                blend: self.terrain.bs_add.clone(),
             };
 
             self.draw_blend_meshes([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, &d);
@@ -1840,7 +2128,10 @@ impl Renderer {
         let Payload::Terrain(first) = &all[0].payload else { return };
         let Some(m) = first.material.clone() else { return };
         let g = self.terrain.mat.get(&m.id).cloned().unwrap_or_default();
-        let el = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
+        let el = [
+            element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false),
+            element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false),
+        ];
         let Some(il) = self.layout(&res_vs, "terrain_resolve", &el) else { return };
         let rtvs = self.gbuffer.scene_rtvs();
         self.ctx.set_render_targets(&rtvs, self.gbuffer.scene_dsv().as_ref());
@@ -1946,8 +2237,14 @@ impl Renderer {
 
     /// Draws the visible patches of every terrain entity, grouped by size, with a pixel shader into one target.
     pub(crate) fn draw_terrain_surface(
-        &mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, rtv: &Option<ID3D11RenderTargetView>, ds: &Option<ID3D11DepthStencilState>,
-        stencil_ref: u32, how: CustomDraw,
+        &mut self,
+        ents: &[&wce_scene::render_scene::Entity],
+        vs: &GameShader,
+        ps: &GameShader,
+        rtv: &Option<ID3D11RenderTargetView>,
+        ds: &Option<ID3D11DepthStencilState>,
+        stencil_ref: u32,
+        how: CustomDraw,
     ) {
         self.ctx.set_render_targets(std::slice::from_ref(rtv), self.gbuffer.dsv.as_ref());
         self.ctx.set_depth_stencil_state(ds.as_ref(), stencil_ref);
@@ -2021,7 +2318,9 @@ impl Renderer {
         SurfaceFrom {
             scene: std::ptr::from_ref(scene) as usize,
             revision: scene.revision(),
-            entities: self.terrain.entities.iter().fold(0xCBF2_9CE4_8422_2325u64 ^ self.terrain.entities.len() as u64, |h, &id| (h ^ u64::from(id)).wrapping_mul(0x0100_0000_01B3)),
+            entities: self.terrain.entities.iter().fold(0xCBF2_9CE4_8422_2325u64 ^ self.terrain.entities.len() as u64, |h, &id| {
+                (h ^ u64::from(id)).wrapping_mul(0x0100_0000_01B3)
+            }),
             units: self.camera.units.to_bits(),
             origin: [o.x.to_bits(), o.y.to_bits(), o.z.to_bits()],
             made: self.terrain.made,
@@ -2033,30 +2332,33 @@ impl Renderer {
     /// entity in the cell of its box's centre, each cluster boxed around its entities' patches, blend box and custom mesh. An entity
     /// without a box is in a cluster of its own that every view takes.
     fn terrain_clusters(&self, ents: &[&wce_scene::render_scene::Entity]) -> Vec<TerrainCluster> {
-        let boxes: Vec<Option<([f32; 3], [f32; 3])>> = ents.iter().map(|e| {
-            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-            let mut add = |a: [f32; 3], b: [f32; 3]| {
-                for r in 0..3 {
-                    (lo[r], hi[r]) = (lo[r].min(a[r]), hi[r].max(b[r]));
+        let boxes: Vec<Option<([f32; 3], [f32; 3])>> = ents
+            .iter()
+            .map(|e| {
+                let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+                let mut add = |a: [f32; 3], b: [f32; 3]| {
+                    for r in 0..3 {
+                        (lo[r], hi[r]) = (lo[r].min(a[r]), hi[r].max(b[r]));
+                    }
+                };
+
+                if let Some(p) = self.terrain.placed.get(&e.id) {
+                    if !p.patches.is_empty() {
+                        add(p.bmin, p.bmax);
+                    }
+
+                    if let Some((_, b, _)) = p.blend_box {
+                        add([b[0], b[1], b[2]], [b[3], b[4], b[5]]);
+                    }
                 }
-            };
 
-            if let Some(p) = self.terrain.placed.get(&e.id) {
-                if !p.patches.is_empty() {
-                    add(p.bmin, p.bmax);
+                if let Some((a, b)) = self.custom_box(e) {
+                    add(a, b);
                 }
 
-                if let Some((_, b, _)) = p.blend_box {
-                    add([b[0], b[1], b[2]], [b[3], b[4], b[5]]);
-                }
-            }
-
-            if let Some((a, b)) = self.custom_box(e) {
-                add(a, b);
-            }
-
-            (lo[0] <= hi[0] && lo.iter().chain(&hi).all(|v| v.is_finite())).then_some((lo, hi))
-        }).collect();
+                (lo[0] <= hi[0] && lo.iter().chain(&hi).all(|v| v.is_finite())).then_some((lo, hi))
+            })
+            .collect();
 
         let (mut x0, mut z0, mut x1, mut z1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for (lo, hi) in boxes.iter().flatten() {
@@ -2093,16 +2395,28 @@ impl Renderer {
 
     /// The entities of `ents` (the frame's list, `terrain_surface_entities`) in the clusters within `cull` (scene units), in the list's
     /// order; all of them when `ents` is some other list.
-    pub(crate) fn terrain_in_view<'e>(&self, ents: &[&'e wce_scene::render_scene::Entity], cull: &Float4x4) -> Vec<&'e wce_scene::render_scene::Entity> {
+    pub(crate) fn terrain_in_view<'e>(
+        &self,
+        ents: &[&'e wce_scene::render_scene::Entity],
+        cull: &Float4x4,
+    ) -> Vec<&'e wce_scene::render_scene::Entity> {
         let same = self.terrain.surface.as_ref().is_some_and(|(frame, ids)| {
-            *frame == self.terrain.frame && ids.len() == ents.len() && self.terrain.clusters.iter().map(|c| c.ents.len()).sum::<usize>() == ents.len()
+            *frame == self.terrain.frame
+                && ids.len() == ents.len()
+                && self.terrain.clusters.iter().map(|c| c.ents.len()).sum::<usize>() == ents.len()
         });
 
         if !same {
             return ents.to_vec();
         }
 
-        let mut pick: Vec<usize> = self.terrain.clusters.iter().filter(|c| c.always || box_in_frustum(cull, c.bmin, c.bmax)).flat_map(|c| c.ents.iter().copied()).collect();
+        let mut pick: Vec<usize> = self
+            .terrain
+            .clusters
+            .iter()
+            .filter(|c| c.always || box_in_frustum(cull, c.bmin, c.bmax))
+            .flat_map(|c| c.ents.iter().copied())
+            .collect();
         pick.sort_unstable();
         pick.into_iter().map(|k| ents[k]).collect()
     }
@@ -2113,13 +2427,19 @@ impl Renderer {
     pub(crate) fn draw_terrain_shadow(&mut self, scene: &RenderScene, view_proj: &Float4x4, relative: &Float4x4) -> u64 {
         // Rome 2's shadow vertex shader is its surface one (the LF window through lf_block_cb, two inputs it never reads).
         let rome2 = self.game == super::game::RenderGame::Rome2;
-        let (Some(vs), Some(ps)) = (self.shader(if rome2 { super::terrain_rome2::R2_SHADOW_VS } else { SHADOW_NEW_VS }), self.shader(SHADOW_TERRAIN_PS)) else {
+        let (Some(vs), Some(ps)) =
+            (self.shader(if rome2 { super::terrain_rome2::R2_SHADOW_VS } else { SHADOW_NEW_VS }), self.shader(SHADOW_TERRAIN_PS))
+        else {
             return 0;
         };
 
         let ents = self.terrain_surface_entities(scene);
         let ents = self.terrain_in_view(&ents, view_proj);
-        let il = if rome2 { self.layout(&vs, "terrain_shadow_rome2", &super::terrain_rome2::geom_layout()) } else { self.layout(&vs, "terrain_shadow", &geom_layout()) };
+        let il = if rome2 {
+            self.layout(&vs, "terrain_shadow_rome2", &super::terrain_rome2::geom_layout())
+        } else {
+            self.layout(&vs, "terrain_shadow", &geom_layout())
+        };
         let Some(il) = il else { return 0 };
         if ents.is_empty() {
             return 0;
@@ -2138,14 +2458,27 @@ impl Renderer {
     /// Draws the patches of every terrain entity inside `cull` (scene units), grouped by size and stride, into the bound targets; `clip` is the
     /// view-projection the shaders get (game units). Each LF map's terrains are drawn in its frame (see `lf_draw`: the camera constants move
     /// with it and are put back after); the placements of one patch go out as instances of one draw. Returns the triangles drawn.
-    fn draw_terrain_patches(&mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, cull: &Float4x4, clip: &Float4x4) -> u64 {
+    fn draw_terrain_patches(
+        &mut self,
+        ents: &[&wce_scene::render_scene::Entity],
+        vs: &GameShader,
+        ps: &GameShader,
+        cull: &Float4x4,
+        clip: &Float4x4,
+    ) -> u64 {
         self.draw_terrain_patches_with(ents, vs, ps, cull, clip, CustomDraw::None)
     }
 
     /// [`Self::draw_terrain_patches`], and the custom meshes of each LF group (`how`): a terrain with a custom mesh has no patches drawn (the
     /// game's tile has none: its mesh is all its geometry), and the material pass draws the meshes alone.
     pub(crate) fn draw_terrain_patches_with(
-        &mut self, ents: &[&wce_scene::render_scene::Entity], vs: &GameShader, ps: &GameShader, cull: &Float4x4, clip: &Float4x4, how: CustomDraw,
+        &mut self,
+        ents: &[&wce_scene::render_scene::Entity],
+        vs: &GameShader,
+        ps: &GameShader,
+        cull: &Float4x4,
+        clip: &Float4x4,
+        how: CustomDraw,
     ) -> u64 {
         let material_only = matches!(how, CustomDraw::Material);
         let geom_il = match how {
@@ -2176,7 +2509,15 @@ impl Renderer {
                     self.lf_draw(lf, eye)
                 }
                 // No LF: the frame of the render origin.
-                None => LfDraw { srv: self.lf_zero(), n: 2.0, width: 1.0e6, scale: 0.0, offset: 0.0, uv_offset: 0.0, shift: [origin.x, origin.z] },
+                None => LfDraw {
+                    srv: self.lf_zero(),
+                    n: 2.0,
+                    width: 1.0e6,
+                    scale: 0.0,
+                    offset: 0.0,
+                    uv_offset: 0.0,
+                    shift: [origin.x, origin.z],
+                },
             };
 
             let [sx, sz] = d.shift;
@@ -2210,7 +2551,8 @@ impl Renderer {
             bind_sampler(&self.ctx, vs, "s_low_res_height_map", self.states.s_clamp_point.as_ref());
 
             // The batches: (buffer, patch, stride) -> instance rows.
-            let batching = wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
+            let batching =
+                wce_foundation::profile::Scope::new(BATCH_SLOT.get_or_init(|| wce_foundation::profile::slot("terrain.patches.batch")));
             let mut batches: Vec<(usize, usize, [i32; 3], i32, Vec<f32>)> = vec![];
             // By vertex buffer, patch size and stride: the flat patches of every buffer share one vertex buffer (`hf_patch_vb`).
             let mut at: HashMap<(usize, i32, i32), usize> = HashMap::new();
@@ -2238,7 +2580,8 @@ impl Renderer {
                     // vertex from 512 m, every 4th from 1 km ...), a power of two that divides the patch.
                     let k = if p.lod {
                         let (lo, hi) = (pp.bmin, pp.bmax);
-                        let (dx, dy, dz) = (eye.x.clamp(lo[0], hi[0]) - eye.x, eye.y.clamp(lo[1], hi[1]) - eye.y, eye.z.clamp(lo[2], hi[2]) - eye.z);
+                        let (dx, dy, dz) =
+                            (eye.x.clamp(lo[0], hi[0]) - eye.x, eye.y.clamp(lo[1], hi[1]) - eye.y, eye.z.clamp(lo[2], hi[2]) - eye.z);
                         let d = (dx * dx + dy * dy + dz * dz).sqrt() / (LOD_STEPS * p.step);
                         let mut k = 1;
                         while k < pp.cells && d >= (2 * k) as f32 && pp.cx % (2 * k) == 0 && pp.cz % (2 * k) == 0 {

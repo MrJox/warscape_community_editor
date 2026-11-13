@@ -31,7 +31,9 @@ use wce_render::unit_animation::UnitModel;
 use wce_render::unit_catalog::UnitCatalog;
 use wce_scene::camera::Camera;
 use wce_scene::environment::read_environment;
-use wce_scene::render_scene::{MODEL_SKINNED_SUFFIX, Payload, SKINNED_NO_OFFSET, RenderScene, SkinnedInstance, SkinnedPart, SourceRef, Terrain};
+use wce_scene::render_scene::{
+    MODEL_SKINNED_SUFFIX, Payload, RenderScene, SKINNED_NO_OFFSET, SkinnedInstance, SkinnedPart, SourceRef, Terrain,
+};
 use wce_vfs::{Config, GameProfile, Vfs};
 
 const W: u32 = 512;
@@ -50,7 +52,8 @@ const CLOAK: [&str; 1] = ["variantmeshes/_variantmodels/man/cloak/eastern_overcl
 /// WeightedDecalDirtmap, alpha-tested: `weightedwithdecaldirt`, with no decal given.
 const GREAVES: [&str; 1] = ["variantmeshes/_variantmodels/man/greaves/steppe_leather_greaves.rigid_model_v2"];
 /// The whole units: infantry and cavalry, `unit:faction`. `WCE_UNITS` replaces them.
-const UNITS: [&str; 2] = ["att_rom_legio_comitatenses:att_fact_western_roman_empire", "att_rom_equites_promoti:att_fact_western_roman_empire"];
+const UNITS: [&str; 2] =
+    ["att_rom_legio_comitatenses:att_fact_western_roman_empire", "att_rom_equites_promoti:att_fact_western_roman_empire"];
 const WALK: &str = "animations/rome2/human/battle/sword_and_shield/locomotion/sws_walk_124_cm.anim";
 
 struct Gpu {
@@ -65,7 +68,19 @@ fn make_device() -> Option<Gpu> {
         let adapter = choose_adapter();
         let driver = if adapter.is_some() { D3D_DRIVER_TYPE_UNKNOWN } else { D3D_DRIVER_TYPE_HARDWARE };
         let (mut dev, mut ctx) = (None, None);
-        D3D11CreateDevice(adapter.as_ref(), driver, HMODULE::default(), 0, Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION as u32, Some(&mut dev), None, Some(&mut ctx)).ok().ok()?;
+        D3D11CreateDevice(
+            adapter.as_ref(),
+            driver,
+            HMODULE::default(),
+            0,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION as u32,
+            Some(&mut dev),
+            None,
+            Some(&mut ctx),
+        )
+        .ok()
+        .ok()?;
         Some(Gpu { dev: dev?, ctx: ctx? })
     }
 }
@@ -107,7 +122,8 @@ fn skin_of(vfs: &Vfs, clip: Option<(&str, f32)>) -> Vec<Float4x4> {
 
 /// LOD 0's vertices skinned on the CPU.
 fn cpu_vertices(vfs: &Vfs, model: &str, skin: &[Float4x4]) -> Vec<Float3> {
-    let model = RigidModel::decode(&mut Cursor::new(vfs.read(model).expect("the model")), &Some(DecodeableExtraData::default())).expect("a model");
+    let model =
+        RigidModel::decode(&mut Cursor::new(vfs.read(model).expect("the model")), &Some(DecodeableExtraData::default())).expect("a model");
     let mut out = vec![];
     for block in model.lods()[0].mesh_blocks() {
         let format = *block.material().vertex_format();
@@ -211,24 +227,43 @@ struct Case {
 
 /// Whole units from the DB, side by side: `(unit, faction)`, a few soldiers of each, standing, each with his mount. Checks that they load and that
 /// the seeds differ, and leaves pictures to compare with the game's. Returns the failures.
-fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::environment::EnvironmentParams, out: &Path) -> Result<usize, String> {
+fn legion(
+    gpu: &Gpu,
+    vfs: &Arc<Vfs>,
+    files: &Arc<dyn Files>,
+    env: &wce_scene::environment::EnvironmentParams,
+    out: &Path,
+) -> Result<usize, String> {
     let read = |p: &str| vfs.read(p).ok();
     let schema_path = rpfm_schema_path(vfs.profile()).ok_or("no rpfm schema")?;
     let schema = Schema::load(&schema_path, None).map_err(|e| e.to_string())?;
     let catalog = UnitCatalog::load(vfs, &schema)?;
-    println!("catalog: {} units, {} land units, {} mounts, {} factions, {} tables", catalog.units().len(), catalog.land_units.len(), catalog.mounts.len(), catalog.colours.len(), catalog.tables.len());
+    println!(
+        "catalog: {} units, {} land units, {} mounts, {} factions, {} tables",
+        catalog.units().len(),
+        catalog.land_units.len(),
+        catalog.mounts.len(),
+        catalog.colours.len(),
+        catalog.tables.len()
+    );
     if let Ok(find) = std::env::var("WCE_UNIT_FIND") {
         let found: Vec<&str> = catalog.units().into_iter().filter(|u| u.contains(&find)).take(30).collect();
         println!("units with '{find}': {found:?}");
     }
 
-    let units: Vec<String> = std::env::var("WCE_UNITS").map_or_else(|_| UNITS.iter().map(|u| (*u).to_owned()).collect(), |v| v.split(',').map(str::to_owned).collect());
+    let units: Vec<String> = std::env::var("WCE_UNITS")
+        .map_or_else(|_| UNITS.iter().map(|u| (*u).to_owned()).collect(), |v| v.split(',').map(str::to_owned).collect());
     let mut failures = 0;
     for (shot, unit) in units.iter().enumerate() {
         let (unit, faction) = unit.split_once(':').unwrap_or((unit, ""));
         let mut scene = RenderScene::default();
         let layer = scene.add_layer(1, "Unit");
-        scene.add(layer, Float4x4::IDENTITY, Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)), SourceRef { doc: 1, item: 0 });
+        scene.add(
+            layer,
+            Float4x4::IDENTITY,
+            Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)),
+            SourceRef { doc: 1, item: 0 },
+        );
         scene.environment.active = Some(env.clone());
 
         // Far from the soldiers: the environment cube, rebuilt every few frames from above the battle's centre, must change nothing of theirs.
@@ -256,7 +291,16 @@ fn legion(gpu: &Gpu, vfs: &Arc<Vfs>, files: &Arc<dyn Files>, env: &wce_scene::en
 
             if k == 0 {
                 let e = catalog.entry(unit, faction).expect("the unit");
-                println!("{unit}: variant {}, skeleton {}, mount {}, {} parts, clip {} ({} s), missing {:?}", e.variant, model.man.rig.skeleton.skeleton, model.mount.as_ref().map_or("none", |m| m.rig.skeleton.skeleton.as_str()), model.man.parts.parts.len(), model.man.segments[0].clip.anim.bones.len(), model.man.segments.iter().map(|s| s.length).sum::<f32>(), model.man.parts.missing);
+                println!(
+                    "{unit}: variant {}, skeleton {}, mount {}, {} parts, clip {} ({} s), missing {:?}",
+                    e.variant,
+                    model.man.rig.skeleton.skeleton,
+                    model.mount.as_ref().map_or("none", |m| m.rig.skeleton.skeleton.as_str()),
+                    model.man.parts.parts.len(),
+                    model.man.segments[0].clip.anim.bones.len(),
+                    model.man.segments.iter().map(|s| s.length).sum::<f32>(),
+                    model.man.parts.missing
+                );
             }
 
             let (a, b) = (model.instances(1.25, true), model.instances(1.25, true));
@@ -384,7 +428,12 @@ fn run(out: &Path, env_path: &str) -> Result<usize, String> {
 
         let mut scene = RenderScene::default();
         let layer = scene.add_layer(1, "Unit");
-        scene.add(layer, Float4x4::IDENTITY, Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)), SourceRef { doc: 1, item: 0 });
+        scene.add(
+            layer,
+            Float4x4::IDENTITY,
+            Payload::Terrain(Terrain::flat(200.0, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0)),
+            SourceRef { doc: 1, item: 0 },
+        );
         scene.environment.active = Some(env.clone());
         let target = Float3::new(0.0, 0.95, 0.0);
         let (cp, sp) = (0.2f32.cos(), 0.2f32.sin());
@@ -394,9 +443,24 @@ fn run(out: &Path, env_path: &str) -> Result<usize, String> {
         let mut rt = RenderTarget::new(&gpu.dev, W, H);
         let skin = skin_of(&vfs, case.clip);
         let mut instance = SkinnedInstance {
-            parts: case.parts.iter().map(|p| SkinnedPart { model: (*p).to_owned(), tint: [0.0; 4], decal_diffuse: None, decal_normal: None, masks: [0, 1, 2], bone: None, offset: SKINNED_NO_OFFSET }).collect(),
-            palette: Arc::new(palette(&skin)), bones: Arc::new(vec![]), casts_shadow: false,
-            faction_colours: [[0.7, 0.1, 0.1], [0.8, 0.7, 0.3], [0.2, 0.2, 0.6], [0.0; 3]], faction_scale: 0.0,
+            parts: case
+                .parts
+                .iter()
+                .map(|p| SkinnedPart {
+                    model: (*p).to_owned(),
+                    tint: [0.0; 4],
+                    decal_diffuse: None,
+                    decal_normal: None,
+                    masks: [0, 1, 2],
+                    bone: None,
+                    offset: SKINNED_NO_OFFSET,
+                })
+                .collect(),
+            palette: Arc::new(palette(&skin)),
+            bones: Arc::new(vec![]),
+            casts_shadow: false,
+            faction_colours: [[0.7, 0.1, 0.1], [0.8, 0.7, 0.3], [0.2, 0.2, 0.6], [0.0; 3]],
+            faction_scale: 0.0,
         };
 
         let unit = scene.add(layer, Float4x4::IDENTITY, Payload::SkinnedInstance(instance.clone()), SourceRef { doc: 1, item: 1 });
@@ -414,7 +478,9 @@ fn run(out: &Path, env_path: &str) -> Result<usize, String> {
 
         frames(&mut r, &scene, &cam, &mut rt, 40);
         let empty = rt.read_rgba8(&gpu.dev, &gpu.ctx).unwrap_or_default();
-        let differ = |a: &[u8], b: &[u8]| -> Vec<bool> { a.chunks_exact(4).zip(b.chunks_exact(4)).map(|(a, b)| (0..3).any(|k| a[k].abs_diff(b[k]) > 6)).collect() };
+        let differ = |a: &[u8], b: &[u8]| -> Vec<bool> {
+            a.chunks_exact(4).zip(b.chunks_exact(4)).map(|(a, b)| (0..3).any(|k| a[k].abs_diff(b[k]) > 6)).collect()
+        };
         let changed = differ(&without_shadow, &empty);
         let shadow = differ(&full, &without_shadow).iter().filter(|c| **c).count();
 
@@ -441,13 +507,21 @@ fn run(out: &Path, env_path: &str) -> Result<usize, String> {
         // Rendered without a shadow, the unit changes nothing outside its vertices' box but the ambient occlusion it puts on the ground around
         // and under it: the band of pixels nearest the feet is left out, and below the feet.
         let ground = hi[1] - 60;
-        let stray = changed.iter().enumerate().filter(|(i, c)| {
-            let (x, y) = ((*i % W as usize) as i32, (*i / W as usize) as i32);
-            **c && y < ground && (x < lo[0] - 3 || x > hi[0] + 3 || y < lo[1] - 3)
-        }).count();
+        let stray = changed
+            .iter()
+            .enumerate()
+            .filter(|(i, c)| {
+                let (x, y) = ((*i % W as usize) as i32, (*i / W as usize) as i32);
+                **c && y < ground && (x < lo[0] - 3 || x > hi[0] + 3 || y < lo[1] - 3)
+            })
+            .count();
         let total = changed.iter().filter(|c| **c).count();
         let share = hit as f32 / seen.max(1) as f32;
-        println!("{}: {hit} of {seen} vertices on the unit's pixels ({:.2} %), {total} pixels changed, {stray} stray, {shadow} by the shadow", case.name, share * 100.0);
+        println!(
+            "{}: {hit} of {seen} vertices on the unit's pixels ({:.2} %), {total} pixels changed, {stray} stray, {shadow} by the shadow",
+            case.name,
+            share * 100.0
+        );
         if seen < 100 || share < 0.97 || total < 500 || stray > 40 || shadow < 100 {
             println!("FAIL: {}", case.name);
             failures += 1;

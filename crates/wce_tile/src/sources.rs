@@ -29,7 +29,11 @@ pub fn file_any_case(dir: &Path, name: &str) -> Option<PathBuf> {
         return Some(exact);
     }
 
-    std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)))
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name)))
 }
 
 /// A tile with no scene of its own, a mesh instead (the `cliff_custom` set): its mesh file, the kit's CS2 first, else the packs' model.

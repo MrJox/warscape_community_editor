@@ -111,7 +111,10 @@ impl GameData {
     pub fn from_vfs(vfs: &Vfs, schema: Option<&Path>) -> Result<Self, String> {
         let mut warnings = vec![];
         let schema = match schema {
-            Some(p) => match { wce_foundation::wce_prof!("game_data.schema"); Schema::load(p, None) } {
+            Some(p) => match {
+                wce_foundation::wce_prof!("game_data.schema");
+                Schema::load(p, None)
+            } {
                 Ok(s) => Some(s),
                 Err(e) => {
                     warnings.push(format!("{}: {e}", p.display()));
@@ -121,7 +124,10 @@ impl GameData {
             None => None,
         };
         if schema.is_none() {
-            warnings.push("no rpfm schema (Help > Update Manager downloads it): the buildings' categories and destruction thresholds are not known".to_owned());
+            warnings.push(
+                "no rpfm schema (Help > Update Manager downloads it): the buildings' categories and destruction thresholds are not known"
+                    .to_owned(),
+            );
         }
 
         // The destruction levels: the building's collision file lists each piece's destructs, the building's count is the most over its
@@ -149,7 +155,10 @@ impl GameData {
         let from_cs2: BTreeMap<String, u32> = {
             use rayon::prelude::*;
             wce_foundation::wce_prof!("game_data.cs2");
-            let levels = cs2.par_iter().map(|(key, n)| vfs.read(n).ok().and_then(|bytes| destruction_levels(&bytes)).map(|l| (key.to_string(), l))).collect::<Vec<_>>();
+            let levels = cs2
+                .par_iter()
+                .map(|(key, n)| vfs.read(n).ok().and_then(|bytes| destruction_levels(&bytes)).map(|l| (key.to_string(), l)))
+                .collect::<Vec<_>>();
             levels.into_iter().flatten().collect()
         };
 

@@ -69,7 +69,6 @@ pub fn default_layout(dockspace: gui::ImGuiID, title: &str) {
 }
 
 pub trait Tool: Any {
-
     /// "weather", "tile", ...
     fn id(&self) -> &str;
     fn title(&self) -> &str;
@@ -231,7 +230,13 @@ pub trait Tool: Any {
 
     /// Where the rotate gizmo leaves `item` (its world matrix `moved`, from `frame` at the drag's start): the tool's snapping. The default
     /// leaves it.
-    fn snap_gizmo_rotate(&self, editor: &Editor, item: SourceRef, frame: &wce_foundation::math::Float4x4, moved: wce_foundation::math::Float4x4) -> wce_foundation::math::Float4x4 {
+    fn snap_gizmo_rotate(
+        &self,
+        editor: &Editor,
+        item: SourceRef,
+        frame: &wce_foundation::math::Float4x4,
+        moved: wce_foundation::math::Float4x4,
+    ) -> wce_foundation::math::Float4x4 {
         let _ = (editor, item, frame);
         moved
     }
@@ -336,7 +341,9 @@ impl Tool for PlaceholderTool {
         if gui::begin(&self.title, None, 0) {
             gui::text_wrapped(&self.plan);
             gui::separator();
-            gui::text_disabled("Registered so that the tool switcher, the layout files and document routing are exercised. No features yet.");
+            gui::text_disabled(
+                "Registered so that the tool switcher, the layout files and document routing are exercised. No features yet.",
+            );
         }
 
         gui::end();

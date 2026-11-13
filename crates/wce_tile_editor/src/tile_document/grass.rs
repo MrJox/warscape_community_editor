@@ -20,7 +20,10 @@ use wce_formats::old_lists::{OldList, OldListKind};
 use wce_foundation::log;
 use wce_foundation::math::{Float3, rotation_y, scaling, translation};
 use wce_scene::render_scene::{EntityId, Grass, LayerId, Payload, RenderScene};
-use wce_tile::vegetation::{self, grass::{GrassParams, generate_grass}};
+use wce_tile::vegetation::{
+    self,
+    grass::{GrassParams, generate_grass},
+};
 
 use super::vegetation::tilt;
 
@@ -56,7 +59,6 @@ pub(crate) struct GrassState {
 }
 
 impl Tile {
-
     /// What the grass drawn is, for the ground chip: the reason it is not generated, and whether the packed list is drawn instead.
     pub fn grass_note(&mut self) -> Option<String> {
         let why = self.grass_unavailable()?;
@@ -104,7 +106,13 @@ impl Tile {
             };
         };
         match GrassListFile::decode(&mut Cursor::new(bytes), &None) {
-            Ok(f) => Some(f.grass_list().grass_list().iter().map(|v| (v.key().replace('\\', "/").to_lowercase(), v.value().iter().map(|i| (*i.x(), *i.z())).collect())).collect()),
+            Ok(f) => Some(
+                f.grass_list()
+                    .grass_list()
+                    .iter()
+                    .map(|v| (v.key().replace('\\', "/").to_lowercase(), v.value().iter().map(|i| (*i.x(), *i.z())).collect()))
+                    .collect(),
+            ),
             Err(error) => {
                 log::warn(format!("{file}: {error}"));
                 Some(vec![])
@@ -313,7 +321,12 @@ impl Tile {
                 instances.push([a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3], c[0], c[1], c[2], c[3]]);
             }
 
-            let e = scene.add(layer, wce_foundation::math::Float4x4::IDENTITY, Payload::Grass(Grass { model, instances: Arc::new(instances) }), self.source(TERRAIN));
+            let e = scene.add(
+                layer,
+                wce_foundation::math::Float4x4::IDENTITY,
+                Payload::Grass(Grass { model, instances: Arc::new(instances) }),
+                self.source(TERRAIN),
+            );
             if let Some(en) = scene.find_mut(e) {
                 en.locked = true;
             }

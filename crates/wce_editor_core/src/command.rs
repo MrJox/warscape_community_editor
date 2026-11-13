@@ -71,10 +71,19 @@ impl<M: Default + 'static> Default for CommandStack<M> {
 }
 
 impl<M: 'static> CommandStack<M> {
-
     /// An empty history of `model`.
     pub fn new(model: M) -> Self {
-        Self { model, entries: vec![], position: 0, saved_position: 0, saved_valid: false, merge_open: false, version: 0, last_dirty: Dirty::default(), pending: Dirty::NONE }
+        Self {
+            model,
+            entries: vec![],
+            position: 0,
+            saved_position: 0,
+            saved_valid: false,
+            merge_open: false,
+            version: 0,
+            last_dirty: Dirty::default(),
+            pending: Dirty::NONE,
+        }
     }
 
     /// The model the commands edit.
@@ -100,8 +109,12 @@ impl<M: 'static> CommandStack<M> {
         }
 
         c.apply(&mut self.model);
-        if self.merge_open && self.position > 0 && c.merge_key() != 0 && self.entries[self.position - 1].merge_key() == c.merge_key()
-            && !(self.saved_valid && self.saved_position == self.position) && self.entries[self.position - 1].merge_from(c.as_ref())
+        if self.merge_open
+            && self.position > 0
+            && c.merge_key() != 0
+            && self.entries[self.position - 1].merge_key() == c.merge_key()
+            && !(self.saved_valid && self.saved_position == self.position)
+            && self.entries[self.position - 1].merge_from(c.as_ref())
         {
             let items = self.entries[self.position - 1].dirty_items();
             self.note(items);

@@ -83,7 +83,11 @@ pub fn type_name(ty: &str) -> &'static str {
 
 /// A layer's export types (without the `LayerExportType_` prefix), as TEd's layer properties name them.
 pub const EXPORT_TYPES: [(&str, &str); 6] = [
-    ("Normal", "Export"), ("Off", "Don't Export"), ("Separate", "Export Separately"), ("Escalation1", "Escalation 1"), ("Escalation2", "Escalation 2"),
+    ("Normal", "Export"),
+    ("Off", "Don't Export"),
+    ("Separate", "Export Separately"),
+    ("Escalation1", "Escalation 1"),
+    ("Escalation2", "Escalation 2"),
     ("Escalation3", "Escalation 3"),
 ];
 

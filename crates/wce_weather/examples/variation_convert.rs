@@ -46,7 +46,10 @@ fn run(input: &str, output: &str, force: bool) -> Result<i32, String> {
     std::fs::write(output, &out).map_err(|_| format!("cannot write {output}"))?;
     let variations = db.entries().iter().map(|e| e.variations().len()).sum::<usize>();
     println!(
-        "{input} -> {output}: {} categories ({} values), {variations} variations, {} bytes", db.categories().len(), db.value_count(), out.len(),
+        "{input} -> {output}: {} categories ({} values), {variations} variations, {} bytes",
+        db.categories().len(),
+        db.value_count(),
+        out.len(),
     );
     Ok(0)
 }
@@ -62,7 +65,8 @@ fn main() {
         }
     }
 
-    let ok_dirs = args.len() == 2 && ((ext(&args[0]) == ".xml" && ext(&args[1]) == ".bin") || (ext(&args[0]) == ".bin" && ext(&args[1]) == ".xml"));
+    let ok_dirs =
+        args.len() == 2 && ((ext(&args[0]) == ".xml" && ext(&args[1]) == ".bin") || (ext(&args[0]) == ".bin" && ext(&args[1]) == ".xml"));
     if !ok_dirs {
         println!("usage: variation_convert <in.xml|in.bin> <out.bin|out.xml> [--force]");
         std::process::exit(2);

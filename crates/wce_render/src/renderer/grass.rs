@@ -79,7 +79,6 @@ fn cell_of(x: f32, z: f32) -> (i32, i32) {
 }
 
 impl Renderer {
-
     fn collect_grass(&mut self, scene: &RenderScene) {
         let id = std::ptr::from_ref(scene) as usize;
         let g = &mut self.grass;
@@ -202,7 +201,12 @@ impl Renderer {
     /// The patches within [`GRASS_DISTANCE`] (game units) of `eye` (and in the frustum, if any): their instances per model mesh (the pivot
     /// goes into the translation) in game units, in runs of (model, mesh, count). With `oit` (squared distances in scene units, and which
     /// side to keep), only the patches within the order-independent transparency's range (true) or only the others (false).
-    pub(crate) fn gather_grass(&self, eye: Float3, frustum: Option<&Frustum>, oit: Option<((f32, f32), bool)>) -> (Vec<f32>, Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>) {
+    pub(crate) fn gather_grass(
+        &self,
+        eye: Float3,
+        frustum: Option<&Frustum>,
+        oit: Option<((f32, f32), bool)>,
+    ) -> (Vec<f32>, Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>) {
         let units = self.camera.units;
         let reach = GRASS_DISTANCE / units + PATCH_RADIUS;
         let (c0, c1) = (cell_of(eye.x - reach, eye.z - reach), cell_of(eye.x + reach, eye.z + reach));
@@ -283,7 +287,11 @@ impl Renderer {
         let Some(layout) = self.grass_layout(&vs) else { return };
         let (all, runs) = self.gather_grass(eye, None, None);
         let Some(inst_vb) = self.upload_grass(&all) else { return };
-        let dissolve = self.textures.get(DISSOLVE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.white_srv.clone());
+        let dissolve = self
+            .textures
+            .get(DISSOLVE_MAP, false)
+            .and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
+            .or_else(|| self.res.white_srv.clone());
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_rasterizer_state(self.states.rs_none.as_ref());
         self.bind(&vs);
@@ -292,7 +300,12 @@ impl Renderer {
         bind_srv(&self.ctx, &ps, "s_dissolve_map", dissolve.as_ref());
         for (c, vp) in light_vp.iter().enumerate() {
             let half = self.shadow_map.size as f32 / 2.0;
-            self.ctx.set_viewports(&[viewport(super::passes::SHADOW_BOUNDS[c][0] * self.shadow_map.size as f32, super::passes::SHADOW_BOUNDS[c][1] * self.shadow_map.size as f32, half, half)]);
+            self.ctx.set_viewports(&[viewport(
+                super::passes::SHADOW_BOUNDS[c][0] * self.shadow_map.size as f32,
+                super::passes::SHADOW_BOUNDS[c][1] * self.shadow_map.size as f32,
+                half,
+                half,
+            )]);
             self.cbs.set_m("camera_VS_PS", "view_projection", game_clip(vp, self.camera.units).data());
             self.upload();
             let mut first = 0u32;
@@ -300,7 +313,12 @@ impl Renderer {
                 let mesh = &model.meshes[*mi];
                 let diffuse = self.vegetation_diffuse(mesh);
                 bind_srv(&self.ctx, &ps, "s_diffuse_map", diffuse.as_ref());
-                self.ctx.set_vertex_buffers(0, &[mesh.vb.clone(), Some(inst_vb.clone())], &[mesh.stride, (INSTANCE_FLOATS * 4) as u32], &[0, 0]);
+                self.ctx.set_vertex_buffers(
+                    0,
+                    &[mesh.vb.clone(), Some(inst_vb.clone())],
+                    &[mesh.stride, (INSTANCE_FLOATS * 4) as u32],
+                    &[0, 0],
+                );
                 self.ctx.set_index_buffer(mesh.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
                 self.ctx.draw_indexed_instanced(mesh.index_count, *count, 0, 0, first);
                 self.draw_stats.draw_calls += 1;
@@ -327,7 +345,12 @@ impl Renderer {
 
         // With MSAA the coverage technique (`ps50_gbuffer_grass_ms`).
         let ms_ps = if self.gbuffer.ms.is_some() { self.shader(GRASS_MS_PS) } else { None };
-        let (Some(vs), Some(ps)) = (self.shader(GRASS_VS), ms_ps.or_else(|| self.shader(if self.game == super::game::RenderGame::Rome2 { R2_GRASS_PS } else { GRASS_PS }))) else { return };
+        let (Some(vs), Some(ps)) = (
+            self.shader(GRASS_VS),
+            ms_ps.or_else(|| self.shader(if self.game == super::game::RenderGame::Rome2 { R2_GRASS_PS } else { GRASS_PS })),
+        ) else {
+            return;
+        };
         let Some(layout) = self.grass_layout(&vs) else { return };
         let frustum = Frustum::from_view_projection(&self.camera.view_proj);
         // gfx_alpha_blend: the near patches are the order-independent transparency's (`pass_oit`).
@@ -337,8 +360,13 @@ impl Renderer {
 
         if self.grass.bs.is_none() {
             let blend = D3D11_RENDER_TARGET_BLEND_DESC {
-                BlendEnable: true.into(), SrcBlend: D3D11_BLEND_SRC_ALPHA, DestBlend: D3D11_BLEND_INV_SRC_ALPHA, BlendOp: D3D11_BLEND_OP_ADD,
-                SrcBlendAlpha: D3D11_BLEND_ZERO, DestBlendAlpha: D3D11_BLEND_INV_SRC_ALPHA, BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                BlendEnable: true.into(),
+                SrcBlend: D3D11_BLEND_SRC_ALPHA,
+                DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
+                BlendOp: D3D11_BLEND_OP_ADD,
+                SrcBlendAlpha: D3D11_BLEND_ZERO,
+                DestBlendAlpha: D3D11_BLEND_INV_SRC_ALPHA,
+                BlendOpAlpha: D3D11_BLEND_OP_ADD,
                 RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8,
             };
             let opaque = D3D11_RENDER_TARGET_BLEND_DESC { RenderTargetWriteMask: D3D11_COLOR_WRITE_ENABLE_ALL as u8, ..Default::default() };
@@ -477,7 +505,12 @@ impl Renderer {
     }
 
     /// Draws the gathered grass (`gather_grass`'s runs, their instances in `inst_vb`) with each mesh's diffuse and burn.
-    pub(crate) fn draw_grass_runs(&mut self, ps: &Rc<GameShader>, runs: Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>, inst_vb: &ID3D11Buffer) {
+    pub(crate) fn draw_grass_runs(
+        &mut self,
+        ps: &Rc<GameShader>,
+        runs: Vec<(Arc<crate::model_cache::GpuModel>, usize, u32)>,
+        inst_vb: &ID3D11Buffer,
+    ) {
         let mut first = 0u32;
         for (model, mi, count) in runs {
             let mesh = &model.meshes[mi];
@@ -485,7 +518,12 @@ impl Renderer {
             bind_srv(&self.ctx, ps, "s_diffuse_map", diffuse.as_ref());
             let burn = self.grass_burn(mesh);
             bind_srv(&self.ctx, ps, "burn_sampler", burn.as_ref());
-            self.ctx.set_vertex_buffers(0, &[mesh.vb.clone(), Some(inst_vb.clone())], &[mesh.stride, (INSTANCE_FLOATS * 4) as u32], &[0, 0]);
+            self.ctx.set_vertex_buffers(
+                0,
+                &[mesh.vb.clone(), Some(inst_vb.clone())],
+                &[mesh.stride, (INSTANCE_FLOATS * 4) as u32],
+                &[0, 0],
+            );
             self.ctx.set_index_buffer(mesh.ib.as_ref(), DXGI_FORMAT_R16_UINT, 0);
             self.ctx.draw_indexed_instanced(mesh.index_count, count, 0, 0, first);
             self.draw_stats.draw_calls += 1;

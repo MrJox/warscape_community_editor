@@ -10,7 +10,8 @@ pub const SETTINGS_ID: &str = "tile";
 
 /// The fields about the game's files, kept per game: tiles, weathers and Create entries are one game's (the same tile path can be in two
 /// games), and so are the sea states (keys of the game's wind table), the packs written and Launch in game's armies (keys of its tables).
-pub const GAME_FIELDS: &[&str] = &["sea_state", "weathers", "favourites", "recent", "create_favourites", "create_recent", "mod_packs", "launch_army"];
+pub const GAME_FIELDS: &[&str] =
+    &["sea_state", "weathers", "favourites", "recent", "create_favourites", "create_recent", "mod_packs", "launch_army"];
 
 /// The source of the game's exported tiles in a [`TileRef`] (the Tiles panel's "game packs").
 pub const PACKS_SOURCE: &str = "packs";
@@ -268,6 +269,29 @@ pub struct CameraView {
 
 impl Default for TileSettings {
     fn default() -> Self {
-        Self { show_sea: true, show_vfx_boxes: true, polygon_fill: 0.3, polygon_outline: 0.85, polygon_type_fill: BTreeMap::new(), sea_state: String::new(), weathers: BTreeMap::new(), favourites: vec![], recent: vec![], create_favourites: vec![], create_recent: vec![], create_grid: false, boundary_reach: 0.0, place_surface: SurfaceMode::default(), place_rotation: RotationMode::default(), veg_brush: VegBrush::default(), brush_curve: BrushCurve::default(), brush_image: ImageBrush::default(), camera_views: BTreeMap::new(), mod_packs: BTreeMap::new(), launch: LaunchSettings::default(), launch_army: LaunchArmy::default() }
+        Self {
+            show_sea: true,
+            show_vfx_boxes: true,
+            polygon_fill: 0.3,
+            polygon_outline: 0.85,
+            polygon_type_fill: BTreeMap::new(),
+            sea_state: String::new(),
+            weathers: BTreeMap::new(),
+            favourites: vec![],
+            recent: vec![],
+            create_favourites: vec![],
+            create_recent: vec![],
+            create_grid: false,
+            boundary_reach: 0.0,
+            place_surface: SurfaceMode::default(),
+            place_rotation: RotationMode::default(),
+            veg_brush: VegBrush::default(),
+            brush_curve: BrushCurve::default(),
+            brush_image: ImageBrush::default(),
+            camera_views: BTreeMap::new(),
+            mod_packs: BTreeMap::new(),
+            launch: LaunchSettings::default(),
+            launch_army: LaunchArmy::default(),
+        }
     }
 }

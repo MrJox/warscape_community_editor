@@ -21,7 +21,10 @@ use wce_render::ship_model::ShipModel;
 use wce_render::unit_animation::{UnitInstance, UnitModel};
 use wce_render::unit_catalog::{UnitCatalog, formation, men_at_size};
 use wce_scene::environment::read_game_graphics_values;
-use wce_scene::render_scene::{DocumentId, EntityId, LayerId, MODEL_ROPES_SUFFIX, MeshInstance, Payload, RopeLine, Ropes, SKINNED_NO_OFFSET, SkinnedInstance, SkinnedPart, SourceRef};
+use wce_scene::render_scene::{
+    DocumentId, EntityId, LayerId, MODEL_ROPES_SUFFIX, MeshInstance, Payload, RopeLine, Ropes, SKINNED_NO_OFFSET, SkinnedInstance,
+    SkinnedPart, SourceRef,
+};
 use wce_tile_editor::tile_document::{REF_HUMAN, REF_SHIP, REF_UNIT, TileDocument, item_of};
 
 use crate::tool::selected;
@@ -213,13 +216,38 @@ pub struct RefUnits {
 impl RefUnits {
     /// What is loaded and drawn, for the scripts.
     pub fn summary(&self) -> String {
-        let units = self.models.keys().filter(|w| w.variations > 1).filter_map(|w| Some((w, self.catalog.as_ref()?.land_units.get(&w.unit)?))).map(|(w, l)| {
-            format!("{}: {} men, {} ranks, spacing {:?}", w.unit, men_at_size(l, self.size.unwrap_or(3)), l.rank_depth, l.spacing)
-        }).collect::<Vec<_>>().join("; ");
-        let ships = self.ships.values().map(|s| format!("{}: {} ({} parts{})", s.unit, s.variant, s.parts.len(), if s.missing.is_empty() { String::new() } else { format!(", missing {:?}", s.missing) })).collect::<Vec<_>>().join("; ");
+        let units = self
+            .models
+            .keys()
+            .filter(|w| w.variations > 1)
+            .filter_map(|w| Some((w, self.catalog.as_ref()?.land_units.get(&w.unit)?)))
+            .map(|(w, l)| {
+                format!("{}: {} men, {} ranks, spacing {:?}", w.unit, men_at_size(l, self.size.unwrap_or(3)), l.rank_depth, l.spacing)
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        let ships = self
+            .ships
+            .values()
+            .map(|s| {
+                format!(
+                    "{}: {} ({} parts{})",
+                    s.unit,
+                    s.variant,
+                    s.parts.len(),
+                    if s.missing.is_empty() { String::new() } else { format!(", missing {:?}", s.missing) }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
         let mut water: Vec<String> = self.water.iter().map(|(elem, (_, _, level))| format!("#{elem} {level:?}")).collect();
         water.sort_unstable();
-        let afloat = self.afloat.iter().map(|(elem, [h, p, r])| format!("#{elem} heave {h:.2} pitch {p:.2} roll {r:.2}")).collect::<Vec<_>>().join(", ");
+        let afloat = self
+            .afloat
+            .iter()
+            .map(|(elem, [h, p, r])| format!("#{elem} heave {h:.2} pitch {p:.2} roll {r:.2}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         let headings = self.headings.iter().map(|(elem, h)| format!("#{elem} {h:.1}")).collect::<Vec<_>>().join(", ");
         let ships = format!("{ships}; water under them: {}; afloat: {afloat}; headings: {headings}", water.join(", "));
         let catalog = self.catalog.as_ref().map_or_else(String::new, |c| {
@@ -230,8 +258,18 @@ impl RefUnits {
         });
         format!(
             "{catalog}tables {}, {} loaded, loading {}, {} failed, {} entities, unit size {:?}, update {:.2} ms [{units}]; ships {} loaded, loading {}, {} failed, {} entities [{ships}]: {}",
-            self.catalog.is_some(), self.models.len(), self.loading.is_some(), self.failed.len(), self.entities.len(), self.size, self.update_ms,
-            self.ships.len(), self.ship_loading.is_some(), self.ship_failed.len(), self.ship_entities.len(), self.status
+            self.catalog.is_some(),
+            self.models.len(),
+            self.loading.is_some(),
+            self.failed.len(),
+            self.entities.len(),
+            self.size,
+            self.update_ms,
+            self.ships.len(),
+            self.ship_loading.is_some(),
+            self.ship_failed.len(),
+            self.ship_entities.len(),
+            self.status
         )
     }
 
@@ -278,7 +316,8 @@ impl RefUnits {
         self.catalog_rx = Some(rx);
         "reading the unit tables...".clone_into(&mut self.status);
         std::thread::spawn(move || {
-            let result = rpfm_schema_path(vfs.profile()).ok_or_else(|| "no rpfm schema of the game (Help > Update Manager downloads it)".to_owned())
+            let result = rpfm_schema_path(vfs.profile())
+                .ok_or_else(|| "no rpfm schema of the game (Help > Update Manager downloads it)".to_owned())
                 .and_then(|path| Schema::load(&path, None).map_err(|e| e.to_string()))
                 .and_then(|schema| UnitCatalog::load(&vfs, &schema));
             let _ = tx.send(result);
@@ -364,14 +403,16 @@ impl RefUnits {
         format!("loading {}...", wanted.unit).clone_into(&mut self.status);
         std::thread::spawn(move || {
             let read = |p: &str| vfs.read(p).ok();
-            let models = (0..wanted.variations).map(|k| {
-                let mut model = UnitModel::load(&read, &catalog, &wanted.unit, &wanted.faction, wanted.seed.wrapping_add(k))?;
-                if !wanted.slot.is_empty() {
-                    model.play(&read, &wanted.slot);
-                }
+            let models = (0..wanted.variations)
+                .map(|k| {
+                    let mut model = UnitModel::load(&read, &catalog, &wanted.unit, &wanted.faction, wanted.seed.wrapping_add(k))?;
+                    if !wanted.slot.is_empty() {
+                        model.play(&read, &wanted.slot);
+                    }
 
-                Ok(model)
-            }).collect();
+                    Ok(model)
+                })
+                .collect();
             let _ = tx.send((wanted, models));
         });
     }
@@ -389,8 +430,13 @@ impl RefUnits {
             let Some(kind) = Kind::of(tag) else { continue };
             for elem in t.tscene().find_all(tag).into_iter().filter(|&elem| t.shown(elem)) {
                 let attr = |name: &str| t.tscene().doc().get(elem, name).unwrap_or_default();
-                let Some((wanted, ship)) = self.wanted(e, &attr("unit"), &attr("faction"), attr("seed").trim().parse().unwrap_or(0), &attr("slot"), kind) else { continue };
-                let (colours, on_ground, rowing) = (parse_colours(&attr("colours")), attr("surface_mode") != "MSM_FREEFORM", attr("rowing") == "1");
+                let Some((wanted, ship)) =
+                    self.wanted(e, &attr("unit"), &attr("faction"), attr("seed").trim().parse().unwrap_or(0), &attr("slot"), kind)
+                else {
+                    continue;
+                };
+                let (colours, on_ground, rowing) =
+                    (parse_colours(&attr("colours")), attr("surface_mode") != "MSM_FREEFORM", attr("rowing") == "1");
                 out.push(Reference { elem, kind, wanted, ship, colours, on_ground, rowing });
             }
         }
@@ -404,14 +450,26 @@ impl RefUnits {
         let faction_or = |default: &str| if unit.is_empty() { default.to_owned() } else { faction.to_owned() };
         if kind == Kind::Ship {
             let (default, default_faction) = default_naval(e.game().key);
-            let chosen = [unit, default].into_iter().find(|u| !u.is_empty() && catalog.naval_units.contains_key(*u)).or_else(|| catalog.naval().first().copied())?;
+            let chosen = [unit, default]
+                .into_iter()
+                .find(|u| !u.is_empty() && catalog.naval_units.contains_key(*u))
+                .or_else(|| catalog.naval().first().copied())?;
             let faction = faction_or(default_faction);
-            let men = Wanted { unit: catalog.naval_units[chosen].land_unit.clone(), faction: faction.clone(), seed, slot: slot.to_owned(), variations: UNIT_VARIATIONS };
+            let men = Wanted {
+                unit: catalog.naval_units[chosen].land_unit.clone(),
+                faction: faction.clone(),
+                seed,
+                slot: slot.to_owned(),
+                variations: UNIT_VARIATIONS,
+            };
             return Some((men, Some(ShipWanted { unit: chosen.to_owned(), faction, seed })));
         }
 
         let (default, default_faction) = default_unit(e.game().key);
-        let chosen = [unit, default].into_iter().find(|u| !u.is_empty() && catalog.entry(u, "").is_some()).or_else(|| catalog.units().first().copied())?;
+        let chosen = [unit, default]
+            .into_iter()
+            .find(|u| !u.is_empty() && catalog.entry(u, "").is_some())
+            .or_else(|| catalog.units().first().copied())?;
         let variations = if kind == Kind::Unit { UNIT_VARIATIONS } else { 1 };
         Some((Wanted { unit: chosen.to_owned(), faction: faction_or(default_faction), seed, slot: slot.to_owned(), variations }, None))
     }
@@ -420,7 +478,10 @@ impl RefUnits {
     fn water_under(&mut self, e: &Editor, id: DocumentId, elem: usize, x: f32, z: f32) -> Option<f32> {
         let now = gui::time();
         let at = [x.to_bits(), z.to_bits()];
-        if let Some((was, when, level)) = self.water.get(&elem) && *was == at && now - when < WATER_SECONDS {
+        if let Some((was, when, level)) = self.water.get(&elem)
+            && *was == at
+            && now - when < WATER_SECONDS
+        {
             return *level;
         }
 
@@ -448,7 +509,10 @@ impl RefUnits {
     }
 
     fn update_scene(&mut self, e: &mut Editor, id: DocumentId) {
-        let any = e.docs.find_as::<TileDocument>(id).is_some_and(|d| [REF_HUMAN, REF_UNIT, REF_SHIP].iter().any(|k| d.tile().type_counts().contains_key(*k)));
+        let any = e
+            .docs
+            .find_as::<TileDocument>(id)
+            .is_some_and(|d| [REF_HUMAN, REF_UNIT, REF_SHIP].iter().any(|k| d.tile().type_counts().contains_key(*k)));
         if !any || e.viewport.game_view {
             self.clear(e);
             if let Some(d) = e.docs.find_as::<TileDocument>(id) {
@@ -466,7 +530,11 @@ impl RefUnits {
         self.ships.retain(|w, _| used_ships.contains(w));
         self.water.retain(|elem, _| references.iter().any(|r| r.elem == *elem && r.kind == Kind::Ship));
         if self.ship_loading.is_none()
-            && let Some(wanted) = references.iter().filter_map(|r| r.ship.as_ref()).find(|w| !self.ships.contains_key(*w) && !self.ship_failed.contains(*w)).cloned()
+            && let Some(wanted) = references
+                .iter()
+                .filter_map(|r| r.ship.as_ref())
+                .find(|w| !self.ships.contains_key(*w) && !self.ship_failed.contains(*w))
+                .cloned()
         {
             self.load_ship(e, wanted);
         }
@@ -497,9 +565,15 @@ impl RefUnits {
         for r in &references {
             let stands: Vec<[f32; 4]> = match r.kind {
                 Kind::Human => vec![[0.0; 4]],
-                Kind::Unit => catalog.as_ref().and_then(|c| c.land_units.get(&r.wanted.unit)).map_or_else(|| vec![[0.0; 4]], |land| {
-                    formation(men_at_size(land, size), land.rank_depth, land.spacing).into_iter().map(|[x, z]| [x, 0.0, z, 0.0]).collect()
-                }),
+                Kind::Unit => catalog.as_ref().and_then(|c| c.land_units.get(&r.wanted.unit)).map_or_else(
+                    || vec![[0.0; 4]],
+                    |land| {
+                        formation(men_at_size(land, size), land.rank_depth, land.spacing)
+                            .into_iter()
+                            .map(|[x, z]| [x, 0.0, z, 0.0])
+                            .collect()
+                    },
+                ),
                 Kind::Ship => {
                     let Some(ship) = r.ship.as_ref().and_then(|w| self.ships.get(w)).cloned() else { continue };
                     let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
@@ -533,7 +607,8 @@ impl RefUnits {
                     let wind = ship_wind(rows);
                     for (k, part) in ship.parts.iter().enumerate() {
                         if let Some(rig) = &part.cloth {
-                            let sim = self.sails.entry((r.elem, k)).or_insert_with(|| ClothSim::new(rig, r.wanted.seed.wrapping_add(k as u64)));
+                            let sim =
+                                self.sails.entry((r.elem, k)).or_insert_with(|| ClothSim::new(rig, r.wanted.seed.wrapping_add(k as u64)));
                             sim.update(sails_dt, sails_t, wind);
                         }
                     }
@@ -548,10 +623,15 @@ impl RefUnits {
 
         let time = e.clock.time() as f32;
         self.place_ships(e, id, &ship_places, time);
-        let used: HashSet<&Wanted> = references.iter().filter(|r| men_of.get(&r.elem).is_some_and(|m| !m.is_empty())).map(|r| &r.wanted).collect();
+        let used: HashSet<&Wanted> =
+            references.iter().filter(|r| men_of.get(&r.elem).is_some_and(|m| !m.is_empty())).map(|r| &r.wanted).collect();
         self.models.retain(|w, _| used.contains(w));
         if self.loading.is_none()
-            && let Some(wanted) = references.iter().map(|r| &r.wanted).find(|w| used.contains(w) && !self.models.contains_key(*w) && !self.failed.contains(*w)).cloned()
+            && let Some(wanted) = references
+                .iter()
+                .map(|r| &r.wanted)
+                .find(|w| used.contains(w) && !self.models.contains_key(*w) && !self.failed.contains(*w))
+                .cloned()
         {
             self.load_models(e, wanted);
         }
@@ -611,7 +691,10 @@ impl RefUnits {
         t.set_ref_spots(spots);
         if self.entities.len() != placed.len() || self.entities.iter().any(|&id| e.scene.find(id).is_none()) {
             self.clear(e);
-            self.entities = placed.iter().map(|_| e.scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), SourceRef { doc: id, item: 0 })).collect();
+            self.entities = placed
+                .iter()
+                .map(|_| e.scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), SourceRef { doc: id, item: 0 }))
+                .collect();
         }
 
         for (&entity, (world, mut figure, colours)) in self.entities.iter().zip(placed) {
@@ -649,7 +732,14 @@ impl RefUnits {
                     let ropes = Some(Ropes { lines, diffuse, normal });
                     want.push(ShipShown { model: format!("{}#moving_ropes", p.model), elem, world, sail: None, palette: None, ropes });
                 } else if p.what.ropes {
-                    want.push(ShipShown { model: format!("{}{MODEL_ROPES_SUFFIX}", p.model), elem, world, sail: None, palette: None, ropes: None });
+                    want.push(ShipShown {
+                        model: format!("{}{MODEL_ROPES_SUFFIX}", p.model),
+                        elem,
+                        world,
+                        sail: None,
+                        palette: None,
+                        ropes: None,
+                    });
                 }
 
                 if p.what.cloth {
@@ -660,34 +750,60 @@ impl RefUnits {
         }
 
         let Some(layer) = self.layer.filter(|(doc, _)| *doc == id).map(|(_, l)| l) else { return };
-        let same = self.ship_shown.len() == want.len() && self.ship_shown.iter().zip(&want).all(|(a, b)| a.model == b.model && a.elem == b.elem && a.sail == b.sail);
+        let same = self.ship_shown.len() == want.len()
+            && self.ship_shown.iter().zip(&want).all(|(a, b)| a.model == b.model && a.elem == b.elem && a.sail == b.sail);
         if !same || self.ship_entities.iter().any(|&en| e.scene.find(en).is_none()) {
             self.clear_ships(e);
             let rest = self.rest.get_or_insert_with(|| Arc::new(vec![SKINNED_NO_OFFSET; SAIL_BONES])).clone();
-            self.ship_entities = want.iter().map(|w| {
-                let payload = match w.sail {
-                    _ if w.ropes.is_some() => Payload::Ropes(w.ropes.clone().unwrap_or_default()),
+            self.ship_entities = want
+                .iter()
+                .map(|w| {
+                    let payload = match w.sail {
+                        _ if w.ropes.is_some() => Payload::Ropes(w.ropes.clone().unwrap_or_default()),
 
-                    // Its cloth's bones, or at rest: every cloth bone where the file has it.
-                    Some((masks, faction_colours)) => {
-                        let part = SkinnedPart { model: w.model.clone(), tint: [0.0; 4], decal_diffuse: None, decal_normal: None, masks, bone: None, offset: SKINNED_NO_OFFSET };
-                        let palette = w.palette.clone().unwrap_or_else(|| rest.clone());
-                        Payload::SkinnedInstance(SkinnedInstance { parts: vec![part], palette, bones: rest.clone(), casts_shadow: true, faction_colours, faction_scale: 0.0 })
-                    }
+                        // Its cloth's bones, or at rest: every cloth bone where the file has it.
+                        Some((masks, faction_colours)) => {
+                            let part = SkinnedPart {
+                                model: w.model.clone(),
+                                tint: [0.0; 4],
+                                decal_diffuse: None,
+                                decal_normal: None,
+                                masks,
+                                bone: None,
+                                offset: SKINNED_NO_OFFSET,
+                            };
+                            let palette = w.palette.clone().unwrap_or_else(|| rest.clone());
+                            Payload::SkinnedInstance(SkinnedInstance {
+                                parts: vec![part],
+                                palette,
+                                bones: rest.clone(),
+                                casts_shadow: true,
+                                faction_colours,
+                                faction_scale: 0.0,
+                            })
+                        }
 
-                    // The ropes read POSITION4.w as their burn.
-                    None if w.model.ends_with(MODEL_ROPES_SUFFIX) => Payload::MeshInstance(MeshInstance { model: w.model.clone(), lod: false, p4: [0.0; 4], ..MeshInstance::default() }),
-                    None => Payload::MeshInstance(MeshInstance { model: w.model.clone(), lod: true, ..MeshInstance::default() }),
-                };
+                        // The ropes read POSITION4.w as their burn.
+                        None if w.model.ends_with(MODEL_ROPES_SUFFIX) => Payload::MeshInstance(MeshInstance {
+                            model: w.model.clone(),
+                            lod: false,
+                            p4: [0.0; 4],
+                            ..MeshInstance::default()
+                        }),
+                        None => Payload::MeshInstance(MeshInstance { model: w.model.clone(), lod: true, ..MeshInstance::default() }),
+                    };
 
-                e.scene.add(layer, w.world, payload, SourceRef { doc: id, item: item_of(w.elem) })
-            }).collect();
+                    e.scene.add(layer, w.world, payload, SourceRef { doc: id, item: item_of(w.elem) })
+                })
+                .collect();
         } else {
             // Every frame on the waves: moves the scene follows without going over itself again; a sail takes its cloth's bones.
             for (&entity, (shown, wanted)) in self.ship_entities.iter().zip(self.ship_shown.iter().zip(&want)) {
                 if let Some(ropes) = &wanted.ropes {
                     e.scene.update_ropes(entity, wanted.world, ropes.clone());
-                } else if let (Some(palette), Some(Payload::SkinnedInstance(s))) = (&wanted.palette, e.scene.find(entity).map(|en| &en.payload)) {
+                } else if let (Some(palette), Some(Payload::SkinnedInstance(s))) =
+                    (&wanted.palette, e.scene.find(entity).map(|en| &en.payload))
+                {
                     let instance = SkinnedInstance { palette: palette.clone(), ..s.clone() };
                     e.scene.update_pose(entity, wanted.world, instance);
                 } else if shown.world != wanted.world {
@@ -790,7 +906,12 @@ impl RefUnits {
         }
 
         if let Some(model) = self.models.get(&wanted).and_then(|m| m.first()) {
-            gui::text_disabled(&format!("{}, scale {:.3}{}", model.man.rig.skeleton.skeleton, model.scale, model.mount.as_ref().map_or(String::new(), |m| format!(", on {}", m.rig.skeleton.skeleton))));
+            gui::text_disabled(&format!(
+                "{}, scale {:.3}{}",
+                model.man.rig.skeleton.skeleton,
+                model.scale,
+                model.mount.as_ref().map_or(String::new(), |m| format!(", on {}", m.rig.skeleton.skeleton))
+            ));
         }
 
         if let Some(s) = &ship {
@@ -798,7 +919,11 @@ impl RefUnits {
             let size = self.size.unwrap_or(3);
             let men = catalog.land_units.get(&s.unit).map_or(0, |land| men_at_size(land, size));
             let model = self.ships.get(s).map_or_else(|| "loading".to_owned(), |m| format!("{}, {} parts", m.variant, m.parts.len()));
-            gui::text_disabled(&format!("{} ({}), {model}", naval.map_or("", |n| n.ship.as_str()), naval.map_or("", |n| n.category.as_str())));
+            gui::text_disabled(&format!(
+                "{} ({}), {model}",
+                naval.map_or("", |n| n.ship.as_str()),
+                naval.map_or("", |n| n.category.as_str())
+            ));
             gui::text_disabled(&format!("{men} men of {} aboard (the game's unit size: {})", wanted.unit, size_name(size)));
             let mut rowing = attr("rowing") == "1";
             if gui::checkbox("Rowing##reference", &mut rowing) {
@@ -806,7 +931,9 @@ impl RefUnits {
             }
         }
 
-        if kind == Kind::Unit && let Some(land) = catalog.land_units.get(&wanted.unit) {
+        if kind == Kind::Unit
+            && let Some(land) = catalog.land_units.get(&wanted.unit)
+        {
             let size = self.size.unwrap_or(3);
             let men = men_at_size(land, size);
             let ranks = land.rank_depth.clamp(1, men.max(1));

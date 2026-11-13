@@ -24,7 +24,11 @@ const PARTICLE_CLASS: u32 = 618_864;
 
 /// An `ECTransform`'s numbers (rotation, scale, position).
 fn numbers(p: &TerryProject, e: &TerryEntity, attr: &str, default: [f64; 3]) -> [f64; 3] {
-    let v: Vec<f64> = p.component(e, "ECTransform").and_then(|c| p.doc.get(c, attr)).map(|v| v.split_whitespace().filter_map(|t| t.parse().ok()).collect()).unwrap_or_default();
+    let v: Vec<f64> = p
+        .component(e, "ECTransform")
+        .and_then(|c| p.doc.get(c, attr))
+        .map(|v| v.split_whitespace().filter_map(|t| t.parse().ok()).collect())
+        .unwrap_or_default();
     if v.len() == 3 { [v[0], v[1], v[2]] } else { default }
 }
 
@@ -51,11 +55,7 @@ pub fn matrix(p: &TerryProject, e: &TerryEntity) -> [f32; 16] {
     let (x2, y2, z2, w2) = (qx * 2.0, qy * 2.0, qz * 2.0, qw * 2.0);
     let (xx, yy, zz) = (x2 * qx, y2 * qy, z2 * qz);
     let (xy, xz, yz, wx, wy, wz) = (qy * x2, qz * x2, qz * y2, w2 * qx, w2 * qy, w2 * qz);
-    let rot = [
-        [(1.0 - yy) - zz, xy - wz, xz + wy],
-        [xy + wz, (1.0 - xx) - zz, yz - wx],
-        [xz - wy, yz + wx, (1.0 - xx) - yy],
-    ];
+    let rot = [[(1.0 - yy) - zz, xy - wz, xz + wy], [xy + wz, (1.0 - xx) - zz, yz - wx], [xz - wy, yz + wx, (1.0 - xx) - yy]];
 
     let mut m = [0f32; 16];
     for (i, sc) in s.iter().enumerate() {
@@ -80,12 +80,19 @@ fn seasons(p: &TerryProject, e: &TerryEntity) -> u32 {
         return 15;
     }
 
-    ["spring", "summer", "autumn", "winter"].iter().enumerate().filter(|(_, s)| flag(p, e, "ECSeasonMask", s) == 1).map(|(i, _)| 1 << i).sum()
+    ["spring", "summer", "autumn", "winter"]
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| flag(p, e, "ECSeasonMask", s) == 1)
+        .map(|(i, _)| 1 << i)
+        .sum()
 }
 
 fn visibility(p: &TerryProject, e: &TerryEntity, component: &str) -> Vec<(&'static str, Value)> {
     ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"]
-        .iter().map(|a| (*a, Value::U8(flag(p, e, component, a)))).collect()
+        .iter()
+        .map(|a| (*a, Value::U8(flag(p, e, component, a))))
+        .collect()
 }
 
 /// A markers file of records keyed by text (the groups in the marker table's order).
@@ -100,12 +107,20 @@ fn markers(class: &str, class_id: u32, records: Vec<(String, Vec<u8>)>) -> Vec<u
         indices.entry(k.clone()).or_default().push(i as u32);
     }
 
-    let groups = wce_tile_io::attila::compile::text_key_group_order(&first).into_iter()
+    let groups = wce_tile_io::attila::compile::text_key_group_order(&first)
+        .into_iter()
         .map(|i| MarkerGroup { key: vec![KeyPart::Wide(first[i].encode_utf16().collect())], indices: indices[&first[i]].clone() })
         .collect();
     MarkersFile {
-        repository: "BASE_MARKER_REPOSITORY".to_owned(), repository_id: REPOSITORY_ID, repository_u32: 1, repository_u16: 1, class_id,
-        class_name: class.to_owned(), version: 9, records: records.into_iter().map(|r| r.1).collect(), groups: Some(groups),
+        repository: "BASE_MARKER_REPOSITORY".to_owned(),
+        repository_id: REPOSITORY_ID,
+        repository_u32: 1,
+        repository_u16: 1,
+        class_id,
+        class_name: class.to_owned(),
+        version: 9,
+        records: records.into_iter().map(|r| r.1).collect(),
+        groups: Some(groups),
     }
     .write()
 }
@@ -120,8 +135,14 @@ pub fn prop_markers(p: &TerryProject) -> Result<Vec<u8>, String> {
     for e in &p.entities {
         let EntityKind::Prop(model) = p.kind(e) else { continue };
         let mut f: Vec<(&str, Value)> = vec![
-            ("transform", Value::Matrix(matrix(p, e))), ("unknown_64", Value::U8(1)), ("is_decal", Value::U8(0)), ("unknown_66", Value::U8(0)),
-            ("unknown_67", Value::U8(0)), ("unknown_68", Value::U8(0)), ("unknown_69", Value::U8(0)), ("seasons", Value::U32(seasons(p, e))),
+            ("transform", Value::Matrix(matrix(p, e))),
+            ("unknown_64", Value::U8(1)),
+            ("is_decal", Value::U8(0)),
+            ("unknown_66", Value::U8(0)),
+            ("unknown_67", Value::U8(0)),
+            ("unknown_68", Value::U8(0)),
+            ("unknown_69", Value::U8(0)),
+            ("seasons", Value::U32(seasons(p, e))),
             // BOB_Terrain: the fauna bit of a model under `/fauna/` (case-sensitive).
             ("unknown_74", Value::U8(u8::from(model.contains("/fauna/")))),
         ];
@@ -143,7 +164,9 @@ pub fn particle_markers(p: &TerryProject) -> Result<Vec<u8>, String> {
         let EntityKind::Vfx(vfx) = p.kind(e) else { continue };
         let scale: f32 = p.component(e, "ECVFX").and_then(|c| p.doc.get(c, "scale")).and_then(|v| v.trim().parse().ok()).unwrap_or(1.0);
         let mut f: Vec<(&str, Value)> = vec![
-            ("transform", Value::Matrix(matrix(p, e))), ("unknown_64", Value::Bytes(vec![0; 6])), ("autoplay", Value::U8(flag(p, e, "ECVFX", "autoplay"))),
+            ("transform", Value::Matrix(matrix(p, e))),
+            ("unknown_64", Value::Bytes(vec![0; 6])),
+            ("autoplay", Value::U8(flag(p, e, "ECVFX", "autoplay"))),
             ("use_in_outfield", Value::U8(0)),
         ];
         f.extend(visibility(p, e, "ECVFX"));
@@ -243,7 +266,12 @@ pub fn environment_collection(p: &TerryProject) -> Vec<u8> {
         let w = p.world_position(e.id);
         spheres += &format!(
             "\t\t<SPHERE serialise_version='1' lighting='{}' x='{}' y='{}' z='{}' inner_radius='{}' outer_radius='{}'/>\n",
-            get("lighting_file"), f(f64::from(w[0] as f32)), f(f64::from(w[1] as f32)), f(f64::from(w[2] as f32)), f(num("inner_radius")), f(num("outer_radius"))
+            get("lighting_file"),
+            f(f64::from(w[0] as f32)),
+            f(f64::from(w[1] as f32)),
+            f(f64::from(w[2] as f32)),
+            f(num("inner_radius")),
+            f(num("outer_radius"))
         );
     }
 

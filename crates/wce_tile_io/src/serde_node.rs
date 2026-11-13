@@ -184,8 +184,16 @@ mod tests {
     #[test]
     fn round_trip() {
         let v = Outer {
-            version: 6, big: u64::MAX, flag: true, scale: 0.1, ids: vec![1, 2], empty: vec![], names: vec!["a".into()], maybe: None,
-            inners: vec![Inner { name: "x".into(), points: vec![1.5, -0.25] }], inner: Inner { name: "y".into(), points: vec![] },
+            version: 6,
+            big: u64::MAX,
+            flag: true,
+            scale: 0.1,
+            ids: vec![1, 2],
+            empty: vec![],
+            names: vec!["a".into()],
+            maybe: None,
+            inners: vec![Inner { name: "x".into(), points: vec![1.5, -0.25] }],
+            inner: Inner { name: "y".into(), points: vec![] },
         };
 
         let n = to_node("Outer", &v).unwrap();

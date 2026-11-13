@@ -96,7 +96,13 @@ impl Layout {
 
 /// The chunks an LF edit reaches with their pixels from `base` (chunk number, x, y, the pixel's place in the chunk), where the LF is as
 /// it was, else the LF's own normals there.
-fn edited_chunks(lf: &PagedU16, original: &[u16], cells: (u32, u32), layout: Layout, base: &dyn Fn(i64, i64, i64, i64, i64) -> Option<[u8; 4]>) -> Vec<(String, Vec<u8>)> {
+fn edited_chunks(
+    lf: &PagedU16,
+    original: &[u16],
+    cells: (u32, u32),
+    layout: Layout,
+    base: &dyn Fn(i64, i64, i64, i64, i64) -> Option<[u8; 4]>,
+) -> Vec<(String, Vec<u8>)> {
     let (w, h) = (i64::from(lf.width()), i64::from(lf.height()));
     let now = samples(lf);
     if now.len() != original.len() || now == original {
@@ -169,8 +175,16 @@ fn edited_chunks(lf: &PagedU16, original: &[u16], cells: (u32, u32), layout: Lay
 /// The chunks an LF edit reaches on a map with no `normal.dds` (Rome 2's built maps): each from the map's own shipped chunk (`shipped`
 /// gives a chunk's DDS by number), its pixels where the LF is as it was, the LF's normals over the edited samples. None when the shipped
 /// chunks' layout is not one this knows ([`Layout::of`]; the game's then stay) or the LF is as it was.
-pub fn edited_shipped_chunks(lf: &PagedU16, original: &[u16], cells: (u32, u32), count: usize, shipped: &dyn Fn(i64) -> Option<Vec<u8>>) -> Vec<(String, Vec<u8>)> {
-    let Some(side) = shipped(0).and_then(|b| b.get(16..20).map(|s| i64::from(u32::from_le_bytes([s[0], s[1], s[2], s[3]])))) else { return vec![] };
+pub fn edited_shipped_chunks(
+    lf: &PagedU16,
+    original: &[u16],
+    cells: (u32, u32),
+    count: usize,
+    shipped: &dyn Fn(i64) -> Option<Vec<u8>>,
+) -> Vec<(String, Vec<u8>)> {
+    let Some(side) = shipped(0).and_then(|b| b.get(16..20).map(|s| i64::from(u32::from_le_bytes([s[0], s[1], s[2], s[3]])))) else {
+        return vec![];
+    };
     let Some(layout) = Layout::of(count, side, i64::from(lf.width()), i64::from(lf.height())) else { return vec![] };
     let decoded = std::cell::RefCell::new(std::collections::HashMap::<i64, Option<wce_formats::dds_decode::Rgba8Image>>::new());
     let pixel = |n: i64, _: i64, _: i64, sx: i64, sy: i64| -> Option<[u8; 4]> {
@@ -187,5 +201,6 @@ pub fn edited_shipped_chunks(lf: &PagedU16, original: &[u16], cells: (u32, u32),
 /// The LF's samples as a 16-bit TIFF holds them (the map file's, before the edits).
 pub fn tiff_samples(bytes: &[u8]) -> Option<Vec<u16>> {
     let t = TiffFile::parse(bytes).ok()?;
-    (t.bits_per_sample == 16 && t.samples_per_pixel == 1).then(|| t.pixels.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect())
+    (t.bits_per_sample == 16 && t.samples_per_pixel == 1)
+        .then(|| t.pixels.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect())
 }

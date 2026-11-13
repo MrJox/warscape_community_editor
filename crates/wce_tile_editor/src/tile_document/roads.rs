@@ -3,6 +3,7 @@
 //! edit of the road needs nothing of its own. What a road was made from is in its layers' owner (`road:<id>#<signature>`), so that opening a
 //! tile does not make its roads again.
 
+use std::collections::HashMap;
 use wce_foundation::math::{Double3, Double3x3, Float3};
 use wce_scene::render_scene::RenderScene;
 use wce_tile::ground_types::GROUND_TYPES;
@@ -10,7 +11,6 @@ use wce_tile::road_layout::{End, Hold, Measures, Site, Stations, fit_dressed, ju
 use wce_tile::road_pieces::{BASE, PIECES, Piece, VARIANTS, key, read};
 use wce_tile::roads::{RoadSettings, Strip, WaterMap, centre_line_handled, sharp_points};
 use wce_tile::ted_scene::TedScene;
-use std::collections::HashMap;
 
 use wce_tile::terrain_layers::{Blend, Ground as TerrainGround, Height, Kind, Stack, TerrainLayers};
 
@@ -61,7 +61,12 @@ fn parse_owner(owner: &str) -> Option<(u32, u64)> {
 /// The piece laid for `laid[k]`: it or one of its variants (`road_pieces::VARIANTS`) the road's type has, by the road's seed. A variant
 /// with buildings (a bank 18.6 m long) only between pieces running on along the road (straights, curves), not over a junction, a corner
 /// or an end, nor a bridge or a ford next to it.
-fn pick<'a>(laid: &[wce_tile::road_layout::Laid], k: usize, pieces: &'a [(&'static str, Piece, String, Vec<u8>)], road: &Road) -> Option<&'a (&'static str, Piece, String, Vec<u8>)> {
+fn pick<'a>(
+    laid: &[wce_tile::road_layout::Laid],
+    k: usize,
+    pieces: &'a [(&'static str, Piece, String, Vec<u8>)],
+    road: &Road,
+) -> Option<&'a (&'static str, Piece, String, Vec<u8>)> {
     use wce_tile::road_layout::Frame;
     let l = &laid[k];
     let own = pieces.iter().find(|p| p.0 == l.piece)?;
@@ -70,9 +75,11 @@ fn pick<'a>(laid: &[wce_tile::road_layout::Laid], k: usize, pieces: &'a [(&'stat
         Frame::Star { .. } => None,
     };
 
-    let runs_on = |j: Option<usize>, at: f64| j.and_then(|j| laid.get(j)).is_some_and(|n| {
-        matches!(n.piece, "straight" | "curve") && span(n).is_some_and(|(a, b)| (a - at).abs() < 0.5 || (b - at).abs() < 0.5)
-    });
+    let runs_on = |j: Option<usize>, at: f64| {
+        j.and_then(|j| laid.get(j)).is_some_and(|n| {
+            matches!(n.piece, "straight" | "curve") && span(n).is_some_and(|(a, b)| (a - at).abs() < 0.5 || (b - at).abs() < 0.5)
+        })
+    };
     let between = span(l).is_some_and(|(a, b)| runs_on(k.checked_sub(1), a) && runs_on(Some(k + 1), b));
     // Those with buildings (the banks) three times as often as the rest (user 2026-11-08: more of them).
     let options = std::iter::once(own)
@@ -81,7 +88,9 @@ fn pick<'a>(laid: &[wce_tile::road_layout::Laid], k: usize, pieces: &'a [(&'stat
         .flat_map(|p| std::iter::repeat_n(p, if p.1.parts.iter().any(|q| q.solid) { 3 } else { 1 }))
         .collect::<Vec<_>>();
 
-    let mut h = u64::from(road.settings.seed).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(road.id).rotate_left(23) ^ (k as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    let mut h = u64::from(road.settings.seed).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ u64::from(road.id).rotate_left(23)
+        ^ (k as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
     h ^= h >> 31;
     h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     h ^= h >> 29;
@@ -93,16 +102,22 @@ fn pick<'a>(laid: &[wce_tile::road_layout::Laid], k: usize, pieces: &'a [(&'stat
 /// the through road met the branch's end (user, 2026-11-08). Otherwise as they are.
 fn made_order<T>(v: Vec<T>, road: impl Fn(&T) -> &Road) -> Vec<T> {
     let centres = v.iter().map(|t| centre_line_handled(&road(t).line, &road(t).handles, &road(t).sharp).0).collect::<Vec<_>>();
-    let off = |line: &[[f64; 2]], p: [f64; 2]| line.windows(2).map(|w| {
-        let (d, e) = ([w[1][0] - w[0][0], w[1][1] - w[0][1]], [p[0] - w[0][0], p[1] - w[0][1]]);
-        let t = ((d[0] * e[0] + d[1] * e[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-12)).clamp(0.0, 1.0);
-        (e[0] - d[0] * t).hypot(e[1] - d[1] * t)
-    }).fold(f64::MAX, f64::min);
+    let off = |line: &[[f64; 2]], p: [f64; 2]| {
+        line.windows(2)
+            .map(|w| {
+                let (d, e) = ([w[1][0] - w[0][0], w[1][1] - w[0][1]], [p[0] - w[0][0], p[1] - w[0][1]]);
+                let t = ((d[0] * e[0] + d[1] * e[1]) / (d[0] * d[0] + d[1] * d[1]).max(1e-12)).clamp(0.0, 1.0);
+                (e[0] - d[0] * t).hypot(e[1] - d[1] * t)
+            })
+            .fold(f64::MAX, f64::min)
+    };
     let ends_on = |i: usize| {
         let c = &centres[i];
-        [c.first(), c.last()].into_iter().flatten().filter(|&&p| {
-            centres.iter().enumerate().any(|(j, o)| j != i && off(o, p) <= road(&v[j]).settings.width * 0.5)
-        }).count()
+        [c.first(), c.last()]
+            .into_iter()
+            .flatten()
+            .filter(|&&p| centres.iter().enumerate().any(|(j, o)| j != i && off(o, p) <= road(&v[j]).settings.width * 0.5))
+            .count()
     };
 
     let keys = (0..v.len()).map(ends_on).collect::<Vec<_>>();
@@ -159,7 +174,12 @@ impl Tile {
         let points = self.polygon_world_points(elem).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>();
         let line = centre_line_handled(&points, &self.road_handles(elem), &self.road_sharp(elem, &points)).0;
         let every = (line.len() / 400).max(2);
-        let mut curve: Vec<_> = line.iter().step_by(every).chain(line.last()).map(|p| Float3::new(p[0] as f32, self.terrain_height(p[0] as f32, p[1] as f32), p[1] as f32)).collect();
+        let mut curve: Vec<_> = line
+            .iter()
+            .step_by(every)
+            .chain(line.last())
+            .map(|p| Float3::new(p[0] as f32, self.terrain_height(p[0] as f32, p[1] as f32), p[1] as f32))
+            .collect();
         curve.dedup();
         curve
     }
@@ -169,12 +189,17 @@ impl Tile {
     pub fn road_items_report(&self) -> String {
         let text = |t: &[u8]| String::from_utf8_lossy(t).into_owned();
         let bridge = self.road_items.iter().filter(|i| text(&i.text).contains("key=\"bridge_")).count();
-        let list = self.road_items.iter().filter(|i| text(&i.text).contains("key=\"bridge_")).map(|i| {
-            let t = text(&i.text);
-            let key = t.split("key=\"").nth(1).and_then(|k| k.split('"').next()).unwrap_or("");
-            let m = self.preview_payloads(&i.text).len();
-            format!("{key} at {:.1} {:.1} {:.1} parts {m}", i.position[0], i.position[1], i.position[2])
-        }).collect::<Vec<_>>();
+        let list = self
+            .road_items
+            .iter()
+            .filter(|i| text(&i.text).contains("key=\"bridge_"))
+            .map(|i| {
+                let t = text(&i.text);
+                let key = t.split("key=\"").nth(1).and_then(|k| k.split('"').next()).unwrap_or("");
+                let m = self.preview_payloads(&i.text).len();
+                format!("{key} at {:.1} {:.1} {:.1} parts {m}", i.position[0], i.position[1], i.position[2])
+            })
+            .collect::<Vec<_>>();
         let owned = self.project.layers.as_ref().map_or([0; 3], |l| {
             let count = |n: Option<Vec<&str>>| n.map_or(0, |v| v.iter().filter(|o| o.starts_with("road:")).count());
             [
@@ -188,7 +213,9 @@ impl Tile {
         let mut pieces = std::collections::BTreeMap::<String, usize>::new();
         for i in &self.road_items {
             let t = text(&i.text);
-            if t.starts_with("<UserInstanceGroup") && let Some(name) = t.split("name=\"").nth(1).and_then(|n| n.split('"').next()) {
+            if t.starts_with("<UserInstanceGroup")
+                && let Some(name) = t.split("name=\"").nth(1).and_then(|n| n.split('"').next())
+            {
                 *pieces.entry(name.to_owned()).or_default() += 1;
             }
         }
@@ -203,27 +230,37 @@ impl Tile {
         let Some(s) = p.layers.as_ref().and_then(|l| l.ground.as_ref()) else { return false };
         let Some(f) = p.ground.as_ref() else { return false };
         let border = p.border_m();
-        let (u, v) = ((x + border) * f64::from(f.width()) / (p.extent_x() + 2.0 * border), (z + border) * f64::from(f.height()) / (p.extent_z() + 2.0 * border));
+        let (u, v) = (
+            (x + border) * f64::from(f.width()) / (p.extent_x() + 2.0 * border),
+            (z + border) * f64::from(f.height()) / (p.extent_z() + 2.0 * border),
+        );
         u >= 0.0 && v >= 0.0 && s.owned_at("road:", u as u32, v as u32, |px| px[3] == 0)
     }
 
     /// An id for a new road.
     pub(super) fn next_road_id(&self) -> u32 {
         let doc = self.tscene().doc();
-        (0..doc.elements().len()).filter(|&e| self.is_road(e)).filter_map(|e| doc.get(e, "road_id")?.parse::<u32>().ok()).max().unwrap_or(0) + 1
+        (0..doc.elements().len()).filter(|&e| self.is_road(e)).filter_map(|e| doc.get(e, "road_id")?.parse::<u32>().ok()).max().unwrap_or(0)
+            + 1
     }
 
     /// A road's corners: its points marked `sharp`, and those it turns at by 90 degrees or more.
     fn road_sharp(&self, elem: usize, points: &[[f64; 2]]) -> Vec<bool> {
         let sc = self.tscene();
-        let marked = sc.polygon_points(elem).iter().map(|&p| sc.doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v))).collect::<Vec<_>>();
+        let marked = sc
+            .polygon_points(elem)
+            .iter()
+            .map(|&p| sc.doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v)))
+            .collect::<Vec<_>>();
         // A point turned by its handles is no corner unless marked one, however sharp the turn between its neighbours.
         let handles = self.road_handles(elem);
         let auto = sharp_points(points, &[]);
-        (0..points.len()).map(|i| {
-            let turned = handles.get(i).is_some_and(|h| h.iter().any(Option::is_some));
-            marked.get(i).copied().unwrap_or(false) || (auto[i] && !turned)
-        }).collect()
+        (0..points.len())
+            .map(|i| {
+                let turned = handles.get(i).is_some_and(|h| h.iter().any(Option::is_some));
+                marked.get(i).copied().unwrap_or(false) || (auto[i] && !turned)
+            })
+            .collect()
     }
 
     /// A road's handles where written (world x, z).
@@ -238,39 +275,79 @@ impl Tile {
         let doc = self.tscene().doc();
         let number = |e: usize, name: &str, or: f64| doc.get(e, name).and_then(|v| wce_formats::c_num::strtod(&v)).unwrap_or(or);
         let elems = self.road_elems();
-        let mut lines = elems.iter().map(|&e| self.polygon_world_points(e).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>()).collect::<Vec<_>>();
-        let centres = elems.iter().zip(&lines).map(|(&e, l)| centre_line_handled(l, &self.road_handles(e), &self.road_sharp(e, l)).0).collect::<Vec<_>>();
+        let mut lines = elems
+            .iter()
+            .map(|&e| self.polygon_world_points(e).iter().map(|p| [f64::from(p.x), f64::from(p.z)]).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let centres = elems
+            .iter()
+            .zip(&lines)
+            .map(|(&e, l)| centre_line_handled(l, &self.road_handles(e), &self.road_sharp(e, l)).0)
+            .collect::<Vec<_>>();
         snap_ends(&mut lines, &centres);
 
         // The water a road crosses is in what it is made from: a river or a lake moved makes it again.
         let sc = self.tscene();
-        let wet = |e: usize| sc.type_of(e) == "SplineRiverInstance" || (sc.type_of(e) == "SIMPLE_MESH_INSTANCE" && sc.doc().get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")));
-        let water = (0..sc.doc().elements().len()).filter(|&e| wet(e)).fold(0u64, |h, e| h.rotate_left(5) ^ hash_text(&String::from_utf8_lossy(&sc.element_text(e))));
-        elems.into_iter().zip(lines).map(|(e, line)| {
-            let ground = doc.get(e, "road_ground").and_then(|g| GROUND_TYPES.iter().find(|t| t.0 == g.as_str())).map_or([255, 96, 0], |t| t.1);
-            let settings = RoadSettings {
-                width: number(e, "road_width", 6.0).max(0.5), shoulder: number(e, "road_shoulder", 3.0).max(0.5), bump: number(e, "road_bump", 0.25),
-                max_grade: number(e, "road_max_grade", 10.0).clamp(0.5, 60.0), max_side: number(e, "road_max_side", 30.0).clamp(1.0, 80.0),
-                channel: (number(e, "road_group", 0.0) as usize).min(3) * 4 + (number(e, "road_variation", 0.0) as usize).min(3), ground,
-                bridges: doc.get(e, "road_bridges").is_none_or(|v| v != "false"), clearance: number(e, "road_bridge_clearance", 2.0).max(0.0),
-                feather: number(e, "road_feather", 2.0).max(0.0), seed: number(e, "road_seed", 1.0) as u32,
-            };
+        let wet = |e: usize| {
+            sc.type_of(e) == "SplineRiverInstance"
+                || (sc.type_of(e) == "SIMPLE_MESH_INSTANCE"
+                    && sc.doc().get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")))
+        };
+        let water = (0..sc.doc().elements().len())
+            .filter(|&e| wet(e))
+            .fold(0u64, |h, e| h.rotate_left(5) ^ hash_text(&String::from_utf8_lossy(&sc.element_text(e))));
+        elems
+            .into_iter()
+            .zip(lines)
+            .map(|(e, line)| {
+                let ground =
+                    doc.get(e, "road_ground").and_then(|g| GROUND_TYPES.iter().find(|t| t.0 == g.as_str())).map_or([255, 96, 0], |t| t.1);
+                let settings = RoadSettings {
+                    width: number(e, "road_width", 6.0).max(0.5),
+                    shoulder: number(e, "road_shoulder", 3.0).max(0.5),
+                    bump: number(e, "road_bump", 0.25),
+                    max_grade: number(e, "road_max_grade", 10.0).clamp(0.5, 60.0),
+                    max_side: number(e, "road_max_side", 30.0).clamp(1.0, 80.0),
+                    channel: (number(e, "road_group", 0.0) as usize).min(3) * 4 + (number(e, "road_variation", 0.0) as usize).min(3),
+                    ground,
+                    bridges: doc.get(e, "road_bridges").is_none_or(|v| v != "false"),
+                    clearance: number(e, "road_bridge_clearance", 2.0).max(0.0),
+                    feather: number(e, "road_feather", 2.0).max(0.0),
+                    seed: number(e, "road_seed", 1.0) as u32,
+                };
 
-            let sharp = self.road_sharp(e, &line);
-            let handles = self.road_handles(e);
-            let road_type = doc.get(e, "road_type").filter(|t| !t.is_empty()).unwrap_or_else(|| wce_tile::road_dirt::TYPE.to_owned());
-            let bridge = doc.get(e, "road_bridge").filter(|b| wce_walls::bridge::base(b).is_some()).unwrap_or_else(|| wce_walls::bridge::BASES[0].name.to_owned());
-            let fences = match doc.get(e, "road_fences").as_deref() {
-                Some("left") => [true, false],
-                Some("right") => [false, true],
-                Some("both") => [true, true],
-                _ => [false, false],
-            };
+                let sharp = self.road_sharp(e, &line);
+                let handles = self.road_handles(e);
+                let road_type = doc.get(e, "road_type").filter(|t| !t.is_empty()).unwrap_or_else(|| wce_tile::road_dirt::TYPE.to_owned());
+                let bridge = doc
+                    .get(e, "road_bridge")
+                    .filter(|b| wce_walls::bridge::base(b).is_some())
+                    .unwrap_or_else(|| wce_walls::bridge::BASES[0].name.to_owned());
+                let fences = match doc.get(e, "road_fences").as_deref() {
+                    Some("left") => [true, false],
+                    Some("right") => [false, true],
+                    Some("both") => [true, true],
+                    _ => [false, false],
+                };
 
-            let fence_damage = number(e, "road_fence_damage", 0.0).clamp(0.0, 1.0);
-            let signature = hash_text(&format!("{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {water:x}"));
-            Road { id: number(e, "road_id", 0.0) as u32, line, sharp, handles, settings, road_type, bridge, fences, fence_damage, signature }
-        }).collect()
+                let fence_damage = number(e, "road_fence_damage", 0.0).clamp(0.0, 1.0);
+                let signature = hash_text(&format!(
+                    "{ROAD_MAKING} {line:?} {sharp:?} {handles:?} {settings:?} {road_type} {bridge} {fences:?} {fence_damage} {water:x}"
+                ));
+                Road {
+                    id: number(e, "road_id", 0.0) as u32,
+                    line,
+                    sharp,
+                    handles,
+                    settings,
+                    road_type,
+                    bridge,
+                    fences,
+                    fence_damage,
+                    signature,
+                }
+            })
+            .collect()
     }
 
     /// Makes again the layers of the roads that changed, and takes out those of roads that went. Waits for an open stroke and for a line that
@@ -288,7 +365,9 @@ impl Tile {
         self.take_road_terrain(wait);
 
         let any = self.idx.valid && self.idx.type_names.iter().any(|t| t == ROAD_SPLINE);
-        let owned = |p: &wce_tile::tile_project::TileProject| p.layers.as_ref().and_then(|l| l.height.as_ref()).is_some_and(|s| s.layers.iter().any(|l| l.owner.starts_with("road:")));
+        let owned = |p: &wce_tile::tile_project::TileProject| {
+            p.layers.as_ref().and_then(|l| l.height.as_ref()).is_some_and(|s| s.layers.iter().any(|l| l.owner.starts_with("road:")))
+        };
         if !any && !owned(&self.project) {
             return;
         }
@@ -299,12 +378,19 @@ impl Tile {
         // Each road against what its layers were made from.
         let made = |id: u32| stacks.and_then(|s| s.layers.iter().find_map(|l| parse_owner(&l.owner).filter(|o| o.0 == id).map(|o| o.1)));
         let on_top = self.project.layers.as_ref().is_none_or(|l| {
-            l.height.as_ref().is_none_or(Stack::owned_on_top) && l.blend.as_ref().is_none_or(Stack::owned_on_top) && l.ground.as_ref().is_none_or(Stack::owned_on_top)
+            l.height.as_ref().is_none_or(Stack::owned_on_top)
+                && l.blend.as_ref().is_none_or(Stack::owned_on_top)
+                && l.ground.as_ref().is_none_or(Stack::owned_on_top)
         });
 
         // Their layers in the order they are made (each laid on those under it).
         let in_order = stacks.is_none_or(|s| {
-            let ranks = s.layers.iter().filter_map(|l| parse_owner(&l.owner)).filter_map(|o| roads.iter().position(|r| r.id == o.0)).collect::<Vec<_>>();
+            let ranks = s
+                .layers
+                .iter()
+                .filter_map(|l| parse_owner(&l.owner))
+                .filter_map(|o| roads.iter().position(|r| r.id == o.0))
+                .collect::<Vec<_>>();
             ranks.windows(2).all(|w| w[0] < w[1])
         });
         let stale = self.roads_stale || !on_top || !in_order || roads.iter().any(|r| made(r.id) != Some(r.signature));
@@ -357,15 +443,24 @@ impl Tile {
     /// The tile's water, as a road crossing it finds it (world metres): its rivers' ribbons as they are drawn, its lakes' water planes, and
     /// the sea at 0 m in a tile of the sea's sets (`sea`, `sea_coast`, `sea_coast_landing`, `river_mouth`: docs/re/water.md).
     pub(super) fn water_map(&self) -> WaterMap {
-        let rivers = self.river_ribbons().into_iter().map(|(_, samples)| samples.iter().map(|s| [s.x, s.z, s.y, s.width * 0.5]).collect()).collect();
+        let rivers =
+            self.river_ribbons().into_iter().map(|(_, samples)| samples.iter().map(|s| [s.x, s.z, s.y, s.width * 0.5]).collect()).collect();
         let sc = self.tscene();
-        let planes = sc.find_all("SIMPLE_MESH_INSTANCE").into_iter().filter(|&e| sc.doc().get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane"))).filter_map(|e| {
-            let m = self.model_of(e).filter(|m| m.ok && m.resolved)?;
-            let w = self.world_matrix(e);
-            let corner = |x: f32, z: f32| { let p = w.transform_point(Float3::new(x, 0.0, z)); [f64::from(p.x), f64::from(p.z)] };
-            let y = f64::from(w.transform_point(Float3::new(0.0, 0.0, 0.0)).y);
-            Some(([corner(m.bmin.x, m.bmin.z), corner(m.bmax.x, m.bmin.z), corner(m.bmax.x, m.bmax.z), corner(m.bmin.x, m.bmax.z)], y))
-        }).collect();
+        let planes = sc
+            .find_all("SIMPLE_MESH_INSTANCE")
+            .into_iter()
+            .filter(|&e| sc.doc().get(e, "key").is_some_and(|k| k.to_lowercase().contains("water_plane")))
+            .filter_map(|e| {
+                let m = self.model_of(e).filter(|m| m.ok && m.resolved)?;
+                let w = self.world_matrix(e);
+                let corner = |x: f32, z: f32| {
+                    let p = w.transform_point(Float3::new(x, 0.0, z));
+                    [f64::from(p.x), f64::from(p.z)]
+                };
+                let y = f64::from(w.transform_point(Float3::new(0.0, 0.0, 0.0)).y);
+                Some(([corner(m.bmin.x, m.bmin.z), corner(m.bmax.x, m.bmin.z), corner(m.bmax.x, m.bmax.z), corner(m.bmin.x, m.bmax.z)], y))
+            })
+            .collect();
 
         let dir = self.project.dir.to_string_lossy().replace('\\', "/").to_lowercase();
         let set = dir.split("/battle/").nth(1).and_then(|r| r.split('/').next()).unwrap_or_default().to_owned();
@@ -382,7 +477,9 @@ impl Tile {
         p.load_ground()?;
         let unit = p.unit_scale;
         let (border, ex, ez, mx, mz) = (p.border_m(), p.extent_x(), p.extent_z(), p.mpp_x(), p.mpp_z());
-        let (Some(hf), Some(bf), Some(gf)) = (p.height.as_ref(), p.blend.as_ref(), p.ground.as_ref()) else { return Err("the tile has no height map".to_owned()) };
+        let (Some(hf), Some(bf), Some(gf)) = (p.height.as_ref(), p.blend.as_ref(), p.ground.as_ref()) else {
+            return Err("the tile has no height map".to_owned());
+        };
         let dims = [(hf.width(), hf.height()), (bf.width(), bf.height()), (gf.width(), gf.height())];
         let layers = p.layers.get_or_insert_with(TerrainLayers::default);
         let new_ids = roads.iter().map(|_| [layers.new_id(), layers.new_id(), layers.new_id()]).collect::<Vec<_>>();
@@ -390,7 +487,8 @@ impl Tile {
         let blend = layers.blend.get_or_insert_with(|| Stack::new(bf)).clone();
         let ground = layers.ground.get_or_insert_with(|| Stack::new(gf)).clone();
         let before = (height.clone(), blend.clone(), ground.clone());
-        let input = TerrainInput { roads: roads.to_vec(), water, new_ids, height, blend, ground, dims, frame: (unit, border, ex, ez, mx, mz) };
+        let input =
+            TerrainInput { roads: roads.to_vec(), water, new_ids, height, blend, ground, dims, frame: (unit, border, ex, ez, mx, mz) };
         let job = super::jobs::Job::spawn("road terrain", move || road_terrain(input));
         self.road_terrain_job = Some(RoadTerrainJob { job, all, before });
         Ok(())
@@ -414,7 +512,10 @@ impl Tile {
         };
 
         let p = &mut self.project;
-        let (Some(hf), Some(bf), Some(gf), Some(layers)) = (p.height.as_mut(), p.blend.as_mut(), p.ground.as_mut(), p.layers.as_mut()) else { return };
+        let (Some(hf), Some(bf), Some(gf), Some(layers)) = (p.height.as_mut(), p.blend.as_mut(), p.ground.as_mut(), p.layers.as_mut())
+        else {
+            return;
+        };
         let (Some(h0), Some(b0), Some(g0)) = (layers.height.as_ref(), layers.blend.as_ref(), layers.ground.as_ref()) else { return };
         if !(h0.unchanged_since(&j.before.0) && b0.unchanged_since(&j.before.1) && g0.unchanged_since(&j.before.2)) {
             self.roads_stale = true;
@@ -423,7 +524,11 @@ impl Tile {
 
         // What changed of each map: where the roads' layers were and are.
         fn roads_rect<K: wce_tile::terrain_layers::Kind>(old: &Stack<K>, new: &Stack<K>) -> Option<[u32; 4]> {
-            old.layers.iter().chain(&new.layers).filter(|l| l.owner.starts_with("road:")).filter_map(|l| l.extent())
+            old.layers
+                .iter()
+                .chain(&new.layers)
+                .filter(|l| l.owner.starts_with("road:"))
+                .filter_map(|l| l.extent())
                 .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])])
         }
 
@@ -562,7 +667,14 @@ impl Tile {
     fn building_levels(&self, key: &str) -> u32 {
         let Some(files) = self.files.as_deref() else { return 1 };
         let folder = wce_walls::building::folder(key);
-        files.list(&folder, ".rigid_model_v2").iter().filter(|p| wce_walls::building::is_piece_mesh(p)).map(|p| wce_walls::pieces::level_of(p)).max().unwrap_or(1).max(1)
+        files
+            .list(&folder, ".rigid_model_v2")
+            .iter()
+            .filter(|p| wce_walls::building::is_piece_mesh(p))
+            .map(|p| wce_walls::pieces::level_of(p))
+            .max()
+            .unwrap_or(1)
+            .max(1)
     }
 
     /// A bridge base, turned and measured (`wce_walls::bridge::prepare`), read once.
@@ -571,11 +683,13 @@ impl Tile {
             return b.clone();
         }
 
-        let made = self.files.as_deref().and_then(|f| wce_walls::building::BuildingFiles::read_files(f, key).ok()).and_then(|b| match wce_walls::bridge::prepare(&b) {
-            Ok(p) => Some(std::sync::Arc::new(p)),
-            Err(err) => {
-                wce_foundation::log::warn(format!("bridge base {key}: {err}"));
-                None
+        let made = self.files.as_deref().and_then(|f| wce_walls::building::BuildingFiles::read_files(f, key).ok()).and_then(|b| {
+            match wce_walls::bridge::prepare(&b) {
+                Ok(p) => Some(std::sync::Arc::new(p)),
+                Err(err) => {
+                    wce_foundation::log::warn(format!("bridge base {key}: {err}"));
+                    None
+                }
             }
         });
         self.bridge_bases.insert(key.to_owned(), made.clone());
@@ -585,12 +699,16 @@ impl Tile {
     /// A road's generated buildings (its bridges' pieces): each one's frame (as drawn) and key.
     pub(crate) fn road_buildings(&self, elem: usize) -> Vec<(wce_foundation::math::Float4x4, String)> {
         let unit = self.unit();
-        self.road_items.iter().filter(|i| i.road == elem).filter_map(|i| {
-            let key = i.building.clone()?;
-            let [x, y, z] = i.position;
-            let wt = wce_tile::world_transform::WorldTransform { position: Double3::new(x, y, z), rotation: Double3x3::default() };
-            Some((super::index::matrix_of(&wt, unit, Some(Double3::new(1.0 / unit, 1.0 / unit, 1.0 / unit))), key))
-        }).collect()
+        self.road_items
+            .iter()
+            .filter(|i| i.road == elem)
+            .filter_map(|i| {
+                let key = i.building.clone()?;
+                let [x, y, z] = i.position;
+                let wt = wce_tile::world_transform::WorldTransform { position: Double3::new(x, y, z), rotation: Double3x3::default() };
+                Some((super::index::matrix_of(&wt, unit, Some(Double3::new(1.0 / unit, 1.0 / unit, 1.0 / unit))), key))
+            })
+            .collect()
     }
 
     /// The roads with generated buildings.
@@ -603,7 +721,9 @@ impl Tile {
     /// Whether the roads have generated bridges: an export makes them as walls are made.
     #[must_use]
     pub fn has_road_bridges(&self) -> bool {
-        self.road_items.iter().any(|i| i.export.as_ref().is_some_and(|t| t.starts_with(format!("<{}", wce_walls::bridge::BRIDGE_SPAN).as_bytes())))
+        self.road_items
+            .iter()
+            .any(|i| i.export.as_ref().is_some_and(|t| t.starts_with(format!("<{}", wce_walls::bridge::BRIDGE_SPAN).as_bytes())))
     }
 
     fn road_elems(&self) -> Vec<usize> {
@@ -618,29 +738,38 @@ impl Tile {
         }
 
         // The type's variants of its pieces, those it has (the base has none).
-        let variants = VARIANTS.iter().filter_map(|&(name, _)| {
-            let k = key(road_type, name);
-            lib.get(&k)?;
-            let prefab = lib.load(&k).map_err(|e| wce_foundation::log::warn(format!("roads: {k}: {e}"))).ok()?;
-            let piece = read(&prefab.group_text).map_err(|e| wce_foundation::log::warn(format!("roads: {k} is not a road piece: {e}"))).ok()?;
-            Some((name, piece, k, prefab.children_text))
-        }).collect::<Vec<_>>();
+        let variants = VARIANTS
+            .iter()
+            .filter_map(|&(name, _)| {
+                let k = key(road_type, name);
+                lib.get(&k)?;
+                let prefab = lib.load(&k).map_err(|e| wce_foundation::log::warn(format!("roads: {k}: {e}"))).ok()?;
+                let piece =
+                    read(&prefab.group_text).map_err(|e| wce_foundation::log::warn(format!("roads: {k} is not a road piece: {e}"))).ok()?;
+                Some((name, piece, k, prefab.children_text))
+            })
+            .collect::<Vec<_>>();
 
-        PIECES.iter().filter_map(|&name| {
-            let found = [key(road_type, name), key(BASE, name)].into_iter().find(|k| lib.get(k).is_some());
-            let Some(k) = found else {
-                wce_foundation::log::warn(format!("roads: no {} piece for the road type {road_type}, nor a base one", name));
-                return None;
-            };
+        PIECES
+            .iter()
+            .filter_map(|&name| {
+                let found = [key(road_type, name), key(BASE, name)].into_iter().find(|k| lib.get(k).is_some());
+                let Some(k) = found else {
+                    wce_foundation::log::warn(format!("roads: no {} piece for the road type {road_type}, nor a base one", name));
+                    return None;
+                };
 
-            if k != key(road_type, name) {
-                wce_foundation::log::warn(format!("roads: the road type {road_type} has no {name}: the base's is laid (guides only)"));
-            }
+                if k != key(road_type, name) {
+                    wce_foundation::log::warn(format!("roads: the road type {road_type} has no {name}: the base's is laid (guides only)"));
+                }
 
-            let prefab = lib.load(&k).map_err(|e| wce_foundation::log::warn(format!("roads: {k}: {e}"))).ok()?;
-            let piece = read(&prefab.group_text).map_err(|e| wce_foundation::log::warn(format!("roads: {k} is not a road piece: {e}"))).ok()?;
-            Some((name, piece, k, prefab.children_text))
-        }).chain(variants).collect()
+                let prefab = lib.load(&k).map_err(|e| wce_foundation::log::warn(format!("roads: {k}: {e}"))).ok()?;
+                let piece =
+                    read(&prefab.group_text).map_err(|e| wce_foundation::log::warn(format!("roads: {k} is not a road piece: {e}"))).ok()?;
+                Some((name, piece, k, prefab.children_text))
+            })
+            .chain(variants)
+            .collect()
     }
 
     /// Puts the instances along the roads on the scene.
@@ -746,7 +875,13 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
     blend.layers.retain(|l| alive(&l.owner));
     ground.layers.retain(|l| alive(&l.owner));
     // The owned layers on top, the roads' in the order they are made, the kit walls' over them as they were (kit_walls.rs).
-    let rank = |o: &str| if o.starts_with(super::kit_walls::OWNER) { usize::MAX } else { parse_owner(o).and_then(|(id, _)| roads.iter().position(|r| r.id == id)).unwrap_or(0) };
+    let rank = |o: &str| {
+        if o.starts_with(super::kit_walls::OWNER) {
+            usize::MAX
+        } else {
+            parse_owner(o).and_then(|(id, _)| roads.iter().position(|r| r.id == id)).unwrap_or(0)
+        }
+    };
     height.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
     blend.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
     ground.layers.sort_by_key(|l| (!l.owner.is_empty(), rank(&l.owner)));
@@ -778,7 +913,12 @@ fn road_terrain(i: TerrainInput) -> (Stack<Height>, Stack<Blend>, Stack<TerrainG
         let b = strip.bounds();
         let rect = |pp: (f64, f64), off: f64, w: u32, h: u32| {
             let lo = |v: f64, n: u32| (v.floor().max(0.0) as u32).min(n);
-            [lo((b[0] + off) * pp.0, w), lo((b[1] + off) * pp.1, h), lo(((b[2] + off) * pp.0).ceil(), w), lo(((b[3] + off) * pp.1).ceil(), h)]
+            [
+                lo((b[0] + off) * pp.0, w),
+                lo((b[1] + off) * pp.1, h),
+                lo(((b[2] + off) * pp.0).ceil(), w),
+                lo(((b[3] + off) * pp.1).ceil(), h),
+            ]
         };
 
         let mut writes = vec![];
@@ -853,14 +993,14 @@ pub(crate) struct ItemsMade {
 /// The instances along the roads: their type's pieces, bent to them, their crossings' hints, and the bridges over their gaps, made from
 /// their bases (their files given back, to go among the generated ones). Off the editor's thread.
 fn road_items(i: ItemsInput) -> ItemsMade {
-wce_foundation::wce_prof!("tile.make_road_items");
-let ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, levels, making } = i;
-let (unit, border, ex, ez, mx, mz) = frame;
-let mut items = vec![];
-let mut made = ItemsMade::default();
+    wce_foundation::wce_prof!("tile.make_road_items");
+    let ItemsInput { roads, water, height, hdims, frame, ground, pieces, bases, levels, making } = i;
+    let (unit, border, ex, ez, mx, mz) = frame;
+    let mut items = vec![];
+    let mut made = ItemsMade::default();
 
-// Each road's line and bridges first: where roads meet is found on all their lines.
-let mut planned = vec![];
+    // Each road's line and bridges first: where roads meet is found on all their lines.
+    let mut planned = vec![];
     let mut decks = vec![];
     let mut earlier: Vec<Strip> = vec![];
     for &(elem, ref road) in &roads {
@@ -871,7 +1011,9 @@ let mut planned = vec![];
         // Laid as the terrain pass lays it (`make_roads`): on what lies below its layer, sampled the same way, the earlier roads taken
         // for ground with no bump. Laid another way, a bridge's deck and the road it lands on were not at the same height (user
         // 2026-11-08: its ends stood off the ground).
-        let below = height.as_ref().and_then(|s| s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|o| o.0 == road.id)).map(|l| (s, l.id)));
+        let below = height
+            .as_ref()
+            .and_then(|s| s.layers.iter().find(|l| parse_owner(&l.owner).is_some_and(|o| o.0 == road.id)).map(|l| (s, l.id)));
         let (w, h) = hdims;
         let under = |x: u32, y: u32| match below {
             Some((s, id)) => {
@@ -891,13 +1033,21 @@ let mut planned = vec![];
         let mut spans = vec![];
         // Each crossing's AI hint, as vanilla's bridges and fords have one (`road_layout::crossing_hint`), for an export.
         let width = road.settings.width;
-        let crossings = plan.gaps.iter().map(|&g| (g, width * 0.5 + wce_tile::road_layout::HINT_SIDE))
-            .chain(plan.fords.iter().map(|&g| (g, (width * 0.5 + wce_tile::road_layout::HINT_SIDE).max(wce_tile::road_layout::FORD_HINT_HALF))));
+        let crossings = plan.gaps.iter().map(|&g| (g, width * 0.5 + wce_tile::road_layout::HINT_SIDE)).chain(
+            plan.fords.iter().map(|&g| (g, (width * 0.5 + wce_tile::road_layout::HINT_SIDE).max(wce_tile::road_layout::FORD_HINT_HALF))),
+        );
         for ((a, b), half) in crossings {
             let ends = wce_tile::road_layout::HINT_ENDS;
             let outline = wce_tile::road_layout::strip_outline(&plan.line, st.of_sample(a) - ends, st.of_sample(b) + ends, half, unit);
             match wce_tile::road_layout::crossing_hint(&outline) {
-                Ok(hint) => items.push(RoadItem { road: elem, text: vec![], position: [0.0; 3], meshes: vec![], export: Some(hint), building: None }),
+                Ok(hint) => items.push(RoadItem {
+                    road: elem,
+                    text: vec![],
+                    position: [0.0; 3],
+                    meshes: vec![],
+                    export: Some(hint),
+                    building: None,
+                }),
                 Err(why) => wce_foundation::log::warn(format!("road {}: {why}", road.id)),
             }
         }
@@ -906,9 +1056,24 @@ let mut planned = vec![];
         for &(a, b, _) in &plan.decks {
             for side in [-1.0, 1.0] {
                 let half = width * 0.5;
-                let outline = wce_tile::road_layout::side_outline(&plan.line, st.of_sample(a), st.of_sample(b), half + NOGO_NEAR, half + NOGO_FAR, side, unit);
+                let outline = wce_tile::road_layout::side_outline(
+                    &plan.line,
+                    st.of_sample(a),
+                    st.of_sample(b),
+                    half + NOGO_NEAR,
+                    half + NOGO_FAR,
+                    side,
+                    unit,
+                );
                 match wce_tile::road_layout::nogo_region(&outline) {
-                    Ok(nogo) => items.push(RoadItem { road: elem, text: vec![], position: [0.0; 3], meshes: vec![], export: Some(nogo), building: None }),
+                    Ok(nogo) => items.push(RoadItem {
+                        road: elem,
+                        text: vec![],
+                        position: [0.0; 3],
+                        meshes: vec![],
+                        export: Some(nogo),
+                        building: None,
+                    }),
                     Err(why) => wce_foundation::log::warn(format!("road {}: {why}", road.id)),
                 }
             }
@@ -920,7 +1085,8 @@ let mut planned = vec![];
             // Rim to rim, DECK_LIFT over the road: the deck's platform out of a unit's step from the ground, so that units go on and off by
             // its ground platforms (`wce_walls::bridge::GROUND_PLATFORM`, from its ends down to the road), as Rome II's bridges have it
             // (user 2026-11-08: lying on the road, units stepped onto it anywhere and the game would not path across).
-            let path = (a..=b).map(|i| [plan.line[i][0] * unit, (plan.heights[i] + DECK_LIFT) * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
+            let path =
+                (a..=b).map(|i| [plan.line[i][0] * unit, (plan.heights[i] + DECK_LIFT) * unit, plan.line[i][1] * unit]).collect::<Vec<_>>();
             decks.push((elem, road.id, road.bridge.clone(), road.settings.width * unit, path));
         }
 
@@ -928,21 +1094,24 @@ let mut planned = vec![];
     }
 
     // The pieces of each road's type, its measures, and how far its junctions reach.
-    let kit = planned.iter().map(|(_, road, _, _)| {
-        let pieces = pieces.get(&road.road_type).map_or(&[][..], Vec::as_slice);
-        let arm = |name: &str| pieces.iter().find(|p| p.0 == name).and_then(|p| p.1.arms.first()).map(|a| a.length);
-        let defaults = Measures::default();
-        let measures = Measures {
-            straight: arm("straight").unwrap_or(defaults.straight),
-            end: arm("end").unwrap_or(defaults.end),
-            corner_arm: arm("corner").unwrap_or(defaults.corner_arm),
-        };
+    let kit = planned
+        .iter()
+        .map(|(_, road, _, _)| {
+            let pieces = pieces.get(&road.road_type).map_or(&[][..], Vec::as_slice);
+            let arm = |name: &str| pieces.iter().find(|p| p.0 == name).and_then(|p| p.1.arms.first()).map(|a| a.length);
+            let defaults = Measures::default();
+            let measures = Measures {
+                straight: arm("straight").unwrap_or(defaults.straight),
+                end: arm("end").unwrap_or(defaults.end),
+                corner_arm: arm("corner").unwrap_or(defaults.corner_arm),
+            };
 
-        let width = pieces.iter().find(|p| p.0 == "straight").map_or(wce_tile::road_pieces::WIDTH, |p| p.1.width).max(1e-6);
-        let scale = road.settings.width / width;
-        let half = arm("x_junction").or_else(|| arm("t_junction")).unwrap_or(defaults.corner_arm) * scale;
-        (pieces, measures, scale, half)
-    }).collect::<Vec<_>>();
+            let width = pieces.iter().find(|p| p.0 == "straight").map_or(wce_tile::road_pieces::WIDTH, |p| p.1.width).max(1e-6);
+            let scale = road.settings.width / width;
+            let half = arm("x_junction").or_else(|| arm("t_junction")).unwrap_or(defaults.corner_arm) * scale;
+            (pieces, measures, scale, half)
+        })
+        .collect::<Vec<_>>();
 
     let lines = planned.iter().map(|p| p.2.line.clone()).collect::<Vec<_>>();
     let meet = junctions(&lines, &kit.iter().map(|k| k.3).collect::<Vec<_>>());
@@ -951,7 +1120,15 @@ let mut planned = vec![];
     }
 
     // Each road's pieces, from end to end, but over its bridges and the junctions of other roads.
-    let end_of = |p: [f64; 2], joined: bool| if joined { End::Joined } else if p[0] < 1.0 || p[1] < 1.0 || p[0] > ex - 1.0 || p[1] > ez - 1.0 { End::Edge } else { End::Free };
+    let end_of = |p: [f64; 2], joined: bool| {
+        if joined {
+            End::Joined
+        } else if p[0] < 1.0 || p[1] < 1.0 || p[0] > ex - 1.0 || p[1] > ez - 1.0 {
+            End::Edge
+        } else {
+            End::Free
+        }
+    };
     let terrain = |x: f64, z: f64| ground.height_at(x, z) / unit;
     for (r, ((elem, road, plan, spans), (pieces, measures, scale, _))) in planned.iter().zip(&kit).enumerate() {
         if pieces.is_empty() {
@@ -971,7 +1148,14 @@ let mut planned = vec![];
             let n = (((to - from) / measures.straight).round() as usize).max(1);
             for k in 0..n {
                 let (s0, s1) = (from + (to - from) * k as f64 / n as f64, from + (to - from) * (k + 1) as f64 / n as f64);
-                holds.push(Hold { from: s0, to: s1, laid: Some(wce_tile::road_layout::Laid { piece: "ford", frame: wce_tile::road_layout::Frame::Along { from: s0, to: s1 } }) });
+                holds.push(Hold {
+                    from: s0,
+                    to: s1,
+                    laid: Some(wce_tile::road_layout::Laid {
+                        piece: "ford",
+                        frame: wce_tile::road_layout::Frame::Along { from: s0, to: s1 },
+                    }),
+                });
             }
         }
 
@@ -987,7 +1171,9 @@ let mut planned = vec![];
             // Their buildings (the banks) tilted to the ground under them.
             let dress = wce_tile::road_layout::Dress { tilt: Some(wce_tile::road_layout::PIECE_TILT), attrs: None };
             match fit_dressed(p, children, key, l, &Site { line: &plan.line, width, unit, ground: &terrain }, &dress) {
-                Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
+                Ok(f) => {
+                    items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None })
+                }
                 Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
             }
         }
@@ -1032,9 +1218,11 @@ let mut planned = vec![];
 
             // A fence standing on a road (its own, past a sharp turn or where it crosses itself, or another) is left out (user 2026-11-08:
             // the inside of a sharp corner's fences ran on across the road).
-            let on_road = |p: [f64; 2]| planned.iter().any(|(_, other, op, _)| {
-                wce_tile::road_layout::nearest(&op.line, p).1 < other.settings.width * 0.5 + wce_tile::road_layout::FENCE_OUT * 0.5
-            });
+            let on_road = |p: [f64; 2]| {
+                planned.iter().any(|(_, other, op, _)| {
+                    wce_tile::road_layout::nearest(&op.line, p).1 < other.settings.width * 0.5 + wce_tile::road_layout::FENCE_OUT * 0.5
+                })
+            };
             let mut k = 0u64;
             for (fence_line, runs) in &lines {
                 let fst = Stations::new(fence_line);
@@ -1049,7 +1237,10 @@ let mut planned = vec![];
                     let damage = |_: usize, part: &wce_tile::road_pieces::Part| {
                         let max = levels.get(&part.key).copied().unwrap_or(1);
                         let roll = |salt: u64| {
-                            let mut h = u64::from(road.settings.seed).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(road.id).rotate_left(17) ^ n.wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ salt;
+                            let mut h = u64::from(road.settings.seed).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                                ^ u64::from(road.id).rotate_left(17)
+                                ^ n.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+                                ^ salt;
                             h ^= h >> 31;
                             h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
                             h ^= h >> 29;
@@ -1065,8 +1256,22 @@ let mut planned = vec![];
                     };
 
                     let dress = wce_tile::road_layout::Dress { tilt: Some(wce_tile::road_layout::FENCE_TILT), attrs: Some(&damage) };
-                    match wce_tile::road_layout::fit_dressed(p, children, key, l, &Site { line: fence_line, width: p.width, unit, ground: &terrain }, &dress) {
-                        Ok(f) => items.push(RoadItem { road: *elem, text: f.text, position: f.position, meshes: vec![], export: None, building: None }),
+                    match wce_tile::road_layout::fit_dressed(
+                        p,
+                        children,
+                        key,
+                        l,
+                        &Site { line: fence_line, width: p.width, unit, ground: &terrain },
+                        &dress,
+                    ) {
+                        Ok(f) => items.push(RoadItem {
+                            road: *elem,
+                            text: f.text,
+                            position: f.position,
+                            meshes: vec![],
+                            export: None,
+                            building: None,
+                        }),
                         Err(why) => wce_foundation::log::warn(format!("road {}: {key}: {why}", road.id)),
                     }
                 }
@@ -1093,7 +1298,18 @@ type Bases = (Option<std::sync::Arc<wce_walls::bridge::Prepared>>, Option<std::s
 /// its pieces' files put among the generated ones under keys of this making, drawn as they are; an export writes the bridge's span
 /// instead, to be made again there (`wce_walls::export::lower_walls`).
 #[allow(clippy::too_many_arguments, reason = "what a bridge is made from")]
-fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 3]>, (prepared, end): Bases, (making, n): (u64, usize), ground: &super::jobs::Ground, unit: f64, made_files: &mut ItemsMade) -> Vec<RoadItem> {
+fn bridge_items(
+    elem: usize,
+    road: u32,
+    base: &str,
+    width: f64,
+    path: Vec<[f64; 3]>,
+    (prepared, end): Bases,
+    (making, n): (u64, usize),
+    ground: &super::jobs::Ground,
+    unit: f64,
+    made_files: &mut ItemsMade,
+) -> Vec<RoadItem> {
     let Some(prepared) = prepared else {
         wce_foundation::log::warn(format!("road {road}: the bridge base {base} is in no pack: no bridge"));
         return vec![];
@@ -1135,7 +1351,6 @@ fn bridge_items(elem: usize, road: u32, base: &str, width: f64, path: Vec<[f64; 
     out
 }
 
-
 /// The version of how roads are made, in every road's signature: a road's layers are saved with the tile and made again only when its
 /// signature changes, so a change to how they are made bumps this, or a tile keeps the old terrain (user 2026-11-08: the bridges' fixes
 /// did not show on a tile saved before them).
@@ -1157,7 +1372,13 @@ fn level_past_rims(line: &[[f64; 2]], mut heights: Vec<f64>, gaps: &[(usize, usi
         let (sa, sb, ha, hb) = (st.of_sample(a), st.of_sample(b), heights[a], heights[b]);
         for (i, h) in heights.iter_mut().enumerate() {
             let s = st.of_sample(i);
-            let (off, rim) = if s < sa { (sa - s, ha) } else if s > sb { (s - sb, hb) } else { continue };
+            let (off, rim) = if s < sa {
+                (sa - s, ha)
+            } else if s > sb {
+                (s - sb, hb)
+            } else {
+                continue;
+            };
             let want = rim - (off - LEVEL_PAST_RIM).max(0.0) * slope;
             *h = h.max(want);
         }
@@ -1194,7 +1415,13 @@ fn road_strip(plan: &Plan, settings: &RoadSettings) -> Strip {
         let (sa, sb) = (st.of_sample(a), st.of_sample(b));
         for i in 0..plan.line.len() {
             let s = st.of_sample(i);
-            let off = if s < sa { sa - s } else if s > sb { s - sb } else { 0.0 };
+            let off = if s < sa {
+                sa - s
+            } else if s > sb {
+                s - sb
+            } else {
+                0.0
+            };
             // Under the deck the ground stays at the road's height (the deck DECK_LIFT over it), the bank beside it held back; and under the
             // end pieces too, level with the road across their whole width and past it (user 2026-11-08: the ground fell away towards one
             // side of a ramp's foot, and units got on and off only by the corner where it met the ground).

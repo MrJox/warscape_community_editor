@@ -123,7 +123,6 @@ pub(crate) struct TreeList {
 }
 
 impl Tile {
-
     /// The matrix an instance's model is drawn with: [`Tile::world_matrix`], tilted to the terrain for a tree.
     pub fn drawn_matrix(&self, elem: usize) -> Float4x4 {
         let w = self.world_matrix(elem);
@@ -182,7 +181,8 @@ impl Tile {
                 }
             }
 
-            for dir in [self.project.dir.clone(), self.project.dir.join(CARRIED_DIR)].into_iter().filter_map(|d| std::fs::read_dir(d).ok()) {
+            for dir in [self.project.dir.clone(), self.project.dir.join(CARRIED_DIR)].into_iter().filter_map(|d| std::fs::read_dir(d).ok())
+            {
                 for entry in dir.flatten() {
                     let file = entry.file_name().to_string_lossy().to_lowercase();
                     if let Some(name) = file.strip_suffix(TREE_LIST_EXTENSION).or_else(|| file.strip_suffix(OLD_TREE_LIST_EXTENSION)) {
@@ -214,9 +214,13 @@ impl Tile {
     fn packed_tree_list(&self, name: &str) -> Vec<ListTree> {
         let Some((bytes, old)) = self.read_tree_list(name) else { return vec![] };
         let decoded = if old {
-            OldList::parse(OldListKind::Tree, &bytes).map(|list| old_list_trees(&list)).map_err(|error| format!("{name}{OLD_TREE_LIST_EXTENSION}: {error}"))
+            OldList::parse(OldListKind::Tree, &bytes)
+                .map(|list| old_list_trees(&list))
+                .map_err(|error| format!("{name}{OLD_TREE_LIST_EXTENSION}: {error}"))
         } else {
-            TreeListFile::decode(&mut Cursor::new(bytes), &None).map(|file| list_trees(&file)).map_err(|error| format!("{name}{TREE_LIST_EXTENSION}: {error}"))
+            TreeListFile::decode(&mut Cursor::new(bytes), &None)
+                .map(|file| list_trees(&file))
+                .map_err(|error| format!("{name}{TREE_LIST_EXTENSION}: {error}"))
         };
 
         let mut trees = decoded.unwrap_or_else(|error| {
@@ -259,7 +263,11 @@ impl Tile {
     /// when the kit has one, else `default`). None without the kit's parameters.
     pub fn tree_category(&self) -> Option<String> {
         let params = self.generation_params()?;
-        let want = if self.display.tree_category.is_empty() { self.look.climate.to_lowercase() } else { self.display.tree_category.to_lowercase() };
+        let want = if self.display.tree_category.is_empty() {
+            self.look.climate.to_lowercase()
+        } else {
+            self.display.tree_category.to_lowercase()
+        };
         Some(if params.category(&want).is_some() { want } else { DEFAULT_TREE_LIST.to_owned() })
     }
 
@@ -428,7 +436,8 @@ impl Tile {
             for &e in &self.instances {
                 if sc.type_of(e) == "VEGETATION_INSTANCE" {
                     let p = self.world_position(e);
-                    (p.x.to_bits(), p.y.to_bits(), p.z.to_bits(), doc.get(e, "key"), doc.get(e, "scale"), doc.get(e, "surface_mode")).hash(&mut trees);
+                    (p.x.to_bits(), p.y.to_bits(), p.z.to_bits(), doc.get(e, "key"), doc.get(e, "scale"), doc.get(e, "surface_mode"))
+                        .hash(&mut trees);
                 }
             }
 
@@ -497,7 +506,10 @@ impl Tile {
     /// The static instances' model entities with the model of their key as the shown list's climate converts it.
     fn update_static_tree_models(&mut self, scene: &mut RenderScene) {
         for &e in &self.instances.clone() {
-            if self.first_entity.get(e).is_none_or(|&f| f == 0) || self.entity_count[e] != 1 || self.tscene().type_of(e) != "VEGETATION_INSTANCE" {
+            if self.first_entity.get(e).is_none_or(|&f| f == 0)
+                || self.entity_count[e] != 1
+                || self.tscene().type_of(e) != "VEGETATION_INSTANCE"
+            {
                 continue;
             }
 
@@ -548,7 +560,11 @@ impl Tile {
                 continue;
             }
 
-            let y = if t.freeform || !self.project.has_height() { t.y / unit } else { (self.project.height_at(f64::from(t.x), f64::from(z)) / self.unit()) as f32 };
+            let y = if t.freeform || !self.project.has_height() {
+                t.y / unit
+            } else {
+                (self.project.height_at(f64::from(t.x), f64::from(z)) / self.unit()) as f32
+            };
             let at = translation(Float3::new(t.x, y, z));
             let turn = rotation_y(-t.yaw) * scaling(t.scale / unit);
             let w = at * self.terrain_tilt(t.x, z) * turn;
@@ -685,7 +701,15 @@ fn list_of_generated(generated: &[vegetation::ListTree]) -> Vec<ListTree> {
         for t in items {
             rand = rand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
             let scale = f32::from(t.scale_byte) / 127.0;
-            trees.push(ListTree { model: model.clone(), x: t.x, y: t.y, z: t.z, scale, freeform: false, yaw: (rand >> 16) as f32 * YAW_STEP });
+            trees.push(ListTree {
+                model: model.clone(),
+                x: t.x,
+                y: t.y,
+                z: t.z,
+                scale,
+                freeform: false,
+                yaw: (rand >> 16) as f32 * YAW_STEP,
+            });
         }
     }
 
@@ -747,7 +771,15 @@ fn old_list_trees(list: &OldList) -> Vec<ListTree> {
         for i in *first as usize..end.min(list.len()) {
             rand = rand.wrapping_mul(0x343fd).wrapping_add(0x269ec3);
             let [x, y, z] = list.position(i);
-            trees.push(ListTree { model: model.clone(), x, y, z, scale: list.scale(i).unwrap_or(1.0), freeform: false, yaw: (rand >> 16) as f32 * YAW_STEP });
+            trees.push(ListTree {
+                model: model.clone(),
+                x,
+                y,
+                z,
+                scale: list.scale(i).unwrap_or(1.0),
+                freeform: false,
+                yaw: (rand >> 16) as f32 * YAW_STEP,
+            });
         }
     }
 

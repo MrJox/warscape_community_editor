@@ -59,7 +59,6 @@ fn collect(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Blob>) -> std::i
 }
 
 impl TileFiles {
-
     /// The files of a folder (not read yet: blobs that point at the files), without an entry.
     ///
     /// # Errors

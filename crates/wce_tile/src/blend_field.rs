@@ -202,7 +202,6 @@ pub struct BlendField {
 }
 
 impl BlendField {
-
     /// # Errors
     ///
     /// The image is not 16 samples of 16 bits per pixel.
@@ -330,7 +329,14 @@ impl BlendField {
     /// # Errors
     ///
     /// No edit is open, or no such channel.
-    pub fn paint_mode(&mut self, b: &Brush, channel: usize, mode: PaintMode, mask: &dyn Fn(u32, u32) -> bool, slope: &dyn Fn(u32, u32) -> f64) -> Result<()> {
+    pub fn paint_mode(
+        &mut self,
+        b: &Brush,
+        channel: usize,
+        mode: PaintMode,
+        mask: &dyn Fn(u32, u32) -> bool,
+        slope: &dyn Fn(u32, u32) -> f64,
+    ) -> Result<()> {
         if !self.layer.is_editing() {
             return Err("begin_edit() before editing".to_owned());
         }
@@ -535,7 +541,11 @@ pub fn reduce_pixel(p: &[u16]) -> ([u8; 4], [u8; 4]) {
     for g in 0..4 {
         let s = f64::from(p[g * 4]) + f64::from(p[g * 4 + 1]) + f64::from(p[g * 4 + 2]) + f64::from(p[g * 4 + 3]);
         blend[g] = q8(s / 65535.0);
-        index[g] = if s > 0.0 { q8((f64::from(p[g * 4 + 1]) + 2.0 * f64::from(p[g * 4 + 2]) + 3.0 * f64::from(p[g * 4 + 3])) / s / 3.0) } else { 0 };
+        index[g] = if s > 0.0 {
+            q8((f64::from(p[g * 4 + 1]) + 2.0 * f64::from(p[g * 4 + 2]) + 3.0 * f64::from(p[g * 4 + 3])) / s / 3.0)
+        } else {
+            0
+        };
     }
 
     (blend, index)
@@ -564,7 +574,11 @@ mod tests {
         assert_eq!(q.iter().map(|&v| u32::from(v)).sum::<u32>(), 65_535);
         assert_eq!(q[9], 32_768);
         assert!((f64::from(q[0]) / f64::from(q[1]) - 1.5).abs() < 1e-3);
-        assert_eq!(paint_pixel(&q, 9, 1.0), { let mut f = [0u16; 16]; f[9] = FULL; f });
+        assert_eq!(paint_pixel(&q, 9, 1.0), {
+            let mut f = [0u16; 16];
+            f[9] = FULL;
+            f
+        });
     }
 
     #[test]
@@ -597,7 +611,14 @@ mod tests {
         bytes.extend_from_slice(&px);
         let mut f = BlendField::from_tiff(TiffFile::parse(&bytes).unwrap()).unwrap();
         f.begin_edit().unwrap();
-        f.paint_mode(&Brush { cx: 10.0, cy: 2.0, radius: 6.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 0, PaintMode::Blur, &|_, _| true, &|_, _| 0.0).unwrap();
+        f.paint_mode(
+            &Brush { cx: 10.0, cy: 2.0, radius: 6.0, strength: 1.0, falloff: 0.0, ..Default::default() },
+            0,
+            PaintMode::Blur,
+            &|_, _| true,
+            &|_, _| 0.0,
+        )
+        .unwrap();
         f.end_edit();
         let (l, r) = (f.pixel(9, 2), f.pixel(10, 2));
         assert!(l[0] < FULL && l[4] > 0 && r[4] < FULL && r[0] > 0, "{l:?} {r:?}");
@@ -622,7 +643,10 @@ mod tests {
         assert_eq!(flange_pixel(&p, 2, 1.0, 0.0).unwrap()[11], FULL, "full weight: variation 3");
         let rim = flange_pixel(&p, 2, 0.25, 0.5).unwrap();
         assert_eq!((rim[8], rim[0]), (32767, 32768), "under the threshold variation 0 fades in (the tie goes to the lower channel)");
-        assert!(flange_pixel(&rim, 2, 0.1, 0.5).is_some() && flange_pixel(&[0, 0, 0, 0, 0, 0, 0, 0, FULL, 0, 0, 0, 0, 0, 0, 0], 2, 0.1, 0.5).is_none());
+        assert!(
+            flange_pixel(&rim, 2, 0.1, 0.5).is_some()
+                && flange_pixel(&[0, 0, 0, 0, 0, 0, 0, 0, FULL, 0, 0, 0, 0, 0, 0, 0], 2, 0.1, 0.5).is_none()
+        );
     }
 
     #[test]
@@ -642,7 +666,8 @@ mod tests {
 
         f.begin_edit().unwrap();
         f.paint(&Brush { cx: 63.0, cy: 64.0, radius: 9.0, strength: 0.8, falloff: 0.5, ..Default::default() }, 6, &|_, _| true).unwrap();
-        f.paint(&Brush { cx: 140.0, cy: 2.0, radius: 20.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 15, &|x, _| x != 149).unwrap();
+        f.paint(&Brush { cx: 140.0, cy: 2.0, radius: 20.0, strength: 1.0, falloff: 0.0, ..Default::default() }, 15, &|x, _| x != 149)
+            .unwrap();
         f.end_edit();
         assert!(f.pixel(63, 64)[6] > 0 && f.pixel(148, 0)[15] == FULL && f.pixel(149, 0)[15] == 0, "the mask keeps column 149");
         assert_eq!(f.take_changed(), Some((55, 0, 149, 70)));

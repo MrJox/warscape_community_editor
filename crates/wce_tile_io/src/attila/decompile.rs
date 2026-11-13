@@ -13,8 +13,8 @@ use wce_tile_model::{Entry, MapKind, Node, OpaqueFile, Raster, Samples, Sym, Til
 
 use crate::TileFormat;
 
-use super::compile::{MarkerKey, marker_insertion_order};
 use super::building_list::BattlefieldBuilding;
+use super::compile::{MarkerKey, marker_insertion_order};
 use super::ted_project;
 use super::tile_binary::buildings;
 
@@ -81,7 +81,10 @@ pub fn entry_file_name(location: &str) -> String {
 /// The tile of a location in the databases, as (database, index): the first database that has it (list a mod's database before the
 /// game's).
 pub fn find_tile(databases: &[TileDatabase], location: &str) -> Option<(usize, usize)> {
-    databases.iter().enumerate().find_map(|(d, db)| db.tiles().iter().position(|t| t.location().eq_ignore_ascii_case(location)).map(|i| (d, i)))
+    databases
+        .iter()
+        .enumerate()
+        .find_map(|(d, db)| db.tiles().iter().position(|t| t.location().eq_ignore_ascii_case(location)).map(|i| (d, i)))
 }
 
 /// An entry number, as its `%.6f` text reads back.
@@ -116,10 +119,20 @@ pub fn entry_node(db: &TileDatabase, index: usize) -> Node {
     let mut root = node(
         "TILE",
         vec![
-            ("serialise_version", i(*t.serialise_version())), ("location", s(t.location())), ("tile_set", s(t.tile_set())), ("mask", s(t.mask())),
-            ("width", i(*t.width())), ("height", i(*t.height())), ("red", f(*t.red())), ("green", f(*t.green())), ("blue", f(*t.blue())),
-            ("requires_infield_lodding", b(*t.requires_infield_lodding())), ("random_rotatable", b(*t.random_rotatable())),
-            ("custom_alpha_blend_texture", s(t.custom_alpha_blend_texture())), ("scalable", b(*t.scalable())), ("encampable", b(*t.encampable())),
+            ("serialise_version", i(*t.serialise_version())),
+            ("location", s(t.location())),
+            ("tile_set", s(t.tile_set())),
+            ("mask", s(t.mask())),
+            ("width", i(*t.width())),
+            ("height", i(*t.height())),
+            ("red", f(*t.red())),
+            ("green", f(*t.green())),
+            ("blue", f(*t.blue())),
+            ("requires_infield_lodding", b(*t.requires_infield_lodding())),
+            ("random_rotatable", b(*t.random_rotatable())),
+            ("custom_alpha_blend_texture", s(t.custom_alpha_blend_texture())),
+            ("scalable", b(*t.scalable())),
+            ("encampable", b(*t.encampable())),
             ("custom_blend_tile", s(t.custom_blend_tile())),
         ],
     );
@@ -134,10 +147,19 @@ pub fn entry_node(db: &TileDatabase, index: usize) -> Node {
         vars.children.push(node(
             "VARIATION",
             vec![
-                ("serialise_version", i(*v.serialise_version())), ("location", s(v.location())), ("min_height", f(*v.min_height())),
-                ("scale", f(*v.scale())), ("normal_strength", f(*v.normal_strength())), ("overlap_border_size", f(*v.overlap_border_size())),
-                ("raw_data_tri_density", i(*v.raw_data_tri_density())), ("blend_common", s(v.blend_common())), ("index_common", s(v.index_common())),
-                ("normal_common", s(v.normal_common())), ("red", f(*v.red())), ("green", f(*v.green())), ("blue", f(*v.blue())),
+                ("serialise_version", i(*v.serialise_version())),
+                ("location", s(v.location())),
+                ("min_height", f(*v.min_height())),
+                ("scale", f(*v.scale())),
+                ("normal_strength", f(*v.normal_strength())),
+                ("overlap_border_size", f(*v.overlap_border_size())),
+                ("raw_data_tri_density", i(*v.raw_data_tri_density())),
+                ("blend_common", s(v.blend_common())),
+                ("index_common", s(v.index_common())),
+                ("normal_common", s(v.normal_common())),
+                ("red", f(*v.red())),
+                ("green", f(*v.green())),
+                ("blue", f(*v.blue())),
                 ("barbarian", b(*v.barbarian())),
             ],
         ));
@@ -151,7 +173,10 @@ pub fn entry_node(db: &TileDatabase, index: usize) -> Node {
     root.children.push(vars);
     let mut targets = Node::new("TILE_LINK_TARGETS");
     for lt in t.link_targets() {
-        targets.children.push(node("TILE_LINK_TARGET", vec![("serialise_version", i(*lt.serialise_version())), ("tile_set", s(lt.tile_set())), ("x", i(*lt.x())), ("y", i(*lt.y()))]));
+        targets.children.push(node(
+            "TILE_LINK_TARGET",
+            vec![("serialise_version", i(*lt.serialise_version())), ("tile_set", s(lt.tile_set())), ("x", i(*lt.x())), ("y", i(*lt.y()))],
+        ));
     }
 
     root.children.push(targets);
@@ -160,8 +185,15 @@ pub fn entry_node(db: &TileDatabase, index: usize) -> Node {
         let mut n = node(
             "TILE_LINK",
             vec![
-                ("serialise_version", i(*l.serialise_version())), ("link_set", s(l.link_set())), ("x", i(*l.x())), ("y", i(*l.y())), ("base_x", i(*l.base_x())),
-                ("base_y", i(*l.base_y())), ("is_entry", b(*l.is_entry())), ("blend_size", i(*l.blend_size())), ("no_offline_blend", b(*l.no_offline_blend())),
+                ("serialise_version", i(*l.serialise_version())),
+                ("link_set", s(l.link_set())),
+                ("x", i(*l.x())),
+                ("y", i(*l.y())),
+                ("base_x", i(*l.base_x())),
+                ("base_y", i(*l.base_y())),
+                ("is_entry", b(*l.is_entry())),
+                ("blend_size", i(*l.blend_size())),
+                ("no_offline_blend", b(*l.no_offline_blend())),
                 ("test", s(l.test())),
             ],
         );
@@ -366,8 +398,13 @@ fn layer(name: &str, export_type: &str) -> Node {
     node(
         "LayerInstance",
         vec![
-            ("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE"])), ("export_type", s(export_type)), ("lf_offset", Value::Float(0.0)),
-            ("position", Value::Vec3([0.0; 3])), ("name", s(name)), ("surface_mode", s("MSM_FREEFORM")), ("orientation", Value::Euler([0.0; 3])),
+            ("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE"])),
+            ("export_type", s(export_type)),
+            ("lf_offset", Value::Float(0.0)),
+            ("position", Value::Vec3([0.0; 3])),
+            ("name", s(name)),
+            ("surface_mode", s("MSM_FREEFORM")),
+            ("orientation", Value::Euler([0.0; 3])),
         ],
     )
 }
@@ -383,8 +420,13 @@ fn project(extent: (f64, f64)) -> Node {
     scene.children.push(node(
         "SCENE_GRAPH",
         vec![
-            ("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE"])), ("export_type", s("LayerExportType_Normal")), ("lf_offset", Value::Float(0.0)),
-            ("position", Value::Vec3([0.0; 3])), ("name", s("root")), ("surface_mode", s("MSM_FREEFORM")), ("orientation", Value::Euler([0.0; 3])),
+            ("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE"])),
+            ("export_type", s("LayerExportType_Normal")),
+            ("lf_offset", Value::Float(0.0)),
+            ("position", Value::Vec3([0.0; 3])),
+            ("name", s("root")),
+            ("surface_mode", s("MSM_FREEFORM")),
+            ("orientation", Value::Euler([0.0; 3])),
         ],
     ));
     p.children.push(scene);
@@ -392,11 +434,23 @@ fn project(extent: (f64, f64)) -> Node {
     p.children.push(node(
         "camera",
         vec![
-            ("vertical_fov", Value::Float(r32(std::f64::consts::FRAC_PI_3))), ("orthographic", b(false)), ("orthographic_height", Value::Float(1.0)), ("far_distance", Value::Float(12000.0)),
-            ("smoothed", b(true)), ("target", Value::Vec3([cx, 0.0, cz * 0.5].map(r32))), ("ground_height", Value::Float(1.4)), ("DOF_blur_size", Value::Float(0.0)),
-            ("terrain_collision", b(false)), ("head_bob", b(false)), ("aspect_ratio", Value::Float(1.687541)), ("focal_length", Value::Float(0.0)),
-            ("position", Value::Vec3([cx, extent.0.max(extent.1), cz * 1.1].map(r32))), ("DOF_focus", s("variance(0,40)")), ("movement_mode", s("CM_LOOK")),
-            ("roll", Value::Float(0.0)), ("near_distance", Value::Float(1.0)),
+            ("vertical_fov", Value::Float(r32(std::f64::consts::FRAC_PI_3))),
+            ("orthographic", b(false)),
+            ("orthographic_height", Value::Float(1.0)),
+            ("far_distance", Value::Float(12000.0)),
+            ("smoothed", b(true)),
+            ("target", Value::Vec3([cx, 0.0, cz * 0.5].map(r32))),
+            ("ground_height", Value::Float(1.4)),
+            ("DOF_blur_size", Value::Float(0.0)),
+            ("terrain_collision", b(false)),
+            ("head_bob", b(false)),
+            ("aspect_ratio", Value::Float(1.687541)),
+            ("focal_length", Value::Float(0.0)),
+            ("position", Value::Vec3([cx, extent.0.max(extent.1), cz * 1.1].map(r32))),
+            ("DOF_focus", s("variance(0,40)")),
+            ("movement_mode", s("CM_LOOK")),
+            ("roll", Value::Float(0.0)),
+            ("near_distance", Value::Float(1.0)),
         ],
     ));
     p
@@ -425,9 +479,16 @@ fn building_node(bl: &BattlefieldBuilding, extent_z: f64, ctx: &Context, losses:
     let pos = [2.0 * p[0], p[1], 2.0 * (extent_z - p[2])];
     let euler = quaternion_euler(bl.orientation.map(f64::from));
     let mut own = vec![
-        ("opacity", Value::Float(1.0)), ("building_tech_level", s("TL_TECH_LEVEL1")), ("bounds_colour", Value::Colour([1.0, 0.0, 0.0, 1.0])),
-        ("indestructible", b(bl.indestructible)), ("glow_amount", Value::Float(1.0)), ("key", s(&bl.key)), ("dirt_level", Value::Float(1.0)),
-        ("destruction_level", i(destruction_level(bl, ctx, losses))), ("toggleable", b(bl.toggleable.unwrap_or(false))), ("burn", b(bl.on_fire)),
+        ("opacity", Value::Float(1.0)),
+        ("building_tech_level", s("TL_TECH_LEVEL1")),
+        ("bounds_colour", Value::Colour([1.0, 0.0, 0.0, 1.0])),
+        ("indestructible", b(bl.indestructible)),
+        ("glow_amount", Value::Float(1.0)),
+        ("key", s(&bl.key)),
+        ("dirt_level", Value::Float(1.0)),
+        ("destruction_level", i(destruction_level(bl, ctx, losses))),
+        ("toggleable", b(bl.toggleable.unwrap_or(false))),
+        ("burn", b(bl.on_fire)),
         // Rome 2's list has the amount (TEd's default 1: Attila's lists have none).
         ("burn_amount", Value::Float(bl.burn_amount.map_or(1.0, |a| crate::xml::values::Num::Ted.quantise(f64::from(a))))),
     ];
@@ -577,7 +638,15 @@ fn rows_euler(r: [[f64; 3]; 3]) -> [f64; 3] {
     let a = (-r[2][0]).atan2(ca);
     let locked = ca < 1e-12;
     let (beta, c) = if locked { ((-r[1][2]).atan2(r[1][1]), 0.0) } else { (r[2][1].atan2(r[2][2]), r[1][0].atan2(r[0][0])) };
-    let wrap = |v: f64| if v > PI { v - 2.0 * PI } else if v <= -PI { v + 2.0 * PI } else { v };
+    let wrap = |v: f64| {
+        if v > PI {
+            v - 2.0 * PI
+        } else if v <= -PI {
+            v + 2.0 * PI
+        } else {
+            v
+        }
+    };
     let zero = |v: f64| if v.abs() < 1e-9 { 0.0 } else { v };
     let one = [a, -beta, c];
     let other = [wrap(PI - a), wrap(-beta - PI), wrap(c - PI)];
@@ -598,9 +667,15 @@ fn refine_euler(r: [[f64; 3]; 3], mut e: [f64; 3]) -> [f64; 3] {
         let (sc, cc) = e[2].sin_cos();
         // Rz(c) * Ry(a) * Rx(beta), beta = -b.
         [
-            cc * ca, cc * sa * sb - sc * cb, cc * sa * cb + sc * sb,
-            sc * ca, sc * sa * sb + cc * cb, sc * sa * cb - cc * sb,
-            -sa, ca * sb, ca * cb,
+            cc * ca,
+            cc * sa * sb - sc * cb,
+            cc * sa * cb + sc * sb,
+            sc * ca,
+            sc * sa * sb + cc * cb,
+            sc * sa * cb - cc * sb,
+            -sa,
+            ca * sb,
+            ca * cb,
         ]
     };
     let target = [r[0][0], r[0][1], r[0][2], r[1][0], r[1][1], r[1][2], r[2][0], r[2][1], r[2][2]];
@@ -678,12 +753,21 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64, signed: bool) -> Node {
     let f = [1.0, 1.0, -1.0];
     let rows_of = |half: &[f64; 3]| -> [[f64; 3]; 3] {
         std::array::from_fn(|k| {
-            let n = if decal && signed { half[k].abs() } else if decal { half[k] } else { f[k] * half[k] };
+            let n = if decal && signed {
+                half[k].abs()
+            } else if decal {
+                half[k]
+            } else {
+                f[k] * half[k]
+            };
             let n = if n.abs() < 1e-12 { 1e-12 } else { n };
             [m[4 * k] / n, m[4 * k + 1] / n, m[4 * k + 2] / n]
         })
     };
-    let det = |a: &[[f64; 3]; 3]| a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+    let det = |a: &[[f64; 3]; 3]| {
+        a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+            + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
+    };
     // A version 5 decal's scale fields are magnitudes: TEd's negative z is in its rows (a mirror with the fields' signs).
     if decal && !signed && det(&rows_of(&half)) < 0.0 {
         half[2] = -half[2];
@@ -710,12 +794,19 @@ fn prop_node(rec: &Node, key: &str, extent_z: f64, signed: bool) -> Node {
             "Projected Decal",
             pos,
             rows_euler(rows),
-            vec![("scale", scale), ("key", s(key)), ("parallax_scale", Value::Float(r32(num(rec, "parallax_scale")))), ("tiled", b(num(rec, "tiled") != 0.0))],
+            vec![
+                ("scale", scale),
+                ("key", s(key)),
+                ("parallax_scale", Value::Float(r32(num(rec, "parallax_scale")))),
+                ("tiled", b(num(rec, "tiled") != 0.0)),
+            ],
         )
     } else {
         let mut own = vec![("scale", scale), ("key", s(key)), ("seasons", seasons(num(rec, "seasons") as i64))];
         // A version 9 record's visibility, TEd's attributes of the model.
-        for v in ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"] {
+        for v in
+            ["visible_inside_snow_zone", "visible_outside_snow_zone", "visible_inside_destruction_zone", "visible_outside_destruction_zone"]
+        {
             if let Some(x) = rec.get(v).and_then(Value::as_int) {
                 own.push((v, b(x != 0)));
             }
@@ -762,8 +853,11 @@ fn emitter_node(rec: &Node, key: &str, extent_z: f64) -> Node {
         [2.0 * m[12], m[13], 2.0 * (extent_z - m[14])],
         rows_euler(rows),
         vec![
-            ("vfx", s(key)), ("use_in_outfield", b(num(rec, "use_in_outfield") != 0.0)), ("scale", Value::Float(r32(2.0 * num(rec, "scale")))),
-            ("seasons", seasons(rec.get("seasons").and_then(Value::as_int).unwrap_or(15))), ("autoplay", b(num(rec, "autoplay") != 0.0)),
+            ("vfx", s(key)),
+            ("use_in_outfield", b(num(rec, "use_in_outfield") != 0.0)),
+            ("scale", Value::Float(r32(2.0 * num(rec, "scale")))),
+            ("seasons", seasons(rec.get("seasons").and_then(Value::as_int).unwrap_or(15))),
+            ("autoplay", b(num(rec, "autoplay") != 0.0)),
         ],
     )
 }
@@ -776,9 +870,12 @@ fn light_node(rec: &Node, key: &str, extent_z: f64) -> Node {
         [2.0 * num(rec, "x"), num(rec, "y"), 2.0 * (extent_z - num(rec, "z"))],
         [0.0; 3],
         vec![
-            ("random_offset", Value::Float(r32(num(rec, "random_offset")))), ("animation_type", rec.get("animation_type").cloned().unwrap_or_else(|| s("LAT_NONE"))),
-            ("radius", Value::Float(r32(num(rec, "radius")))), ("falloff_type", rec.get("falloff_type").cloned().unwrap_or_else(|| s("WPLFT_SMOOTH"))),
-            ("colour_min", Value::Float(r32(num(rec, "colour_min")))), ("colour_scale", Value::Float(r32(num(rec, "colour_scale")))),
+            ("random_offset", Value::Float(r32(num(rec, "random_offset")))),
+            ("animation_type", rec.get("animation_type").cloned().unwrap_or_else(|| s("LAT_NONE"))),
+            ("radius", Value::Float(r32(num(rec, "radius")))),
+            ("falloff_type", rec.get("falloff_type").cloned().unwrap_or_else(|| s("WPLFT_SMOOTH"))),
+            ("colour_min", Value::Float(r32(num(rec, "colour_min")))),
+            ("colour_scale", Value::Float(r32(num(rec, "colour_scale")))),
             ("colour", Value::Colour([num(rec, "red"), num(rec, "green"), num(rec, "blue"), 1.0].map(r32))),
             ("animation_speed_scale", Value::Vec2([num(rec, "animation_speed_x"), num(rec, "animation_speed_y")].map(r32))),
         ],
@@ -839,7 +936,10 @@ fn tree_nodes(doc: &Node, extent_z: f64, density: u32) -> ListTrees {
     let mut out = ListTrees::default();
     for t in doc.children.iter().filter(|c| c.class == "type") {
         let key = tree_key(t.get("key").and_then(Value::as_str).unwrap_or_default());
-        let (pos, scale) = (t.get("position").and_then(Value::as_floats).unwrap_or_default(), t.get("scale").and_then(Value::as_floats).unwrap_or_default());
+        let (pos, scale) = (
+            t.get("position").and_then(Value::as_floats).unwrap_or_default(),
+            t.get("scale").and_then(Value::as_floats).unwrap_or_default(),
+        );
         let flags = t.get("flags").and_then(Value::as_ints).unwrap_or_default();
         for (i, p) in pos.as_chunks::<3>().0.iter().enumerate() {
             if on_generator_grid(p[0], p[2], density) {
@@ -924,16 +1024,27 @@ fn polygon(class: &str, name: &str, pts: &[(f64, f64)], closed: bool, own: Vec<(
 
     let c = if pts.is_empty() { (0.0, 0.0) } else { ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0) };
     let area = if with_area {
-        (0..pts.len()).map(|i| {
-            let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
-            a.0 * b.1 - b.0 * a.1
-        }).sum::<f64>().abs() / 2.0
+        (0..pts.len())
+            .map(|i| {
+                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+                a.0 * b.1 - b.0 * a.1
+            })
+            .sum::<f64>()
+            .abs()
+            / 2.0
     } else {
         0.0
     };
 
     let g = |v: f64| crate::xml::values::Num::G.quantise(v);
-    let mut n = node(class, vec![("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"])), ("recenter_polygon", i(0)), ("lf_offset", Value::Float(0.0))]);
+    let mut n = node(
+        class,
+        vec![
+            ("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"])),
+            ("recenter_polygon", i(0)),
+            ("lf_offset", Value::Float(0.0)),
+        ],
+    );
     n.set("line_colour", Value::Colour([1.0, 1.0, 1.0, 1.0]));
     for (k, v) in own {
         n.set(k, v);
@@ -960,7 +1071,12 @@ fn xml_points(e: &Node) -> Vec<(f64, f64)> {
     e.children
         .iter()
         .filter(|c| c.class == "position")
-        .map(|c| (c.get("x").and_then(Value::as_str).and_then(|v| v.parse().ok()).unwrap_or(0.0), c.get("y").and_then(Value::as_str).and_then(|v| v.parse().ok()).unwrap_or(0.0)))
+        .map(|c| {
+            (
+                c.get("x").and_then(Value::as_str).and_then(|v| v.parse().ok()).unwrap_or(0.0),
+                c.get("y").and_then(Value::as_str).and_then(|v| v.parse().ok()).unwrap_or(0.0),
+            )
+        })
         .collect()
 }
 
@@ -986,22 +1102,54 @@ fn record_polylines(rec: &Node) -> Vec<Vec<(f64, f64)>> {
         return vec![pts(p)];
     }
 
-    rec.child("polylines").map_or(vec![], |l| l.children.iter().filter_map(|c| c.get("points").and_then(Value::as_floats)).map(pts).collect())
+    rec.child("polylines")
+        .map_or(vec![], |l| l.children.iter().filter_map(|c| c.get("points").and_then(Value::as_floats)).map(pts).collect())
 }
 
 /// TEd's AI hint type of the markers' number (the index in TEd's table).
 fn hint_type(n: i64) -> String {
     // TEd's table (wce_tile::property_enums::AI_HINT_TYPE, read from TEd.AssemblyKit.exe).
     const NAMES: [&str; 41] = [
-        "AIH_DEFENSIVE_LINE", "AIH_DEFENSIVE_HILL", "AIH_DEAD_GROUND", "AIH_IMPASSIBLE", "AIH_TOWN_CLUSTER", "AIH_CHOKE_POINT",
-        "AIH_GOOD_CAVALRY_GROUND", "AIH_COVER", "AIH_AMBUSH_FOREST", "AIH_AMBUSH_BUILDINGS", "AIH_REDOUBT",
-        "AIH_SUITABLE_GROUND_BOMBARDMENT", "AIH_SUITABLE_DEPLOYABLE_GABIONADE", "AIH_SUITABLE_DEPLOYABLE_FOUGASSE",
-        "AIH_SUITABLE_DEPLOYABLE_CHEVAUX_DE_FRISE", "AIH_SUITABLE_DEPLOYABLE_EARTHWORKS", "AIH_FORDING_POINT", "AIH_FORT_APPROACH",
-        "AIH_BRIDGE_CROSSING", "AIH_BEACH_LANDING", "AIH_RIVER_EDGE", "AIH_SIEGE_AREA_NODE", "AIH_SIEGE_INTERSECTION_NODE",
-        "AIH_SIEGE_STREET_EDGE", "AIH_CAPTURE_POINT_MAJOR", "AIH_CAPTURE_POINT_MINOR", "AIH_SIEGE_WALL_AREA_NODE",
-        "AIH_SIEGE_AREA_CONNECTION_EDGE", "AIH_SIEGE_WALL_EDGE", "AIH_COVER_LINE", "AIH_SIEGE_ENTRY_NODE", "AIH_AMBUSH_MELEE_LINE",
-        "AIH_AMBUSH_MISSILE_LINE", "AIH_AMBUSH_CAVALRY_LINE", "AIH_AMBUSH_DEFENDER_INITIAL_PATH", "AIH_FORT_PERIMETER",
-        "AIH_BEACH_LANDING_FORT_APPROACH", "AIH_AMBUSH_ASSAULT_AREA", "AIH_AMBUSH_FIREBALL_LINE", "AIH_DEFAULT_DEPLOYMENT_LINE",
+        "AIH_DEFENSIVE_LINE",
+        "AIH_DEFENSIVE_HILL",
+        "AIH_DEAD_GROUND",
+        "AIH_IMPASSIBLE",
+        "AIH_TOWN_CLUSTER",
+        "AIH_CHOKE_POINT",
+        "AIH_GOOD_CAVALRY_GROUND",
+        "AIH_COVER",
+        "AIH_AMBUSH_FOREST",
+        "AIH_AMBUSH_BUILDINGS",
+        "AIH_REDOUBT",
+        "AIH_SUITABLE_GROUND_BOMBARDMENT",
+        "AIH_SUITABLE_DEPLOYABLE_GABIONADE",
+        "AIH_SUITABLE_DEPLOYABLE_FOUGASSE",
+        "AIH_SUITABLE_DEPLOYABLE_CHEVAUX_DE_FRISE",
+        "AIH_SUITABLE_DEPLOYABLE_EARTHWORKS",
+        "AIH_FORDING_POINT",
+        "AIH_FORT_APPROACH",
+        "AIH_BRIDGE_CROSSING",
+        "AIH_BEACH_LANDING",
+        "AIH_RIVER_EDGE",
+        "AIH_SIEGE_AREA_NODE",
+        "AIH_SIEGE_INTERSECTION_NODE",
+        "AIH_SIEGE_STREET_EDGE",
+        "AIH_CAPTURE_POINT_MAJOR",
+        "AIH_CAPTURE_POINT_MINOR",
+        "AIH_SIEGE_WALL_AREA_NODE",
+        "AIH_SIEGE_AREA_CONNECTION_EDGE",
+        "AIH_SIEGE_WALL_EDGE",
+        "AIH_COVER_LINE",
+        "AIH_SIEGE_ENTRY_NODE",
+        "AIH_AMBUSH_MELEE_LINE",
+        "AIH_AMBUSH_MISSILE_LINE",
+        "AIH_AMBUSH_CAVALRY_LINE",
+        "AIH_AMBUSH_DEFENDER_INITIAL_PATH",
+        "AIH_FORT_PERIMETER",
+        "AIH_BEACH_LANDING_FORT_APPROACH",
+        "AIH_AMBUSH_ASSAULT_AREA",
+        "AIH_AMBUSH_FIREBALL_LINE",
+        "AIH_DEFAULT_DEPLOYMENT_LINE",
         "AIH_SIEGE_PALISADE_EDGE",
     ];
 
@@ -1010,7 +1158,14 @@ fn hint_type(n: i64) -> String {
 
 /// A no-go region (`non_terrain_outlines.xml`, a BMD's `non_terrain_outlines`) through scene points.
 fn nogo_node(pts: &[(f64, f64)]) -> Node {
-    polygon("NOGO_REGION_POLYGON_INSTANCE", "No-go region", pts, true, vec![("line_colour", Value::Colour([0.65, 0.0, 0.0, 1.0]))], (0.0, 0.0))
+    polygon(
+        "NOGO_REGION_POLYGON_INSTANCE",
+        "No-go region",
+        pts,
+        true,
+        vec![("line_colour", Value::Colour([0.65, 0.0, 0.0, 1.0]))],
+        (0.0, 0.0),
+    )
 }
 
 /// A zone (`zones.xml`, a BMD's `zones_template_list`) through scene points, with TEd's defaults for what the files do not keep.
@@ -1021,8 +1176,13 @@ fn zone_node(pts: &[(f64, f64)]) -> Node {
         pts,
         true,
         vec![
-            ("purpose", s("EFP_LOW_WALL")), ("rank_count", i(0)), ("zone_skirt_distance", Value::Float(3.0)), ("locked", b(false)),
-            ("max_subdivisions", i(100)), ("rank_distance", Value::Float(3.0)), ("subdivision_length", Value::Float(5.0)),
+            ("purpose", s("EFP_LOW_WALL")),
+            ("rank_count", i(0)),
+            ("zone_skirt_distance", Value::Float(3.0)),
+            ("locked", b(false)),
+            ("max_subdivisions", i(100)),
+            ("rank_distance", Value::Float(3.0)),
+            ("subdivision_length", Value::Float(5.0)),
         ],
         (0.0, 0.0),
     )
@@ -1042,7 +1202,11 @@ fn civilian_nodes(root: &Node, extent_z: f64) -> Vec<Node> {
                 "Civilian Deployment Zone",
                 &scene_xz(&pts, extent_z),
                 true,
-                vec![("line_colour", Value::Colour([0.294, 0.0, 0.51, 1.0])), ("civilian_type", s(&str_attr(zone, "kind"))), ("civilian_amount", s(&str_attr(zone, "size")))],
+                vec![
+                    ("line_colour", Value::Colour([0.294, 0.0, 0.51, 1.0])),
+                    ("civilian_type", s(&str_attr(zone, "kind"))),
+                    ("civilian_amount", s(&str_attr(zone, "size"))),
+                ],
                 (0.0, 0.0),
             )
         })
@@ -1058,9 +1222,20 @@ fn bmd_points(n: &Node) -> Vec<(f64, f64)> {
 fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
     let mut l = layer("Logic", "LayerExportType_Normal");
     let mut items = vec![];
-    let xml_outlines = |file: &str| binary.document(file).map_or(vec![], |d| d.root.children.iter().filter(|c| c.class == "OUTLINE").map(xml_points).collect::<Vec<_>>());
+    let xml_outlines = |file: &str| {
+        binary
+            .document(file)
+            .map_or(vec![], |d| d.root.children.iter().filter(|c| c.class == "OUTLINE").map(xml_points).collect::<Vec<_>>())
+    };
     for pts in xml_outlines("go_outlines.xml") {
-        items.push(polygon("GO_REGION_POLYGON_INSTANCE", "Go region", &scene_xz(&pts, extent_z), true, vec![("line_colour", Value::Colour([0.0, 0.25, 0.0, 1.0]))], (0.0, 0.0)));
+        items.push(polygon(
+            "GO_REGION_POLYGON_INSTANCE",
+            "Go region",
+            &scene_xz(&pts, extent_z),
+            true,
+            vec![("line_colour", Value::Colour([0.0, 0.25, 0.0, 1.0]))],
+            (0.0, 0.0),
+        ));
     }
 
     for pts in xml_outlines("non_terrain_outlines.xml") {
@@ -1094,9 +1269,12 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                     [0.0; 3],
                     [0.0; 3],
                     vec![
-                        ("deployment_category", s(&str_attr(area, "category"))), ("deployment_type", s("EDZT_1V1")), ("new_polygon_type", s("PDM_POLYGON")),
+                        ("deployment_category", s(&str_attr(area, "category"))),
+                        ("deployment_type", s("EDZT_1V1")),
+                        ("new_polygon_type", s("PDM_POLYGON")),
                         ("deployment_zone_id", i(str_attr(area, "id").parse::<i64>().unwrap_or(0))),
-                        ("add_polygon", i(0)), ("alliance_id", i(alliance)),
+                        ("add_polygon", i(0)),
+                        ("alliance_id", i(alliance)),
                     ],
                 );
 
@@ -1125,7 +1303,9 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                         &scene_xz(&xml_points(bnd), extent_z),
                         true,
                         vec![
-                            ("line_colour", Value::Colour([0.0, 0.0, 1.0, 0.7])), ("subdivision_length", Value::Float(5.0)), ("max_subdivisions", i(100)),
+                            ("line_colour", Value::Colour([0.0, 0.0, 1.0, 0.7])),
+                            ("subdivision_length", Value::Float(5.0)),
+                            ("max_subdivisions", i(100)),
                             ("deployment_polygon_type", s(kind)),
                         ],
                         (0.0, 0.0),
@@ -1145,7 +1325,8 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
             let ty = hint_type(key.and_then(Value::as_int).unwrap_or(0));
             for mut pts in record_polylines(rec) {
                 // A closed hint (the fort perimeter) repeats its first point at the end.
-                let closed = pts.len() > 3 && pts.first().zip(pts.last()).is_some_and(|(a, b)| (a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4);
+                let closed =
+                    pts.len() > 3 && pts.first().zip(pts.last()).is_some_and(|(a, b)| (a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4);
                 if closed {
                     pts.pop();
                 }
@@ -1156,7 +1337,10 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                     &scene_xz(&pts, extent_z),
                     closed,
                     vec![
-                        ("subdivision_length", Value::Float(5.0)), ("max_subdivisions", i(100)), ("hint_type", s(&ty)), ("is_generated", b(false)),
+                        ("subdivision_length", Value::Float(5.0)),
+                        ("max_subdivisions", i(100)),
+                        ("hint_type", s(&ty)),
+                        ("is_generated", b(false)),
                         ("generated", b(false)),
                     ],
                     (0.0, 0.0),
@@ -1213,13 +1397,26 @@ fn logic_layer(binary: &Tile, extent_z: f64, losses: &mut Losses) -> Node {
                 (0.0, 0.0)
             };
 
-            let mut n = instance(class, if class == "SiegeAINodeInstance" { "Siege AI Node" } else { "Siege AI Edge" }, [node_pos.0, 0.0, node_pos.1], [0.0; 3], vec![("add_boundary", i(0)), ("type", s(ty))]);
+            let mut n = instance(
+                class,
+                if class == "SiegeAINodeInstance" { "Siege AI Node" } else { "Siege AI Edge" },
+                [node_pos.0, 0.0, node_pos.1],
+                [0.0; 3],
+                vec![("add_boundary", i(0)), ("type", s(ty))],
+            );
             n.set("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"]));
             for (j, pts) in lines.iter().enumerate() {
                 let name = names[j.min(1)];
                 // A node's bounding box and boundary are closed, an edge's street and boundaries open.
                 let closed = class == "SiegeAINodeInstance";
-                n.wrapped_mut("children").push(polygon("SIEGE_AI_POLYGON_INSTANCE", name, &scene_xz(pts, extent_z), closed, vec![], node_pos));
+                n.wrapped_mut("children").push(polygon(
+                    "SIEGE_AI_POLYGON_INSTANCE",
+                    name,
+                    &scene_xz(pts, extent_z),
+                    closed,
+                    vec![],
+                    node_pos,
+                ));
             }
 
             items.push(n);
@@ -1428,9 +1625,9 @@ fn bmd_captures(bmd: &Node) -> Vec<CaptureLocation> {
             max_players: loc.get("valid_for_max_num_players").and_then(Value::as_int).unwrap_or(8),
             radius: num(loc, "radius"),
             points: loc.child("location_points").map_or(vec![], |p| p.children.iter().map(|c| (num(c, "x"), num(c, "y"))).collect()),
-            links: loc
-                .child("building_links")
-                .map_or(vec![], |l| l.children.iter().filter_map(|c| c.get("building_index").and_then(Value::as_int)).map(|i| i as usize).collect()),
+            links: loc.child("building_links").map_or(vec![], |l| {
+                l.children.iter().filter_map(|c| c.get("building_index").and_then(Value::as_int)).map(|i| i as usize).collect()
+            }),
         })
         .collect()
 }
@@ -1479,8 +1676,11 @@ fn capture_node(c: &CaptureLocation, name: &str, extent_z: f64) -> Node {
         [r32(centre.0), 0.0, r32(centre.1)],
         [0.0; 3],
         vec![
-            ("flag_facing", Value::Float(r32(facing))), ("database_type", s(&c.key)), ("min_num_players", i(c.min_players)),
-            ("type", s(if c.major { "CLT_MAJOR" } else { "CLT_MINOR" })), ("max_num_players", i(c.max_players)),
+            ("flag_facing", Value::Float(r32(facing))),
+            ("database_type", s(&c.key)),
+            ("min_num_players", i(c.min_players)),
+            ("type", s(if c.major { "CLT_MAJOR" } else { "CLT_MINOR" })),
+            ("max_num_players", i(c.max_players)),
             ("flag_position", Value::Vec3([r32(flag.0 - centre.0), 0.0, r32(flag.1 - centre.1)])),
         ],
     );
@@ -1490,10 +1690,12 @@ fn capture_node(c: &CaptureLocation, name: &str, extent_z: f64) -> Node {
     let boundary = if circle {
         // TEd's circle: 20 points from +z towards +x, (r sin a, r cos a) for a = 0, 18, ... 342 degrees.
         let r = 2.0 * c.radius;
-        let ring = (0..20).map(|k| {
-            let a = f64::from(k) * 18f64.to_radians();
-            (centre.0 + r * a.sin(), centre.1 + r * a.cos())
-        }).collect::<Vec<_>>();
+        let ring = (0..20)
+            .map(|k| {
+                let a = f64::from(k) * 18f64.to_radians();
+                (centre.0 + r * a.sin(), centre.1 + r * a.cos())
+            })
+            .collect::<Vec<_>>();
 
         let mut b = polygon("CaptureLocationPolygonInstance", "Boundary", &ring, true, vec![("radius", Value::Float(r32(r)))], centre);
         b.set("polygon_shape", s("PS_CIRCLE"));
@@ -1518,7 +1720,11 @@ struct BuildingLosses {
 /// size from the CHMF (samples x spacing, 128 m cells), one variation, the rest of the fields their defaults. A row of `databases` is the
 /// template (rpfm's tile types can only be had through a database).
 fn fallback_database(databases: &[TileDatabase], binary: &Tile, location: &str, variation: &str) -> Result<TileDatabase, String> {
-    let template = databases.iter().flat_map(|d| d.tiles().iter()).find(|t| !t.variations().is_empty()).ok_or("no tile database to make an entry from")?;
+    let template = databases
+        .iter()
+        .flat_map(|d| d.tiles().iter())
+        .find(|t| !t.variations().is_empty())
+        .ok_or("no tile database to make an entry from")?;
     let doc = binary.document("hf_height_map.data").ok_or("no tile database has the tile, and no hf_height_map.data to size it")?;
     let m = binary.map(MapKind::Height, 0).ok_or("no heights to size the tile")?;
     let spacing = doc.root.get("spacing").and_then(Value::as_f64).unwrap_or(1.0);
@@ -1593,9 +1799,13 @@ fn river_nodes(mesh: &[u8], extent_z: f64, unit: f64) -> (Vec<Node>, Vec<wce_til
                 spline.children.push(node(
                     &format!("POINT{k}"),
                     vec![
-                        ("width", Value::Float(g(f64::from(seg.width[0])))), ("x", Value::Float(g(f[0]))), ("y", Value::Float(g(f[1]))),
-                        ("foam_amount", Value::Float(g(f64::from(seg.foam[0])))), ("z", Value::Float(g(f[2]))),
-                        ("alpha_fade", Value::Float(g(f64::from(alpha)))), ("flow_speed", Value::Float(g(f64::from(seg.flow[0])))),
+                        ("width", Value::Float(g(f64::from(seg.width[0])))),
+                        ("x", Value::Float(g(f[0]))),
+                        ("y", Value::Float(g(f[1]))),
+                        ("foam_amount", Value::Float(g(f64::from(seg.foam[0])))),
+                        ("z", Value::Float(g(f[2]))),
+                        ("alpha_fade", Value::Float(g(f64::from(alpha)))),
+                        ("flow_speed", Value::Float(g(f64::from(seg.flow[0])))),
                     ],
                 ));
             }
@@ -1612,9 +1822,16 @@ fn river_nodes(mesh: &[u8], extent_z: f64, unit: f64) -> (Vec<Node>, Vec<wce_til
         let mut river = node(
             "SplineRiverInstance",
             vec![
-                ("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"])), ("lf_offset", Value::Float(0.0)),
-                ("position", Value::Vec3(origin.map(r32))), ("step_size", Value::Float(10.0)), ("flatten", i(0)), ("select_all_points", i(0)),
-                ("closed", i(0)), ("name", s("River Spline")), ("surface_mode", s("MSM_FREEFORM")), ("orientation", Value::Euler([0.0; 3])),
+                ("flags", flags(&["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"])),
+                ("lf_offset", Value::Float(0.0)),
+                ("position", Value::Vec3(origin.map(r32))),
+                ("step_size", Value::Float(10.0)),
+                ("flatten", i(0)),
+                ("select_all_points", i(0)),
+                ("closed", i(0)),
+                ("name", s("River Spline")),
+                ("surface_mode", s("MSM_FREEFORM")),
+                ("orientation", Value::Euler([0.0; 3])),
             ],
         );
         let points = river.wrapped_mut("points");
@@ -1630,9 +1847,14 @@ fn river_nodes(mesh: &[u8], extent_z: f64, unit: f64) -> (Vec<Node>, Vec<wce_til
             points.push(node(
                 "point",
                 vec![
-                    ("width", Value::Float(r32(unit * f64::from(values.width[0])))), ("foam_amount", Value::Float(r32(f64::from(values.foam[0])))),
-                    ("alpha_fade", Value::Float(r32(f64::from(alpha)))), ("terrain_offset", Value::Float(0.0)), ("controlIn", rel(control_in)),
-                    ("position", rel(at)), ("flow_speed", Value::Float(r32(f64::from(values.flow[0])))), ("controlOut", rel(control_out)),
+                    ("width", Value::Float(r32(unit * f64::from(values.width[0])))),
+                    ("foam_amount", Value::Float(r32(f64::from(values.foam[0])))),
+                    ("alpha_fade", Value::Float(r32(f64::from(alpha)))),
+                    ("terrain_offset", Value::Float(0.0)),
+                    ("controlIn", rel(control_in)),
+                    ("position", rel(at)),
+                    ("flow_speed", Value::Float(r32(f64::from(values.flow[0])))),
+                    ("controlOut", rel(control_out)),
                 ],
             ));
         }
@@ -1683,13 +1905,17 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             // So does its density: the project's height map has the binary's samples per subtile.
             let density = vn.get("raw_data_tri_density").and_then(Value::as_int);
             if density != Some(i64::from(ppc)) && ppc > 0 {
-                losses.note(format!("entry: {variation} raw_data_tri_density {density:?} -> {ppc} (the binary's heights' samples per subtile)"));
+                losses.note(format!(
+                    "entry: {variation} raw_data_tri_density {density:?} -> {ppc} (the binary's heights' samples per subtile)"
+                ));
                 vn.set("raw_data_tri_density", i(ppc));
             }
 
             let (old_min, old_scale) = (vn.get("min_height").and_then(Value::as_f64), vn.get("scale").and_then(Value::as_f64));
             if old_min != f(min).as_f64() || old_scale != f(range).as_f64() {
-                losses.note(format!("entry: {variation} min_height / scale {old_min:?} / {old_scale:?} -> {min} / {range} (the binary's heights)"));
+                losses.note(format!(
+                    "entry: {variation} min_height / scale {old_min:?} / {old_scale:?} -> {min} / {range} (the binary's heights)"
+                ));
             }
 
             vn.set("min_height", f(min));
@@ -1724,7 +1950,8 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
             out.maps.push(TileMap { kind: MapKind::GroundType, index: 0, raster: ground });
             losses.note("blend map: from blend.dds / index.dds (DXT5), at most two variations per texture group");
             if painted > 0 {
-                losses.note(format!("ground type map: {painted} pixels painted where ground_types.dds is not the strongest texture group's"));
+                losses
+                    .note(format!("ground type map: {painted} pixels painted where ground_types.dds is not the strongest texture group's"));
             }
         }
         None => losses.note("blend map: no blend.dds / index.dds of the same size"),
@@ -1866,7 +2093,11 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
 
         if let Some(zs) = doc.root.child("zones_template_list").and_then(|n| n.child("zones")) {
             for z in &zs.children {
-                let pts = z.child("battlefield_zone_template").and_then(|t| t.child("outline")).and_then(|o| o.child("outline")).map_or(vec![], bmd_points);
+                let pts = z
+                    .child("battlefield_zone_template")
+                    .and_then(|t| t.child("outline"))
+                    .and_then(|o| o.child("outline"))
+                    .map_or(vec![], bmd_points);
                 l.wrapped_mut("children").push(zone_node(&scene_xz(&pts, extent.1)));
             }
         }
@@ -1892,7 +2123,11 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         all(&d.root, list, &mut l);
         !l.iter().any(|l| l.children.iter().any(|c| c.class == "item"))
     };
-    for doc in binary.documents.iter().filter(|d| (d.name.ends_with(".markers") && !d.root.children.iter().any(|c| c.class == "record")) || empty_civilians(d)) {
+    for doc in binary
+        .documents
+        .iter()
+        .filter(|d| (d.name.ends_with(".markers") && !d.root.children.iter().any(|c| c.class == "record")) || empty_civilians(d))
+    {
         let one = Tile { documents: vec![doc.clone()], ..Default::default() };
         let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
         if let Some(data) = files.folder.get(&doc.name) {
@@ -1909,10 +2144,12 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     // Rome 2's `<building list>.outlines` (outlines of a list's buildings, empty in the shipped tiles looked at): carried along too. So is
     // its one `generic_marker.markers` (front-end characters' positions: no TEd instance type is known for them).
     let outlines = binary.documents.iter().map(|d| d.name.clone()).filter(|n| n.to_lowercase().ends_with(".outlines")).collect::<Vec<_>>();
-    let carried = ["definition.xml", "vegetation_exclusion.xml", "sound_emitter_list.xml", "tree_random_seed.xml", "generic_marker.markers"];
+    let carried =
+        ["definition.xml", "vegetation_exclusion.xml", "sound_emitter_list.xml", "tree_random_seed.xml", "generic_marker.markers"];
     for name in carried.into_iter().chain(outlines.iter().map(String::as_str)) {
         let Some(doc) = binary.document(name) else { continue };
-        let one = Tile { documents: vec![doc.clone()], source_format: binary.source_format, source: binary.source.clone(), ..Default::default() };
+        let one =
+            Tile { documents: vec![doc.clone()], source_format: binary.source_format, source: binary.source.clone(), ..Default::default() };
         let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
         if let Some(data) = files.folder.get(name) {
             out.files.push(OpaqueFile { path: name.to_owned(), data: data.clone() });
@@ -1925,7 +2162,12 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         let mut lists = vec![];
         all(&doc.root, "CAPTURE_LOCATION_LIST", &mut lists);
         if lists.len() > 1 {
-            let one = Tile { documents: vec![doc.clone()], source_format: binary.source_format, source: binary.source.clone(), ..Default::default() };
+            let one = Tile {
+                documents: vec![doc.clone()],
+                source_format: binary.source_format,
+                source: binary.source.clone(),
+                ..Default::default()
+            };
             let (files, _) = super::TileBinary.write(&one).map_err(|e| e.to_string())?;
             if let Some(data) = files.folder.get("capture_location_list.xml") {
                 out.files.push(OpaqueFile { path: super::compile::CAPTURE_ALTERNATIVES.to_owned(), data: data.clone() });
@@ -1933,12 +2175,19 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         }
     }
 
-    let extra = binary.files.iter().filter(|f| super::compile::carried_into_export(&f.path) && !out.files.iter().any(|o| o.path == f.path)).cloned().collect::<Vec<_>>();
+    let extra = binary
+        .files
+        .iter()
+        .filter(|f| super::compile::carried_into_export(&f.path) && !out.files.iter().any(|o| o.path == f.path))
+        .cloned()
+        .collect::<Vec<_>>();
     out.files.extend(extra);
 
     // The markers of the normal layers.
     let key_str = |k: Option<&Value>| k.and_then(Value::as_str).unwrap_or_default().to_owned();
-    for (file, layer_name) in [("prop_marker.markers", "Props"), ("particle_emitter_marker.markers", "VFX"), ("point_light_marker.markers", "Point lights")] {
+    for (file, layer_name) in
+        [("prop_marker.markers", "Props"), ("particle_emitter_marker.markers", "VFX"), ("point_light_marker.markers", "Point lights")]
+    {
         let Some(doc) = binary.document(file) else { continue };
         let recs = marker_records(&doc.root);
         if recs.is_empty() {
@@ -1949,7 +2198,12 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         for (rec, key) in recs {
             let key = key_str(key);
             l.wrapped_mut("children").push(match file {
-                "prop_marker.markers" => prop_node(rec, &key, extent.1, ctx.conventions.signed_decal_fields(doc.root.get("version").and_then(Value::as_int).unwrap_or(9))),
+                "prop_marker.markers" => prop_node(
+                    rec,
+                    &key,
+                    extent.1,
+                    ctx.conventions.signed_decal_fields(doc.root.get("version").and_then(Value::as_int).unwrap_or(9)),
+                ),
                 "particle_emitter_marker.markers" => emitter_node(rec, &key, extent.1),
                 _ => light_node(rec, &key, extent.1),
             });
@@ -1971,7 +2225,10 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
     let vegetation = binary.documents.iter().any(|d| super::stage_c::kind_of(&d.name).is_some());
     if vegetation {
         // A tile without the FASTBIN lists (Rome 2's) has the older default list.
-        let doc = lists.iter().find_map(|l| binary.document(l)).or_else(|| ctx.tree_list.is_none().then(|| binary.document("default.tree_list")).flatten());
+        let doc = lists
+            .iter()
+            .find_map(|l| binary.document(l))
+            .or_else(|| ctx.tree_list.is_none().then(|| binary.document("default.tree_list")).flatten());
         // The generator ran at the database's density (the row's, before the height map's may replace it above).
         let density = vi.map_or(128, |v| *row.variations()[v].raw_data_tri_density()).max(1);
         let read = |d: &Node| if d.class == "TREE_LIST" { old_tree_nodes(d, extent.1, density) } else { tree_nodes(d, extent.1, density) };
@@ -2004,7 +2261,10 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
         }
 
         if !cover.is_empty() {
-            losses.note(format!("vegetation: {} exclusion polygons around the static trees (the rest of the tile is generated)", cover.len()));
+            losses.note(format!(
+                "vegetation: {} exclusion polygons around the static trees (the rest of the tile is generated)",
+                cover.len()
+            ));
         }
 
         l.wrapped_mut("children").extend(trees.nodes);
@@ -2043,7 +2303,10 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
                     graph(p).wrapped_mut("children").push(l);
                 }
 
-                losses.note(format!("rivers: {} fitted to the water baked into the terrain mesh as splines (the packs have none)", splines.len()));
+                losses.note(format!(
+                    "rivers: {} fitted to the water baked into the terrain mesh as splines (the packs have none)",
+                    splines.len()
+                ));
                 out.rivers = splines;
             }
         }
@@ -2056,7 +2319,10 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
 
         if any {
             let text = super::carry::text(&fingerprints(&out));
-            out.files.push(OpaqueFile { path: format!("{CARRIED_DIR}/{}", super::carry::FINGERPRINTS), data: wce_tile_model::Blob::Bytes(text.into_bytes().into()) });
+            out.files.push(OpaqueFile {
+                path: format!("{CARRIED_DIR}/{}", super::carry::FINGERPRINTS),
+                data: wce_tile_model::Blob::Bytes(text.into_bytes().into()),
+            });
             losses.note("terrain: BOB's files carried along (written back while the heights, maps, buildings, rivers and water planes are unchanged)");
         }
     }
@@ -2079,7 +2345,10 @@ pub fn decompile(binary: &Tile, folder: &str, ctx: &Context) -> Result<(Tile, Lo
 
         match Fingerprints::of(&out) {
             Ok(f) => {
-                out.files.push(OpaqueFile { path: format!("{CARRIED_DIR}/{FINGERPRINTS}"), data: wce_tile_model::Blob::Bytes(f.text().into_bytes().into()) });
+                out.files.push(OpaqueFile {
+                    path: format!("{CARRIED_DIR}/{FINGERPRINTS}"),
+                    data: wce_tile_model::Blob::Bytes(f.text().into_bytes().into()),
+                });
                 losses.note("vegetation: the tree, grass and procedural files carried along (written back while the trees, terrain and seeds are unchanged)");
             }
             Err(e) => losses.note(format!("vegetation: the files carried along without fingerprints ({e}): the compile regenerates them")),
@@ -2210,8 +2479,16 @@ mod tests {
         gt[5] = 6;
         gt[6] = 8;
         let mut binary = Tile::default();
-        binary.maps.push(TileMap { kind: MapKind::BlendTexture, index: 0, raster: Raster { width: w, height: h, channels: 4, samples: Samples::U8(bl) } });
-        binary.maps.push(TileMap { kind: MapKind::GroundType, index: 0, raster: Raster { width: 4, height: 4, channels: 1, samples: Samples::U8(gt) } });
+        binary.maps.push(TileMap {
+            kind: MapKind::BlendTexture,
+            index: 0,
+            raster: Raster { width: w, height: h, channels: 4, samples: Samples::U8(bl) },
+        });
+        binary.maps.push(TileMap {
+            kind: MapKind::GroundType,
+            index: 0,
+            raster: Raster { width: 4, height: 4, channels: 1, samples: Samples::U8(gt) },
+        });
         let (r, painted) = ground_type_map(&binary, [1, 8, 2, 0], w, h);
         assert_eq!(painted, 1);
         let Samples::U8(px) = &r.samples else { panic!("not u8") };
@@ -2226,9 +2503,15 @@ mod tests {
         let mut list = Node::new("CAPTURE_LOCATION_SET");
         let mut l = Node::new("CAPTURE_LOCATION");
         for (k, v) in [
-            ("radius", "7.500000"), ("position_x", "569.485779"), ("position_y", "449.696472"), ("valid_for_min_num_players", "2"),
-            ("valid_for_max_num_players", "8"), ("capture_point_type_v2", "CAPTURE_LOCATION_MINOR"), ("capture_point_list", "569.544983,454.443054"),
-            ("database_key", "capture_point_tower_only"), ("flag_facing", "-0.309017,0.951057"),
+            ("radius", "7.500000"),
+            ("position_x", "569.485779"),
+            ("position_y", "449.696472"),
+            ("valid_for_min_num_players", "2"),
+            ("valid_for_max_num_players", "8"),
+            ("capture_point_type_v2", "CAPTURE_LOCATION_MINOR"),
+            ("capture_point_list", "569.544983,454.443054"),
+            ("database_key", "capture_point_tower_only"),
+            ("flag_facing", "-0.309017,0.951057"),
         ] {
             l.set(k, s(v));
         }

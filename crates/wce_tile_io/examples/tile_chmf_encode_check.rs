@@ -37,7 +37,12 @@ fn main() {
                 same = false;
                 if differ < 10 {
                     let at = offsets.iter().zip(&r.offsets).position(|(a, b)| a != b).unwrap_or(offsets.len());
-                    println!("{}: region {i}: tag {tag:?} / {:?}, first block whose offset differs {at} of {}", p.display(), r.tag, offsets.len());
+                    println!(
+                        "{}: region {i}: tag {tag:?} / {:?}, first block whose offset differs {at} of {}",
+                        p.display(),
+                        r.tag,
+                        offsets.len()
+                    );
                 }
             }
         }
@@ -51,6 +56,9 @@ fn main() {
         }
     }
 
-    println!("{} files: {exact} encoded byte-identically, {differ} differ, {short} with a short block table (not the engine's encoder)", all.len());
+    println!(
+        "{} files: {exact} encoded byte-identically, {differ} differ, {short} with a short block table (not the engine's encoder)",
+        all.len()
+    );
     std::process::exit(i32::from(differ != 0));
 }

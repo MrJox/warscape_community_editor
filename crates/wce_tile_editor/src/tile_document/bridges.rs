@@ -216,10 +216,14 @@ impl Gathered {
 
 /// The height of the highest ground platform at a point (on it, or on its edge within [`CORNER`]), on the plane through its corners.
 fn ground_height(grounds: &[Vec<Float3>], p: Float3) -> Option<f32> {
-    grounds.iter().filter(|r| {
-        let ring = r.iter().map(|q| [q.x, q.z]).collect::<Vec<_>>();
-        inside([p.x, p.z], &ring) || (0..ring.len()).any(|i| seg_dist([p.x, p.z], ring[i], ring[(i + 1) % ring.len()]) <= CORNER)
-    }).map(|r| plane_height(r, p.x, p.z)).reduce(f32::max)
+    grounds
+        .iter()
+        .filter(|r| {
+            let ring = r.iter().map(|q| [q.x, q.z]).collect::<Vec<_>>();
+            inside([p.x, p.z], &ring) || (0..ring.len()).any(|i| seg_dist([p.x, p.z], ring[i], ring[(i + 1) % ring.len()]) <= CORNER)
+        })
+        .map(|r| plane_height(r, p.x, p.z))
+        .reduce(f32::max)
 }
 
 /// The height at (x, z) of the plane through a ring's corners (Newell's normal through their mean).
@@ -267,7 +271,8 @@ impl Tile {
 
         // The bridges: buildings of the category, and the roads' generated bridges.
         let buildings = self.instances.iter().copied().filter(|&e| self.tscene().type_of(e) == "BUILDING_INSTANCE").collect::<Vec<_>>();
-        let category = |t: &Self, e: usize| t.tscene().doc().get(e, "key").and_then(|k| t.building_category(&k.to_lowercase())).unwrap_or_default();
+        let category =
+            |t: &Self, e: usize| t.tscene().doc().get(e, "key").and_then(|k| t.building_category(&k.to_lowercase())).unwrap_or_default();
         let bridges = buildings.iter().copied().filter(|&e| category(self, e) == "bridge").collect::<Vec<_>>();
         let roads = self.roads_with_buildings();
         let mut g = Gathered::default();
@@ -288,7 +293,8 @@ impl Tile {
 
         let reach = 64.0;
         let close = |p: Float3| p.x >= lo[0] - reach && p.x <= hi[0] + reach && p.z >= lo[1] - reach && p.z <= hi[1] + reach;
-        let others = buildings.iter().copied().filter(|e| !bridges.contains(e)).filter(|&e| close(self.world_position(e))).collect::<Vec<_>>();
+        let others =
+            buildings.iter().copied().filter(|e| !bridges.contains(e)).filter(|&e| close(self.world_position(e))).collect::<Vec<_>>();
         for e in others {
             let c = category(self, e);
             let snap = if matches!(c.as_str(), "fort_wall" | "unbreachable_fort_wall") { SNAP_BRIDGE } else { SNAP_OTHER };
@@ -296,7 +302,10 @@ impl Tile {
         }
 
         let walls = self.wall_preview.shown_walls();
-        let walls = walls.into_iter().filter(|&e| self.generated_buildings(e).iter().any(|(w, _)| close(w.transform_point(Float3::new(0.0, 0.0, 0.0))))).collect::<Vec<_>>();
+        let walls = walls
+            .into_iter()
+            .filter(|&e| self.generated_buildings(e).iter().any(|(w, _)| close(w.transform_point(Float3::new(0.0, 0.0, 0.0)))))
+            .collect::<Vec<_>>();
         for e in walls {
             g.add(self, e, false, SNAP_BRIDGE, false, false);
         }
@@ -344,7 +353,12 @@ impl Tile {
 
                     let q = &platforms[m].corners;
                     let (c, d) = (q[j], q[(j + 1) % q.len()]);
-                    if near(c, b) && near(d, a) && (c.y - b.y).abs() <= JOINT_HEIGHT && (d.y - a.y).abs() <= JOINT_HEIGHT && !joints[k].iter().any(|&(o, _)| o == m) {
+                    if near(c, b)
+                        && near(d, a)
+                        && (c.y - b.y).abs() <= JOINT_HEIGHT
+                        && (d.y - a.y).abs() <= JOINT_HEIGHT
+                        && !joints[k].iter().any(|&(o, _)| o == m)
+                    {
                         joints[k].push((m, i));
                     }
                 }
@@ -403,7 +417,12 @@ impl Tile {
             let mut names = members.iter().map(|&k| platforms[k].key.clone()).collect::<Vec<_>>();
             names.sort();
             names.dedup();
-            report.summary.push(format!("{}: {} platform(s), {} way(s) off on {groups} side(s)", names.join(" + "), members.len(), exits.len()));
+            report.summary.push(format!(
+                "{}: {} platform(s), {} way(s) off on {groups} side(s)",
+                names.join(" + "),
+                members.len(),
+                exits.len()
+            ));
             if groups >= 2 {
                 continue;
             }
@@ -416,9 +435,17 @@ impl Tile {
             keys.dedup();
             let all = members.iter().flat_map(|&k| platforms[k].corners.iter().copied()).collect::<Vec<_>>();
             let at = all.iter().fold(Float3::new(0.0, 0.0, 0.0), |s, &p| s + p) * (1.0 / all.len().max(1) as f32);
-            let what = if groups == 0 { "units cannot get onto it: no platform edge links to the ground or to another building" } else { "it reaches the ground on one side only: units can get on but not across" };
+            let what = if groups == 0 {
+                "units cannot get onto it: no platform edge links to the ground or to another building"
+            } else {
+                "it reaches the ground on one side only: units can get on but not across"
+            };
             let loose = members.iter().any(|&k| slope(&platforms[k].corners) > RAMP_DEGREES && ground[k].is_empty());
-            let hint = if loose { " (a ramp's foot does not run along its collision outline's edge, or the ground there, a green ground platform where there is one, is more than 1 m off)" } else { "" };
+            let hint = if loose {
+                " (a ramp's foot does not run along its collision outline's edge, or the ground there, a green ground platform where there is one, is more than 1 m off)"
+            } else {
+                ""
+            };
             report.problems.push(BridgeProblem { elems, message: format!("bridge {}: {what}{hint}", keys.join(", ")), at });
         }
 
@@ -536,13 +563,20 @@ impl Tile {
         pairs.dedup();
         report.wall_pairs = pairs
             .into_iter()
-            .map(|(a, b)| WallPair { a: a.0, b: b.0, joints: joined.get(&(a, b)).copied().unwrap_or(0), closest: gaps.get(&(a, b)).map(|g| (g.0, g.1)) })
+            .map(|(a, b)| WallPair {
+                a: a.0,
+                b: b.0,
+                joints: joined.get(&(a, b)).copied().unwrap_or(0),
+                closest: gaps.get(&(a, b)).map(|g| (g.0, g.1)),
+            })
             .collect();
         let key = |k: usize| {
             let p = &platforms[k];
             match self.tscene().doc().get(p.elem, "key") {
                 Some(key) => key,
-                None if !wce_walls::scene::is_procedural(self.tscene(), p.elem) => format!("{} (kit wall {})", p.key, self.tscene().name(p.elem)),
+                None if !wce_walls::scene::is_procedural(self.tscene(), p.elem) => {
+                    format!("{} (kit wall {})", p.key, self.tscene().name(p.elem))
+                }
                 None => "procedural wall".to_owned(),
             }
         };
@@ -563,7 +597,13 @@ impl Tile {
             });
         }
 
-        report.summary.push(format!("wall walks: {} building(s), {} platform(s) ({grounds} ground), {} joint(s), {} break(s)", report.walls, platforms.len(), report.wall_joints, report.problems.len()));
+        report.summary.push(format!(
+            "wall walks: {} building(s), {} platform(s) ({grounds} ground), {} joint(s), {} break(s)",
+            report.walls,
+            platforms.len(),
+            report.wall_joints,
+            report.problems.len()
+        ));
         report
     }
 }
@@ -602,12 +642,18 @@ impl Tile {
     /// point: what blocks units on the walls. Each with its key, layer and the walk's building.
     pub fn things_on_walks(&mut self, x: f32, z: f32, r: f32) -> Vec<String> {
         let fort = |c: &str| c.contains("fort") || c.contains("wall") || c.contains("gate") || c.contains("tower");
-        let category = |t: &Self, e: usize| t.tscene().doc().get(e, "key").and_then(|k| t.building_category(&k.to_lowercase())).unwrap_or_default();
+        let category =
+            |t: &Self, e: usize| t.tscene().doc().get(e, "key").and_then(|k| t.building_category(&k.to_lowercase())).unwrap_or_default();
         let near = |t: &Self, e: usize| {
             let p = t.world_position(e);
             (p.x - x).hypot(p.z - z) <= r
         };
-        let buildings = self.instances.iter().copied().filter(|&e| self.tscene().type_of(e) == "BUILDING_INSTANCE" && near(self, e)).collect::<Vec<_>>();
+        let buildings = self
+            .instances
+            .iter()
+            .copied()
+            .filter(|&e| self.tscene().type_of(e) == "BUILDING_INSTANCE" && near(self, e))
+            .collect::<Vec<_>>();
         let (walls, others): (Vec<usize>, Vec<usize>) = buildings.into_iter().partition(|&e| fort(&category(self, e)));
         let mut walks = vec![];
         for &w in &walls {
@@ -626,7 +672,15 @@ impl Tile {
             if let Some((w, _)) = on {
                 let doc = self.tscene().doc();
                 let layer = self.layer_of(e).map(|l| self.tscene().name(l).to_owned()).unwrap_or_default();
-                out.push(format!("#{e} {} ({}) at ({:.1}, {:.1}, {:.1}) in '{layer}', on #{w} {}", doc.get(e, "key").unwrap_or_default(), category(self, e), p.x, p.y, p.z, doc.get(*w, "key").unwrap_or_default()));
+                out.push(format!(
+                    "#{e} {} ({}) at ({:.1}, {:.1}, {:.1}) in '{layer}', on #{w} {}",
+                    doc.get(e, "key").unwrap_or_default(),
+                    category(self, e),
+                    p.x,
+                    p.y,
+                    p.z,
+                    doc.get(*w, "key").unwrap_or_default()
+                ));
             }
         }
 

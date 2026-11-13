@@ -161,15 +161,26 @@ impl Zone {
         use wce_siege::raster::{dist, inside};
         let of = |t: &'static str| self.polygons.iter().filter(move |(k, p)| *k == t && p.len() >= 3).map(|(_, p)| p);
         let edge_gap = |p: [f64; 2]| {
-            of("standard additive").chain(of("standard subtractive")).flat_map(|poly| (0..poly.len()).map(move |i| (poly[i], poly[(i + 1) % poly.len()]))).map(|(a, b)| {
-                let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
-                let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (dx * dx + dz * dz).max(1e-9)).clamp(0.0, 1.0);
-                dist(p, [a[0] + t * dx, a[1] + t * dz])
-            }).fold(f64::MAX, f64::min)
+            of("standard additive")
+                .chain(of("standard subtractive"))
+                .flat_map(|poly| (0..poly.len()).map(move |i| (poly[i], poly[(i + 1) % poly.len()])))
+                .map(|(a, b)| {
+                    let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+                    let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / (dx * dx + dz * dz).max(1e-9)).clamp(0.0, 1.0);
+                    dist(p, [a[0] + t * dx, a[1] + t * dz])
+                })
+                .fold(f64::MAX, f64::min)
         };
-        let ok = |p: [f64; 2]| of("standard additive").any(|poly| inside(p, poly)) && !of("standard subtractive").any(|poly| inside(p, poly)) && edge_gap(p) >= margin;
+        let ok = |p: [f64; 2]| {
+            of("standard additive").any(|poly| inside(p, poly))
+                && !of("standard subtractive").any(|poly| inside(p, poly))
+                && edge_gap(p) >= margin
+        };
         let (nx, nz) = ((half.0 / 10.0) as i64, (half.1 / 10.0) as i64);
-        (-nx..=nx).flat_map(|i| (-nz..=nz).map(move |j| [i as f64 * 10.0, j as f64 * 10.0])).filter(|&p| ok(p)).min_by(|a, b| dist(*a, near).total_cmp(&dist(*b, near)))
+        (-nx..=nx)
+            .flat_map(|i| (-nz..=nz).map(move |j| [i as f64 * 10.0, j as f64 * 10.0]))
+            .filter(|&p| ok(p))
+            .min_by(|a, b| dist(*a, near).total_cmp(&dist(*b, near)))
     }
 }
 
@@ -194,7 +205,8 @@ pub fn battle_xml(b: &Battle) -> String {
         format!(
             "\t\t\t\t<boundary type='{kind}'>\n\t\t\t\t\t<position x='{x0}' y='{y0}'/>\n\t\t\t\t\t<position x='{x0}' y='{dy}'/>\n\t\t\t\t\t<position x='{dx}' y='{dy}'/>\n\
              \t\t\t\t\t<position x='{dx}' y='{y0}'/>\n\t\t\t\t\t<orientation radians=\"0.00\"/>\n\t\t\t\t</boundary>\n",
-            x0 = -dx, y0 = -dy
+            x0 = -dx,
+            y0 = -dy
         )
     };
 
@@ -232,7 +244,9 @@ pub fn battle_xml(b: &Battle) -> String {
         a += &format!(
             "\t\t\t<unit script_name=\"{name}\">\n\t\t\t\t<unit_type type=\"{}\"/>\n\t\t\t\t<position x=\"{:.0}\" y=\"{:.0}\"/>\n\t\t\t\t<orientation radians=\"0\"/>\n\
              \t\t\t\t<width metres=\"20\"/>\n\t\t\t\t<unit_experience level=\"0\"/>\n\t\t\t</unit>\n\t\t</army>\n",
-            esc(unit), at[0], at[1]
+            esc(unit),
+            at[0],
+            at[1]
         );
         a += "\t\t<victory_condition>\n\t\t\t<kill_or_rout_enemy></kill_or_rout_enemy>\n\t\t</victory_condition>\n";
         if attacker && settlement {
@@ -258,7 +272,10 @@ pub fn battle_xml(b: &Battle) -> String {
     x += &format!(
         "\t<battle_description>\n\t\t<time_of_day>{}</time_of_day>\n\t\t<season>{}</season>\n\t\t<precipitation_type>{}</precipitation_type>\n\
          \t\t<type>{}</type>\n\t\t<duration>3600</duration>\n\t\t<timeout_winning_alliance_index>0</timeout_winning_alliance_index>\n",
-        w.time_of_day, w.season, w.precipitation, if settlement { "settlement_standard" } else { "land_normal" }
+        w.time_of_day,
+        w.season,
+        w.precipitation,
+        if settlement { "settlement_standard" } else { "land_normal" }
     );
     if b.facts.alliance_indices {
         x += "\t\t<battlefield_owner_alliance_index>0</battlefield_owner_alliance_index>\n";
@@ -274,7 +291,10 @@ pub fn battle_xml(b: &Battle) -> String {
     }
 
     if !w.environment.is_empty() {
-        x += &format!("\t<weather>\n\t\t<prevailing_wind x=\"0.00\" y=\"9.00\"/>\n\t\t<environment_key>{}</environment_key>\n\t</weather>\n", esc(&w.environment));
+        x += &format!(
+            "\t<weather>\n\t\t<prevailing_wind x=\"0.00\" y=\"9.00\"/>\n\t\t<environment_key>{}</environment_key>\n\t</weather>\n",
+            esc(&w.environment)
+        );
     }
 
     // No <Climate> nor <Season> element: the game reads neither (no such tag in its battle XML reader; the ground's climate is the map's,
@@ -367,7 +387,8 @@ pub fn asset_paths(bytes: &[u8]) -> BTreeSet<String> {
 
     // UTF-16 LE: every other byte zero.
     for start in 0..2 {
-        let narrow: Vec<u8> = bytes[start..].chunks(2).map(|c| if c.len() == 2 && c[1] == 0 && path_char(c[0]) { c[0] } else { 0 }).collect();
+        let narrow: Vec<u8> =
+            bytes[start..].chunks(2).map(|c| if c.len() == 2 && c[1] == 0 && path_char(c[0]) { c[0] } else { 0 }).collect();
         for run in narrow.split(|&c| c == 0) {
             take(run);
         }
@@ -381,7 +402,14 @@ pub fn asset_paths(bytes: &[u8]) -> BTreeSet<String> {
 /// in turn, in the models, technical files and definitions those name (`prefixes`: whole folders more, like the climate's ground
 /// textures), the pack each is read from; and the mod packs whose database tables (`tables`, like `models_building_tables`) hold one of
 /// `keys` (the buildings', the armies'). `shipped`: the paths the launch ships, for [`Needs::shadowing`].
-pub fn needs(vfs: &Vfs, shipped: &[(String, Vec<u8>)], buildings: &[String], prefixes: &[String], tables: &[&str], keys: &[String]) -> Needs {
+pub fn needs(
+    vfs: &Vfs,
+    shipped: &[(String, Vec<u8>)],
+    buildings: &[String],
+    prefixes: &[String],
+    tables: &[&str],
+    keys: &[String],
+) -> Needs {
     let packs = vfs.packs();
     let mut why: BTreeMap<usize, String> = BTreeMap::new();
     let mut out = Needs::default();
@@ -433,9 +461,11 @@ pub fn needs(vfs: &Vfs, shipped: &[(String, Vec<u8>)], buildings: &[String], pre
     // The database rows: a mod pack's table files that hold a key the release's tables lack (a mod's own building or unit; a key of the
     // release is found in a mod's copy of a whole table too, which it does not need), as its strings are stored: UTF-8 or UTF-16 LE.
     let in_tables = |i: usize, needle: &(String, Vec<u8>, Vec<u8>)| {
-        tables.iter().flat_map(|t| vfs.list(&format!("db/{t}/"), "")).filter(|p| vfs.owners(p).contains(&i)).any(|p| {
-            vfs.read_from(i, p).is_ok_and(|b| contains(&b, &needle.1) || contains(&b, &needle.2))
-        })
+        tables
+            .iter()
+            .flat_map(|t| vfs.list(&format!("db/{t}/"), ""))
+            .filter(|p| vfs.owners(p).contains(&i))
+            .any(|p| vfs.read_from(i, p).is_ok_and(|b| contains(&b, &needle.1) || contains(&b, &needle.2)))
     };
 
     let release: Vec<usize> = packs.iter().enumerate().filter(|(_, p)| !p.is_mod && !p.loose).map(|(i, _)| i).collect();
@@ -487,7 +517,9 @@ pub fn release_shadowing(vfs: &Vfs, shipped: &[(String, Vec<u8>)]) -> Option<(St
     let packs = vfs.packs();
     let mut paths: Vec<String> = shipped.iter().map(|(p, _)| normalize(p)).collect();
     paths.sort();
-    paths.iter().find_map(|p| vfs.owners(p).iter().find(|&&i| !packs[i].is_mod && !packs[i].loose).map(|&i| (packs[i].name.clone(), p.clone())))
+    paths
+        .iter()
+        .find_map(|p| vfs.owners(p).iter().find(|&&i| !packs[i].is_mod && !packs[i].loose).map(|&i| (packs[i].name.clone(), p.clone())))
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
@@ -511,7 +543,9 @@ pub fn stray_movie_packs(data: &Path, release: &[String]) -> Vec<String> {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| n.to_ascii_lowercase().ends_with(".pack"))
         .filter(|n| !release.iter().any(|r| r.eq_ignore_ascii_case(n)))
-        .filter(|n| ![wce_walls::pack::PROC_PACK, wce_tile_editor::building_effects::VFX_PACK].iter().any(|own| n.eq_ignore_ascii_case(own)))
+        .filter(|n| {
+            ![wce_walls::pack::PROC_PACK, wce_tile_editor::building_effects::VFX_PACK].iter().any(|own| n.eq_ignore_ascii_case(own))
+        })
         .filter(|n| pack_type(&data.join(n)) == Some(4))
         .collect();
     v.sort_by_key(|n| n.to_ascii_lowercase());
@@ -581,21 +615,35 @@ pub fn processes_running(exes: &[&str]) -> Option<Vec<bool>> {
 /// # Errors
 ///
 /// The game can't be started (elsewhere than Windows: a native Linux build, or no Proton or prefix).
-pub fn start(game_dir: &Path, game: &wce_vfs::GameProfile, command_line: &str, proton: Option<&Path>, scratch: &Path) -> Result<(Child, String), String> {
+pub fn start(
+    game_dir: &Path,
+    game: &wce_vfs::GameProfile,
+    command_line: &str,
+    proton: Option<&Path>,
+    scratch: &Path,
+) -> Result<(Child, String), String> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         let _ = (proton, scratch);
         let path = game_dir.join(game.exe);
         // As one raw string: the game parses `name "arg";` itself, and Rust's quoting would escape the quotes.
-        let child = std::process::Command::new(&path).current_dir(game_dir).raw_arg(command_line).spawn().map_err(|e| format!("{}: {e}", path.display()))?;
+        let child = std::process::Command::new(&path)
+            .current_dir(game_dir)
+            .raw_arg(command_line)
+            .spawn()
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         Ok((child, path.display().to_string()))
     }
 
     #[cfg(not(windows))]
     {
         if crate::proton::build_of(game_dir, game.exe) == crate::proton::Build::Linux {
-            return Err(format!("{} has no {}: a native Linux build, which Launch in game does not start (it starts the Windows build through Proton)", game_dir.display(), game.exe));
+            return Err(format!(
+                "{} has no {}: a native Linux build, which Launch in game does not start (it starts the Windows build through Proton)",
+                game_dir.display(),
+                game.exe
+            ));
         }
 
         let (child, launcher) = crate::proton::start(game_dir, game.exe, command_line, game.steam_app_id, proton, scratch)?;
@@ -647,7 +695,11 @@ mod tests {
     fn weather() -> BattleWeather {
         let w = TileWeather {
             file: "weather/rome_atlantic/au/land/day/dry/demo_morning.environment".to_owned(),
-            query: BTreeMap::from([("season".to_owned(), "au".to_owned()), ("climate".to_owned(), "ROME_Atlantic".to_owned()), ("precipitation".to_owned(), "dry,rain".to_owned())]),
+            query: BTreeMap::from([
+                ("season".to_owned(), "au".to_owned()),
+                ("climate".to_owned(), "ROME_Atlantic".to_owned()),
+                ("precipitation".to_owned(), "dry,rain".to_owned()),
+            ]),
         };
         BattleWeather::from_tile(&w)
     }
@@ -667,7 +719,15 @@ mod tests {
         ];
         let s = attila_army();
         let map = BattleMap::Tile("terrain/tiles/battle/assembly_kit/x/battlefield".to_owned());
-        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &wce_vfs::GameProfile::ATTILA.launch, zones: &zones });
+        let x = battle_xml(&Battle {
+            map,
+            cells: (8, 8),
+            weather: weather(),
+            sea_surface: String::new(),
+            army: &s,
+            facts: &wce_vfs::GameProfile::ATTILA.launch,
+            zones: &zones,
+        });
         assert!(x.contains("<boundary type='standard subtractive'>\n\t\t\t\t\t<position x='-400' y='-400'/>"));
         assert!(!x.contains("y='952'"), "a whole-tile area was written");
 
@@ -698,7 +758,15 @@ mod tests {
     fn tile_battle_as_tested() {
         let s = attila_army();
         let facts = wce_vfs::GameProfile::ATTILA.launch;
-        let x = battle_xml(&Battle { map: BattleMap::Tile("terrain/tiles/battle/plains/8x8/8x8_aa".to_owned()), cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &facts, zones: &[] });
+        let x = battle_xml(&Battle {
+            map: BattleMap::Tile("terrain/tiles/battle/plains/8x8/8x8_aa".to_owned()),
+            cells: (8, 8),
+            weather: weather(),
+            sea_surface: String::new(),
+            army: &s,
+            facts: &facts,
+            zones: &[],
+        });
         assert!(x.contains("<name>terrain/tiles/battle/plains/8x8/8x8_aa</name>"));
         assert!(!x.contains("tile_map_position"));
         assert!(x.contains("<type>land_normal</type>"));
@@ -709,7 +777,10 @@ mod tests {
         assert!(!x.contains("<Climate>") && !x.contains("<Season>"), "the game reads neither");
         assert!(x.contains("<precipitation_type>dry</precipitation_type>"), "a filter of several values is 'any'");
         assert!(x.contains("<faction>att_fact_western_roman_empire</faction>") && x.contains("<unit_type type=\"att_nor_saxon_spears\"/>"));
-        assert!(x.contains("<deployment_area_alliance_index>1</deployment_area_alliance_index>") && x.contains("<battlefield_owner_alliance_index>"));
+        assert!(
+            x.contains("<deployment_area_alliance_index>1</deployment_area_alliance_index>")
+                && x.contains("<battlefield_owner_alliance_index>")
+        );
         assert_eq!(x.matches("<alliance id=").count(), 2);
         assert!(!x.contains("sea_surface_name"), "no sea surface given: none written");
     }
@@ -719,21 +790,46 @@ mod tests {
         let game = &wce_vfs::GameProfile::ROME_2;
         let s = LaunchArmy { tile_upgrades: "level1".to_owned(), ..LaunchArmy::default() }.resolved(&game.launch);
         let map = BattleMap::Position { map: format!("{}/", game.campaign_battle_map), x: 0.5, y: 0.5, settlement: true };
-        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: String::new(), army: &s, facts: &game.launch, zones: &[] });
+        let x = battle_xml(&Battle {
+            map,
+            cells: (8, 8),
+            weather: weather(),
+            sea_surface: String::new(),
+            army: &s,
+            facts: &game.launch,
+            zones: &[],
+        });
         assert!(x.contains("<faction>rom_rome</faction>") && x.contains("<unit_type type=\"Rom_Hastati\"/>"));
         assert!(x.contains("<faction>rom_suebi</faction>") && x.contains("<unit_type type=\"Ger_Spear_Levy\"/>"));
         assert!(x.contains("<subculture>sc_rom_roman</subculture>") && x.contains("<name>terrain/battles/main_rome_map/</name>"));
-        assert!(!x.contains("deployment_area_alliance_index") && !x.contains("battlefield_owner_alliance_index") && !x.contains("tile_upgrade"));
+        assert!(
+            !x.contains("deployment_area_alliance_index") && !x.contains("battlefield_owner_alliance_index") && !x.contains("tile_upgrade")
+        );
     }
 
     #[test]
     fn settlement_position() {
         let s = LaunchArmy { tile_upgrades: "level1 escalation3".to_owned(), ..attila_army() };
-        let map = BattleMap::Position { map: "terrain/battles/main_attila_map/".to_owned(), x: 310.0 / 2032.0, y: 324.0 / 1437.0, settlement: true };
-        let x = battle_xml(&Battle { map, cells: (8, 8), weather: weather(), sea_surface: "wind_level_2".to_owned(), army: &s, facts: &wce_vfs::GameProfile::ATTILA.launch, zones: &[] });
-        assert!(x.contains("</battle_description>
+        let map = BattleMap::Position {
+            map: "terrain/battles/main_attila_map/".to_owned(),
+            x: 310.0 / 2032.0,
+            y: 324.0 / 1437.0,
+            settlement: true,
+        };
+        let x = battle_xml(&Battle {
+            map,
+            cells: (8, 8),
+            weather: weather(),
+            sea_surface: "wind_level_2".to_owned(),
+            army: &s,
+            facts: &wce_vfs::GameProfile::ATTILA.launch,
+            zones: &[],
+        });
+        assert!(x.contains(
+            "</battle_description>
 	<sea_surface_name>wind_level_2</sea_surface_name>
-	<weather>"));
+	<weather>"
+        ));
         assert!(x.contains("<tile_map_position x=\"0.152559\" y=\"0.225470\">/</tile_map_position>"));
         assert!(x.contains("<type>settlement_standard</type>") && x.contains("<capture_settlement>"));
         assert!(x.contains("<tile_upgrade>level1</tile_upgrade>\n\t\t<tile_upgrade>escalation3</tile_upgrade>"));
@@ -742,7 +838,10 @@ mod tests {
     #[test]
     fn command_line_puts_the_launch_pack_first() {
         let c = command_line(&Delivery::Pack, &["tdd_pack1_main_v1.1.0.pack".to_owned(), "wce_launch.pack".to_owned()]);
-        assert_eq!(c, "mod \"wce_launch.pack\"; mod \"tdd_pack1_main_v1.1.0.pack\"; show_frontend_movies false; game_startup_mode battle script/wce/wce_launch.xml;");
+        assert_eq!(
+            c,
+            "mod \"wce_launch.pack\"; mod \"tdd_pack1_main_v1.1.0.pack\"; show_frontend_movies false; game_startup_mode battle script/wce/wce_launch.xml;"
+        );
     }
 
     #[test]

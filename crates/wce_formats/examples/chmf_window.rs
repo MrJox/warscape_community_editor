@@ -31,7 +31,8 @@ fn main() {
 
     println!("{} x {} samples, {} per cell, min {} max {}", f.width, f.height, f.cells_x, f.min, f.max);
     for y in y0..y1 {
-        let row: Vec<String> = (x0..x1).map(|x| grid[((y - y0) * (x1 - x0) + x - x0) as usize].map_or("    -".to_owned(), |v| format!("{v:5}"))).collect();
+        let row: Vec<String> =
+            (x0..x1).map(|x| grid[((y - y0) * (x1 - x0) + x - x0) as usize].map_or("    -".to_owned(), |v| format!("{v:5}"))).collect();
         println!("{y:5} {}", row.join(" "));
     }
 }

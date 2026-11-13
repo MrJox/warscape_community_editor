@@ -35,7 +35,12 @@ fn main() {
 fn run() -> Result<(), String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
-    let plain = args.iter().enumerate().filter(|(i, a)| !a.starts_with("--") && (*i == 0 || !args[i - 1].starts_with("--"))).map(|(_, a)| a.clone()).collect::<Vec<_>>();
+    let plain = args
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || !args[i - 1].starts_with("--")))
+        .map(|(_, a)| a.clone())
+        .collect::<Vec<_>>();
     let [game, schema, out] = plain.as_slice() else {
         return Err("usage: wall_spike <game folder> <rpfm schema_att.ron> <out .pack> [--mods a.pack;b.pack] [--angle degrees]".to_owned());
     };
@@ -77,11 +82,17 @@ fn run() -> Result<(), String> {
                     let longest = mesh::longest_edge(bytes)?;
                     let same = mesh::round_trips(bytes)?;
                     *bytes = mesh::warp_mesh(bytes, &warp, &Cuts::every(STEP))?;
-                    println!("  {name}: round trip {same}, longest triangle edge along x {longest:.1} m -> {:.1} m", mesh::longest_edge(bytes)?);
+                    println!(
+                        "  {name}: round trip {same}, longest triangle edge along x {longest:.1} m -> {:.1} m",
+                        mesh::longest_edge(bytes)?
+                    );
                 } else if *name == logic_name {
                     let (w, notes) = logic::warp_logic(bytes, &warp, &Cuts::every(STEP))?;
                     *bytes = w;
-                    println!("  {name}: platforms {} -> {}, firing lines off their strip {}", notes.platforms.0, notes.platforms.1, notes.orphan_lines);
+                    println!(
+                        "  {name}: platforms {} -> {}, firing lines off their strip {}",
+                        notes.platforms.0, notes.platforms.1, notes.orphan_lines
+                    );
                     for w in notes.warnings {
                         println!("    {w}");
                     }
@@ -92,8 +103,13 @@ fn run() -> Result<(), String> {
 
             bends.push((key.to_owned(), Bend::turning(x0, x1, a)));
             let end = warp.point([x1, 0.0, 0.0]);
-            println!("  bent {:.1} degrees about x = {x0}: the end (x = {x1}, z = 0) is at x {:.3}, z {:.3}, facing {:.1} degrees",
-                a.to_degrees(), end[0], end[2], warp.yaw([x1, 0.0, 0.0]).to_degrees());
+            println!(
+                "  bent {:.1} degrees about x = {x0}: the end (x = {x1}, z = 0) is at x {:.3}, z {:.3}, facing {:.1} degrees",
+                a.to_degrees(),
+                end[0],
+                end[2],
+                warp.yaw([x1, 0.0, 0.0]).to_degrees()
+            );
         }
 
         files.extend(b.into_pack_files());
@@ -110,7 +126,11 @@ fn run() -> Result<(), String> {
         }
 
         if let Some(b) = db::cell_mut(table, key, "DockingLines").and_then(db::bytes_mut) {
-            let (old, new) = { let old = lines::read_docking_lines(b)?; let new = lines::warp_docking_lines(&old, warp, DOCKING_STEP); (old, new) };
+            let (old, new) = {
+                let old = lines::read_docking_lines(b)?;
+                let new = lines::warp_docking_lines(&old, warp, DOCKING_STEP);
+                (old, new)
+            };
             *b = lines::write_docking_lines(&new);
             println!("{key}: docking lines {} -> {}", old.len(), new.len());
         }

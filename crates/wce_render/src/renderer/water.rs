@@ -78,7 +78,6 @@ pub(crate) struct WaterGpu {
 const WATER_VERTEX: u32 = 32;
 
 impl Renderer {
-
     fn water_refraction(&mut self) {
         let (tw, th) = ((self.gbuffer.w / 2).max(1), (self.gbuffer.h / 2).max(1));
         if self.water.refr.tex.is_none() || self.water.refr_w != tw || self.water.refr_h != th {
@@ -126,7 +125,10 @@ impl Renderer {
                 None => {
                     let verts = w.verts.iter().flat_map(|v| [v.x, v.y, v.z, v.across, v.u, v.v, v.flow, v.fade]).collect::<Vec<_>>();
                     let indices = w.indices.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
-                    let (vb, ib) = (immutable_buffer(&self.dev, &f32_bytes(&verts), D3D11_BIND_VERTEX_BUFFER), immutable_buffer(&self.dev, &indices, D3D11_BIND_INDEX_BUFFER));
+                    let (vb, ib) = (
+                        immutable_buffer(&self.dev, &f32_bytes(&verts), D3D11_BIND_VERTEX_BUFFER),
+                        immutable_buffer(&self.dev, &indices, D3D11_BIND_INDEX_BUFFER),
+                    );
                     if vb.is_none() || ib.is_none() {
                         continue;
                     }
@@ -144,16 +146,21 @@ impl Renderer {
         self.water.meshes = keep;
 
         // The water meshes of models (water planes, fountains) the camera's G-buffer pass found visible: drawn with the sea plane.
-        let model_water = !rivers && [(&self.draw_lists.terrain_draws, &self.draw_lists.vis_terrain), (&self.draw_lists.draws, &self.draw_lists.vis)]
-            .iter()
-            .any(|(set, vis)| vis.active.iter().any(|&b| set.batch_mesh(b).kind == crate::model_cache::MeshKind::Water));
+        let model_water = !rivers
+            && [(&self.draw_lists.terrain_draws, &self.draw_lists.vis_terrain), (&self.draw_lists.draws, &self.draw_lists.vis)]
+                .iter()
+                .any(|(set, vis)| vis.active.iter().any(|&b| set.batch_mesh(b).kind == crate::model_cache::MeshKind::Water));
         if !any && !model_water {
             return;
         }
 
         wce_prof!("render.water");
         let vs = self.shader(if rivers { RIVER_VS } else { SEA_VS });
-        let quality = if self.game == super::game::RenderGame::Rome2 { super::rome2_water(self.settings.water_quality, false) } else { self.settings.water_quality };
+        let quality = if self.game == super::game::RenderGame::Rome2 {
+            super::rome2_water(self.settings.water_quality, false)
+        } else {
+            self.settings.water_quality
+        };
         let sea_ps = sea_ps(quality);
         let ultra = quality >= 3;
         let shadows = if self.game == super::game::RenderGame::Rome2 { self.rome2_shadows_on() } else { self.settings.shadows };
@@ -167,10 +174,21 @@ impl Renderer {
         let (Some(vs), Some(ps)) = (vs, ps) else { return };
         if self.water.ds.is_none() {
             // Geometry is stencil 1: the fog pass covers the sea plane.
-            let replace = D3D11_DEPTH_STENCILOP_DESC { StencilFailOp: D3D11_STENCIL_OP_KEEP, StencilDepthFailOp: D3D11_STENCIL_OP_KEEP, StencilPassOp: D3D11_STENCIL_OP_REPLACE, StencilFunc: D3D11_COMPARISON_ALWAYS };
+            let replace = D3D11_DEPTH_STENCILOP_DESC {
+                StencilFailOp: D3D11_STENCIL_OP_KEEP,
+                StencilDepthFailOp: D3D11_STENCIL_OP_KEEP,
+                StencilPassOp: D3D11_STENCIL_OP_REPLACE,
+                StencilFunc: D3D11_COMPARISON_ALWAYS,
+            };
             let dd = D3D11_DEPTH_STENCIL_DESC {
-                DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ALL, DepthFunc: D3D11_COMPARISON_LESS_EQUAL, StencilEnable: true.into(),
-                StencilReadMask: 0xFF, StencilWriteMask: 0xFF, FrontFace: replace, BackFace: replace,
+                DepthEnable: true.into(),
+                DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ALL,
+                DepthFunc: D3D11_COMPARISON_LESS_EQUAL,
+                StencilEnable: true.into(),
+                StencilReadMask: 0xFF,
+                StencilWriteMask: 0xFF,
+                FrontFace: replace,
+                BackFace: replace,
             };
 
             self.water.ds = self.dev.create_depth_stencil_state(&dd).ok();
@@ -211,7 +229,8 @@ impl Renderer {
         // turned the sun's specular term (sun_colour unscaled) into a white glare over the lakes. The river's normal map has the layout.
         // ASSUMPTION: which map the engine binds to RIGID_WATER_SHADER's `t_normal` was not traced (the plane's model names none).
         let rome2 = self.game == super::game::RenderGame::Rome2;
-        let nt = self.textures.get(if rivers || rome2 { "battleterrain/river/river_normal.dds" } else { "sea/water_detail_normal.dds" }, false);
+        let nt =
+            self.textures.get(if rivers || rome2 { "battleterrain/river/river_normal.dds" } else { "sea/water_detail_normal.dds" }, false);
         let f4 = DXGI_FORMAT_R32G32B32A32_FLOAT;
         let layout = if rivers {
             let mut el = vec![element(c"POSITION", 0, f4, 0, 0, false), element(c"POSITION", 1, f4, 0, 16, false)];
@@ -221,7 +240,10 @@ impl Renderer {
 
             self.layout(&vs, "river", &el)
         } else {
-            let mut el = vec![element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
+            let mut el = vec![
+                element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false),
+                element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false),
+            ];
             for i in 0..6 {
                 el.push(element(c"POSITION", 1 + i, f4, 1, i * 16, true));
             }
@@ -304,18 +326,29 @@ impl Renderer {
         // G-buffer pass's instances (POSITION1..3; the shader reads nothing else of them).
         if model_water {
             // The shader declares the sea quad's inputs too (TEXCOORD0, POSITION4..6), unread: the uv and the instance's other rows.
-            let mut el = vec![element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R16G16_FLOAT, 0, 8, false)];
+            let mut el = vec![
+                element(c"POSITION", 0, DXGI_FORMAT_R16G16B16A16_FLOAT, 0, 0, false),
+                element(c"TEXCOORD", 0, DXGI_FORMAT_R16G16_FLOAT, 0, 8, false),
+            ];
             for i in 0..6 {
                 el.push(element(c"POSITION", 1 + i, f4, 1, i * 16, true));
             }
 
             if let Some(model_layout) = self.layout(&vs, "sea_model", &el) {
                 self.ctx.set_input_layout(Some(&model_layout));
-                self.ctx.set_vertex_buffers(1, std::slice::from_ref(&self.draw_lists.ring.buffer), &[(size_of::<crate::model_cache::RigidInstance>() as u32)], &[0]);
-                let (terrain_draws, draws) = (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
+                self.ctx.set_vertex_buffers(
+                    1,
+                    std::slice::from_ref(&self.draw_lists.ring.buffer),
+                    &[(size_of::<crate::model_cache::RigidInstance>() as u32)],
+                    &[0],
+                );
+                let (terrain_draws, draws) =
+                    (std::mem::take(&mut self.draw_lists.terrain_draws), std::mem::take(&mut self.draw_lists.draws));
                 let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
                 let firsts = self.draw_lists.gbuffer_firsts;
-                let (_, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| m.kind == crate::model_cache::MeshKind::Water);
+                let (_, triangles) = self.draw_batches([&terrain_draws, &draws], [&vis_terrain, &vis], firsts, |_, m| {
+                    m.kind == crate::model_cache::MeshKind::Water
+                });
                 self.draw_stats.triangles += triangles;
                 self.draw_lists.terrain_draws = terrain_draws;
                 self.draw_lists.draws = draws;

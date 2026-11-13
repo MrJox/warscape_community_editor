@@ -79,8 +79,16 @@ fn config(sharpness: f32, (sw, sh): (u32, u32), (dw, dh): (u32, u32)) -> [u32; 2
 fn coef_texture(dev: &ID3D11Device, table: &[[f32; 8]; 64]) -> Option<ID3D11ShaderResourceView> {
     let bytes: Vec<u8> = table.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
     let desc = D3D11_TEXTURE2D_DESC {
-        Width: 2, Height: 64, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R32G32B32A32_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        Usage: D3D11_USAGE_IMMUTABLE, BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: 2,
+        Height: 64,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_R32G32B32A32_FLOAT,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
     let tex = dev.create_texture_2d(&desc, Some(&[InitData::new(&bytes, 2 * 16)])).ok()?;
     dev.create_shader_resource_view(&tex, None).ok()
@@ -88,19 +96,34 @@ fn coef_texture(dev: &ID3D11Device, table: &[[f32; 8]; 64]) -> Option<ID3D11Shad
 
 impl Nis {
     fn create(&mut self, dev: &ID3D11Device) -> Result<(), RenderError> {
-        let main = include_str!("../../../../third_party/nis/NIS_Main.hlsl").replace("#include \"NIS_Scaler.h\"", include_str!("../../../../third_party/nis/NIS_Scaler.h"));
-        let source = format!("#define NIS_BLOCK_WIDTH {BLOCK_WIDTH}\n#define NIS_BLOCK_HEIGHT {BLOCK_HEIGHT}\n#define NIS_THREAD_GROUP_SIZE {THREAD_GROUP_SIZE}\n{main}");
+        let main = include_str!("../../../../third_party/nis/NIS_Main.hlsl")
+            .replace("#include \"NIS_Scaler.h\"", include_str!("../../../../third_party/nis/NIS_Scaler.h"));
+        let source = format!(
+            "#define NIS_BLOCK_WIDTH {BLOCK_WIDTH}\n#define NIS_BLOCK_HEIGHT {BLOCK_HEIGHT}\n#define NIS_THREAD_GROUP_SIZE {THREAD_GROUP_SIZE}\n{main}"
+        );
         let code = super::compile(&source, "NIS_Main.hlsl", "main", "cs_5_0")?;
         self.cs = Some(dev.create_compute_shader(&code).map_err(|e| RenderError(format!("NIS: {e}")))?);
         self.cb = dev
-            .create_buffer(&D3D11_BUFFER_DESC { ByteWidth: 28 * 4, Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32, ..Default::default() }, None)
+            .create_buffer(
+                &D3D11_BUFFER_DESC {
+                    ByteWidth: 28 * 4,
+                    Usage: D3D11_USAGE_DEFAULT,
+                    BindFlags: D3D11_BIND_CONSTANT_BUFFER as u32,
+                    ..Default::default()
+                },
+                None,
+            )
             .ok();
         self.coef_scaler = coef_texture(dev, &COEF_SCALE);
         self.coef_usm = coef_texture(dev, &COEF_USM);
         self.sampler = dev
             .create_sampler_state(&D3D11_SAMPLER_DESC {
-                Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR, AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
-                AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, MaxLOD: D3D11_FLOAT32_MAX, ..Default::default()
+                Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
+                AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
+                AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
+                MaxLOD: D3D11_FLOAT32_MAX,
+                ..Default::default()
             })
             .ok();
         if self.cb.is_none() || self.coef_scaler.is_none() || self.coef_usm.is_none() || self.sampler.is_none() {
@@ -115,7 +138,15 @@ impl Nis {
     /// # Errors
     ///
     /// The shader or its resources can't be made (once; later calls return false).
-    pub(crate) fn upscale(&mut self, dev: &ID3D11Device, ctx: &ID3D11DeviceContext, src: &ID3D11ShaderResourceView, size: (u32, u32), target: &RenderTarget, sharpness: f32) -> Result<bool, RenderError> {
+    pub(crate) fn upscale(
+        &mut self,
+        dev: &ID3D11Device,
+        ctx: &ID3D11DeviceContext,
+        src: &ID3D11ShaderResourceView,
+        size: (u32, u32),
+        target: &RenderTarget,
+        sharpness: f32,
+    ) -> Result<bool, RenderError> {
         if self.failed {
             return Ok(false);
         }
@@ -131,8 +162,16 @@ impl Nis {
         let Some(target_tex) = target.texture() else { return Ok(false) };
         if self.out.is_none() || self.out_size != dst {
             let desc = D3D11_TEXTURE2D_DESC {
-                Width: dst.0, Height: dst.1, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-                Usage: D3D11_USAGE_DEFAULT, BindFlags: D3D11_BIND_UNORDERED_ACCESS as u32, CPUAccessFlags: 0, MiscFlags: 0,
+                Width: dst.0,
+                Height: dst.1,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_UNORDERED_ACCESS as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
             };
             self.out = dev.create_texture_2d(&desc, None).ok().and_then(|tex| {
                 let uav = dev.create_unordered_access_view(&tex, None).ok()?;

@@ -53,7 +53,10 @@ pub struct Manifest {
 
 impl Manifest {
     fn to_text(&self) -> String {
-        let mut s = format!("wce_share {}\ngame {}\nlocation {}\nentry {}\nvariation {}\n", self.version, self.game, self.location, self.entry, self.variation);
+        let mut s = format!(
+            "wce_share {}\ngame {}\nlocation {}\nentry {}\nvariation {}\n",
+            self.version, self.game, self.location, self.entry, self.variation
+        );
         for k in &self.kit_prefabs {
             s += &format!("kit_prefab {k}\n");
         }
@@ -87,7 +90,10 @@ impl Manifest {
         }
 
         if m.version > VERSION {
-            return Err(format!("the project was shared by a newer editor (format {}, this one reads {VERSION}): update the editor", m.version));
+            return Err(format!(
+                "the project was shared by a newer editor (format {}, this one reads {VERSION}): update the editor",
+                m.version
+            ));
         }
 
         Ok(m)
@@ -178,14 +184,24 @@ fn references(text: &str) -> (Vec<String>, Vec<String>) {
 /// # Errors
 ///
 /// The location folder or the entry is not there.
-pub fn collect(raw_root: &Path, entry_file: &Path, location: &str, variation: &str, projects_raw: &Path, prefabs: &PrefabLibrary, game: &str) -> Result<Share, String> {
+pub fn collect(
+    raw_root: &Path,
+    entry_file: &Path,
+    location: &str,
+    variation: &str,
+    projects_raw: &Path,
+    prefabs: &PrefabLibrary,
+    game: &str,
+) -> Result<Share, String> {
     let location = location.replace('\\', "/").trim_matches('/').to_owned();
     let dir = raw_root.join(&location);
     if !dir.is_dir() {
         return Err(format!("the tile's folder {} is not there", dir.display()));
     }
 
-    let entry = relative(entry_file, raw_root).filter(|_| entry_file.is_file()).ok_or_else(|| format!("the tile's entry {} is not in {}", entry_file.display(), raw_root.display()))?;
+    let entry = relative(entry_file, raw_root)
+        .filter(|_| entry_file.is_file())
+        .ok_or_else(|| format!("the tile's entry {} is not in {}", entry_file.display(), raw_root.display()))?;
     let mut files = BTreeMap::new();
     files.insert(entry.clone(), entry_file.to_path_buf());
     let mut texts = vec![];
@@ -243,7 +259,12 @@ pub fn collect(raw_root: &Path, entry_file: &Path, location: &str, variation: &s
     }
 
     let manifest = Manifest {
-        version: VERSION, game: game.to_owned(), location, entry, variation: variation.to_owned(), kit_prefabs: kit.into_iter().collect(),
+        version: VERSION,
+        game: game.to_owned(),
+        location,
+        entry,
+        variation: variation.to_owned(),
+        kit_prefabs: kit.into_iter().collect(),
         missing_prefabs: missing.into_iter().collect(),
     };
 
@@ -303,14 +324,19 @@ impl ImportPlan {
     /// The variation folder to open after it, relative to `raw_data`.
     #[must_use]
     pub fn open_path(&self) -> String {
-        if self.manifest.variation.is_empty() { self.manifest.location.clone() } else { format!("{}/{}", self.manifest.location, self.manifest.variation) }
+        if self.manifest.variation.is_empty() {
+            self.manifest.location.clone()
+        } else {
+            format!("{}/{}", self.manifest.location, self.manifest.variation)
+        }
     }
 }
 
 /// A zip entry's path relative to `raw_data`, when it is one and stays inside it.
 fn raw_path(name: &str) -> Option<String> {
     let rel = name.replace('\\', "/").strip_prefix(RAW)?.to_owned();
-    let safe = !rel.is_empty() && !rel.starts_with('/') && !rel.contains(':') && rel.split('/').all(|p| !p.is_empty() && p != "." && p != "..");
+    let safe =
+        !rel.is_empty() && !rel.starts_with('/') && !rel.contains(':') && rel.split('/').all(|p| !p.is_empty() && p != "." && p != "..");
     safe.then_some(rel)
 }
 
@@ -348,7 +374,10 @@ fn open_zip(path: &Path) -> Result<zip::ZipArchive<std::io::BufReader<File>>, St
 pub fn plan_import(zip_path: &Path, projects_raw: &Path, prefabs: &PrefabLibrary, game: &str) -> Result<ImportPlan, String> {
     let mut zip = open_zip(zip_path)?;
     let mut text = String::new();
-    zip.by_name(MANIFEST).map_err(|_| format!("{} is not a shared project (no {MANIFEST})", zip_path.display()))?.read_to_string(&mut text).map_err(|e| e.to_string())?;
+    zip.by_name(MANIFEST)
+        .map_err(|_| format!("{} is not a shared project (no {MANIFEST})", zip_path.display()))?
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
     let manifest = Manifest::parse(&text)?;
     if !manifest.game.is_empty() && !manifest.game.eq_ignore_ascii_case(game) {
         return Err(format!("the project is for {}, not {game}: switch the game first", manifest.game));
@@ -379,7 +408,8 @@ pub fn plan_import(zip_path: &Path, projects_raw: &Path, prefabs: &PrefabLibrary
 
     let location = projects_raw.join(&plan.manifest.location);
     plan.stale = files_below(&location).iter().filter_map(|f| relative(f, projects_raw)).filter(|r| !names.contains(r)).collect();
-    plan.lacking_prefabs = plan.manifest.kit_prefabs.iter().filter(|k| prefabs.get(k).is_none()).chain(&plan.manifest.missing_prefabs).cloned().collect();
+    plan.lacking_prefabs =
+        plan.manifest.kit_prefabs.iter().filter(|k| prefabs.get(k).is_none()).chain(&plan.manifest.missing_prefabs).cloned().collect();
     Ok(plan)
 }
 
@@ -455,12 +485,20 @@ mod tests {
         let raw = dir.path().join("projects/assembly_kit/raw_data");
         let kit = dir.path().join("kit/raw_data");
         let loc = raw.join("terrain/tiles/battle/my_set/my_tile");
-        write(&loc.join("a/tile.wce"), &format!(r#"<project><g {PREFAB_ATTR}="house_block"/><g {PREFAB_ATTR}="Kit_Rock"/><g {PREFAB_ATTR}="gone"/><{ROAD_SPLINE} road_type="stone"/></project>"#));
+        write(
+            &loc.join("a/tile.wce"),
+            &format!(
+                r#"<project><g {PREFAB_ATTR}="house_block"/><g {PREFAB_ATTR}="Kit_Rock"/><g {PREFAB_ATTR}="gone"/><{ROAD_SPLINE} road_type="stone"/></project>"#
+            ),
+        );
         write(&loc.join("a/height_map_0.png"), "png");
         write(&loc.join("a/tile.wce.bak"), "old");
         write(&loc.join("b/tile.wce"), "<project/>");
         write(&raw.join("terrain/tiles/battle/_tile_database/TILES/my_set_my_tile.xml"), "<TILE/>");
-        write(&raw.join("art/prefabs/town/house_block.wce"), &format!(r#"<INSTANCE_SELECTION><g {PREFAB_ATTR}="chimney"/></INSTANCE_SELECTION>"#));
+        write(
+            &raw.join("art/prefabs/town/house_block.wce"),
+            &format!(r#"<INSTANCE_SELECTION><g {PREFAB_ATTR}="chimney"/></INSTANCE_SELECTION>"#),
+        );
         write(&raw.join("art/prefabs/chimney.wce"), "<INSTANCE_SELECTION/>");
         write(&raw.join("art/prefabs/unused.wce"), "<INSTANCE_SELECTION/>");
         write(&raw.join("art/prefabs/roads_proc/stone/road_stone_straight.wce"), "<INSTANCE_SELECTION/>");
@@ -476,15 +514,18 @@ mod tests {
         let entry = raw.join("terrain/tiles/battle/_tile_database/TILES/my_set_my_tile.xml");
         let share = collect(&raw, &entry, "terrain\\tiles\\battle\\my_set\\my_tile", "a", &raw, &lib, "attila").unwrap();
         let names = share.files.iter().map(|f| f.0.as_str()).collect::<Vec<_>>();
-        assert_eq!(names, [
-            "art/prefabs/chimney.wce",
-            "art/prefabs/roads_proc/stone/road_stone_straight.wce",
-            "art/prefabs/town/house_block.wce",
-            "terrain/tiles/battle/_tile_database/TILES/my_set_my_tile.xml",
-            "terrain/tiles/battle/my_set/my_tile/a/height_map_0.png",
-            "terrain/tiles/battle/my_set/my_tile/a/tile.wce",
-            "terrain/tiles/battle/my_set/my_tile/b/tile.wce",
-        ]);
+        assert_eq!(
+            names,
+            [
+                "art/prefabs/chimney.wce",
+                "art/prefabs/roads_proc/stone/road_stone_straight.wce",
+                "art/prefabs/town/house_block.wce",
+                "terrain/tiles/battle/_tile_database/TILES/my_set_my_tile.xml",
+                "terrain/tiles/battle/my_set/my_tile/a/height_map_0.png",
+                "terrain/tiles/battle/my_set/my_tile/a/tile.wce",
+                "terrain/tiles/battle/my_set/my_tile/b/tile.wce",
+            ]
+        );
         assert_eq!(share.manifest.kit_prefabs, ["kit_rock"]);
         assert_eq!(share.manifest.missing_prefabs, ["gone"]);
 
@@ -501,7 +542,10 @@ mod tests {
         assert_eq!(plan.open_path(), "terrain/tiles/battle/my_set/my_tile/a");
         let report = import(&zip, &other, &plan, false).unwrap();
         assert_eq!(report.written, 7);
-        assert_eq!(std::fs::read(other.join("art/prefabs/town/house_block.wce")).unwrap(), std::fs::read(raw.join("art/prefabs/town/house_block.wce")).unwrap());
+        assert_eq!(
+            std::fs::read(other.join("art/prefabs/town/house_block.wce")).unwrap(),
+            std::fs::read(raw.join("art/prefabs/town/house_block.wce")).unwrap()
+        );
 
         // Again: all the same, nothing to ask.
         let plan = plan_import(&zip, &other, &empty, "attila").unwrap();
@@ -535,7 +579,15 @@ mod tests {
 
     #[test]
     fn the_manifest_reads_back() {
-        let m = Manifest { version: 1, game: "attila".into(), location: "terrain/tiles/battle/a/b".into(), entry: "e.xml".into(), variation: "v".into(), kit_prefabs: vec!["k".into()], missing_prefabs: vec!["m".into()] };
+        let m = Manifest {
+            version: 1,
+            game: "attila".into(),
+            location: "terrain/tiles/battle/a/b".into(),
+            entry: "e.xml".into(),
+            variation: "v".into(),
+            kit_prefabs: vec!["k".into()],
+            missing_prefabs: vec!["m".into()],
+        };
         assert_eq!(Manifest::parse(&m.to_text()).unwrap(), m);
         assert!(Manifest::parse("wce_share 99\nlocation a\nentry b\n").is_err(), "a newer format");
     }

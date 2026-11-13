@@ -32,7 +32,9 @@ pub fn printf_f(v: f64) -> String {
     }
 
     let n = digits.len() - 6;
-    let text: String = digits[..n].iter().map(|d| char::from(b'0' + d)).collect::<String>() + "." + &digits[n..].iter().map(|d| char::from(b'0' + d)).collect::<String>();
+    let text: String = digits[..n].iter().map(|d| char::from(b'0' + d)).collect::<String>()
+        + "."
+        + &digits[n..].iter().map(|d| char::from(b'0' + d)).collect::<String>();
     if v.is_sign_negative() && v != 0.0 { format!("-{text}") } else { text }
 }
 
@@ -64,7 +66,8 @@ pub fn build(p: &TerryProject) -> Vec<(String, Vec<u8>)> {
             continue;
         }
 
-        let zones: Vec<_> = e.children.iter().filter_map(|&c| p.entity(c)).filter(|z| matches!(p.kind(z), EntityKind::DeploymentZone)).collect();
+        let zones: Vec<_> =
+            e.children.iter().filter_map(|&c| p.entity(c)).filter(|z| matches!(p.kind(z), EntityKind::DeploymentZone)).collect();
         if zones.is_empty() {
             continue;
         }

@@ -15,42 +15,42 @@
 //! which scene it published into by its address only.
 
 mod baked_river;
+pub mod brush;
 mod collapse;
 mod columns;
-pub mod brush;
 mod commands;
 mod cover;
 pub use self::cover::{EdgeColours, edge_strip};
-mod draft;
-pub mod context;
-mod edits;
 mod bridges;
-mod flip;
+pub mod context;
+mod draft;
+mod edits;
 pub mod fire;
+mod flip;
 mod index;
 mod jobs;
 mod measure;
 
 /// Whether anything is being made off the editor's thread (`tile_wait_jobs`).
 pub use jobs::running as jobs_running;
+mod grass;
+pub mod kit;
+mod kit_walls;
 pub mod layers;
 pub mod minimap;
-mod radar;
-pub mod kit;
 mod pick;
 pub mod prefab_ground;
 mod preview;
-pub mod roads;
+mod radar;
 pub mod river_links;
+pub mod roads;
 mod shift;
 pub mod siege;
 pub mod stage;
-mod grass;
-mod vegetation;
 mod tech;
+mod vegetation;
 mod view;
 mod walls;
-mod kit_walls;
 
 use std::any::Any;
 use std::cell::{OnceCell, RefCell};
@@ -62,8 +62,8 @@ use wce_editor_core::command::{CommandStack, Dirty, History};
 use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
 use wce_editor_core::inspector::Inspector;
 use wce_formats::tile_climate::ClimateList;
-use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_foundation::log;
+use wce_foundation::math::{Double3, Float3, Float4x4};
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, LfMap, Overlay, RenderScene, SourceRef, TerrainMaterial, TerrainSkin};
 use wce_tile::blend_field::{PaintFilter, PaintMode};
 use wce_tile::brush_image::BrushImage;
@@ -75,15 +75,15 @@ use wce_vfs::files::Files;
 
 use crate::terrain_bake::{BakedColour, TerrainLook};
 
+pub use self::bridges::{BridgeEdge, BridgeProblem, BridgeReport, WallPair};
 pub use self::draft::{Draft, tilt_to, tilted, turned, with_root_attr};
 pub use self::edits::{BoundaryKind, BoundaryShape, prefab_reference_text, text_kind};
-pub use self::bridges::{BridgeEdge, BridgeProblem, BridgeReport, WallPair};
 pub use self::flip::{FlipPlane, TileFlipAxis};
 pub use self::index::{FILLED_TYPES, deployment_colour, deployment_variant, polygon_colour, style_of};
-pub use self::view::{LIGHT_RADIUS_HANDLE, SHELTER_TARGET_HANDLE, link_rgb};
+pub use self::roads::ROAD_SPLINE;
 pub use self::tech::{GROUPS, KINDS, TechInfo, TechKind, TechScope, TechSettings, TechStats, WallTechReport, tech_counts};
 pub use self::vegetation::{DEFAULT_TREE_LIST, convert_whole_tile_exclusion};
-pub use self::roads::ROAD_SPLINE;
+pub use self::view::{LIGHT_RADIUS_HANDLE, SHELTER_TARGET_HANDLE, link_rgb};
 pub use self::walls::{Anchor, WALL_SPLINE, WallLayout};
 pub use wce_tile::new_instances::{ANGLE_FINDER, MEASURE_LINE, REF_HUMAN, REF_SHIP, REF_UNIT};
 
@@ -153,7 +153,20 @@ pub struct BrushSettings {
 
 impl Default for BrushSettings {
     fn default() -> Self {
-        Self { radius_m: 12.0, strength: 6.0, falloff: 0.7, flatten_height: 0.0, opacity: 0.5, curve: None, image: None, image_angle: 0.0, filter: None, paint_mode: PaintMode::Normal, noise_scale_m: 16.0, stamp_height_m: 5.0 }
+        Self {
+            radius_m: 12.0,
+            strength: 6.0,
+            falloff: 0.7,
+            flatten_height: 0.0,
+            opacity: 0.5,
+            curve: None,
+            image: None,
+            image_angle: 0.0,
+            filter: None,
+            paint_mode: PaintMode::Normal,
+            noise_scale_m: 16.0,
+            stamp_height_m: 5.0,
+        }
     }
 }
 
@@ -258,8 +271,25 @@ pub struct TileDisplay {
 impl Default for TileDisplay {
     fn default() -> Self {
         Self {
-            hidden_types: BTreeSet::new(), show_polygons: true, polygon_look: PolygonLook::default(), polygon_over_buildings: false, lod: true, veg_distance: 450.0, decal_distance: 300.0, other_distance: 3000.0, show_border: true, tint_freeform: false,
-            show_links: false, show_water: true, show_sea: true, show_trees: true, tree_category: String::new(), tree_list: String::new(), show_grass: true, show_auto_nogo: false, tech: TechSettings::default(),
+            hidden_types: BTreeSet::new(),
+            show_polygons: true,
+            polygon_look: PolygonLook::default(),
+            polygon_over_buildings: false,
+            lod: true,
+            veg_distance: 450.0,
+            decal_distance: 300.0,
+            other_distance: 3000.0,
+            show_border: true,
+            tint_freeform: false,
+            show_links: false,
+            show_water: true,
+            show_sea: true,
+            show_trees: true,
+            tree_category: String::new(),
+            tree_list: String::new(),
+            show_grass: true,
+            show_auto_nogo: false,
+            tech: TechSettings::default(),
             game_layers: None,
         }
     }
@@ -836,8 +866,22 @@ pub struct PieceProps {
 impl Default for PieceProps {
     fn default() -> Self {
         Self {
-            visible: true, active: true, draggable: false, freeform: true, position: [0.0; 3], euler: [0.0; 3], scale: [1.0; 3], opacity: 1.0, burn: false,
-            burn_amount: 0.0, glow_amount: 0.0, dirt_level: 0.0, bounds_colour: [1.0; 4], show_collision: false, seasons: [true; 4], destruction_level: -1,
+            visible: true,
+            active: true,
+            draggable: false,
+            freeform: true,
+            position: [0.0; 3],
+            euler: [0.0; 3],
+            scale: [1.0; 3],
+            opacity: 1.0,
+            burn: false,
+            burn_amount: 0.0,
+            glow_amount: 0.0,
+            dirt_level: 0.0,
+            bounds_colour: [1.0; 4],
+            show_collision: false,
+            seasons: [true; 4],
+            destruction_level: -1,
         }
     }
 }
@@ -845,24 +889,147 @@ impl Default for PieceProps {
 pub const TERRAIN: u64 = 0;
 
 impl TileDocument {
-
     /// A tile opened for editing; `files` are the game's files (the building models, the climate's textures), `None` without them.
     pub fn new(project: TileProject, files: Option<Arc<dyn Files>>) -> Self {
         let core = DocumentCore::new();
         let t0 = std::time::Instant::now();
         let mut tile = Tile {
             ref_spots: Default::default(),
-            id: core.id(), project, files, display: TileDisplay::default(), scene_key: 0, layer: 0, terrain_entity: 0, converted_on_open: false, overlay_entity: 0, terrain_version: 1,
-            terrain_stride: 1, instances: vec![], type_ordinal: vec![], markers: Markers::default(), type_counts: BTreeMap::new(), batch_entity: vec![], dirty_type: vec![],
-            first_entity: vec![], entity_count: vec![], outline_entity: HashMap::new(), covers: HashMap::new(), covers_dirty: BTreeSet::new(), cover_spare: HashMap::new(), cover_ground: 0, polygons_published: false, tops: HashMap::new(), tops_wanted: BTreeSet::new(), tops_polls: 0, tops_came: false, models: BTreeMap::new(), unresolved: vec![], fallbacks: vec![],
-            markers_dirty: true, polygons_dirty: false, wall_preview: walls::WallPreview::default(), hidden_signature: 0, lod_eye: Float3::new(1e30, 1e30, 1e30), grid: RefCell::default(),
-            grid_dirty: std::cell::Cell::new(true), last_highlight: None, mask_entity: 0, last_mask: None, meshed_for: (vec![], u64::MAX), meshed: HashSet::new(), siege_lines: None, edits_seen: 0, gesture: 0x100, structure_version: 1, hint: None, stroke_open: false, road_items: vec![], road_entities: vec![], road_items_stale: true, road_items_shown: false, road_prefabs: None, road_generated: vec![], road_terrain_job: None, roads_due: false, road_items_job: None, road_making: 0, bridge_bases: HashMap::new(), layers_shown: false, roads_stale: false, roads_seen: 0, history_version: 0, prefab_ground_seen: 0, prefab_ground_stale: false, prefab_tool_ready: false, prefab_open_request: None, stage_outline: (0, None), stage_layer_last: false, stage_snapped: vec![],
-            stroke_id: 0x5000, stroke_version: 0, saved_height_depth: 0, ted_on_disk_edited: false, png_on_disk_edited: false, saved_blend_depth: 0, blend_on_disk_edited: false, saved_ground_depth: 0, ground_on_disk_edited: false, water_depth: None, auto_nogos: None, nogo_entity: 0, nogo_dirty: true, water_entities: vec![], columns: columns::ColumnState::default(), tech: tech::TechState::default(), collapses: collapse::CollapseState::default(), fire: fire::FirePreview::default(), links_entity: 0,
-            links_dirty: true, water_dirty: true, water_version: 0, water_note: String::new(), look: TerrainLook::default(), skin_look: TerrainLook::default(),
-            skin_baked: None, skin: None, skin_id: 0, terrain_note: String::new(), climates: OnceCell::new(), pack_categories: None, building_db: OnceCell::new(), building_tables: vec![], tile_sets: OnceCell::new(), logic_summaries: RefCell::default(), preview: preview::Preview::default(), projects_root: None, drafts: HashMap::new(), piece_props: HashMap::new(), piece_pending: vec![], material_base: None, normal_image: None, heights_changed: None, terrain_grid: None,
-            material_look: TerrainLook::default(), material_id: 0, normal_id: 0, ground_info: GroundInfo::default(), ground_info_base: GroundInfo::default(),
-            last_message: String::new(), load_info: String::new(), idx: Index::default(), trees: Default::default(), grass: Default::default(),
-            changes: vec![], siege_version: 0, siege_buildings: RefCell::new(HashMap::new()), clip_to_tile: false, material_clip_id: 0, clip_alpha: None, context_lf: None, prefab_cache: HashMap::new(), scale_drag: None,
+            id: core.id(),
+            project,
+            files,
+            display: TileDisplay::default(),
+            scene_key: 0,
+            layer: 0,
+            terrain_entity: 0,
+            converted_on_open: false,
+            overlay_entity: 0,
+            terrain_version: 1,
+            terrain_stride: 1,
+            instances: vec![],
+            type_ordinal: vec![],
+            markers: Markers::default(),
+            type_counts: BTreeMap::new(),
+            batch_entity: vec![],
+            dirty_type: vec![],
+            first_entity: vec![],
+            entity_count: vec![],
+            outline_entity: HashMap::new(),
+            covers: HashMap::new(),
+            covers_dirty: BTreeSet::new(),
+            cover_spare: HashMap::new(),
+            cover_ground: 0,
+            polygons_published: false,
+            tops: HashMap::new(),
+            tops_wanted: BTreeSet::new(),
+            tops_polls: 0,
+            tops_came: false,
+            models: BTreeMap::new(),
+            unresolved: vec![],
+            fallbacks: vec![],
+            markers_dirty: true,
+            polygons_dirty: false,
+            wall_preview: walls::WallPreview::default(),
+            hidden_signature: 0,
+            lod_eye: Float3::new(1e30, 1e30, 1e30),
+            grid: RefCell::default(),
+            grid_dirty: std::cell::Cell::new(true),
+            last_highlight: None,
+            mask_entity: 0,
+            last_mask: None,
+            meshed_for: (vec![], u64::MAX),
+            meshed: HashSet::new(),
+            siege_lines: None,
+            edits_seen: 0,
+            gesture: 0x100,
+            structure_version: 1,
+            hint: None,
+            stroke_open: false,
+            road_items: vec![],
+            road_entities: vec![],
+            road_items_stale: true,
+            road_items_shown: false,
+            road_prefabs: None,
+            road_generated: vec![],
+            road_terrain_job: None,
+            roads_due: false,
+            road_items_job: None,
+            road_making: 0,
+            bridge_bases: HashMap::new(),
+            layers_shown: false,
+            roads_stale: false,
+            roads_seen: 0,
+            history_version: 0,
+            prefab_ground_seen: 0,
+            prefab_ground_stale: false,
+            prefab_tool_ready: false,
+            prefab_open_request: None,
+            stage_outline: (0, None),
+            stage_layer_last: false,
+            stage_snapped: vec![],
+            stroke_id: 0x5000,
+            stroke_version: 0,
+            saved_height_depth: 0,
+            ted_on_disk_edited: false,
+            png_on_disk_edited: false,
+            saved_blend_depth: 0,
+            blend_on_disk_edited: false,
+            saved_ground_depth: 0,
+            ground_on_disk_edited: false,
+            water_depth: None,
+            auto_nogos: None,
+            nogo_entity: 0,
+            nogo_dirty: true,
+            water_entities: vec![],
+            columns: columns::ColumnState::default(),
+            tech: tech::TechState::default(),
+            collapses: collapse::CollapseState::default(),
+            fire: fire::FirePreview::default(),
+            links_entity: 0,
+            links_dirty: true,
+            water_dirty: true,
+            water_version: 0,
+            water_note: String::new(),
+            look: TerrainLook::default(),
+            skin_look: TerrainLook::default(),
+            skin_baked: None,
+            skin: None,
+            skin_id: 0,
+            terrain_note: String::new(),
+            climates: OnceCell::new(),
+            pack_categories: None,
+            building_db: OnceCell::new(),
+            building_tables: vec![],
+            tile_sets: OnceCell::new(),
+            logic_summaries: RefCell::default(),
+            preview: preview::Preview::default(),
+            projects_root: None,
+            drafts: HashMap::new(),
+            piece_props: HashMap::new(),
+            piece_pending: vec![],
+            material_base: None,
+            normal_image: None,
+            heights_changed: None,
+            terrain_grid: None,
+            material_look: TerrainLook::default(),
+            material_id: 0,
+            normal_id: 0,
+            ground_info: GroundInfo::default(),
+            ground_info_base: GroundInfo::default(),
+            last_message: String::new(),
+            load_info: String::new(),
+            idx: Index::default(),
+            trees: Default::default(),
+            grass: Default::default(),
+            changes: vec![],
+            siege_version: 0,
+            siege_buildings: RefCell::new(HashMap::new()),
+            clip_to_tile: false,
+            material_clip_id: 0,
+            clip_alpha: None,
+            context_lf: None,
+            prefab_cache: HashMap::new(),
+            scale_drag: None,
         };
 
         tile.build_index();
@@ -878,7 +1045,9 @@ impl TileDocument {
 
         let total = t0.elapsed().as_secs_f64();
         tile.load_info = format!(
-            "tile loaded: {} instances in {total:.2} s (element index {t_index:.2}, building models {t_models:.2}, markers {:.2})", tile.instances.len(), total - t_index - t_models
+            "tile loaded: {} instances in {total:.2} s (element index {t_index:.2}, building models {t_models:.2}, markers {:.2})",
+            tile.instances.len(),
+            total - t_index - t_models
         );
         log::info(tile.load_info.clone());
         Self { core, history: CommandStack::new(tile), stage: None }

@@ -12,7 +12,10 @@ pub enum Node {
     Elem(Element),
     Text(String),
     /// `inline`: written on the line of the node before it.
-    Comment { text: String, inline: bool },
+    Comment {
+        text: String,
+        inline: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +124,9 @@ impl Element {
             match n {
                 Node::Comment { text, inline: true } => {
                     let t = text.trim();
-                    let note = t.starts_with("ID (") || t.ends_with("degrees") || (t.len() == 11 && t.chars().all(|c| c.is_ascii_hexdigit() || c == ':'));
+                    let note = t.starts_with("ID (")
+                        || t.ends_with("degrees")
+                        || (t.len() == 11 && t.chars().all(|c| c.is_ascii_hexdigit() || c == ':'));
                     if !note {
                         label = Some(t);
                     }

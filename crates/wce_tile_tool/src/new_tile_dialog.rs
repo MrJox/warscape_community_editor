@@ -23,7 +23,14 @@ pub(crate) struct NewTileDialog {
 impl Default for NewTileDialog {
     fn default() -> Self {
         let cells = new_tile::DEFAULT_CELLS as i32;
-        Self { name: String::new(), cells: [cells; 2], height: new_tile::DEFAULT_HEIGHT as f32, density: density_index(new_tile::DEFAULT_DENSITY), density_chosen: false, error: String::new() }
+        Self {
+            name: String::new(),
+            cells: [cells; 2],
+            height: new_tile::DEFAULT_HEIGHT as f32,
+            density: density_index(new_tile::DEFAULT_DENSITY),
+            density_chosen: false,
+            error: String::new(),
+        }
     }
 }
 
@@ -67,7 +74,9 @@ impl TileTool {
             return;
         };
 
-        gui::text_wrapped("A battle tile in the projects folder (tile set assembly_kit, variation battlefield), flat at the terrain height.");
+        gui::text_wrapped(
+            "A battle tile in the projects folder (tile set assembly_kit, variation battlefield), flat at the terrain height.",
+        );
         gui::set_next_item_width(320.0);
         if gui::is_window_appearing() {
             gui::set_keyboard_focus_here(0);
@@ -103,7 +112,12 @@ impl TileTool {
 
         let t = d.tile();
         let (w, h) = t.map_size();
-        gui::text_disabled(&format!("{} x {} m, maps of {w} x {h} pixels, blend_map.tif {}", t.cells_x * 128, t.cells_y * 128, size_text(t.blend_map_bytes())));
+        gui::text_disabled(&format!(
+            "{} x {} m, maps of {w} x {h} pixels, blend_map.tif {}",
+            t.cells_x * 128,
+            t.cells_y * 128,
+            size_text(t.blend_map_bytes())
+        ));
         if !d.error.is_empty() {
             gui::text_colored(theme::warning(), &d.error);
         }

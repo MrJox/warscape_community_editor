@@ -49,7 +49,6 @@ fn collect(dir: &Path, prefix: &str, out: &mut BTreeMap<String, Blob>) -> std::i
 }
 
 impl MapFiles {
-
     /// Files read already (a folder of the game's packs).
     pub fn from_bytes(files: impl IntoIterator<Item = (String, Vec<u8>)>) -> Self {
         Self { folder: files.into_iter().map(|(p, b)| (p, Blob::Bytes(std::sync::Arc::from(b)))).collect() }

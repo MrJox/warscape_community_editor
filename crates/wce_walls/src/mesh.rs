@@ -7,8 +7,8 @@
 use std::io::Cursor;
 
 use nalgebra::{Vector2, Vector4};
-use rpfm_lib::files::rigidmodel::{Mesh, RigidModel};
 use rpfm_lib::files::rigidmodel::vertices::Vertex;
+use rpfm_lib::files::rigidmodel::{Mesh, RigidModel};
 use rpfm_lib::files::{Decodeable, DecodeableExtraData, Encodeable};
 
 use crate::warp::{Cuts, Warp, turn3};
@@ -41,7 +41,10 @@ pub fn splice_holds(c: [f32; 3], x: (f32, f32), zy: Option<((f32, f32), (f32, f3
         (c[1] - (y0 + (y1 - y0) * t)).abs() <= half
     };
 
-    c[0] >= x.0 - 1e-3 && c[0] <= x.1 + 1e-3 && zy.is_none_or(|((z0, z1), (y0, y1))| c[2] >= z0 && c[2] <= z1 && c[1] >= y0 && c[1] <= y1) && band.is_none_or(near)
+    c[0] >= x.0 - 1e-3
+        && c[0] <= x.1 + 1e-3
+        && zy.is_none_or(|((z0, z1), (y0, y1))| c[2] >= z0 && c[2] <= z1 && c[1] >= y0 && c[1] <= y1)
+        && band.is_none_or(near)
 }
 
 /// [`warp_mesh`] with step sections: the base's triangles over the `drop` x ranges (of its frame, and inside `drop_zy` when given) left
@@ -50,7 +53,14 @@ pub fn splice_holds(c: [f32; 3], x: (f32, f32), zy: Option<((f32, f32), (f32, f3
 /// # Errors
 ///
 /// A file doesn't read, or the result doesn't write back.
-pub fn warp_mesh_with(bytes: &[u8], warp: &dyn Warp, cuts: &Cuts, drop: &[(f32, f32)], drop_zy: Option<((f32, f32), (f32, f32))>, splices: &[MeshSplice]) -> Result<Vec<u8>, String> {
+pub fn warp_mesh_with(
+    bytes: &[u8],
+    warp: &dyn Warp,
+    cuts: &Cuts,
+    drop: &[(f32, f32)],
+    drop_zy: Option<((f32, f32), (f32, f32))>,
+    splices: &[MeshSplice],
+) -> Result<Vec<u8>, String> {
     let mut model = decode(bytes)?;
     let in_box = |c: [f32; 3]| drop_zy.is_none_or(|((z0, z1), (y0, y1))| c[2] >= z0 && c[2] <= z1 && c[1] >= y0 && c[1] <= y1);
     let kept = |c: [f32; 3]| !(in_box(c) && drop.iter().any(|&(a, b)| c[0] > a && c[0] < b));
@@ -97,11 +107,15 @@ pub fn treads(meshes: &[&[u8]], x: (f32, f32), z: (f32, f32)) -> Vec<(f32, f32, 
             let pivot = block.material().v_pivot();
             let (v, ix) = (block.mesh().vertices(), block.mesh().indices());
             for t in ix.chunks(3) {
-                let c = t.iter().map(|&i| {
-                    let q = v[i as usize].position();
-                    [q.x + pivot.x, q.y + pivot.y, q.z + pivot.z]
-                }).collect::<Vec<_>>();
-                let (u, w) = ([c[1][0] - c[0][0], c[1][1] - c[0][1], c[1][2] - c[0][2]], [c[2][0] - c[0][0], c[2][1] - c[0][1], c[2][2] - c[0][2]]);
+                let c = t
+                    .iter()
+                    .map(|&i| {
+                        let q = v[i as usize].position();
+                        [q.x + pivot.x, q.y + pivot.y, q.z + pivot.z]
+                    })
+                    .collect::<Vec<_>>();
+                let (u, w) =
+                    ([c[1][0] - c[0][0], c[1][1] - c[0][1], c[1][2] - c[0][2]], [c[2][0] - c[0][0], c[2][1] - c[0][1], c[2][2] - c[0][2]]);
                 let n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
                 let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
                 let mid = [(c[0][0] + c[1][0] + c[2][0]) / 3.0, (c[0][1] + c[1][1] + c[2][1]) / 3.0, (c[0][2] + c[1][2] + c[2][2]) / 3.0];
@@ -132,7 +146,9 @@ pub fn treads(meshes: &[&[u8]], x: (f32, f32), z: (f32, f32)) -> Vec<(f32, f32, 
 
 /// If a block is wood (its diffuse texture's name says so).
 fn is_wood(block: &rpfm_lib::files::rigidmodel::MeshBlock) -> bool {
-    block.material().textures().iter().any(|t| matches!(t.tex_type(), rpfm_lib::files::rigidmodel::materials::TextureType::Diffuse) && file_name(t.path()).contains("wood"))
+    block.material().textures().iter().any(|t| {
+        matches!(t.tex_type(), rpfm_lib::files::rigidmodel::materials::TextureType::Diffuse) && file_name(t.path()).contains("wood")
+    })
 }
 
 fn file_name(path: &str) -> String {
@@ -140,7 +156,12 @@ fn file_name(path: &str) -> String {
 }
 
 /// A block cut at `cuts`, the triangles whose centre (the piece's frame) `keep` refuses left out, warped.
-fn warp_block(block: &mut rpfm_lib::files::rigidmodel::MeshBlock, warp: &dyn Warp, cuts: &Cuts, keep: &dyn Fn([f32; 3]) -> bool) -> Result<(), String> {
+fn warp_block(
+    block: &mut rpfm_lib::files::rigidmodel::MeshBlock,
+    warp: &dyn Warp,
+    cuts: &Cuts,
+    keep: &dyn Fn([f32; 3]) -> bool,
+) -> Result<(), String> {
     let pivot = block.material().v_pivot();
     let pivot = [pivot.x, pivot.y, pivot.z];
     let mesh = block.mesh_mut();
@@ -182,7 +203,10 @@ fn keep_triangles(mesh: &mut Mesh, pivot: [f32; 3], keep: &dyn Fn([f32; 3]) -> b
 
     let v = mesh.vertices();
     let centre = |t: &[u16]| {
-        let p = |i: u16| { let q = v[i as usize].position(); [q.x + pivot[0], q.y + pivot[1], q.z + pivot[2]] };
+        let p = |i: u16| {
+            let q = v[i as usize].position();
+            [q.x + pivot[0], q.y + pivot[1], q.z + pivot[2]]
+        };
         let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
         [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0, (a[2] + b[2] + c[2]) / 3.0]
     };
@@ -209,7 +233,8 @@ fn slice_mesh(mesh: &mut Mesh, cuts: &Cuts, pivot_x: f32) -> Result<(), String> 
     let mut indices = Vec::with_capacity(mesh.indices().len());
     for t in mesh.indices().chunks_exact(3) {
         let tri = [&vertices[t[0] as usize], &vertices[t[1] as usize], &vertices[t[2] as usize]];
-        let (lo, hi) = tri.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v.position().x + pivot_x), hi.max(v.position().x + pivot_x)));
+        let (lo, hi) =
+            tri.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v.position().x + pivot_x), hi.max(v.position().x + pivot_x)));
         let bounds = cuts.bounds(lo, hi);
         if bounds.len() <= 2 {
             indices.extend_from_slice(t);
@@ -314,7 +339,14 @@ fn clip_by(polygon: &[Vertex], side: impl Fn(&Vertex) -> f32) -> Vec<Vertex> {
 fn compact(vertices: &[Vertex], indices: &[u16]) -> (Vec<Vertex>, Vec<u16>) {
     let key = |v: &Vertex| {
         let mut k = Vec::with_capacity(24);
-        for x in [v.position().as_slice(), v.normal().as_slice(), v.tangent().as_slice(), v.bitangent().as_slice(), v.color().as_slice(), v.weights().as_slice()] {
+        for x in [
+            v.position().as_slice(),
+            v.normal().as_slice(),
+            v.tangent().as_slice(),
+            v.bitangent().as_slice(),
+            v.color().as_slice(),
+            v.weights().as_slice(),
+        ] {
             k.extend(x.iter().map(|f| f.to_bits()));
         }
 
@@ -325,13 +357,16 @@ fn compact(vertices: &[Vertex], indices: &[u16]) -> (Vec<Vertex>, Vec<u16>) {
 
     let mut seen = std::collections::HashMap::new();
     let mut out = vec![];
-    let new = indices.iter().map(|&i| {
-        let v = &vertices[i as usize];
-        *seen.entry(key(v)).or_insert_with(|| {
-            out.push(v.clone());
-            (out.len() - 1) as u16
+    let new = indices
+        .iter()
+        .map(|&i| {
+            let v = &vertices[i as usize];
+            *seen.entry(key(v)).or_insert_with(|| {
+                out.push(v.clone());
+                (out.len() - 1) as u16
+            })
         })
-    }).collect();
+        .collect();
     (out, new)
 }
 

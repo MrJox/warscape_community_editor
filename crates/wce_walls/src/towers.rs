@@ -51,10 +51,13 @@ pub fn tower_ring(logic: &[u8], origin: [f64; 3], yaw: f64) -> Option<(Vec<[f64;
 
     // Across each joint: the walk's edges (at its height), else a walk of the usual width.
     let band = |k: usize| {
-        let walk = edges.get(k).into_iter().flatten().filter(|e| e.y_lo.abs() <= 0.1 && e.y_hi.abs() <= 0.1).fold(None, |b: Option<(f64, f64)>, e| {
-            let (lo, hi) = (f64::from(e.lo), f64::from(e.hi));
-            Some(b.map_or((lo, hi), |(a, c)| (a.min(lo), c.max(hi))))
-        });
+        let walk = edges.get(k).into_iter().flatten().filter(|e| e.y_lo.abs() <= 0.1 && e.y_hi.abs() <= 0.1).fold(
+            None,
+            |b: Option<(f64, f64)>, e| {
+                let (lo, hi) = (f64::from(e.lo), f64::from(e.hi));
+                Some(b.map_or((lo, hi), |(a, c)| (a.min(lo), c.max(hi))))
+            },
+        );
         walk.unwrap_or((-HALF_WALK, HALF_WALK))
     };
     let side = |k: usize| {
@@ -122,13 +125,19 @@ pub fn capture_element(c: &TowerCapture) -> Result<NewInstance, String> {
 
     let points = c.ring.iter().map(|q| Double3::new(q[0] - c.at[0], 0.0, q[1] - c.at[2])).collect::<Vec<_>>();
     let mut boundary = NewInstance::new("CaptureLocationPolygonInstance")
-        .attr("polygon_shape", "PS_POLYGON").attr("polygon_closed", "1").attr("surface_mode", "MSM_FREEFORM")
+        .attr("polygon_shape", "PS_POLYGON")
+        .attr("polygon_closed", "1")
+        .attr("surface_mode", "MSM_FREEFORM")
         .attr("area", wce_tile::ted_scene::format_number(polygon_area(&points)));
     boundary.points = points.into_iter().map(NewPoint::at).collect();
 
-    let mut n = NewInstance::new("CaptureLocationInstance").position(Double3::new(c.at[0], c.at[1], c.at[2]))
-        .attr("name", c.name.as_str()).attr("database_type", "capture_point_tower_only").attr("type", "CLT_MINOR")
-        .attr("flag_position", "vector(0,0,0)").attr("surface_mode", "MSM_FREEFORM");
+    let mut n = NewInstance::new("CaptureLocationInstance")
+        .position(Double3::new(c.at[0], c.at[1], c.at[2]))
+        .attr("name", c.name.as_str())
+        .attr("database_type", "capture_point_tower_only")
+        .attr("type", "CLT_MINOR")
+        .attr("flag_position", "vector(0,0,0)")
+        .attr("surface_mode", "MSM_FREEFORM");
     n.children.push(element_text(&boundary)?);
     Ok(n)
 }

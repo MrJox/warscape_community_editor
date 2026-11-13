@@ -25,7 +25,11 @@ fn main() {
             let skel = match vfs.read(&m.to_lowercase().replace('\\', "/")) {
                 Ok(b) if b.len() >= 140 => {
                     let s = &b[12..140];
-                    format!("v{} {:?}", u32::from_le_bytes([b[4], b[5], b[6], b[7]]), String::from_utf8_lossy(&s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())]))
+                    format!(
+                        "v{} {:?}",
+                        u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+                        String::from_utf8_lossy(&s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())])
+                    )
                 }
                 Ok(_) => "short".to_owned(),
                 Err(e) => format!("missing ({e})"),

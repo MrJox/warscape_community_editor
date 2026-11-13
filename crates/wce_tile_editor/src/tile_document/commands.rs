@@ -4,9 +4,9 @@
 //! Undo puts the attribute texts an edit replaced back as they were (writing the old numbers again could give other text than the file's,
 //! and the text splices of earlier structural commands must still fit the text).
 
-use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 use std::any::Any;
 use std::collections::HashMap;
+use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 
 use wce_editor_core::command::Command;
 use wce_formats::xml_doc::XmlSplice;
@@ -253,7 +253,9 @@ impl Command<Tile> for TedPointAttrsCommand {
     }
 
     fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
-        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else { return false };
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else {
+            return false;
+        };
         if n.steps.iter().zip(&self.steps).any(|(a, b)| a.0 != b.0 || a.1 != b.1) {
             return false;
         }
@@ -318,7 +320,9 @@ impl TedSpliceCommand {
             }
 
             SpliceEffect::Remade(elems) => t.note_remade(elems),
-            SpliceEffect::Shift { spans, added, touched } => t.changes.push(ViewChange::Shift(ElementShift { spans: spans.clone(), came: *added == forward, touched: touched.clone() })),
+            SpliceEffect::Shift { spans, added, touched } => {
+                t.changes.push(ViewChange::Shift(ElementShift { spans: spans.clone(), came: *added == forward, touched: touched.clone() }))
+            }
             SpliceEffect::Structure => t.piece_props.clear(),
         }
 
@@ -413,7 +417,9 @@ impl Command<Tile> for TedAttrCommand {
     }
 
     fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
-        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else { return false };
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.elem == self.elem && n.steps.len() == self.steps.len()) else {
+            return false;
+        };
         if n.steps.iter().zip(&self.steps).any(|(a, b)| a.0 != b.0) {
             return false;
         }
@@ -467,7 +473,9 @@ impl Command<Tile> for TedAttrsCommand {
         let Some(n) = next.as_any().downcast_ref::<Self>() else { return false };
 
         // A step of a drag may leave out an item whose value did not change this time (at the end of its range), or bring in a new one.
-        let same_attrs = |a: &TedAttrCommand, b: &TedAttrCommand| a.steps.len() == b.steps.len() && a.steps.iter().zip(&b.steps).all(|(x, y)| x.0 == y.0);
+        let same_attrs = |a: &TedAttrCommand, b: &TedAttrCommand| {
+            a.steps.len() == b.steps.len() && a.steps.iter().zip(&b.steps).all(|(x, y)| x.0 == y.0)
+        };
         if n.edits.iter().any(|t| self.edits.iter().any(|m| m.elem == t.elem && !same_attrs(m, t))) {
             return false;
         }
@@ -817,7 +825,9 @@ impl Command<Tile> for EntryAttrCommand {
     }
 
     fn merge_from(&mut self, next: &dyn Command<Tile>) -> bool {
-        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.attr == self.attr && n.variation == self.variation) else { return false };
+        let Some(n) = next.as_any().downcast_ref::<Self>().filter(|n| n.attr == self.attr && n.variation == self.variation) else {
+            return false;
+        };
         self.after = n.after.clone();
         true
     }

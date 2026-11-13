@@ -12,7 +12,9 @@ use wce_tile::ground_type_field::GroundTypeField;
 use wce_vfs::files::Files;
 
 use super::Tile;
-use crate::terrain_bake::{BakeRequest, BakedColour, TerrainView, WaterDepth, bake_terrain_colour, bake_terrain_map_view, bake_water_depth};
+use crate::terrain_bake::{
+    BakeRequest, BakedColour, TerrainView, WaterDepth, bake_terrain_colour, bake_terrain_map_view, bake_water_depth,
+};
 
 /// A picture of the tile from above: sRGB, `w * h * 4`, rows along +z, over `x0, z0, w_m, h_m` (metres).
 #[derive(Clone, Debug, Default)]
@@ -63,7 +65,9 @@ impl GroundBake {
     /// The maps or the textures do not read; the water depth view's raster is not worked out yet.
     pub fn run(&self) -> Result<BakedColour, String> {
         match self.request.look.view {
-            TerrainView::Colour | TerrainView::BlendGroups => bake_terrain_colour(&self.request, self.blend.as_ref(), &self.climates, self.files.as_ref()),
+            TerrainView::Colour | TerrainView::BlendGroups => {
+                bake_terrain_colour(&self.request, self.blend.as_ref(), &self.climates, self.files.as_ref())
+            }
             TerrainView::GroundTypes | TerrainView::Protection => bake_terrain_map_view(&self.request, self.ground.as_ref()),
             TerrainView::WaterDepth => {
                 let water = self.water.as_ref().ok_or("water depth: being worked out (stage B's water map)")?;
@@ -97,10 +101,13 @@ impl Tile {
         let (w, h) = (((w_m * ppm).round() as u32).max(2), ((h_m * ppm).round() as u32).max(2));
         let (cx, cz) = (w_m / f64::from(w), h_m / f64::from(h));
         let project = &self.project;
-        let heights: Vec<f64> = (0..w * h).into_par_iter().map(|k| {
-            let (i, j) = (k % w, k / w);
-            project.height_at(x0 + (f64::from(i) + 0.5) * cx, z0 + (f64::from(j) + 0.5) * cz)
-        }).collect();
+        let heights: Vec<f64> = (0..w * h)
+            .into_par_iter()
+            .map(|k| {
+                let (i, j) = (k % w, k / w);
+                project.height_at(x0 + (f64::from(i) + 0.5) * cx, z0 + (f64::from(j) + 0.5) * cz)
+            })
+            .collect();
 
         let (lo, hi) = heights.iter().fold((f64::MAX, f64::MIN), |(a, b), &v| (a.min(v), b.max(v)));
         let land_lo = lo.max(0.0);
@@ -114,16 +121,19 @@ impl Tile {
             [l[0] / n, l[1] / n, l[2] / n]
         };
 
-        let rgba = (0..w * h).into_par_iter().flat_map_iter(|k| {
-            let (i, j) = (i64::from(k % w), i64::from(k / w));
-            let v = at(i, j);
-            let (dx, dz) = ((at(i + 1, j) - at(i - 1, j)) / (2.0 * cx), (at(i, j + 1) - at(i, j - 1)) / (2.0 * cz));
-            let n = (dx * dx + dz * dz + 1.0).sqrt();
-            let shade = ((-dx * light[0] - dz * light[1] + light[2]) / n).clamp(0.0, 1.0);
-            let c = if v < 0.0 { sea_colour(-v) } else { land_colour((v - land_lo) / span) };
-            let k = 0.45 + 0.75 * shade;
-            [(c[0] * k).min(255.0) as u8, (c[1] * k).min(255.0) as u8, (c[2] * k).min(255.0) as u8, 255]
-        }).collect();
+        let rgba = (0..w * h)
+            .into_par_iter()
+            .flat_map_iter(|k| {
+                let (i, j) = (i64::from(k % w), i64::from(k / w));
+                let v = at(i, j);
+                let (dx, dz) = ((at(i + 1, j) - at(i - 1, j)) / (2.0 * cx), (at(i, j + 1) - at(i, j - 1)) / (2.0 * cz));
+                let n = (dx * dx + dz * dz + 1.0).sqrt();
+                let shade = ((-dx * light[0] - dz * light[1] + light[2]) / n).clamp(0.0, 1.0);
+                let c = if v < 0.0 { sea_colour(-v) } else { land_colour((v - land_lo) / span) };
+                let k = 0.45 + 0.75 * shade;
+                [(c[0] * k).min(255.0) as u8, (c[1] * k).min(255.0) as u8, (c[2] * k).min(255.0) as u8, 255]
+            })
+            .collect();
 
         Some(MinimapImage { x0, z0, w_m, h_m, w, h, rgba, range: (lo, hi) })
     }
@@ -144,8 +154,16 @@ impl Tile {
         let [x0, z0, w_m, h_m] = self.minimap_area();
         let look = crate::terrain_bake::TerrainLook { blended: true, view, ..self.look.clone() };
         let request = BakeRequest {
-            blend_map: p.dir.join("blend_map.tif"), folder: p.dir.clone(), groups: p.entry.as_ref().expect("an entry").texture_group(), x0, z0, w_m, h_m,
-            look, max_dim, ..Default::default()
+            blend_map: p.dir.join("blend_map.tif"),
+            folder: p.dir.clone(),
+            groups: p.entry.as_ref().expect("an entry").texture_group(),
+            x0,
+            z0,
+            w_m,
+            h_m,
+            look,
+            max_dim,
+            ..Default::default()
         };
 
         let blend = if matches!(view, TerrainView::Colour | TerrainView::BlendGroups) { p.blend.clone() } else { None };
@@ -159,26 +177,36 @@ impl Tile {
         let (w, h) = (img.w, img.h);
         let (cx, cz) = (img.w_m / f64::from(w), img.h_m / f64::from(h));
         let project = &self.project;
-        img.rgba.par_chunks(4).enumerate().flat_map_iter(|(k, px)| {
-            let (i, j) = (k as u32 % w, k as u32 / w);
-            let depth = -project.height_at(img.x0 + (f64::from(i) + 0.5) * cx, img.z0 + (f64::from(j) + 0.5) * cz);
-            if depth <= 0.0 {
-                return [px[0], px[1], px[2], px[3]];
-            }
+        img.rgba
+            .par_chunks(4)
+            .enumerate()
+            .flat_map_iter(|(k, px)| {
+                let (i, j) = (k as u32 % w, k as u32 / w);
+                let depth = -project.height_at(img.x0 + (f64::from(i) + 0.5) * cx, img.z0 + (f64::from(j) + 0.5) * cz);
+                if depth <= 0.0 {
+                    return [px[0], px[1], px[2], px[3]];
+                }
 
-            let (sea, a) = (sea_colour(depth), 0.55 + 0.35 * (depth / 20.0).clamp(0.0, 1.0));
-            let mix = |c: u8, s: f64| (f64::from(c) * (1.0 - a) + s * a) as u8;
-            [mix(px[0], sea[0]), mix(px[1], sea[1]), mix(px[2], sea[2]), px[3]]
-        }).collect()
+                let (sea, a) = (sea_colour(depth), 0.55 + 0.35 * (depth / 20.0).clamp(0.0, 1.0));
+                let mix = |c: u8, s: f64| (f64::from(c) * (1.0 - a) + s * a) as u8;
+                [mix(px[0], sea[0]), mix(px[1], sea[1]), mix(px[2], sea[2]), px[3]]
+            })
+            .collect()
     }
 
     /// The siege AI and the deployment zones for the minimap.
     pub fn minimap_siege(&self) -> MinimapSiege {
         let input = self.siege_input_with(false);
-        let wall_fills = input.walls.iter().flat_map(|w| w.footprint.iter().map(move |r| {
-            let ring = r.iter().map(|q| [q[0] as f32, q[1] as f32]).collect::<Vec<_>>();
-            (w.gate, strip_triangles(&ring).unwrap_or_else(|| super::cover::ear_clip(&ring)))
-        })).collect();
+        let wall_fills = input
+            .walls
+            .iter()
+            .flat_map(|w| {
+                w.footprint.iter().map(move |r| {
+                    let ring = r.iter().map(|q| [q[0] as f32, q[1] as f32]).collect::<Vec<_>>();
+                    (w.gate, strip_triangles(&ring).unwrap_or_else(|| super::cover::ear_clip(&ring)))
+                })
+            })
+            .collect();
         MinimapSiege { unit: self.unit(), input, layout: self.current_siege_layout(), zones: self.deployment_zones(), wall_fills }
     }
 }
@@ -200,15 +228,25 @@ fn strip_triangles(ring: &[[f32; 2]]) -> Option<Vec<[[f32; 2]; 3]>> {
         return None;
     }
 
-    Some((0..n - 1).flat_map(|i| {
-        let (a, b, c, d) = (ring[i], ring[i + 1], ring[2 * n - 2 - i], ring[2 * n - 1 - i]);
-        [[a, b, c], [a, c, d]]
-    }).collect())
+    Some(
+        (0..n - 1)
+            .flat_map(|i| {
+                let (a, b, c, d) = (ring[i], ring[i + 1], ring[2 * n - 2 - i], ring[2 * n - 1 - i]);
+                [[a, b, c], [a, c, d]]
+            })
+            .collect(),
+    )
 }
 
 /// Land at `t` (0 the lowest, 1 the highest): green lowlands, olive, brown hills, grey-white tops.
 fn land_colour(t: f64) -> [f64; 3] {
-    const STOPS: [(f64, [f64; 3]); 5] = [(0.0, [72.0, 112.0, 62.0]), (0.3, [128.0, 140.0, 80.0]), (0.6, [140.0, 112.0, 76.0]), (0.85, [150.0, 140.0, 130.0]), (1.0, [235.0, 235.0, 235.0])];
+    const STOPS: [(f64, [f64; 3]); 5] = [
+        (0.0, [72.0, 112.0, 62.0]),
+        (0.3, [128.0, 140.0, 80.0]),
+        (0.6, [140.0, 112.0, 76.0]),
+        (0.85, [150.0, 140.0, 130.0]),
+        (1.0, [235.0, 235.0, 235.0]),
+    ];
     let t = t.clamp(0.0, 1.0);
     let k = STOPS.iter().position(|s| s.0 >= t).unwrap_or(STOPS.len() - 1).max(1);
     let ((t0, a), (t1, b)) = (STOPS[k - 1], STOPS[k]);

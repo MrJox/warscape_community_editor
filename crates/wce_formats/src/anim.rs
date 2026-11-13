@@ -110,10 +110,16 @@ impl Animation {
                 return None;
             }
 
-            let frames = (0..count.min(max_frames)).map(|_| (0..n).map(|_| {
-                let t = [r.f32()?, r.f32()?, r.f32()?];
-                Some((t, normalised([r.f32()?, r.f32()?, r.f32()?, r.f32()?])))
-            }).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>()?;
+            let frames = (0..count.min(max_frames))
+                .map(|_| {
+                    (0..n)
+                        .map(|_| {
+                            let t = [r.f32()?, r.f32()?, r.f32()?];
+                            Some((t, normalised([r.f32()?, r.f32()?, r.f32()?, r.f32()?])))
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })
+                .collect::<Option<Vec<_>>>()?;
             return Some(Self { fps, end, skeleton, bones, parents, tracked: vec![(true, true); n], frames });
         }
 
@@ -127,12 +133,18 @@ impl Animation {
         let mut frames = Vec::with_capacity(count.min(max_frames).min(4096));
         for _ in 0..count.min(max_frames) {
             let ts = (0..nt).map(|_| Some([r.f32()?, r.f32()?, r.f32()?])).collect::<Option<Vec<_>>>()?;
-            let qs = (0..nr).map(|_| Some(normalised([r.i16()?, r.i16()?, r.i16()?, r.i16()?].map(|v| f32::from(v) / 32767.0)))).collect::<Option<Vec<_>>>()?;
-            frames.push((0..n).map(|i| {
-                let t = usize::try_from(tmap[i]).ok().and_then(|k| ts.get(k)).copied().unwrap_or([0.0; 3]);
-                let q = usize::try_from(rmap[i]).ok().and_then(|k| qs.get(k)).copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
-                (t, q)
-            }).collect());
+            let qs = (0..nr)
+                .map(|_| Some(normalised([r.i16()?, r.i16()?, r.i16()?, r.i16()?].map(|v| f32::from(v) / 32767.0))))
+                .collect::<Option<Vec<_>>>()?;
+            frames.push(
+                (0..n)
+                    .map(|i| {
+                        let t = usize::try_from(tmap[i]).ok().and_then(|k| ts.get(k)).copied().unwrap_or([0.0; 3]);
+                        let q = usize::try_from(rmap[i]).ok().and_then(|k| qs.get(k)).copied().unwrap_or([0.0, 0.0, 0.0, 1.0]);
+                        (t, q)
+                    })
+                    .collect(),
+            );
         }
 
         let tracked = tmap.iter().zip(&rmap).map(|(t, q)| (*t >= 0, *q >= 0)).collect();
@@ -143,7 +155,8 @@ impl Animation {
     /// by name.
     pub fn on_skeleton(&mut self, skeleton: &Animation) {
         let Some(rest) = skeleton.frames.first() else { return };
-        let of: Vec<Option<BoneLocal>> = self.bones.iter().map(|b| skeleton.bones.iter().position(|n| n == b).and_then(|i| rest.get(i)).copied()).collect();
+        let of: Vec<Option<BoneLocal>> =
+            self.bones.iter().map(|b| skeleton.bones.iter().position(|n| n == b).and_then(|i| rest.get(i)).copied()).collect();
         for frame in &mut self.frames {
             for (i, (t, q)) in frame.iter_mut().enumerate() {
                 let Some((rt, rq)) = of[i] else { continue };
@@ -160,11 +173,7 @@ impl Animation {
 
     /// How long it plays, in seconds: its end time, else its frames at its rate.
     pub fn duration(&self) -> f32 {
-        if self.end > 0.0 {
-            self.end
-        } else {
-            self.frames.len().saturating_sub(1) as f32 / self.fps.max(1e-3)
-        }
+        if self.end > 0.0 { self.end } else { self.frames.len().saturating_sub(1) as f32 / self.fps.max(1e-3) }
     }
 
     /// The bones' local transforms at time `t` (seconds), between the two nearest frames (translations lerped, rotations nlerped along the
@@ -174,11 +183,14 @@ impl Animation {
         let f = (t.max(0.0) * self.fps).min(last as f32);
         let (i, w) = (f.floor() as usize, f.fract());
         let (a, b) = (&self.frames[i], &self.frames[(i + 1).min(last)]);
-        a.iter().zip(b).map(|((ta, qa), (tb, qb))| {
-            let t = std::array::from_fn(|c| ta[c] + (tb[c] - ta[c]) * w);
-            let sign = if qa.iter().zip(qb).map(|(x, y)| x * y).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
-            (t, normalised(std::array::from_fn(|c| qa[c] + (sign * qb[c] - qa[c]) * w)))
-        }).collect()
+        a.iter()
+            .zip(b)
+            .map(|((ta, qa), (tb, qb))| {
+                let t = std::array::from_fn(|c| ta[c] + (tb[c] - ta[c]) * w);
+                let sign = if qa.iter().zip(qb).map(|(x, y)| x * y).sum::<f32>() < 0.0 { -1.0 } else { 1.0 };
+                (t, normalised(std::array::from_fn(|c| qa[c] + (sign * qb[c] - qa[c]) * w)))
+            })
+            .collect()
     }
 }
 

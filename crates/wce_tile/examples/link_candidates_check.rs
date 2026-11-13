@@ -16,7 +16,12 @@ fn main() {
     let by_location: HashMap<String, usize> = db.tiles.iter().enumerate().map(|(i, t)| (t.location.to_lowercase(), i)).collect();
     let mut cache: HashMap<usize, Vec<wce_tile::battle_map::link_candidates::Candidate>> = HashMap::new();
     let (mut pairs, mut found) = (0, 0);
-    let mut maps = std::fs::read_dir(raw.join("terrain/battles")).expect("battles").flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect::<Vec<_>>();
+    let mut maps = std::fs::read_dir(raw.join("terrain/battles"))
+        .expect("battles")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect::<Vec<_>>();
     maps.sort();
     for m in maps.iter().filter(|m| m.file_name().is_some_and(|n| n.to_string_lossy().starts_with("settlement"))) {
         let Ok(map) = wce_tile::battle_map::load_kit_map(&db, m) else { continue };
@@ -31,7 +36,8 @@ fn main() {
             for b in &map.placements {
                 let Some(&bi) = by_location.get(&b.location.to_lowercase()) else { continue };
                 let br = b.rect();
-                let touch = (br[2] == ar[0] || br[0] == ar[2]) && br[1] < ar[3] && br[3] > ar[1] || (br[3] == ar[1] || br[1] == ar[3]) && br[0] < ar[2] && br[2] > ar[0];
+                let touch = (br[2] == ar[0] || br[0] == ar[2]) && br[1] < ar[3] && br[3] > ar[1]
+                    || (br[3] == ar[1] || br[1] == ar[3]) && br[0] < ar[2] && br[2] > ar[0];
                 if !touch {
                     continue;
                 }
@@ -44,7 +50,13 @@ fn main() {
                     (rel.0 + dx, rel.1 + dy)
                 };
                 let name = |s: Option<usize>| s.map(|s| db.sets[s].link_name().to_owned());
-                let joins = at.link_targets.iter().any(|tg| bt.links.iter().any(|l| l.test == wce_tile::battle_map::tile_db::LinkTest::Equals && lands(l.x, l.y) == (tg.x, tg.y) && name(l.set) == name(tg.set)));
+                let joins = at.link_targets.iter().any(|tg| {
+                    bt.links.iter().any(|l| {
+                        l.test == wce_tile::battle_map::tile_db::LinkTest::Equals
+                            && lands(l.x, l.y) == (tg.x, tg.y)
+                            && name(l.set) == name(tg.set)
+                    })
+                });
                 if !joins {
                     continue;
                 }
@@ -54,7 +66,13 @@ fn main() {
                 if c.iter().any(|c| c.tile == bi && c.rotation == b.rotation && (c.x, c.y) == rel) {
                     found += 1;
                 } else {
-                    println!("{}: {} next to {} at {rel:?} rot {:#x} not a candidate", m.file_name().unwrap_or_default().to_string_lossy(), b.location, a.location, b.rotation);
+                    println!(
+                        "{}: {} next to {} at {rel:?} rot {:#x} not a candidate",
+                        m.file_name().unwrap_or_default().to_string_lossy(),
+                        b.location,
+                        a.location,
+                        b.rotation
+                    );
                 }
             }
         }

@@ -99,7 +99,11 @@ fn read_use(u: &Element, version: u32) -> Use {
         off: (signed(1), signed(2)),
         size: (signed(3), signed(4)),
         dock: ints.first().copied().unwrap_or(0) as i32,
-        dock_off: if version >= 77 { (ints.get(1).copied().unwrap_or(0) as f32, ints.get(2).copied().unwrap_or(0) as f32) } else { (0.0, 0.0) },
+        dock_off: if version >= 77 {
+            (ints.get(1).copied().unwrap_or(0) as f32, ints.get(2).copied().unwrap_or(0) as f32)
+        } else {
+            (0.0, 0.0)
+        },
         stretch: (b.get(3).copied().unwrap_or(false), b.get(4).copied().unwrap_or(false)),
     }
 }
@@ -252,7 +256,11 @@ impl UiModel {
             // asked to follow a parent that was resized with its children
             if let (Some(p), true) = (parent_ix, parent_ix.is_some_and(|p| follow[p])) {
                 let (sx, sy) = factor[p];
-                let want = if relative { (dsize.0 + (out[p].w - design[p].0), dsize.1 + (out[p].h - design[p].1)) } else { (dsize.0 * sx, dsize.1 * sy) };
+                let want = if relative {
+                    (dsize.0 + (out[p].w - design[p].0), dsize.1 + (out[p].h - design[p].1))
+                } else {
+                    (dsize.0 * sx, dsize.1 * sy)
+                };
                 size = resized(allow, locked, dsize, want);
                 my_follow = true;
             }

@@ -30,17 +30,21 @@ fn listing(dir: &std::path::Path, prefix: &str, out: &mut BTreeMap<String, PathB
 
 /// Two tile maps the same but for the LF of non-origin cells.
 fn same_tile_maps(a: &TileMap, b: &TileMap) -> bool {
-    a.width == b.width && a.height == b.height && a.names == b.names && a.layers.iter().zip(&b.layers).all(|(x, y)| {
-        x.len() == y.len() && x.iter().zip(y).all(|(c, d)| {
-            let (mut c, mut d) = (*c, *d);
-            if c.index <= 0 {
-                c.lf = [0.0; 2];
-                d.lf = [0.0; 2];
-            }
+    a.width == b.width
+        && a.height == b.height
+        && a.names == b.names
+        && a.layers.iter().zip(&b.layers).all(|(x, y)| {
+            x.len() == y.len()
+                && x.iter().zip(y).all(|(c, d)| {
+                    let (mut c, mut d) = (*c, *d);
+                    if c.index <= 0 {
+                        c.lf = [0.0; 2];
+                        d.lf = [0.0; 2];
+                    }
 
-            c == d
+                    c == d
+                })
         })
-    })
 }
 
 fn main() {
@@ -85,7 +89,10 @@ fn main() {
         if **mine == want {
             same += 1;
         } else if rel == "tile_map.tiles"
-            && let (Ok(x), Ok(y)) = (TileMap::parse(&ours["tile_map.index"][..], mine), TileMap::parse(&std::fs::read(out.join("tile_map.index")).unwrap_or_default(), &want))
+            && let (Ok(x), Ok(y)) = (
+                TileMap::parse(&ours["tile_map.index"][..], mine),
+                TileMap::parse(&std::fs::read(out.join("tile_map.index")).unwrap_or_default(), &want),
+            )
             && same_tile_maps(&x, &y)
         {
             same += 1;

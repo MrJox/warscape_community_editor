@@ -85,8 +85,11 @@ impl Spec {
             });
 
             s.types.push(BcaType {
-                name: b.attribute("type").unwrap_or_default().to_owned(), boundary: int(b, "boundary"), infield: words(b.child("infield")),
-                restriction: words(b.child("infield_restriction")), deployment,
+                name: b.attribute("type").unwrap_or_default().to_owned(),
+                boundary: int(b, "boundary"),
+                infield: words(b.child("infield")),
+                restriction: words(b.child("infield_restriction")),
+                deployment,
             });
         }
 
@@ -242,7 +245,8 @@ pub struct Dzr {
 fn regions(z: &zones::Polygon, centre: (i32, i32), out: &mut Vec<Dzr>) {
     if !z.points.is_empty() {
         out.push(Dzr {
-            name: format!("DZR {}", out.len()), subtractive: z.area() < 0.0,
+            name: format!("DZR {}", out.len()),
+            subtractive: z.area() < 0.0,
             points: z.points.iter().map(|&(x, y)| (centre.0 as f32 + x as f32, centre.1 as f32 + y as f32)).collect(),
         });
     }
@@ -256,8 +260,15 @@ fn regions(z: &zones::Polygon, centre: (i32, i32), out: &mut Vec<Dzr>) {
 /// second's alliances swapped when its zones face the other way (their centroids' axes' dot product below 0).
 #[allow(clippy::too_many_arguments)]
 fn deploy(
-    spec: &Spec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement], cells: &[i32], masks: &HashMap<(usize, usize), DeploymentMask>,
-    b: &mut Bca, dep: &DeploymentSpec,
+    spec: &Spec,
+    db: &TileDatabase,
+    w: u32,
+    h: u32,
+    instances: &[Placement],
+    cells: &[i32],
+    masks: &HashMap<(usize, usize), DeploymentMask>,
+    b: &mut Bca,
+    dep: &DeploymentSpec,
 ) {
     let inset = zones::battle_inset(2.0);
     let mut make = |config: i32| {
@@ -334,7 +345,12 @@ pub fn cell_instances(db: &TileDatabase, w: u32, h: u32, instances: &[Placement]
 /// The BCAs of a map (`w` x `h` cells, its tile instances in the battle field's order), in the order Terry makes them; with
 /// `delete_invalid` the ones with an error are still listed (their `errors` say why they go).
 pub fn generate(
-    spec: &Spec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement], masks: &HashMap<(usize, usize), DeploymentMask>,
+    spec: &Spec,
+    db: &TileDatabase,
+    w: u32,
+    h: u32,
+    instances: &[Placement],
+    masks: &HashMap<(usize, usize), DeploymentMask>,
 ) -> Vec<Bca> {
     let cells = cell_instances(db, w, h, instances);
     let mut out: Vec<Bca> = vec![];
@@ -368,16 +384,26 @@ pub fn generate(
                 continue;
             }
 
-            let mut b = Bca { name: format!("BCA {:05}", out.len()), kind: t.name.clone(), cell: c, type_index: k, instance: i, errors: vec![], zones: vec![] };
-            let restricted = (-4..4).any(|dy| (-4..4).any(|dx| {
-                let (x, y) = (c.0 + dx, c.1 + dy);
-                if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
-                    return false;
-                }
+            let mut b = Bca {
+                name: format!("BCA {:05}", out.len()),
+                kind: t.name.clone(),
+                cell: c,
+                type_index: k,
+                instance: i,
+                errors: vec![],
+                zones: vec![],
+            };
+            let restricted = (-4..4).any(|dy| {
+                (-4..4).any(|dx| {
+                    let (x, y) = (c.0 + dx, c.1 + dy);
+                    if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+                        return false;
+                    }
 
-                let j = cells[(y as u32 * w + x as u32) as usize];
-                j >= 0 && j as usize != i && listed(k, 1, &instances[j as usize])
-            }));
+                    let j = cells[(y as u32 * w + x as u32) as usize];
+                    j >= 0 && j as usize != i && listed(k, 1, &instances[j as usize])
+                })
+            });
 
             if restricted {
                 b.errors.push("Infield contains restricted tiles".to_owned());
@@ -449,7 +475,11 @@ pub fn terry_xml(spec: &Spec, bcas: &[&Bca], w: u32, h: u32, first_id: u64, heig
 <entity id=\"{cid:x}\" name=\"Catchment Region\">\n{{i}}<components>\n{{i}}{{i}}<ECRectangle width=\"{side}\" height=\"{side}\" active=\"true\"/>\n\
 {{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"0 0 0\"/>\n{{i}}{{i}}<ECLandscapeAbove active=\"true\"/>\n\
 {{i}}</components>\n{{i}}<children/>\n</entity>\n",
-            b.name, n(x), n(height(x, z)), n(z), b.kind
+            b.name,
+            n(x),
+            n(height(x, z)),
+            n(z),
+            b.kind
         );
 
         for (d, (did, rids)) in b.zones.iter().zip(&dz_ids) {
@@ -458,13 +488,17 @@ pub fn terry_xml(spec: &Spec, bcas: &[&Bca], w: u32, h: u32, first_id: u64, heig
             tail += &format!(
                 "<entity id=\"{did:x}\" name=\"{}\">\n{{i}}<components>\n{{i}}{{i}}<ECDeploymentZone deployment_category=\"DZC_{}\" deployment_type=\"DZT_1V1\" \
 active=\"true\" facing_direction=\"0\" deployment_zone_id=\"0\" alliance_id=\"{}\" configuration=\"{}\"/>\n{{i}}</components>\n{kids}</entity>\n",
-                d.name, d.category.to_uppercase(), d.alliance, d.configuration
+                d.name,
+                d.category.to_uppercase(),
+                d.alliance,
+                d.configuration
             );
 
             for (r, rid) in d.regions.iter().zip(rids) {
                 let pts: Vec<(f32, f32)> = r.points.iter().map(|&(x, y)| world(x, y)).collect();
                 let (x0, z0) = pts[0];
-                let points: String = pts.iter()
+                let points: String = pts
+                    .iter()
                     .map(|&(x, z)| format!("{{i}}{{i}}{{i}}{{i}}<point x=\"{}\" y=\"{}\"/>\n", point_text(x - x0), point_text(z - z0)))
                     .collect();
                 let (x0, z0) = (f64::from(x0), f64::from(z0));
@@ -472,7 +506,11 @@ active=\"true\" facing_direction=\"0\" deployment_zone_id=\"0\" alliance_id=\"{}
                     "<entity id=\"{rid:x}\" name=\"{}\">\n{{i}}<components>\n{{i}}{{i}}<ECDeploymentZoneRegion active=\"true\" region_type=\"{}\"/>\n\
 {{i}}{{i}}<ECPolyline active=\"true\">\n{{i}}{{i}}{{i}}<polyline closed=\"true\">\n{points}{{i}}{{i}}{{i}}</polyline>\n{{i}}{{i}}</ECPolyline>\n\
 {{i}}{{i}}<ECTransform rotation=\"0 0 0\" scale=\"1 1 1\" active=\"true\" position=\"{} {} {}\"/>\n{{i}}</components>\n{{i}}<children/>\n</entity>\n",
-                    r.name, if r.subtractive { "DZRT_SUBTRACTIVE" } else { "DZRT_ADDITIVE" }, n(x0), n(height(x0, z0)), n(z0)
+                    r.name,
+                    if r.subtractive { "DZRT_SUBTRACTIVE" } else { "DZRT_ADDITIVE" },
+                    n(x0),
+                    n(height(x0, z0)),
+                    n(z0)
                 );
             }
         }
@@ -483,5 +521,9 @@ active=\"true\" facing_direction=\"0\" deployment_zone_id=\"0\" alliance_id=\"{}
 
 /// The procedural BCAs of a project (`ECProcedural`: the generator's; Terry removes them first).
 pub fn procedural(p: &crate::terry::TerryProject) -> Vec<u64> {
-    p.entities.iter().filter(|e| matches!(p.kind(e), crate::terry::EntityKind::Bca(_)) && p.component(e, "ECProcedural").is_some()).map(|e| e.id).collect()
+    p.entities
+        .iter()
+        .filter(|e| matches!(p.kind(e), crate::terry::EntityKind::Bca(_)) && p.component(e, "ECProcedural").is_some())
+        .map(|e| e.id)
+        .collect()
 }

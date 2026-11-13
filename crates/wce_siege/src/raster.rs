@@ -199,7 +199,8 @@ impl Grid {
         while let Some(k) = q.pop_front() {
             for d in N4 {
                 if let Some(n) = self.step(k, d)
-                    && pass[n] && !out[n]
+                    && pass[n]
+                    && !out[n]
                 {
                     out[n] = true;
                     q.push_back(n);
@@ -235,7 +236,8 @@ impl Grid {
                 n += 1;
                 for d in N8 {
                     if let Some(c) = self.step(k, d)
-                        && m[c] && label[c] == usize::MAX
+                        && m[c]
+                        && label[c] == usize::MAX
                     {
                         label[c] = id;
                         q.push_back(c);
@@ -315,7 +317,11 @@ impl Grid {
                         continue;
                     }
 
-                    let ok = if pass == 0 { !(p[0] && p[2] && p[4]) && !(p[2] && p[4] && p[6]) } else { !(p[0] && p[2] && p[6]) && !(p[0] && p[4] && p[6]) };
+                    let ok = if pass == 0 {
+                        !(p[0] && p[2] && p[4]) && !(p[2] && p[4] && p[6])
+                    } else {
+                        !(p[0] && p[2] && p[6]) && !(p[0] && p[4] && p[6])
+                    };
                     if ok {
                         gone.push(k);
                     }
@@ -376,7 +382,6 @@ impl Grid {
                 let mut at = s;
                 let mut prev_dir = (0isize, 0isize);
                 while let Some(outs) = next.get_mut(&at).filter(|v| !v.is_empty()) {
-
                     // At a corner touched by two loops (cells meeting diagonally), turn the same way every time.
                     let pick = if outs.len() > 1 {
                         let turn = |t: &(isize, isize)| {
@@ -512,10 +517,12 @@ pub fn inside(p: P, poly: &[P]) -> bool {
 
 /// Twice the signed area (shoelace).
 pub fn area2(poly: &[P]) -> f64 {
-    (0..poly.len()).map(|i| {
-        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
-        a[0] * b[1] - b[0] * a[1]
-    }).sum()
+    (0..poly.len())
+        .map(|i| {
+            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+            a[0] * b[1] - b[0] * a[1]
+        })
+        .sum()
 }
 
 #[cfg(test)]

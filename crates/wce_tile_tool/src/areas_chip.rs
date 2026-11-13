@@ -50,8 +50,14 @@ impl TileTool {
         let look = self.polygon_look(e).clone();
         let shown = e.docs.find_as::<TileDocument>(id).is_some_and(|d| d.tile().display().show_polygons);
         let changed = !shown || look != PolygonLook::default();
-        let tip = format!("Areas: outlines {:.2}, fills {:.2}\nClick: how the polygons' outlines and fills are drawn, for all of them and per type", look.outline, look.fill);
-        gui::set_cursor_screen_pos(gui::v2(origin.x + size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 16.0, origin.y + top));
+        let tip = format!(
+            "Areas: outlines {:.2}, fills {:.2}\nClick: how the polygons' outlines and fills are drawn, for all of them and per type",
+            look.outline, look.fill
+        );
+        gui::set_cursor_screen_pos(gui::v2(
+            origin.x + size.x - self.ground_chip_width - self.tech_chip_width - self.areas_chip_width - 16.0,
+            origin.y + top,
+        ));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         if gui::begin_pill("##areaschip") {
             if chip(changed, icons::LAND_PLOT, "areaviews", &tip) {

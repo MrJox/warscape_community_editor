@@ -17,7 +17,6 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
-
     /// A target of a size; invalid when the device refuses it.
     pub fn new(dev: &ID3D11Device, width: u32, height: u32) -> Self {
         let mut target = Self::default();
@@ -33,8 +32,16 @@ impl RenderTarget {
         }
 
         let td = D3D11_TEXTURE2D_DESC {
-            Width: width, Height: height, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_R8G8B8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0, MiscFlags: 0,
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
 
         let created = dev.create_texture_2d(&td, None).and_then(|tex| {

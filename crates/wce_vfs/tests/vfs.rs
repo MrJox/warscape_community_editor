@@ -22,17 +22,28 @@ fn pack_order_follows_mods_then_extra_vanilla_then_manifest() {
     let game = game_folder(&[
         ("used_mods.txt", "mod \"my_mod.pack\";\r\nmod \"missing.pack\";\r\n  mod \"second_mod.pack\" ;\r\nmodx \"not_a_mod.pack\";\r\n"),
         ("data/manifest.txt", "data.pack\t123\r\nBLOOD.pack\t1\r\nmovies/intro.pack\t2\r\nlocal_en.pack\t3\r\nnotes.txt\t4\r\n"),
-        ("data/my_mod.pack", ""), ("data/second_mod.pack", ""), ("data/not_a_mod.pack", ""),
-        ("data/data.pack", ""), ("data/blood.pack", ""), ("data/local_en.pack", ""), ("data/charlemagne.pack", ""),
+        ("data/my_mod.pack", ""),
+        ("data/second_mod.pack", ""),
+        ("data/not_a_mod.pack", ""),
+        ("data/data.pack", ""),
+        ("data/blood.pack", ""),
+        ("data/local_en.pack", ""),
+        ("data/charlemagne.pack", ""),
     ]);
 
     let order = GameProfile::ATTILA.pack_order(game.path(), true);
     let names = order.packs.iter().map(|pack| (pack.name.as_str(), pack.is_mod)).collect::<Vec<_>>();
-    assert_eq!(names, [
-        ("my_mod.pack", true), ("second_mod.pack", true),
-        ("charlemagne.pack", false), ("blood.pack", false),
-        ("data.pack", false), ("local_en.pack", false),
-    ]);
+    assert_eq!(
+        names,
+        [
+            ("my_mod.pack", true),
+            ("second_mod.pack", true),
+            ("charlemagne.pack", false),
+            ("blood.pack", false),
+            ("data.pack", false),
+            ("local_en.pack", false),
+        ]
+    );
     assert_eq!(order.missing_mods, ["missing.pack"]);
 
     let without_mods = GameProfile::ATTILA.pack_order(game.path(), false);
@@ -75,7 +86,10 @@ fn pack_header(kind: u8) -> String {
 fn patch_packs_come_before_the_release_packs() {
     let (release, patch) = (pack_header(1), pack_header(2));
     let game = game_folder(&[
-        ("data/data.pack", &release), ("data/data_rome2.pack", &patch), ("data/tiles.pack", &release), ("data/tiles_rome2.pack", &patch),
+        ("data/data.pack", &release),
+        ("data/data_rome2.pack", &patch),
+        ("data/tiles.pack", &release),
+        ("data/tiles_rome2.pack", &patch),
         ("data/my_mod.pack", &pack_header(3)),
     ]);
 
@@ -124,8 +138,15 @@ fn files_go_into_a_mod_pack_replacing_their_folder() {
     let pack = dir.path().join("data/my_tile.pack");
     let game = &GameProfile::ROME_2;
     let file = |p: &str, d: &[u8]| (p.to_owned(), d.to_vec());
-    wce_vfs::mod_pack::write_files(game, &pack, &[], &[file("terrain/tiles/battle/a/aa/old.markers", b"1"), file("terrain/tiles/battle/b/aa/x", b"2")]).unwrap();
-    wce_vfs::mod_pack::write_files(game, &pack, &["terrain/tiles/battle/a/aa"], &[file("terrain/tiles/battle/a/aa/new.markers", b"3")]).unwrap();
+    wce_vfs::mod_pack::write_files(
+        game,
+        &pack,
+        &[],
+        &[file("terrain/tiles/battle/a/aa/old.markers", b"1"), file("terrain/tiles/battle/b/aa/x", b"2")],
+    )
+    .unwrap();
+    wce_vfs::mod_pack::write_files(game, &pack, &["terrain/tiles/battle/a/aa"], &[file("terrain/tiles/battle/a/aa/new.markers", b"3")])
+        .unwrap();
 
     let mut config = Config::new(dir.path(), game.clone());
     config.mod_packs = Some(vec!["my_tile.pack".to_owned()]);

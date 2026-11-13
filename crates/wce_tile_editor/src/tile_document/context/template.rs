@@ -100,7 +100,10 @@ impl Grid {
     /// Every `k`-th sample inside a margin of `m` samples (`k` divides what is left).
     fn every(&self, m: i32, k: i32) -> Self {
         let (nx, nz) = ((self.nx - 1 - 2 * m) / k + 1, (self.nz - 1 - 2 * m) / k + 1);
-        let heights = (0..nz).flat_map(|j| (0..nx).map(move |i| (i, j))).map(|(i, j)| self.heights[((m + j * k) * self.nx + m + i * k) as usize]).collect();
+        let heights = (0..nz)
+            .flat_map(|j| (0..nx).map(move |i| (i, j)))
+            .map(|(i, j)| self.heights[((m + j * k) * self.nx + m + i * k) as usize])
+            .collect();
         let (ox, oz) = (self.ox + m as f32 * self.step, self.oz + m as f32 * self.step);
         Self { nx, nz, ox, oz, step: self.step * k as f32, heights: Arc::new(heights) }
     }
@@ -108,11 +111,14 @@ impl Grid {
     /// The grid with a ring of vertices one step outside it, SKIRT below its edge.
     pub(super) fn skirted(&self) -> Self {
         let (nx, nz) = (self.nx + 2, self.nz + 2);
-        let heights = (0..nz).flat_map(|j| (0..nx).map(move |i| (i, j))).map(|(i, j)| {
-            let (si, sj) = ((i - 1).clamp(0, self.nx - 1), (j - 1).clamp(0, self.nz - 1));
-            let h = self.heights[(sj * self.nx + si) as usize];
-            if i == 0 || j == 0 || i == nx - 1 || j == nz - 1 { h - SKIRT } else { h }
-        }).collect();
+        let heights = (0..nz)
+            .flat_map(|j| (0..nx).map(move |i| (i, j)))
+            .map(|(i, j)| {
+                let (si, sj) = ((i - 1).clamp(0, self.nx - 1), (j - 1).clamp(0, self.nz - 1));
+                let h = self.heights[(sj * self.nx + si) as usize];
+                if i == 0 || j == 0 || i == nx - 1 || j == nz - 1 { h - SKIRT } else { h }
+            })
+            .collect();
 
         Self { nx, nz, ox: self.ox - self.step, oz: self.oz - self.step, step: self.step, heights: Arc::new(heights) }
     }
@@ -333,14 +339,26 @@ impl Template {
         self.material_low = self.material.as_ref().map(smaller);
         self.material_far = self.material_low.as_ref().map(smaller);
 
-        let images = |m: &Option<Arc<TerrainMaterial>>| m.as_ref().map_or(0, |m| image_bytes(&m.blend) + image_bytes(&m.index) + image_bytes(&m.normal) + image_bytes(&m.alpha));
+        let images = |m: &Option<Arc<TerrainMaterial>>| {
+            m.as_ref().map_or(0, |m| image_bytes(&m.blend) + image_bytes(&m.index) + image_bytes(&m.normal) + image_bytes(&m.alpha))
+        };
         let entities: usize = self.entities.iter().map(|(_, p)| match p {
             Payload::Water(w) => w.verts.len() * 48 + w.indices.len() * 4,
             Payload::VfxEmitter(v) => v.mesh.as_ref().map_or(0, |m| m.len() * 36),
             _ => 0,
         } + 160).sum();
-        let custom: usize = self.custom.iter().flat_map(|m| &m.lods).map(|l| l.vertices.len() * size_of::<wce_scene::render_scene::CustomTerrainVertex>() + l.indices.len() * 4).sum();
-        self.bytes = (self.own.heights.len() + self.near.heights.len() + self.coarse.heights.len()) * 4 + images(&self.material) + images(&self.material_low) + images(&self.material_far) + entities + custom;
+        let custom: usize = self
+            .custom
+            .iter()
+            .flat_map(|m| &m.lods)
+            .map(|l| l.vertices.len() * size_of::<wce_scene::render_scene::CustomTerrainVertex>() + l.indices.len() * 4)
+            .sum();
+        self.bytes = (self.own.heights.len() + self.near.heights.len() + self.coarse.heights.len()) * 4
+            + images(&self.material)
+            + images(&self.material_low)
+            + images(&self.material_far)
+            + entities
+            + custom;
     }
 }
 
@@ -375,7 +393,11 @@ fn blended(blend: &[u8], index: &[u8], slots: &[[f32; 3]; 16]) -> [f32; 3] {
 /// heights, its alpha map (the game's, `game_alpha`, when the rectangle is the tile with its whole border; else 1 over the tile) and its
 /// box; new ids.
 fn context_material(
-    m: &TerrainMaterial, (x0, z0, x1, z1): (f64, f64, f64, f64), (ex, ez): (f64, f64), own: &Grid, height: &(dyn Fn(f64, f64) -> f32 + Sync),
+    m: &TerrainMaterial,
+    (x0, z0, x1, z1): (f64, f64, f64, f64),
+    (ex, ez): (f64, f64),
+    own: &Grid,
+    height: &(dyn Fn(f64, f64) -> f32 + Sync),
     alpha: Option<TerrainImage>,
 ) -> TerrainMaterial {
     let step = NEIGHBOUR_STEP;
@@ -384,7 +406,8 @@ fn context_material(
     let (gx, gz) = (((m.x1 - m.x0) / step).round().max(1.0) as i32 + 1, ((m.z1 - m.z0) / step).round().max(1.0) as i32 + 1);
     let over = Grid::sample(gx, gz, m.x0, m.z0, step, height);
     m.normal = terrain_normal_image(&over.heights, over.nx, over.nz, step, step, m.blend.w.max(1), m.blend.h.max(1));
-    let bordered = (x0 + 128.0).abs() < 1e-6 && (z0 + 128.0).abs() < 1e-6 && (x1 - ex - 128.0).abs() < 1e-6 && (z1 - ez - 128.0).abs() < 1e-6;
+    let bordered =
+        (x0 + 128.0).abs() < 1e-6 && (z0 + 128.0).abs() < 1e-6 && (x1 - ex - 128.0).abs() < 1e-6 && (z1 - ez - 128.0).abs() < 1e-6;
     m.alpha = alpha.filter(|_| bordered).unwrap_or_else(|| alpha_map(&m, ex, ez));
     let (lo, hi) = own.range();
     (m.y0, m.y1) = (f64::from(lo) - BOX_BELOW, f64::from(hi) + BOX_ABOVE);
@@ -394,8 +417,18 @@ fn context_material(
 }
 
 /// Opens a neighbour tile: a scene's ([`load_template`]) or a custom mesh's ([`load_custom_template`]).
-pub fn load_any_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Option<&Path>, files: Option<Arc<dyn Files>>) -> Result<Template, String> {
-    if wce_tile::sources::custom_mesh(dir).is_some() { load_custom_template(dir, look, files) } else { load_template(dir, look, trees, game_kit, files) }
+pub fn load_any_template(
+    dir: &Path,
+    look: &TerrainLook,
+    trees: bool,
+    game_kit: Option<&Path>,
+    files: Option<Arc<dyn Files>>,
+) -> Result<Template, String> {
+    if wce_tile::sources::custom_mesh(dir).is_some() {
+        load_custom_template(dir, look, files)
+    } else {
+        load_template(dir, look, trees, game_kit, files)
+    }
 }
 
 /// Opens a custom-mesh tile (the `cliff_custom` set: no scene, no height map): its mesh (the kit's CS2, else the packs' model), on the map's LF, with the material
@@ -416,14 +449,18 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
     // The kit's CS2, else the packs' model (a tile no kit has: Rome 2's).
     let mesh = match wce_tile::sources::file_any_case(dir, wce_tile::sources::CUSTOM_MESH_CS2) {
         Some(cs2) => {
-            let parsed = wce_formats::cas2::Cas2File::parse(&std::fs::read(&cs2).map_err(|e| format!("{}: {e}", cs2.display()))?).map_err(|e| format!("{}: {e}", cs2.display()))?;
-            super::custom_mesh::from_cs2(&parsed, albedo, next_id(&MATERIAL_IDS), ez as f32).map_err(|e| format!("{}: {e}", cs2.display()))?
+            let parsed = wce_formats::cas2::Cas2File::parse(&std::fs::read(&cs2).map_err(|e| format!("{}: {e}", cs2.display()))?)
+                .map_err(|e| format!("{}: {e}", cs2.display()))?;
+            super::custom_mesh::from_cs2(&parsed, albedo, next_id(&MATERIAL_IDS), ez as f32)
+                .map_err(|e| format!("{}: {e}", cs2.display()))?
         }
 
         None => {
-            let model = wce_tile::sources::file_any_case(dir, wce_tile::sources::CUSTOM_MESH_MODEL).ok_or_else(|| format!("no custom mesh in {}", dir.display()))?;
+            let model = wce_tile::sources::file_any_case(dir, wce_tile::sources::CUSTOM_MESH_MODEL)
+                .ok_or_else(|| format!("no custom mesh in {}", dir.display()))?;
             let bytes = std::fs::read(&model).map_err(|e| format!("{}: {e}", model.display()))?;
-            super::custom_mesh::from_model(&bytes, albedo, next_id(&MATERIAL_IDS), ez as f32).map_err(|e| format!("{}: {e}", model.display()))?
+            super::custom_mesh::from_model(&bytes, albedo, next_id(&MATERIAL_IDS), ez as f32)
+                .map_err(|e| format!("{}: {e}", model.display()))?
         }
     };
     let height = |_: f64, _: f64| 0.0f32;
@@ -432,7 +469,14 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
     // The blend map is the bordered tile's (a cell around it), as a scene tile's. Some variations have none (Attila's `cliff_custom`
     // `6x2_l0_r0/ad`: only the mesh; the packs ship no blend for any of them): the mesh alone, no ground material.
     let Some(tif) = wce_tile::sources::file_any_case(dir, "blend_map.tif") else {
-        let mut tpl = Template { extent: (ex, ez), own, material: None, custom: Some(Arc::new(mesh)), load_s: t0.elapsed().as_secs_f64(), ..Default::default() };
+        let mut tpl = Template {
+            extent: (ex, ez),
+            own,
+            material: None,
+            custom: Some(Arc::new(mesh)),
+            load_s: t0.elapsed().as_secs_f64(),
+            ..Default::default()
+        };
         tpl.finish();
         return Ok(tpl);
     };
@@ -443,20 +487,42 @@ pub fn load_custom_template(dir: &Path, look: &TerrainLook, files: Option<Arc<dy
     let climates = crate::climate_db::effective_climates(kit, &kind, Some(files.as_ref()));
     let b = 128.0;
     let rq = crate::terrain_material::MaterialRequest {
-        folder: dir.to_path_buf(), groups: entry.texture_group(), x0: -b, z0: -b, x1: ex + b, z1: ez + b, y0: -BOX_BELOW, y1: BOX_ABOVE, look: look.clone(), id: 0,
+        folder: dir.to_path_buf(),
+        groups: entry.texture_group(),
+        x0: -b,
+        z0: -b,
+        x1: ex + b,
+        z1: ez + b,
+        y0: -BOX_BELOW,
+        y1: BOX_ABOVE,
+        look: look.clone(),
+        id: 0,
     };
 
     let (m, _) = crate::terrain_material::build_terrain_material(&rq, &blend, &climates, files.as_ref())?;
     // Its box reaches over the mesh too (`finish`).
     let alpha = game_alpha(entry, (cx, cz), files.as_ref());
     let material = Arc::new(context_material(&m, (-b, -b, ex + b, ez + b), (ex, ez), &own, &height, alpha));
-    let mut tpl = Template { extent: (ex, ez), own, material: Some(material), custom: Some(Arc::new(mesh)), load_s: t0.elapsed().as_secs_f64(), ..Default::default() };
+    let mut tpl = Template {
+        extent: (ex, ez),
+        own,
+        material: Some(material),
+        custom: Some(Arc::new(mesh)),
+        load_s: t0.elapsed().as_secs_f64(),
+        ..Default::default()
+    };
     tpl.finish();
     Ok(tpl)
 }
 
 /// Opens a neighbour tile (slow: the whole tile document; run it away from the UI thread); `game_kit` is `TileProject::game_kit`.
-pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Option<&Path>, files: Option<Arc<dyn Files>>) -> Result<Template, String> {
+pub fn load_template(
+    dir: &Path,
+    look: &TerrainLook,
+    trees: bool,
+    game_kit: Option<&Path>,
+    files: Option<Arc<dyn Files>>,
+) -> Result<Template, String> {
     let t0 = std::time::Instant::now();
     let mut project = TileProject::open(dir)?;
     project.game_kit = game_kit.map(Path::to_path_buf);
@@ -492,13 +558,19 @@ pub fn load_template(dir: &Path, look: &TerrainLook, trees: bool, game_kit: Opti
 
     // The material with its border (at most what the height map has), its normal map from the heights over it, its alpha map, its box.
     let border = project.border_m();
-    let material = scratch.find(t.terrain_entity).and_then(|e| match &e.payload {
-        Payload::Terrain(tr) => tr.material.clone(),
-        _ => None,
-    }).map(|m| {
-        let alpha = files.as_deref().zip(project.entry.as_ref()).and_then(|(f, e)| game_alpha(e, (project.info.cells_x.max(1), project.info.cells_y.max(1)), f));
-        Arc::new(context_material(&m, (-border, -border, ex + border, ez + border), (ex, ez), &own, &height, alpha))
-    });
+    let material = scratch
+        .find(t.terrain_entity)
+        .and_then(|e| match &e.payload {
+            Payload::Terrain(tr) => tr.material.clone(),
+            _ => None,
+        })
+        .map(|m| {
+            let alpha = files
+                .as_deref()
+                .zip(project.entry.as_ref())
+                .and_then(|(f, e)| game_alpha(e, (project.info.cells_x.max(1), project.info.cells_y.max(1)), f));
+            Arc::new(context_material(&m, (-border, -border, ex + border, ez + border), (ex, ez), &own, &height, alpha))
+        });
 
     let mut entities: Vec<(Float4x4, Payload)> = scratch
         .entities()

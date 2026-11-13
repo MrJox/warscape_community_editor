@@ -30,7 +30,9 @@ impl TileTool {
             return;
         }
 
-        let wants_water = d.tile().terrain_look().view == TerrainView::WaterDepth || self.minimap.view() == Some(TerrainView::WaterDepth) || self.minimap.wants_radar();
+        let wants_water = d.tile().terrain_look().view == TerrainView::WaterDepth
+            || self.minimap.view() == Some(TerrainView::WaterDepth)
+            || self.minimap.wants_radar();
         let wants_nogo = d.tile().display().show_auto_nogo || self.minimap.shows_auto_nogos();
         let version = d.history().version();
         let key = Some((id, version));
@@ -62,7 +64,11 @@ impl TileTool {
             }
         };
 
-        log::info(format!("{} worked out in {:.2} s", if nogo { "water depth and no-go areas" } else { "water depth" }, started.elapsed().as_secs_f64()));
+        log::info(format!(
+            "{} worked out in {:.2} s",
+            if nogo { "water depth and no-go areas" } else { "water depth" },
+            started.elapsed().as_secs_f64()
+        ));
         self.water_for = key;
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         d.tile_mut().set_water_depth(&mut e.scene, depth);
@@ -125,7 +131,11 @@ impl TileTool {
 pub type Outlines = Vec<Vec<[f32; 2]>>;
 
 /// With `nogos`, the automatic no-go areas too.
-pub fn stage_b_of(d: &TileDocument, game: Option<&wce_tile_io::attila::workflow::Game>, nogos: bool) -> Result<(WaterDepth, Option<Outlines>), String> {
+pub fn stage_b_of(
+    d: &TileDocument,
+    game: Option<&wce_tile_io::attila::workflow::Game>,
+    nogos: bool,
+) -> Result<(WaterDepth, Option<Outlines>), String> {
     use wce_tile::project_files::{TED_FILE, WCE_FILE, to_ted};
 
     let p = d.project();

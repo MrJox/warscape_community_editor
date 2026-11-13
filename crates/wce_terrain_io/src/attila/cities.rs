@@ -35,8 +35,8 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use rpfm_lib::files::esf::{ESF, NodeType, RecordNode};
 use rpfm_lib::files::db::DB;
+use rpfm_lib::files::esf::{ESF, NodeType, RecordNode};
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
 use rpfm_lib::schema::Schema;
 
@@ -198,7 +198,11 @@ pub(crate) fn slot_of(slot: &RecordNode) -> (String, Option<String>, Option<Stri
 
     if let Some(m) = child(slot, "BUILDING_MANAGER") {
         let b = child(m, "BUILDING").and_then(|b| b.children().first());
-        return (text(leaf(sg, Some("BUILDING_MANAGER"), 3)).unwrap_or_default(), b.and_then(|bg| text(leaf(bg, None, 4))), b.and_then(|bg| text(leaf(bg, None, 5))));
+        return (
+            text(leaf(sg, Some("BUILDING_MANAGER"), 3)).unwrap_or_default(),
+            b.and_then(|bg| text(leaf(bg, None, 4))),
+            b.and_then(|bg| text(leaf(bg, None, 5))),
+        );
     }
 
     (String::new(), None, None)
@@ -221,7 +225,8 @@ fn hex_direction(a: (u16, u16), b: (u16, u16)) -> Option<u32> {
 /// the smallest; the rotation the smallest turning it into the mask).
 fn edge_piece(mask: u32) -> (u32, u32) {
     let rot = |m: u32, k: u32| ((m << k) | (m >> ((6 - k) % 6))) & 63;
-    let shape = (0..6).map(|k| rot(mask, k)).filter(|m| m & 3 == 3).min().unwrap_or_else(|| (0..6).map(|k| rot(mask, k)).min().unwrap_or(0));
+    let shape =
+        (0..6).map(|k| rot(mask, k)).filter(|m| m & 3 == 3).min().unwrap_or_else(|| (0..6).map(|k| rot(mask, k)).min().unwrap_or(0));
     (shape, (0..6).find(|&k| rot(shape, k) == mask).unwrap_or(0))
 }
 
@@ -230,19 +235,26 @@ fn edge_piece(mask: u32) -> (u32, u32) {
 fn wall_walks(data: &RecordNode) -> Vec<Vec<(u16, u16)>> {
     let walk = |slot: &RecordNode| -> Option<Vec<(u16, u16)>> {
         let walls = child(slot, "SLOT_WALL_ARRAY")?;
-        let cells: Vec<(u16, u16)> = walls.children().iter().filter_map(|g| {
-            let mut v = g.iter().filter_map(|n| match n {
-                NodeType::U16(x) => Some(*x),
-                _ => None,
-            });
-            Some((v.next()?, v.next()?))
-        }).collect();
+        let cells: Vec<(u16, u16)> = walls
+            .children()
+            .iter()
+            .filter_map(|g| {
+                let mut v = g.iter().filter_map(|n| match n {
+                    NodeType::U16(x) => Some(*x),
+                    _ => None,
+                });
+                Some((v.next()?, v.next()?))
+            })
+            .collect();
         (cells.len() > 2).then_some(cells)
     };
 
     let records = data.children().iter().flatten().filter_map(as_record);
     let primary = records.clone().filter(|r| r.name() == "SLOT_MAP_DATA");
-    let secondary = records.filter(|r| r.name() == "SECONDARY_SLOT_ARRAY").flat_map(|a| a.children().iter().flatten().filter_map(as_record)).filter(|r| r.name() == "SLOT_MAP_DATA");
+    let secondary = records
+        .filter(|r| r.name() == "SECONDARY_SLOT_ARRAY")
+        .flat_map(|a| a.children().iter().flatten().filter_map(as_record))
+        .filter(|r| r.name() == "SLOT_MAP_DATA");
     primary.chain(secondary).filter_map(walk).collect()
 }
 
@@ -250,11 +262,15 @@ fn wall_walks(data: &RecordNode) -> Vec<Vec<(u16, u16)>> {
 /// `SLOT_MAP_DATA`, the main slot and the port, and its `SECONDARY_SLOT_ARRAY`'s): the slot's index (the leading u32) -> its cell.
 fn startpos_slot_cells(settlement: &RecordNode) -> HashMap<usize, (u16, u16)> {
     let mut out = HashMap::new();
-    let Some(data) = child(settlement, "SETTLEMENT_EXPANSION_MANAGER").and_then(|m| child(m, "SETTLEMENT_EXPANSION_MAP_DATA")) else { return out };
+    let Some(data) = child(settlement, "SETTLEMENT_EXPANSION_MANAGER").and_then(|m| child(m, "SETTLEMENT_EXPANSION_MAP_DATA")) else {
+        return out;
+    };
     let mut take = |r: &RecordNode| {
         for g in r.children() {
             let mut v = g.iter().filter(|n| as_record(n).is_none());
-            let (Some(i), Some(NodeType::U16(c)), Some(NodeType::U16(row))) = (v.next().and_then(u32_of), v.next(), v.next()) else { continue };
+            let (Some(i), Some(NodeType::U16(c)), Some(NodeType::U16(row))) = (v.next().and_then(u32_of), v.next(), v.next()) else {
+                continue;
+            };
             out.insert(i as usize, (*c, *row));
         }
     };
@@ -262,7 +278,9 @@ fn startpos_slot_cells(settlement: &RecordNode) -> HashMap<usize, (u16, u16)> {
     for r in data.children().iter().flatten().filter_map(as_record) {
         match r.name().as_str() {
             "SLOT_MAP_DATA" => take(r),
-            "SECONDARY_SLOT_ARRAY" => r.children().iter().flatten().filter_map(as_record).filter(|s| s.name() == "SLOT_MAP_DATA").for_each(&mut take),
+            "SECONDARY_SLOT_ARRAY" => {
+                r.children().iter().flatten().filter_map(as_record).filter(|s| s.name() == "SLOT_MAP_DATA").for_each(&mut take)
+            }
             _ => {}
         }
     }
@@ -271,7 +289,12 @@ fn startpos_slot_cells(settlement: &RecordNode) -> HashMap<usize, (u16, u16)> {
 }
 
 /// A db table's rows by column name (every file of `db/<table>/`; `read` gives a path's bytes, `list` the paths under a prefix).
-pub fn table_rows(schema: &Schema, table: &str, list: &dyn Fn(&str) -> Vec<String>, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Vec<HashMap<String, String>> {
+pub fn table_rows(
+    schema: &Schema,
+    table: &str,
+    list: &dyn Fn(&str) -> Vec<String>,
+    read: &dyn Fn(&str) -> Option<Vec<u8>>,
+) -> Vec<HashMap<String, String>> {
     let mut out = vec![];
     for path in list(&format!("db/{table}/")) {
         let Some(bytes) = read(&path) else { continue };
@@ -350,12 +373,19 @@ impl DisplayTables {
         let num = |r: &HashMap<String, String>, k: &str| r.get(k).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
         for r in rows("campaign_settlement_display_aqueducts_tables") {
             t.aqueducts.push(Aqueduct {
-                region: get(&r, "region_key"), model: get(&r, "building_path").replace('\\', "/").to_lowercase(),
-                world: (num(&r, "position_x_map"), num(&r, "position_y_map")), height: num(&r, "position_z_height"), rotation: num(&r, "rotation_cw_radians"),
+                region: get(&r, "region_key"),
+                model: get(&r, "building_path").replace('\\', "/").to_lowercase(),
+                world: (num(&r, "position_x_map"), num(&r, "position_y_map")),
+                height: num(&r, "position_z_height"),
+                rotation: num(&r, "rotation_cw_radians"),
             });
         }
 
-        t.with_aqueduct = rows("building_levels_tables").into_iter().filter(|r| get(r, "has_aqueduct") == "true").map(|r| get(&r, "level_name")).collect();
+        t.with_aqueduct = rows("building_levels_tables")
+            .into_iter()
+            .filter(|r| get(r, "has_aqueduct") == "true")
+            .map(|r| get(&r, "level_name"))
+            .collect();
         t
     }
 
@@ -391,15 +421,25 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
     let sp = ESF::decode(&mut Cursor::new(startpos), &None).map_err(|e| format!("startpos.esf: {e}"))?;
     let md_root = as_record(md.root_node()).ok_or("map_data.esf: no root record")?;
     let regions_data = child(md_root, "REGIONS_DATA").ok_or("map_data.esf: no REGIONS_DATA")?;
-    let world = regions_data.children().iter().find_map(|g| {
-        g.iter().filter_map(|n| match n {
-            NodeType::Coord2d(c) => Some((f64::from(*c.x()), f64::from(*c.y()))),
-            _ => None,
-        }).nth(1)
-    }).ok_or("map_data.esf: no world size")?;
-    let grid = child(regions_data, "theatres").and_then(|t| child(t, "CAMPAIGN_THEATRE")).and_then(|t| child(t, "HEX_MAP_DATA"))
+    let world = regions_data
+        .children()
+        .iter()
+        .find_map(|g| {
+            g.iter()
+                .filter_map(|n| match n {
+                    NodeType::Coord2d(c) => Some((f64::from(*c.x()), f64::from(*c.y()))),
+                    _ => None,
+                })
+                .nth(1)
+        })
+        .ok_or("map_data.esf: no world size")?;
+    let grid = child(regions_data, "theatres")
+        .and_then(|t| child(t, "CAMPAIGN_THEATRE"))
+        .and_then(|t| child(t, "HEX_MAP_DATA"))
         .and_then(|h| h.children().first().map(|g| g.iter().filter_map(u32_of).take(2).collect::<Vec<_>>()))
-        .filter(|v| v.len() == 2).map(|v| (v[0], v[1])).ok_or("map_data.esf: no hex grid")?;
+        .filter(|v| v.len() == 2)
+        .map(|v| (v[0], v[1]))
+        .ok_or("map_data.esf: no hex grid")?;
 
     // RPFM's MapScale: world units a raw unit, across and down.
     let raw_w = f64::from(grid.0.saturating_sub(1)) * CELL_RAW_WIDTH;
@@ -420,8 +460,11 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             let Some(key) = region.children().first().and_then(|g| g.iter().find_map(str_of)) else { continue };
             let Some(info) = child(region, "SETTLEMENT_INFO") else { continue };
             // A group of the slot array a slot (RPFM's `map_slot`): its first position.
-            let slots: Vec<(u16, u16)> = child(info, "SLOT_ARRAY_BLOCK").into_iter().flat_map(|b| b.children().iter())
-                .filter_map(|g| g.iter().filter_map(as_record).find(|r| r.name() == "SLOT_POSITIONS_BLOCK").and_then(first_cell)).collect();
+            let slots: Vec<(u16, u16)> = child(info, "SLOT_ARRAY_BLOCK")
+                .into_iter()
+                .flat_map(|b| b.children().iter())
+                .filter_map(|g| g.iter().filter_map(as_record).find(|r| r.name() == "SLOT_POSITIONS_BLOCK").and_then(first_cell))
+                .collect();
             let port = child(info, "PORT_POSITIONS_BLOCK").and_then(first_cell);
             let mut v = vec![slots.first().copied(), port];
             v.extend(slots.iter().skip(1).map(|&c| Some(c)));
@@ -431,7 +474,8 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
 
     // The startpos's factions and regions.
     let sp_root = as_record(sp.root_node()).ok_or("startpos.esf: no root record")?;
-    let world_rec = ["CAMPAIGN_ENV", "CAMPAIGN_MODEL", "WORLD"].iter().try_fold(sp_root, |r, n| child(r, n)).ok_or("startpos.esf: no WORLD")?;
+    let world_rec =
+        ["CAMPAIGN_ENV", "CAMPAIGN_MODEL", "WORLD"].iter().try_fold(sp_root, |r, n| child(r, n)).ok_or("startpos.esf: no WORLD")?;
     let mut factions: HashMap<u32, String> = HashMap::new();
     if let Some(array) = child(world_rec, "FACTION_ARRAY") {
         for f in array.children().iter().flatten().filter_map(as_record).filter(|r| r.name() == "FACTION") {
@@ -461,7 +505,10 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             let Some(manager) = g.iter().filter_map(as_record).find(|r| r.name() == "REGION_SLOT_MANAGER") else { continue };
             let cells = map_slots.get(key);
             let own_cells = g.iter().filter_map(as_record).find(|r| r.name() == "SETTLEMENT").map(startpos_slot_cells).unwrap_or_default();
-            let slots = child(manager, "REGION_SLOT_ARRAY").into_iter().flat_map(|a| a.children().iter().flatten().filter_map(as_record)).filter(|r| r.name() == "REGION_SLOT");
+            let slots = child(manager, "REGION_SLOT_ARRAY")
+                .into_iter()
+                .flat_map(|a| a.children().iter().flatten().filter_map(as_record))
+                .filter(|r| r.name() == "REGION_SLOT");
             let mut secondary = 0;
             // The tier of each slot's building, by the startpos's slot index (the sprawl's `zone_slots` bits).
             let mut tiers: HashMap<usize, u32> = HashMap::new();
@@ -496,7 +543,10 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                 };
 
                 // The owner: the region's settlement's (Attila, Thrones), else the building's own (Rome 2's slots name it).
-                let model = building.as_deref().and_then(|b| tables.model(b, faction.as_deref().filter(|_| owner.is_empty()).unwrap_or(&owner))).map(str::to_owned);
+                let model = building
+                    .as_deref()
+                    .and_then(|b| tables.model(b, faction.as_deref().filter(|_| owner.is_empty()).unwrap_or(&owner)))
+                    .map(str::to_owned);
                 match (&building, &model) {
                     (None, _) => no_building += 1,
                     (Some(b), None) => {
@@ -517,32 +567,64 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             // piece the cell's road or coast shape names, turned by its rotation; level from the slot's building tier (ASSUMPTION: the
             // runtime sprawl's level is grown by chance, not stored).
             let faction = owner.clone();
-            let expansion = g.iter().filter_map(as_record).find(|r| r.name() == "SETTLEMENT")
-                .and_then(|s| child(s, "SETTLEMENT_EXPANSION_MANAGER")).and_then(|m| child(m, "SETTLEMENT_EXPANSION_MAP_DATA"));
+            let expansion = g
+                .iter()
+                .filter_map(as_record)
+                .find(|r| r.name() == "SETTLEMENT")
+                .and_then(|s| child(s, "SETTLEMENT_EXPANSION_MANAGER"))
+                .and_then(|m| child(m, "SETTLEMENT_EXPANSION_MAP_DATA"));
             // Per sprawl cell: the zones' slots, the map's road and river edges.
             let mut cell_info: HashMap<(u16, u16), (i64, i64, i64)> = HashMap::new();
             if let Some(blocks) = expansion.and_then(|d| child(d, "SPRAWL_BLOCK")) {
                 for sg in blocks.children() {
                     let Some(hex) = sg.iter().filter_map(as_record).find(|r| r.name() == "SPRAWL_HEX_MAP_DATA") else { continue };
                     let Some(hg) = hex.children().first() else { continue };
-                    let v: Vec<i64> = hg.iter().filter_map(|n| match n {
-                        NodeType::Bool(b) => Some(i64::from(*b.value())),
-                        NodeType::I32(x) => Some(i64::from(*x.value())),
-                        other => u32_of(other).map(i64::from),
-                    }).collect();
+                    let v: Vec<i64> = hg
+                        .iter()
+                        .filter_map(|n| match n {
+                            NodeType::Bool(b) => Some(i64::from(*b.value())),
+                            NodeType::I32(x) => Some(i64::from(*x.value())),
+                            other => u32_of(other).map(i64::from),
+                        })
+                        .collect();
                     // RPFM's writer: column, row, in a footprint, in a zone, the map's two edge masks, water, the road mask, its shape and
                     // rotation, the zones' slots, the coast mask, its shape and rotation.
-                    let [c, r, in_footprint, in_zone, road_edges, river_edges, water, _, road_shape, road_turn, zone_slots, _, coast_shape, coast_turn] = v[..] else { continue };
+                    let [
+                        c,
+                        r,
+                        in_footprint,
+                        in_zone,
+                        road_edges,
+                        river_edges,
+                        water,
+                        _,
+                        road_shape,
+                        road_turn,
+                        zone_slots,
+                        _,
+                        coast_shape,
+                        coast_turn,
+                    ] = v[..]
+                    else {
+                        continue;
+                    };
                     cell_info.insert((c as u16, r as u16), (zone_slots, road_edges, river_edges));
                     if in_zone == 0 || in_footprint != 0 {
                         continue;
                     }
 
-                    let Some(tier) = (0..32).filter(|k| zone_slots & (1 << k) != 0).filter_map(|k| tiers.get(&(k as usize)).copied()).max() else { continue };
+                    let Some(tier) = (0..32).filter(|k| zone_slots & (1 << k) != 0).filter_map(|k| tiers.get(&(k as usize)).copied()).max()
+                    else {
+                        continue;
+                    };
                     let level = tier.div_ceil(2).clamp(1, 3);
                     let (piece, turn) = if water != 0 {
                         let shape = coast_shape as u32;
-                        let piece = if [3, 7, 15, 31].contains(&shape) { format!("sea_sprawl_edge_{}", shape_digits(shape)) } else { "sea_sprawl_default".to_owned() };
+                        let piece = if [3, 7, 15, 31].contains(&shape) {
+                            format!("sea_sprawl_edge_{}", shape_digits(shape))
+                        } else {
+                            "sea_sprawl_default".to_owned()
+                        };
                         (piece, coast_turn as u32)
                     } else {
                         (format!("sprawl_edge_{}", shape_digits(road_shape as u32)), road_turn as u32)
@@ -560,7 +642,12 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
             // (`river_gatehouse_` a river), `_inverse` when the edge before its turn leads out of the zones (a straight 14 is turned half a
             // turn instead), as the game's `FUN_10aecb70` / `FUN_10af7850` choose them; a connecting tower between two cells of a walk.
             let main = tiers.get(&0).copied();
-            let walled = cities.slots.iter().rev().take_while(|s| s.region == key).any(|s| s.index == 0 && s.building.as_deref().is_some_and(|b| b.contains("_major_")));
+            let walled = cities
+                .slots
+                .iter()
+                .rev()
+                .take_while(|s| s.region == key)
+                .any(|s| s.index == 0 && s.building.as_deref().is_some_and(|b| b.contains("_major_")));
             let walks = expansion.map(wall_walks).unwrap_or_default();
             let inside = |c: (u16, u16)| cell_info.get(&c).is_some_and(|i| i.0 != 0);
             let outer = |c: (u16, u16)| (0..6).any(|d| !hex_neighbour(c, d).is_some_and(inside));
@@ -570,58 +657,81 @@ pub fn read(map_data: &[u8], startpos: &[u8], tables: &DisplayTables) -> Result<
                 cities.sprawl.retain(|p| p.region != key || !on_wall.contains(&p.cell));
                 let level = tier.div_ceil(2).clamp(1, 3);
                 for walk in &walks {
-                let n = walk.len();
-                for (i, &cell) in walk.iter().enumerate().filter(|(_, c)| on_wall.contains(c)) {
-                    let (prev, next) = (walk[(i + n - 1) % n], walk[(i + 1) % n]);
-                    let mask = [prev, next].iter().filter_map(|&o| hex_direction(cell, o)).fold(0u32, |m, d| m | (1 << d));
-                    if mask.count_ones() != 2 {
-                        continue;
+                    let n = walk.len();
+                    for (i, &cell) in walk.iter().enumerate().filter(|(_, c)| on_wall.contains(c)) {
+                        let (prev, next) = (walk[(i + n - 1) % n], walk[(i + 1) % n]);
+                        let mask = [prev, next].iter().filter_map(|&o| hex_direction(cell, o)).fold(0u32, |m, d| m | (1 << d));
+                        if mask.count_ones() != 2 {
+                            continue;
+                        }
+
+                        let (shape, rot) = edge_piece(mask);
+                        let zone_mask = (0..6).filter(|&d| hex_neighbour(cell, d).is_some_and(inside)).fold(0u32, |m, d| m | (1 << d));
+                        let edge = 1 << ((rot + 5) % 6);
+                        let outward = zone_mask & edge != edge;
+                        let (roads, rivers) = cell_info.get(&cell).map_or((0, 0), |i| (i.1 as u32, i.2 as u32));
+                        let kind = if roads & !mask != 0 {
+                            "gatehouse_"
+                        } else if rivers & !mask != 0 {
+                            "river_gatehouse_"
+                        } else {
+                            "wall_"
+                        };
+                        let base = format!("{kind}{}", shape_digits(shape));
+                        let (piece, turn) = match (outward, shape) {
+                            (true, 9) => (base, (rot + 3) % 6),
+                            (true, _) => (format!("{base}_inverse"), rot),
+                            _ => (base, rot),
+                        };
+
+                        let model = tables
+                            .sprawl_model(&piece, level, &faction)
+                            .or_else(|| tables.sprawl_model(&piece.replacen(kind, "wall_", 1), level, &faction))
+                            .map(str::to_owned);
+                        cities.sprawl.push(SprawlPiece { region: key.to_owned(), cell, world: centre(cell), piece, level, turn, model });
                     }
 
-                    let (shape, rot) = edge_piece(mask);
-                    let zone_mask = (0..6).filter(|&d| hex_neighbour(cell, d).is_some_and(inside)).fold(0u32, |m, d| m | (1 << d));
-                    let edge = 1 << ((rot + 5) % 6);
-                    let outward = zone_mask & edge != edge;
-                    let (roads, rivers) = cell_info.get(&cell).map_or((0, 0), |i| (i.1 as u32, i.2 as u32));
-                    let kind = if roads & !mask != 0 { "gatehouse_" } else if rivers & !mask != 0 { "river_gatehouse_" } else { "wall_" };
-                    let base = format!("{kind}{}", shape_digits(shape));
-                    let (piece, turn) = match (outward, shape) {
-                        (true, 9) => (base, (rot + 3) % 6),
-                        (true, _) => (format!("{base}_inverse"), rot),
-                        _ => (base, rot),
-                    };
-
-                    let model = tables.sprawl_model(&piece, level, &faction)
-                        .or_else(|| tables.sprawl_model(&piece.replacen(kind, "wall_", 1), level, &faction))
-                        .map(str::to_owned);
-                    cities.sprawl.push(SprawlPiece { region: key.to_owned(), cell, world: centre(cell), piece, level, turn, model });
-                }
-
-                // A connecting tower between each two cells of the walk (`FUN_10aecb70`: halfway, turned by the step's direction, half a
-                // turn more when the edge before it leads out of the zone; `FUN_10af7610` names it `tower`).
-                for (i, &cell) in walk.iter().enumerate().filter(|(_, c)| on_wall.contains(c)) {
-                    let next = walk[(i + 1) % n];
-                    let Some(d) = hex_direction(cell, next).filter(|_| on_wall.contains(&next)) else { continue };
-                    let zone_mask = (0..6).filter(|&e| hex_neighbour(cell, e).is_some_and(inside)).fold(0u32, |m, e| m | (1 << e));
-                    let turn = if zone_mask & (1 << ((d + 5) % 6)) == 0 { (d + 3) % 6 } else { d };
-                    let (a, b) = (centre(cell), centre(next));
-                    let model = tables.sprawl_model("tower", level, &faction).map(str::to_owned);
-                    cities.sprawl.push(SprawlPiece { region: key.to_owned(), cell, world: ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0), piece: "tower".to_owned(), level, turn, model });
-                }
+                    // A connecting tower between each two cells of the walk (`FUN_10aecb70`: halfway, turned by the step's direction, half a
+                    // turn more when the edge before it leads out of the zone; `FUN_10af7610` names it `tower`).
+                    for (i, &cell) in walk.iter().enumerate().filter(|(_, c)| on_wall.contains(c)) {
+                        let next = walk[(i + 1) % n];
+                        let Some(d) = hex_direction(cell, next).filter(|_| on_wall.contains(&next)) else { continue };
+                        let zone_mask = (0..6).filter(|&e| hex_neighbour(cell, e).is_some_and(inside)).fold(0u32, |m, e| m | (1 << e));
+                        let turn = if zone_mask & (1 << ((d + 5) % 6)) == 0 { (d + 3) % 6 } else { d };
+                        let (a, b) = (centre(cell), centre(next));
+                        let model = tables.sprawl_model("tower", level, &faction).map(str::to_owned);
+                        cities.sprawl.push(SprawlPiece {
+                            region: key.to_owned(),
+                            cell,
+                            world: ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0),
+                            piece: "tower".to_owned(),
+                            level,
+                            turn,
+                            model,
+                        });
+                    }
                 }
             }
         }
     }
 
     cities.aqueducts = tables.aqueducts.iter().filter(|a| aqueduct_regions.contains(&a.region)).cloned().collect();
-    cities.notes.push(format!("{no_cell} buildings in slots without a cell, {no_building} slots without a building, {no_model} buildings without a model"));
-    cities.notes.push(format!("sprawl: {} pieces, {} with a model", cities.sprawl.len(), cities.sprawl.iter().filter(|p| p.model.is_some()).count()));
+    cities.notes.push(format!(
+        "{no_cell} buildings in slots without a cell, {no_building} slots without a building, {no_model} buildings without a model"
+    ));
+    cities.notes.push(format!(
+        "sprawl: {} pieces, {} with a model",
+        cities.sprawl.len(),
+        cities.sprawl.iter().filter(|p| p.model.is_some()).count()
+    ));
     cities.notes.push(format!("slot cells: map data and startpos agree on {agree}, differ on {differ}; {from_startpos} from the startpos alone; {} aqueducts of {} in {} regions {:?}",
         cities.aqueducts.len(), tables.aqueducts.len(), aqueduct_regions.len(), aqueduct_regions));
     let mut top: Vec<(String, usize)> = unmatched.into_iter().collect();
     top.sort_by_key(|t| std::cmp::Reverse(t.1));
     if !top.is_empty() {
-        cities.notes.push(format!("without a model: {}", top.iter().take(8).map(|(b, n)| format!("{b} x{n}")).collect::<Vec<_>>().join(", ")));
+        cities
+            .notes
+            .push(format!("without a model: {}", top.iter().take(8).map(|(b, n)| format!("{b} x{n}")).collect::<Vec<_>>().join(", ")));
     }
 
     Ok(cities)

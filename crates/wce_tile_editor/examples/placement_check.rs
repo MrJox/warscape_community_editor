@@ -53,7 +53,12 @@ fn read_list(p: &Path) -> Result<Vec<ListEntry>, String> {
                 x: num(&doc, c, "position_x", 0.0),
                 y: num(&doc, c, "position_y", 0.0),
                 z: num(&doc, c, "position_z", 0.0),
-                q: [num(&doc, c, "orientation_i", 0.0), num(&doc, c, "orientation_j", 0.0), num(&doc, c, "orientation_k", 0.0), num(&doc, c, "orientation_w", 1.0)],
+                q: [
+                    num(&doc, c, "orientation_i", 0.0),
+                    num(&doc, c, "orientation_j", 0.0),
+                    num(&doc, c, "orientation_k", 0.0),
+                    num(&doc, c, "orientation_w", 1.0),
+                ],
                 used: false,
             });
         }
@@ -197,7 +202,8 @@ fn short(mode: &str) -> &str {
 }
 
 fn bucket(rows: &[Row], name: &str, pred: impl Fn(&Row) -> bool) {
-    let (mut dxz, mut e_abs, mut e_rel, mut e_rel2, mut rot0, mut rotm) = (Stat::default(), Stat::default(), Stat::default(), Stat::default(), Stat::default(), Stat::default());
+    let (mut dxz, mut e_abs, mut e_rel, mut e_rel2, mut rot0, mut rotm) =
+        (Stat::default(), Stat::default(), Stat::default(), Stat::default(), Stat::default(), Stat::default());
     for r in rows.iter().filter(|r| pred(r)) {
         dxz.add(r.dx.hypot(r.dz));
         e_abs.add(r.list_y - r.world_y);
@@ -213,8 +219,21 @@ fn bucket(rows: &[Row], name: &str, pred: impl Fn(&Row) -> bool) {
 
     println!(
         "{name:<34} n {:7} | xz mean {:.4} max {:.4} | y absolute: mean|e| {:.3} med|e| {:.3} max {:.3} | world y above the tool's terrain (min_height + scale * raw): mean|d| {:.3} med|d| {:.3} max {:.3}, signed median {:.3} | above raw * 3000 / 65535 - 20: med|d| {:.3} | rot as is: mean {:.3} max {:.2}, z mirrored: mean {:.3} max {:.2}",
-        dxz.v.len(), dxz.mean_abs(), dxz.max_abs(), e_abs.mean_abs(), e_abs.median_abs(), e_abs.max_abs(), e_rel.mean_abs(), e_rel.median_abs(), e_rel.max_abs(),
-        e_rel.signed_median(), e_rel2.median_abs(), rot0.mean(), rot0.max_abs(), rotm.mean(), rotm.max_abs(),
+        dxz.v.len(),
+        dxz.mean_abs(),
+        dxz.max_abs(),
+        e_abs.mean_abs(),
+        e_abs.median_abs(),
+        e_abs.max_abs(),
+        e_rel.mean_abs(),
+        e_rel.median_abs(),
+        e_rel.max_abs(),
+        e_rel.signed_median(),
+        e_rel2.median_abs(),
+        rot0.mean(),
+        rot0.max_abs(),
+        rotm.mean(),
+        rotm.max_abs(),
     );
 }
 
@@ -225,8 +244,18 @@ fn worst(rows: &[Row], n: usize, title: &str, score: impl Fn(&Row) -> f64) {
     for &(s, i) in order.iter().take(n) {
         let r = &rows[i];
         println!(
-            "  {s:9.3}  {:<54} {:<34} {:<14} depth {}  y world {:.3} list {:.3} terrain {:.3}  dxz {:.4} {:.4} rot {:.2} / {:.2}", r.tile, r.key, short(&r.mode),
-            r.depth, r.world_y, r.list_y, r.terrain, r.dx, r.dz, r.rot, r.rot_m,
+            "  {s:9.3}  {:<54} {:<34} {:<14} depth {}  y world {:.3} list {:.3} terrain {:.3}  dxz {:.4} {:.4} rot {:.2} / {:.2}",
+            r.tile,
+            r.key,
+            short(&r.mode),
+            r.depth,
+            r.world_y,
+            r.list_y,
+            r.terrain,
+            r.dx,
+            r.dz,
+            r.rot,
+            r.rot_m,
         );
     }
 }
@@ -279,7 +308,8 @@ fn main() {
         .into_iter()
         .filter(|dir| {
             let list = work_root.join(dir.strip_prefix(&raw_root).unwrap_or(dir)).join("building_list.xml");
-            std::fs::metadata(&list).is_ok_and(|m| m.len() >= 1024) && (filter.is_empty() || dir.to_string_lossy().replace('\\', "/").contains(&filter))
+            std::fs::metadata(&list).is_ok_and(|m| m.len() >= 1024)
+                && (filter.is_empty() || dir.to_string_lossy().replace('\\', "/").contains(&filter))
         })
         .collect::<Vec<_>>();
     tiles.sort();
@@ -290,8 +320,8 @@ fn main() {
     let mut fits = vec![];
     let (mut unmatched_tile, mut unmatched_list, mut matched, mut ordered, mut fallback_tiles, mut no_entry) = (0, 0, 0, 0, 0, 0);
     println!(
-        "\n{:<62} {:>7} {:>7} {:>5}  {:<7} {:>9} {:>9}  {:>9} {:>9}  {:>8} {:>8}", "tile", "list", "match", "order", "landsc.", "med e_abs", "med above", "freef. abs",
-        "med above", "max xz", "max rot",
+        "\n{:<62} {:>7} {:>7} {:>5}  {:<7} {:>9} {:>9}  {:>9} {:>9}  {:>8} {:>8}",
+        "tile", "list", "match", "order", "landsc.", "med e_abs", "med above", "freef. abs", "med above", "max xz", "max rot",
     );
     for dir in &tiles {
         let list_path = work_root.join(dir.strip_prefix(&raw_root).unwrap_or(dir)).join("building_list.xml");
@@ -356,7 +386,8 @@ fn main() {
             }
         }
 
-        let (mut land_abs, mut land_rel, mut free_abs, mut free_rel, mut xz, mut rot) = (Stat::default(), Stat::default(), Stat::default(), Stat::default(), Stat::default(), Stat::default());
+        let (mut land_abs, mut land_rel, mut free_abs, mut free_rel, mut xz, mut rot) =
+            (Stat::default(), Stat::default(), Stat::default(), Stat::default(), Stat::default(), Stat::default());
         let mut n_match = 0;
 
         // y = a + b * raw over the landscape buildings (raw: the tool's height sample as the 16-bit value).
@@ -373,8 +404,11 @@ fn main() {
             let w = world_transform(sc, e);
             let p = t.world_position(e);
             let mut r = Row {
-                tile: relative(dir, &battle), key: le.key.clone(), mode: sc.doc().get(e, "surface_mode").unwrap_or_default(),
-                lf_off: num(sc.doc(), e, "lf_offset", 0.0), ..Default::default()
+                tile: relative(dir, &battle),
+                key: le.key.clone(),
+                mode: sc.doc().get(e, "surface_mode").unwrap_or_default(),
+                lf_off: num(sc.doc(), e, "lf_offset", 0.0),
+                ..Default::default()
             };
 
             let mut a = sc.doc().elements()[e].parent;
@@ -441,20 +475,38 @@ fn main() {
                 let slope = (n * sxy - sx * sy) / den;
                 let scale = slope * 65535.0;
                 fits.push(Fit {
-                    tile: relative(dir, &battle), n: nfit, scale, min: (sy - slope * sx) / n, entry_min: info.min_height, entry_scale: info.scale,
-                    rms: (syy / n - (sy / n) * (sy / n) - (scale / 65535.0) * (scale / 65535.0) * (sxx / n - (sx / n) * (sx / n))).max(0.0).sqrt(),
+                    tile: relative(dir, &battle),
+                    n: nfit,
+                    scale,
+                    min: (sy - slope * sx) / n,
+                    entry_min: info.min_height,
+                    entry_scale: info.scale,
+                    rms: (syy / n - (sy / n) * (sy / n) - (scale / 65535.0) * (scale / 65535.0) * (sxx / n - (sx / n) * (sx / n)))
+                        .max(0.0)
+                        .sqrt(),
                 });
             }
         }
 
         println!(
-            "{:<62} {:7} {:7} {:>5}  {:<7} {:9.3} {:9.3}  {:9.3} {:9.3}  {:8.4} {:8.3}", rows.last().map_or("?", |r| r.tile.as_str()), list.len(), n_match,
-            if same_order { "yes" } else { "no" }, land_abs.v.len(), land_abs.median(), land_rel.median(), free_abs.median(), free_rel.median(), xz.max_abs(),
+            "{:<62} {:7} {:7} {:>5}  {:<7} {:9.3} {:9.3}  {:9.3} {:9.3}  {:8.4} {:8.3}",
+            rows.last().map_or("?", |r| r.tile.as_str()),
+            list.len(),
+            n_match,
+            if same_order { "yes" } else { "no" },
+            land_abs.v.len(),
+            land_abs.median(),
+            land_rel.median(),
+            free_abs.median(),
+            free_rel.median(),
+            xz.max_abs(),
             rot.max_abs(),
         );
     }
 
-    println!("\ntiles: {ordered} in the same order as the export, {fallback_tiles} paired by key and position, {no_entry} without a tile database entry");
+    println!(
+        "\ntiles: {ordered} in the same order as the export, {fallback_tiles} paired by key and position, {no_entry} without a tile database entry"
+    );
     println!("buildings: {matched} paired, {unmatched_tile} of the tiles unpaired, {unmatched_list} of the exports unpaired");
 
     // ---- which height formula fits: y of the landscape buildings against the tool's raw sample, per tile
@@ -469,13 +521,17 @@ fn main() {
         }
 
         println!(
-            "  {:<60} n {:6}  fit min {:9.4} scale {:9.4} (rms {:.3} m) | entry min {:9.4} scale {:9.4} | d min {dmin:8.4} d scale {dsc:8.4}", f.tile, f.n, f.min, f.scale,
-            f.rms, f.entry_min, f.entry_scale,
+            "  {:<60} n {:6}  fit min {:9.4} scale {:9.4} (rms {:.3} m) | entry min {:9.4} scale {:9.4} | d min {dmin:8.4} d scale {dsc:8.4}",
+            f.tile, f.n, f.min, f.scale, f.rms, f.entry_min, f.entry_scale,
         );
         shown += 1;
     }
 
-    println!("  {shown} of {} fitted tiles differ; the other {} agree with the entry's min_height and scale", fits.len(), fits.len() - shown);
+    println!(
+        "  {shown} of {} fitted tiles differ; the other {} agree with the entry's min_height and scale",
+        fits.len(),
+        fits.len() - shown
+    );
 
     // ---- report by surface mode, depth in groups
     println!("\nby surface mode and depth in groups (units: metres, degrees)");
@@ -501,17 +557,33 @@ fn main() {
     bucket(&rows, "lf_offset != 0", |r| r.lf_off != 0.0);
 
     // ---- the worst ones (by the better of the two y hypotheses for their mode, then by xz, then by rotation)
-    worst(&rows, worst_n, "|y error| under the better hypothesis", |r| (r.list_y - r.world_y).abs().min((r.list_y - (r.world_y - r.terrain)).abs()));
+    worst(&rows, worst_n, "|y error| under the better hypothesis", |r| {
+        (r.list_y - r.world_y).abs().min((r.list_y - (r.world_y - r.terrain)).abs())
+    });
     worst(&rows, worst_n, "xz error", |r| r.dx.hypot(r.dz));
     worst(&rows, worst_n, "rotation error (degrees, better of as is / mirrored)", |r| r.rot.min(r.rot_m));
 
     if !csv.is_empty() {
         // The C++ stream wrote doubles with 6 significant digits.
-        let mut out = "tile\tkey\tmode\tgroup_mode\tdepth\tlf_offset\tworld_y\tfile_y\tlist_y\tterrain\tdx\tdz\trot\trot_mirrored\n".to_owned();
+        let mut out =
+            "tile\tkey\tmode\tgroup_mode\tdepth\tlf_offset\tworld_y\tfile_y\tlist_y\tterrain\tdx\tdz\trot\trot_mirrored\n".to_owned();
         for r in &rows {
             out += &format!(
-                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n", r.tile, r.key, r.mode, r.parent_mode, r.depth, printf_g(r.lf_off), printf_g(r.world_y), printf_g(r.file_y),
-                printf_g(r.list_y), printf_g(r.terrain), printf_g(r.dx), printf_g(r.dz), printf_g(r.rot), printf_g(r.rot_m),
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                r.tile,
+                r.key,
+                r.mode,
+                r.parent_mode,
+                r.depth,
+                printf_g(r.lf_off),
+                printf_g(r.world_y),
+                printf_g(r.file_y),
+                printf_g(r.list_y),
+                printf_g(r.terrain),
+                printf_g(r.dx),
+                printf_g(r.dz),
+                printf_g(r.rot),
+                printf_g(r.rot_m),
             );
         }
 

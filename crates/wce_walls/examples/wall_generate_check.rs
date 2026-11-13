@@ -35,14 +35,28 @@ fn run() -> Result<(), String> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let game = args.first().ok_or("usage: wall_generate_check <game folder> [--mods a.pack;b.pack]")?;
     let mut config = Config::new(PathBuf::from(game), GameProfile::ATTILA);
-    config.mod_packs = args.iter().position(|a| a == "--mods").and_then(|i| args.get(i + 1)).map(|m| m.split(';').filter(|s| !s.is_empty()).map(str::to_owned).collect());
+    config.mod_packs = args
+        .iter()
+        .position(|a| a == "--mods")
+        .and_then(|i| args.get(i + 1))
+        .map(|m| m.split(';').filter(|s| !s.is_empty()).map(str::to_owned).collect());
     let vfs = Vfs::mount(&config).map_err(|e| e.to_string())?;
 
     let mut bad = 0;
     let flat = |_: f64, z: f64| 1.0 + 0.002 * z;
     let cases: [(&str, Vec<[f64; 2]>, Vec<bool>, &dyn Fn(f64, f64) -> f64); 3] = [
-        ("barbarian_fort_straight", vec![[0.0, 0.0], [60.0, 30.0], [120.0, 0.0], [180.0, 25.0], [260.0, 25.0]], vec![false, false, true, false, false], &ground),
-        ("roman_fort_straight", vec![[0.0, 0.0], [60.0, 30.0], [120.0, 0.0], [180.0, 25.0], [260.0, 25.0]], vec![false, false, true, false, false], &ground),
+        (
+            "barbarian_fort_straight",
+            vec![[0.0, 0.0], [60.0, 30.0], [120.0, 0.0], [180.0, 25.0], [260.0, 25.0]],
+            vec![false, false, true, false, false],
+            &ground,
+        ),
+        (
+            "roman_fort_straight",
+            vec![[0.0, 0.0], [60.0, 30.0], [120.0, 0.0], [180.0, 25.0], [260.0, 25.0]],
+            vec![false, false, true, false, false],
+            &ground,
+        ),
         ("roman_fort_straight", vec![[0.0, 0.0], [400.0, 0.0]], vec![false, false], &flat),
     ];
 
@@ -55,18 +69,27 @@ fn run() -> Result<(), String> {
         let plan = solve(&input, p, ground);
         let (rigid, ps): (Vec<_>, Vec<_>) = pieces(&plan, p).into_iter().partition(|q| q.rigid);
         println!("  towers and bastions: {:?}", rigid.iter().map(|q| (q.s.0.round(), q.base.unwrap_or_default())).collect::<Vec<_>>());
-        println!("== {key}: {:.0} long, {} pieces, {} step section(s), {} warning(s)", plan.length, ps.len(), plan.steps.len(), plan.warnings.len());
+        println!(
+            "== {key}: {:.0} long, {} pieces, {} step section(s), {} warning(s)",
+            plan.length,
+            ps.len(),
+            plan.steps.len(),
+            plan.warnings.len()
+        );
 
         let door = (!p.door.is_empty()).then(|| BuildingFiles::read(&vfs, p.door)).transpose()?;
         let (doors, _) = door_pieces(&plan, p, &ps, ground, &|_| true);
         println!("  door sections at pieces {doors:?}");
         let make = || -> Result<Vec<BuildingFiles>, String> {
-            ps.iter().enumerate().map(|(i, &piece)| {
-                let warp = PieceWarp::new(&plan, p, piece, ground);
-                let own = piece.base.map(|k| BuildingFiles::read(&vfs, k)).transpose()?;
-                let from = own.as_ref().or(door.as_ref().filter(|_| doors.contains(&i))).unwrap_or(&base);
-                make_piece(from, &format!("wce_check_{i}"), &warp, steps, true, None)
-            }).collect()
+            ps.iter()
+                .enumerate()
+                .map(|(i, &piece)| {
+                    let warp = PieceWarp::new(&plan, p, piece, ground);
+                    let own = piece.base.map(|k| BuildingFiles::read(&vfs, k)).transpose()?;
+                    let from = own.as_ref().or(door.as_ref().filter(|_| doors.contains(&i))).unwrap_or(&base);
+                    make_piece(from, &format!("wce_check_{i}"), &warp, steps, true, None)
+                })
+                .collect()
         };
 
         let t = Instant::now();
@@ -83,7 +106,8 @@ fn run() -> Result<(), String> {
                 bytes += data.len();
                 if is_piece_mesh(name) {
                     meshes += 1;
-                    RigidModel::decode(&mut Cursor::new(data), &Some(DecodeableExtraData::default())).map_err(|e| format!("{name}: {e}"))?;
+                    RigidModel::decode(&mut Cursor::new(data), &Some(DecodeableExtraData::default()))
+                        .map_err(|e| format!("{name}: {e}"))?;
                 }
             }
 
@@ -119,7 +143,8 @@ fn run() -> Result<(), String> {
             // A stair stands only where its step piece has the level: elsewhere the piece is the base alone.
             let mut stair = String::new();
             if !step_ranges(&plan, p, &piece).is_empty() && piece.base.is_none() && !doors.contains(&i) {
-                let levels = [&up, &down].iter().flat_map(|f| f.files.keys()).filter(|n| is_piece_mesh(n)).map(|n| level_of(n)).max().unwrap_or(0);
+                let levels =
+                    [&up, &down].iter().flat_map(|f| f.files.keys()).filter(|n| is_piece_mesh(n)).map(|n| level_of(n)).max().unwrap_or(0);
                 let warp = PieceWarp::new(&plan, p, piece, ground);
                 let bare = make_piece(&base, &format!("wce_check_{i}"), &warp, StepFiles { up: None, down: None }, true, None)?;
                 let destructs = |f: &BuildingFiles| -> Result<Vec<serde_json::Value>, String> {
@@ -146,8 +171,19 @@ fn run() -> Result<(), String> {
             }
 
             let pc = ps[i];
-            println!("  piece {i}: s {:.0}..{:.0} (x {:.3}), {} files ({} meshes, {} KB), {} platforms, {} firing lines, {} door feet{stair}, {} problems",
-                pc.s.0, pc.s.1, pc.scale, b.files.len(), meshes, bytes / 1024, plats, lines, feet, orphans);
+            println!(
+                "  piece {i}: s {:.0}..{:.0} (x {:.3}), {} files ({} meshes, {} KB), {} platforms, {} firing lines, {} door feet{stair}, {} problems",
+                pc.s.0,
+                pc.s.1,
+                pc.scale,
+                b.files.len(),
+                meshes,
+                bytes / 1024,
+                plats,
+                lines,
+                feet,
+                orphans
+            );
             bad += orphans;
         }
     }

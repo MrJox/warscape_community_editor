@@ -13,8 +13,8 @@ use std::path::Path;
 
 use rpfm_lib::files::Decodeable;
 use rpfm_lib::files::asset_variation_db::AssetVariationDb;
-use wce_editor::editor::Editor;
 use wce_editor::chips::{begin_chip_popup, chip};
+use wce_editor::editor::Editor;
 use wce_editor::{gui, icons, theme};
 use wce_editor_core::document::Document;
 use wce_foundation::log;
@@ -29,13 +29,23 @@ const PACKS_DB: &str = "warscape_asset_variation_db/warscape_asset_variation_db.
 
 /// The filters, as the panel labels them, and their categories in environment_map.xml.
 pub const FILTERS: [(&str, &str); 8] = [
-    ("map", "map"), ("climate", "climate"), ("season", "season"), ("climate change", "climate_change_index"), ("precipitation", "precipitation"),
-    ("time of day", "time_of_day"), ("battle type", "battle_types"), ("snow attrition", "snow_attrition"),
+    ("map", "map"),
+    ("climate", "climate"),
+    ("season", "season"),
+    ("climate change", "climate_change_index"),
+    ("precipitation", "precipitation"),
+    ("time of day", "time_of_day"),
+    ("battle type", "battle_types"),
+    ("snow attrition", "snow_attrition"),
 ];
 
 /// The chips over the viewport: icon, category, what it is.
-const CHIPS: [(&str, &str, &str); 4] =
-    [(icons::LEAF, "season", "season"), (icons::CLOUD_RAIN, "precipitation", "precipitation"), (icons::CLOCK, "time_of_day", "time of day"), (icons::GLOBE, "climate", "climate")];
+const CHIPS: [(&str, &str, &str); 4] = [
+    (icons::LEAF, "season", "season"),
+    (icons::CLOUD_RAIN, "precipitation", "precipitation"),
+    (icons::CLOCK, "time_of_day", "time of day"),
+    (icons::GLOBE, "climate", "climate"),
+];
 
 #[derive(Default)]
 pub(crate) struct WeatherUi {
@@ -139,14 +149,20 @@ impl WeatherUi {
     /// named dry, else all of them), the first one not named snow, else the first one (the search is not applied).
     fn first_dry(&self) -> Option<String> {
         let env = self.env.as_ref()?;
-        let query: BTreeMap<String, String> = self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
-        let files = |query: &BTreeMap<String, String>| env.matches("environment", query).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>();
+        let query: BTreeMap<String, String> =
+            self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
+        let files = |query: &BTreeMap<String, String>| {
+            env.matches("environment", query).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>()
+        };
         let named = |f: &String, word: &str| f.to_lowercase().contains(word);
-        let mut dry = self.value_of("precipitation", "dry").map(|value| {
-            let mut q = query.clone();
-            q.insert("precipitation".to_owned(), value);
-            files(&q)
-        }).unwrap_or_default();
+        let mut dry = self
+            .value_of("precipitation", "dry")
+            .map(|value| {
+                let mut q = query.clone();
+                q.insert("precipitation".to_owned(), value);
+                files(&q)
+            })
+            .unwrap_or_default();
 
         if dry.is_empty() {
             let all = files(&query);
@@ -323,7 +339,11 @@ impl WeatherUi {
 
         let env = self.env.as_ref().ok_or_else(|| self.status.clone())?;
         let values = env.category(category).ok_or_else(|| format!("no filter '{category}'"))?.values().clone();
-        let value = if value.is_empty() { String::new() } else { values.into_iter().find(|v| v.eq_ignore_ascii_case(value)).ok_or_else(|| format!("{category} has no '{value}'"))? };
+        let value = if value.is_empty() {
+            String::new()
+        } else {
+            values.into_iter().find(|v| v.eq_ignore_ascii_case(value)).ok_or_else(|| format!("{category} has no '{value}'"))?
+        };
         self.choice.query.insert(category.to_owned(), value);
         self.remember(e);
         Ok(())
@@ -388,7 +408,13 @@ impl WeatherUi {
         }
 
         gui::set_next_item_width(-1.0);
-        gui::input_text("##weather_search", Some(&format!("{}  search the files (words are and-ed)", icons::SEARCH)), &mut self.search, 256, 0);
+        gui::input_text(
+            "##weather_search",
+            Some(&format!("{}  search the files (words are and-ed)", icons::SEARCH)),
+            &mut self.search,
+            256,
+            0,
+        );
 
         let (files, used_default_map) = self.matching();
         let map = self.choice.query.get("map").cloned().unwrap_or_default();
@@ -398,7 +424,8 @@ impl WeatherUi {
 
         let variations = files.iter().map(|(_, n)| n).sum::<usize>();
         gui::text_disabled(&format!(
-            "{} files{} ({variations} variations); the game picks a variation at random. Click a file to light the tile with it.", files.len(),
+            "{} files{} ({variations} variations); the game picks a variation at random. Click a file to light the tile with it.",
+            files.len(),
             if self.search.trim().is_empty() { "" } else { " found" },
         ));
         gui::begin_child("envlist", gui::v2(0.0, 180.0), gui::CHILD_BORDERS, 0);
@@ -414,7 +441,9 @@ impl WeatherUi {
             }
 
             if *n > 1 && gui::is_item_hovered() {
-                gui::set_tooltip(&format!("The database lists this file {n} times (for different maps or climates): the game picks it {n} times as often."));
+                gui::set_tooltip(&format!(
+                    "The database lists this file {n} times (for different maps or climates): the game picks it {n} times as often."
+                ));
             }
 
             if e.can_open(file) && gui::begin_popup_context_item("##ctx") {
@@ -466,7 +495,8 @@ impl WeatherUi {
     /// Whether some file passes the filters with `category` set to `value`.
     fn passes(&self, category: &str, value: &str) -> bool {
         let Some(env) = &self.env else { return false };
-        let mut query: BTreeMap<String, String> = self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
+        let mut query: BTreeMap<String, String> =
+            self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
         if value.is_empty() {
             query.remove(category);
         } else {
@@ -520,7 +550,12 @@ impl WeatherUi {
 
         if let Some(f) = file {
             gui::same_line_touching();
-            if chip(false, icons::PENCIL, "editweather", "Edit it in the Weather tool: the tile follows the edits; Save writes the file into the project, which every tile reads from then on") {
+            if chip(
+                false,
+                icons::PENCIL,
+                "editweather",
+                "Edit it in the Weather tool: the tile follows the edits; Save writes the file into the project, which every tile reads from then on",
+            ) {
                 self.edit(e, &f);
             }
         }

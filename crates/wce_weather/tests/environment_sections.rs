@@ -157,7 +157,17 @@ fn sections_by_effect_with_tooltips() {
     let mut d = document();
     let mut s = Script::default();
     d.inspect_environment(&mut s);
-    for title in ["Sun", "Ambient light", "Fog", "Exposure and tone mapping", "Colour grading", "Depth of field", "Water", "Wind and snow", "Other attributes"] {
+    for title in [
+        "Sun",
+        "Ambient light",
+        "Fog",
+        "Exposure and tone mapping",
+        "Colour grading",
+        "Depth of field",
+        "Water",
+        "Wind and snow",
+        "Other attributes",
+    ] {
         assert!(s.sections.iter().any(|t| t == title), "section {title} in {:?}", s.sections);
     }
 
@@ -254,5 +264,10 @@ fn three_channel_rows_write_only_the_changed_channel() {
     let mut s = Script { set_trio: vec![("low_tones_bias", [0.4, 0.25, 0.5])], ..Default::default() };
     d.inspect_environment(&mut s);
     let out = saved(&d);
-    assert!(out.contains("low_tones_bias_green='0.25'") && out.contains("low_tones_bias_blue='0.5'") && out.contains("low_tones_bias_red='0.4'"), "{out}");
+    assert!(
+        out.contains("low_tones_bias_green='0.25'")
+            && out.contains("low_tones_bias_blue='0.5'")
+            && out.contains("low_tones_bias_red='0.4'"),
+        "{out}"
+    );
 }

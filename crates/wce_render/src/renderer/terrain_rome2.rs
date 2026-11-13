@@ -17,8 +17,8 @@
 
 use wce_scene::render_scene::{Payload, Terrain};
 
-use super::*;
 use super::terrain::{INSTANCE_BYTES, box_in_frustum};
+use super::*;
 use crate::shader_lib::{bind_sampler, bind_srv};
 
 pub(crate) const R2_GEOM_VS: &str = "dx11_sm_3_0_rigidterrain.hlsl_vs_vs30_geom";
@@ -76,11 +76,13 @@ fn box_layout() -> [InputElement; 7] {
 }
 
 impl Renderer {
-
     /// Rome 2's terrain passes over the terrain entities (see the module).
     pub(crate) fn draw_terrain_rome2(&mut self, ents: &[&wce_scene::render_scene::Entity]) {
-        let shaders = [R2_GEOM_VS, R2_GEOM_PS, R2_BLEND_VS, R2_BLEND_PS, R2_COMPOSITE_VS, R2_COMPOSITE_PS, R2_RESOLVE_VS, R2_RESOLVE_PS].map(|name| self.shader(name));
-        let [Some(geom_vs), Some(geom_ps), Some(blend_vs), Some(blend_ps), Some(comp_vs), Some(comp_ps), Some(res_vs), Some(res_ps)] = shaders else {
+        let shaders = [R2_GEOM_VS, R2_GEOM_PS, R2_BLEND_VS, R2_BLEND_PS, R2_COMPOSITE_VS, R2_COMPOSITE_PS, R2_RESOLVE_VS, R2_RESOLVE_PS]
+            .map(|name| self.shader(name));
+        let [Some(geom_vs), Some(geom_ps), Some(blend_vs), Some(blend_ps), Some(comp_vs), Some(comp_ps), Some(res_vs), Some(res_ps)] =
+            shaders
+        else {
             self.terrain.failed = true;
             return;
         };
@@ -112,7 +114,10 @@ impl Renderer {
 
         // ---- 2. Per material: its boxes accumulated, then textured into the terrain targets.
         let Some(box_il) = self.layout(&blend_vs, "terrain_box_rome2", &box_layout()) else { return };
-        let comp_el = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
+        let comp_el = [
+            element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false),
+            element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false),
+        ];
 
         // The DX11 composite when its shaders load, else the ps30 one.
         let arrays = match (self.shader(R2_COMPOSITE50_VS), self.shader(R2_COMPOSITE50_PS)) {
@@ -129,10 +134,13 @@ impl Renderer {
         };
 
         let (u, view_proj, o) = (self.camera.units, self.camera.main_view_proj, self.camera.origin);
-        let mut by_material: Vec<(Arc<wce_scene::render_scene::TerrainMaterial>, Option<Arc<wce_scene::render_scene::LfMap>>, Vec<f32>)> = vec![];
+        let mut by_material: Vec<(Arc<wce_scene::render_scene::TerrainMaterial>, Option<Arc<wce_scene::render_scene::LfMap>>, Vec<f32>)> =
+            vec![];
         for e in ents {
             let Payload::Terrain(t) = &e.payload else { continue };
-            let (Some(m), Some((_, b, rot))) = (t.material.clone(), self.terrain.placed.get(&e.id).and_then(|p| p.blend_box)) else { continue };
+            let (Some(m), Some((_, b, rot))) = (t.material.clone(), self.terrain.placed.get(&e.id).and_then(|p| p.blend_box)) else {
+                continue;
+            };
             if !box_in_frustum(&view_proj, [b[0], b[1], b[2]], [b[3], b[4], b[5]]) {
                 continue;
             }
@@ -170,10 +178,14 @@ impl Renderer {
 
             // The LF map's normals at uv = (x, -z) / its world size (as Attila's: lf_block_cb's rectangles do that: (x, z) / size, v = 1 - v,
             // then v - 1).
-            let lf_normal = lf.as_ref().and_then(|lf| self.terrain.lf.get(&lf.id).and_then(|l| l.normal.srv.clone())).or_else(|| g.lf_normal.srv.clone());
+            let lf_normal = lf
+                .as_ref()
+                .and_then(|lf| self.terrain.lf.get(&lf.id).and_then(|l| l.normal.srv.clone()))
+                .or_else(|| g.lf_normal.srv.clone());
             let world = lf.as_ref().filter(|lf| lf.normal.w > 0).map_or(1.0e6, |lf| lf.normal_world[0] * u);
             self.cbs.set_f("lf_block_cb", "g_ws_lf_aabb", &[0.0, 0.0, world, world]);
-            let scale = m.pixel_scale.iter().copied().filter(|s| *s > 0.0).sum::<f32>() / m.pixel_scale.iter().filter(|s| **s > 0.0).count().max(1) as f32;
+            let scale = m.pixel_scale.iter().copied().filter(|s| *s > 0.0).sum::<f32>()
+                / m.pixel_scale.iter().filter(|s| **s > 0.0).count().max(1) as f32;
             self.cbs.set_f("ps_height_map_cb", "g_blend_pixel_scale", &[super::tiling(scale, super::ORIGIN_REACH * u)]);
             if arrays {
                 // ps_texture_array_cb: g_blend_pixel_scale_array[offset / 4].x is a group's repeat; g_light_params_array[layer] its
@@ -232,8 +244,10 @@ impl Renderer {
                 s.textures.get(path, srgb).and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
             };
 
-            let diffuse: [Option<ID3D11ShaderResourceView>; 4] = if arrays { Default::default() } else { std::array::from_fn(|c| tex(self, &m.diffuse[4 * c], true)) };
-            let normals: [Option<ID3D11ShaderResourceView>; 4] = if arrays { Default::default() } else { std::array::from_fn(|c| tex(self, &m.normal_tex[4 * c], false)) };
+            let diffuse: [Option<ID3D11ShaderResourceView>; 4] =
+                if arrays { Default::default() } else { std::array::from_fn(|c| tex(self, &m.diffuse[4 * c], true)) };
+            let normals: [Option<ID3D11ShaderResourceView>; 4] =
+                if arrays { Default::default() } else { std::array::from_fn(|c| tex(self, &m.normal_tex[4 * c], false)) };
             let comp = self.terrain.r2_comp.iter().map(|t| t.rtv.clone()).collect::<Vec<_>>();
             ctx.set_render_targets(&comp, None);
             ctx.set_depth_stencil_state(self.states.ds_off.as_ref(), 0);
@@ -296,7 +310,10 @@ impl Renderer {
             return;
         };
 
-        let el = [element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false)];
+        let el = [
+            element(c"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, false),
+            element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 16, false),
+        ];
         let Some(il) = self.layout(&res_vs, "terrain_resolve_rome2", &el) else { return };
 
         // The depth channel is read (the ground's position) and written: read from a copy, which the grass reads too.
@@ -326,8 +343,14 @@ impl Renderer {
         self.bind(&res_ps);
         null_ps_srvs(&ctx, 16);
         let detail = if m.detail_normal.is_empty() { None } else { self.textures.get(&m.detail_normal, false) };
-        let detail = detail.and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.terrain.mat.get(&m.id).and_then(|g| g.lf_normal.srv.clone()));
-        let noise = self.textures.get(NOISE_MAP, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.white_srv.clone());
+        let detail = detail
+            .and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
+            .or_else(|| self.terrain.mat.get(&m.id).and_then(|g| g.lf_normal.srv.clone()));
+        let noise = self
+            .textures
+            .get(NOISE_MAP, false)
+            .and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
+            .or_else(|| self.res.white_srv.clone());
         ps_samplers(&ctx, &res_ps, &self.states.s_wrap_aniso);
         for n in ["s_albedo_map", "s_terrain_normal_map", "s_terrain_gloss_map", "s_depth_map"] {
             bind_sampler(&ctx, &res_ps, n, self.states.s_clamp_point.as_ref());
@@ -357,8 +380,12 @@ impl Renderer {
         let (vis_terrain, vis) = (std::mem::take(&mut self.draw_lists.vis_terrain), std::mem::take(&mut self.draw_lists.vis));
         let d = super::blend_mesh::BlendDraw {
             dsv: self.gbuffer.dsv.clone(),
-            vs: super::blend_mesh::BLEND_VS, ps: super::blend_mesh::BLEND_GBUFFER_PS, targets: self.gbuffer.channels[..2].iter().map(|t| t.rtv.clone()).collect(),
-            depth_stencil: self.terrain.ds_lequal.clone(), stencil_ref: 0, blend: self.terrain.bs_r2_overlay.clone(),
+            vs: super::blend_mesh::BLEND_VS,
+            ps: super::blend_mesh::BLEND_GBUFFER_PS,
+            targets: self.gbuffer.channels[..2].iter().map(|t| t.rtv.clone()).collect(),
+            depth_stencil: self.terrain.ds_lequal.clone(),
+            stencil_ref: 0,
+            blend: self.terrain.bs_r2_overlay.clone(),
         };
 
         let firsts = self.draw_lists.gbuffer_firsts;
@@ -371,4 +398,3 @@ impl Renderer {
         self.ctx.set_blend_state(self.states.bs_opaque.as_ref());
     }
 }
-

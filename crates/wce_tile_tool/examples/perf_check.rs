@@ -88,8 +88,28 @@ fn thread_pool_checks(g: &mut Gate) {
 fn mesh() -> GpuMesh {
     let tex = Arc::new(RwLock::new(Texture::default()));
     GpuMesh {
-        vb: None, ib: None, index_count: 0, alpha_mode: 0, stride: 32, kind: Default::default(), dirt: false, decal: false, bone: -1, decal_rect: [0.0; 4], uv2_tile: [0.0; 2], tint: [1.0; 12], offset: Float3::default(), has_offset: false, tex: std::array::from_fn(|_| tex.clone()), diffuse_path: String::new(), normal_path: String::new(),
-        displacement: None, bmin: Float3::default(), bmax: Float3::default(), snow: false, palette_base: 0,
+        vb: None,
+        ib: None,
+        index_count: 0,
+        alpha_mode: 0,
+        stride: 32,
+        kind: Default::default(),
+        dirt: false,
+        decal: false,
+        bone: -1,
+        decal_rect: [0.0; 4],
+        uv2_tile: [0.0; 2],
+        tint: [1.0; 12],
+        offset: Float3::default(),
+        has_offset: false,
+        tex: std::array::from_fn(|_| tex.clone()),
+        diffuse_path: String::new(),
+        normal_path: String::new(),
+        displacement: None,
+        bmin: Float3::default(),
+        bmax: Float3::default(),
+        snow: false,
+        palette_base: 0,
     }
 }
 
@@ -215,7 +235,10 @@ fn tile_index_checks(g: &mut Gate, dir: &std::path::Path) {
         checked += 1;
         let w = world_transform(sc, e);
         let p = t.world_position(e);
-        if (p.x - (w.position.x / u) as f32).abs() > 1e-3 || (p.y - w.position.y as f32).abs() > 1e-3 || (p.z - (w.position.z / u) as f32).abs() > 1e-3 {
+        if (p.x - (w.position.x / u) as f32).abs() > 1e-3
+            || (p.y - w.position.y as f32).abs() > 1e-3
+            || (p.z - (w.position.z / u) as f32).abs() > 1e-3
+        {
             bad += 1;
         }
 

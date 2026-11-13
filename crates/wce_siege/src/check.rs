@@ -34,7 +34,9 @@ pub fn in_rect(b: &[P; 4], p: P) -> bool {
 fn overlap(a: &[P; 4], b: &[P; 4]) -> bool {
     let axes = |r: &[P; 4]| [[r[1][0] - r[0][0], r[1][1] - r[0][1]], [r[3][0] - r[0][0], r[3][1] - r[0][1]]];
     for axis in axes(a).into_iter().chain(axes(b)) {
-        let proj = |cs: &[P; 4]| cs.iter().map(|p| p[0] * axis[0] + p[1] * axis[1]).fold((f64::MAX, f64::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
+        let proj = |cs: &[P; 4]| {
+            cs.iter().map(|p| p[0] * axis[0] + p[1] * axis[1]).fold((f64::MAX, f64::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)))
+        };
         let (pa, pb) = (proj(a), proj(b));
         if pa.1 <= pb.0 + 1e-9 || pb.1 <= pa.0 + 1e-9 {
             return false;
@@ -87,7 +89,12 @@ pub fn check(l: &Layout) -> Report {
         let (first, last) = (edge.line[0], edge.line[edge.line.len() - 1]);
         let (a, b) = (holders(l, first), holders(l, last));
         if a.is_empty() || b.is_empty() {
-            r.problems.push(format!("edge {e} ({:?}): an end in no node's rectangle (at ({:.0}, {:.0}))", edge.kind, if a.is_empty() { first[0] } else { last[0] }, if a.is_empty() { first[1] } else { last[1] }));
+            r.problems.push(format!(
+                "edge {e} ({:?}): an end in no node's rectangle (at ({:.0}, {:.0}))",
+                edge.kind,
+                if a.is_empty() { first[0] } else { last[0] },
+                if a.is_empty() { first[1] } else { last[1] }
+            ));
             continue;
         }
 
@@ -170,10 +177,12 @@ pub fn check_steep(l: &Layout, steep: &[Vec<P>]) -> Vec<String> {
     for (i, e) in l.edges.iter().enumerate().filter(|(_, e)| matches!(e.kind, EdgeKind::Street | EdgeKind::AreaConnection)) {
         let crossing = e.line.windows(2).find_map(|w| {
             let steps = (dist(w[0], w[1]) / 2.0).ceil().max(1.0);
-            (0..=steps as usize).map(|k| {
-                let t = k as f64 / steps;
-                [w[0][0] + (w[1][0] - w[0][0]) * t, w[0][1] + (w[1][1] - w[0][1]) * t]
-            }).find(|&p| on(p))
+            (0..=steps as usize)
+                .map(|k| {
+                    let t = k as f64 / steps;
+                    [w[0][0] + (w[1][0] - w[0][0]) * t, w[0][1] + (w[1][1] - w[0][1]) * t]
+                })
+                .find(|&p| on(p))
         });
         if let Some(p) = crossing {
             out.push(format!("edge {i} ({:?}) crosses steep ground at ({:.0}, {:.0})", e.kind, p[0], p[1]));

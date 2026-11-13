@@ -40,7 +40,9 @@ impl TileTool {
             "Building technology: off".to_owned()
         };
 
-        tip.push_str("\nClick: choose what of the buildings' logic files to draw (collision, platforms, pipes, formation lines, emitters ...)");
+        tip.push_str(
+            "\nClick: choose what of the buildings' logic files to draw (collision, platforms, pipes, formation lines, emitters ...)",
+        );
         gui::set_cursor_screen_pos(gui::v2(origin.x + size.x - self.ground_chip_width - self.tech_chip_width - 12.0, origin.y + top));
         gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
         if gui::begin_pill("##techchip") {

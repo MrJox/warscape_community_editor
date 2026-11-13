@@ -33,8 +33,17 @@ fn main() {
     let db = TileDatabase::load(&raw.join("terrain/tiles/battle/_tile_database")).expect("database");
     let dir = PathBuf::from(map);
     let r = |n: &str| std::fs::read(dir.join(n)).ok();
-    let m = load_game_map("game", &db, &r("tile_map.index").expect("index"), &r("tile_map.tiles").expect("tiles"), r("lf_height_map.dds").as_deref()).expect("map");
-    println!("placement                                   at          rot   plateau min / median / max (m)   faces                    LF under the plateau");
+    let m = load_game_map(
+        "game",
+        &db,
+        &r("tile_map.index").expect("index"),
+        &r("tile_map.tiles").expect("tiles"),
+        r("lf_height_map.dds").as_deref(),
+    )
+    .expect("map");
+    println!(
+        "placement                                   at          rot   plateau min / median / max (m)   faces                    LF under the plateau"
+    );
     for p in &m.placements {
         let c = p.rect();
         if !(c[0] < x1 && x0 < c[2] && c[1] < y1 && y0 < c[3]) || !p.location.to_lowercase().contains("cliff_custom") {
@@ -44,7 +53,8 @@ fn main() {
         let folder = wce_tile::sources::tile_dir(&raw, &p.location, &p.variation);
         let Some(cs2) = wce_tile::sources::file_any_case(&folder, wce_tile::sources::CUSTOM_MESH_CS2) else { continue };
         let depth = f64::from(p.h) * 128.0;
-        let mesh = from_cs2(&Cas2File::parse(&std::fs::read(&cs2).expect("cs2")).expect("a CS2"), String::new(), 1, depth as f32).expect("a mesh");
+        let mesh =
+            from_cs2(&Cas2File::parse(&std::fs::read(&cs2).expect("cs2")).expect("a CS2"), String::new(), 1, depth as f32).expect("a mesh");
         let to_map = p.to_map();
         let (mut top, mut face, mut lf) = (vec![], vec![], vec![]);
         for v in mesh.lods[0].vertices.iter() {
@@ -53,7 +63,10 @@ fn main() {
             let l = m.lf_metres(u, w);
             if v.normal[3] == 0 {
                 if std::env::var_os("WCE_LOW").is_some() && l + 2.0 * y < 20.0 && y > 0.0 {
-                    println!("    low plateau vertex: tile ({x:.1}, {:.1}) y {y:.2}, map ({u:.3}, {w:.3}), LF {l:.1}", -f64::from(v.position[2]));
+                    println!(
+                        "    low plateau vertex: tile ({x:.1}, {:.1}) y {y:.2}, map ({u:.3}, {w:.3}), LF {l:.1}",
+                        -f64::from(v.position[2])
+                    );
                 }
 
                 top.push(l + 2.0 * y);

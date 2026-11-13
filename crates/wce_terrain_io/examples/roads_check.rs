@@ -15,13 +15,15 @@ fn main() {
     let vfs = Vfs::mount(&cfg).expect("vfs");
     let (campaign, map) = (&a[1], &a[2]);
     let filter = a.get(3).cloned().unwrap_or_default();
-    let schema = rpfm_lib::schema::Schema::load(&wce_foundation::settings::rpfm_schema_path(&game).expect("an rpfm schema"), None).expect("schema");
+    let schema =
+        rpfm_lib::schema::Schema::load(&wce_foundation::settings::rpfm_schema_path(&game).expect("an rpfm schema"), None).expect("schema");
     let list = |p: &str| vfs.list(p, "").iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
     let read_vfs = |p: &str| vfs.read(p).ok().map(|b| b.to_vec());
     let tables = RoadTables::read(&schema, campaign, &list, &read_vfs);
     println!("thresholds {:?}; {} buildings with a road value", tables.thresholds, tables.values.len());
     let map_data = vfs.read(&format!("campaign_maps/{map}/map_data.esf")).expect("map_data.esf");
-    let startpos = std::fs::read(std::path::Path::new(&a[0]).join(format!("data/campaigns/{campaign}/startpos.esf"))).expect("startpos.esf");
+    let startpos =
+        std::fs::read(std::path::Path::new(&a[0]).join(format!("data/campaigns/{campaign}/startpos.esf"))).expect("startpos.esf");
     let upgrades = vfs.read("terrain/tiles/campaign/tile_upgrades.xml").expect("tile_upgrades.xml");
     let dynamic = vfs.read(&format!("campaign_maps/{map}/dynamic_resources.esf")).ok();
     let roads = read(&map_data, &startpos, &upgrades, &tables, dynamic.as_deref()).expect("roads");
@@ -33,7 +35,13 @@ fn main() {
     let mut tiers = std::collections::BTreeMap::<String, usize>::new();
     let (mut level_rule, mut tier_rule) = (0, 0);
     for a in &areas {
-        let best = roads.hex.regions.get(a.region).and_then(|r| buildings.get(r)).into_iter().flatten()
+        let best = roads
+            .hex
+            .regions
+            .get(a.region)
+            .and_then(|r| buildings.get(r))
+            .into_iter()
+            .flatten()
             .filter_map(|b| tables.chain_levels.get(b).filter(|(sc, _)| *sc == a.superchain).map(|(_, l)| (*l, b.clone())))
             .max();
         if a.level == 1 {
@@ -47,15 +55,28 @@ fn main() {
     println!("areas reached: chain level >= area level {level_rule}, chain level + 1 >= area level {tier_rule}");
     let mut shown = std::collections::BTreeSet::new();
     for a in &areas {
-        let best = roads.hex.regions.get(a.region).and_then(|r| buildings.get(r)).into_iter().flatten()
-            .filter_map(|b| tables.chain_levels.get(b).filter(|(sc, _)| *sc == a.superchain).map(|(_, l)| *l)).max();
+        let best = roads
+            .hex
+            .regions
+            .get(a.region)
+            .and_then(|r| buildings.get(r))
+            .into_iter()
+            .flatten()
+            .filter_map(|b| tables.chain_levels.get(b).filter(|(sc, _)| *sc == a.superchain).map(|(_, l)| *l))
+            .max();
         if best.is_some_and(|l| l >= a.level) && shown.insert(a.region) && shown.len() <= 8 {
             println!("  farmland: {} level {} {} cells, first {:?}", roads.hex.regions[a.region], a.level, a.cells.len(), a.cells.first());
         }
     }
     println!("regions' best agriculture building (per level-1 area): {tiers:?}");
-    println!("hex {} x {}, {} regions; regions a level {:?}; upgrade groups {:?}", roads.hex.w, roads.hex.h, roads.hex.regions.len(), roads.level_counts(),
-        roads.upgrades.groups.iter().map(|(k, v)| format!("{k} {}", v.len())).collect::<Vec<_>>());
+    println!(
+        "hex {} x {}, {} regions; regions a level {:?}; upgrade groups {:?}",
+        roads.hex.w,
+        roads.hex.h,
+        roads.hex.regions.len(),
+        roads.level_counts(),
+        roads.upgrades.groups.iter().map(|(k, v)| format!("{k} {}", v.len())).collect::<Vec<_>>()
+    );
 
     // Road cells a level.
     let mut cells = vec![0usize; roads.level_counts().len()];

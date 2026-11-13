@@ -56,10 +56,21 @@ fn main() {
         let first = files.iter().find(|(k, v)| made.get(*k) != Some(v)).map(|(k, v)| {
             let m = made.get(k).cloned().unwrap_or_default();
             let at = m.iter().zip(v.iter()).position(|(x, y)| x != y).unwrap_or(m.len().min(v.len()));
-            format!("{k} at byte {at}: ours {:?} / shipped {:?}", String::from_utf8_lossy(&m[at.saturating_sub(40)..(at + 40).min(m.len())]), String::from_utf8_lossy(&v[at.saturating_sub(40)..(at + 40).min(v.len())]))
+            format!(
+                "{k} at byte {at}: ours {:?} / shipped {:?}",
+                String::from_utf8_lossy(&m[at.saturating_sub(40)..(at + 40).min(m.len())]),
+                String::from_utf8_lossy(&v[at.saturating_sub(40)..(at + 40).min(v.len())])
+            )
         });
-        println!("{folder}: {} entities; blm {}; deployment files {same} of {} the same ({} made, {orphans} orphans kept){}; {:.1} s",
-            p.entities.len(), if blm_same { "the same".to_owned() } else { format!("DIFFERS (sizes {} / {}, first at {blm_at:?})", blm2.len(), bytes.len()) }, files.len(), made.len(), first.map_or(String::new(), |f| format!("; first: {f}")), t0.elapsed().as_secs_f64());
+        println!(
+            "{folder}: {} entities; blm {}; deployment files {same} of {} the same ({} made, {orphans} orphans kept){}; {:.1} s",
+            p.entities.len(),
+            if blm_same { "the same".to_owned() } else { format!("DIFFERS (sizes {} / {}, first at {blm_at:?})", blm2.len(), bytes.len()) },
+            files.len(),
+            made.len(),
+            first.map_or(String::new(), |f| format!("; first: {f}")),
+            t0.elapsed().as_secs_f64()
+        );
         if !blm_same || same != files.len() || made.len() != files.len() {
             bad += 1;
         }

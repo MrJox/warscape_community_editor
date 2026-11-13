@@ -101,7 +101,10 @@ impl SampleGrid {
         let n = w as usize * h as usize;
         let len = std::fs::metadata(path)?.len();
         if offset + n as u64 * 2 > len {
-            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!("{}: {} samples from byte {offset} past its end", path.display(), n)));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("{}: {} samples from byte {offset} past its end", path.display(), n),
+            ));
         }
 
         if offset.is_multiple_of(2)
@@ -213,7 +216,14 @@ impl MappedView {
         let end = offset + samples as u64 * 2;
         // SAFETY: plain Win32 calls on a handle we own; a null result is checked.
         unsafe {
-            let mapping = win::CreateFileMappingW(file.as_raw_handle().cast(), std::ptr::null_mut(), win::PAGE_WRITECOPY, (end >> 32) as u32, end as u32, std::ptr::null());
+            let mapping = win::CreateFileMappingW(
+                file.as_raw_handle().cast(),
+                std::ptr::null_mut(),
+                win::PAGE_WRITECOPY,
+                (end >> 32) as u32,
+                end as u32,
+                std::ptr::null(),
+            );
             if mapping.is_null() {
                 return None;
             }
@@ -239,7 +249,8 @@ impl MappedView {
         // SAFETY: a new private mapping of a file we opened (it outlives the descriptor, closed on return); a failure is checked.
         unsafe {
             // The view starts at the file's start (a view's offset must be a multiple of the page size).
-            let base = posix::mmap(std::ptr::null_mut(), end, posix::PROT_READ | posix::PROT_WRITE, posix::MAP_PRIVATE, file.as_raw_fd(), 0);
+            let base =
+                posix::mmap(std::ptr::null_mut(), end, posix::PROT_READ | posix::PROT_WRITE, posix::MAP_PRIVATE, file.as_raw_fd(), 0);
             if base.addr() == posix::MAP_FAILED {
                 return None;
             }
@@ -296,7 +307,14 @@ mod win {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        pub fn CreateFileMappingW(file: *mut c_void, attributes: *mut c_void, protect: u32, size_high: u32, size_low: u32, name: *const u16) -> *mut c_void;
+        pub fn CreateFileMappingW(
+            file: *mut c_void,
+            attributes: *mut c_void,
+            protect: u32,
+            size_high: u32,
+            size_low: u32,
+            name: *const u16,
+        ) -> *mut c_void;
         pub fn MapViewOfFile(mapping: *mut c_void, access: u32, offset_high: u32, offset_low: u32, bytes: usize) -> *mut c_void;
         pub fn UnmapViewOfFile(base: *const c_void) -> i32;
         pub fn CloseHandle(handle: *mut c_void) -> i32;

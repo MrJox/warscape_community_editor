@@ -123,7 +123,9 @@ pub fn centre_line_handled(points: &[[f64; 2]], handles: &[[Option<[f64; 2]>; 2]
         for k in 0..n {
             let t = k as f64 / n as f64;
             let (t2, t3) = (t * t, t * t * t);
-            let c = |a: f64, b: f64, c: f64, d: f64| 0.5 * (2.0 * b + (c - a) * t + (2.0 * a - 5.0 * b + 4.0 * c - d) * t2 + (3.0 * b - a - 3.0 * c + d) * t3);
+            let c = |a: f64, b: f64, c: f64, d: f64| {
+                0.5 * (2.0 * b + (c - a) * t + (2.0 * a - 5.0 * b + 4.0 * c - d) * t2 + (3.0 * b - a - 3.0 * c + d) * t3)
+            };
             out.push([c(p0[0], p1[0], p2[0], p3[0]), c(p0[1], p1[1], p2[1], p3[1])]);
         }
     }
@@ -137,16 +139,18 @@ pub fn centre_line_handled(points: &[[f64; 2]], handles: &[[Option<[f64; 2]>; 2]
 /// ends are not.
 #[must_use]
 pub fn sharp_points(points: &[[f64; 2]], marked: &[bool]) -> Vec<bool> {
-    (0..points.len()).map(|i| {
-        if i == 0 || i + 1 >= points.len() {
-            return false;
-        }
+    (0..points.len())
+        .map(|i| {
+            if i == 0 || i + 1 >= points.len() {
+                return false;
+            }
 
-        let (a, b, c) = (points[i - 1], points[i], points[i + 1]);
-        let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
-        let turn = (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]).abs();
-        marked.get(i).copied().unwrap_or(false) || turn >= std::f64::consts::FRAC_PI_2 - 1e-9
-    }).collect()
+            let (a, b, c) = (points[i - 1], points[i], points[i + 1]);
+            let (u, v) = ([b[0] - a[0], b[1] - a[1]], [c[0] - b[0], c[1] - b[1]]);
+            let turn = (u[0] * v[1] - u[1] * v[0]).atan2(u[0] * v[0] + u[1] * v[1]).abs();
+            marked.get(i).copied().unwrap_or(false) || turn >= std::f64::consts::FRAC_PI_2 - 1e-9
+        })
+        .collect()
 }
 
 /// The road's height at each sample: the ground under it averaged along the line, then limited to the maximum grade both ways, and the bump.
@@ -227,7 +231,13 @@ pub fn with_bump(line: &[[f64; 2]], heights: &[f64], s: &RoadSettings, on_other:
 /// As [`with_bump`], the bump coming in from the ends `ramp_ends` says (first, last): not from an end on another road, where the road
 /// meets that one's surface with its own bump.
 #[must_use]
-pub fn with_bump_ends(line: &[[f64; 2]], heights: &[f64], s: &RoadSettings, on_other: &dyn Fn(f64, f64) -> bool, ramp_ends: [bool; 2]) -> Vec<f64> {
+pub fn with_bump_ends(
+    line: &[[f64; 2]],
+    heights: &[f64],
+    s: &RoadSettings,
+    on_other: &dyn Fn(f64, f64) -> bool,
+    ramp_ends: [bool; 2],
+) -> Vec<f64> {
     let n = heights.len();
     let reach = BUMP_RAMP as usize;
     let off = line.iter().map(|p| on_other(p[0], p[1])).collect::<Vec<_>>();
@@ -240,7 +250,10 @@ pub fn with_bump_ends(line: &[[f64; 2]], heights: &[f64], s: &RoadSettings, on_o
             [false, false] => n,
         };
         let ends = (from_ends as f64 / BUMP_RAMP).min(1.0);
-        let near = (i.saturating_sub(reach)..(i + reach + 1).min(n)).filter(|&k| off[k]).map(|k| k.abs_diff(i) as f64 / BUMP_RAMP).fold(1.0, f64::min);
+        let near = (i.saturating_sub(reach)..(i + reach + 1).min(n))
+            .filter(|&k| off[k])
+            .map(|k| k.abs_diff(i) as f64 / BUMP_RAMP)
+            .fold(1.0, f64::min);
         out.push(heights[i] + s.bump * smooth(ends.min(near)));
     }
 
@@ -480,7 +493,13 @@ pub fn plan(line: &[[f64; 2]], raw: &[f64], water: &[Option<f64>], s: &RoadSetti
         let mut heights = grade(&gaps, pins);
         for &(a, b, deck) in &decks {
             for (i, h) in heights.iter_mut().enumerate() {
-                let off = if i < a { along[a] - along[i] } else if i > b { along[i] - along[b] } else { 0.0 };
+                let off = if i < a {
+                    along[a] - along[i]
+                } else if i > b {
+                    along[i] - along[b]
+                } else {
+                    0.0
+                };
                 *h = h.max(deck - off * slope);
             }
         }
@@ -519,8 +538,11 @@ fn over_itself(line: &[[f64; 2]], along: &[f64], width: f64) -> Vec<(usize, usiz
     let mut out = vec![];
     for i in 0..line.len() {
         let p = line[i];
-        let found = (0..i).take_while(|&k| along[i] - along[k] > width * 2.0).map(|k| (k, (line[k][0] - p[0]).hypot(line[k][1] - p[1])))
-            .filter(|&(_, d)| d <= width * 0.5).min_by(|a, b| a.1.total_cmp(&b.1));
+        let found = (0..i)
+            .take_while(|&k| along[i] - along[k] > width * 2.0)
+            .map(|k| (k, (line[k][0] - p[0]).hypot(line[k][1] - p[1])))
+            .filter(|&(_, d)| d <= width * 0.5)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((k, _)) = found {
             out.push((i, k));
         }
@@ -721,7 +743,9 @@ impl Strip {
 /// Smooth noise, 0 to 1: values at a lattice's points blended between.
 fn noise(x: f64, z: f64, seed: u32) -> f64 {
     let at = |ix: i64, iz: i64| {
-        let mut h = (ix as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (iz as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ u64::from(seed).wrapping_mul(0x1656_67B1_9E37_79F9);
+        let mut h = (ix as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ (iz as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+            ^ u64::from(seed).wrapping_mul(0x1656_67B1_9E37_79F9);
         h ^= h >> 29;
         h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
         h ^= h >> 32;
@@ -741,7 +765,19 @@ mod tests {
     use super::*;
 
     fn settings() -> RoadSettings {
-        RoadSettings { width: 6.0, shoulder: 3.0, bump: 0.25, max_grade: 10.0, max_side: 30.0, channel: 5, ground: [255, 96, 0], bridges: true, clearance: 2.0, feather: 2.0, seed: 1 }
+        RoadSettings {
+            width: 6.0,
+            shoulder: 3.0,
+            bump: 0.25,
+            max_grade: 10.0,
+            max_side: 30.0,
+            channel: 5,
+            ground: [255, 96, 0],
+            bridges: true,
+            clearance: 2.0,
+            feather: 2.0,
+            seed: 1,
+        }
     }
 
     #[test]
@@ -768,10 +804,19 @@ mod tests {
         let s = settings();
 
         // Walls 30 high over 30 units each side, a flat floor between them.
-        let raw = l.iter().map(|p| {
-            let d = (p[0] - 50.0).abs();
-            if d < 10.0 { -30.0 } else if d < 40.0 { -30.0 + d - 10.0 } else { 0.0 }
-        }).collect::<Vec<_>>();
+        let raw = l
+            .iter()
+            .map(|p| {
+                let d = (p[0] - 50.0).abs();
+                if d < 10.0 {
+                    -30.0
+                } else if d < 40.0 {
+                    -30.0 + d - 10.0
+                } else {
+                    0.0
+                }
+            })
+            .collect::<Vec<_>>();
         let gaps = find_gaps(&l, &raw, &graded(&l, &raw, &s), &s);
         assert_eq!(gaps.len(), 1, "{gaps:?}");
         let (a, b) = gaps[0];
@@ -899,7 +944,10 @@ mod tests {
         let ground = |x: f64, z: f64| (x * 0.05).sin() * 8.0 + (z * 0.07).cos() * 8.0 + 20.0;
         let y = profile(&l, &ground, &s);
         let strip = Strip::new(l, y, s);
-        let at = |x: f64, z: f64| { let g = ground(x, z); strip.height_at(x, z, g).unwrap_or(g) };
+        let at = |x: f64, z: f64| {
+            let g = ground(x, z);
+            strip.height_at(x, z, g).unwrap_or(g)
+        };
         let mut worst = (0.0, 0.0, 0.0);
         for j in 0..2400 {
             for i in 0..2400 {
@@ -1034,11 +1082,13 @@ mod tests {
         let pts = [[0.0, 0.0], [40.0, 10.0], [80.0, 0.0], [120.0, 30.0]];
         let (plain, _) = centre_line_sharp(&pts, &[]);
         // Every handle written as the Catmull-Rom one: the same curve (as many samples a segment, near enough).
-        let h = (0..pts.len()).map(|i| {
-            let (a, b) = (pts[i.saturating_sub(1)], pts[(i + 1).min(pts.len() - 1)]);
-            let d = [(b[0] - a[0]) / 6.0, (b[1] - a[1]) / 6.0];
-            [Some([pts[i][0] - d[0], pts[i][1] - d[1]]), Some([pts[i][0] + d[0], pts[i][1] + d[1]])]
-        }).collect::<Vec<_>>();
+        let h = (0..pts.len())
+            .map(|i| {
+                let (a, b) = (pts[i.saturating_sub(1)], pts[(i + 1).min(pts.len() - 1)]);
+                let d = [(b[0] - a[0]) / 6.0, (b[1] - a[1]) / 6.0];
+                [Some([pts[i][0] - d[0], pts[i][1] - d[1]]), Some([pts[i][0] + d[0], pts[i][1] + d[1]])]
+            })
+            .collect::<Vec<_>>();
         let (same, _) = centre_line_handled(&pts, &h, &[]);
         let off = |a: &[[f64; 2]], p: [f64; 2]| a.iter().map(|q| (q[0] - p[0]).hypot(q[1] - p[1])).fold(f64::MAX, f64::min);
         assert!(plain.iter().all(|&p| off(&same, p) < 0.6), "the curve moved");

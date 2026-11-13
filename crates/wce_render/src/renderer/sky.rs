@@ -11,8 +11,8 @@ use wce_foundation::math::{Float3, Float4x4, perspective_lh, translation};
 use wce_scene::clouds::cloud_texture;
 use wce_scene::environment::{EnvironmentParams, colour_to_linear};
 
-use super::*;
 use super::targets::GBuffer;
+use super::*;
 use crate::model_cache::half_to_float;
 use crate::shader_lib::{bind_sampler, bind_srv};
 use crate::texture::load_dds;
@@ -30,14 +30,25 @@ pub(crate) struct Cube {
 impl Cube {
     pub(crate) fn new(dev: &ID3D11Device, size: u32) -> Self {
         let cd = D3D11_TEXTURE2D_DESC {
-            Width: size, Height: size, MipLevels: 0, ArraySize: 6, Format: DXGI_FORMAT_R16G16B16A16_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT, BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32, CPUAccessFlags: 0,
+            Width: size,
+            Height: size,
+            MipLevels: 0,
+            ArraySize: 6,
+            Format: DXGI_FORMAT_R16G16B16A16_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE) as u32,
+            CPUAccessFlags: 0,
             MiscFlags: (D3D11_RESOURCE_MISC_TEXTURECUBE | D3D11_RESOURCE_MISC_GENERATE_MIPS) as u32,
         };
 
         let Ok(tex) = dev.create_texture_2d(&cd, None) else { return Self::default() };
         let face_rtv = std::array::from_fn(|f| {
-            let mut rd = D3D11_RENDER_TARGET_VIEW_DESC { Format: cd.Format, ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2DARRAY, ..Default::default() };
+            let mut rd = D3D11_RENDER_TARGET_VIEW_DESC {
+                Format: cd.Format,
+                ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2DARRAY,
+                ..Default::default()
+            };
             rd.Anonymous.Texture2DArray.FirstArraySlice = f as u32;
             rd.Anonymous.Texture2DArray.ArraySize = 1;
             dev.create_render_target_view(&tex, Some(&rd)).ok()
@@ -98,8 +109,16 @@ pub(crate) struct EnvCube {
 impl EnvCube {
     pub fn new(dev: &ID3D11Device) -> Self {
         let staging = D3D11_TEXTURE2D_DESC {
-            Width: 1, Height: 1, MipLevels: 1, ArraySize: 6, Format: DXGI_FORMAT_R16G16B16A16_FLOAT, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_STAGING, BindFlags: 0, CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32, MiscFlags: 0,
+            Width: 1,
+            Height: 1,
+            MipLevels: 1,
+            ArraySize: 6,
+            Format: DXGI_FORMAT_R16G16B16A16_FLOAT,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_STAGING,
+            BindFlags: 0,
+            CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32,
+            MiscFlags: 0,
         };
 
         Self {
@@ -148,7 +167,6 @@ pub(crate) struct CloudLayer {
 }
 
 impl Renderer {
-
     pub(crate) fn pass_sky_cube(&mut self, _env: &EnvironmentParams, time_s: f32) {
         let vs = self.shader(SKY_VS);
         let ps = self.shader(SKY_GEN_PS);
@@ -213,7 +231,9 @@ impl Renderer {
         let ground = match self.env.ground {
             Some((k, g)) if k == key => g,
             _ => {
-                let g = scene.entities().iter()
+                let g = scene
+                    .entities()
+                    .iter()
                     .filter(|e| scene.drawable(e))
                     .find_map(|e| match &e.payload {
                         wce_scene::render_scene::Payload::Terrain(t) => t.ground_at(&e.world, cx, cz),
@@ -291,7 +311,13 @@ impl Renderer {
     fn readback_ambient(&mut self) {
         // 256 -> 1.
         let mips = 9;
-        let (Some(dst), Some(src), Some(cube)) = (self.env.ambient_staging[(self.env.ambient_frame & 1) as usize].clone(), self.env.ambient_staging[((self.env.ambient_frame + 1) & 1) as usize].clone(), self.env.cube.tex.clone()) else { return };
+        let (Some(dst), Some(src), Some(cube)) = (
+            self.env.ambient_staging[(self.env.ambient_frame & 1) as usize].clone(),
+            self.env.ambient_staging[((self.env.ambient_frame + 1) & 1) as usize].clone(),
+            self.env.cube.tex.clone(),
+        ) else {
+            return;
+        };
         for f in 0..6 {
             self.ctx.copy_subresource_region(&dst, f, [0; 3], &cube, (mips - 1) + f * mips, None);
         }
@@ -330,7 +356,11 @@ impl Renderer {
 
         let s = env.ambient_scale;
         for (var, a, b) in [("ambient_cube_lr", 0, 1), ("ambient_cube_tb", 2, 3), ("ambient_cube_fb", 4, 5)] {
-            self.cbs.set_f("lighting_VS_PS", var, &[faces[a][0] * s, faces[a][1] * s, faces[a][2] * s, 0.0, faces[b][0] * s, faces[b][1] * s, faces[b][2] * s]);
+            self.cbs.set_f(
+                "lighting_VS_PS",
+                var,
+                &[faces[a][0] * s, faces[a][1] * s, faces[a][2] * s, 0.0, faces[b][0] * s, faces[b][1] * s, faces[b][2] * s],
+            );
         }
     }
 
@@ -436,7 +466,10 @@ impl Renderer {
         self.cbs.set_m("sun_VS", "g_projection", proj.data());
         self.cbs.set_f("sun_VS", "g_sun_scale", &[env.sun_scale]);
         self.upload();
-        let el = [element(c"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, false), element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, false)];
+        let el = [
+            element(c"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, false),
+            element(c"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, false),
+        ];
         let Some(layout) = self.layout(&vs, "sun", &el) else { return };
         self.ctx.set_input_layout(Some(&layout));
         self.ctx.set_vertex_buffers(0, std::slice::from_ref(&self.res.sun_vb), &[16], &[0]);
@@ -531,11 +564,29 @@ impl Renderer {
             let p = &env.cloud_planes[i];
 
             // Regenerated when anything that affects spawning changes (the numbers as C's %f writes them, as the C++ editor compared them).
-            let mut sig = format!("{}|{}|{:.6}|{:.6}|{:.6}|{}", self.settings.cloud_seed, p.grid_size, p.density, p.height_variation, p.rotation, i32::from(p.far_plane));
+            let mut sig = format!(
+                "{}|{}|{:.6}|{:.6}|{:.6}|{}",
+                self.settings.cloud_seed,
+                p.grid_size,
+                p.density,
+                p.height_variation,
+                p.rotation,
+                i32::from(p.far_plane)
+            );
             for c in &p.clouds {
                 sig += &format!("|{}{:.6}", i32::from(c.this_cloud_only), c.probability);
                 for e in &c.elements {
-                    sig += &format!(";{}{:.6}{:.6}{:.6}{:.6}{}{}{}", i32::from(e.enabled), e.scale, e.offset[0], e.offset[1], e.offset[2], e.texture_index, e.texture_row, e.texture_column);
+                    sig += &format!(
+                        ";{}{:.6}{:.6}{:.6}{:.6}{}{}{}",
+                        i32::from(e.enabled),
+                        e.scale,
+                        e.offset[0],
+                        e.offset[1],
+                        e.offset[2],
+                        e.texture_index,
+                        e.texture_row,
+                        e.texture_column
+                    );
                 }
             }
 
@@ -560,7 +611,10 @@ impl Renderer {
                     g.instances = dynamic_buffer(&self.dev, g.capacity as usize * 72, D3D11_BIND_VERTEX_BUFFER);
                 }
 
-                let bytes = inst.iter().flat_map(|c| c.t1.iter().chain(&c.t2).chain(&c.t3).chain(&c.t4).chain(&c.t5).flat_map(|f| f.to_le_bytes())).collect::<Vec<_>>();
+                let bytes = inst
+                    .iter()
+                    .flat_map(|c| c.t1.iter().chain(&c.t2).chain(&c.t3).chain(&c.t4).chain(&c.t5).flat_map(|f| f.to_le_bytes()))
+                    .collect::<Vec<_>>();
                 if g.count > 0
                     && let Some(buffer) = &g.instances
                     && let Ok(mut ms) = self.ctx.map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0)

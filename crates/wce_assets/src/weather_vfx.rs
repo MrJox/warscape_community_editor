@@ -151,7 +151,9 @@ pub type VfxReader<'a> = dyn Fn(&str) -> Result<Vec<u8>, String> + 'a;
 
 fn find_definition(read: &VfxReader, name: &str) -> Result<Option<WeatherDefinition>, String> {
     let doc = XmlDoc::parse(read("weather/weather_definitions.xml")?).map_err(|error| error.to_string())?;
-    let Some(i) = (0..doc.elements().len()).find(|&i| doc.elements()[i].name == "WEATHER_DEFINITION" && doc.get(i, "name").as_deref() == Some(name)) else {
+    let Some(i) =
+        (0..doc.elements().len()).find(|&i| doc.elements()[i].name == "WEATHER_DEFINITION" && doc.get(i, "name").as_deref() == Some(name))
+    else {
         return Ok(None);
     };
 
@@ -183,7 +185,8 @@ fn load_vfx(read: &VfxReader, name: &str) -> Result<VfxFile, String> {
 
 /// The chain an emitter draws with: some render stack pairs it with a chain that has a texture.
 fn render_chain<'a>(lib: &'a VfxFile, emitter: &str) -> Option<(&'a VfxStack, &'a VfxChain)> {
-    lib.stacks.iter()
+    lib.stacks
+        .iter()
         .filter(|stack| stack.emitters.iter().any(|e| e == emitter))
         .flat_map(|stack| stack.chains.iter().filter_map(|c| lib.chain(c)).map(move |chain| (stack, chain)))
         .find(|(_, chain)| chain.find("ps_texture").is_some())
@@ -214,7 +217,8 @@ pub fn load_weather_vfx(read: &VfxReader, definition_name: &str) -> Result<Weath
         let effect = load_effect_with(read, top_name, &mut libs);
         out.emitters.extend(effect.emitters);
         out.lights.extend(effect.lights);
-        out.notes.extend(effect.rigids.iter().map(|r| format!("{}/{}: rigid model '{}' not drawn in weather", r.instance, r.name, r.model)));
+        out.notes
+            .extend(effect.rigids.iter().map(|r| format!("{}/{}: rigid model '{}' not drawn in weather", r.instance, r.name, r.model)));
         out.notes.extend(effect.notes);
     }
 
@@ -240,7 +244,13 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
 
     // A file without references draws its own emitters, as one reference of itself.
     let own = VfxRef {
-        inst_name: name.to_owned(), library: name.to_owned(), scale_min: 1.0, scale_max: 1.0, pos: [0.0; 3], start_time: 0.0, infinite_life: true,
+        inst_name: name.to_owned(),
+        library: name.to_owned(),
+        scale_min: 1.0,
+        scale_max: 1.0,
+        pos: [0.0; 3],
+        start_time: 0.0,
+        infinite_life: true,
         emitters: vec![],
     };
 
@@ -276,13 +286,25 @@ pub fn load_effect_with(read: &VfxReader, name: &str, libs: &mut BTreeMap<String
                 let model = em.text("RigidModelFile").replace('\\', "/").to_lowercase();
                 if model.starts_with("point_lights/") {
                     out.lights.push(EffectLight {
-                        instance: vfx_ref.inst_name.clone(), name: em.id.clone(), model: format!("rigidmodels/{model}"), def: em.clone(), tint_min, tint_max,
-                        scale_range: [vfx_ref.scale_min, vfx_ref.scale_max], pos: vfx_ref.pos,
+                        instance: vfx_ref.inst_name.clone(),
+                        name: em.id.clone(),
+                        model: format!("rigidmodels/{model}"),
+                        def: em.clone(),
+                        tint_min,
+                        tint_max,
+                        scale_range: [vfx_ref.scale_min, vfx_ref.scale_max],
+                        pos: vfx_ref.pos,
                     });
                 } else {
                     out.rigids.push(EffectLight {
-                        instance: vfx_ref.inst_name.clone(), name: em.id.clone(), model: format!("rigidmodels/{model}"), def: em.clone(), tint_min, tint_max,
-                        scale_range: [vfx_ref.scale_min, vfx_ref.scale_max], pos: vfx_ref.pos,
+                        instance: vfx_ref.inst_name.clone(),
+                        name: em.id.clone(),
+                        model: format!("rigidmodels/{model}"),
+                        def: em.clone(),
+                        tint_min,
+                        tint_max,
+                        scale_range: [vfx_ref.scale_min, vfx_ref.scale_max],
+                        pos: vfx_ref.pos,
                     });
                 }
 

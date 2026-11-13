@@ -57,11 +57,12 @@ impl CampaignTrees {
     fn near(&self, cx: f32, cy: f32, r: f32) -> impl Iterator<Item = u32> + '_ {
         let (b0, b1) = (((cx - r) / BUCKET).floor() as i32, ((cx + r) / BUCKET).floor() as i32);
         let (c0, c1) = (((cy - r) / BUCKET).floor() as i32, ((cy + r) / BUCKET).floor() as i32);
-        (c0..=c1).flat_map(move |by| (b0..=b1).map(move |bx| (bx, by)))
-            .filter_map(|b| self.buckets.get(&b))
-            .flatten()
-            .copied()
-            .filter(move |&i| { let t = &self.trees[i as usize]; (t.1 - cx).hypot(t.2 - cy) <= r })
+        (c0..=c1).flat_map(move |by| (b0..=b1).map(move |bx| (bx, by))).filter_map(|b| self.buckets.get(&b)).flatten().copied().filter(
+            move |&i| {
+                let t = &self.trees[i as usize];
+                (t.1 - cx).hypot(t.2 - cy) <= r
+            },
+        )
     }
 
     /// The trees of a file on a map `w` x `h` cells; none for a file that does not read.
@@ -120,11 +121,15 @@ fn marker_props(bytes: &[u8]) -> Vec<Prop> {
     let Ok(f) = MarkersFile::parse(bytes) else { return vec![] };
     let mut model_of = vec![String::new(); f.records.len()];
     for g in f.groups.iter().flatten() {
-        let key = g.key.iter().find_map(|k| match k {
-            KeyPart::Wide(w) => Some(String::from_utf16_lossy(w)),
-            KeyPart::Narrow(n) => Some(String::from_utf8_lossy(n).into_owned()),
-            KeyPart::U32(_) => None,
-        }).unwrap_or_default();
+        let key = g
+            .key
+            .iter()
+            .find_map(|k| match k {
+                KeyPart::Wide(w) => Some(String::from_utf16_lossy(w)),
+                KeyPart::Narrow(n) => Some(String::from_utf8_lossy(n).into_owned()),
+                KeyPart::U32(_) => None,
+            })
+            .unwrap_or_default();
         for &i in &g.indices {
             if let Some(m) = model_of.get_mut(i as usize) {
                 m.clone_from(&key);
@@ -132,12 +137,17 @@ fn marker_props(bytes: &[u8]) -> Vec<Prop> {
         }
     }
 
-    model_of.into_iter().enumerate().filter(|(_, m)| !m.is_empty()).filter_map(|(i, model)| {
-        let fields = f.fields(i).ok()?;
-        let Some(Value::Matrix(matrix)) = fields.into_iter().find(|(n, _)| *n == "transform").map(|(_, v)| v) else { return None };
-        let at = [f64::from(matrix[12]), f64::from(matrix[13]), f64::from(matrix[14])];
-        Some(Prop { key: MARKER_KEY | i as u64, at, model: model.to_lowercase().replace('\\', "/"), matrix, item: u64::MAX })
-    }).collect()
+    model_of
+        .into_iter()
+        .enumerate()
+        .filter(|(_, m)| !m.is_empty())
+        .filter_map(|(i, model)| {
+            let fields = f.fields(i).ok()?;
+            let Some(Value::Matrix(matrix)) = fields.into_iter().find(|(n, _)| *n == "transform").map(|(_, v)| v) else { return None };
+            let at = [f64::from(matrix[12]), f64::from(matrix[13]), f64::from(matrix[14])];
+            Some(Prop { key: MARKER_KEY | i as u64, at, model: model.to_lowercase().replace('\\', "/"), matrix, item: u64::MAX })
+        })
+        .collect()
 }
 
 pub struct PropModels {
@@ -173,7 +183,20 @@ pub struct PropModels {
 
 impl Default for PropModels {
     fn default() -> Self {
-        Self { on: true, radius_cells: 96.0, layer: 0, drawn: std::collections::HashMap::new(), built: None, count: 0, props: None, trees: None, tree_count: 0, cities: None, city_count: 0, heights: vec![] }
+        Self {
+            on: true,
+            radius_cells: 96.0,
+            layer: 0,
+            drawn: std::collections::HashMap::new(),
+            built: None,
+            count: 0,
+            props: None,
+            trees: None,
+            tree_count: 0,
+            cities: None,
+            city_count: 0,
+            heights: vec![],
+        }
     }
 }
 
@@ -229,24 +252,36 @@ impl PropModels {
         if self.trees.as_ref().is_none_or(|(id, _)| *id != doc) {
             wce_foundation::wce_prof!("props.tree_list");
             let (_, name) = crate::tool::map_kind(&d.name);
-            let list = e.files().and_then(|f| f.read(&format!("campaign_maps/{name}/display/trees/trees.campaign_tree_list")).ok())
-                .and_then(|b| CampaignTrees::parse(&b, frame.map.width, frame.map.height)).map(Arc::new);
+            let list = e
+                .files()
+                .and_then(|f| f.read(&format!("campaign_maps/{name}/display/trees/trees.campaign_tree_list")).ok())
+                .and_then(|b| CampaignTrees::parse(&b, frame.map.width, frame.map.height))
+                .map(Arc::new);
             self.trees = Some((doc, list));
         }
 
         if self.props.as_ref().is_none_or(|(id, rev, _)| *id != doc || *rev != key.1) {
             wce_foundation::wce_prof!("props.index");
             let list = match p {
-                Some(p) => p.entities.iter().filter_map(|x| match p.kind(x) {
-                    EntityKind::Prop(model) if !model.is_empty() => Some(Prop {
-                        key: x.id, at: p.world_position(x.id), model: model.to_lowercase().replace('\\', "/"),
-                        matrix: wce_terrain_io::attila::campaign::matrix(p, x), item: x.id,
-                    }),
-                    _ => None,
-                }).collect(),
+                Some(p) => p
+                    .entities
+                    .iter()
+                    .filter_map(|x| match p.kind(x) {
+                        EntityKind::Prop(model) if !model.is_empty() => Some(Prop {
+                            key: x.id,
+                            at: p.world_position(x.id),
+                            model: model.to_lowercase().replace('\\', "/"),
+                            matrix: wce_terrain_io::attila::campaign::matrix(p, x),
+                            item: x.id,
+                        }),
+                        _ => None,
+                    })
+                    .collect(),
                 None => {
                     let (_, name) = crate::tool::map_kind(&d.name);
-                    e.files().and_then(|f| f.read(&format!("terrain/campaigns/{name}/prop_marker.markers")).ok()).map_or_else(Vec::new, |b| marker_props(&b))
+                    e.files()
+                        .and_then(|f| f.read(&format!("terrain/campaigns/{name}/prop_marker.markers")).ok())
+                        .map_or_else(Vec::new, |b| marker_props(&b))
                 }
             };
 
@@ -278,8 +313,14 @@ impl PropModels {
             world.m[2][3] = fz as f32;
             let p16 = DEFAULT_INSTANCE_PARAMS;
             let mesh = MeshInstance {
-                model: prop.model.clone(), casts_shadow: true, lod: true, p4: [p16[0], p16[1], p16[2], p16[3]], p5: [p16[4], p16[5], p16[6], p16[7]],
-                p6: [p16[8], p16[9], p16[10], p16[11]], p7: [p16[12], p16[13], p16[14], p16[15]], burning: false,
+                model: prop.model.clone(),
+                casts_shadow: true,
+                lod: true,
+                p4: [p16[0], p16[1], p16[2], p16[3]],
+                p5: [p16[4], p16[5], p16[6], p16[7]],
+                p6: [p16[8], p16[9], p16[10], p16[11]],
+                p7: [p16[12], p16[13], p16[14], p16[15]],
+                burning: false,
             };
             out.push((prop.key, world, Payload::MeshInstance(mesh), prop.item));
         }
@@ -309,8 +350,14 @@ impl PropModels {
                 world.m[2] = [-s * k, 0.0, c * k, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
-                    model: trees.models[usize::from(m)].clone(), casts_shadow: true, lod: true, p4: [p16[0], p16[1], p16[2], p16[3]], p5: [p16[4], p16[5], p16[6], p16[7]],
-                    p6: [p16[8], p16[9], p16[10], p16[11]], p7: [p16[12], p16[13], p16[14], p16[15]], burning: false,
+                    model: trees.models[usize::from(m)].clone(),
+                    casts_shadow: true,
+                    lod: true,
+                    p4: [p16[0], p16[1], p16[2], p16[3]],
+                    p5: [p16[4], p16[5], p16[6], p16[7]],
+                    p6: [p16[8], p16[9], p16[10], p16[11]],
+                    p7: [p16[12], p16[13], p16[14], p16[15]],
+                    burning: false,
                 };
                 out.push((TREE_KEY | u64::from(i), world, Payload::MeshInstance(mesh), u64::MAX));
                 self.tree_count += 1;
@@ -340,8 +387,14 @@ impl PropModels {
                 (world.m[0][3], world.m[1][3], world.m[2][3]) = (fx as f32, frame.lift(fx, fz), fz as f32);
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
-                    model: model.clone(), casts_shadow: true, lod: true, p4: [p16[0], p16[1], p16[2], p16[3]], p5: [p16[4], p16[5], p16[6], p16[7]],
-                    p6: [p16[8], p16[9], p16[10], p16[11]], p7: [p16[12], p16[13], p16[14], p16[15]], burning: false,
+                    model: model.clone(),
+                    casts_shadow: true,
+                    lod: true,
+                    p4: [p16[0], p16[1], p16[2], p16[3]],
+                    p5: [p16[4], p16[5], p16[6], p16[7]],
+                    p6: [p16[8], p16[9], p16[10], p16[11]],
+                    p7: [p16[12], p16[13], p16[14], p16[15]],
+                    burning: false,
                 };
                 out.push((CITY_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
                 self.city_count += 1;
@@ -362,8 +415,14 @@ impl PropModels {
                 world.m[2] = [-s * k, 0.0, co * k, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
-                    model: aq.model.clone(), casts_shadow: true, lod: true, p4: [p16[0], p16[1], p16[2], p16[3]], p5: [p16[4], p16[5], p16[6], p16[7]],
-                    p6: [p16[8], p16[9], p16[10], p16[11]], p7: [p16[12], p16[13], p16[14], p16[15]], burning: false,
+                    model: aq.model.clone(),
+                    casts_shadow: true,
+                    lod: true,
+                    p4: [p16[0], p16[1], p16[2], p16[3]],
+                    p5: [p16[4], p16[5], p16[6], p16[7]],
+                    p6: [p16[8], p16[9], p16[10], p16[11]],
+                    p7: [p16[12], p16[13], p16[14], p16[15]],
+                    burning: false,
                 };
                 out.push((CITY_KEY | AQUEDUCT_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
                 self.city_count += 1;
@@ -386,8 +445,14 @@ impl PropModels {
                 world.m[2] = [-s * k, 0.0, co * k, fz as f32];
                 let p16 = DEFAULT_INSTANCE_PARAMS;
                 let mesh = MeshInstance {
-                    model: model.clone(), casts_shadow: true, lod: true, p4: [p16[0], p16[1], p16[2], p16[3]], p5: [p16[4], p16[5], p16[6], p16[7]],
-                    p6: [p16[8], p16[9], p16[10], p16[11]], p7: [p16[12], p16[13], p16[14], p16[15]], burning: false,
+                    model: model.clone(),
+                    casts_shadow: true,
+                    lod: true,
+                    p4: [p16[0], p16[1], p16[2], p16[3]],
+                    p5: [p16[4], p16[5], p16[6], p16[7]],
+                    p6: [p16[8], p16[9], p16[10], p16[11]],
+                    p7: [p16[12], p16[13], p16[14], p16[15]],
+                    burning: false,
                 };
                 out.push((CITY_KEY | SPRAWL_KEY | i as u64, world, Payload::MeshInstance(mesh), u64::MAX));
                 self.city_count += 1;

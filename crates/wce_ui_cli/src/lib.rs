@@ -9,14 +9,14 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use serde_json::{Value, json};
+use wce_ui_model::DrawOptions;
+use wce_ui_model::fonts::FontLibrary;
 use wce_ui_model::images::{self, Rgba8Image};
 use wce_ui_model::layout::Rect;
-use wce_ui_model::related::{self, RelKind, Relation, RelationIndex};
 use wce_ui_model::model::EntryKind;
-use wce_ui_model::fonts::FontLibrary;
-use wce_ui_model::skins;
-use wce_ui_model::DrawOptions;
+use wce_ui_model::related::{self, RelKind, Relation, RelationIndex};
 use wce_ui_model::render::{RenderOptions, render};
+use wce_ui_model::skins;
 use wce_ui_model::{Entry, UiModel};
 use wce_vfs::{Config, GameProfile, Vfs};
 
@@ -77,26 +77,45 @@ fn arg_b(a: &Value, k: &str) -> Option<bool> {
 
 fn is_ui_path(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
-    path.starts_with("ui/") && (!name.contains('.') || name.ends_with(".cml") || name.ends_with(".fc") || name.ends_with(".twui") || name.ends_with(".twui.images"))
+    path.starts_with("ui/")
+        && (!name.contains('.')
+            || name.ends_with(".cml")
+            || name.ends_with(".fc")
+            || name.ends_with(".twui")
+            || name.ends_with(".twui.images"))
 }
 
 impl Session {
     pub fn new(game_dir: Option<PathBuf>) -> Self {
         let settings = wce_foundation::settings::Settings::load_default();
         let game_dir = game_dir.or_else(|| settings.game_dir());
-        Self { game_dir, game: settings.game_profile(), vfs: None, fonts: FontLibrary::default(), docs: vec![], next_id: 1, images: HashMap::new(), relations: None }
+        Self {
+            game_dir,
+            game: settings.game_profile(),
+            vfs: None,
+            fonts: FontLibrary::default(),
+            docs: vec![],
+            next_id: 1,
+            images: HashMap::new(),
+            relations: None,
+        }
     }
 
     fn vfs(&mut self) -> Result<&Vfs, String> {
         if self.vfs.is_none() {
-            let dir = self.game_dir.clone().ok_or("the game folder is not set: pass --game <folder>, set WCE_GAME, or run the editor once")?;
+            let dir =
+                self.game_dir.clone().ok_or("the game folder is not set: pass --game <folder>, set WCE_GAME, or run the editor once")?;
             let mut cfg = Config::new(dir, self.game.clone());
             if let Ok(o) = std::env::var("WCE_OVERLAY") {
                 cfg.overlay_folders = o.split(';').map(str::trim).filter(|s| !s.is_empty()).map(std::path::PathBuf::from).collect();
             }
             // the game's release packs, and the mods named in WCE_MOD_PACKS (; separated file names); not the launcher's list
             cfg.use_mods = false;
-            cfg.mod_packs = Some(std::env::var("WCE_MOD_PACKS").map(|m| m.split(';').map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect()).unwrap_or_default());
+            cfg.mod_packs = Some(
+                std::env::var("WCE_MOD_PACKS")
+                    .map(|m| m.split(';').map(|n| n.trim().to_owned()).filter(|n| !n.is_empty()).collect())
+                    .unwrap_or_default(),
+            );
             let v = Vfs::mount(&cfg).map_err(|e| e.to_string())?;
             self.vfs = Some(Rc::new(v));
         }
@@ -128,7 +147,11 @@ impl Session {
         let d = self.doc(id)?;
         let ents = d.model.entries();
         if let Some(i) = v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())) {
-            return ents.get(i as usize).cloned().map(|e| (i as usize, e)).ok_or_else(|| format!("no entry {i} (the layout has {})", ents.len()));
+            return ents
+                .get(i as usize)
+                .cloned()
+                .map(|e| (i as usize, e))
+                .ok_or_else(|| format!("no entry {i} (the layout has {})", ents.len()));
         }
         let s = v.as_str().ok_or("entry must be an index or a name")?;
         let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
@@ -151,7 +174,11 @@ impl Session {
         match matches.as_slice() {
             [i] => Ok((*i, ents[*i].clone())),
             [] => Err(format!("no entry named '{s}'")),
-            m => Err(format!("'{s}' names {} entries ({}); use an index or a longer path", m.len(), m.iter().take(8).map(|i| i.to_string()).collect::<Vec<_>>().join(", "))),
+            m => Err(format!(
+                "'{s}' names {} entries ({}); use an index or a longer path",
+                m.len(),
+                m.iter().take(8).map(|i| i.to_string()).collect::<Vec<_>>().join(", ")
+            )),
         }
     }
 
@@ -165,7 +192,21 @@ impl Session {
         let kind = if e.kind == EntryKind::Template { " [template]" } else { "" };
         let (sx, sy) = (r.x.round() as i32, r.y.round() as i32);
         let moved = if (sx, sy) != (e.ax, e.ay) { format!(" (stored {},{})", e.ax, e.ay) } else { String::new() };
-        format!("{}[{}] {}{} ({}) @{},{} {}x{}  screen {},{}{}", "  ".repeat(e.depth), i, e.name, kind, e.class, e.x, e.y, r.w.round() as i32, r.h.round() as i32, sx, sy, moved)
+        format!(
+            "{}[{}] {}{} ({}) @{},{} {}x{}  screen {},{}{}",
+            "  ".repeat(e.depth),
+            i,
+            e.name,
+            kind,
+            e.class,
+            e.x,
+            e.y,
+            r.w.round() as i32,
+            r.h.round() as i32,
+            sx,
+            sy,
+            moved
+        )
     }
 
     /// The other layouts that go with the layout `id` (it must come from the packs).
@@ -185,7 +226,13 @@ impl Session {
     }
 
     /// The reference layers for a render: (below, above).
-    fn related_layers(&mut self, id: &str, o: &DrawOptions, all: bool, alpha: f32) -> Result<(Vec<wce_ui_model::DrawItem>, Vec<wce_ui_model::DrawItem>), String> {
+    fn related_layers(
+        &mut self,
+        id: &str,
+        o: &DrawOptions,
+        all: bool,
+        alpha: f32,
+    ) -> Result<(Vec<wce_ui_model::DrawItem>, Vec<wce_ui_model::DrawItem>), String> {
         let rels: Vec<Relation> = self.relations_of(id)?.into_iter().filter(|r| all || !r.generic).collect();
         let main = self.doc(id)?.model.clone();
         let (mut below, mut above) = (vec![], vec![]);
@@ -273,12 +320,19 @@ impl Session {
                 let filter = arg_str(a, "filter").unwrap_or("").to_lowercase();
                 let limit = arg_i(a, "limit").unwrap_or(500) as usize;
                 let vfs = self.vfs()?;
-                let all: Vec<&str> = vfs.files().keys().map(|s| s.as_str()).filter(|p| is_ui_path(p) && p.to_lowercase().contains(&filter)).collect();
+                let all: Vec<&str> =
+                    vfs.files().keys().map(|s| s.as_str()).filter(|p| is_ui_path(p) && p.to_lowercase().contains(&filter)).collect();
                 let shown: Vec<&str> = all.iter().take(limit).copied().collect();
-                Ok(Reply::text(format!("{} files{}\n{}", all.len(), if all.len() > shown.len() { format!(" (first {})", shown.len()) } else { String::new() }, shown.join("\n"))))
+                Ok(Reply::text(format!(
+                    "{} files{}\n{}",
+                    all.len(),
+                    if all.len() > shown.len() { format!(" (first {})", shown.len()) } else { String::new() },
+                    shown.join("\n")
+                )))
             }
             "open" => {
-                let src = arg_str(a, "source").ok_or("'source' is required: a path in the game packs (ui/campaign ui/x) or a file on disk")?;
+                let src =
+                    arg_str(a, "source").ok_or("'source' is required: a path in the game packs (ui/campaign ui/x) or a file on disk")?;
                 let (bytes, origin) = if Path::new(src).is_file() {
                     (std::fs::read(src).map_err(|e| e.to_string())?, Origin::Disk(PathBuf::from(src)))
                 } else {
@@ -289,7 +343,8 @@ impl Session {
                 let model = if wce_ui_format::looks_like_ui(&bytes) {
                     UiModel::from_bytes(&bytes)?
                 } else {
-                    UiModel::from_xml(std::str::from_utf8(&bytes).map_err(|_| "not a UI file and not UTF-8 XML")?).map_err(|e| format!("{src}: {e}"))?
+                    UiModel::from_xml(std::str::from_utf8(&bytes).map_err(|_| "not a UI file and not UTF-8 XML")?)
+                        .map_err(|e| format!("{src}: {e}"))?
                 };
                 let id = arg_str(a, "id").map(str::to_string).unwrap_or_else(|| {
                     let i = format!("ui{}", self.next_id);
@@ -355,7 +410,8 @@ impl Session {
                     return Ok(Reply::text("(this file has no components: it is not a layout)"));
                 }
                 let rects = d.model.geometry(&ents, &self.draw_options(&id, a)?);
-                let lines: Vec<String> = ents.iter().enumerate().filter(|(_, e)| e.depth <= max).map(|(i, e)| Self::row(i, e, &rects[i])).collect();
+                let lines: Vec<String> =
+                    ents.iter().enumerate().filter(|(_, e)| e.depth <= max).map(|(i, e)| Self::row(i, e, &rects[i])).collect();
                 Ok(Reply::text(lines.join("\n")))
             }
             "entry" => {
@@ -363,8 +419,14 @@ impl Session {
                 let (i, en) = self.entry_arg(&id, a, "entry")?;
                 let d = self.doc(&id)?;
                 let ents = d.model.entries();
-                let kids: Vec<String> = ents.iter().enumerate().filter(|(_, e)| e.parent == Some(i)).map(|(k, e)| format!("[{k}] {}", e.name)).collect();
-                let fields: Vec<Value> = d.model.fields(&en.path).into_iter().map(|f| json!({"field": f.idx, "type": f.tag, "label": f.label, "value": f.value})).collect();
+                let kids: Vec<String> =
+                    ents.iter().enumerate().filter(|(_, e)| e.parent == Some(i)).map(|(k, e)| format!("[{k}] {}", e.name)).collect();
+                let fields: Vec<Value> = d
+                    .model
+                    .fields(&en.path)
+                    .into_iter()
+                    .map(|f| json!({"field": f.idx, "type": f.tag, "label": f.label, "value": f.value}))
+                    .collect();
                 Ok(Reply::json(json!({
                     "index": i, "name": en.name, "class": en.class, "id": en.id,
                     "offset": [en.x, en.y], "size": [en.w, en.h], "screen": [en.ax, en.ay],
@@ -376,14 +438,20 @@ impl Session {
                 let (_, en) = self.entry_arg(&id, a, "entry")?;
                 let d = self.doc(&id)?;
                 let sp = d.model.default_state_path(&en.path).ok_or("entry has no state")?;
-                let fields: Vec<Value> = d.model.fields(&sp).into_iter().map(|f| json!({"field": f.idx, "type": f.tag, "label": f.label, "value": f.value})).collect();
+                let fields: Vec<Value> = d
+                    .model
+                    .fields(&sp)
+                    .into_iter()
+                    .map(|f| json!({"field": f.idx, "type": f.tag, "label": f.label, "value": f.value}))
+                    .collect();
                 Ok(Reply::json(json!({ "state_path": sp, "properties": props_json(&d.model, &sp), "fields": fields })))
             }
             "set_field" => {
                 let id = self.id_of(a)?;
                 let (_, en) = self.entry_arg(&id, a, "entry")?;
                 let field = arg_i(a, "field").ok_or("'field' (the number from entry/state) is required")? as usize;
-                let value = a.get("value").map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).ok_or("'value' is required")?;
+                let value =
+                    a.get("value").map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).ok_or("'value' is required")?;
                 let in_state = arg_b(a, "state").unwrap_or(false);
                 let d = self.doc_mut(&id)?;
                 let path = if in_state { d.model.default_state_path(&en.path).ok_or("entry has no state")? } else { en.path.clone() };
@@ -395,21 +463,33 @@ impl Session {
                 let id = self.id_of(a)?;
                 let (_, en) = self.entry_arg(&id, a, "entry")?;
                 let name = arg_str(a, "name").ok_or("'name' (a property name from ui_entry or ui_state) is required")?.to_string();
-                let value = a.get("value").map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).ok_or("'value' is required")?;
+                let value =
+                    a.get("value").map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).ok_or("'value' is required")?;
                 let d = self.doc_mut(&id)?;
                 let path = match arg_str(a, "state") {
                     None | Some("") => {
-                        if arg_str(a, "scope") == Some("state") { d.model.default_state_path(&en.path).ok_or("entry has no state")? } else { en.path.clone() }
+                        if arg_str(a, "scope") == Some("state") {
+                            d.model.default_state_path(&en.path).ok_or("entry has no state")?
+                        } else {
+                            en.path.clone()
+                        }
                     }
-                    Some(st) => d.model.state_paths(&en.path).into_iter().find(|(_, n)| n == st).map(|(p, _)| p).ok_or_else(|| format!("the component has no state called {st:?}"))?,
+                    Some(st) => d
+                        .model
+                        .state_paths(&en.path)
+                        .into_iter()
+                        .find(|(_, n)| n == st)
+                        .map(|(p, _)| p)
+                        .ok_or_else(|| format!("the component has no state called {st:?}"))?,
                 };
 
                 let props = d.model.properties(&path);
-                let p = props
-                    .items
-                    .iter()
-                    .find(|p| p.name.eq_ignore_ascii_case(&name))
-                    .ok_or_else(|| format!("no property {name:?}; the names are: {}", props.items.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")))?;
+                let p = props.items.iter().find(|p| p.name.eq_ignore_ascii_case(&name)).ok_or_else(|| {
+                    format!(
+                        "no property {name:?}; the names are: {}",
+                        props.items.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+                    )
+                })?;
                 let change = p.edit_from_text(&value)?;
                 d.model.edit_prop(&path, p.idx, change)?;
                 d.dirty = true;
@@ -420,7 +500,11 @@ impl Session {
                 let (_, en) = self.entry_arg(&id, a, "entry")?;
                 let d = self.doc_mut(&id)?;
                 if a.get("x").is_some() || a.get("y").is_some() {
-                    d.model.set_offset(&en.path, arg_i(a, "x").unwrap_or(en.x as i64) as i32, arg_i(a, "y").unwrap_or(en.y as i64) as i32)?;
+                    d.model.set_offset(
+                        &en.path,
+                        arg_i(a, "x").unwrap_or(en.x as i64) as i32,
+                        arg_i(a, "y").unwrap_or(en.y as i64) as i32,
+                    )?;
                 }
                 if a.get("w").is_some() || a.get("h").is_some() {
                     d.model.set_size(&en.path, arg_i(a, "w").unwrap_or(en.w as i64) as i32, arg_i(a, "h").unwrap_or(en.h as i64) as i32)?;
@@ -475,7 +559,9 @@ impl Session {
                 let id = self.id_of(a)?;
                 let (_, en) = self.entry_arg(&id, a, "entry")?;
                 let d = self.doc_mut(&id)?;
-                let p = d.model.move_sibling(&en.path, arg_i(a, "delta").ok_or("'delta' is required (negative: earlier, drawn below)")? as i32)?;
+                let p = d
+                    .model
+                    .move_sibling(&en.path, arg_i(a, "delta").ok_or("'delta' is required (negative: earlier, drawn below)")? as i32)?;
                 d.dirty = true;
                 self.created(&id, &p)
             }
@@ -555,13 +641,21 @@ impl Session {
                 let vfs = self.vfs.clone();
                 let mut fonts = std::mem::take(&mut self.fonts);
                 let canvas = {
-                    let mut resolve = |font: &str, size: i32, cat: &str| vfs.as_deref().and_then(|v| fonts.resolve(v, font, size, cat)).map(|r| (r.cuf, r.color));
+                    let mut resolve = |font: &str, size: i32, cat: &str| {
+                        vfs.as_deref().and_then(|v| fonts.resolve(v, font, size, cat)).map(|r| (r.cuf, r.color))
+                    };
                     render(&model, &o, &mut |p| self.find_image(p, skin.as_deref()), &mut resolve)
                 };
                 self.fonts = fonts;
                 let png = canvas.to_png()?;
                 let missing = self.images.values().filter(|v| v.is_none()).count();
-                let text = format!("{}x{} px, scale {}{}", canvas.w, canvas.h, scale, if missing > 0 { format!("; {missing} picture(s) not found (drawn as magenta outlines)") } else { String::new() });
+                let text = format!(
+                    "{}x{} px, scale {}{}",
+                    canvas.w,
+                    canvas.h,
+                    scale,
+                    if missing > 0 { format!("; {missing} picture(s) not found (drawn as magenta outlines)") } else { String::new() }
+                );
                 if let Some(path) = arg_str(a, "out") {
                     std::fs::write(path, &png).map_err(|e| e.to_string())?;
                     return Ok(Reply { text: format!("{text}; written to {path}"), png: Some(png) });
@@ -569,19 +663,30 @@ impl Session {
                 Ok(Reply { text, png: Some(png) })
             }
             "skins" => {
-                let lines: Vec<String> = skins::list(self.vfs()?, None).iter().map(|s| format!("{} ({} pictures)", s.name, s.files)).collect();
+                let lines: Vec<String> =
+                    skins::list(self.vfs()?, None).iter().map(|s| format!("{} ({} pictures)", s.name, s.files)).collect();
                 Ok(Reply::text(lines.join("\n")))
             }
             "related" => {
                 let id = self.id_of(a)?;
                 let rels = self.relations_of(&id)?;
                 if rels.is_empty() {
-                    return Ok(Reply::text("no layout in the packs is named after a component of this one, or has a component named after this one"));
+                    return Ok(Reply::text(
+                        "no layout in the packs is named after a component of this one, or has a component named after this one",
+                    ));
                 }
 
                 let lines: Vec<String> = rels
                     .iter()
-                    .map(|r| format!("{} {} (via component '{}'){}", if r.kind == RelKind::Child { "child " } else { "parent" }, r.path, r.via, if r.generic { " [generic name: probably not a real link]" } else { "" }))
+                    .map(|r| {
+                        format!(
+                            "{} {} (via component '{}'){}",
+                            if r.kind == RelKind::Child { "child " } else { "parent" },
+                            r.path,
+                            r.via,
+                            if r.generic { " [generic name: probably not a real link]" } else { "" }
+                        )
+                    })
                     .collect();
                 Ok(Reply::text(lines.join("\n")))
             }
@@ -603,17 +708,43 @@ impl Session {
 
                 let mut lines = vec![];
                 for (i, an) in &list {
-                    lines.push(format!("[{}] {} animation '{}': {} ms, {} frame(s){}", i, ents[*i].name, an.name, an.duration(), an.frames.len(), if an.propagate { ", propagates to descendants" } else { "" }));
+                    lines.push(format!(
+                        "[{}] {} animation '{}': {} ms, {} frame(s){}",
+                        i,
+                        ents[*i].name,
+                        an.name,
+                        an.duration(),
+                        an.frames.len(),
+                        if an.propagate { ", propagates to descendants" } else { "" }
+                    ));
                     if a.get("entry").is_some() {
                         for (k, f) in an.frames.iter().enumerate() {
                             let mut what = vec![];
-                            for (bit, name) in [(1u32, "colour"), (2, "position"), (4, "size"), (8, "shader"), (0x10, "rotation"), (0x20, "crossfade"), (0x40, "opacity"), (0x80, "text colour")] {
+                            for (bit, name) in [
+                                (1u32, "colour"),
+                                (2, "position"),
+                                (4, "size"),
+                                (8, "shader"),
+                                (0x10, "rotation"),
+                                (0x20, "crossfade"),
+                                (0x40, "opacity"),
+                                (0x80, "text colour"),
+                            ] {
                                 if f.mask & bit != 0 {
                                     what.push(name);
                                 }
                             }
 
-                            let trig: Vec<String> = f.triggers.iter().map(|t| format!("component {} state '{}' animation '{}' property '{}'", t.component, t.state, t.animation, t.property)).collect();
+                            let trig: Vec<String> = f
+                                .triggers
+                                .iter()
+                                .map(|t| {
+                                    format!(
+                                        "component {} state '{}' animation '{}' property '{}'",
+                                        t.component, t.state, t.animation, t.property
+                                    )
+                                })
+                                .collect();
                             lines.push(format!(
                                 "  frame {k}: {} ms, {:?}{}, moves [{}], offset {:?}{}, size {:?}, colour {:?}{}",
                                 f.time,
@@ -639,7 +770,8 @@ impl Session {
                     let (_, en) = self.resolve(&id, e)?;
                     let names = d.model.entry_state_names(&en.path);
                     let def = d.model.default_state_index(&en.path);
-                    let lines: Vec<String> = names.iter().enumerate().map(|(i, n)| format!("{i} {n}{}", if i == def { " (default)" } else { "" })).collect();
+                    let lines: Vec<String> =
+                        names.iter().enumerate().map(|(i, n)| format!("{i} {n}{}", if i == def { " (default)" } else { "" })).collect();
                     return Ok(Reply::text(lines.join("\n")));
                 }
                 let lines: Vec<String> = d.model.state_names().iter().map(|(n, c)| format!("{n}: {c} components")).collect();
@@ -651,18 +783,18 @@ impl Session {
                 let bytes = m.to_bytes()?;
                 let back = UiModel::from_bytes(&bytes)?;
                 let same = back.to_xml() == m.to_xml();
-                Ok(Reply::text(if same { format!("ok: {} bytes, converts to binary and back to the same XML", bytes.len()) } else { "the binary parses to different XML".into() }))
+                Ok(Reply::text(if same {
+                    format!("ok: {} bytes, converts to binary and back to the same XML", bytes.len())
+                } else {
+                    "the binary parses to different XML".into()
+                }))
             }
             "save" => {
                 let id = self.id_of(a)?;
                 let as_xml = arg_str(a, "format") == Some("xml");
                 let (data, name_hint) = {
                     let d = self.doc_mut(&id)?;
-                    if as_xml {
-                        (d.model.to_xml().into_bytes(), "xml")
-                    } else {
-                        (d.model.to_bytes()?, "bin")
-                    }
+                    if as_xml { (d.model.to_xml().into_bytes(), "xml") } else { (d.model.to_bytes()?, "bin") }
                 };
                 let origin = self.doc(&id)?.origin.clone();
                 if let Some(pack) = arg_str(a, "pack") {
@@ -673,7 +805,10 @@ impl Session {
                         Some(p) => wce_vfs::normalize(p),
                         None => match &origin {
                             Origin::Pack(p) => p.clone(),
-                            _ => return Err("'path' (where the file goes inside the pack) is required for a layout that did not come from the packs".into()),
+                            _ => return Err(
+                                "'path' (where the file goes inside the pack) is required for a layout that did not come from the packs"
+                                    .into(),
+                            ),
                         },
                     };
                     wce_ui_model::pack::write_pack(self.game, Path::new(pack), &inside, &data)?;
@@ -684,7 +819,9 @@ impl Session {
                     Some(o) => PathBuf::from(o),
                     None => match &origin {
                         Origin::Disk(p) if !as_xml => p.clone(),
-                        _ => return Err(format!("say where to save: 'out' (a file on disk) or 'pack' (a mod pack); format is {name_hint}")),
+                        _ => {
+                            return Err(format!("say where to save: 'out' (a file on disk) or 'pack' (a mod pack); format is {name_hint}"));
+                        }
                     },
                 };
                 std::fs::write(&out, &data).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -697,7 +834,12 @@ impl Session {
 
     /// The drawing options of a call: `screen`, `state`, `show_hidden`, `show_templates`, `show` / `hide` (lists of components) and `entry_state`.
     fn draw_options(&self, id: &str, a: &Value) -> Result<DrawOptions, String> {
-        let mut o = DrawOptions { show_hidden: arg_b(a, "show_hidden").unwrap_or(false), show_templates: arg_b(a, "show_templates").unwrap_or(false), state: arg_str(a, "state").map(str::to_string), ..Default::default() };
+        let mut o = DrawOptions {
+            show_hidden: arg_b(a, "show_hidden").unwrap_or(false),
+            show_templates: arg_b(a, "show_templates").unwrap_or(false),
+            state: arg_str(a, "state").map(str::to_string),
+            ..Default::default()
+        };
         let as_list = |v: &Value| -> Vec<Value> {
             match v {
                 Value::Array(x) => x.clone(),
@@ -705,7 +847,11 @@ impl Session {
             }
         };
         if let Some(sz) = arg_str(a, "screen") {
-            let (w, h) = sz.to_ascii_lowercase().split_once('x').and_then(|(w, h)| Some((w.trim().parse::<i32>().ok()?, h.trim().parse::<i32>().ok()?))).ok_or("'screen' is like 1920x1080")?;
+            let (w, h) = sz
+                .to_ascii_lowercase()
+                .split_once('x')
+                .and_then(|(w, h)| Some((w.trim().parse::<i32>().ok()?, h.trim().parse::<i32>().ok()?)))
+                .ok_or("'screen' is like 1920x1080")?;
             if !(64..=8192).contains(&w) || !(64..=8192).contains(&h) {
                 return Err("'screen' must be between 64 and 8192 pixels on each side".into());
             }
@@ -743,7 +889,6 @@ impl Session {
         Ok(Reply::text(Self::row(i, &ents[i], &rects[i]).trim_start().to_string()))
     }
 }
-
 
 /// The properties of the element at `path` as JSON: the game's name, group, kind of control, shown value and choices.
 fn props_json(m: &wce_ui_model::UiModel, path: &[usize]) -> Vec<Value> {

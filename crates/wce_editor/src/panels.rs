@@ -37,7 +37,10 @@ impl ImGuiInspector {
 
     /// A field's mark note, when it is marked (or a field it is part of).
     fn mark(&self, field: &str) -> Option<&str> {
-        self.marks.iter().find(|(f, _)| field == f || field.strip_prefix(f.as_str()).is_some_and(|r| r.starts_with('.'))).map(|(_, n)| n.as_str())
+        self.marks
+            .iter()
+            .find(|(f, _)| field == f || field.strip_prefix(f.as_str()).is_some_and(|r| r.starts_with('.')))
+            .map(|(_, n)| n.as_str())
     }
 
     /// A label: in the warning colour with the note as its tooltip when its field is marked.
@@ -53,7 +56,11 @@ impl ImGuiInspector {
             }
 
             None => {
-                if disabled || dim { gui::text_disabled(label) } else { gui::text(label) }
+                if disabled || dim {
+                    gui::text_disabled(label)
+                } else {
+                    gui::text(label)
+                }
                 self.show_hint();
             }
         }
@@ -390,8 +397,17 @@ pub struct PanelState {
 impl Default for PanelState {
     fn default() -> Self {
         Self {
-            asset_folder: String::new(), asset_filter: String::new(), asset_only_tool: true, assets_built_for: String::new(), asset_folders: vec![],
-            asset_files: vec![], show_info: true, show_warn: true, show_error: true, log_seen: 0, command_line: String::new(),
+            asset_folder: String::new(),
+            asset_filter: String::new(),
+            asset_only_tool: true,
+            assets_built_for: String::new(),
+            asset_folders: vec![],
+            asset_files: vec![],
+            show_info: true,
+            show_warn: true,
+            show_error: true,
+            log_seen: 0,
+            command_line: String::new(),
         }
     }
 }
@@ -504,7 +520,13 @@ pub fn assets(e: &mut Editor) {
 
     gui::same_line();
     gui::text_disabled(&format!("/{}", st.asset_folder));
-    let key = format!("{}|{}|{}{}|{file_count}", st.asset_folder, st.asset_filter, e.active_tool_id(), if st.asset_only_tool { "1" } else { "0" });
+    let key = format!(
+        "{}|{}|{}{}|{file_count}",
+        st.asset_folder,
+        st.asset_filter,
+        e.active_tool_id(),
+        if st.asset_only_tool { "1" } else { "0" }
+    );
     if key != st.assets_built_for {
         rebuild_assets(e, &mut st);
         st.assets_built_for = key;

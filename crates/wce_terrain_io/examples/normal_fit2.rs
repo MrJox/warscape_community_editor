@@ -65,7 +65,10 @@ fn main() {
             ratios.sort_by(|a, b| a.partial_cmp(b).unwrap());
             println!(
                 "  span {span} {name}: corr x {:+.3}, corr y {:+.3}, median (nx/nz)/dx {:.7} ({} samples)",
-                a1 / (b1 * c1).sqrt(), a2 / (b2 * c2).sqrt(), ratios.get(ratios.len() / 2).copied().unwrap_or(0.0), ratios.len()
+                a1 / (b1 * c1).sqrt(),
+                a2 / (b2 * c2).sqrt(),
+                ratios.get(ratios.len() / 2).copied().unwrap_or(0.0),
+                ratios.len()
             );
         }
     }

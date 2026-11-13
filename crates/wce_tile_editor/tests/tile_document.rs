@@ -5,8 +5,8 @@ use std::io::Write;
 
 use wce_editor_core::document::Document;
 use wce_editor_core::inspector::{InspectTarget, Inspector};
-use wce_scene::render_scene::SourceRef;
 use wce_foundation::math::{Double3, Float3};
+use wce_scene::render_scene::SourceRef;
 use wce_tile::tile_project::TileProject;
 use wce_tile_editor::tile_document::{BrushKind, BrushSettings, Create, TileDocument, item_of};
 
@@ -39,7 +39,15 @@ fn open() -> (tempfile::TempDir, TileDocument) {
     std::fs::File::create(dir.path().join("tile.ted")).unwrap().write_all(TED.as_bytes()).unwrap();
     let (w, h) = (64u32, 64u32);
     let pixels = (0..h).flat_map(|y| (0..w).flat_map(move |x| ((x * 300 + y * 200) as u16).to_be_bytes())).collect();
-    let png = wce_formats::png_file::PngFile { width: w, height: h, bit_depth: 16, color_type: 0, pixels, pixels_edited: true, ..Default::default() };
+    let png = wce_formats::png_file::PngFile {
+        width: w,
+        height: h,
+        bit_depth: 16,
+        color_type: 0,
+        pixels,
+        pixels_edited: true,
+        ..Default::default()
+    };
     std::fs::write(dir.path().join("height_map_0.png"), png.write().unwrap()).unwrap();
     let doc = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
     (dir, doc)
@@ -108,7 +116,6 @@ fn a_stroke_interrupted_by_another_edit_is_two_entries_with_their_own_heights() 
     d.history_mut().undo();
     assert_eq!(heights()(&d), h0);
 }
-
 
 /// An inspector that records the rows and applies one scripted edit.
 #[derive(Default)]
@@ -239,10 +246,24 @@ fn the_grid_of_a_building_is_teds_and_every_row_edits_the_file() {
     let b = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
     let rows = inspect(&mut d, b, None);
     for f in [
-        "flags", "surface_mode", "position", "euler", "key", "opacity", "bounds_colour", "burn", "burn_amount", "destruction_level",
-        "indestructible", "toggleable", "capture_location",
+        "flags",
+        "surface_mode",
+        "position",
+        "euler",
+        "key",
+        "opacity",
+        "bounds_colour",
+        "burn",
+        "burn_amount",
+        "destruction_level",
+        "indestructible",
+        "toggleable",
+        "capture_location",
     ] {
-        assert!(rows.iter().any(|r| r == f || r == &format!("text:{f}") || r.starts_with(&format!("{f}."))), "{f} is in the grid: {rows:?}");
+        assert!(
+            rows.iter().any(|r| r == f || r == &format!("text:{f}") || r.starts_with(&format!("{f}."))),
+            "{f} is in the grid: {rows:?}"
+        );
     }
 
     // TEd shows these, wce does not: nothing uses them (docs/re/buildings.md); the file keeps them as they are.
@@ -333,7 +354,8 @@ fn the_scale_gizmo_works_on_everything_with_a_scale() {
     let (_dir, mut d) = open();
     let layer = d.tile().tscene().find_all("LayerInstance")[0];
     let add = |d: &mut TileDocument, tag: &str, scale: &str| {
-        let attrs = [("key", "k"), ("scale", scale), ("surface_mode", "MSM_FREEFORM"), ("flags", " OIF_VISIBLE|OIF_ACTIVE")].map(|(k, v)| (k.to_owned(), v.to_owned()));
+        let attrs = [("key", "k"), ("scale", scale), ("surface_mode", "MSM_FREEFORM"), ("flags", " OIF_VISIBLE|OIF_ACTIVE")]
+            .map(|(k, v)| (k.to_owned(), v.to_owned()));
         let mut scene = wce_tile::ted_scene::TedScene::parse_any(d.tile().tscene().save()).unwrap();
         scene.add_instance(Some(layer), tag, &attrs).unwrap();
         scene.save()
@@ -350,7 +372,8 @@ fn the_scale_gizmo_works_on_everything_with_a_scale() {
     }
 
     let find = |d: &TileDocument, tag: &str| d.tile().tscene().find_all(tag)[0];
-    let (mesh, decal, vfx, tree) = (find(&d, "SIMPLE_MESH_INSTANCE"), find(&d, "ProjectedDecalInstance"), find(&d, "VFXInstance"), find(&d, "VEGETATION_INSTANCE"));
+    let (mesh, decal, vfx, tree) =
+        (find(&d, "SIMPLE_MESH_INSTANCE"), find(&d, "ProjectedDecalInstance"), find(&d, "VFXInstance"), find(&d, "VEGETATION_INSTANCE"));
     let items = [mesh, decal, vfx, tree].map(|e| SourceRef { doc: d.id(), item: item_of(e) });
     let scale = |d: &TileDocument, e: usize| d.tile().tscene().doc().get(e, "scale").unwrap();
     let before = d.history().size();
@@ -447,7 +470,12 @@ fn a_preview_turns_without_being_made_again_and_as_the_item_will_be() {
 
 /// What a scene shows of the items: (item, kind, its matrix's bits), sorted.
 fn items_shown(scene: &wce_scene::render_scene::RenderScene) -> Vec<(u64, String, Vec<u32>)> {
-    let mut out = scene.entities().iter().filter(|e| e.source.item != 0).map(|e| (e.source.item, format!("{:?}", e.kind()), e.world.m.iter().flatten().map(|v| v.to_bits()).collect())).collect::<Vec<_>>();
+    let mut out = scene
+        .entities()
+        .iter()
+        .filter(|e| e.source.item != 0)
+        .map(|e| (e.source.item, format!("{:?}", e.kind()), e.world.m.iter().flatten().map(|v| v.to_bits()).collect()))
+        .collect::<Vec<_>>();
     out.sort();
     out
 }
@@ -562,7 +590,14 @@ fn edits_of_a_part_of_the_tile_leave_the_scene_as_a_new_publish_would() {
     d.history_mut().undo();
     same(&mut d, &mut scene, "the first one's undo");
 
-    let copy = d.add_polygon(Some(first), "AI_HINT_POLYGON_INSTANCE", "", &[Float3::new(1.0, 0.0, 1.0), Float3::new(5.0, 0.0, 1.0), Float3::new(1.0, 0.0, 5.0)]).unwrap();
+    let copy = d
+        .add_polygon(
+            Some(first),
+            "AI_HINT_POLYGON_INSTANCE",
+            "",
+            &[Float3::new(1.0, 0.0, 1.0), Float3::new(5.0, 0.0, 1.0), Float3::new(1.0, 0.0, 5.0)],
+        )
+        .unwrap();
     same(&mut d, &mut scene, "a new polygon");
     d.history_mut().undo();
     same(&mut d, &mut scene, "its undo");
@@ -683,7 +718,8 @@ fn a_flip_leaves_a_splines_unused_handles_turns_a_walls_side_and_mirrors_a_shelt
     let original = self::text(&d);
     let unit = d.tile().unit();
     let sc = d.tile().tscene();
-    let (river, wall, shelter) = (sc.find_all("SplineRiverInstance")[0], sc.find_all("WceWallSpline")[0], sc.find_all("CivilianShelter")[0]);
+    let (river, wall, shelter) =
+        (sc.find_all("SplineRiverInstance")[0], sc.find_all("WceWallSpline")[0], sc.find_all("CivilianShelter")[0]);
     let world = |d: &TileDocument, p: Double3| {
         let w = world_transform(d.tile().tscene(), river);
         w.position + w.rotation * p
@@ -764,7 +800,10 @@ fn a_flip_keeps_what_follows_the_landscape_as_high_above_the_ground() {
 
     let moved = world(&d, land, after[0].position).y - first_y;
     assert!(moved.abs() > 0.1, "the ground is another height there: {moved}");
-    assert!((world(&d, land, after[0].control_out).y - world(&d, land, after[0].position).y - handle_above).abs() < 1e-2, "a handle goes with its point");
+    assert!(
+        (world(&d, land, after[0].control_out).y - world(&d, land, after[0].position).y - handle_above).abs() < 1e-2,
+        "a handle goes with its point"
+    );
     assert_eq!(after[1].control_out, Double3::ZERO);
 
     for (p, y) in points(&d, free).iter().zip(&free_y) {
@@ -875,10 +914,16 @@ fn a_fires_char_moves_the_instances_and_nothing_else() {
     let layer = scene.add_layer(d.id(), "tile");
     d.publish(&mut scene, layer);
     let building = d.tile().tscene().find_all("BUILDING_INSTANCE")[0];
-    let burn = |scene: &RenderScene| scene.entities().iter().find_map(|e| match &e.payload {
-        Payload::MeshInstance(mi) if e.source.item == item_of(building) => Some((mi.p6[0], mi.burning)),
-        _ => None,
-    }).unwrap();
+    let burn = |scene: &RenderScene| {
+        scene
+            .entities()
+            .iter()
+            .find_map(|e| match &e.payload {
+                Payload::MeshInstance(mi) if e.source.item == item_of(building) => Some((mi.p6[0], mi.burning)),
+                _ => None,
+            })
+            .unwrap()
+    };
 
     d.tile_mut().update_fire(&mut scene, 0.0);
     d.tile_mut().fire_start(building, 0.0);
@@ -944,7 +989,9 @@ fn a_flip_mirrors_places_and_headings_undoes_at_once_and_can_copy() {
     assert!(near(pos(&d, in1), mirrored(p1)) && near(pos(&d, in2), mirrored(p2)), "{:?}", pos(&d, in1));
     assert!(near(forward(&d, in1), Double3::new(-f1.x, f1.y, f1.z)), "the heading is reflected: {:?} from {f1:?}", forward(&d, in1));
     let r = world_transform(d.tile().tscene(), in1).rotation;
-    let det = r.col(0).x * (r.col(1).y * r.col(2).z - r.col(1).z * r.col(2).y) - r.col(0).y * (r.col(1).x * r.col(2).z - r.col(1).z * r.col(2).x) + r.col(0).z * (r.col(1).x * r.col(2).y - r.col(1).y * r.col(2).x);
+    let det = r.col(0).x * (r.col(1).y * r.col(2).z - r.col(1).z * r.col(2).y)
+        - r.col(0).y * (r.col(1).x * r.col(2).z - r.col(1).z * r.col(2).x)
+        + r.col(0).z * (r.col(1).x * r.col(2).y - r.col(1).y * r.col(2).x);
     assert!((det - 1.0).abs() < 1e-6, "still a rotation: {det}");
 
     // On the landscape: its height is the ground's over there (a_flip_keeps_what_follows_the_landscape_as_high_above_the_ground).
@@ -979,7 +1026,12 @@ fn a_whole_tile_flip_mirrors_the_items_and_the_ground_under_them_and_undoes_at_o
     let p0 = pos(&d);
     let (hx, hz) = ((p0.x / unit) as f32, (p0.z / unit) as f32);
     let ground_before = d.tile().terrain_height(hx, hz);
-    let heights = |d: &TileDocument| (0..9).flat_map(|i| (0..9).map(move |j| (i as f32 * ex / 8.0, j as f32 * ez / 8.0))).map(|(x, z)| d.tile().terrain_height(x, z)).collect::<Vec<_>>();
+    let heights = |d: &TileDocument| {
+        (0..9)
+            .flat_map(|i| (0..9).map(move |j| (i as f32 * ex / 8.0, j as f32 * ez / 8.0)))
+            .map(|(x, z)| d.tile().terrain_height(x, z))
+            .collect::<Vec<_>>()
+    };
     let before_heights = heights(&d);
     let size = d.history().size();
 
@@ -988,7 +1040,10 @@ fn a_whole_tile_flip_mirrors_the_items_and_the_ground_under_them_and_undoes_at_o
         assert_eq!(d.history().size(), size + 1, "one undo entry");
         let p = pos(&d);
         let (mx, mz) = if axis == TileFlipAxis::X { (ex - hx, hz) } else { (hx, ez - hz) };
-        assert!(((p.x / unit) as f32 - mx).abs() < 1e-3 && ((p.z / unit) as f32 - mz).abs() < 1e-3, "{axis:?}: the house goes across: {p:?}");
+        assert!(
+            ((p.x / unit) as f32 - mx).abs() < 1e-3 && ((p.z / unit) as f32 - mz).abs() < 1e-3,
+            "{axis:?}: the house goes across: {p:?}"
+        );
         assert!((p.y - p0.y).abs() < 1e-6, "{axis:?}: a landscape item keeps its height, the ground went with it");
         let ground = d.tile().terrain_height(mx, mz);
         assert!((ground - ground_before).abs() < 1e-3, "{axis:?}: the ground under it went with it: {ground} vs {ground_before}");
@@ -1017,7 +1072,12 @@ fn a_whole_tile_flip_mirrors_the_terrain_layers_and_undoes_them() {
 
     let (_dir, mut d) = open();
     let (ex, ez) = (d.project().extent_x() as f32, d.project().extent_z() as f32);
-    let heights = |d: &TileDocument| (0..9).flat_map(|i| (0..9).map(move |j| (i as f32 * ex / 8.0, j as f32 * ez / 8.0))).map(|(x, z)| d.tile().terrain_height(x, z)).collect::<Vec<_>>();
+    let heights = |d: &TileDocument| {
+        (0..9)
+            .flat_map(|i| (0..9).map(move |j| (i as f32 * ex / 8.0, j as f32 * ez / 8.0)))
+            .map(|(x, z)| d.tile().terrain_height(x, z))
+            .collect::<Vec<_>>()
+    };
     let layer = d.add_terrain_layer(LayerType::Height, "bump").unwrap();
     d.set_working_layer(LayerType::Height, Some(layer));
     d.brush_step(BrushKind::Raise, ex * 0.25, ez * 0.25, BrushSettings::default(), 0.05);
@@ -1170,7 +1230,6 @@ fn a_layer_is_moved_by_its_position_and_everything_below_it_follows() {
     assert!((d.tile().world_position(b).x - before.x).abs() < 1e-4);
 }
 
-
 /// Two pieces (and a second destruction level of the first) for the building key "house".
 struct HouseFiles;
 
@@ -1188,7 +1247,10 @@ impl wce_vfs::files::Files for HouseFiles {
             return vec![];
         }
 
-        ["house_piece01_destruct01", "house_piece01_destruct02", "house_piece02_destruct01"].iter().map(|f| format!("rigidmodels/buildings/house/{f}.rigid_model_v2")).collect()
+        ["house_piece01_destruct01", "house_piece01_destruct02", "house_piece02_destruct01"]
+            .iter()
+            .map(|f| format!("rigidmodels/buildings/house/{f}.rigid_model_v2"))
+            .collect()
     }
 }
 
@@ -1208,7 +1270,9 @@ fn the_pieces_of_a_building_have_their_own_properties() {
     // One item per piece (the destruction states of a piece are not pieces).
     let count = d.tile().model_of(b).filter(|m| m.ok).map_or(0, |m| m.pieces.len());
     assert_eq!(count, 2, "two pieces");
-    let pieces = (0..count).map(|i| wce_scene::render_scene::SourceRef { doc: d.id(), item: wce_tile_editor::tile_document::piece_item(b, i) }).collect::<Vec<_>>();
+    let pieces = (0..count)
+        .map(|i| wce_scene::render_scene::SourceRef { doc: d.id(), item: wce_tile_editor::tile_document::piece_item(b, i) })
+        .collect::<Vec<_>>();
 
     // The grid of a piece is TEd's: flags, surface_mode, position, orientation, scale, opacity, burn ..., seasons, destruction_level.
     let rows = {
@@ -1216,7 +1280,20 @@ fn the_pieces_of_a_building_have_their_own_properties() {
         d.inspect(pieces[0], &mut r);
         r.fields
     };
-    for f in ["flags.visible", "surface_mode", "position", "orientation", "scale", "opacity", "burn", "burn_amount", "bounds_colour", "show_collision", "seasons.Winter", "destruction_level"] {
+    for f in [
+        "flags.visible",
+        "surface_mode",
+        "position",
+        "orientation",
+        "scale",
+        "opacity",
+        "burn",
+        "burn_amount",
+        "bounds_colour",
+        "show_collision",
+        "seasons.Winter",
+        "destruction_level",
+    ] {
         assert!(rows.iter().any(|r| r == f), "{f} is in the grid of a piece: {rows:?}");
     }
 
@@ -1368,7 +1445,11 @@ fn every_kind_is_created_with_its_parts() {
         }
 
         if kind == "DeploymentZonePolygonInstanceGroup" {
-            assert_eq!(sc.doc().get(made, "deployment_category").as_deref(), Some("DAC_DEFAULT"), "a new zone is Default, not TEd's Ambush");
+            assert_eq!(
+                sc.doc().get(made, "deployment_category").as_deref(),
+                Some("DAC_DEFAULT"),
+                "a new zone is Default, not TEd's Ambush"
+            );
         }
 
         if let Create::Point(p) = shape {
@@ -1392,7 +1473,8 @@ fn shapes_go_only_into_their_holders() {
     let original = text(&d);
     let graph = d.tile().tscene().scene_graph().unwrap();
     let at = Create::Point(Float3::new(10.0, 0.0, 10.0));
-    let square = Create::Line(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(8.0, 0.0, 0.0), Float3::new(8.0, 0.0, 8.0), Float3::new(0.0, 0.0, 8.0)]);
+    let square =
+        Create::Line(vec![Float3::new(0.0, 0.0, 0.0), Float3::new(8.0, 0.0, 0.0), Float3::new(8.0, 0.0, 8.0), Float3::new(0.0, 0.0, 8.0)]);
     let names = |d: &TileDocument, h: usize| {
         let sc = d.tile().tscene();
         sc.children(h).into_iter().map(|c| sc.name(c)).collect::<Vec<_>>()
@@ -1488,13 +1570,18 @@ fn a_bounding_box_is_a_rectangle_and_a_boundary_fits_the_ground() {
 
     // A no-go region 4 m east of the box: the Boundary stops at its edge (not grown onto it, as onto a building's face; within the
     // raster's 2 units), and reaches further the other ways.
-    let nogo = [(cx + 10.0, cz - 30.0), (cx + 40.0, cz - 30.0), (cx + 40.0, cz + 30.0), (cx + 10.0, cz + 30.0)].map(|(x, z)| Float3::new(x, 0.0, z));
+    let nogo = [(cx + 10.0, cz - 30.0), (cx + 40.0, cz - 30.0), (cx + 40.0, cz + 30.0), (cx + 10.0, cz + 30.0)]
+        .map(|(x, z)| Float3::new(x, 0.0, z));
     d.add_polygon(Some(graph), "NOGO_REGION_POLYGON_INSTANCE", "", &nogo).unwrap();
     let _ = d.take_selection_hint();
     let b = d.adjust_node_boundary(find(&d), None).unwrap();
     assert_eq!(d.take_selection_hint(), Some(vec![item_of(find(&d))]), "the node stays selected, not its new Boundary");
     let sc = d.tile().tscene();
-    assert_eq!(sc.children(find(&d)).into_iter().map(|c| sc.name(c)).collect::<Vec<_>>(), ["Bounding Box", "Boundary"], "replaced in place");
+    assert_eq!(
+        sc.children(find(&d)).into_iter().map(|c| sc.name(c)).collect::<Vec<_>>(),
+        ["Bounding Box", "Boundary"],
+        "replaced in place"
+    );
     assert_eq!(shape(&d, "Boundary"), b);
     let p = d.tile().polygon_world_points(b);
     let u = d.tile().unit() as f32;
@@ -1512,10 +1599,12 @@ fn a_bounding_box_is_a_rectangle_and_a_boundary_fits_the_ground() {
     assert!(!p.iter().any(inside), "a point inside the other node's Boundary: {p:?}");
     let mid = Float3::new(cx - 40.0, 0.0, cz);
     // Where its outline crosses the line through both centres.
-    let xs = (0..p.len()).filter_map(|i| {
-        let (a, b) = (p[i], p[(i + 1) % p.len()]);
-        ((a.z > cz) != (b.z > cz)).then(|| a.x + (cz - a.z) / (b.z - a.z) * (b.x - a.x))
-    }).collect::<Vec<_>>();
+    let xs = (0..p.len())
+        .filter_map(|i| {
+            let (a, b) = (p[i], p[(i + 1) % p.len()]);
+            ((a.z > cz) != (b.z > cz)).then(|| a.x + (cz - a.z) / (b.z - a.z) * (b.x - a.x))
+        })
+        .collect::<Vec<_>>();
     assert!(xs.iter().all(|&x| x >= cx - 28.0 - m), "level with it, it is east of it: {xs:?} ({mid:?})");
     let holds = |o: Float3| {
         let mut inside = false;
@@ -1631,7 +1720,11 @@ fn a_capture_boundary_takes_preset_shapes() {
     assert!((s.size - 20.0).abs() < 0.01 && (s.centre.x - cx).abs() < 0.01, "{s:?}");
 
     let near = |a: f32, b: f32, tol: f32| (a - b).abs() < tol;
-    let cases = [(BoundaryKind::Semicircle, 15.0, 90.0, 21, Some("PS_SEMICIRCLE")), (BoundaryKind::Square, 10.0, 30.0, 4, Some("PS_RECTANGLE")), (BoundaryKind::Circle, 12.0, 0.0, 20, Some("PS_CIRCLE"))];
+    let cases = [
+        (BoundaryKind::Semicircle, 15.0, 90.0, 21, Some("PS_SEMICIRCLE")),
+        (BoundaryKind::Square, 10.0, 30.0, 4, Some("PS_RECTANGLE")),
+        (BoundaryKind::Circle, 12.0, 0.0, 20, Some("PS_CIRCLE")),
+    ];
     for (kind, size, turn, points, ted) in cases {
         let b = d.capture_boundary(loc).unwrap();
         let _ = d.take_selection_hint();
@@ -1652,12 +1745,20 @@ fn a_capture_boundary_takes_preset_shapes() {
 
     // A semicircle turned 90: its round side towards +x.
     let b = d.capture_boundary(loc).unwrap();
-    let semi = d.set_boundary_shape(b, BoundaryShape { kind: BoundaryKind::Semicircle, centre: Float3::new(cx, 0.0, cz), size: 10.0, turn: 90.0 }, None).unwrap();
+    let semi = d
+        .set_boundary_shape(
+            b,
+            BoundaryShape { kind: BoundaryKind::Semicircle, centre: Float3::new(cx, 0.0, cz), size: 10.0, turn: 90.0 },
+            None,
+        )
+        .unwrap();
     let pts = d.tile().polygon_world_points(semi);
     assert!(pts.iter().all(|p| p.x >= cx - 0.01) && near(pts[10].x, cx + 10.0, 0.01), "{pts:?}");
 
     // A polygon keeps its points, freely edited.
-    let poly = d.set_boundary_shape(semi, BoundaryShape { kind: BoundaryKind::Polygon, centre: Float3::default(), size: 0.0, turn: 0.0 }, None).unwrap();
+    let poly = d
+        .set_boundary_shape(semi, BoundaryShape { kind: BoundaryKind::Polygon, centre: Float3::default(), size: 0.0, turn: 0.0 }, None)
+        .unwrap();
     assert_eq!(d.tile().tscene().doc().get(poly, "polygon_shape").as_deref(), Some("PS_POLYGON"));
     assert_eq!(d.tile().polygon_world_points(poly).len(), 21);
 
@@ -1815,11 +1916,24 @@ fn a_road_pieces_guides_show_on_the_prefab_stage_only() {
     // A base piece placed in a tile, and the same piece as the Prefab tool's stage holds it.
     let piece = String::from_utf8(group_text("road_base_straight", &base_guides("straight"))).unwrap();
     let staged = piece.replacen("<UserInstanceGroup ", "<UserInstanceGroup wce_stage_root=\"true\" ", 1);
-    let inside = format!("{piece}{staged}").lines().map(|l| format!("                        {l}
-")).collect::<String>();
-    let ted = TED.replacen("                    </children>
-                </LayerInstance>", &format!("{inside}                    </children>
-                </LayerInstance>"), 1);
+    let inside = format!("{piece}{staged}")
+        .lines()
+        .map(|l| {
+            format!(
+                "                        {l}
+"
+            )
+        })
+        .collect::<String>();
+    let ted = TED.replacen(
+        "                    </children>
+                </LayerInstance>",
+        &format!(
+            "{inside}                    </children>
+                </LayerInstance>"
+        ),
+        1,
+    );
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("tile.ted"), &ted).unwrap();
     let mut d = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
@@ -1854,12 +1968,18 @@ fn a_wall_is_drawn_as_the_create_panel_draws_it() {
     assert_eq!(t.tscene().polygon_points(wall).len(), 3);
     assert_eq!(t.tscene().layer_path(wall), "Buildings");
     let get = |a: &str| t.tscene().doc().get(wall, a).unwrap_or_default();
-    assert_eq!((get("wall_base").as_str(), get("polygon_closed").as_str(), get("wall_tolerance").as_str()), ("roman_fort_straight", "0", "0.5"));
+    assert_eq!(
+        (get("wall_base").as_str(), get("polygon_closed").as_str(), get("wall_tolerance").as_str()),
+        ("roman_fort_straight", "0", "0.5")
+    );
 
     // A new wall is a kit wall (*Procedural* off: docs/plans/kit_walls.md), which has no procedural layout; with *Procedural* on it has one.
     assert!(!wce_walls::scene::is_procedural(t.tscene(), wall) && t.wall_layout(wall).is_none(), "a kit wall");
     let pts = vec![Float3::new(10.0, 0.0, 50.0), Float3::new(40.0, 0.0, 50.0), Float3::new(60.0, 0.0, 70.0)];
-    let attrs = std::collections::BTreeMap::from([("wall_base".to_owned(), "roman_fort_straight".to_owned()), (wce_tile::new_instances::WALL_PROCEDURAL.to_owned(), "true".to_owned())]);
+    let attrs = std::collections::BTreeMap::from([
+        ("wall_base".to_owned(), "roman_fort_straight".to_owned()),
+        (wce_tile::new_instances::WALL_PROCEDURAL.to_owned(), "true".to_owned()),
+    ]);
     let procedural = d.create_with(WALL_SPLINE, layer, &Create::Line(pts), "", &attrs).unwrap();
     assert!(d.tile().wall_layout(procedural).is_some(), "the procedural wall has a layout");
 }
@@ -1940,7 +2060,12 @@ fn ground_at(d: &TileDocument, x: f64, z: f64) -> f64 {
 }
 
 fn prefab_owners(d: &TileDocument) -> Vec<String> {
-    d.project().layers.as_ref().and_then(|l| l.height.as_ref()).map(|s| s.layers.iter().filter(|l| l.owner.starts_with("prefab:")).map(|l| l.owner.clone()).collect()).unwrap_or_default()
+    d.project()
+        .layers
+        .as_ref()
+        .and_then(|l| l.height.as_ref())
+        .map(|s| s.layers.iter().filter(|l| l.owner.starts_with("prefab:")).map(|l| l.owner.clone()).collect())
+        .unwrap_or_default()
 }
 
 #[test]
@@ -2154,7 +2279,9 @@ fn on_a_stage_what_is_on_the_landscape_stands_on_the_ground_and_saves_as_it_was(
     d.begin_stage(None).unwrap();
     assert!(!d.modified());
 
-    let find = |d: &TileDocument, name: &str| d.tile().tscene().find_all("BUILDING_INSTANCE").into_iter().find(|&e| d.tile().tscene().name(e) == name).unwrap();
+    let find = |d: &TileDocument, name: &str| {
+        d.tile().tscene().find_all("BUILDING_INSTANCE").into_iter().find(|&e| d.tile().tscene().name(e) == name).unwrap()
+    };
     let world_y = |d: &TileDocument, e: usize| wce_tile::world_transform::world_transform(d.tile().tscene(), e).position.y;
     let (border, post) = (find(&d, "border"), find(&d, "post"));
     assert!((world_y(&d, border) - s.height).abs() < 1e-3, "on the ground: {}", world_y(&d, border));
@@ -2176,7 +2303,14 @@ fn a_procedural_roads_points_have_handles_that_turn_it_and_go_with_them() {
 
     let (_dir, mut d) = open();
     let original = text(&d);
-    let road = d.add_polygon(None, wce_tile::new_instances::ROAD_SPLINE, "", &[Float3::new(10.0, 0.0, 10.0), Float3::new(30.0, 0.0, 10.0), Float3::new(50.0, 0.0, 20.0)]).unwrap();
+    let road = d
+        .add_polygon(
+            None,
+            wce_tile::new_instances::ROAD_SPLINE,
+            "",
+            &[Float3::new(10.0, 0.0, 10.0), Float3::new(30.0, 0.0, 10.0), Float3::new(50.0, 0.0, 20.0)],
+        )
+        .unwrap();
     let new = text(&d);
     assert!(d.has_handles(road) && !d.is_spline(road), "handles, not TEd's spline panel");
 

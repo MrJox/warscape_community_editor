@@ -36,9 +36,9 @@ use crate::terrain_material::{retexture, terrain_normal_image};
 use wce_formats::tile_climate::ClimateList;
 
 use crate::climate_db::effective_climates;
+use template::{BOX_ABOVE, BOX_BELOW, Grid, SKIRT, Template, mean_of_material};
 use wce_formats::tile_entry::TileTextureGroup;
 use wce_vfs::files::Files;
-use template::{BOX_ABOVE, BOX_BELOW, Grid, SKIRT, Template, mean_of_material};
 
 pub use stream::{ChunkChange, ChunkKey, Lod, Streamer};
 pub use wce_tile::sources::tile_dir;
@@ -177,7 +177,8 @@ fn bounds(a: &Affine2, x0: f64, z0: f64, x1: f64, z1: f64) -> [f64; 4] {
 /// A mesh instance's POSITION5..7 as a tree's untilted matrix (rows), when they are one: a 3 x 3 part that is not degenerate.
 fn untilted(rows: &[[f32; 4]; 3]) -> Option<Float4x4> {
     let r = |i: usize, j: usize| f64::from(rows[i][j]);
-    let det = r(0, 0) * (r(1, 1) * r(2, 2) - r(1, 2) * r(2, 1)) - r(0, 1) * (r(1, 0) * r(2, 2) - r(1, 2) * r(2, 0)) + r(0, 2) * (r(1, 0) * r(2, 1) - r(1, 1) * r(2, 0));
+    let det = r(0, 0) * (r(1, 1) * r(2, 2) - r(1, 2) * r(2, 1)) - r(0, 1) * (r(1, 0) * r(2, 2) - r(1, 2) * r(2, 0))
+        + r(0, 2) * (r(1, 0) * r(2, 1) - r(1, 1) * r(2, 0));
     if det.abs() < 1e-9 {
         return None;
     }
@@ -194,7 +195,15 @@ fn position(m: &Float4x4) -> (f64, f64) {
 
 /// A field of the map (its LF, its sea LF) in the open frame, on the field's own lattice (the frame's axes are the map's turned by whole
 /// quarter turns, so its samples are the map's pixels): `LF * height - VERTICAL_OFFSET` m, relative to the median LF under the open tile.
-fn lf_map(map: &PlacedMap, f: Option<&LfField>, height: f64, from_map: &Affine2, to_map: &Affine2, lf_level: f64, unit: f64) -> Option<LfMap> {
+fn lf_map(
+    map: &PlacedMap,
+    f: Option<&LfField>,
+    height: f64,
+    from_map: &Affine2,
+    to_map: &Affine2,
+    lf_level: f64,
+    unit: f64,
+) -> Option<LfMap> {
     let vertical_offset = map.vertical_offset;
     let f = f.filter(|f| f.w > 1 && f.h > 1)?;
     let (ppx, ppy) = (f64::from(f.w) / f64::from(map.width), f64::from(f.h) / f64::from(map.height));
@@ -203,13 +212,17 @@ fn lf_map(map: &PlacedMap, f: Option<&LfField>, height: f64, from_map: &Affine2,
     let (nx, nz) = (((b[2] - b[0]) / s).round() as i32 + 1, ((b[3] - b[1]) / s).round() as i32 + 1);
     // The frame lays the field's samples out one to one (the Terrain tool's: the map's own frame, rows the other way up): the field's
     // samples themselves, shared (the campaign's LF is 375 MB), else resampled.
-    let sample = |i: f64, j: f64| { let (cx, cy) = to_map.apply(b[0] + i * s, b[1] + j * s); (cx * ppx, cy * ppy) };
+    let sample = |i: f64, j: f64| {
+        let (cx, cy) = to_map.apply(b[0] + i * s, b[1] + j * s);
+        (cx * ppx, cy * ppy)
+    };
     let near = |a: (f64, f64), b: (f64, f64)| (a.0 - b.0).abs() < 1e-3 && (a.1 - b.1).abs() < 1e-3;
     let same_size = u32::try_from(nx).ok() == Some(f.w) && u32::try_from(nz).ok() == Some(f.h);
     let last_y = f64::from(f.h - 1);
     let shared = if !same_size {
         None
-    } else if near(sample(0.0, 0.0), (0.0, last_y)) && near(sample(1.0, 0.0), (1.0, last_y)) && near(sample(0.0, 1.0), (0.0, last_y - 1.0)) {
+    } else if near(sample(0.0, 0.0), (0.0, last_y)) && near(sample(1.0, 0.0), (1.0, last_y)) && near(sample(0.0, 1.0), (0.0, last_y - 1.0))
+    {
         Some(true)
     } else if near(sample(0.0, 0.0), (0.0, 0.0)) && near(sample(1.0, 0.0), (1.0, 0.0)) && near(sample(0.0, 1.0), (0.0, 1.0)) {
         Some(false)
@@ -219,8 +232,16 @@ fn lf_map(map: &PlacedMap, f: Option<&LfField>, height: f64, from_map: &Affine2,
 
     if let Some(flip) = shared {
         let mut lf = LfMap {
-            x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values: LfSamples::shared(f.values.clone(), flip), scale: (height / unit) as f32,
-            offset: ((vertical_offset + lf_level) / unit) as f32, id: next_id(&NORMAL_IDS), ..Default::default()
+            x0: b[0] as f32,
+            z0: b[1] as f32,
+            step: s as f32,
+            nx,
+            nz,
+            values: LfSamples::shared(f.values.clone(), flip),
+            scale: (height / unit) as f32,
+            offset: ((vertical_offset + lf_level) / unit) as f32,
+            id: next_id(&NORMAL_IDS),
+            ..Default::default()
         };
 
         lf_normals(&mut lf);
@@ -245,8 +266,16 @@ fn lf_map(map: &PlacedMap, f: Option<&LfField>, height: f64, from_map: &Affine2,
     drop(field);
 
     let mut lf = LfMap {
-        x0: b[0] as f32, z0: b[1] as f32, step: s as f32, nx, nz, values: LfSamples::new(values), scale: (height / unit) as f32, offset: ((vertical_offset + lf_level) / unit) as f32,
-        id: next_id(&NORMAL_IDS), ..Default::default()
+        x0: b[0] as f32,
+        z0: b[1] as f32,
+        step: s as f32,
+        nx,
+        nz,
+        values: LfSamples::new(values),
+        scale: (height / unit) as f32,
+        offset: ((vertical_offset + lf_level) / unit) as f32,
+        id: next_id(&NORMAL_IDS),
+        ..Default::default()
     };
 
     lf_normals(&mut lf);
@@ -408,11 +437,21 @@ pub struct Frame {
 }
 
 impl Frame {
-
     /// The frame of a request (slow on the campaign map: its LF map; run it away from the UI thread).
     pub fn new(rq: &ContextRequest, files: Option<Arc<dyn Files>>) -> Self {
         let map = rq.map.clone();
-        let me = MapPlacement { location: String::new(), variation: String::new(), x: rq.spot.x, y: rq.spot.y, w: rq.cells.0, h: rq.cells.1, rotation: rq.spot.rotation, flipped: false, climate: 0, any_variation: false };
+        let me = MapPlacement {
+            location: String::new(),
+            variation: String::new(),
+            x: rq.spot.x,
+            y: rq.spot.y,
+            w: rq.cells.0,
+            h: rq.cells.1,
+            rotation: rq.spot.rotation,
+            flipped: false,
+            climate: 0,
+            any_variation: false,
+        };
         let open = me.rect();
         let to_map = me.to_map();
         let from_map = to_map.inverse();
@@ -423,14 +462,40 @@ impl Frame {
 
         let index = MapIndex::new(&map, open);
         // A campaign map's tiles (`terrain/tiles/campaign/...`) take the campaign database's climates and textures.
-        let kind = if map.placements.iter().take(64).any(|p| p.location.replace('\\', "/").to_ascii_lowercase().contains("/tiles/campaign/")) { "campaign" } else { "battle" };
-        let kit_climates = ClimateList::load(&rq.raw_root.join(format!("terrain/tiles/{kind}/_tile_database/_settings.xml"))).unwrap_or_default();
+        let kind =
+            if map.placements.iter().take(64).any(|p| p.location.replace('\\', "/").to_ascii_lowercase().contains("/tiles/campaign/")) {
+                "campaign"
+            } else {
+                "battle"
+            };
+        let kit_climates =
+            ClimateList::load(&rq.raw_root.join(format!("terrain/tiles/{kind}/_tile_database/_settings.xml"))).unwrap_or_default();
         let climates = effective_climates(kit_climates, kind, files.as_deref());
         let MapIndex { owner, climate, by_chunk, reach } = index;
         Self {
-            map, unit: rq.unit, open, to_map, from_map, lf_level, lf_range, lf, sea_lf, by_chunk, owner, reach, climate, climates, look: rq.look.clone(),
-            groups: rq.groups.clone(), files, plain_base: Mutex::new(rq.plain.clone()), plain_normal_id: next_id(&NORMAL_IDS), zeros: Mutex::default(),
-            plain_bases: Mutex::default(), plain_colours: Mutex::default(), plains: Mutex::default(),
+            map,
+            unit: rq.unit,
+            open,
+            to_map,
+            from_map,
+            lf_level,
+            lf_range,
+            lf,
+            sea_lf,
+            by_chunk,
+            owner,
+            reach,
+            climate,
+            climates,
+            look: rq.look.clone(),
+            groups: rq.groups.clone(),
+            files,
+            plain_base: Mutex::new(rq.plain.clone()),
+            plain_normal_id: next_id(&NORMAL_IDS),
+            zeros: Mutex::default(),
+            plain_bases: Mutex::default(),
+            plain_colours: Mutex::default(),
+            plains: Mutex::default(),
         }
     }
 
@@ -439,10 +504,29 @@ impl Frame {
     pub fn with_map(&self, map: Arc<PlacedMap>) -> Self {
         let MapIndex { owner, climate, by_chunk, reach } = MapIndex::new(&map, self.open);
         Self {
-            map, unit: self.unit, open: self.open, to_map: self.to_map, from_map: self.from_map, lf_level: self.lf_level, lf_range: self.lf_range,
-            lf: self.lf.clone(), sea_lf: self.sea_lf.clone(), by_chunk, owner, reach, climate, climates: self.climates.clone(), look: self.look.clone(),
-            groups: self.groups.clone(), files: self.files.clone(), plain_base: Mutex::new(self.plain_base.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()),
-            plain_normal_id: self.plain_normal_id, zeros: Mutex::default(), plain_bases: Mutex::default(), plain_colours: Mutex::default(), plains: Mutex::default(),
+            map,
+            unit: self.unit,
+            open: self.open,
+            to_map: self.to_map,
+            from_map: self.from_map,
+            lf_level: self.lf_level,
+            lf_range: self.lf_range,
+            lf: self.lf.clone(),
+            sea_lf: self.sea_lf.clone(),
+            by_chunk,
+            owner,
+            reach,
+            climate,
+            climates: self.climates.clone(),
+            look: self.look.clone(),
+            groups: self.groups.clone(),
+            files: self.files.clone(),
+            plain_base: Mutex::new(self.plain_base.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()),
+            plain_normal_id: self.plain_normal_id,
+            zeros: Mutex::default(),
+            plain_bases: Mutex::default(),
+            plain_colours: Mutex::default(),
+            plains: Mutex::default(),
         }
     }
 
@@ -474,7 +558,10 @@ impl Frame {
 
     /// A placement's climate: the map's when the database has its textures, else the look's.
     pub fn climate_name(&self, i: usize) -> String {
-        self.map.climate_of(&self.map.placements[i]).filter(|c| self.climates.find(c).is_some()).map_or_else(|| self.look.climate.clone(), str::to_owned)
+        self.map
+            .climate_of(&self.map.placements[i])
+            .filter(|c| self.climates.find(c).is_some())
+            .map_or_else(|| self.look.climate.clone(), str::to_owned)
     }
 
     /// The plain material's base for a climate and its id: the base itself for the look's climate (or NO_CLIMATE), else the base with that
@@ -514,10 +601,12 @@ impl Frame {
         let (w, h) = (self.map.width as i32, self.map.height as i32);
         let area = [area[0].max(0), area[1].max(0), area[2].min(w), area[3].min(h)];
         let (aw, ah) = ((area[2] - area[0]).max(0) as usize, (area[3] - area[1]).max(0) as usize);
-        let mut free: Vec<bool> = (0..aw * ah).map(|k| {
-            let (x, y) = (area[0] + (k % aw) as i32, area[1] + (k / aw) as i32);
-            take(self.owner[(y * w + x) as usize], x, y)
-        }).collect();
+        let mut free: Vec<bool> = (0..aw * ah)
+            .map(|k| {
+                let (x, y) = (area[0] + (k % aw) as i32, area[1] + (k / aw) as i32);
+                take(self.owner[(y * w + x) as usize], x, y)
+            })
+            .collect();
 
         let mut out = vec![];
         for y in 0..ah {
@@ -584,7 +673,9 @@ impl Frame {
         let (me, c) = (self.owner_of(key), [key.0 * CHUNK, key.1 * CHUNK, (key.0 + 1) * CHUNK, (key.1 + 1) * CHUNK]);
         let inside = |x: i32, y: i32| x >= c[0] && x < c[2] && y >= c[1] && y < c[3];
         let cut = |x: i32, y: i32| except.iter().any(|r| x >= r[0] && x < r[2] && y >= r[1] && y < r[3]);
-        self.runs_by_climate([c[0], c[1], c[2] + self.reach, c[3] + self.reach], |o, x, y| (if placed { o == me } else { o == 0 && inside(x, y) }) && !cut(x, y))
+        self.runs_by_climate([c[0], c[1], c[2] + self.reach, c[3] + self.reach], |o, x, y| {
+            (if placed { o == me } else { o == 0 && inside(x, y) }) && !cut(x, y)
+        })
     }
 
     /// The LF ground over a rectangle of map cells: a grid of zero heights on the LF's lattice (the shader adds the LF), the plain material
@@ -593,24 +684,46 @@ impl Frame {
         let b = bounds(&self.from_map, f64::from(r[0]), f64::from(r[1]), f64::from(r[2]), f64::from(r[3]));
         let step = self.lf.as_ref().map_or(CELL / 4.0, |lf| f64::from(lf.step));
         let (nx, nz) = (((b[2] - b[0]) / step).round() as i32 + 1, ((b[3] - b[1]) / step).round() as i32 + 1);
-        let heights = self.zeros.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz)).or_insert_with(|| Arc::new(vec![0.0; (nx * nz) as usize])).clone();
+        let heights = self
+            .zeros
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .entry((nx, nz))
+            .or_insert_with(|| Arc::new(vec![0.0; (nx * nz) as usize]))
+            .clone();
         let (base, plain_id) = self.plain_for(climate);
         let material = base.map(|base| {
-            self.plains.lock().unwrap_or_else(|p| p.into_inner()).entry((nx, nz, far, climate)).or_insert_with(|| {
-                // A little past its rectangle (one colour: its maps wrap onto themselves), so two of them side by side leave no pixel to
-                // neither (the resolve would draw it black).
-                // One id per climate and one normal id for all sizes: one set of maps on the GPU (a normal id per size had the renderer make
-                // the normal map again every time the next terrain's size differed).
-                let mut m = plain_material(&base, plain_id, self.plain_normal_id);
-                let (w, h) = (f64::from(nx - 1) * step, f64::from(nz - 1) * step);
-                let e = if far { FAR_MARGIN } else { PLAIN_MARGIN };
-                (m.x0, m.z0, m.x1, m.z1) = (-e, -e, w + e, h + e);
-                Arc::new(m)
-            }).clone()
+            self.plains
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .entry((nx, nz, far, climate))
+                .or_insert_with(|| {
+                    // A little past its rectangle (one colour: its maps wrap onto themselves), so two of them side by side leave no pixel to
+                    // neither (the resolve would draw it black).
+                    // One id per climate and one normal id for all sizes: one set of maps on the GPU (a normal id per size had the renderer make
+                    // the normal map again every time the next terrain's size differed).
+                    let mut m = plain_material(&base, plain_id, self.plain_normal_id);
+                    let (w, h) = (f64::from(nx - 1) * step, f64::from(nz - 1) * step);
+                    let e = if far { FAR_MARGIN } else { PLAIN_MARGIN };
+                    (m.x0, m.z0, m.x1, m.z1) = (-e, -e, w + e, h + e);
+                    Arc::new(m)
+                })
+                .clone()
         });
 
         let t = Terrain {
-            nx, nz, origin_x: 0.0, origin_z: 0.0, step: step as f32, heights, lod: true, tile_metres: 32.0, material, lf: self.lf.clone(), legacy: false, ..Default::default()
+            nx,
+            nz,
+            origin_x: 0.0,
+            origin_z: 0.0,
+            step: step as f32,
+            heights,
+            lod: true,
+            tile_metres: 32.0,
+            material,
+            lf: self.lf.clone(),
+            legacy: false,
+            ..Default::default()
         };
         let mut world = Float4x4::IDENTITY;
         (world.m[0][3], world.m[2][3]) = (b[0] as f32, b[1] as f32);
@@ -644,7 +757,13 @@ impl Frame {
         let v = |x: f64, z: f64| WaterVertex { x: x as f32, y, z: z as f32, u: x as f32, v: z as f32, fade: 1.0, ..Default::default() };
         // Its version follows its rectangle (the renderer lays a plane's chunks out again when it changes).
         let version = b.iter().fold(0xCBF2_9CE4_8422_2325u64, |h, v| (h ^ v.to_bits()).wrapping_mul(0x0100_0000_01B3));
-        let sea = Water { river: false, foam: 0.0, verts: vec![v(b[0], b[1]), v(b[2], b[1]), v(b[0], b[3]), v(b[2], b[3])], indices: vec![0, 2, 1, 1, 2, 3], version };
+        let sea = Water {
+            river: false,
+            foam: 0.0,
+            verts: vec![v(b[0], b[1]), v(b[2], b[1]), v(b[0], b[3]), v(b[2], b[3])],
+            indices: vec![0, 2, 1, 1, 2, 3],
+            version,
+        };
         (Float4x4::IDENTITY, Payload::Water(sea))
     }
 
@@ -672,8 +791,18 @@ impl Frame {
         };
 
         let terrain = Terrain {
-            nx: grid.nx, nz: grid.nz, origin_x: grid.ox, origin_z: grid.oz, step: grid.step, heights: grid.heights.clone(), lod: true, material: material.clone(), lf: self.lf.clone(),
-            legacy: false, custom: t.custom.clone(), ..Default::default()
+            nx: grid.nx,
+            nz: grid.nz,
+            origin_x: grid.ox,
+            origin_z: grid.oz,
+            step: grid.step,
+            heights: grid.heights.clone(),
+            lod: true,
+            material: material.clone(),
+            lf: self.lf.clone(),
+            legacy: false,
+            custom: t.custom.clone(),
+            ..Default::default()
         };
 
         // A sea tile (the `sea` set) on the sea's LF, not the land's: the game draws its sea geometry pass with the battle's
@@ -729,7 +858,8 @@ impl Frame {
         }
 
         let r = p.rect();
-        let mut v: Vec<f64> = (r[1] * 4..r[3] * 4).flat_map(|y| (r[0] * 4..r[2] * 4).map(move |x| (x, y)))
+        let mut v: Vec<f64> = (r[1] * 4..r[3] * 4)
+            .flat_map(|y| (r[0] * 4..r[2] * 4).map(move |x| (x, y)))
             .map(|(x, y)| self.map.lf_metres((f64::from(x) + 0.5) / 4.0, (f64::from(y) + 0.5) / 4.0))
             .collect();
         v.sort_by(f64::total_cmp);
@@ -796,15 +926,17 @@ impl Frame {
         let side = BLOCK * CHUNK;
         let area = [key.0 * CHUNK, key.1 * CHUNK, (key.0 * CHUNK + side).min(w), (key.1 * CHUNK + side).min(h)];
         let (aw, ah) = (area[2] - area[0], area[3] - area[1]);
-        let mut cells: Vec<Cell> = (0..aw * ah).map(|k| {
-            let (x, y) = (area[0] + k % aw, area[1] + k / aw);
-            let sea = match self.owner[(y * w + x) as usize] {
-                0 => self.climates.kind == "campaign",
-                o => o == 1,
-            };
+        let mut cells: Vec<Cell> = (0..aw * ah)
+            .map(|k| {
+                let (x, y) = (area[0] + k % aw, area[1] + k / aw);
+                let sea = match self.owner[(y * w + x) as usize] {
+                    0 => self.climates.kind == "campaign",
+                    o => o == 1,
+                };
 
-            if sea { Cell::Sea } else { Cell::Land }
-        }).collect();
+                if sea { Cell::Sea } else { Cell::Land }
+            })
+            .collect();
 
         // The placements over its cells, from their chunks: up to the largest tile before the block.
         let mut out = vec![];
@@ -916,7 +1048,8 @@ impl Frame {
 
                 // Under the sea its bed, not the climate's ground: the sea shows what is under it, and a bright bed took the coast away.
                 let under = matches!(cell, Cell::Sea) || self.lift(x, z) < self.sea_y();
-                let c = painted.unwrap_or_else(|| if under { SEA_BED } else { self.plain_colour(self.climate[(cy * w + cx) as usize], source.mean) });
+                let c = painted
+                    .unwrap_or_else(|| if under { SEA_BED } else { self.plain_colour(self.climate[(cy * w + cx) as usize], source.mean) });
                 texel.copy_from_slice(&c);
             }
         }
@@ -943,8 +1076,18 @@ impl Frame {
         // parted by far more than a skirt closes (black lines, block-wide, in the distance).
         let g = Grid { nx, nz, ox: 0.0, oz: 0.0, step: CELL as f32, heights: Arc::new(grid) }.skirted();
         let t = Terrain {
-            nx: g.nx, nz: g.nz, origin_x: g.ox, origin_z: g.oz, step: g.step, heights: g.heights, lod: false, tile_metres: 32.0, material: Some(Arc::new(m)),
-            lf: self.lf.clone(), legacy: false, ..Default::default()
+            nx: g.nx,
+            nz: g.nz,
+            origin_x: g.ox,
+            origin_z: g.oz,
+            step: g.step,
+            heights: g.heights,
+            lod: false,
+            tile_metres: 32.0,
+            material: Some(Arc::new(m)),
+            lf: self.lf.clone(),
+            legacy: false,
+            ..Default::default()
         };
         let mut world = Float4x4::IDENTITY;
         (world.m[0][3], world.m[2][3]) = (b[0] as f32, b[1] as f32);
@@ -955,7 +1098,9 @@ impl Frame {
     /// The colour of a climate's plain ground, as a baked material stores it: what its material averages to.
     fn plain_colour(&self, climate: u8, mean: &dyn Fn(&str) -> Option<[f32; 3]>) -> [u8; 4] {
         let mut known = self.plain_colours.lock().unwrap_or_else(|p| p.into_inner());
-        *known.entry(climate).or_insert_with(|| self.plain_for(climate).0.as_deref().map_or([128, 128, 128, 255], |m| mean_of_material(m, mean)))
+        *known
+            .entry(climate)
+            .or_insert_with(|| self.plain_for(climate).0.as_deref().map_or([128, 128, 128, 255], |m| mean_of_material(m, mean)))
     }
 
     /// A chunk at a level: its placements from their tiles (`template` gives a placement's tile, none when it could not be opened: its
@@ -978,8 +1123,13 @@ impl Frame {
     }
 
     /// A chunk at a level, as [`Self::build_chunk`] says, without the cells of tiles the blocks draw.
-    fn chunk_levels(&self, key: ChunkKey, lod: Lod, template: &dyn Fn(usize) -> Option<Arc<Template>>, is_custom: &dyn Fn(usize) -> bool) -> Vec<(Float4x4, Payload)> {
-
+    fn chunk_levels(
+        &self,
+        key: ChunkKey,
+        lod: Lod,
+        template: &dyn Fn(usize) -> Option<Arc<Template>>,
+        is_custom: &dyn Fn(usize) -> bool,
+    ) -> Vec<(Float4x4, Payload)> {
         // Far: the LF ground over everything it draws, in as few rectangles as its cells make; but a custom-mesh tile (the cliffs) keeps
         // its mesh (its coarsest level by distance): the LF under it is the land its cliff drops from, which drawn plain stood as a slab
         // over the sea. Their tiles are few (48 cliffs), opened once for all their placements. A sea tile's rectangle is on the sea's LF.
@@ -1043,14 +1193,25 @@ impl Frame {
     /// A line for the report: the LF under the open tile.
     pub fn lf_note(&self) -> String {
         format!(
-            "LF under the tile {:.1} m median, {:.1} m range{}", self.lf_level, self.lf_range,
-            if self.lf_range > 2.0 { format!(": its objects may be off the ground by up to {:.1} m", self.lf_range * 0.5 / self.unit) } else { String::new() }
+            "LF under the tile {:.1} m median, {:.1} m range{}",
+            self.lf_level,
+            self.lf_range,
+            if self.lf_range > 2.0 {
+                format!(": its objects may be off the ground by up to {:.1} m", self.lf_range * 0.5 / self.unit)
+            } else {
+                String::new()
+            }
         )
     }
 }
 
 /// Puts entities on a layer of the scene (cleared first); they can't be picked.
-pub fn publish(scene: &mut RenderScene, layer: wce_scene::render_scene::LayerId, entities: Vec<(Float4x4, Payload)>, doc: wce_scene::render_scene::DocumentId) {
+pub fn publish(
+    scene: &mut RenderScene,
+    layer: wce_scene::render_scene::LayerId,
+    entities: Vec<(Float4x4, Payload)>,
+    doc: wce_scene::render_scene::DocumentId,
+) {
     scene.clear_layer(layer);
     scene.reserve(entities.len());
     for (world, payload) in entities {

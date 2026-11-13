@@ -66,7 +66,12 @@ const RIVER: &str = "<SEGMENTED_SPLINE>\r\n    <SPLINE>\r\n        <POINT0 width
 const ENTRY: &str = "\u{feff}<TILE serialise_version='3' location='terrain\\tiles\\battle\\test\\2x1' tile_set='test' mask='' width='2' height='1' red='0.000000' green='0.500000' blue='1.000000' requires_infield_lodding='true' random_rotatable='true' custom_alpha_blend_texture='' scalable='false' encampable='false' custom_blend_tile=''>\r\n\t<TEXTURE_GROUP red='grass' green='forest' blue='mud' alpha='sand'/>\r\n\t<VARIATIONS>\r\n\t\t<VARIATION serialise_version='2' location='aa' min_height='-5.000000' scale='24.550000' normal_strength='2.000000' overlap_border_size='1.000000' raw_data_tri_density='128' blend_common='' index_common='' normal_common='' red='0.000000' green='0.000000' blue='0.000000' barbarian='false'/>\r\n\t</VARIATIONS>\r\n\t<TILE_LINK_TARGETS>\r\n\t\t<TILE_LINK_TARGET serialise_version='1' tile_set='river' x='0' y='1'/>\r\n\t</TILE_LINK_TARGETS>\r\n\t<TILE_LINKS/>\r\n</TILE>\r\n";
 
 fn height(w: u32, h: u32) -> Raster {
-    Raster { width: w, height: h, channels: 1, samples: Samples::U16((0..w * h).map(|i| (i.wrapping_mul(2654435761) >> 16) as u16).collect()) }
+    Raster {
+        width: w,
+        height: h,
+        channels: 1,
+        samples: Samples::U16((0..w * h).map(|i| (i.wrapping_mul(2654435761) >> 16) as u16).collect()),
+    }
 }
 
 fn png(r: &Raster) -> Vec<u8> {
@@ -138,7 +143,10 @@ fn what_the_model_holds() {
     assert_eq!(tile.variation.as_deref(), Some("aa"));
     assert_eq!(tile.maps.iter().map(|m| m.kind).collect::<Vec<_>>(), [MapKind::Height, MapKind::Blend, MapKind::GroundType, MapKind::Nogo]);
     assert_eq!(tile.rivers.len(), 1);
-    assert_eq!(tile.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["final_heights.dds", "lf_influence_map.png", "raw/sculpt.png"]);
+    assert_eq!(
+        tile.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+        ["final_heights.dds", "lf_influence_map.png", "raw/sculpt.png"]
+    );
     assert!(matches!(report.parts.iter().find(|p| p.0 == "lf_influence_map.png").unwrap().1, PartRead::Failed(_)));
 
     let scene = tile.scene.as_ref().unwrap();

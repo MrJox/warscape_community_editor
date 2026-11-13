@@ -62,13 +62,22 @@ fn run() -> Result<(), String> {
 
         let path = format!("rigidmodels/buildings/{key}/{key}_tech.cs2.parsed");
         let bytes = generated.get(&path).ok_or_else(|| format!("{key}: no logic file"))?;
-        let j = serde_json::to_value(Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        let j = serde_json::to_value(Cs2Parsed::decode(&mut Cursor::new(bytes), &None).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
         let w = world_transform(&scene, e);
         for d in j["pieces"].as_array().into_iter().flatten().flat_map(|p| p["destructs"].as_array().into_iter().flatten()) {
-            for f in d["file_refs"].as_array().into_iter().flatten().filter(|f| f["name"].as_str().unwrap_or_default().contains("bridgingcolumn")) {
+            for f in d["file_refs"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|f| f["name"].as_str().unwrap_or_default().contains("bridgingcolumn"))
+            {
                 let t = &f["transform"];
                 let g = |k: &str| t[k].as_f64().unwrap_or(0.0);
-                let (p, x) = (w.position + w.rotation * Double3::new(g("m30"), g("m31"), g("m32")), w.rotation * Double3::new(g("m00"), g("m01"), g("m02")));
+                let (p, x) = (
+                    w.position + w.rotation * Double3::new(g("m30"), g("m31"), g("m32")),
+                    w.rotation * Double3::new(g("m00"), g("m01"), g("m02")),
+                );
                 ends.push((e, key.clone(), p, [x.x, x.z]));
             }
         }
@@ -81,7 +90,11 @@ fn run() -> Result<(), String> {
         let b = vfs.read(&format!("rigidmodels/buildings/{k}/{k}_tech.cs2.parsed")).ok()?;
         wce_walls::logic::extent_x(&b).ok().map(|(a, b)| (f64::from(a), f64::from(b)))
     };
-    ends.extend(wce_walls::scene::anchors(&scene, &extent).into_iter().map(|a| (a.elem, a.key.clone(), Double3::new(a.at[0], a.at[1], a.at[2]), a.axis)));
+    ends.extend(
+        wce_walls::scene::anchors(&scene, &extent)
+            .into_iter()
+            .map(|a| (a.elem, a.key.clone(), Double3::new(a.at[0], a.at[1], a.at[2]), a.axis)),
+    );
 
     // Each generated end's nearest end of another piece.
     let (mut joints, mut open, mut bad) = (0, 0, 0);
@@ -103,7 +116,13 @@ fn run() -> Result<(), String> {
         joints += 1;
         bad += usize::from(!ok);
         if !ok {
-            println!("{k} -> {k2} at ({:.2}, {:.2}, {:.2}): {d:.3} apart, {:+.3} in height, {angle:.2} degrees  <- PROBLEM", p.x, p.y, p.z, q.y - p.y);
+            println!(
+                "{k} -> {k2} at ({:.2}, {:.2}, {:.2}): {d:.3} apart, {:+.3} in height, {angle:.2} degrees  <- PROBLEM",
+                p.x,
+                p.y,
+                p.z,
+                q.y - p.y
+            );
         }
     }
 

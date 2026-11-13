@@ -100,7 +100,9 @@ fn differ(a: &TileProject, b: &TileProject) -> String {
 
     match (&a.height, &b.height) {
         (Some(_), None) | (None, Some(_)) => return "height map presence".to_owned(),
-        (Some(h), Some(g)) if h.width() != g.width() || h.height() != g.height() || hash_samples(h) != hash_samples(g) => return "height map".to_owned(),
+        (Some(h), Some(g)) if h.width() != g.width() || h.height() != g.height() || hash_samples(h) != hash_samples(g) => {
+            return "height map".to_owned();
+        }
         _ => {}
     }
 
@@ -166,7 +168,10 @@ fn main() {
                         no_variation += usize::from(v.is_empty());
                         with_links += usize::from(!e.links().is_empty());
                         with_targets += usize::from(!e.link_targets().is_empty());
-                        g.check(e.width() > 0 && e.height() > 0 && !e.location().is_empty() && !e.tile_set().is_empty(), &format!("typed fields {shown}"));
+                        g.check(
+                            e.width() > 0 && e.height() > 0 && !e.location().is_empty() && !e.tile_set().is_empty(),
+                            &format!("typed fields {shown}"),
+                        );
                         g.check(e.raw_root().as_ref() == Some(root), &format!("raw_root of {shown}"));
                         g.check(!e.kind().is_empty(), &format!("kind of {shown}"));
                     }
@@ -225,12 +230,19 @@ fn main() {
             g.check(plain.find_name(&e.name).is_some(), &format!("{kit}: find_name {}", e.name));
             for v in 0..e.variations.len() {
                 let folder = entry.variation_folder(root, v);
-                let (r1, r2, r3) = (plain.resolve(&folder), plain.resolve(&folder.join("tile.ted")), plain.resolve(&entry.tile_folder(root)));
+                let (r1, r2, r3) =
+                    (plain.resolve(&folder), plain.resolve(&folder.join("tile.ted")), plain.resolve(&entry.tile_folder(root)));
                 if !plain.duplicate_locations.contains(&e.key) {
                     let shown = folder.display();
                     g.check(r1.entry.is_some_and(|x| x.xml == e.xml) && r1.variation == Some(v), &format!("{kit}: resolve folder {shown}"));
-                    g.check(r2.entry.is_some_and(|x| x.xml == e.xml) && r2.variation == Some(v), &format!("{kit}: resolve tile.ted {shown}"));
-                    g.check(r3.entry.is_some_and(|x| x.xml == e.xml) && r3.variation.is_none(), &format!("{kit}: resolve tile folder {shown}"));
+                    g.check(
+                        r2.entry.is_some_and(|x| x.xml == e.xml) && r2.variation == Some(v),
+                        &format!("{kit}: resolve tile.ted {shown}"),
+                    );
+                    g.check(
+                        r3.entry.is_some_and(|x| x.xml == e.xml) && r3.variation.is_none(),
+                        &format!("{kit}: resolve tile folder {shown}"),
+                    );
                 }
 
                 resolved += 1;
@@ -317,7 +329,9 @@ fn main() {
         opened += 1;
     }
 
-    println!("open: {opened} tiles opened by folder, by tile.ted and by entry, {different} differ, {unopenable} cannot be opened (identical errors)");
+    println!(
+        "open: {opened} tiles opened by folder, by tile.ted and by entry, {different} differ, {unopenable} cannot be opened (identical errors)"
+    );
     if show_time {
         println!("time: opens {:.1} s", t_open.elapsed().as_secs_f64());
     }
@@ -334,9 +348,14 @@ fn main() {
 
         match TileProject::open(&scratch) {
             Ok(p) => {
-                g.check(!p.has_entry() && !p.info.found && !p.warning.is_empty(), "a tile.ted outside the kit opens with a warning and no entry");
+                g.check(
+                    !p.has_entry() && !p.info.found && !p.warning.is_empty(),
+                    "a tile.ted outside the kit opens with a warning and no entry",
+                );
                 println!(
-                    "outside a kit: opens without an entry, info.found {}, warning: {}", i32::from(p.info.found), if p.warning.is_empty() { "(none)" } else { "yes" },
+                    "outside a kit: opens without an entry, info.found {}, warning: {}",
+                    i32::from(p.info.found),
+                    if p.warning.is_empty() { "(none)" } else { "yes" },
                 );
             }
 

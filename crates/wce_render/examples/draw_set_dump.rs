@@ -35,8 +35,15 @@ fn floats<'a>(v: impl IntoIterator<Item = &'a f32>) -> u64 {
 }
 
 fn show(tag: &str, v: &Visible) {
-    println!("{tag} n{} start={:016x} count={:016x} active={:016x} order={:016x} batch={:016x}", v.instances(), words(&v.start), words(&v.count), words(&v.active),
-        words(&v.order), words(&v.batch_of));
+    println!(
+        "{tag} n{} start={:016x} count={:016x} active={:016x} order={:016x} batch={:016x}",
+        v.instances(),
+        words(&v.start),
+        words(&v.count),
+        words(&v.active),
+        words(&v.order),
+        words(&v.batch_of)
+    );
 }
 
 fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
@@ -49,7 +56,11 @@ fn mesh(rng: &mut Rng, y: bool) -> GpuMesh {
         ib: None,
         index_count: 0,
         alpha_mode: 0,
-        stride: 32, dirt: false, decal: false, bone: -1, decal_rect: [0.0; 4],
+        stride: 32,
+        dirt: false,
+        decal: false,
+        bone: -1,
+        decal_rect: [0.0; 4],
         kind: Default::default(),
         uv2_tile: [0.0; 2],
         tint: [1.0; 12],
@@ -80,13 +91,25 @@ fn main() {
         let nm = 1 + rng.next() % 3;
         let meshes = (0..nm).map(|_| mesh(&mut rng, true)).collect();
         let nl = rng.next() % 4;
-        let lods = (0..nl).map(|l| {
-            let distance = if l + 1 == nl { 0.0 } else { rng.f(100.0, 400.0) * (l + 1) as f32 };
-            let count = 1 + rng.next() % 2;
-            GpuLod { meshes: (0..count).map(|_| mesh(&mut rng, false)).collect(), distance }
-        }).collect();
+        let lods = (0..nl)
+            .map(|l| {
+                let distance = if l + 1 == nl { 0.0 } else { rng.f(100.0, 400.0) * (l + 1) as f32 };
+                let count = 1 + rng.next() % 2;
+                GpuLod { meshes: (0..count).map(|_| mesh(&mut rng, false)).collect(), distance }
+            })
+            .collect();
 
-        models.push(Arc::new(GpuModel { path: String::new(), meshes, distance, lods, bmin, bmax, decals: vec![], top: None, ..Default::default() }));
+        models.push(Arc::new(GpuModel {
+            path: String::new(),
+            meshes,
+            distance,
+            lods,
+            bmin,
+            bmax,
+            decals: vec![],
+            top: None,
+            ..Default::default()
+        }));
     }
 
     let mut ds = DrawSet::default();
@@ -110,9 +133,14 @@ fn main() {
 
     println!("items {} batches {} models {}", ds.items(), ds.batches(), ds.models());
     for v in 0..5 {
-        let (ex, ey, ez, tx, tz) = (rng.f(-500.0, 500.0), rng.f(20.0, 200.0), rng.f(-500.0, 500.0), rng.f(-500.0, 500.0), rng.f(-500.0, 500.0));
+        let (ex, ey, ez, tx, tz) =
+            (rng.f(-500.0, 500.0), rng.f(20.0, 200.0), rng.f(-500.0, 500.0), rng.f(-500.0, 500.0), rng.f(-500.0, 500.0));
         let (eye, target) = (Float3::new(ex, ey, ez), Float3::new(tx, 0.0, tz));
-        let proj = if v == 2 { ortho_lh(800.0, 800.0, -2000.0, 2000.0) } else { perspective_lh(if v == 1 { 0.6 } else { 1.13446 }, 16.0 / 9.0, 1.0, 13000.0) };
+        let proj = if v == 2 {
+            ortho_lh(800.0, 800.0, -2000.0, 2000.0)
+        } else {
+            perspective_lh(if v == 1 { 0.6 } else { 1.13446 }, 16.0 / 9.0, 1.0, 13000.0)
+        };
         let vp = proj * look_at_lh(eye, target, Float3::new(0.0, 1.0, 0.0));
         let view = View {
             frustum: Frustum::from_view_projection(&vp),
@@ -133,7 +161,10 @@ fn main() {
         show("visible", &vis);
         let mut inst = vec![RigidInstance::default(); vis.instances()];
         ds.gather(&vis, &mut inst, 1.0, [0.0; 3]);
-        println!("gather {:016x}", floats(inst.iter().flat_map(|r| r.world.iter().flatten().chain(&r.p4).chain(&r.p5).chain(&r.p6).chain(&r.p7))));
+        println!(
+            "gather {:016x}",
+            floats(inst.iter().flat_map(|r| r.world.iter().flatten().chain(&r.p4).chain(&r.p5).chain(&r.p6).chain(&r.p7)))
+        );
         println!("ids {:016x}", words(&ds.gather_ids(&vis)));
         ds.retain(&mut vis, |e| e % 3 != 0);
         show("retained", &vis);

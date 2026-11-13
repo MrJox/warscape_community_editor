@@ -93,7 +93,9 @@ pub struct Meta {
 fn grammar(kind: &str, version: u32) -> Option<String> {
     Some(match kind {
         "RHAND_POSE" | "LHAND_POSE" | "FACE_POSE" => "uf".to_owned(),
-        "WEAPON_RHAND" | "WEAPON_LHAND" | "WEAPON_HIP" | "WEAPON_ON" | "DOCK_EQPT_BACK" | "DOCK_EQPT_LHAND" => if version >= 3 { "uff" } else { "u" }.to_owned(),
+        "WEAPON_RHAND" | "WEAPON_LHAND" | "WEAPON_HIP" | "WEAPON_ON" | "DOCK_EQPT_BACK" | "DOCK_EQPT_LHAND" => {
+            if version >= 3 { "uff" } else { "u" }.to_owned()
+        }
         "SOUND_TRIGGER" | "SOUND_IMPACT" => "uu".to_owned(),
         "SOUND_ATTACK_TYPE" | "SOUND_DEFEND_TYPE" => if version >= 3 { "uuu" } else { "u" }.to_owned(),
         "IMPACT_POS" | "FIRE_POS" | "TARGET_POS" => "fff".to_owned(),
@@ -109,7 +111,8 @@ fn grammar(kind: &str, version: u32) -> Option<String> {
             0..=2 => "sffffs",
             3 => "ssffffffss",
             _ => "ssffffffsss",
-        }.to_owned(),
+        }
+        .to_owned(),
         "VOLUMETRIC_EFFECT" => format!("s{}", "f".repeat(20)),
         "SOUND_BUILDING" => "uuuuu".to_owned(),
         _ => return None,
@@ -165,11 +168,14 @@ impl Meta {
             let end = r.f32()?;
             let v = version.unwrap_or(0);
             let tag = if v >= 2 { r.string()? } else { String::new() };
-            let fields = grammar(&kind, v)?.chars().map(|c| match c {
-                'u' => r.u32().map(MetaField::U32),
-                'f' => r.f32().map(MetaField::F32),
-                _ => r.string().map(MetaField::Str),
-            }).collect::<Option<Vec<_>>>()?;
+            let fields = grammar(&kind, v)?
+                .chars()
+                .map(|c| match c {
+                    'u' => r.u32().map(MetaField::U32),
+                    'f' => r.f32().map(MetaField::F32),
+                    _ => r.string().map(MetaField::Str),
+                })
+                .collect::<Option<Vec<_>>>()?;
             entries.push(MetaEntry { kind, version, start, end, tag, fields });
         }
 
@@ -212,23 +218,41 @@ pub fn meta_effects(bytes: &[u8]) -> Option<Vec<MetaEffect>> {
     }
 
     let floats = |e: &MetaEntry, from: usize, n: usize| (from..from + n).map(|i| e.f32(i)).collect::<Option<Vec<_>>>();
-    Meta::decode(bytes)?.entries.iter().filter_map(|e| match e.kind.as_str() {
-        "EFFECT" => Some((|| {
-            let f = floats(e, 2, 7)?;
-            Some(MetaEffect {
-                tag: e.tag.clone(), effect: e.str(0)?.to_owned(), start: e.start, end: e.end, position: [f[0], f[1], f[2]], rotation: [f[3], f[4], f[5], f[6]],
-                bone: e.u32(9)? as i32, scale: e.f32(10).unwrap_or(1.0), volume: None,
-            })
-        })()),
-        "VOLUMETRIC_EFFECT" => Some((|| {
-            let f = floats(e, 1, 20)?;
-            Some(MetaEffect {
-                tag: e.tag.clone(), effect: e.str(0)?.to_owned(), start: e.start, end: e.end, position: [f[0] + f[7], f[1] + f[8], f[2] + f[9]],
-                rotation: [f[13], f[14], f[15], f[16]], bone: -1, scale: 1.0, volume: Some([f[10], f[11], f[12]]),
-            })
-        })()),
-        _ => None,
-    }).collect()
+    Meta::decode(bytes)?
+        .entries
+        .iter()
+        .filter_map(|e| match e.kind.as_str() {
+            "EFFECT" => Some((|| {
+                let f = floats(e, 2, 7)?;
+                Some(MetaEffect {
+                    tag: e.tag.clone(),
+                    effect: e.str(0)?.to_owned(),
+                    start: e.start,
+                    end: e.end,
+                    position: [f[0], f[1], f[2]],
+                    rotation: [f[3], f[4], f[5], f[6]],
+                    bone: e.u32(9)? as i32,
+                    scale: e.f32(10).unwrap_or(1.0),
+                    volume: None,
+                })
+            })()),
+            "VOLUMETRIC_EFFECT" => Some((|| {
+                let f = floats(e, 1, 20)?;
+                Some(MetaEffect {
+                    tag: e.tag.clone(),
+                    effect: e.str(0)?.to_owned(),
+                    start: e.start,
+                    end: e.end,
+                    position: [f[0] + f[7], f[1] + f[8], f[2] + f[9]],
+                    rotation: [f[13], f[14], f[15], f[16]],
+                    bone: -1,
+                    scale: 1.0,
+                    volume: Some([f[10], f[11], f[12]]),
+                })
+            })()),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -306,7 +330,10 @@ mod tests {
         b.extend(0.25f32.to_le_bytes());
         b.extend(3u32.to_le_bytes());
         let m = Meta::decode(&b).expect("parses");
-        assert_eq!((m.entries[0].version, m.entries[0].tag.as_str(), m.entries[0].u32(0), m.entries[0].f32(1)), (Some(2), "t", Some(7), Some(1.0)));
+        assert_eq!(
+            (m.entries[0].version, m.entries[0].tag.as_str(), m.entries[0].u32(0), m.entries[0].f32(1)),
+            (Some(2), "t", Some(7), Some(1.0))
+        );
         assert_eq!((m.entries[1].version, m.entries[1].u32(0)), (Some(1), Some(4)));
         assert_eq!((m.entries[2].version, m.entries[2].start, m.entries[2].u32(0)), (None, 0.25, Some(3)));
         assert_eq!(m.encode(), b);

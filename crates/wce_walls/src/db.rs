@@ -86,7 +86,9 @@ pub fn bytes_mut(c: &mut DecodedData) -> Option<&mut Vec<u8>> {
 
 fn is_text(c: &DecodedData, text: &str) -> bool {
     match c {
-        DecodedData::StringU8(s) | DecodedData::StringU16(s) | DecodedData::OptionalStringU8(s) | DecodedData::OptionalStringU16(s) => s.eq_ignore_ascii_case(text),
+        DecodedData::StringU8(s) | DecodedData::StringU16(s) | DecodedData::OptionalStringU8(s) | DecodedData::OptionalStringU16(s) => {
+            s.eq_ignore_ascii_case(text)
+        }
         _ => false,
     }
 }
@@ -108,7 +110,9 @@ fn in_paths(c: &DecodedData, base: &str, new: &str) -> DecodedData {
         let mut out = s.clone();
         for sep in ['\\', '/'] {
             if lower.contains(&format!("{sep}{base}{sep}")) {
-                out = out.replace(&format!("{sep}{base}{sep}{base}_"), &format!("{sep}{new}{sep}{new}_")).replace(&format!("{sep}{base}{sep}"), &format!("{sep}{new}{sep}"));
+                out = out
+                    .replace(&format!("{sep}{base}{sep}{base}_"), &format!("{sep}{new}{sep}{new}_"))
+                    .replace(&format!("{sep}{base}{sep}"), &format!("{sep}{new}{sep}"));
             }
         }
         out

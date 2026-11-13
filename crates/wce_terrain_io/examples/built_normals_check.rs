@@ -17,12 +17,17 @@ fn main() {
     let vfs = Vfs::mount(&cfg).expect("vfs");
     let folder = a[1].trim_end_matches('/');
     let prefix = format!("{folder}/");
-    let files: Vec<(String, Vec<u8>)> = vfs.list(&prefix, "").iter().map(|p| (p[prefix.len()..].to_owned(), vfs.read(p).expect("read").to_vec())).collect();
+    let files: Vec<(String, Vec<u8>)> =
+        vfs.list(&prefix, "").iter().map(|p| (p[prefix.len()..].to_owned(), vfs.read(p).expect("read").to_vec())).collect();
     let name = folder.rsplit('/').next().unwrap_or(folder);
     let mut m = wce_terrain_io::built::read(name, &wce_terrain_io::MapFiles::from_bytes(files.clone())).expect("model");
     let chunk_names = |f: &wce_terrain_io::MapFiles| f.folder.keys().filter(|k| k.starts_with("normals/")).cloned().collect::<Vec<_>>();
     let unedited = wce_terrain_io::built::write(&m, None).expect("write");
-    let same = unedited.folder.iter().filter(|(k, _)| k.starts_with("normals/")).all(|(k, b)| files.iter().any(|(n, s)| n == k && b.bytes().ok().as_deref() == Some(s.as_slice())));
+    let same = unedited
+        .folder
+        .iter()
+        .filter(|(k, _)| k.starts_with("normals/"))
+        .all(|(k, b)| files.iter().any(|(n, s)| n == k && b.bytes().ok().as_deref() == Some(s.as_slice())));
     println!("unedited: {} chunks, all as shipped: {same}", chunk_names(&unedited).len());
 
     // A hill: radius r samples at (cx, cy), up to 3000 raw units.
@@ -42,13 +47,24 @@ fn main() {
     }
 
     let out = wce_terrain_io::built::write(&m, None).expect("write");
-    let changed: Vec<String> = out.folder.iter().filter(|(k, b)| k.starts_with("normals/") && files.iter().all(|(n, s)| n != *k || b.bytes().ok().as_deref() != Some(s.as_slice()))).map(|(k, _)| k.clone()).collect();
+    let changed: Vec<String> = out
+        .folder
+        .iter()
+        .filter(|(k, b)| k.starts_with("normals/") && files.iter().all(|(n, s)| n != *k || b.bytes().ok().as_deref() != Some(s.as_slice())))
+        .map(|(k, _)| k.clone())
+        .collect();
     println!("hill at ({cx}, {cy}) radius {r} on {w} x {h}: {} chunks written: {changed:?}", changed.len());
     let mut ok = same;
     let shipped = |k: &str| files.iter().find(|(n, _)| n == k).map(|(_, b)| b.clone());
     for k in &changed {
-        let (Some(old), Some(new)) = (shipped(k), out.folder[k].bytes().ok()) else { ok = false; continue };
-        let (Ok(o), Ok(n)) = (dds_decode_mip(&old, 0), dds_decode_mip(&new, 0)) else { ok = false; continue };
+        let (Some(old), Some(new)) = (shipped(k), out.folder[k].bytes().ok()) else {
+            ok = false;
+            continue;
+        };
+        let (Ok(o), Ok(n)) = (dds_decode_mip(&old, 0), dds_decode_mip(&new, 0)) else {
+            ok = false;
+            continue;
+        };
         let side = o.w;
         // The chunk's origin from its number (the 256-sample grid, a 32-sample margin; or one chunk of the whole LF).
         let num: i64 = k.trim_start_matches("normals/normal_").trim_end_matches(".dds").parse().unwrap_or(0);
@@ -82,7 +98,11 @@ fn main() {
 
         let (far_mean, lean_share) = (far as f64 / nfar.max(1) as f64, (lean + nlean) as f64 / (2 * nlean.max(1)) as f64);
         let flat_share = flat as f64 / (nlean + flat).max(1) as f64;
-        println!("  {k}: away from the hill {far_mean:.2} off the shipped chunk; on it {:.0} % of the changed x and y move out of it ({:.0} % unchanged)", 100.0 * lean_share, 100.0 * flat_share);
+        println!(
+            "  {k}: away from the hill {far_mean:.2} off the shipped chunk; on it {:.0} % of the changed x and y move out of it ({:.0} % unchanged)",
+            100.0 * lean_share,
+            100.0 * flat_share
+        );
         ok &= far_mean < 2.0 && (nlean == 0 || lean_share > 0.9);
     }
 

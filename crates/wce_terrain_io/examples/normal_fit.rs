@@ -53,7 +53,9 @@ fn main() {
             let med = ratios.get(ratios.len() / 2).copied().unwrap_or(0.0);
             println!(
                 "span {span} (row offset {dy:+3} flip {flip}): corr(nx, dx) {:+.3}, corr(ny, dy) {:+.3}, median -(nx/nz)/dx {med:.6} ({} samples, {cnt})",
-                sxy / (sxx * syy).sqrt(), sxy2 / (sxx2 * syy2).sqrt(), ratios.len()
+                sxy / (sxx * syy).sqrt(),
+                sxy2 / (sxx2 * syy2).sqrt(),
+                ratios.len()
             );
         }
     }

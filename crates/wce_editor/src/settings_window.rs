@@ -255,7 +255,9 @@ impl Editor {
 
         let now = self.settings_ref();
         let game_changed = before.game_dir() != now.game_dir();
-        let files_changed = before.mod_packs() != now.mod_packs() || before.overlay_folders() != now.overlay_folders() || before.loose_dir() != now.loose_dir();
+        let files_changed = before.mod_packs() != now.mod_packs()
+            || before.overlay_folders() != now.overlay_folders()
+            || before.loose_dir() != now.loose_dir();
         if !self.is_mounted() {
             if self.start() {
                 self.activate_all_tools();
@@ -302,7 +304,11 @@ impl Editor {
         gui::set_next_window_pos(gui::v2(vp.Pos.x + vp.Size.x * 0.5, vp.Pos.y + vp.Size.y * 0.5), gui::COND_APPEARING, gui::v2(0.5, 0.5));
         gui::set_next_window_size(gui::v2(820.0, 560.0), gui::COND_FIRST_USE_EVER);
         let mut open = true;
-        let visible = gui::begin(&format!("{}  Settings###Settings", icons::SETTINGS), Some(&mut open), gui::WINDOW_NO_DOCKING | gui::WINDOW_NO_COLLAPSE);
+        let visible = gui::begin(
+            &format!("{}  Settings###Settings", icons::SETTINGS),
+            Some(&mut open),
+            gui::WINDOW_NO_DOCKING | gui::WINDOW_NO_COLLAPSE,
+        );
         if visible {
             let footer = gui::frame_height_with_spacing() + gui::item_spacing().y * 2.0;
             gui::begin_child("##pages", gui::v2(180.0, -footer), gui::CHILD_BORDERS, 0);
@@ -418,7 +424,8 @@ impl Editor {
         help("Holds an interactive session to that many frames per second, so that a laptop GPU does not heat up and throttle itself.");
 
         gui::separator_text("Game data");
-        let default_schemas = wce_foundation::settings::default_rpfm_schemas_dir().map_or_else(|| "rpfm's schemas folder (not found)".to_owned(), |d| d.display().to_string());
+        let default_schemas = wce_foundation::settings::default_rpfm_schemas_dir()
+            .map_or_else(|| "rpfm's schemas folder (not found)".to_owned(), |d| d.display().to_string());
         let mut schemas = d.db_schemas.clone();
         if folder_field("DB schemas", &mut schemas, &default_schemas) {
             d.db_schemas = schemas;
@@ -430,15 +437,27 @@ impl Editor {
         gui::set_cursor_pos_x(LABEL_WIDTH);
         match wce_foundation::settings::rpfm_schema_path_in(game, d.db_schemas_dir().as_deref()) {
             Some(p) => gui::text_disabled(&format!("{}: {}", game.display_name, p.display())),
-            None => gui::text_colored(theme::warning(), &format!("{}  {}: no {} here, in the editor's or in rpfm's schemas folder (Help > Update Manager downloads it)", icons::TRIANGLE_ALERT, game.display_name, game.rpfm_schema)),
+            None => gui::text_colored(
+                theme::warning(),
+                &format!(
+                    "{}  {}: no {} here, in the editor's or in rpfm's schemas folder (Help > Update Manager downloads it)",
+                    icons::TRIANGLE_ALERT,
+                    game.display_name,
+                    game.rpfm_schema
+                ),
+            ),
         }
 
-        help("rpfm's schemas (schema_att.ron, schema_tob.ron...), to read the games' db tables: the buildings' data, the weather's climate phases, the procedural walls' rows. A game whose schema is not in this folder uses the ones the Update Manager downloaded, then rpfm's own.");
+        help(
+            "rpfm's schemas (schema_att.ron, schema_tob.ron...), to read the games' db tables: the buildings' data, the weather's climate phases, the procedural walls' rows. A game whose schema is not in this folder uses the ones the Update Manager downloaded, then rpfm's own.",
+        );
 
         gui::separator_text("Updates");
         gui::checkbox("Check for updates at start", &mut d.updates.check_on_start);
         gui::checkbox("Include pre-releases (betas)", &mut d.updates.prereleases);
-        help("Updates come from the editor's releases on GitHub, rpfm's schemas from its schema repository. Help > Update Manager looks for both at any time; without the current game's schema it is looked for at start anyway.");
+        help(
+            "Updates come from the editor's releases on GitHub, rpfm's schemas from its schema repository. Help > Update Manager looks for both at any time; without the current game's schema it is looked for at start anyway.",
+        );
     }
 
     fn draw_game_page(&mut self) {
@@ -493,13 +512,19 @@ impl Editor {
         env_note("WCE_ASSEMBLY_KIT");
         if d.game_settings().assembly_kits.is_empty() {
             gui::set_cursor_pos_x(LABEL_WIDTH);
-            let detected = d.detected_assembly_kit().map_or_else(|| "none found in the game folder".to_owned(), |k| k.display().to_string());
+            let detected =
+                d.detected_assembly_kit().map_or_else(|| "none found in the game folder".to_owned(), |k| k.display().to_string());
             gui::text_disabled(&format!("In use: {detected}"));
         }
 
-        help("Folders with raw_data; the first one wins where several have the same tile or prefab. The tools read them; only \"Save for Assembly Kit\" writes to one (it asks which when several fit), as TEd and the kit's tools read files. With none listed, the kit in the game folder is used.");
+        help(
+            "Folders with raw_data; the first one wins where several have the same tile or prefab. The tools read them; only \"Save for Assembly Kit\" writes to one (it asks which when several fit), as TEd and the kit's tools read files. With none listed, the kit in the game folder is used.",
+        );
         if !d.game_profile().features.kit_tiles {
-            help(&format!("{}'s kit has no battle tiles: the tiles come from the game's packs and go into mod packs (Tile > Save to mod pack).", d.game_profile().display_name));
+            help(&format!(
+                "{}'s kit has no battle tiles: the tiles come from the game's packs and go into mod packs (Tile > Save to mod pack).",
+                d.game_profile().display_name
+            ));
         }
         let default_projects = d.projects_dir().display().to_string();
         let mut projects = d.game_mut().projects.clone();
@@ -508,7 +533,9 @@ impl Editor {
         }
 
         env_note("WCE_PROJECTS");
-        help("Where the editor saves: assembly_kit/ holds the tiles (tile.wce) in the kit's layout, loose/ the loose files read before every pack (the UI tool's skins, layouts and pictures).");
+        help(
+            "Where the editor saves: assembly_kit/ holds the tiles (tile.wce) in the kit's layout, loose/ the loose files read before every pack (the UI tool's skins, layouts and pictures).",
+        );
 
         gui::separator_text("Loose files");
         label("Other folders");
@@ -536,13 +563,20 @@ impl Editor {
         label("Options");
         if gui::checkbox(&format!("Use {}'s own##use_game", profile.display_name), &mut g.use_game) && !g.use_game && g.options.is_empty() {
             // The editor's copy starts as the game's.
-            g.options = catalogue.options.iter().map(|o| (o.key.to_owned(), game_values.get(o.key).cloned().unwrap_or_else(|| o.default.to_owned()))).collect();
+            g.options = catalogue
+                .options
+                .iter()
+                .map(|o| (o.key.to_owned(), game_values.get(o.key).cloned().unwrap_or_else(|| o.default.to_owned())))
+                .collect();
         }
 
         gui::set_cursor_pos_x(LABEL_WIDTH);
         match wce_scene::environment::preferences_file(profile).filter(|p| p.is_file()) {
             Some(p) => gui::text_disabled(&format!("The game's: {}", p.display())),
-            None => gui::text_colored(theme::warning(), &format!("{}  {}'s preferences file is not there: its defaults", icons::TRIANGLE_ALERT, profile.display_name)),
+            None => gui::text_colored(
+                theme::warning(),
+                &format!("{}  {}'s preferences file is not there: its defaults", icons::TRIANGLE_ALERT, profile.display_name),
+            ),
         }
 
         gui::set_cursor_pos_x(LABEL_WIDTH);
@@ -550,14 +584,19 @@ impl Editor {
             sw.game_graphics = None;
         }
 
-        help("The options the game's options screen has, per game: the game's preferences file, or (unticked) the editor's own copy, which never changes the game's file. Options marked \"not applied yet\" are drawn as the game's highest level (an effect the editor does not draw yet: off).");
+        help(
+            "The options the game's options screen has, per game: the game's preferences file, or (unticked) the editor's own copy, which never changes the game's file. Options marked \"not applied yet\" are drawn as the game's highest level (an effect the editor does not draw yet: off).",
+        );
         let use_game = g.use_game;
         let value = |key: &str, g: &wce_foundation::settings::GraphicsSettings| -> String {
             let own = (!use_game).then(|| g.options.get(key).cloned()).flatten();
-            own.or_else(|| game_values.get(key).cloned()).or_else(|| catalogue.option(key).map(|o| o.default.to_owned())).unwrap_or_default()
+            own.or_else(|| game_values.get(key).cloned())
+                .or_else(|| catalogue.option(key).map(|o| o.default.to_owned()))
+                .unwrap_or_default()
         };
 
-        let values: std::collections::BTreeMap<String, String> = catalogue.options.iter().map(|o| (o.key.to_owned(), value(o.key, g))).collect();
+        let values: std::collections::BTreeMap<String, String> =
+            catalogue.options.iter().map(|o| (o.key.to_owned(), value(o.key, g))).collect();
         gui::begin_disabled(use_game);
         label("Preset");
         let current = catalogue.matching_preset(&values, video_memory).map_or("Custom", |p| p.name);
@@ -641,7 +680,9 @@ impl Editor {
         }
 
         gui::end_disabled();
-        help("For a slower GPU: the scene is drawn at this share of the viewport's width and height and enlarged with NVIDIA Image Scaling (spatial upscaling and sharpening; it changes the sharpness, not what is drawn). 100 % draws it at full size, as the game.");
+        help(
+            "For a slower GPU: the scene is drawn at this share of the viewport's width and height and enlarged with NVIDIA Image Scaling (spatial upscaling and sharpening; it changes the sharpness, not what is drawn). 100 % draws it at full size, as the game.",
+        );
     }
 
     fn draw_appearance_page(&mut self) {
@@ -725,7 +766,8 @@ impl Editor {
         let mut table_open = false;
         for a in shortcuts::actions() {
             let keys = shortcuts::keys_in(&a, &d.shortcuts);
-            let text = format!("{} {} {}", a.group, a.label, keys.iter().flatten().map(Chord::text).collect::<Vec<_>>().join(" ")).to_lowercase();
+            let text =
+                format!("{} {} {}", a.group, a.label, keys.iter().flatten().map(Chord::text).collect::<Vec<_>>().join(" ")).to_lowercase();
             if !words.iter().all(|w| text.contains(w)) {
                 continue;
             }
@@ -771,7 +813,10 @@ impl Editor {
                 let label = if reading { "press a key...".to_owned() } else { keys[slot].map_or_else(|| "-".to_owned(), |c| c.text()) };
                 let bad = keys[slot].is_some_and(|c| clash_of(a.id, &c).is_some());
                 if bad {
-                    gui::push_style_color(gui::COL_TEXT, { let c = theme::error(); gui::v4(c[0], c[1], c[2], c[3]) });
+                    gui::push_style_color(gui::COL_TEXT, {
+                        let c = theme::error();
+                        gui::v4(c[0], c[1], c[2], c[3])
+                    });
                 }
 
                 if gui::button_sized(&format!("{label}##{}{slot}", a.id), gui::v2(130.0, 0.0)) {
@@ -783,7 +828,11 @@ impl Editor {
                 }
 
                 if gui::is_item_hovered() {
-                    gui::set_tooltip(if reading { "Press the keys (with Ctrl, Shift, Alt); click again to stop" } else { "Click, then press the keys" });
+                    gui::set_tooltip(if reading {
+                        "Press the keys (with Ctrl, Shift, Alt); click again to stop"
+                    } else {
+                        "Click, then press the keys"
+                    });
                 }
 
                 gui::same_line();
@@ -820,7 +869,9 @@ impl Editor {
         let paths = self.settings_ref().paths().clone();
         gui::separator_text("Where the editor keeps its files");
         for (name, path) in [
-            ("Settings", paths.config_dir().to_path_buf()), ("Your files", paths.data_dir().to_path_buf()), ("Caches", paths.cache_dir().to_path_buf()),
+            ("Settings", paths.config_dir().to_path_buf()),
+            ("Your files", paths.data_dir().to_path_buf()),
+            ("Caches", paths.cache_dir().to_path_buf()),
             ("Log", paths.log_dir().to_path_buf()),
         ] {
             label(name);

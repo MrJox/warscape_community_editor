@@ -221,9 +221,19 @@ struct GroupView<'a> {
 
 impl<'a> GroupView<'a> {
     fn new(params: &'a GenerationParams, inputs: &TileInputs, name: &String) -> Self {
-        let Some(g) = params.groups.get(name) else { return Self { params: None, sum_textures: vec![], probability_textures: vec![], probability_channel: None } };
-        let channel = inputs.probability_textures(&g.channel_group_for_probability).get((g.channel_number >> 2) as usize).map(|&t| (g.channel_number & 3) as usize + t * 4);
-        Self { params: Some(g), sum_textures: inputs.textures(&g.channel_group), probability_textures: inputs.textures(&g.channel_group_for_probability), probability_channel: channel }
+        let Some(g) = params.groups.get(name) else {
+            return Self { params: None, sum_textures: vec![], probability_textures: vec![], probability_channel: None };
+        };
+        let channel = inputs
+            .probability_textures(&g.channel_group_for_probability)
+            .get((g.channel_number >> 2) as usize)
+            .map(|&t| (g.channel_number & 3) as usize + t * 4);
+        Self {
+            params: Some(g),
+            sum_textures: inputs.textures(&g.channel_group),
+            probability_textures: inputs.textures(&g.channel_group_for_probability),
+            probability_channel: channel,
+        }
     }
 }
 
@@ -301,7 +311,8 @@ pub fn candidates_with(inputs: &TileInputs, density: f32, rand: &mut Rand, disca
 
     let total2 = ((total / x1) * x1.ceil()).ceil();
     let t2k = total2 * K;
-    let mut keys: HashSet<u32, std::hash::BuildHasherDefault<U32Hasher>> = HashSet::with_capacity_and_hasher(count as usize, Default::default());
+    let mut keys: HashSet<u32, std::hash::BuildHasherDefault<U32Hasher>> =
+        HashSet::with_capacity_and_hasher(count as usize, Default::default());
     let mut s = rand.0;
     for _ in 0..count {
         loop {
@@ -525,7 +536,15 @@ pub fn generate(params: &GenerationParams, inputs: &TileInputs, category: usize,
 
 /// [`generate`], then `statics` added to the generated map (where nothing is at their position yet), as BOB adds the static trees to the tree
 /// generator's map before writing: they don't take part in the generation, but their place in the map's order is the list's.
-pub fn generate_with(params: &GenerationParams, inputs: &TileInputs, category: usize, mask: u32, seed: u32, density: f32, statics: &[Chosen]) -> Vec<Chosen> {
+pub fn generate_with(
+    params: &GenerationParams,
+    inputs: &TileInputs,
+    category: usize,
+    mask: u32,
+    seed: u32,
+    density: f32,
+    statics: &[Chosen],
+) -> Vec<Chosen> {
     with_statics(generate_map(params, inputs, category, mask, seed, density), statics)
 }
 
@@ -539,7 +558,14 @@ pub(super) fn with_statics(mut live: CaMap<Vec2Key, Chosen>, statics: &[Chosen])
 }
 
 /// One generator's map (see [`generate`]), for callers that take more than one list from the same run.
-pub(super) fn generate_map(params: &GenerationParams, inputs: &TileInputs, category: usize, mask: u32, seed: u32, density: f32) -> CaMap<Vec2Key, Chosen> {
+pub(super) fn generate_map(
+    params: &GenerationParams,
+    inputs: &TileInputs,
+    category: usize,
+    mask: u32,
+    seed: u32,
+    density: f32,
+) -> CaMap<Vec2Key, Chosen> {
     let objects = &params.objects;
 
     // The category's objects of the generator's humidity (0, arid), by group, in the category map's order.
@@ -572,7 +598,9 @@ pub(super) fn generate_map(params: &GenerationParams, inputs: &TileInputs, categ
     let mut tree = Quadtree::new((minx - 0.5, miny - 0.5), (maxx + 0.5, maxy + 0.5), 7);
     let h_scene = inputs.cells_y as f32 * 128.0 * inputs.render_scale;
     let tw = trace_window();
-    let traced = |x: f32, y: f32| tw.is_some_and(|(cx, cz, r)| (x / inputs.render_scale - cx).abs() <= r && ((h_scene - y) / inputs.render_scale - cz).abs() <= r);
+    let traced = |x: f32, y: f32| {
+        tw.is_some_and(|(cx, cz, r)| (x / inputs.render_scale - cx).abs() <= r && ((h_scene - y) / inputs.render_scale - cz).abs() <= r)
+    };
     let lp = |x: f32, y: f32| (x / inputs.render_scale, (h_scene - y) / inputs.render_scale);
     let mut live: CaMap<Vec2Key, Chosen> = CaMap::default();
     let mut blends: CaMap<Vec2Key, f32> = CaMap::default();
@@ -601,8 +629,10 @@ pub(super) fn generate_map(params: &GenerationParams, inputs: &TileInputs, categ
 
     // The groups' parameters and channels, resolved once (millions of candidates read them).
     let group_views: Vec<GroupView> = group_list.iter().map(|(name, _)| GroupView::new(params, inputs, name)).collect();
-    let group_objects: Vec<Vec<usize>> =
-        group_list.iter().map(|(_, inner)| inner.iter().map(|(_, &o)| o).filter(|&o| objects[o].kind & mask == objects[o].kind).collect()).collect();
+    let group_objects: Vec<Vec<usize>> = group_list
+        .iter()
+        .map(|(_, inner)| inner.iter().map(|(_, &o)| o).filter(|&o| objects[o].kind & mask == objects[o].kind).collect())
+        .collect();
 
     // The pick's weights, reused from candidate to candidate.
     let scratch = std::cell::RefCell::new((Vec::<(f32, usize)>::new(), Vec::<(f32, usize)>::new()));
@@ -712,7 +742,19 @@ pub(super) fn generate_map(params: &GenerationParams, inputs: &TileInputs, categ
         nodes.clear();
         tree.query(0, (lx, ly, gr), &mut nodes);
         if traced(lx, ly) {
-            eprintln!("leader {:?} gr {gr} nodes {:?}", lp(lx, ly), nodes.iter().map(|&n| (n, tree.nodes[n].min, tree.nodes[n].max, tree.nodes[n].items.keys().iter().map(|k| lp(k.0, k.1)).collect::<Vec<_>>())).collect::<Vec<_>>());
+            eprintln!(
+                "leader {:?} gr {gr} nodes {:?}",
+                lp(lx, ly),
+                nodes
+                    .iter()
+                    .map(|&n| (
+                        n,
+                        tree.nodes[n].min,
+                        tree.nodes[n].max,
+                        tree.nodes[n].items.keys().iter().map(|k| lp(k.0, k.1)).collect::<Vec<_>>()
+                    ))
+                    .collect::<Vec<_>>()
+            );
         }
         for &n in &nodes {
             // The node's keys as they are when its turn comes (the loop changes values, not keys).
@@ -816,7 +858,14 @@ pub(super) fn generate_map(params: &GenerationParams, inputs: &TileInputs, categ
 
                 if remove {
                     if traced(okey.0, okey.1) {
-                        eprintln!("remove {:?} by {:?} (ms {} vs {}) in live {}", lp(okey.0, okey.1), lp(ekey.0, ekey.1), ms, oms, live.contains(&okey));
+                        eprintln!(
+                            "remove {:?} by {:?} (ms {} vs {}) in live {}",
+                            lp(okey.0, okey.1),
+                            lp(ekey.0, ekey.1),
+                            ms,
+                            oms,
+                            live.contains(&okey)
+                        );
                     }
 
                     live.remove(&okey);
@@ -951,7 +1000,11 @@ fn sobel(field: &[f32], w: f32, h: f32, col: i32, row: i32, transpose: bool) -> 
     for o in 0..3 {
         for i in 0..3 {
             // Plain: kernel row o, column i at (col - 1 + i, row - 1 + o). Transposed: kernel [i][o] at the same pixel.
-            let (c, r, k) = if transpose { (col - 1 + i, row - 1 + o, K[(i * 3 + o) as usize]) } else { (col - 1 + i, row - 1 + o, K[(o * 3 + i) as usize]) };
+            let (c, r, k) = if transpose {
+                (col - 1 + i, row - 1 + o, K[(i * 3 + o) as usize])
+            } else {
+                (col - 1 + i, row - 1 + o, K[(o * 3 + i) as usize])
+            };
             let c = c.clamp(0, max_c.max(0));
             let r = r.clamp(0, max_r.max(0));
             let v = field.get((r * stride + c) as usize).copied().unwrap_or(0.0);
@@ -994,7 +1047,12 @@ pub fn to_decal_list(inputs: &TileInputs, chosen: &[Chosen]) -> Vec<ListProp> {
             let angle = f64::from(nb).acos() as f32;
             let (ax, az) = (inv, -na);
             let l2 = (ax * ax + az * az).sqrt();
-            let (ux, uz) = if l2 > 0.0 { let r = 1.0 / l2; (r * ax, r * az) } else { (1.0, 0.0) };
+            let (ux, uz) = if l2 > 0.0 {
+                let r = 1.0 / l2;
+                (r * ax, r * az)
+            } else {
+                (1.0, 0.0)
+            };
             let half = f64::from(angle * 0.5);
             let (s, co) = (half.sin() as f32, half.cos() as f32);
             qx = ux * s;
@@ -1130,7 +1188,9 @@ pub mod probe {
                 if let Some((model, byte)) = oracle.get(&(p.px, p.py)) {
                     let matches = |s: u32| {
                         let (r, _) = choose(p, s);
-                        r.is_some_and(|(m, size)| m.replace('\\', "/").to_lowercase() == *model && ((size * 127.0).ceil() as i64 & 0xff) as u8 == *byte)
+                        r.is_some_and(|(m, size)| {
+                            m.replace('\\', "/").to_lowercase() == *model && ((size * 127.0).ceil() as i64 & 0xff) as u8 == *byte
+                        })
                     };
                     let at = |k: usize| {
                         let mut s = state;
@@ -1141,7 +1201,12 @@ pub mod probe {
                     };
                     if report.len() < 20 {
                         let (mine, _) = choose(p, at(offset));
-                        report.push(format!("  oracle ({}, {}) theirs {model} {byte} mine {:?}", p.px, p.py, mine.map(|(m, s)| (m, ((s * 127.0).ceil() as i64 & 0xff) as u8))));
+                        report.push(format!(
+                            "  oracle ({}, {}) theirs {model} {byte} mine {:?}",
+                            p.px,
+                            p.py,
+                            mine.map(|(m, s)| (m, ((s * 127.0).ceil() as i64 & 0xff) as u8))
+                        ));
                     }
 
                     if matches(at(offset)) {

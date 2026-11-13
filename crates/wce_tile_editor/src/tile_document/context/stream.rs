@@ -18,8 +18,8 @@ use wce_scene::render_scene::Payload;
 use wce_vfs::files::Files;
 
 use super::template::{Template, load_any_template};
-use crate::terrain_bake::TerrainLook;
 use super::{BLOCK, BlockSource, CHUNK, ContextRequest, Frame, TileKey, cache, tile_dir};
+use crate::terrain_bake::TerrainLook;
 
 /// A chunk: its column and row of CHUNK x CHUNK map cells.
 pub type ChunkKey = (i32, i32);
@@ -150,7 +150,8 @@ impl Shared {
             return known;
         }
 
-        let roots: Vec<PathBuf> = self.rq.tile_roots.iter().chain(self.rq.provider.is_none().then_some(&self.rq.raw_root)).cloned().collect();
+        let roots: Vec<PathBuf> =
+            self.rq.tile_roots.iter().chain(self.rq.provider.is_none().then_some(&self.rq.raw_root)).cloned().collect();
         let custom = wce_tile::sources::find_tile(&roots, &key.0, &key.1).is_some_and(|d| wce_tile::sources::custom_mesh(&d).is_some());
         lock(&self.custom_tiles).insert(key, custom);
         custom
@@ -182,7 +183,8 @@ impl Shared {
         drop(tiles);
         // The first source that has the tile (`wce_tile::sources`): the roots in order, then the provider (the packs' tiles, decompiled on
         // demand: it returns a folder it has at once, and makes a missing or stale one); without a provider `raw_root` last.
-        let roots: Vec<PathBuf> = self.rq.tile_roots.iter().chain(self.rq.provider.is_none().then_some(&self.rq.raw_root)).cloned().collect();
+        let roots: Vec<PathBuf> =
+            self.rq.tile_roots.iter().chain(self.rq.provider.is_none().then_some(&self.rq.raw_root)).cloned().collect();
         let mut dir = tile_dir(&self.rq.raw_root, &key.0, &key.1);
         match wce_tile::sources::find_tile(&roots, &key.0, &key.1) {
             Some(found) => dir = found,
@@ -223,11 +225,20 @@ impl Shared {
         let mut stats = lock(&self.stats);
         let slot = match result {
             Ok(t) => {
-                if cached { stats.from_cache += 1 } else { stats.opened += 1 }
+                if cached {
+                    stats.from_cache += 1
+                } else {
+                    stats.opened += 1
+                }
                 stats.open_s += t.load_s;
                 stats.bytes += t.bytes;
                 if t.material.is_none() {
-                    wce_foundation::log::info(format!("map context: {}\\{}: no ground material ({})", key.0, key.1, if t.custom.is_some() { "custom mesh" } else { "scene tile" }));
+                    wce_foundation::log::info(format!(
+                        "map context: {}\\{}: no ground material ({})",
+                        key.0,
+                        key.1,
+                        if t.custom.is_some() { "custom mesh" } else { "scene tile" }
+                    ));
                 }
 
                 // A campaign map's plain ground (its far ring) from a grass tile, the climates' ground: the first tile to come was any
@@ -249,10 +260,13 @@ impl Shared {
         // Over the budget: the least recently used go.
         let mut tiles = lock(&self.tiles);
         if stats.bytes > TEMPLATE_BUDGET {
-            let mut ready: Vec<(u64, TileKey, usize)> = tiles.iter().filter_map(|(k, s)| match s {
-                Slot::Ready(t, used) => Some((*used, k.clone(), t.bytes)),
-                _ => None,
-            }).collect();
+            let mut ready: Vec<(u64, TileKey, usize)> = tiles
+                .iter()
+                .filter_map(|(k, s)| match s {
+                    Slot::Ready(t, used) => Some((*used, k.clone(), t.bytes)),
+                    _ => None,
+                })
+                .collect();
 
             ready.sort();
             for (_, k, bytes) in ready {
@@ -285,7 +299,8 @@ impl Shared {
         let mean = self.files.as_ref().and_then(|f| f.read(path).ok()).and_then(|bytes| {
             let image = dds_decode_mip(&bytes, dds_info(&bytes).mips.saturating_sub(4)).ok()?;
             let n = (image.px.len() / 4).max(1) as f32;
-            let sum = image.px.chunks_exact(4).fold([0.0f32; 3], |s, p| std::array::from_fn(|k| s[k] + (f32::from(p[k]) / 255.0).powf(2.2)));
+            let sum =
+                image.px.chunks_exact(4).fold([0.0f32; 3], |s, p| std::array::from_fn(|k| s[k] + (f32::from(p[k]) / 255.0).powf(2.2)));
             Some(sum.map(|v| v / n))
         });
 
@@ -317,7 +332,9 @@ impl Shared {
             let (frame, generation) = self.frame();
             let zone = lock(&self.zone).clone();
             let source = BlockSource {
-                template: &|i| self.template(&frame, i), is_custom: &|i| self.is_custom(&frame, i), mean: &|path| self.mean_colour(path),
+                template: &|i| self.template(&frame, i),
+                is_custom: &|i| self.is_custom(&frame, i),
+                mean: &|path| self.mean_colour(path),
                 in_block: &|k| self.rq.bake_ground && !zone.contains(&block_of(k)),
             };
 
@@ -347,7 +364,6 @@ pub struct Streamer {
 }
 
 impl Streamer {
-
     /// The frame of the request (slow on the campaign map: run it away from the UI thread) and the workers.
     pub fn new(rq: ContextRequest, files: Option<Arc<dyn Files>>) -> Self {
         let started = std::time::Instant::now();
@@ -372,15 +388,29 @@ impl Streamer {
         let rings = [rq.near, rq.mid, rq.ground, rq.far];
         let frame_s = started.elapsed().as_secs_f64();
         let shared = Arc::new(Shared {
-            pool, frame: Mutex::new((frame, 0)), rq, files, queue: Mutex::default(), work: Condvar::new(), tiles: Mutex::default(), custom_tiles: Mutex::default(), zone: Mutex::default(), means: Mutex::default(), loaded: Condvar::new(), stats: Mutex::default(),
-            clock: Default::default(), stop: AtomicBool::new(false),
+            pool,
+            frame: Mutex::new((frame, 0)),
+            rq,
+            files,
+            queue: Mutex::default(),
+            work: Condvar::new(),
+            tiles: Mutex::default(),
+            custom_tiles: Mutex::default(),
+            zone: Mutex::default(),
+            means: Mutex::default(),
+            loaded: Condvar::new(),
+            stats: Mutex::default(),
+            clock: Default::default(),
+            stop: AtomicBool::new(false),
         });
 
         let (tx, results) = channel();
-        let workers = (0..WORKERS).map(|_| {
-            let (s, tx) = (shared.clone(), tx.clone());
-            std::thread::spawn(move || s.worker(tx))
-        }).collect();
+        let workers = (0..WORKERS)
+            .map(|_| {
+                let (s, tx) = (shared.clone(), tx.clone());
+                std::thread::spawn(move || s.worker(tx))
+            })
+            .collect();
 
         Self { shared, results, workers, shown: HashMap::new(), wanted: HashMap::new(), rings, started, frame_s, first_s: None }
     }
@@ -404,9 +434,12 @@ impl Streamer {
 
         // A block draws what its cells hold, whichever chunk's tile that is: every block a tile of the chunk can reach.
         let reach = (self.frame().reach() + CHUNK - 1) / CHUNK;
-        let changed: std::collections::HashSet<ChunkKey> = changed.iter().flat_map(|&k| {
-            [k, block_of(k), block_of((k.0 + reach, k.1)), block_of((k.0, k.1 + reach)), block_of((k.0 + reach, k.1 + reach))]
-        }).collect();
+        let changed: std::collections::HashSet<ChunkKey> = changed
+            .iter()
+            .flat_map(|&k| {
+                [k, block_of(k), block_of((k.0 + reach, k.1)), block_of((k.0, k.1 + reach)), block_of((k.0 + reach, k.1 + reach))]
+            })
+            .collect();
         let shown = &self.shown;
         self.wanted.retain(|k, l| shown.get(k) == Some(l) && !changed.contains(k));
         lock(&self.shared.queue).clear();
@@ -498,9 +531,10 @@ impl Streamer {
                 let moved: Vec<ChunkKey> = now.symmetric_difference(&zone).copied().collect();
                 let near = (f.reach() + CHUNK - 1) / CHUNK + 1;
                 self.wanted.retain(|&(cx, cy), l| {
-                    l.is_block() || !moved.iter().any(|&(bx, by)| {
-                        cx >= bx - near && cx < bx + BLOCK + near && cy >= by - near && cy < by + BLOCK + near
-                    })
+                    l.is_block()
+                        || !moved
+                            .iter()
+                            .any(|&(bx, by)| cx >= bx - near && cx < bx + BLOCK + near && cy >= by - near && cy < by + BLOCK + near)
                 });
                 *now = zone;
             }
@@ -509,7 +543,8 @@ impl Streamer {
         let mut out = vec![];
 
         // The chunks that go: off the queue, off the scene.
-        let gone: std::collections::HashSet<ChunkKey> = self.wanted.keys().chain(self.shown.keys()).filter(|k| !want.contains_key(k)).copied().collect();
+        let gone: std::collections::HashSet<ChunkKey> =
+            self.wanted.keys().chain(self.shown.keys()).filter(|k| !want.contains_key(k)).copied().collect();
         for k in gone {
             self.wanted.remove(&k);
             if self.shown.remove(&k).is_some() {
@@ -612,8 +647,15 @@ impl Streamer {
         let failed = if s.failed.is_empty() { String::new() } else { format!(", {} could not be opened", s.failed.len()) };
         format!(
             "{}: chunks {near} near, {mid} mid, {ground} ground, {far} far, {merged} merged blocks, {blocks} far blocks{}; tiles: {} opened ({:.1} s), {} from the cache{failed}, {} MB in memory; {} (map {:.1} s{})",
-            f.map.name, if self.busy() > 0 { format!(", {} building", self.busy()) } else { String::new() }, s.opened, s.open_s, s.from_cache, s.bytes >> 20,
-            f.lf_note(), self.frame_s, self.first_s.map_or(String::new(), |t| format!(", first ring {t:.1} s"))
+            f.map.name,
+            if self.busy() > 0 { format!(", {} building", self.busy()) } else { String::new() },
+            s.opened,
+            s.open_s,
+            s.from_cache,
+            s.bytes >> 20,
+            f.lf_note(),
+            self.frame_s,
+            self.first_s.map_or(String::new(), |t| format!(", first ring {t:.1} s"))
         )
     }
 

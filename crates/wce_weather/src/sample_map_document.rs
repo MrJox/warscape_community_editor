@@ -96,10 +96,14 @@ impl SampleMapDocument {
         }
 
         let mut pieces = BTreeMap::new();
-        let base = tmp.entities().iter().map(|e| {
-            *pieces.entry(e.source.item).or_default() += 1;
-            Base { payload: e.payload.clone(), world: e.world, item: e.source.item }
-        }).collect();
+        let base = tmp
+            .entities()
+            .iter()
+            .map(|e| {
+                *pieces.entry(e.source.item).or_default() += 1;
+                Base { payload: e.payload.clone(), world: e.world, item: e.source.item }
+            })
+            .collect();
 
         Self { core, history: CommandStack::default(), seed, info, base, pieces }
     }
@@ -236,7 +240,10 @@ impl Document for SampleMapDocument {
 
             let (Some(before), Some(c)) = (self.item_transform(r), self.centre(r.item)) else { continue };
             let now = *delta * before;
-            let n = Placement { offset: Float3::new(now.m[0][3] - c.x, now.m[1][3] - c.y, now.m[2][3] - c.z), yaw: now.m[0][2].atan2(now.m[0][0]) };
+            let n = Placement {
+                offset: Float3::new(now.m[0][3] - c.x, now.m[1][3] - c.y, now.m[2][3] - c.z),
+                yaw: now.m[0][2].atan2(now.m[0][0]),
+            };
             self.set_placement(r.item, n, gesture);
         }
     }

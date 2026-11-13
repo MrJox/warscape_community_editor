@@ -332,10 +332,13 @@ fn edges(region: &Region) -> Edges {
         }
     }
 
-    timed.into_iter().map(|(k, mut v)| {
-        v.sort_by_key(|e| e.0);
-        (k, v.into_iter().map(|e| e.1).collect())
-    }).collect()
+    timed
+        .into_iter()
+        .map(|(k, mut v)| {
+            v.sort_by_key(|e| e.0);
+            (k, v.into_iter().map(|e| e.1).collect())
+        })
+        .collect()
 }
 
 /// fn 0x1005c990 as it is: each edge added, its reverse cancelled (the reference for `edges`).
@@ -528,8 +531,17 @@ fn split(zones: &[Polygon], width: f32) -> Option<(Polygon, Polygon)> {
 /// two zones (or fewer) and its errors.
 #[allow(clippy::too_many_arguments)]
 pub fn zones(
-    spec: &Spec, dep: &DeploymentSpec, db: &TileDatabase, w: u32, h: u32, instances: &[Placement], cells: &[i32],
-    masks: &HashMap<(usize, usize), DeploymentMask>, config: i32, centre: (i32, i32), inset: i32,
+    spec: &Spec,
+    dep: &DeploymentSpec,
+    db: &TileDatabase,
+    w: u32,
+    h: u32,
+    instances: &[Placement],
+    cells: &[i32],
+    masks: &HashMap<(usize, usize), DeploymentMask>,
+    config: i32,
+    centre: (i32, i32),
+    inset: i32,
 ) -> (Vec<Polygon>, Vec<String>) {
     let mut gathered = vec![];
     for dy in -4..4 {

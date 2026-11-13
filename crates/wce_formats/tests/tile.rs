@@ -70,7 +70,10 @@ fn climates() {
     assert_eq!((rock.blend_pixel_scale, rock.mid_distance_strength, rock.lerp_smoothness), (20.0, 1.0, [0.1, 0.1, 0.5, 0.1]));
 
     let exists = |p: &str| p == "terrain/textures/battle/default/rock/2_su_normal.dds";
-    assert_eq!(climate_texture_path(&climate.folder(), "rock", 2, "wi", true, exists).as_deref(), Some("terrain/textures/battle/default/rock/2_su_normal.dds"));
+    assert_eq!(
+        climate_texture_path(&climate.folder(), "rock", 2, "wi", true, exists).as_deref(),
+        Some("terrain/textures/battle/default/rock/2_su_normal.dds")
+    );
     assert_eq!(climate_texture_path(&climate.folder(), "rock", 1, "wi", true, exists), None);
 }
 
@@ -86,7 +89,8 @@ fn climates_of_a_mod_over_the_kit() {
         b"<SETTINGS><CLIMATES><CLIMATE name='ROME_Med'><TEXTURES>\
         <TEXTURE name='mordor_gravel' blend_pixel_scale='12'/><TEXTURE name='rock' blend_pixel_scale='25'/></TEXTURES></CLIMATE>\
         <CLIMATE name='ROME_New'/></CLIMATES></SETTINGS>",
-    ).unwrap();
+    )
+    .unwrap();
 
     let list = modded.over(kit);
     let names = list.climates.iter().map(|c| c.name.as_str()).collect::<Vec<_>>();
@@ -100,13 +104,20 @@ fn climates_of_a_mod_over_the_kit() {
 
 #[test]
 fn campaign_climates_use_the_campaign_textures() {
-    let list = ClimateList { kind: "campaign".to_owned(), climates: vec![Climate { name: "Europe".to_owned(), ..Default::default() }], ..Default::default() };
+    let list = ClimateList {
+        kind: "campaign".to_owned(),
+        climates: vec![Climate { name: "Europe".to_owned(), ..Default::default() }],
+        ..Default::default()
+    };
     assert_eq!(list.default_folder(), "terrain/textures/campaign/default");
     assert_eq!(list.folder_named("europe"), "terrain/textures/campaign/europe");
     assert_eq!(list.folder_named("nowhere"), "terrain/textures/campaign/default");
 
     let exists = |p: &str| p == "terrain/textures/campaign/default/mordor_a/1_su_diffuse.dds";
-    assert_eq!(list.texture_path(&list.folder_named("europe"), "mordor_a", 1, "au", false, exists).as_deref(), Some("terrain/textures/campaign/default/mordor_a/1_su_diffuse.dds"));
+    assert_eq!(
+        list.texture_path(&list.folder_named("europe"), "mordor_a", 1, "au", false, exists).as_deref(),
+        Some("terrain/textures/campaign/default/mordor_a/1_su_diffuse.dds")
+    );
     assert_eq!(ClimateList::default().default_folder(), "terrain/textures/battle/default");
 }
 
@@ -126,7 +137,10 @@ fn index_with_cache() {
     assert_eq!(cold.entries(), warm.entries());
 
     let entry = &warm.entries()[0];
-    assert_eq!((entry.key.as_str(), entry.variations.as_slice()), ("terrain/tiles/battle/set_a/tile_b", &["Minor".to_owned(), "major/inner".to_owned()][..]));
+    assert_eq!(
+        (entry.key.as_str(), entry.variations.as_slice()),
+        ("terrain/tiles/battle/set_a/tile_b", &["Minor".to_owned(), "major/inner".to_owned()][..])
+    );
     let folder = raw.path().join("terrain/tiles/battle/set_a/tile_b");
     let resolved = warm.resolve(&folder.join("major/inner/tile.ted"));
     assert_eq!((resolved.entry.map(|e| e.name.as_str()), resolved.variation), (Some("set_a_tile_b"), Some(1)));

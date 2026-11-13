@@ -62,7 +62,6 @@ pub(crate) struct Cover {
 }
 
 impl Cover {
-
     /// The rectangle a cover over `lo`..`hi` covers: with a margin for the edges' ribbons and the bumps' fall-off.
     pub(crate) fn extent(lo: [f32; 2], hi: [f32; 2]) -> ([f32; 2], [f32; 2]) {
         let margin = SMOOTH_M + RIBBON_M + MIN_CELL;
@@ -88,7 +87,10 @@ impl Cover {
         let k = ((cell / SAMPLE_M).ceil() as usize).min(((MAX_SAMPLES / (cx * cz) as f32).sqrt() as usize).max(1)).max(1);
         let (lx, lz) = (cx * k + 1, cz * k + 1);
         let step = cell / k as f32;
-        let lattice = (0..lz).flat_map(|j| (0..lx).map(move |i| (i, j))).map(|(i, j)| terrain(lo[0] + i as f32 * step, lo[1] + j as f32 * step)).collect::<Vec<_>>();
+        let lattice = (0..lz)
+            .flat_map(|j| (0..lx).map(move |i| (i, j)))
+            .map(|(i, j)| terrain(lo[0] + i as f32 * step, lo[1] + j as f32 * step))
+            .collect::<Vec<_>>();
         let mut ground = vec![f32::MIN; cx * cz];
         for j in 0..cz {
             for i in 0..cx {
@@ -253,7 +255,16 @@ const CORNER_SCALE: f32 = 1.5;
 /// in `colours.line` (a little wider than the ribbon, as large as its shorter edge leaves room for) and each edge's ribbon runs from disc
 /// to disc; without (a curve's samples), the ribbon is one strip, mitred at its points.
 #[allow(clippy::too_many_arguments)]
-pub fn edge_strip(points: &[Float3], closed: bool, corners: bool, half: f32, step: f32, height: &dyn Fn(f32, f32) -> f32, colours: EdgeColours, o: &mut Overlay) {
+pub fn edge_strip(
+    points: &[Float3],
+    closed: bool,
+    corners: bool,
+    half: f32,
+    step: f32,
+    height: &dyn Fn(f32, f32) -> f32,
+    colours: EdgeColours,
+    o: &mut Overlay,
+) {
     let mut pts = points.iter().map(|p| [p.x, p.z]).collect::<Vec<_>>();
     pts.dedup_by(|a, b| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-4);
     let n = pts.len();
@@ -283,7 +294,12 @@ pub fn edge_strip(points: &[Float3], closed: bool, corners: bool, half: f32, ste
     let piece = |c0: [f32; 2], c1: [f32; 2], off0: [f32; 2], off1: [f32; 2], o: &mut Overlay| {
         let l = (c1[0] - c0[0]).hypot(c1[1] - c0[1]);
         let k = (l / step.max(0.1)).ceil().max(1.0) as usize;
-        let at = |t: f32| ([c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t], [off0[0] + (off1[0] - off0[0]) * t, off0[1] + (off1[1] - off0[1]) * t]);
+        let at = |t: f32| {
+            (
+                [c0[0] + (c1[0] - c0[0]) * t, c0[1] + (c1[1] - c0[1]) * t],
+                [off0[0] + (off1[0] - off0[0]) * t, off0[1] + (off1[1] - off0[1]) * t],
+            )
+        };
         let mut prev = section(c0, off0);
         for i in 1..=k {
             let (c, off) = at(i as f32 / k as f32);
@@ -302,7 +318,13 @@ pub fn edge_strip(points: &[Float3], closed: bool, corners: bool, half: f32, ste
     if corners {
         // Each point's disc: as wide as asked, but no more than half its shorter edge (two discs never meet).
         let radius = |i: usize| {
-            let before = if i > 0 { Some(len(i - 1)) } else if closed { Some(len(n - 1)) } else { None };
+            let before = if i > 0 {
+                Some(len(i - 1))
+            } else if closed {
+                Some(len(n - 1))
+            } else {
+                None
+            };
             let after = if i < n - 1 || closed { Some(len(i % n)) } else { None };
             let room = before.into_iter().chain(after).fold(f32::MAX, f32::min) * 0.5;
             (half * CORNER_SCALE).min(room)
@@ -338,7 +360,13 @@ pub fn edge_strip(points: &[Float3], closed: bool, corners: bool, half: f32, ste
     } else {
         // One strip, mitred at the points (at most twice as wide as the ribbon there, on very sharp turns).
         let miter = |i: usize| {
-            let prev = if i > 0 { Some(i - 1) } else if closed { Some(n - 1) } else { None };
+            let prev = if i > 0 {
+                Some(i - 1)
+            } else if closed {
+                Some(n - 1)
+            } else {
+                None
+            };
             let next = if i < n - 1 || closed { Some(i % n) } else { None };
             let m = match (prev.map(normal), next.map(normal)) {
                 (Some(a), Some(b)) => {
@@ -385,7 +413,9 @@ fn separable(v: &mut [f32], nx: usize, nz: usize, radius: usize, f: impl Fn(&[f3
 
     let mut line = vec![];
     let mut out = vec![];
-    for (len, count, index) in [(nx, nz, (|a: usize, b: usize, nx: usize| b * nx + a) as fn(usize, usize, usize) -> usize), (nz, nx, |a, b, nx| a * nx + b)] {
+    for (len, count, index) in
+        [(nx, nz, (|a: usize, b: usize, nx: usize| b * nx + a) as fn(usize, usize, usize) -> usize), (nz, nx, |a, b, nx| a * nx + b)]
+    {
         for b in 0..count {
             line.clear();
             line.extend((0..len).map(|a| v[index(a, b, nx)]));
@@ -431,26 +461,32 @@ pub(crate) fn bridge_holes(outer: &[[f32; 2]], holes: &[Vec<[f32; 2]>]) -> Vec<[
         merged.reverse();
     }
 
-    let mut holes = holes.iter().filter(|h| h.len() >= 3).map(|h| {
-        let mut h = h.clone();
-        if signed(&h) > 0.0 {
-            h.reverse();
-        }
-        h
-    }).collect::<Vec<_>>();
+    let mut holes = holes
+        .iter()
+        .filter(|h| h.len() >= 3)
+        .map(|h| {
+            let mut h = h.clone();
+            if signed(&h) > 0.0 {
+                h.reverse();
+            }
+            h
+        })
+        .collect::<Vec<_>>();
     let right = |h: &[[f32; 2]]| (0..h.len()).max_by(|&a, &b| h[a][0].total_cmp(&h[b][0])).unwrap_or(0);
     holes.sort_by(|a, b| b[right(b)][0].total_cmp(&a[right(a)][0]));
 
-    let crosses = |p: [f32; 2], q: [f32; 2], ring: &[[f32; 2]]| (0..ring.len()).any(|k| {
-        let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
-        if a == p || a == q || b == p || b == q {
-            return false;
-        }
+    let crosses = |p: [f32; 2], q: [f32; 2], ring: &[[f32; 2]]| {
+        (0..ring.len()).any(|k| {
+            let (a, b) = (ring[k], ring[(k + 1) % ring.len()]);
+            if a == p || a == q || b == p || b == q {
+                return false;
+            }
 
-        let (d1, d2) = (cross(p, q, a), cross(p, q, b));
-        let (d3, d4) = (cross(a, b, p), cross(a, b, q));
-        d1 * d2 < 0.0 && d3 * d4 < 0.0
-    });
+            let (d1, d2) = (cross(p, q, a), cross(p, q, b));
+            let (d3, d4) = (cross(a, b, p), cross(a, b, q));
+            d1 * d2 < 0.0 && d3 * d4 < 0.0
+        })
+    };
 
     for i in 0..holes.len() {
         let h = &holes[i];
@@ -478,10 +514,12 @@ pub(crate) fn ear_clip(points: &[[f32; 2]]) -> Vec<[[f32; 2]; 3]> {
         idx.pop();
     }
 
-    let area = (0..idx.len()).map(|k| {
-        let (p, q) = (points[idx[k]], points[idx[(k + 1) % idx.len()]]);
-        p[0] * q[1] - q[0] * p[1]
-    }).sum::<f32>();
+    let area = (0..idx.len())
+        .map(|k| {
+            let (p, q) = (points[idx[k]], points[idx[(k + 1) % idx.len()]]);
+            p[0] * q[1] - q[0] * p[1]
+        })
+        .sum::<f32>();
     let sign = if area >= 0.0 { 1.0 } else { -1.0 };
     let mut out = Vec::with_capacity(idx.len().saturating_sub(2));
     let mut k = 0;
@@ -491,15 +529,19 @@ pub(crate) fn ear_clip(points: &[[f32; 2]]) -> Vec<[[f32; 2]; 3]> {
         let (ia, ib, ic) = (idx[(k + n - 1) % n], idx[k % n], idx[(k + 1) % n]);
         let (a, b, c) = (points[ia], points[ib], points[ic]);
         let convex = cross(a, b, c) * sign > 0.0;
-        let empty = convex && idx.iter().all(|&j| {
-            if j == ia || j == ib || j == ic {
-                return true;
-            }
+        let empty = convex
+            && idx.iter().all(|&j| {
+                if j == ia || j == ib || j == ic {
+                    return true;
+                }
 
-            // A copy of a corner (a hole's bridge doubles two points) is not in the ear.
-            let p = points[j];
-            p == a || p == b || p == c || !(cross(a, b, p) * sign >= 0.0 && cross(b, c, p) * sign >= 0.0 && cross(c, a, p) * sign >= 0.0)
-        });
+                // A copy of a corner (a hole's bridge doubles two points) is not in the ear.
+                let p = points[j];
+                p == a
+                    || p == b
+                    || p == c
+                    || !(cross(a, b, p) * sign >= 0.0 && cross(b, c, p) * sign >= 0.0 && cross(c, a, p) * sign >= 0.0)
+            });
 
         if empty {
             out.push([a, b, c]);
@@ -528,7 +570,6 @@ pub(crate) fn ear_clip(points: &[[f32; 2]]) -> Vec<[[f32; 2]; 3]> {
 }
 
 impl Tile {
-
     /// The building pieces the covers go over, none when the display keeps them on the terrain (and the paths of the tops not known yet, asked for at the next [`Tile::poll_tops`]).
     pub(crate) fn cover_solids(&mut self, scene: &RenderScene) -> Vec<Solid> {
         let mut out = vec![];
@@ -657,10 +698,15 @@ impl Tile {
             (e.x.abs().max(e.y.abs()).max(e.z.abs()) / self.unit() as f32).max(1.0)
         });
 
-        let hit = self.covers.iter().filter(|(_, c)| {
-            let (lo, hi) = c.rect();
-            c.sources.contains(&elem) || (p.x + reach >= lo[0] && p.x - reach <= hi[0] && p.z + reach >= lo[1] && p.z - reach <= hi[1])
-        }).map(|(&e, _)| e).collect::<Vec<_>>();
+        let hit = self
+            .covers
+            .iter()
+            .filter(|(_, c)| {
+                let (lo, hi) = c.rect();
+                c.sources.contains(&elem) || (p.x + reach >= lo[0] && p.x - reach <= hi[0] && p.z + reach >= lo[1] && p.z - reach <= hi[1])
+            })
+            .map(|(&e, _)| e)
+            .collect::<Vec<_>>();
         self.covers_dirty.extend(hit);
     }
 
@@ -725,7 +771,8 @@ mod tests {
         let roof = ModelTop::from_triangles(&[
             [Float3::new(-2.0, 6.0, -2.0), Float3::new(2.0, 6.0, -2.0), Float3::new(2.0, 6.0, 2.0)],
             [Float3::new(-2.0, 6.0, -2.0), Float3::new(2.0, 6.0, 2.0), Float3::new(-2.0, 6.0, 2.0)],
-        ]).expect("a roof");
+        ])
+        .expect("a roof");
         let mut world = Float4x4::IDENTITY;
         world.m[0][3] = 20.0;
         world.m[2][3] = 20.0;

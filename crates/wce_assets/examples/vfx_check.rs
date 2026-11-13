@@ -58,13 +58,22 @@ enum Values<'a> {
 fn mine(k: &EmitterConstants) -> Vec<(&'static str, Values<'_>)> {
     use Values::{F, U};
     vec![
-        ("behaviour_mask", U(&k.behaviour_mask)), ("vs_translation_params", F(&k.vs_translation_params)), ("vs_translation_params1", F(&k.vs_translation_params1)),
-        ("ps_sim_game_logic_params", F(&k.ps_sim_game_logic_params)), ("ps_sim_gravity_params", F(&k.ps_sim_gravity_params)),
-        ("ps_sim_deceleration_params", F(&k.ps_sim_deceleration_params)), ("ps_sim_following_emitter_params", F(&k.ps_sim_following_emitter_params)),
-        ("ps_sim_turbulence_params", F(&k.ps_sim_turbulence_params)), ("ps_lighting_legacy_params", F(&k.ps_lighting_legacy_params)),
-        ("ps_lighting_params", F(&k.ps_lighting_params)), ("ps_soft_edge_params", F(&k.ps_soft_edge_params)), ("vs_culling_distances", F(&k.vs_culling_distances)),
-        ("vs_rotation_params", F(&k.vs_rotation_params)), ("vs_atlas_texture_params", F(&k.vs_atlas_texture_params)),
-        ("vs_cell_texture_params", U(&k.vs_cell_texture_params)), ("vs_animated_texture_params", U(&k.vs_animated_texture_params)),
+        ("behaviour_mask", U(&k.behaviour_mask)),
+        ("vs_translation_params", F(&k.vs_translation_params)),
+        ("vs_translation_params1", F(&k.vs_translation_params1)),
+        ("ps_sim_game_logic_params", F(&k.ps_sim_game_logic_params)),
+        ("ps_sim_gravity_params", F(&k.ps_sim_gravity_params)),
+        ("ps_sim_deceleration_params", F(&k.ps_sim_deceleration_params)),
+        ("ps_sim_following_emitter_params", F(&k.ps_sim_following_emitter_params)),
+        ("ps_sim_turbulence_params", F(&k.ps_sim_turbulence_params)),
+        ("ps_lighting_legacy_params", F(&k.ps_lighting_legacy_params)),
+        ("ps_lighting_params", F(&k.ps_lighting_params)),
+        ("ps_soft_edge_params", F(&k.ps_soft_edge_params)),
+        ("vs_culling_distances", F(&k.vs_culling_distances)),
+        ("vs_rotation_params", F(&k.vs_rotation_params)),
+        ("vs_atlas_texture_params", F(&k.vs_atlas_texture_params)),
+        ("vs_cell_texture_params", U(&k.vs_cell_texture_params)),
+        ("vs_animated_texture_params", U(&k.vs_animated_texture_params)),
         ("vs_animated_texture_params1", F(&k.vs_animated_texture_params1)),
     ]
 }
@@ -93,8 +102,13 @@ fn run(args: &[String]) -> Result<i32, String> {
     let w = load_weather_vfx_from_vfs(&vfs, &args[0])?;
     let d = &w.definition;
     println!(
-        "definition '{}' vfx1 '{}' type {} wind {}..{}: {} emitters", d.name, d.vfx1, d.kind, printf_g_prec(f64::from(d.wind_size_min), 3),
-        printf_g_prec(f64::from(d.wind_size_max), 3), w.emitters.len(),
+        "definition '{}' vfx1 '{}' type {} wind {}..{}: {} emitters",
+        d.name,
+        d.vfx1,
+        d.kind,
+        printf_g_prec(f64::from(d.wind_size_min), 3),
+        printf_g_prec(f64::from(d.wind_size_max), 3),
+        w.emitters.len(),
     );
     for n in &w.notes {
         println!("  note: {n}");
@@ -115,10 +129,13 @@ fn run(args: &[String]) -> Result<i32, String> {
 
         let (mut best, mut best_score) = (-1i64, -1i32);
         for (&idx, rv) in &rows {
-            let score = vars.iter().map(|(name, m)| {
-                let r = rv.get(*name).copied().unwrap_or_default();
-                (0..4).filter(|&i| same(m, &r, i)).count() as i32
-            }).sum::<i32>();
+            let score = vars
+                .iter()
+                .map(|(name, m)| {
+                    let r = rv.get(*name).copied().unwrap_or_default();
+                    (0..4).filter(|&i| same(m, &r, i)).count() as i32
+                })
+                .sum::<i32>();
             if score > best_score {
                 best_score = score;
                 best = idx;

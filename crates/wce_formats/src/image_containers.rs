@@ -43,7 +43,6 @@ pub struct DdsFile {
 }
 
 impl DdsFile {
-
     pub fn flags(&self) -> u32 {
         self.header[1]
     }
@@ -136,7 +135,8 @@ impl DdsFile {
 
     /// If the header is [`Self::make_r32f`]'s for its size, and the payload has width * height floats.
     pub fn is_r32f_template(&self) -> bool {
-        !self.has_dx10 && self.header == Self::make_r32f(self.width(), self.height(), vec![]).header
+        !self.has_dx10
+            && self.header == Self::make_r32f(self.width(), self.height(), vec![]).header
             && self.payload.len() == self.width() as usize * self.height() as usize * 4
     }
 }
@@ -151,7 +151,6 @@ pub struct TgaFile {
 }
 
 impl TgaFile {
-
     pub fn image_type(&self) -> u8 {
         self.header[2]
     }
@@ -220,7 +219,6 @@ pub struct TiffFile {
 }
 
 impl TiffFile {
-
     /// Reads a TIFF file.
     ///
     /// # Errors
@@ -278,9 +276,21 @@ impl TiffFile {
         let mut o = vec![b'I', b'I', 42, 0, 8, 0, 0, 0];
         o.extend_from_slice(&15u16.to_le_bytes());
         for (tag, kind, count, value) in [
-            (254u16, 4u16, 1u32, 0u32), (256, 3, 1, width), (257, 3, 1, height), (258, 3, 16, 194), (259, 3, 1, 1), (262, 3, 1, 1), (273, 4, 1, 242),
-            (274, 3, 1, 1), (277, 3, 1, 16), (278, 3, 1, height), (279, 4, 1, width.wrapping_mul(height).wrapping_mul(32)), (282, 5, 1, 226), (283, 5, 1, 234),
-            (284, 3, 1, 1), (296, 3, 1, 1),
+            (254u16, 4u16, 1u32, 0u32),
+            (256, 3, 1, width),
+            (257, 3, 1, height),
+            (258, 3, 16, 194),
+            (259, 3, 1, 1),
+            (262, 3, 1, 1),
+            (273, 4, 1, 242),
+            (274, 3, 1, 1),
+            (277, 3, 1, 16),
+            (278, 3, 1, height),
+            (279, 4, 1, width.wrapping_mul(height).wrapping_mul(32)),
+            (282, 5, 1, 226),
+            (283, 5, 1, 234),
+            (284, 3, 1, 1),
+            (296, 3, 1, 1),
         ] {
             o.extend_from_slice(&tag.to_le_bytes());
             o.extend_from_slice(&kind.to_le_bytes());
@@ -299,6 +309,8 @@ impl TiffFile {
 
     /// If this is a TEd-layout file whose header is [`Self::ted_header`]'s, so it can be rebuilt from the pixels alone.
     pub fn header_is_regenerable(&self) -> bool {
-        self.ted_layout && self.header == Self::ted_header(self.width, self.height) && self.pixels.len() == self.width as usize * self.height as usize * 32
+        self.ted_layout
+            && self.header == Self::ted_header(self.width, self.height)
+            && self.pixels.len() == self.width as usize * self.height as usize * 32
     }
 }

@@ -71,7 +71,9 @@ pub fn codec_of(name: &str, head: &[u8]) -> Codec {
         Codec::TileDatabase
     } else if fastbin && lower.ends_with(".bin") && (lower.contains("_bmd_data") || lower.contains("bmd_data_escalation")) {
         Codec::Bmd
-    } else if (lower.ends_with(".xml") || lower.ends_with(".outlines")) && head.iter().find(|b| !b.is_ascii_whitespace() && **b != 0xEF && **b != 0xBB && **b != 0xBF) == Some(&b'<') {
+    } else if (lower.ends_with(".xml") || lower.ends_with(".outlines"))
+        && head.iter().find(|b| !b.is_ascii_whitespace() && **b != 0xEF && **b != 0xBB && **b != 0xBF) == Some(&b'<')
+    {
         Codec::Xml
     } else if lower.ends_with(".tree_list") {
         Codec::OldList(OldListKind::Tree)

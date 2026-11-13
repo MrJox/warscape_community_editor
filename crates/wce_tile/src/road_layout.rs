@@ -5,8 +5,8 @@
 
 use wce_foundation::math::{Double3, Double3x3};
 
-use crate::prefab_refs::{Override, apply};
 use crate::new_instances::ROAD_GUIDE;
+use crate::prefab_refs::{Override, apply};
 use crate::road_pieces::{Anchor, Part, Piece};
 use crate::ted_scene::{TedScene, format_number};
 use crate::world_transform::{euler_from_matrix, euler_matrix};
@@ -148,7 +148,10 @@ fn pick(seed: u32, n: u32) -> u32 {
 
 /// Where the line is `reach` from a point on it, in a straight line, going from `c` (a distance along it) one way (`reach` < 0: back).
 fn chord(st: &Stations, p: [f64; 2], c: f64, reach: f64, total: f64) -> Option<f64> {
-    let away = |s: f64| { let q = st.at(s).0; (q[0] - p[0]).hypot(q[1] - p[1]) };
+    let away = |s: f64| {
+        let q = st.at(s).0;
+        (q[0] - p[0]).hypot(q[1] - p[1])
+    };
     let far = (c + reach * 3.0).clamp(0.0, total);
     if away(far) < reach.abs() {
         return None;
@@ -185,12 +188,14 @@ pub fn layout(line: &[[f64; 2]], corners: &[usize], ends: [End; 2], holds: &[Hol
         let at = line[i.min(line.len() - 1)];
         // Its ports, as far from its middle as its arms are long, in a straight line: the line may bend a little near the corner.
         let (Some(a), Some(b)) = (chord(&st, at, c, -half, total), chord(&st, at, c, half, total)) else {
-            out.notes.push(format!("a corner at {:.0}, {:.0} has no room for its piece ({:.0} m each way): laid as a bend", at[0], at[1], half));
+            out.notes
+                .push(format!("a corner at {:.0}, {:.0} has no room for its piece ({:.0} m each way): laid as a bend", at[0], at[1], half));
             continue;
         };
 
         if overlaps(&held, a, b) {
-            out.notes.push(format!("a corner at {:.0}, {:.0} has no room for its piece ({:.0} m each way): laid as a bend", at[0], at[1], half));
+            out.notes
+                .push(format!("a corner at {:.0}, {:.0} has no room for its piece ({:.0} m each way): laid as a bend", at[0], at[1], half));
             continue;
         }
 
@@ -241,7 +246,13 @@ pub fn layout(line: &[[f64; 2]], corners: &[usize], ends: [End; 2], holds: &[Hol
             let piece = if bend > STRAIGHT_BEND { "curve" } else { "straight" };
             if bend > CURVE_BEND {
                 let p = st.at((s0 + s1) * 0.5).0;
-                out.notes.push(format!("the road turns {:.0} degrees in {:.1} m at {:.0}, {:.0}: tighter than a curve piece takes", bend.to_degrees(), s1 - s0, p[0], p[1]));
+                out.notes.push(format!(
+                    "the road turns {:.0} degrees in {:.1} m at {:.0}, {:.0}: tighter than a curve piece takes",
+                    bend.to_degrees(),
+                    s1 - s0,
+                    p[0],
+                    p[1]
+                ));
             }
 
             let frame = if pick(seed, n_laid) & 1 == 1 { Frame::Along { from: s1, to: s0 } } else { Frame::Along { from: s0, to: s1 } };
@@ -480,7 +491,9 @@ pub fn fit_dressed(piece: &Piece, children: &[u8], key: &str, laid: &Laid, site:
         };
 
         let e = euler_from_matrix(&rot);
-        let mut set = |attr: &str, value: String| ovs.push(Override { path: part.path.clone(), element: part.kind.clone(), attr: attr.to_owned(), value });
+        let mut set = |attr: &str, value: String| {
+            ovs.push(Override { path: part.path.clone(), element: part.kind.clone(), attr: attr.to_owned(), value })
+        };
         set("position", format!("vector({},{},{})", n(pos.x), n(pos.y), n(pos.z)));
         set("orientation", format!("euler({},{},{})", n(e.x), n(e.y), n(e.z)));
         set("surface_mode", "MSM_FREEFORM".to_owned());
@@ -551,8 +564,21 @@ pub fn ports_at(piece: &Piece, laid: &Laid, line: &[[f64; 2]], width: f64) -> Ve
             }
 
             let probe = Part {
-                path: vec![], kind: String::new(), key: String::new(), arm: i, along: f, across: 0.0, up: 0.0, anchor: Anchor::Surface, solid: false,
-                size: [0.0; 2], turn: 0.0, at: [0.0; 2], rotation: Double3x3::default(), parent: None, scale: None,
+                path: vec![],
+                kind: String::new(),
+                key: String::new(),
+                arm: i,
+                along: f,
+                across: 0.0,
+                up: 0.0,
+                anchor: Anchor::Surface,
+                solid: false,
+                size: [0.0; 2],
+                turn: 0.0,
+                at: [0.0; 2],
+                rotation: Double3x3::default(),
+                parent: None,
+                scale: None,
             };
             out.push(place(piece, &probe, &arranged(piece, &laid.frame), &st, width).0);
         }
@@ -576,10 +602,15 @@ pub fn fence_runs(line: &[[f64; 2]], held: &[(f64, f64)], side: f64, offset: f64
         return (vec![], vec![]);
     }
 
-    let fence_line = (0..n).map(|i| {
-        let t = unit([line[(i + 1).min(n - 1)][0] - line[i.saturating_sub(1)][0], line[(i + 1).min(n - 1)][1] - line[i.saturating_sub(1)][1]]);
-        [line[i][0] + t[1] * side * offset, line[i][1] - t[0] * side * offset]
-    }).collect::<Vec<_>>();
+    let fence_line = (0..n)
+        .map(|i| {
+            let t = unit([
+                line[(i + 1).min(n - 1)][0] - line[i.saturating_sub(1)][0],
+                line[(i + 1).min(n - 1)][1] - line[i.saturating_sub(1)][1],
+            ]);
+            [line[i][0] + t[1] * side * offset, line[i][1] - t[0] * side * offset]
+        })
+        .collect::<Vec<_>>();
     let (centre, beside) = (Stations::new(line), Stations::new(&fence_line));
 
     // A distance along the centre line as one along the fence's line, by the samples it falls between.
@@ -623,10 +654,12 @@ pub fn fences_between(a: f64, b: f64, length: f64) -> Vec<Laid> {
     let count = (span / length).ceil().max(1.0) as usize;
     let first = a + length * 0.5;
     let last = (b - length * 0.5).max(first);
-    (0..count).map(|k| {
-        let c = if count == 1 { (a + b) * 0.5 } else { first + (last - first) * k as f64 / (count - 1) as f64 };
-        Laid { piece: "fence", frame: Frame::Along { from: c - length * 0.5, to: c + length * 0.5 } }
-    }).collect()
+    (0..count)
+        .map(|k| {
+            let c = if count == 1 { (a + b) * 0.5 } else { first + (last - first) * k as f64 / (count - 1) as f64 };
+            Laid { piece: "fence", frame: Frame::Along { from: c - length * 0.5, to: c + length * 0.5 } }
+        })
+        .collect()
 }
 
 /// The fences' lines round a corner or a junction (`at`, its arms' `ways`, each `reach` long to its port): between each two arms next to
@@ -654,7 +687,12 @@ pub fn star_fences(at: [f64; 2], ways: &[[f64; 2]], reach: f64, offset: f64, fen
         let sj = [at[0] + wj[0] * reach + nj[0] * offset, at[1] + wj[1] * reach + nj[1] * offset];
         let line = |a: [f64; 2], b: [f64; 2]| {
             let n = ((a[0] - b[0]).hypot(a[1] - b[1]) / 0.5).ceil().max(1.0) as usize;
-            (0..=n).map(|k| { let t = k as f64 / n as f64; [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t] }).collect::<Vec<_>>()
+            (0..=n)
+                .map(|k| {
+                    let t = k as f64 / n as f64;
+                    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+                })
+                .collect::<Vec<_>>()
         };
 
         if (sector - std::f64::consts::PI).abs() < 1e-3 {
@@ -695,14 +733,24 @@ pub fn star_fences(at: [f64; 2], ways: &[[f64; 2]], reach: f64, offset: f64, fen
             let a0 = ni[1].atan2(ni[0]);
             let n = ((offset * turned) / 0.5).ceil().max(1.0) as usize;
             let mut path = line(si, pi);
-            path.extend((1..n).map(|k| { let a = a0 + turned * k as f64 / n as f64; [at[0] + offset * a.cos(), at[1] + offset * a.sin()] }));
+            path.extend((1..n).map(|k| {
+                let a = a0 + turned * k as f64 / n as f64;
+                [at[0] + offset * a.cos(), at[1] + offset * a.sin()]
+            }));
             path.extend(line(pj, sj));
             out.push(path);
             continue;
         }
 
         let n = ((r * sweep.abs()) / 0.5).ceil().max(1.0) as usize;
-        out.push((0..=n).map(|k| { let a = a0 + sweep * k as f64 / n as f64; [c[0] + r * a.cos(), c[1] + r * a.sin()] }).collect());
+        out.push(
+            (0..=n)
+                .map(|k| {
+                    let a = a0 + sweep * k as f64 / n as f64;
+                    [c[0] + r * a.cos(), c[1] + r * a.sin()]
+                })
+                .collect(),
+        );
     }
 
     out
@@ -745,10 +793,14 @@ pub fn snap_ends(points: &mut [Vec<[f64; 2]>], centres: &[Vec<[f64; 2]>]) {
 
         for end in [0, n - 1] {
             let p = own[end];
-            let best = (0..centres.len()).filter(|&b| b != a && centres[b].len() >= 2).map(|b| {
-                let (s, d, q) = nearest(&centres[b], p);
-                (s, d, q, Stations::new(&centres[b]).length())
-            }).filter(|&(s, d, _, l)| d <= SNAP && s > SNAP && s < l - SNAP).min_by(|x, y| x.1.total_cmp(&y.1));
+            let best = (0..centres.len())
+                .filter(|&b| b != a && centres[b].len() >= 2)
+                .map(|b| {
+                    let (s, d, q) = nearest(&centres[b], p);
+                    (s, d, q, Stations::new(&centres[b]).length())
+                })
+                .filter(|&(s, d, _, l)| d <= SNAP && s > SNAP && s < l - SNAP)
+                .min_by(|x, y| x.1.total_cmp(&y.1));
             if let Some((_, _, q, _)) = best {
                 own[end] = q;
             }
@@ -771,7 +823,9 @@ pub struct Junctions {
 fn crossings(a: &[[f64; 2]], b: &[[f64; 2]]) -> Vec<(f64, f64, [f64; 2])> {
     let mut out: Vec<(f64, f64, [f64; 2])> = vec![];
     let (sa, sb) = (Stations::new(a), Stations::new(b));
-    let bounds = |l: &[[f64; 2]]| l.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |m, p| [m[0].min(p[0]), m[1].min(p[1]), m[2].max(p[0]), m[3].max(p[1])]);
+    let bounds = |l: &[[f64; 2]]| {
+        l.iter().fold([f64::MAX, f64::MAX, f64::MIN, f64::MIN], |m, p| [m[0].min(p[0]), m[1].min(p[1]), m[2].max(p[0]), m[3].max(p[1])])
+    };
     let (ba, bb) = (bounds(a), bounds(b));
     if ba[0] > bb[2] || bb[0] > ba[2] || ba[1] > bb[3] || bb[1] > ba[3] {
         return out;
@@ -853,7 +907,12 @@ pub fn junctions(lines: &[Vec<[f64; 2]>], halves: &[f64]) -> Junctions {
                     continue;
                 }
 
-                let found = (chord(&st[a], x, da, -half, la), chord(&st[a], x, da, half, la), chord(&st[b], x, db, -half, lb), chord(&st[b], x, db, half, lb));
+                let found = (
+                    chord(&st[a], x, da, -half, la),
+                    chord(&st[a], x, da, half, la),
+                    chord(&st[b], x, db, -half, lb),
+                    chord(&st[b], x, db, half, lb),
+                );
                 let (Some(a1), Some(a2), Some(b1), Some(b2)) = found else {
                     out.notes.push(format!("two roads cross at {:.0}, {:.0} too near an end for a junction", x[0], x[1]));
                     continue;
@@ -874,7 +933,12 @@ pub fn junctions(lines: &[Vec<[f64; 2]>], halves: &[f64]) -> Junctions {
                 continue;
             }
 
-            let found = (chord(&st[a], x, d1, -half, la), chord(&st[a], x, d1, half, la), chord(&st[a], x, d2, -half, la), chord(&st[a], x, d2, half, la));
+            let found = (
+                chord(&st[a], x, d1, -half, la),
+                chord(&st[a], x, d1, half, la),
+                chord(&st[a], x, d2, -half, la),
+                chord(&st[a], x, d2, half, la),
+            );
             let (Some(a1), Some(a2), Some(b1), Some(b2)) = found else {
                 out.notes.push(format!("a road crosses itself at {:.0}, {:.0} too near an end for a junction", x[0], x[1]));
                 continue;
@@ -1015,18 +1079,30 @@ mod tests {
 
         // The pieces cover the line with no gap and no overlap.
         let st = Stations::new(&line);
-        let mut spans = l.laid.iter().map(|p| match &p.frame {
-            Frame::Along { from, to } => (from.min(*to), from.max(*to)),
-            Frame::Star { at, ways } => {
-                // Its ports on the line: the distances along it nearest them.
-                let near = |q: [f64; 2]| (0..=(st.length() * 100.0) as usize).map(|k| k as f64 / 100.0).min_by(|a, b| {
-                    let (pa, pb) = (st.at(*a).0, st.at(*b).0);
-                    (pa[0] - q[0]).hypot(pa[1] - q[1]).total_cmp(&(pb[0] - q[0]).hypot(pb[1] - q[1]))
-                }).unwrap();
-                let (a, b) = (near([at[0] + ways[0][0] * 6.0, at[1] + ways[0][1] * 6.0]), near([at[0] + ways[1][0] * 6.0, at[1] + ways[1][1] * 6.0]));
-                (a.min(b), a.max(b))
-            }
-        }).collect::<Vec<_>>();
+        let mut spans = l
+            .laid
+            .iter()
+            .map(|p| match &p.frame {
+                Frame::Along { from, to } => (from.min(*to), from.max(*to)),
+                Frame::Star { at, ways } => {
+                    // Its ports on the line: the distances along it nearest them.
+                    let near = |q: [f64; 2]| {
+                        (0..=(st.length() * 100.0) as usize)
+                            .map(|k| k as f64 / 100.0)
+                            .min_by(|a, b| {
+                                let (pa, pb) = (st.at(*a).0, st.at(*b).0);
+                                (pa[0] - q[0]).hypot(pa[1] - q[1]).total_cmp(&(pb[0] - q[0]).hypot(pb[1] - q[1]))
+                            })
+                            .unwrap()
+                    };
+                    let (a, b) = (
+                        near([at[0] + ways[0][0] * 6.0, at[1] + ways[0][1] * 6.0]),
+                        near([at[0] + ways[1][0] * 6.0, at[1] + ways[1][1] * 6.0]),
+                    );
+                    (a.min(b), a.max(b))
+                }
+            })
+            .collect::<Vec<_>>();
         spans.sort_by(|a, b| a.0.total_cmp(&b.0));
         assert!(spans[0].0.abs() < 1e-6 && (spans.last().unwrap().1 - st.length()).abs() < 1e-6);
         for w in spans.windows(2) {
@@ -1068,7 +1144,12 @@ mod tests {
                 assert!((w.position.y - 6.0).abs() < 1e-6, "at the ground's height");
 
                 // Within the road and its verge of the centre line.
-                let near = (0..=(st.length() as usize)).map(|s| { let q = st.at(s as f64).0; (q[0] - p[0]).hypot(q[1] - p[1]) }).fold(f64::MAX, f64::min);
+                let near = (0..=(st.length() as usize))
+                    .map(|s| {
+                        let q = st.at(s as f64).0;
+                        (q[0] - p[0]).hypot(q[1] - p[1])
+                    })
+                    .fold(f64::MAX, f64::min);
                 assert!(near < 7.5, "{}: a part {near:.1} m off the road", laid.piece);
             }
         }
@@ -1081,7 +1162,11 @@ mod tests {
         let laid = Laid { piece: "straight", frame: Frame::Along { from: 0.0, to: 10.0 } };
         let f = fit(&piece, &children, "s", &laid, &Site { line: &line, width: 9.0, unit: 2.0, ground: &|_, _| 0.0 }).unwrap();
         let scene = TedScene::parse_any(f.text).unwrap();
-        let ruts = scene.find_all("ProjectedDecalInstance").into_iter().filter(|&d| scene.doc().get(d, "key").unwrap().contains("path_1")).collect::<Vec<_>>();
+        let ruts = scene
+            .find_all("ProjectedDecalInstance")
+            .into_iter()
+            .filter(|&d| scene.doc().get(d, "key").unwrap().contains("path_1"))
+            .collect::<Vec<_>>();
         for d in ruts {
             let s = scene.scale(d).unwrap();
             assert!((s.x - 19.0 * 1.25).abs() < 1e-6 && (s.z.abs() - 5.2 * 1.5).abs() < 1e-6, "{s:?}");
@@ -1090,7 +1175,11 @@ mod tests {
         }
 
         // An edge's border keeps its width and moves out with the edge.
-        let border = scene.find_all("ProjectedDecalInstance").into_iter().find(|&d| scene.doc().get(d, "key").unwrap().contains("border_1")).unwrap();
+        let border = scene
+            .find_all("ProjectedDecalInstance")
+            .into_iter()
+            .find(|&d| scene.doc().get(d, "key").unwrap().contains("border_1"))
+            .unwrap();
         assert!((scene.position(border).unwrap().x.abs() / 2.0 - 4.5).abs() < 1e-6);
         assert!((scene.scale(border).unwrap().z.abs() - 4.0).abs() < 1e-6);
     }
@@ -1109,7 +1198,12 @@ mod tests {
 
         // The outer edge (the arc of border_1 chords) lies outside the inner one (border_2): towards +x, +z, the turn's outside.
         let mean = |name: &str| {
-            let ps = scene.find_all("ProjectedDecalInstance").into_iter().filter(|&d| scene.doc().get(d, "key").unwrap().contains(name)).map(|d| scene.position(d).unwrap()).collect::<Vec<_>>();
+            let ps = scene
+                .find_all("ProjectedDecalInstance")
+                .into_iter()
+                .filter(|&d| scene.doc().get(d, "key").unwrap().contains(name))
+                .map(|d| scene.position(d).unwrap())
+                .collect::<Vec<_>>();
             let n = ps.len() as f64;
             (ps.iter().map(|p| p.x).sum::<f64>() / n, ps.iter().map(|p| p.z).sum::<f64>() / n)
         };
@@ -1126,10 +1220,12 @@ mod tests {
         assert!(points[2][1][1].abs() < 1e-9, "C's end is taken onto A: {:?}", points[2][1]);
         let lines = points.iter().map(centre).collect::<Vec<_>>();
         let j = junctions(&lines, &[6.0, 6.0, 6.0]);
-        let laid = (0..3).map(|r| {
-            let ends = [0, 1].map(|e| if j.joined[r][e] { End::Joined } else { End::Free });
-            layout(&lines[r], &[], ends, &j.holds[r], &Measures::default(), 1.0, 3)
-        }).collect::<Vec<_>>();
+        let laid = (0..3)
+            .map(|r| {
+                let ends = [0, 1].map(|e| if j.joined[r][e] { End::Joined } else { End::Free });
+                layout(&lines[r], &[], ends, &j.holds[r], &Measures::default(), 1.0, 3)
+            })
+            .collect::<Vec<_>>();
         (lines, j, laid)
     }
 
@@ -1150,7 +1246,11 @@ mod tests {
         let (lines, _, laid) = three_roads();
         let pieces = PIECES.iter().map(|p| (*p, dirt(p).0)).collect::<Vec<_>>();
         let piece = |name: &str| &pieces.iter().find(|p| p.0 == name).unwrap().1;
-        let ports = laid.iter().zip(&lines).flat_map(|(l, line)| l.laid.iter().map(|p| (p.piece, ports_at(piece(p.piece), p, line, 6.0))).collect::<Vec<_>>()).collect::<Vec<_>>();
+        let ports = laid
+            .iter()
+            .zip(&lines)
+            .flat_map(|(l, line)| l.laid.iter().map(|p| (p.piece, ports_at(piece(p.piece), p, line, 6.0))).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
         for (i, (name, own)) in ports.iter().enumerate() {
             for p in own {
                 let met = ports.iter().enumerate().any(|(k, (_, q))| k != i && q.iter().any(|q| (q[0] - p[0]).hypot(q[1] - p[1]) < 0.05));
@@ -1168,7 +1268,11 @@ mod tests {
         let scene = TedScene::parse_any(f.text).unwrap();
 
         // The through edge (border_1, at x = -3 in the piece, away from its branch) lies on A's far side from C: -z.
-        let borders = scene.find_all("ProjectedDecalInstance").into_iter().filter(|&d| scene.doc().get(d, "key").unwrap().contains("border_1")).collect::<Vec<_>>();
+        let borders = scene
+            .find_all("ProjectedDecalInstance")
+            .into_iter()
+            .filter(|&d| scene.doc().get(d, "key").unwrap().contains("border_1"))
+            .collect::<Vec<_>>();
         assert_eq!(borders.len(), 2);
         for d in borders {
             let w = crate::world_transform::world_transform(&scene, d);
@@ -1179,7 +1283,12 @@ mod tests {
     #[test]
     fn a_crossing_hint_covers_the_crossing_and_its_sides() {
         // A road along x, bent up towards its end; a crossing from 40 to 60 m.
-        let line = (0..=100).map(|i| { let x = f64::from(i); [x, if x > 50.0 { (x - 50.0) * 0.3 } else { 0.0 }] }).collect::<Vec<_>>();
+        let line = (0..=100)
+            .map(|i| {
+                let x = f64::from(i);
+                [x, if x > 50.0 { (x - 50.0) * 0.3 } else { 0.0 }]
+            })
+            .collect::<Vec<_>>();
         let outline = strip_outline(&line, 38.0, 62.0, 6.5, 2.0);
         assert!(outline.len() >= 8 && outline.len() % 2 == 0);
         let inside = |p: [f64; 2]| {
@@ -1207,7 +1316,12 @@ mod tests {
         assert!(!inside([30.0 * 2.0, 0.0]) && !inside([50.0 * 2.0, 8.0 * 2.0]));
 
         let text = String::from_utf8(crossing_hint(&outline).unwrap()).unwrap();
-        assert!(text.starts_with("<AI_HINT_POLYGON_INSTANCE") && text.contains("hint_type=\"AIH_BRIDGE_CROSSING\"") && text.contains("polygon_closed=\"1\""), "{text}");
+        assert!(
+            text.starts_with("<AI_HINT_POLYGON_INSTANCE")
+                && text.contains("hint_type=\"AIH_BRIDGE_CROSSING\"")
+                && text.contains("polygon_closed=\"1\""),
+            "{text}"
+        );
         assert_eq!(text.matches("<point ").count(), outline.len());
         let scene = TedScene::parse_any(text.into_bytes()).unwrap();
         assert!(scene.polygon_area(0) > 2.0 * 20.0 * 2.0 * 13.0 * 0.9, "{}", scene.polygon_area(0));
@@ -1235,7 +1349,13 @@ mod tests {
     fn fences_cover_a_stretch_end_to_end() {
         let f = fences_between(0.0, 12.0, 5.0);
         assert_eq!(f.len(), 3);
-        let spans = f.iter().map(|l| match l.frame { Frame::Along { from, to } => (from, to), _ => unreachable!() }).collect::<Vec<_>>();
+        let spans = f
+            .iter()
+            .map(|l| match l.frame {
+                Frame::Along { from, to } => (from, to),
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
         assert!((spans[0].0).abs() < 1e-9 && (spans[2].1 - 12.0).abs() < 1e-9, "{spans:?}");
         assert!(fences_between(0.0, 2.0, 5.0).is_empty());
         assert_eq!(fences_between(0.0, 3.0, 5.0).len(), 1);
@@ -1345,7 +1465,8 @@ mod tests {
     fn a_road_crossing_itself_lays_an_x_there() {
         // East, up, back west and down across the first stretch.
         let mut pts = vec![];
-        for (p, q) in [([0.0, 0.0], [60.0, 0.0]), ([60.0, 0.0], [60.0, 30.0]), ([60.0, 30.0], [30.0, 30.0]), ([30.0, 30.0], [30.0, -30.0])] {
+        for (p, q) in [([0.0, 0.0], [60.0, 0.0]), ([60.0, 0.0], [60.0, 30.0]), ([60.0, 30.0], [30.0, 30.0]), ([30.0, 30.0], [30.0, -30.0])]
+        {
             for k in 0..30 {
                 let t = f64::from(k) / 30.0;
                 pts.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
@@ -1363,10 +1484,12 @@ mod tests {
     fn a_fence_on_a_bend_starts_and_ends_on_its_line() {
         // A circle of radius 10; a fence from 3 m along it to 8 m: its pivot (the model's end) where it starts, its x towards where it
         // ends, so that the 5 m model ends there too (user 2026-11-08: turned by the line at its pivot, each one stuck out of the bend).
-        let line = (0..=120).map(|i| {
-            let a = f64::from(i) * 0.05;
-            [10.0 * a.cos(), 10.0 * a.sin()]
-        }).collect::<Vec<_>>();
+        let line = (0..=120)
+            .map(|i| {
+                let a = f64::from(i) * 0.05;
+                [10.0 * a.cos(), 10.0 * a.sin()]
+            })
+            .collect::<Vec<_>>();
         let mut children = crate::road_pieces::base_guides("fence");
         children.extend(crate::road_dirt::parts("fence"));
         let text = crate::road_pieces::group_text("road_dirt_fence", &children);

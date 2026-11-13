@@ -339,7 +339,11 @@ impl<T: Copy + Default> Blocks<T> {
         let mut out = Self::new(w, h);
         for y in 0..h {
             for x in 0..w {
-                let (sx, sy) = if across_x { (crate::pixel_layer::mirror_source(w, x, corners), y) } else { (x, crate::pixel_layer::mirror_source(h, y, corners)) };
+                let (sx, sy) = if across_x {
+                    (crate::pixel_layer::mirror_source(w, x, corners), y)
+                } else {
+                    (x, crate::pixel_layer::mirror_source(h, y, corners))
+                };
                 if let Some(px) = self.pixel(sx, sy, channels) {
                     out.pixel_mut(x, y, channels).copy_from_slice(px);
                 }
@@ -351,11 +355,13 @@ impl<T: Copy + Default> Blocks<T> {
 
     /// Whether two hold the very same blocks (shared, not equal by value): one is a copy of the other with nothing written since.
     fn same(&self, other: &Self) -> bool {
-        self.across == other.across && self.blocks.len() == other.blocks.len() && self.blocks.iter().zip(&other.blocks).all(|(a, b)| match (a, b) {
-            (None, None) => true,
-            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-            _ => false,
-        })
+        self.across == other.across
+            && self.blocks.len() == other.blocks.len()
+            && self.blocks.iter().zip(&other.blocks).all(|(a, b)| match (a, b) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            })
     }
 
     /// The pixels its blocks cover (x0, y0, x1, y1, the ends past), none without a block.
@@ -432,7 +438,15 @@ pub struct Stack<K: Kind> {
 // Cheap: the samples are shared blocks (a job works on a copy, `tile_document::jobs`).
 impl<K: Kind> Clone for Stack<K> {
     fn clone(&self) -> Self {
-        Self { w: self.w, h: self.h, base: self.base.clone(), layers: self.layers.clone(), working: self.working, states: self.states.clone(), seen: self.seen }
+        Self {
+            w: self.w,
+            h: self.h,
+            base: self.base.clone(),
+            layers: self.layers.clone(),
+            working: self.working,
+            states: self.states.clone(),
+            seen: self.seen,
+        }
     }
 }
 
@@ -441,9 +455,18 @@ impl<K: Kind> Stack<K> {
     /// from a copy may then take its place (`tile_document::jobs`).
     #[must_use]
     pub fn unchanged_since(&self, copy: &Self) -> bool {
-        self.seen == copy.seen && self.working == copy.working && self.base.same(&copy.base) && self.layers.len() == copy.layers.len()
+        self.seen == copy.seen
+            && self.working == copy.working
+            && self.base.same(&copy.base)
+            && self.layers.len() == copy.layers.len()
             && self.layers.iter().zip(&copy.layers).all(|(a, b)| {
-                a.id == b.id && a.name == b.name && a.visible == b.visible && a.opacity == b.opacity && a.owner == b.owner && a.depends == b.depends && a.samples.same(&b.samples)
+                a.id == b.id
+                    && a.name == b.name
+                    && a.visible == b.visible
+                    && a.opacity == b.opacity
+                    && a.owner == b.owner
+                    && a.depends == b.depends
+                    && a.samples.same(&b.samples)
             })
     }
 
@@ -468,8 +491,15 @@ impl<K: Kind> Stack<K> {
     /// A new layer; its id. A layer of the user's goes on top of theirs, under what procedural features own: those apply last.
     pub fn add(&mut self, id: u64, name: &str, owner: &str) -> u64 {
         let samples = Blocks::new(self.w, self.h);
-        let at = if owner.is_empty() { self.layers.iter().position(|l| !l.owner.is_empty()).unwrap_or(self.layers.len()) } else { self.layers.len() };
-        self.layers.insert(at, Layer { id, name: name.to_owned(), visible: true, opacity: 1.0, owner: owner.to_owned(), depends: String::new(), samples });
+        let at = if owner.is_empty() {
+            self.layers.iter().position(|l| !l.owner.is_empty()).unwrap_or(self.layers.len())
+        } else {
+            self.layers.len()
+        };
+        self.layers.insert(
+            at,
+            Layer { id, name: name.to_owned(), visible: true, opacity: 1.0, owner: owner.to_owned(), depends: String::new(), samples },
+        );
         id
     }
 
@@ -555,9 +585,12 @@ impl<K: Kind> Stack<K> {
 
     /// Whether any visible layer whose owner starts with `owner` has a pixel at a place (`empty`: what a layer's pixel holds where it has nothing).
     pub fn owned_at(&self, owner: &str, x: u32, y: u32, empty: impl Fn(&[K::Sample]) -> bool) -> bool {
-        x < self.w && y < self.h && self.layers.iter().any(|l| {
-            l.visible && l.owner.starts_with(owner) && l.samples.pixel(x, y, K::CHANNELS).is_some_and(|p| !empty(p))
-        })
+        x < self.w
+            && y < self.h
+            && self
+                .layers
+                .iter()
+                .any(|l| l.visible && l.owner.starts_with(owner) && l.samples.pixel(x, y, K::CHANNELS).is_some_and(|p| !empty(p)))
     }
 
     /// Empties a layer, for a procedural feature to fill.
@@ -637,7 +670,8 @@ impl<K: Kind> Stack<K> {
     pub fn absorb(&mut self, field: &mut K::Field, rect: [u32; 4]) -> bool {
         let target = self.working.and_then(|id| self.index_of(id));
         let (x1, y1) = (rect[2].min(self.w), rect[3].min(self.h));
-        let (mut shown, mut new, mut below) = (vec![K::Sample::default(); K::CHANNELS], vec![K::Sample::default(); K::CHANNELS], vec![K::Sample::default(); K::CHANNELS]);
+        let (mut shown, mut new, mut below) =
+            (vec![K::Sample::default(); K::CHANNELS], vec![K::Sample::default(); K::CHANNELS], vec![K::Sample::default(); K::CHANNELS]);
         let mut bounds: Option<[u32; 4]> = None;
         for y in rect[1]..y1 {
             for x in rect[0]..x1 {
@@ -824,7 +858,11 @@ pub struct TerrainLayers {
 
 impl std::fmt::Debug for TerrainLayers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let n = (self.height.as_ref().map_or(0, |s| s.layers.len()), self.blend.as_ref().map_or(0, |s| s.layers.len()), self.ground.as_ref().map_or(0, |s| s.layers.len()));
+        let n = (
+            self.height.as_ref().map_or(0, |s| s.layers.len()),
+            self.blend.as_ref().map_or(0, |s| s.layers.len()),
+            self.ground.as_ref().map_or(0, |s| s.layers.len()),
+        );
         write!(f, "TerrainLayers {n:?}")
     }
 }
@@ -839,7 +877,9 @@ impl TerrainLayers {
     /// Whether there is nothing to keep.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.height.as_ref().is_none_or(|s| s.layers.is_empty()) && self.blend.as_ref().is_none_or(|s| s.layers.is_empty()) && self.ground.as_ref().is_none_or(|s| s.layers.is_empty())
+        self.height.as_ref().is_none_or(|s| s.layers.is_empty())
+            && self.blend.as_ref().is_none_or(|s| s.layers.is_empty())
+            && self.ground.as_ref().is_none_or(|s| s.layers.is_empty())
     }
 
     /// The file's bytes.
@@ -916,7 +956,8 @@ mod tests {
 
     #[test]
     fn a_copy_is_unchanged_until_one_is_written() {
-        let mut s = Stack::<Height> { w: 128, h: 128, base: Blocks::new(128, 128), layers: vec![], working: None, states: HashMap::new(), seen: 0 };
+        let mut s =
+            Stack::<Height> { w: 128, h: 128, base: Blocks::new(128, 128), layers: vec![], working: None, states: HashMap::new(), seen: 0 };
         let id = s.add(7, "a", "");
         s.put(id, 3, 3, &[1.0]);
         let copy = s.clone();
@@ -930,7 +971,15 @@ mod tests {
 
     #[test]
     fn a_layers_extent_is_its_blocks() {
-        let mut l = Layer::<f32> { id: 1, name: String::new(), visible: true, opacity: 1.0, owner: String::new(), depends: String::new(), samples: Blocks::new(300, 200) };
+        let mut l = Layer::<f32> {
+            id: 1,
+            name: String::new(),
+            visible: true,
+            opacity: 1.0,
+            owner: String::new(),
+            depends: String::new(),
+            samples: Blocks::new(300, 200),
+        };
         assert_eq!(l.extent(), None);
         *l.samples.pixel_mut(70, 10, 1).first_mut().unwrap() = 1.0;
         *l.samples.pixel_mut(130, 140, 1).first_mut().unwrap() = 1.0;

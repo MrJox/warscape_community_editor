@@ -25,33 +25,33 @@ use crate::shader_lib::{FileReader, GameShader, ShaderLibrary, bind_shader};
 use crate::wind::WindSim;
 
 mod decals;
-mod lights;
-mod grass;
 mod draws;
-mod skinned;
-mod ropes;
 mod editor;
 pub mod game;
+mod grass;
+mod lights;
+mod ropes;
+mod skinned;
 pub use self::editor::{SurfaceGrid, SurfaceHit};
+mod blend_mesh;
+mod dof;
+mod nis;
+mod nis_coef;
+mod ocean;
+mod oit;
 mod passes;
 mod post;
+mod reflection;
+mod shadow_baked;
 mod shadow_fit;
 mod shared;
 mod sky;
 mod states;
 mod targets;
-mod blend_mesh;
 mod terrain;
 mod terrain_custom;
 mod terrain_rome2;
 mod water;
-mod ocean;
-mod reflection;
-mod dof;
-mod shadow_baked;
-mod nis;
-mod oit;
-mod nis_coef;
 
 pub(crate) use draws::SceneDraws;
 pub(crate) use post::{DepthRange, ToneMap};
@@ -145,15 +145,18 @@ pub(crate) const FADED_PASSES: [(MeshKind, &str); 4] = [
 pub(crate) const DIR_LIGHT_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_slm_highdef";
 
 /// The sun on skin pixels (`SKIN_STENCIL`): G-buffer channel 2 not squared, channel 3 the skin mask.
-pub(crate) const DIR_LIGHT_SKIN_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_skinlm_highdef";
+pub(crate) const DIR_LIGHT_SKIN_PS: &str =
+    "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_directionallight.hlsl_ps_ps30_skinlm_highdef";
 
 /// The environment specular pass (DEFERRED_ENVIRONMENT_SPECULAR_SHADER, full resolution; the game runs their MSAA variants) and its blurs.
-pub(crate) const ENV_SPECULAR_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model_full_res";
+pub(crate) const ENV_SPECULAR_PS: &str =
+    "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model_full_res";
 pub(crate) const REFLECTION_BLUR_X_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_x";
 pub(crate) const REFLECTION_BLUR_Y_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_y_fullres";
 
 /// gfx_screen_space_reflections 1: the half resolution entries (the same code as the full resolution ones, at half the size).
-pub(crate) const ENV_SPECULAR_HALF_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model";
+pub(crate) const ENV_SPECULAR_HALF_PS: &str =
+    "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_environment_specular_light.hlsl_ps_ps40_standard_lighting_model";
 pub(crate) const REFLECTION_BLUR_Y_HALF_PS: &str = "dx11_sm_4_0_reflections_blur.hlsl_ps_ps40_main_blur_y";
 pub(crate) const TM_DOWN_LUMA: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_downsample_image_store_luma";
 pub(crate) const TM_LUMA_STATS: &str = "dx11_sm_3_0_hdr_tone_mapper.hlsl_ps_ps_hdr_luma_to_quarter_size_luma_stats";
@@ -233,7 +236,8 @@ pub(crate) const RESOLVE_DEPTH_PS: [&str; 3] = [
 /// Order-independent transparency (gfx_alpha_blend 1): the leaves' and the grass's forward-lit OIT shaders (the shadowed variants, as the
 /// directional light's), and the resolve.
 pub(crate) const OIT_LEAF_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidleaf_v3.hlsl_ps_ps30_forward_lit_oit";
-pub(crate) const OIT_GRASS_PS: &str = "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidgrass.hlsl_ps_ps30_forward_lit_oit_grass";
+pub(crate) const OIT_GRASS_PS: &str =
+    "dx11_enable_shadows_shadows_hardware_gather_5_0_sm_5_0_rigidgrass.hlsl_ps_ps30_forward_lit_oit_grass";
 pub(crate) const OIT_RESOLVE_PS: &str = "dx11_sm_5_0_oit.hlsl_ps_ps50_sort_alpha_fragments_resolve_colour";
 /// The tweakers OIT_TREE_MIN / MAX_DISTANCE and OIT_GRASS_MIN / MAX_DISTANCE (the same defaults): the leaves and the grass whose distance
 /// is within them are the OIT's, the rest the G-buffer's (fn 0x117f3780; game units).
@@ -257,7 +261,8 @@ pub(crate) const TO_SCREEN_DISTORT_PS: &str = "dx11_enable_distortion_sm_3_0_hdr
 /// ENABLE_DEPTH_OF_FIELD variants: a 25-tap blur (sample_data_5x5) scaled by 1 - exp(-(z - min(focus, 500))^2 / focal^2), result =
 /// lerp(frame, blurred, blur_kernel_scale).
 pub(crate) const TO_SCREEN_DOF_PS: &str = "dx11_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
-pub(crate) const TO_SCREEN_DOF_DISTORT_PS: &str = "dx11_enable_distortion_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
+pub(crate) const TO_SCREEN_DOF_DISTORT_PS: &str =
+    "dx11_enable_distortion_enable_depth_of_field_sm_3_0_hdr_to_screen.hlsl_ps_ps30_main_high";
 pub(crate) const FOG_PS: &str = "dx11_sm_3_0_battlefog.hlsl_ps_ps30_main";
 
 /// Stencil bit 7: the pixels projected decals may paint. The game's G-buffer writes 129 (bit 7 | 1) for the ground and the TerrainBlend
@@ -327,7 +332,13 @@ pub(crate) fn rome2_water(level: i32, sea: bool) -> i32 {
         ..=2 => 0,
         3 => 1,
         4 => 2,
-        _ => if sea { 2 } else { 3 },
+        _ => {
+            if sea {
+                2
+            } else {
+                3
+            }
+        }
     }
 }
 
@@ -348,7 +359,14 @@ pub(crate) fn compile(source: &str, name: &str, entry: &str, target: &str) -> Re
 }
 
 /// An input element.
-pub(crate) fn element(semantic: &'static std::ffi::CStr, index: u32, format: DXGI_FORMAT, slot: u32, offset: u32, instanced: bool) -> InputElement {
+pub(crate) fn element(
+    semantic: &'static std::ffi::CStr,
+    index: u32,
+    format: DXGI_FORMAT,
+    slot: u32,
+    offset: u32,
+    instanced: bool,
+) -> InputElement {
     InputElement::new(semantic, index, format, slot, offset, instanced)
 }
 
@@ -443,8 +461,22 @@ pub(crate) fn billboard_layout() -> Vec<InputElement> {
 
 /// The view of a cube face.
 pub(crate) fn face_view(face: usize) -> Float4x4 {
-    let dirs = [Float3::new(1.0, 0.0, 0.0), Float3::new(-1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, -1.0, 0.0), Float3::new(0.0, 0.0, 1.0), Float3::new(0.0, 0.0, -1.0)];
-    let ups = [Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, -1.0), Float3::new(0.0, 0.0, 1.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 1.0, 0.0)];
+    let dirs = [
+        Float3::new(1.0, 0.0, 0.0),
+        Float3::new(-1.0, 0.0, 0.0),
+        Float3::new(0.0, 1.0, 0.0),
+        Float3::new(0.0, -1.0, 0.0),
+        Float3::new(0.0, 0.0, 1.0),
+        Float3::new(0.0, 0.0, -1.0),
+    ];
+    let ups = [
+        Float3::new(0.0, 1.0, 0.0),
+        Float3::new(0.0, 1.0, 0.0),
+        Float3::new(0.0, 0.0, -1.0),
+        Float3::new(0.0, 0.0, 1.0),
+        Float3::new(0.0, 1.0, 0.0),
+        Float3::new(0.0, 1.0, 0.0),
+    ];
     look_at_lh(Float3::default(), dirs[face], ups[face])
 }
 
@@ -615,7 +647,6 @@ pub struct RenderSettings {
     pub sea_state: String,
 
     // Battle state the engine feeds the weather shaders (not part of the environment files).
-
     /// wind_dir_random: the battle's random direction comes from this seed.
     pub wind_dir_seed: u32,
 
@@ -762,8 +793,16 @@ pub(crate) fn tiling(scale: f32, grid: f32) -> f32 {
 impl Default for CameraState {
     fn default() -> Self {
         Self {
-            main_view_proj: Float4x4::IDENTITY, view_proj: Float4x4::IDENTITY, eye: Float3::default(), px_ratio: 0.001, units: 1.0, cb_view: Float4x4::IDENTITY,
-            cb_view_proj: Float4x4::IDENTITY, cb_eye: Float3::default(), origin: Float3::default(), shadow_splits: [0.0; 64],
+            main_view_proj: Float4x4::IDENTITY,
+            view_proj: Float4x4::IDENTITY,
+            eye: Float3::default(),
+            px_ratio: 0.001,
+            units: 1.0,
+            cb_view: Float4x4::IDENTITY,
+            cb_view_proj: Float4x4::IDENTITY,
+            cb_eye: Float3::default(),
+            origin: Float3::default(),
+            shadow_splits: [0.0; 64],
         }
     }
 }
@@ -970,13 +1009,27 @@ pub struct Renderer {
 
 /// An immutable buffer.
 pub(crate) fn immutable_buffer(dev: &ID3D11Device, data: &[u8], bind: D3D11_BIND_FLAG) -> Option<ID3D11Buffer> {
-    let desc = D3D11_BUFFER_DESC { ByteWidth: data.len() as u32, Usage: D3D11_USAGE_IMMUTABLE, BindFlags: bind as u32, CPUAccessFlags: 0, MiscFlags: 0, StructureByteStride: 0 };
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: data.len() as u32,
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: bind as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
+        StructureByteStride: 0,
+    };
     dev.create_buffer(&desc, Some(data)).ok()
 }
 
 /// A dynamic (CPU-written) buffer.
 pub(crate) fn dynamic_buffer(dev: &ID3D11Device, bytes: usize, bind: D3D11_BIND_FLAG) -> Option<ID3D11Buffer> {
-    let desc = D3D11_BUFFER_DESC { ByteWidth: bytes as u32, Usage: D3D11_USAGE_DYNAMIC, BindFlags: bind as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32, MiscFlags: 0, StructureByteStride: 0 };
+    let desc = D3D11_BUFFER_DESC {
+        ByteWidth: bytes as u32,
+        Usage: D3D11_USAGE_DYNAMIC,
+        BindFlags: bind as u32,
+        CPUAccessFlags: D3D11_CPU_ACCESS_WRITE as u32,
+        MiscFlags: 0,
+        StructureByteStride: 0,
+    };
     dev.create_buffer(&desc, None).ok()
 }
 
@@ -988,8 +1041,16 @@ pub(crate) fn f32_bytes(v: &[f32]) -> Vec<u8> {
 /// An immutable texture of one subresource, and its view.
 pub(crate) fn immutable_srv(dev: &ID3D11Device, w: u32, h: u32, fmt: DXGI_FORMAT, data: &[u8]) -> Option<ID3D11ShaderResourceView> {
     let td = D3D11_TEXTURE2D_DESC {
-        Width: w, Height: h, MipLevels: 1, ArraySize: 1, Format: fmt, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, Usage: D3D11_USAGE_IMMUTABLE,
-        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32, CPUAccessFlags: 0, MiscFlags: 0,
+        Width: w,
+        Height: h,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: fmt,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_IMMUTABLE,
+        BindFlags: D3D11_BIND_SHADER_RESOURCE as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: 0,
     };
 
     let pitch = (data.len() / h.max(1) as usize) as u32;
@@ -1014,7 +1075,6 @@ pub(crate) fn null_ps_srvs(ctx: &ID3D11DeviceContext, n: usize) {
 }
 
 impl Renderer {
-
     /// A renderer on a device, reading the game's files from `files`.
     ///
     /// # Errors
@@ -1197,7 +1257,10 @@ impl Renderer {
 
     /// The global snow normals (black until loaded: the shaders read them only while it snows).
     pub(crate) fn snow_normals_srv(&mut self) -> Option<ID3D11ShaderResourceView> {
-        self.textures.get(SNOW_NORMALS, false).and_then(|t| t.read().ok().and_then(|t| t.srv.clone())).or_else(|| self.res.black_srv.clone())
+        self.textures
+            .get(SNOW_NORMALS, false)
+            .and_then(|t| t.read().ok().and_then(|t| t.srv.clone()))
+            .or_else(|| self.res.black_srv.clone())
     }
 
     pub fn particles(&mut self) -> &mut ParticleSystem {
@@ -1327,7 +1390,8 @@ impl Renderer {
 
     /// The near plane for a camera (see NEAR_FRACTION): from its clearance over the scene's terrains (their highest ground under the eye).
     fn near_plane(&self, scene: &RenderScene, cam: &Camera) -> f32 {
-        let ground = KindIndex::entities(&self.kinds.terrain, scene).into_iter()
+        let ground = KindIndex::entities(&self.kinds.terrain, scene)
+            .into_iter()
             .filter(|e| scene.drawable(e))
             .filter_map(|e| match &e.payload {
                 wce_scene::render_scene::Payload::Terrain(t) => t.ground_at(&e.world, cam.eye.x, cam.eye.z),
@@ -1518,7 +1582,11 @@ impl Renderer {
         // thresholds (fns 0x115b2130, 0x115be0d0, 0x115d9ca0: 2 at 0 .. 2, 1 at 3, 0 at 4 and 5; Attila's 2 at 0 and 1, 1 at 2, 0 at 3): the
         // Attila level of the same variant. ASSUMPTION: the particle pool follows the variant as Attila's does (not traced in Rome 2).
         let effects = match self.game {
-            game::RenderGame::Rome2 => match self.settings.effects_quality { ..=2 => 0, 3 => 2, _ => 3 },
+            game::RenderGame::Rome2 => match self.settings.effects_quality {
+                ..=2 => 0,
+                3 => 2,
+                _ => 3,
+            },
             _ => self.settings.effects_quality,
         };
         if self.effects_applied != Some(effects) {
@@ -1539,7 +1607,13 @@ impl Renderer {
         self.place_effect_rigids();
         let waiting = self.draw_lists.waiting;
         self.begin_terrain_frame();
-        self.draw_stats = DrawStats { items: self.draw_stats.items, batches: self.draw_stats.batches, models: self.draw_stats.models, waiting_models: waiting, ..Default::default() };
+        self.draw_stats = DrawStats {
+            items: self.draw_stats.items,
+            batches: self.draw_stats.batches,
+            models: self.draw_stats.models,
+            waiting_models: waiting,
+            ..Default::default()
+        };
         self.resize(width, height);
         self.gpu_timer.begin_frame();
         self.gpu_timer.mark("setup");
@@ -1549,10 +1623,33 @@ impl Renderer {
             game::RenderGame::Attila => [TM_DOWN_LUMA, TM_LUMA_STATS, TM_STATS_DOWN, TM_POINTS],
             game::RenderGame::Rome2 => [TM_R2_DOWN, TM_R2_LOG_Y, TM_R2_STATS, TM_R2_STATS_DOWN],
         };
-        for s in [SKY_VS, SKY_GEN_PS, SKY_PS, RIGID_VS, RIGID_GBUFFER_PS, RIGID_GBUFFER_ALPHA_PS, DIR_LIGHT_PS, TM_POINTS, TM_HIGH_PASS, TM_BLUR_X, TM_BLUR_Y,
-            TM_TONE_MAP, TO_SCREEN_PS, FOG_PS, SHADOW_VS, SHADOW_PS, SUN_VS, SUN_PS, CLOUD_VS, CLOUD_PS, SSAO_PS, SSAO_BLUR_X_PS, SSAO_BLUR_Y_PS]
-            .into_iter()
-            .chain(luma_stats)
+        for s in [
+            SKY_VS,
+            SKY_GEN_PS,
+            SKY_PS,
+            RIGID_VS,
+            RIGID_GBUFFER_PS,
+            RIGID_GBUFFER_ALPHA_PS,
+            DIR_LIGHT_PS,
+            TM_POINTS,
+            TM_HIGH_PASS,
+            TM_BLUR_X,
+            TM_BLUR_Y,
+            TM_TONE_MAP,
+            TO_SCREEN_PS,
+            FOG_PS,
+            SHADOW_VS,
+            SHADOW_PS,
+            SUN_VS,
+            SUN_PS,
+            CLOUD_VS,
+            CLOUD_PS,
+            SSAO_PS,
+            SSAO_BLUR_X_PS,
+            SSAO_BLUR_Y_PS,
+        ]
+        .into_iter()
+        .chain(luma_stats)
         {
             self.shader(s);
         }
@@ -1748,22 +1845,34 @@ impl Renderer {
 
         // The placed effects (tile VFX instances), gathered again when the scene changes.
         let units = self.camera.units;
-        let scene_key = (std::ptr::from_ref(scene) as usize, scene.revision(), units.to_bits(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
+        let scene_key =
+            (std::ptr::from_ref(scene) as usize, scene.revision(), units.to_bits(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
         if self.vfx_scene != scene_key {
             // A new origin moves the effects (the particles alive keep where they were).
             self.vfx_scene = scene_key;
-            let effects = scene.entities().iter().filter(|e| scene.drawable(e)).filter_map(|e| match &e.payload {
-                wce_scene::render_scene::Payload::VfxEmitter(v) => {
-                    let mut world = e.world;
-                    for (row, o) in world.m.iter_mut().zip([o.x, o.y, o.z]) {
-                        row[3] = (row[3] - o) * units;
+            let effects = scene
+                .entities()
+                .iter()
+                .filter(|e| scene.drawable(e))
+                .filter_map(|e| match &e.payload {
+                    wce_scene::render_scene::Payload::VfxEmitter(v) => {
+                        let mut world = e.world;
+                        for (row, o) in world.m.iter_mut().zip([o.x, o.y, o.z]) {
+                            row[3] = (row[3] - o) * units;
+                        }
+
+                        Some(crate::particles::WorldEffect {
+                            key: u64::from(e.id),
+                            effect: v.effect.clone(),
+                            world,
+                            scale: v.scale * units,
+                            mesh: v.mesh.clone(),
+                        })
                     }
 
-                    Some(crate::particles::WorldEffect { key: u64::from(e.id), effect: v.effect.clone(), world, scale: v.scale * units, mesh: v.mesh.clone() })
-                }
-
-                _ => None,
-            }).collect::<Vec<_>>();
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
             if self.game == game::RenderGame::Rome2 {
                 self.vfx_rome2.set_world_effects(&effects);
             } else {

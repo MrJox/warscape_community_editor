@@ -153,7 +153,12 @@ impl Node {
 
     /// The tree without trivia: two trees that mean the same compare equal this way.
     pub fn without_trivia(&self) -> Node {
-        Node { class: self.class, props: self.props.clone(), children: self.children.iter().map(Node::without_trivia).collect(), trivia: None }
+        Node {
+            class: self.class,
+            props: self.props.clone(),
+            children: self.children.iter().map(Node::without_trivia).collect(),
+            trivia: None,
+        }
     }
 }
 

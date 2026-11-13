@@ -8,19 +8,24 @@ use rayon::prelude::*;
 use wce_formats::c_num::strtod;
 use wce_foundation::math::{Double3, Float3, Float4x4, dot, translation};
 use wce_foundation::{log, wce_prof};
-use wce_scene::render_scene::{TerrainImage, Decal, 
-    EntityId, LayerId, LfMap, MeshInstance, Overlay, OverlayVertex, overlay_slot, Payload, PointLight, RenderScene, SourceRef, Terrain, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour,
+use wce_scene::render_scene::{
+    Decal, EntityId, LayerId, LfMap, MeshInstance, Overlay, OverlayVertex, Payload, PointLight, RenderScene, SourceRef, Terrain,
+    TerrainImage, TerrainMaterial, TerrainSkin, VfxEmitter, Water, WaterVertex, overlay_colour, overlay_slot,
 };
 use wce_tile::blend_field::BlendField;
-use wce_tile::height_field::HeightField;
 use wce_tile::ground_type_field::GroundTypeField;
+use wce_tile::height_field::HeightField;
 use wce_tile::ted_scene::parse_vec3;
 use wce_tile::world_transform::{WorldTransform, euler_matrix, world_transform};
 
 use super::cover::Solid;
 use super::index::{matrix_of, polygon_colour, style_of};
-use super::{GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_of, scene_key};
-use crate::terrain_bake::{BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view, ground_types_report, ground_types_set};
+use super::{
+    GroundInfo, LinkCell, MATERIAL_IDS, NORMAL_IDS, PieceProps, SKIN_IDS, TERRAIN, Tile, elem_of, item_of, next_id, piece_of, scene_key,
+};
+use crate::terrain_bake::{
+    BakeRequest, TerrainLook, TerrainView, bake_terrain_colour, bake_terrain_map_view, ground_types_report, ground_types_set,
+};
 use crate::terrain_material::{MaterialRequest, build_terrain_material, patch_blend_maps, patch_terrain_normal, terrain_normal_image};
 
 /// A river's water at a place along it (world metres): its surface's height, its width, and how it is drawn there.
@@ -82,7 +87,10 @@ fn file_river_points(text: &[u8], height: f64, up: f64) -> Option<Vec<RiverPoint
 
 /// A piece's own transform inside its building: the position (scene units), the euler angles (radians) and the scale.
 pub(crate) fn piece_local(p: &PieceProps) -> Float4x4 {
-    let w = WorldTransform { position: Double3::new(f64::from(p.position[0]), f64::from(p.position[1]), f64::from(p.position[2])), rotation: euler_matrix(Double3::new(f64::from(p.euler[0]), f64::from(p.euler[1]), f64::from(p.euler[2]))) };
+    let w = WorldTransform {
+        position: Double3::new(f64::from(p.position[0]), f64::from(p.position[1]), f64::from(p.position[2])),
+        rotation: euler_matrix(Double3::new(f64::from(p.euler[0]), f64::from(p.euler[1]), f64::from(p.euler[2]))),
+    };
     matrix_of(&w, 1.0, Some(Double3::new(f64::from(p.scale[0]), f64::from(p.scale[1]), f64::from(p.scale[2]))))
 }
 
@@ -100,7 +108,13 @@ pub(crate) fn piece_model(base: &str, level: i64, levels: u32) -> String {
 }
 
 fn bits_equal(a: &[OverlayVertex], b: &[OverlayVertex]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.rgba == y.rgba && x.p.x.to_bits() == y.p.x.to_bits() && x.p.y.to_bits() == y.p.y.to_bits() && x.p.z.to_bits() == y.p.z.to_bits())
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| {
+            x.rgba == y.rgba
+                && x.p.x.to_bits() == y.p.x.to_bits()
+                && x.p.y.to_bits() == y.p.y.to_bits()
+                && x.p.z.to_bits() == y.p.z.to_bits()
+        })
 }
 
 fn link_colour(set: &str, alpha: f32) -> u32 {
@@ -111,8 +125,14 @@ fn link_colour(set: &str, alpha: f32) -> u32 {
 /// A link set's colour, on the ground and on the Tile panel's map of the links.
 pub fn link_rgb(set: &str) -> [f32; 3] {
     const TABLE: [(&str, f32, f32, f32); 8] = [
-        ("sea", 0.15, 0.35, 0.95), ("river", 0.1, 0.85, 0.95), ("roads", 0.9, 0.75, 0.35), ("sea_coast", 0.95, 0.9, 0.2), ("roads_stone", 0.7, 0.7, 0.75),
-        ("roads_mountain", 0.6, 0.4, 0.2), ("river_shallow", 0.5, 0.95, 0.8), ("cliff_custom", 0.95, 0.35, 0.2),
+        ("sea", 0.15, 0.35, 0.95),
+        ("river", 0.1, 0.85, 0.95),
+        ("roads", 0.9, 0.75, 0.35),
+        ("sea_coast", 0.95, 0.9, 0.2),
+        ("roads_stone", 0.7, 0.7, 0.75),
+        ("roads_mountain", 0.6, 0.4, 0.2),
+        ("river_shallow", 0.5, 0.95, 0.8),
+        ("cliff_custom", 0.95, 0.35, 0.2),
     ];
 
     if let Some(&(_, r, g, b)) = TABLE.iter().find(|c| c.0 == set) {
@@ -131,8 +151,12 @@ pub(crate) fn crop_material(m: &mut TerrainMaterial, x0: f64, z0: f64, x1: f64, 
     }
 
     let (ppx, ppz) = (f64::from(w) / (m.x1 - m.x0), f64::from(h) / (m.z1 - m.z0));
-    let (i0, j0) = (((x0 - m.x0) * ppx).round().clamp(0.0, f64::from(w - 1)) as u32, ((z0 - m.z0) * ppz).round().clamp(0.0, f64::from(h - 1)) as u32);
-    let (i1, j1) = (((x1 - m.x0) * ppx).round().clamp(f64::from(i0 + 1), f64::from(w)) as u32, ((z1 - m.z0) * ppz).round().clamp(f64::from(j0 + 1), f64::from(h)) as u32);
+    let (i0, j0) =
+        (((x0 - m.x0) * ppx).round().clamp(0.0, f64::from(w - 1)) as u32, ((z0 - m.z0) * ppz).round().clamp(0.0, f64::from(h - 1)) as u32);
+    let (i1, j1) = (
+        ((x1 - m.x0) * ppx).round().clamp(f64::from(i0 + 1), f64::from(w)) as u32,
+        ((z1 - m.z0) * ppz).round().clamp(f64::from(j0 + 1), f64::from(h)) as u32,
+    );
     let crop = |img: &TerrainImage| -> TerrainImage {
         let Some(px) = &img.rgba else { return img.clone() };
         if img.w != w || img.h != h {
@@ -163,7 +187,6 @@ fn empty_overlay() -> Payload {
 const TERRAIN_CARRIED_DIR: &str = "decompiled_terrain";
 
 impl Tile {
-
     pub(crate) fn source(&self, item: u64) -> SourceRef {
         SourceRef { doc: self.id, item }
     }
@@ -373,8 +396,15 @@ impl Tile {
         let p = &self.project;
         let (x0, z0, x1, z1) = self.blend_area();
         let rq = BakeRequest {
-            blend_map: p.dir.join("blend_map.tif"), folder: p.dir.clone(), groups: p.entry.as_ref().expect("an entry").texture_group(), x0, z0, w_m: x1 - x0,
-            h_m: z1 - z0, look: self.look.clone(), ..Default::default()
+            blend_map: p.dir.join("blend_map.tif"),
+            folder: p.dir.clone(),
+            groups: p.entry.as_ref().expect("an entry").texture_group(),
+            x0,
+            z0,
+            w_m: x1 - x0,
+            h_m: z1 - z0,
+            look: self.look.clone(),
+            ..Default::default()
         };
 
         let Some(files) = self.files.clone() else {
@@ -397,7 +427,17 @@ impl Tile {
             let baked = Arc::new(crate::terrain_bake::bake_water_depth(&rq, &water, self.project.ground.as_ref()));
             let k = self.project.mpp_z() / self.project.mpp_x();
             self.skin_id = next_id(&SKIN_IDS);
-            let skin = Arc::new(TerrainSkin { x0: baked.x0, z0: baked.z0 / k, w_m: baked.w_m, h_m: baked.h_m / k, w: baked.w, h: baked.h, rgba: baked.rgba.clone(), id: self.skin_id, dirty: None });
+            let skin = Arc::new(TerrainSkin {
+                x0: baked.x0,
+                z0: baked.z0 / k,
+                w_m: baked.w_m,
+                h_m: baked.h_m / k,
+                w: baked.w,
+                h: baked.h,
+                rgba: baked.rgba.clone(),
+                id: self.skin_id,
+                dirty: None,
+            });
             self.skin = Some(skin.clone());
             self.terrain_note = format!("debug view, {}", baked.report);
             self.skin_baked = Some(baked);
@@ -423,11 +463,20 @@ impl Tile {
         let k = self.project.mpp_z() / self.project.mpp_x();
         self.skin_id = next_id(&SKIN_IDS);
         let skin = Arc::new(TerrainSkin {
-            x0: baked.x0, z0: baked.z0 / k, w_m: baked.w_m, h_m: baked.h_m / k, w: baked.w, h: baked.h, rgba: baked.rgba.clone(), id: self.skin_id, dirty: None,
+            x0: baked.x0,
+            z0: baked.z0 / k,
+            w_m: baked.w_m,
+            h_m: baked.h_m / k,
+            w: baked.w,
+            h: baked.h,
+            rgba: baked.rgba.clone(),
+            id: self.skin_id,
+            dirty: None,
         });
 
         self.skin = Some(skin.clone());
-        self.terrain_note = format!("{}{}", if self.look.view == TerrainView::Colour { "blended ground: " } else { "debug view, " }, baked.report);
+        self.terrain_note =
+            format!("{}{}", if self.look.view == TerrainView::Colour { "blended ground: " } else { "debug view, " }, baked.report);
         self.skin_baked = Some(baked);
         log::info(format!("terrain: {}", self.terrain_note));
         Some(skin)
@@ -468,8 +517,16 @@ impl Tile {
             let (x0, z0, x1, z1) = self.blend_area();
             self.material_id = next_id(&MATERIAL_IDS);
             let rq = MaterialRequest {
-                folder: p.dir.clone(), groups: p.entry.as_ref().expect("an entry").texture_group(), x0, z0, x1, z1, y0: h.min_height() / p.unit_scale, y1: (h.min_height() + h.scale()) / p.unit_scale,
-                look: self.look.clone(), id: self.material_id,
+                folder: p.dir.clone(),
+                groups: p.entry.as_ref().expect("an entry").texture_group(),
+                x0,
+                z0,
+                x1,
+                z1,
+                y0: h.min_height() / p.unit_scale,
+                y1: (h.min_height() + h.scale()) / p.unit_scale,
+                look: self.look.clone(),
+                id: self.material_id,
             };
 
             let built = build_terrain_material(&rq, blend, self.climates(), files.as_ref());
@@ -515,12 +572,17 @@ impl Tile {
             // with no alpha, the open tile's ground met the neighbours' faded one in a seam. Cut to the tile when the game has no alpha.
             if self.clip_alpha.is_none() {
                 let cells = (self.project.info.cells_x.max(1), self.project.info.cells_y.max(1));
-                let alpha = self.files.as_deref().zip(self.project.entry.as_ref()).and_then(|(f, e)| super::context::template::game_alpha(e, cells, f));
+                let alpha = self
+                    .files
+                    .as_deref()
+                    .zip(self.project.entry.as_ref())
+                    .and_then(|(f, e)| super::context::template::game_alpha(e, cells, f));
                 self.clip_alpha = Some(alpha);
             }
 
             let (b, ex, ez) = (128.0, self.extent_x(), self.extent_z());
-            let bordered = (m.x0 + b).abs() < 1e-6 && (m.z0 + b).abs() < 1e-6 && (m.x1 - ex - b).abs() < 1e-6 && (m.z1 - ez - b).abs() < 1e-6;
+            let bordered =
+                (m.x0 + b).abs() < 1e-6 && (m.z0 + b).abs() < 1e-6 && (m.x1 - ex - b).abs() < 1e-6 && (m.z1 - ez - b).abs() < 1e-6;
             match self.clip_alpha.clone().flatten().filter(|_| bordered) {
                 Some(alpha) => m.alpha = alpha,
                 None => crop_material(&mut m, 0.0, 0.0, ex, ez),
@@ -569,7 +631,8 @@ impl Tile {
                 m.normal = match self.project.height.as_ref().filter(|_| self.clip_to_tile && m.x0 < 0.0) {
                     Some(hf) => {
                         let (w, h, unit) = (hf.width(), hf.height(), self.project.unit_scale);
-                        let all: Vec<f32> = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).map(|(x, y)| (hf.metres(x, y) / unit) as f32).collect();
+                        let all: Vec<f32> =
+                            (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).map(|(x, y)| (hf.metres(x, y) / unit) as f32).collect();
                         terrain_normal_image(&all, w as i32, h as i32, self.project.mpp_x(), self.project.mpp_z(), m.blend.w, m.blend.h)
                     }
                     None => terrain_normal_image(&t.heights, t.nx, t.nz, f64::from(t.step), f64::from(t.step) * k, m.blend.w, m.blend.h),
@@ -606,7 +669,10 @@ impl Tile {
         }
 
         let sc = self.tscene();
-        let file = wce_tile::river_files::rivers(sc).iter().position(|&r| r == elem).and_then(|n| std::fs::read(self.project.dir.join(format!("river_spline{n}.xml"))).ok());
+        let file = wce_tile::river_files::rivers(sc)
+            .iter()
+            .position(|&r| r == elem)
+            .and_then(|n| std::fs::read(self.project.dir.join(format!("river_spline{n}.xml"))).ok());
         wce_tile::river_files::Factors::of(sc, elem, file.as_deref()).height
     }
 
@@ -637,7 +703,8 @@ impl Tile {
             // Its file while the river is as it was loaded or saved (an edit is drawn from TEd's points until the save writes its file).
             let unedited = self.project.river_texts.get(river_index - 1).is_some_and(|t| *t == sc.element_text(e));
             let text = (campaign && unedited).then(|| std::fs::read(&file).ok()).flatten();
-            let from_file = text.as_deref().and_then(|t| file_river_points(t, wce_tile::river_files::Factors::of(sc, e, Some(t)).height, u));
+            let from_file =
+                text.as_deref().and_then(|t| file_river_points(t, wce_tile::river_files::Factors::of(sc, e, Some(t)).height, u));
             let wide = if campaign { 1.0 / across } else { 1.0 };
             let w = world_transform(sc, e);
             let mut pts = from_file.unwrap_or_default();
@@ -654,8 +721,15 @@ impl Tile {
                     let num = |n: &str, d: f64| sc.doc().get(p, n).filter(|v| !v.is_empty()).map_or(d, |v| strtod(&v).unwrap_or(0.0));
                     let wp = world(pos);
                     pts.push(RiverPoint {
-                        x: wp[0], y: wp[1], z: wp[2], cin: world(vec("controlIn").unwrap_or(pos)), cout: world(vec("controlOut").unwrap_or(pos)),
-                        width: num("width", 1.0) * wide, foam: num("foam_amount", 0.1), fade: num("alpha_fade", 1.0), flow: num("flow_speed", 0.5),
+                        x: wp[0],
+                        y: wp[1],
+                        z: wp[2],
+                        cin: world(vec("controlIn").unwrap_or(pos)),
+                        cout: world(vec("controlOut").unwrap_or(pos)),
+                        width: num("width", 1.0) * wide,
+                        foam: num("foam_amount", 0.1),
+                        fade: num("alpha_fade", 1.0),
+                        flow: num("flow_speed", 0.5),
                     });
                 }
             }
@@ -680,7 +754,12 @@ impl Tile {
                     let z = bez(a.z, a.cout[2], b.cin[2], b.z, t);
                     let y = bez(a.y, a.cout[1], b.cin[1], b.y, t);
                     samples.push(RiverSample {
-                        x, z, y, width: a.width + (b.width - a.width) * t, flow: a.flow + (b.flow - a.flow) * t, foam: a.foam + (b.foam - a.foam) * t,
+                        x,
+                        z,
+                        y,
+                        width: a.width + (b.width - a.width) * t,
+                        flow: a.flow + (b.flow - a.flow) * t,
+                        foam: a.foam + (b.foam - a.foam) * t,
                         alpha: a.fade + (b.fade - a.fade) * t,
                     });
                 }
@@ -755,11 +834,24 @@ impl Tile {
                     // tangent turned left in the files' frame, whose z is the other way: sign -1 here) and along (0 to 1), the alpha lerped
                     // between the points, the foam.
                     true => WaterVertex {
-                        x: at(sign).0, y, z: at(sign).1, across: s.flow as f32, u: ((1.0 + sign) * 0.5) as f32, v: (cum[i] / total.max(1e-9)) as f32,
-                        flow: s.alpha as f32, fade: s.foam as f32,
+                        x: at(sign).0,
+                        y,
+                        z: at(sign).1,
+                        across: s.flow as f32,
+                        u: ((1.0 + sign) * 0.5) as f32,
+                        v: (cum[i] / total.max(1e-9)) as f32,
+                        flow: s.alpha as f32,
+                        fade: s.foam as f32,
                     },
                     false => WaterVertex {
-                        x: at(sign).0, y, z: at(sign).1, across: (sign * hw) as f32, u: (sign * hw) as f32, v: cum[i] as f32, flow: s.flow as f32, fade,
+                        x: at(sign).0,
+                        y,
+                        z: at(sign).1,
+                        across: (sign * hw) as f32,
+                        u: (sign * hw) as f32,
+                        v: cum[i] as f32,
+                        flow: s.flow as f32,
+                        fade,
                     },
                 };
 
@@ -798,7 +890,13 @@ impl Tile {
             let (cx, cz) = (self.extent_x() as f32 * 0.5, self.extent_z() as f32 * 0.5);
             let (x0, z0, x1, z1) = (cx - r, cz - r, cx + r, cz + r);
             let v = |x: f32, z: f32| WaterVertex { x, y: 0.0, z, across: 0.0, u: x, v: z, flow: 0.0, fade: 1.0 };
-            new_water.push(Water { river: false, foam: 0.0, verts: vec![v(x0, z0), v(x1, z0), v(x0, z1), v(x1, z1)], indices: vec![0, 2, 1, 1, 2, 3], ..Default::default() });
+            new_water.push(Water {
+                river: false,
+                foam: 0.0,
+                verts: vec![v(x0, z0), v(x1, z0), v(x0, z1), v(x1, z1)],
+                indices: vec![0, 2, 1, 1, 2, 3],
+                ..Default::default()
+            });
         }
 
         for mut wt in new_water {
@@ -809,7 +907,11 @@ impl Tile {
         }
 
         self.water_note = if rivers != 0 || baked || sea {
-            let what = if baked { format!("the rivers baked into the terrain mesh ({ribbons} vertices)") } else { format!("{rivers} river spline(s) ({ribbons} samples)") };
+            let what = if baked {
+                format!("the rivers baked into the terrain mesh ({ribbons} vertices)")
+            } else {
+                format!("{rivers} river spline(s) ({ribbons} samples)")
+            };
             format!("{what}{}", if sea { ", the sea at 0 m" } else { "" })
         } else {
             "no water in this tile".to_owned()
@@ -830,15 +932,32 @@ impl Tile {
     /// The entry's TILE_LINK rules and TILE_LINK_TARGETs: targets first, then the rules, in the entry's order.
     pub fn link_cells(&self) -> Vec<LinkCell> {
         let Some(entry) = &self.project.entry else { return vec![] };
-        let mut out = entry.link_targets().into_iter().map(|t| LinkCell {
-            x: t.x, y: t.y, text: format!("offers a {} join at cell ({}, {})", t.tile_set, t.x, t.y), set: t.tile_set, equals: true, target: true,
-        }).collect::<Vec<_>>();
+        let mut out = entry
+            .link_targets()
+            .into_iter()
+            .map(|t| LinkCell {
+                x: t.x,
+                y: t.y,
+                text: format!("offers a {} join at cell ({}, {})", t.tile_set, t.x, t.y),
+                set: t.tile_set,
+                equals: true,
+                target: true,
+            })
+            .collect::<Vec<_>>();
 
         for l in entry.links() {
             let equals = l.test != "TLT_NOT_EQUALS";
             let text = format!(
-                "cell ({}, {}) {}{}, base point ({}, {}){}, blend {} px{}", l.x, l.y, if equals { "must be " } else { "must not be " }, l.link_set, l.base_x, l.base_y,
-                if l.is_entry { ", entry" } else { "" }, l.blend_size, if l.no_offline_blend { ", no offline blend" } else { "" }
+                "cell ({}, {}) {}{}, base point ({}, {}){}, blend {} px{}",
+                l.x,
+                l.y,
+                if equals { "must be " } else { "must not be " },
+                l.link_set,
+                l.base_x,
+                l.base_y,
+                if l.is_entry { ", entry" } else { "" },
+                l.blend_size,
+                if l.no_offline_blend { ", no offline blend" } else { "" }
             );
 
             out.push(LinkCell { x: l.x, y: l.y, set: l.link_set, text, equals, target: false });
@@ -871,7 +990,16 @@ impl Tile {
         let sub_n = 8;
         for c in &cells {
             let (x0, z0, x1, z1) = self.cell_rect(c.x, c.y);
-            let fill = link_colour(&c.set, if c.target { 0.55 } else if c.equals { 0.30 } else { 0.20 });
+            let fill = link_colour(
+                &c.set,
+                if c.target {
+                    0.55
+                } else if c.equals {
+                    0.30
+                } else {
+                    0.20
+                },
+            );
             let line = link_colour(&c.set, 1.0);
             let at = |x: f32, z: f32| Float3::new(x, self.terrain_height(x, z) + 0.6, z);
 
@@ -913,7 +1041,11 @@ impl Tile {
                 const QUARTER: f32 = 1.570_796_3;
                 for s in 0..4 {
                     let (a, b) = (s as f32 * QUARTER, (s + 1) as f32 * QUARTER);
-                    o.line(Float3::new(m.x + a.cos() * 8.0, m.y + 40.0, m.z + a.sin() * 8.0), Float3::new(m.x + b.cos() * 8.0, m.y + 40.0, m.z + b.sin() * 8.0), line);
+                    o.line(
+                        Float3::new(m.x + a.cos() * 8.0, m.y + 40.0, m.z + a.sin() * 8.0),
+                        Float3::new(m.x + b.cos() * 8.0, m.y + 40.0, m.z + b.sin() * 8.0),
+                        line,
+                    );
                 }
             }
         }
@@ -978,8 +1110,13 @@ impl Tile {
 
         // Where the heights changed since (the same field: its data where it was; another one is all new), in the grid's cells.
         let changed = self.project.height.as_mut().and_then(HeightField::take_changed);
-        let same_field = self.terrain_grid.as_ref().is_some_and(|((v, clip, fade), _, _)| v.map(|v| v.0) == heights.0.map(|v| v.0) && *clip == heights.1 && *fade == heights.2);
-        self.heights_changed = changed.filter(|_| same_field && !first && !self.clip_to_tile).map(|(x0, y0, x1, y1)| [x0 as i32, y0 as i32, x1 as i32, y1 as i32]);
+        let same_field = self
+            .terrain_grid
+            .as_ref()
+            .is_some_and(|((v, clip, fade), _, _)| v.map(|v| v.0) == heights.0.map(|v| v.0) && *clip == heights.1 && *fade == heights.2);
+        self.heights_changed = changed
+            .filter(|_| same_field && !first && !self.clip_to_tile)
+            .map(|(x0, y0, x1, y1)| [x0 as i32, y0 as i32, x1 as i32, y1 as i32]);
         if !same_heights {
             // Landscape rivers lie on the terrain; the link cells are draped over it.
             self.water_dirty = true;
@@ -994,9 +1131,7 @@ impl Tile {
 
         // The scene's terrain lets go of its material and skin: the maps are written in place below instead of copied (they are shared until
         // then).
-        if !first
-            && let Some(Payload::Terrain(old)) = scene.find_mut(self.terrain_entity).map(|e| &mut e.payload)
-        {
+        if !first && let Some(Payload::Terrain(old)) = scene.find_mut(self.terrain_entity).map(|e| &mut e.payload) {
             old.material = None;
             old.skin = None;
         }
@@ -1019,7 +1154,10 @@ impl Tile {
             // The pixels drawn: all, or the tile's own cells (the border cut off).
             let (px0, pz0, px1, pz1) = if self.clip_to_tile && p.bordered() {
                 let (bx, bz) = ((p.border_m() / p.mpp_x()).round() as i32, (p.border_m() / p.mpp_z()).round() as i32);
-                let (ix, iz) = (((p.border_m() + self.extent_x()) / p.mpp_x()).round() as i32, ((p.border_m() + self.extent_z()) / p.mpp_z()).round() as i32);
+                let (ix, iz) = (
+                    ((p.border_m() + self.extent_x()) / p.mpp_x()).round() as i32,
+                    ((p.border_m() + self.extent_z()) / p.mpp_z()).round() as i32,
+                );
                 (bx, bz, ix.min(hf.width() as i32 - 1), iz.min(hf.height() as i32 - 1))
             } else {
                 (0, 0, hf.width() as i32 - 1, hf.height() as i32 - 1)
@@ -1059,7 +1197,11 @@ impl Tile {
 
             (w, t)
         } else {
-            let t = Terrain::flat((self.extent_x().max(self.extent_z()) * 0.5) as f32, "terrain/textures/battle/default/grass/0_su_diffuse.dds", 8.0);
+            let t = Terrain::flat(
+                (self.extent_x().max(self.extent_z()) * 0.5) as f32,
+                "terrain/textures/battle/default/grass/0_su_diffuse.dds",
+                8.0,
+            );
             (translation(Float3::new((self.extent_x() * 0.5) as f32, 0.0, (self.extent_z() * 0.5) as f32)), t)
         };
 
@@ -1103,7 +1245,11 @@ impl Tile {
             for (i, piece) in pieces.into_iter().enumerate() {
                 let props = self.piece_props.get(&(elem, i));
                 let world = props.map_or(w, |p| w * piece_local(p));
-                let model = self.piece_file(&piece, props.map_or(saved, |p| if p.destruction_level < 0 { saved } else { p.destruction_level }), self.piece_levels(elem, i));
+                let model = self.piece_file(
+                    &piece,
+                    props.map_or(saved, |p| if p.destruction_level < 0 { saved } else { p.destruction_level }),
+                    self.piece_levels(elem, i),
+                );
                 // POSITION5.w > 0 lets the rigid shaders put snow on the instance while it snows (they gate it on g_snowing_intensity too).
                 // ASSUMPTION: every placed building and prop takes snow (the engine's per-instance value was not traced).
                 // A building's or a mesh's look (its piece's own once edited): the opacity, and on fire the burn amount (POSITION6.x). A tree
@@ -1118,7 +1264,9 @@ impl Tile {
 
                 let mi = MeshInstance { model, lod: true, p4, p5, p6, p7, burning, ..Default::default() };
                 let e = scene.add(layer, world, Payload::MeshInstance(mi), self.source(item_of(elem)));
-                if props.is_some_and(|p| !p.visible) && let Some(en) = scene.find_mut(e) {
+                if props.is_some_and(|p| !p.visible)
+                    && let Some(en) = scene.find_mut(e)
+                {
                     en.visible = false;
                 }
 
@@ -1151,7 +1299,9 @@ impl Tile {
             let e = scene.add(layer, self.drawn_matrix(elem), Payload::Decal(decal), self.source(item_of(elem)));
             self.first_entity[elem] = e;
             self.entity_count[elem] = 1;
-            if !self.selectable(elem) && let Some(en) = scene.find_mut(e) {
+            if !self.selectable(elem)
+                && let Some(en) = scene.find_mut(e)
+            {
                 en.locked = true;
             }
         }
@@ -1162,7 +1312,9 @@ impl Tile {
             let e = scene.add(layer, self.world_matrix(elem), Payload::PointLight(light), self.source(item_of(elem)));
             self.first_entity[elem] = e;
             self.entity_count[elem] = 1;
-            if !self.selectable(elem) && let Some(en) = scene.find_mut(e) {
+            if !self.selectable(elem)
+                && let Some(en) = scene.find_mut(e)
+            {
                 en.locked = true;
             }
         }
@@ -1173,7 +1325,9 @@ impl Tile {
             let e = scene.add(layer, self.world_matrix(elem), Payload::VfxEmitter(vfx), self.source(item_of(elem)));
             self.first_entity[elem] = e;
             self.entity_count[elem] = 1;
-            if !self.selectable(elem) && let Some(en) = scene.find_mut(e) {
+            if !self.selectable(elem)
+                && let Some(en) = scene.find_mut(e)
+            {
                 en.locked = true;
             }
         }
@@ -1211,7 +1365,15 @@ impl Tile {
         let ty = self.tscene().type_of(e);
         let spline = wce_tile::splines::is_spline(ty);
         let closed = !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
-        let points = if spline { self.spline_world_curve(e) } else if self.is_road(e) { self.road_world_curve(e) } else if self.is_wall(e) { self.wall_world_curve(e) } else { self.polygon_world_points(e) };
+        let points = if spline {
+            self.spline_world_curve(e)
+        } else if self.is_road(e) {
+            self.road_world_curve(e)
+        } else if self.is_wall(e) {
+            self.wall_world_curve(e)
+        } else {
+            self.polygon_world_points(e)
+        };
         (points, closed)
     }
 
@@ -1229,11 +1391,21 @@ impl Tile {
             if self.is_polygon(e) {
                 let spline = wce_tile::splines::is_spline(ty);
                 let closed = !spline && self.tscene().doc().get(e, "polygon_closed").is_none_or(|v| v != "0");
-                let points = if spline { self.spline_world_curve(e) } else if self.is_road(e) { self.road_world_curve(e) } else if self.is_wall(e) { self.wall_world_curve(e) } else { self.polygon_world_points(e) };
+                let points = if spline {
+                    self.spline_world_curve(e)
+                } else if self.is_road(e) {
+                    self.road_world_curve(e)
+                } else if self.is_wall(e) {
+                    self.wall_world_curve(e)
+                } else {
+                    self.polygon_world_points(e)
+                };
                 if points.len() > 1 {
                     out.push((points, closed));
                 }
-            } else if ty == "BUILDING_INSTANCE" && let Some(m) = self.model_of(e).filter(|m| m.ok && m.resolved) {
+            } else if ty == "BUILDING_INSTANCE"
+                && let Some(m) = self.model_of(e).filter(|m| m.ok && m.resolved)
+            {
                 let w = self.world_matrix(e);
                 let corners = [(m.bmin.x, m.bmin.z), (m.bmax.x, m.bmin.z), (m.bmax.x, m.bmax.z), (m.bmin.x, m.bmax.z)];
                 out.push((corners.iter().map(|&(x, z)| w.transform_point(Float3::new(x, 0.0, z))).collect(), true));
@@ -1275,7 +1447,13 @@ impl Tile {
         // The zone: the group above the polygon's `children` wrapper.
         let els = sc.doc().elements();
         let Some(group) = els[elem].parent.and_then(|w| els[w].parent) else { return Some(vec![]) };
-        Some(sc.children(group).into_iter().filter(|&e| e != elem && kind(e) == "DZPT_SUBSTRACTIVE").map(|e| self.polygon_world_points(e)).collect())
+        Some(
+            sc.children(group)
+                .into_iter()
+                .filter(|&e| e != elem && kind(e) == "DZPT_SUBSTRACTIVE")
+                .map(|e| self.polygon_world_points(e))
+                .collect(),
+        )
     }
 
     /// The polygon (or line) on its cover: filled when it is a closed polygon, its edges as ribbons, in its type's colour.
@@ -1284,7 +1462,15 @@ impl Tile {
         let ty = self.tscene().type_of(elem).to_owned();
         let spline = wce_tile::splines::is_spline(&ty);
         let closed = !spline && self.tscene().doc().get(elem, "polygon_closed").is_none_or(|v| v != "0");
-        let points = if spline { self.spline_world_curve(elem) } else if self.is_road(elem) { self.road_world_curve(elem) } else if self.is_wall(elem) { self.wall_world_curve(elem) } else { self.polygon_world_points(elem) };
+        let points = if spline {
+            self.spline_world_curve(elem)
+        } else if self.is_road(elem) {
+            self.road_world_curve(elem)
+        } else if self.is_wall(elem) {
+            self.wall_world_curve(elem)
+        } else {
+            self.polygon_world_points(elem)
+        };
         self.covers_dirty.remove(&elem);
         if points.is_empty() {
             self.covers.remove(&elem);
@@ -1305,8 +1491,13 @@ impl Tile {
 
             // The colours are entries of the overlay colour table: a change of the look does not come here.
             let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x0100_0000_01b3);
-            let look = [r, g, b, f32::from(u8::from(filled))].iter().fold(mix(u64::from(closed) << 1 | u64::from(spline), points.len() as u64), |h, v| mix(h, u64::from(v.to_bits())));
-            let look = points.iter().chain(holes.iter().flatten()).fold(look, |h, p| mix(mix(mix(h, u64::from(p.x.to_bits())), u64::from(p.y.to_bits())), u64::from(p.z.to_bits())));
+            let look = [r, g, b, f32::from(u8::from(filled))]
+                .iter()
+                .fold(mix(u64::from(closed) << 1 | u64::from(spline), points.len() as u64), |h, v| mix(h, u64::from(v.to_bits())));
+            let look = points
+                .iter()
+                .chain(holes.iter().flatten())
+                .fold(look, |h, p| mix(mix(mix(h, u64::from(p.x.to_bits())), u64::from(p.y.to_bits())), u64::from(p.z.to_bits())));
             match &cover.drawn {
                 Some((k, drawn)) if *k == look => o.clone_from(drawn),
                 _ => {
@@ -1316,7 +1507,13 @@ impl Tile {
 
                     // Corners on a polygon's own points only (not on a spline's, a road's or a wall's curve samples).
                     let corners = !spline && !self.is_road(elem) && !self.is_wall(elem);
-                    cover.edges(&points, closed, corners, super::cover::EdgeColours::new(overlay_slot(outline), overlay_slot(line), [r, g, b]), &mut o);
+                    cover.edges(
+                        &points,
+                        closed,
+                        corners,
+                        super::cover::EdgeColours::new(overlay_slot(outline), overlay_slot(line), [r, g, b]),
+                        &mut o,
+                    );
                     cover.drawn = Some((look, o.clone()));
                 }
             }
@@ -1392,7 +1589,8 @@ impl Tile {
             self.piece_pending.clear();
         }
 
-        let keep_terrain = keep_terrain && self.scene_key == scene_key(scene) && self.terrain_entity != 0 && scene.find(self.terrain_entity).is_some();
+        let keep_terrain =
+            keep_terrain && self.scene_key == scene_key(scene) && self.terrain_entity != 0 && scene.find(self.terrain_entity).is_some();
         if keep_terrain {
             scene.clear_layer_except(layer, self.terrain_entity);
         } else {
@@ -1527,7 +1725,8 @@ impl Tile {
     /// A VFXInstance's effect, when it plays (an effect is set, autoplay is on and it is in the terrain look's season).
     fn vfx_emitter(&self, elem: usize) -> Option<VfxEmitter> {
         let doc = self.tscene().doc();
-        if self.tscene().type_of(elem) != "VFXInstance" || doc.get(elem, "autoplay").is_some_and(|v| v == "false") || !self.in_season(elem) {
+        if self.tscene().type_of(elem) != "VFXInstance" || doc.get(elem, "autoplay").is_some_and(|v| v == "false") || !self.in_season(elem)
+        {
             return None;
         }
 
@@ -1552,7 +1751,9 @@ impl Tile {
                     let e = scene.add(self.layer, self.world_matrix(elem), Payload::VfxEmitter(vfx), self.source(item_of(elem)));
                     self.first_entity[elem] = e;
                     self.entity_count[elem] = 1;
-                    if !self.selectable(elem) && let Some(en) = scene.find_mut(e) {
+                    if !self.selectable(elem)
+                        && let Some(en) = scene.find_mut(e)
+                    {
                         en.locked = true;
                     }
                 }
@@ -1817,7 +2018,10 @@ impl Tile {
         }
 
         for t in 0..types {
-            if t + 1 < self.markers.group_begin.len() && self.batch_entity[t] == 0 && self.markers.group_begin[t + 1] != self.markers.group_begin[t] {
+            if t + 1 < self.markers.group_begin.len()
+                && self.batch_entity[t] == 0
+                && self.markers.group_begin[t + 1] != self.markers.group_begin[t]
+            {
                 self.batch_entity[t] = scene.add(layer, Float4x4::IDENTITY, empty_overlay(), self.source(TERRAIN));
                 self.markers_dirty = true;
             }
@@ -1841,7 +2045,10 @@ impl Tile {
             }
 
             // The model pieces of buildings follow the type visibility.
-            let sig = self.display.hidden_types.iter().fold(0u64, |sig, h| sig.wrapping_mul(1_000_003).wrapping_add(h.bytes().fold(14_695_981_039_346_656_037u64, |a, c| (a ^ u64::from(c)).wrapping_mul(1_099_511_628_211))));
+            let sig = self.display.hidden_types.iter().fold(0u64, |sig, h| {
+                sig.wrapping_mul(1_000_003)
+                    .wrapping_add(h.bytes().fold(14_695_981_039_346_656_037u64, |a, c| (a ^ u64::from(c)).wrapping_mul(1_099_511_628_211)))
+            });
             if sig != self.hidden_signature {
                 self.hidden_signature = sig;
                 self.columns_changed();
@@ -1939,7 +2146,11 @@ impl Tile {
     /// The siege overlay of the selection (`set_highlight`): a selected edge's nodes, a selected node's edges. Worked out again only when
     /// the selection, the structure, an element or the terrain changed.
     fn siege_highlight(&mut self, selected: &[usize], handle_size: f32) -> Vec<OverlayVertex> {
-        let key = (selected.to_vec(), self.structure_version ^ self.edits_seen.rotate_left(20) ^ self.terrain_version.rotate_left(40), handle_size.to_bits());
+        let key = (
+            selected.to_vec(),
+            self.structure_version ^ self.edits_seen.rotate_left(20) ^ self.terrain_version.rotate_left(40),
+            handle_size.to_bits(),
+        );
         if let Some((k, lines)) = &self.siege_lines
             && *k == key
         {
@@ -2014,7 +2225,14 @@ impl Tile {
     /// The highlight overlay (the points of a selected polygon, with `polygon_point` hot, and the active tool's overlay) and the selection
     /// outline's mask: the shapes of the selected markers (instances without meshes of their own). The renderer outlines the rest of the
     /// selection from its meshes and overlays.
-    pub fn set_highlight(&mut self, scene: &mut RenderScene, selected: &[usize], polygon_point: Option<usize>, handle_size: f32, tool_overlay: &Overlay) {
+    pub fn set_highlight(
+        &mut self,
+        scene: &mut RenderScene,
+        selected: &[usize],
+        polygon_point: Option<usize>,
+        handle_size: f32,
+        tool_overlay: &Overlay,
+    ) {
         wce_prof!("tile.set_highlight");
         self.flush_pieces(scene);
         self.tech_selection(selected);
@@ -2025,7 +2243,12 @@ impl Tile {
         // The selected elements with meshes of their own: one pass over the scene, when the selection or the scene's structure changed.
         if self.meshed_for.0 != selected || self.meshed_for.1 != scene.structure_revision() {
             let wanted = selected.iter().map(|&e| self.source(item_of(e))).collect::<HashSet<_>>();
-            self.meshed = scene.entities().iter().filter(|en| matches!(en.payload, Payload::MeshInstance(_)) && wanted.contains(&en.source)).map(|en| en.source.item).collect();
+            self.meshed = scene
+                .entities()
+                .iter()
+                .filter(|en| matches!(en.payload, Payload::MeshInstance(_)) && wanted.contains(&en.source))
+                .map(|en| en.source.item)
+                .collect();
             self.meshed_for = (selected.to_vec(), scene.structure_revision());
         }
 
@@ -2051,7 +2274,8 @@ impl Tile {
             // target's handle (TEd drags it over the ground).
             if let Some(to) = self.shelter_target(e) {
                 let from = self.world_position(e);
-                let colour = |k: &str, d: [f32; 4]| self.tscene().doc().get(e, k).and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or(d);
+                let colour =
+                    |k: &str, d: [f32; 4]| self.tscene().doc().get(e, k).and_then(|v| wce_tile::properties::parse_colour(&v)).unwrap_or(d);
                 let (c1, c2) = (colour("colour_1", [0.0, 1.0, 0.0, 0.8]), colour("colour_2", [1.0, 0.0, 0.0, 0.8]));
                 let landscape = self.placement(e) == super::Placement::Landscape;
                 let at = |f: f32| {
@@ -2190,11 +2414,15 @@ impl Tile {
             let closed = wce_tile::splines::is_spline(sc.type_of(elem)) && sc.doc().get(elem, "closed").is_some_and(|v| v == "1");
             let n = pts.len();
             let count = if closed && n > 2 { n } else { n.saturating_sub(1) };
-            return (0..count).map(|i| {
-                let (a, b) = (&pts[i], &pts[(i + 1) % n]);
-                let local = (0..=16).map(|k| wce_tile::splines::bezier(a.position, a.control_out, b.control_in, b.position, f64::from(k) / 16.0)).collect::<Vec<_>>();
-                self.local_to_world(elem, &local)
-            }).collect();
+            return (0..count)
+                .map(|i| {
+                    let (a, b) = (&pts[i], &pts[(i + 1) % n]);
+                    let local = (0..=16)
+                        .map(|k| wce_tile::splines::bezier(a.position, a.control_out, b.control_in, b.position, f64::from(k) / 16.0))
+                        .collect::<Vec<_>>();
+                    self.local_to_world(elem, &local)
+                })
+                .collect();
         }
 
         let pts = self.polygon_world_points(elem);
@@ -2211,10 +2439,14 @@ impl Tile {
         let u = self.unit();
         let fold = wce_walls::scene::wall_profile(self.tscene(), elem).map_or(0.0, wce_walls::profile::Profile::fold_radius);
         let (line, _) = wce_walls::solver::centre_line_marked(&points, &sharp, &handles, fold);
-        line.iter().step_by(4).chain(line.last()).map(|(p, _)| {
-            let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
-            Float3::new(x, self.terrain_height(x, z), z)
-        }).collect()
+        line.iter()
+            .step_by(4)
+            .chain(line.last())
+            .map(|(p, _)| {
+                let (x, z) = ((p[0] / u) as f32, (p[1] / u) as f32);
+                Float3::new(x, self.terrain_height(x, z), z)
+            })
+            .collect()
     }
 
     /// A spline's handles in the world (metres): each point's `controlIn` and `controlOut`, `None` where no segment uses it.
@@ -2229,19 +2461,27 @@ impl Tile {
     fn local_to_world(&self, elem: usize, local: &[Double3]) -> Vec<Float3> {
         let w = world_transform(self.tscene(), elem);
         let u = self.unit();
-        local.iter().map(|&v| {
-            let p = w.position + w.rotation * v;
-            Float3::new((p.x / u) as f32, (p.y / u) as f32, (p.z / u) as f32)
-        }).collect()
+        local
+            .iter()
+            .map(|&v| {
+                let p = w.position + w.rotation * v;
+                Float3::new((p.x / u) as f32, (p.y / u) as f32, (p.z / u) as f32)
+            })
+            .collect()
     }
 
     pub fn polygon_world_points(&self, elem: usize) -> Vec<Float3> {
         let w = world_transform(self.tscene(), elem);
         let u = self.unit();
-        self.tscene().polygon_points(elem).into_iter().filter_map(|p| self.tscene().point_position(p)).map(|v| {
-            let p = w.position + w.rotation * v;
-            Float3::new((p.x / u) as f32, (p.y / u) as f32, (p.z / u) as f32)
-        }).collect()
+        self.tscene()
+            .polygon_points(elem)
+            .into_iter()
+            .filter_map(|p| self.tscene().point_position(p))
+            .map(|v| {
+                let p = w.position + w.rotation * v;
+                Float3::new((p.x / u) as f32, (p.y / u) as f32, (p.z / u) as f32)
+            })
+            .collect()
     }
 
     /// A summary of what the document shows (the debug panel).
@@ -2250,7 +2490,11 @@ impl Tile {
         let (w, h) = p.height.as_ref().map_or((0, 0), |h| (h.width(), h.height()));
         let mut d = format!("tile {}\n", self.title());
         d += &format!(
-            "instances {}, markers {}, building models {} of {} keys\n", self.instances.len(), self.markers.elem.len(), self.models.len() - self.fallbacks.len(), self.models.len()
+            "instances {}, markers {}, building models {} of {} keys\n",
+            self.instances.len(),
+            self.markers.elem.len(),
+            self.models.len() - self.fallbacks.len(),
+            self.models.len()
         );
 
         d += &format!("terrain {w} x {h} px, stride {}, border {} m\n", self.terrain_stride, p.border_m() as i32);

@@ -124,7 +124,13 @@ fn main() {
         tables.add(path, t.is_some());
     }
 
-    let ok = [clips.report("clips"), metas.report("metas"), meshes.report("variant meshes"), fragments.report("fragments"), tables.report("tables")];
+    let ok = [
+        clips.report("clips"),
+        metas.report("metas"),
+        meshes.report("variant meshes"),
+        fragments.report("fragments"),
+        tables.report("tables"),
+    ];
     println!("clip versions {versions:?}, {untouched} with no frames, {dangling} table fragments without a file");
     println!("meta kinds {kinds:?}");
     println!("{} slots", slots.len());

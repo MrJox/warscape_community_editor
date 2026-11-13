@@ -30,8 +30,8 @@ use std::path::{Path, PathBuf};
 
 use wce_foundation::math::Double3;
 use wce_tile::height_field::Brush;
-use wce_tile::tile_project::TileProject;
 use wce_tile::ted_scene::TedScene;
+use wce_tile::tile_project::TileProject;
 use wce_tile::world_transform::world_transform;
 use wce_tile_io::attila::workflow::{Game, open_exported};
 use wce_vfs::{Config, GameProfile, Vfs};
@@ -79,7 +79,12 @@ fn run() -> Result<(), String> {
     let option = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let mods = option("--mods");
     let variant = option("--variant").unwrap_or_else(|| "full".to_owned());
-    let positional = args.iter().enumerate().filter(|(i, a)| !a.starts_with("--") && (*i == 0 || !args[i - 1].starts_with("--"))).map(|(_, a)| a.clone()).collect::<Vec<_>>();
+    let positional = args
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || !args[i - 1].starts_with("--")))
+        .map(|(_, a)| a.clone())
+        .collect::<Vec<_>>();
     let [game_dir, schema, workspace, out] = positional.as_slice() else {
         return Err("usage: wall_edoras_test <game folder> <rpfm schema_att.ron> <workspace folder> <out folder> [--mods a.pack;b.pack] [--variant full|terrain-only|wall-only]".to_owned());
     };
@@ -115,7 +120,8 @@ fn run() -> Result<(), String> {
     let (_, msg) = project.save(&project_dir, true, project.height_dirty)?;
     println!("{msg}");
 
-    let (pack, dir, notes) = wce_walls::export::save_exported_walls(&game, &vfs, &schema, &project_dir, project.scene.save(), Path::new(out), &[])?;
+    let (pack, dir, notes) =
+        wce_walls::export::save_exported_walls(&game, &vfs, &schema, &project_dir, project.scene.save(), Path::new(out), &[])?;
     for n in &notes {
         println!("export: {n}");
     }
@@ -127,7 +133,10 @@ fn run() -> Result<(), String> {
         // CA's tile but for what the wall changes.
         let ours = pack_files(&pack)?;
         let prefix = format!("{folder_path}/");
-        let mut files = ours.into_iter().filter(|(n, _)| !n.starts_with(&prefix) || WALL_FILES.iter().any(|w| n[prefix.len()..].eq_ignore_ascii_case(w))).collect::<Vec<_>>();
+        let mut files = ours
+            .into_iter()
+            .filter(|(n, _)| !n.starts_with(&prefix) || WALL_FILES.iter().any(|w| n[prefix.len()..].eq_ignore_ascii_case(w)))
+            .collect::<Vec<_>>();
         for (name, blob) in &exported.folder {
             // Not TEd's twin of the building list (another mod's Edoras in `data` can add one).
             if !WALL_FILES.iter().any(|w| name.eq_ignore_ascii_case(w)) && !name.eq_ignore_ascii_case("building_list.xml") {
@@ -145,18 +154,22 @@ fn run() -> Result<(), String> {
 
 /// The tile's files a wall changes: the building list, the AI layout (the hints and the siege AI polylines), the zones and the deployment
 /// areas.
-const WALL_FILES: [&str; 5] = ["building_list", "ai_hint_polyline_list_marker.markers", "ai_hint_polyline_marker.markers", "zones.xml", "deployment_areas.xml"];
+const WALL_FILES: [&str; 5] =
+    ["building_list", "ai_hint_polyline_list_marker.markers", "ai_hint_polyline_marker.markers", "zones.xml", "deployment_areas.xml"];
 
 /// The files of a pack (its tables too), as they are.
 fn pack_files(path: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
     use rpfm_lib::files::pack::Pack;
     let games = rpfm_lib::games::supported_games::SupportedGames::default();
     let attila = games.game("attila").ok_or("rpfm knows no attila")?;
-    let mut pack = Pack::read_and_merge(&[path.to_path_buf()], attila, true, false, false).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut pack =
+        Pack::read_and_merge(&[path.to_path_buf()], attila, true, false, false).map_err(|e| format!("{}: {e}", path.display()))?;
     let names = pack.files().keys().cloned().collect::<Vec<_>>();
     let mut out = vec![];
     for n in names {
-        let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else { return Err(format!("{n}: no bytes")) };
+        let Some(Ok(Some(bytes))) = pack.files_mut().get_mut(&n).map(|f| f.encode(&None, false, false, true)) else {
+            return Err(format!("{n}: no bytes"));
+        };
         out.push((n, bytes));
     }
 
@@ -169,11 +182,19 @@ fn rebuild_wall(project: &mut TileProject, vfs: &Vfs) -> Result<(), String> {
 
     // The old run's pieces.
     let key_of = |s: &TedScene, e: usize| s.doc().get(e, "key").unwrap_or_default().to_lowercase();
-    let gone = project.scene.find_all("BUILDING_INSTANCE").into_iter().filter(|&e| {
-        let k = key_of(&project.scene, e);
-        let p = world_transform(&project.scene, e).position;
-        k.contains("_fort_") && !k.contains("_fort_gateway_") && !k.contains("_fort_watchtower_") && distance_to_run([p.x, p.z]) <= ON_RUN
-    }).collect::<Vec<_>>();
+    let gone = project
+        .scene
+        .find_all("BUILDING_INSTANCE")
+        .into_iter()
+        .filter(|&e| {
+            let k = key_of(&project.scene, e);
+            let p = world_transform(&project.scene, e).position;
+            k.contains("_fort_")
+                && !k.contains("_fort_gateway_")
+                && !k.contains("_fort_watchtower_")
+                && distance_to_run([p.x, p.z]) <= ON_RUN
+        })
+        .collect::<Vec<_>>();
     let names = gone.iter().map(|&e| key_of(&project.scene, e)).collect::<Vec<_>>();
     for &e in gone.iter().rev() {
         project.scene.remove(e).map_err(|err| format!("removing #{e}: {err}"))?;
@@ -192,7 +213,10 @@ fn rebuild_wall(project: &mut TileProject, vfs: &Vfs) -> Result<(), String> {
         wce_walls::logic::extent_x(&bytes).ok().map(|(a, b)| (f64::from(a), f64::from(b))).filter(|(a, b)| b > a)
     };
     let all = anchors(&project.scene, &extent);
-    let gate = nearest(&all, GATE_END).filter(|a| a.key.to_lowercase().contains("_fort_gateway_")).ok_or("no gate end at the run's start")?.clone();
+    let gate = nearest(&all, GATE_END)
+        .filter(|a| a.key.to_lowercase().contains("_fort_gateway_"))
+        .ok_or("no gate end at the run's start")?
+        .clone();
     let mut points = points;
     points[0] = [gate.at[0], gate.at[2]];
     let layer = {
@@ -201,8 +225,10 @@ fn rebuild_wall(project: &mut TileProject, vfs: &Vfs) -> Result<(), String> {
     };
 
     let world = points.iter().map(|p| Double3::new(p[0], project.height_at(p[0] / unit, p[1] / unit), p[1])).collect::<Vec<_>>();
-    let extra = [("wall_base", BASE.to_owned()), ("wall_tolerance", TOLERANCE.to_string()), ("wall_defence_every", "120".to_owned())].into_iter()
-        .map(|(k, v)| (k.to_owned(), v)).collect();
+    let extra = [("wall_base", BASE.to_owned()), ("wall_tolerance", TOLERANCE.to_string()), ("wall_defence_every", "120".to_owned())]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v))
+        .collect();
     let wall = project.scene.add_polygon(Some(layer), WALL_SPLINE, "Wall: west of the west gate", &world, &extra)?;
 
     let ground = |x: f64, z: f64| project.height_at(x / unit, z / unit);
@@ -210,7 +236,14 @@ fn rebuild_wall(project: &mut TileProject, vfs: &Vfs) -> Result<(), String> {
     let p = &l.plan;
     let runs = p.runs.iter().map(|r| format!("{:.0}..{:.0} at {:.1}", r.s.0, r.s.1, r.level)).collect::<Vec<_>>();
     let ends = l.ends.iter().map(|a| a.as_ref().map_or("free".to_owned(), |a| a.key.clone())).collect::<Vec<_>>();
-    println!("the wall: {:.0} long, ends {} / {}, {} step section(s), runs [{}]", p.length, ends[0], ends[1], p.steps.len(), runs.join(", "));
+    println!(
+        "the wall: {:.0} long, ends {} / {}, {} step section(s), runs [{}]",
+        p.length,
+        ends[0],
+        ends[1],
+        p.steps.len(),
+        runs.join(", ")
+    );
     for w in &p.warnings {
         println!("  warning: {w}");
     }
@@ -264,7 +297,13 @@ fn run_coords(p: [f64; 2]) -> (f64, f64) {
 fn distance_to_run(p: [f64; 2]) -> f64 {
     let (len, _, _) = run_frame();
     let (u, v) = run_coords(p);
-    if u < 0.0 { (u * u + v * v).sqrt() } else if u > len { ((u - len).powi(2) + v * v).sqrt() } else { v.abs() }
+    if u < 0.0 {
+        (u * u + v * v).sqrt()
+    } else if u > len {
+        ((u - len).powi(2) + v * v).sqrt()
+    } else {
+        v.abs()
+    }
 }
 
 /// Where a point `u` along the old run and `v` off it goes: as far along the new wall (in proportion) and as far off it.
@@ -413,15 +452,29 @@ fn nearest(ends: &[Anchor], p: [f64; 2]) -> Option<&Anchor> {
 /// on the landscape (`MSM_LANDSCAPE`), not the freeform ones (the walls).
 fn raise(project: &mut TileProject, at: [f64; 2], radius: f64, metres: f64) -> Result<(), String> {
     let unit = project.unit_scale;
-    let buildings = project.scene.find_all("BUILDING_INSTANCE").into_iter()
-        .filter(|&e| project.scene.doc().get(e, "surface_mode").is_some_and(|m| m == "MSM_LANDSCAPE")).collect::<Vec<_>>();
-    let before = buildings.iter().map(|&e| {
-        let p = world_transform(&project.scene, e).position;
-        project.height_at(p.x / unit, p.z / unit)
-    }).collect::<Vec<_>>();
+    let buildings = project
+        .scene
+        .find_all("BUILDING_INSTANCE")
+        .into_iter()
+        .filter(|&e| project.scene.doc().get(e, "surface_mode").is_some_and(|m| m == "MSM_LANDSCAPE"))
+        .collect::<Vec<_>>();
+    let before = buildings
+        .iter()
+        .map(|&e| {
+            let p = world_transform(&project.scene, e).position;
+            project.height_at(p.x / unit, p.z / unit)
+        })
+        .collect::<Vec<_>>();
 
     let (x, z) = (at[0] / unit, at[1] / unit);
-    let brush = Brush { cx: project.pixel_x(x), cy: project.pixel_z(z), radius: radius / unit / project.mpp_x(), strength: 1.0, falloff: 1.0, ..Default::default() };
+    let brush = Brush {
+        cx: project.pixel_x(x),
+        cy: project.pixel_z(z),
+        radius: radius / unit / project.mpp_x(),
+        strength: 1.0,
+        falloff: 1.0,
+        ..Default::default()
+    };
     let field = project.height.as_mut().ok_or("the tile has no height map")?;
     field.begin_edit()?;
     field.raise(&brush, metres)?;

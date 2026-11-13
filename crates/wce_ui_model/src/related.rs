@@ -12,9 +12,9 @@
 
 use std::collections::HashMap;
 
+use crate::UiModel;
 use crate::draw::{DrawItem, DrawKind, DrawOptions};
 use crate::model::EntryKind;
-use crate::UiModel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelKind {
@@ -36,7 +36,8 @@ pub struct Relation {
 }
 
 /// Names that many layouts have as components or as file names without being each other's children.
-const GENERIC: [&str; 12] = ["tooltip", "background", "layout", "main", "frontend", "battle", "campaign", "root", "icon", "frame", "title", "button"];
+const GENERIC: [&str; 12] =
+    ["tooltip", "background", "layout", "main", "frontend", "battle", "campaign", "root", "icon", "frame", "title", "button"];
 
 pub fn is_generic(name: &str) -> bool {
     GENERIC.contains(&name.to_ascii_lowercase().as_str())

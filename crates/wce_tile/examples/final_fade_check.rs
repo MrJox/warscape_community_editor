@@ -60,7 +60,9 @@ fn main() {
 
         let west = |d: f64, t: f64| (d, t);
         let line: Vec<String> = [0.0, 2.0, 4.0, 8.0, 12.0, 16.0, 24.0, 32.0, 40.0, 48.0, 56.0, 63.0, 64.0, 70.0]
-            .iter().map(|&d| format!("{d}:{}", weight(d, &west).map_or("-".to_owned(), |w| format!("{w:.4}")))).collect();
+            .iter()
+            .map(|&d| format!("{d}:{}", weight(d, &west).map_or("-".to_owned(), |w| format!("{w:.4}"))))
+            .collect();
         println!("  west edge weight by distance: {}", line.join(" "));
 
         // A corner: the weight at (dx, dz) against w(dx) * w(dz) and min(w(dx), w(dz)), w from the west edge's medians.

@@ -15,7 +15,8 @@ fn main() {
     let m = RigidModel::decode(&mut Cursor::new(data), &Some(extra)).expect("decode");
     // Every LOD's switch distance and mesh blocks (vertex counts) first.
     for (k, l) in m.lods().iter().enumerate() {
-        let blocks = l.mesh_blocks().iter().map(|b| format!("{:?} {}", b.mesh().material_type(), b.mesh().vertices().len())).collect::<Vec<_>>();
+        let blocks =
+            l.mesh_blocks().iter().map(|b| format!("{:?} {}", b.mesh().material_type(), b.mesh().vertices().len())).collect::<Vec<_>>();
         println!("lod {k}: distance {} blocks [{}]", l.visibility_distance(), blocks.join(", "));
     }
 
@@ -39,17 +40,40 @@ fn main() {
             }
         }
 
-        println!("{i}: {:?} {:?} '{}' verts {} lo {:?} hi {:?} tex {:?}", mesh.material_type(), block.material().vertex_format(), block.material().name(), v.len(), lo, hi, tex);
+        println!(
+            "{i}: {:?} {:?} '{}' verts {} lo {:?} hi {:?} tex {:?}",
+            mesh.material_type(),
+            block.material().vertex_format(),
+            block.material().name(),
+            v.len(),
+            lo,
+            hi,
+            tex
+        );
         let mat = block.material();
         let v4: Vec<(i32, [f32; 4])> = mat.params_vector4df32().iter().map(|(k, v)| (*k, [v.x, v.y, v.z, v.w])).collect();
         println!("   params string {:?} f32 {:?} i32 {:?} vec4 {:?}", mat.params_string(), mat.params_f32(), mat.params_i32(), v4);
         if !mat.cloth_bones().is_empty() {
-            let max = v.iter().map(|x| { let b = x.bone_indices(); b.x.max(b.y).max(b.z).max(b.w) }).max().unwrap_or(0);
+            let max = v
+                .iter()
+                .map(|x| {
+                    let b = x.bone_indices();
+                    b.x.max(b.y).max(b.z).max(b.w)
+                })
+                .max()
+                .unwrap_or(0);
             println!("   cloth bones: {}, vertex bone indices up to {max}", mat.cloth_bones().len());
         }
 
         if !mat.rope().nodes().is_empty() {
-            println!("   rope: {} nodes, uk_1 {}, uk_2 {}, attachments {:?}, first {:?}", mat.rope().nodes().len(), mat.rope().uk_1(), mat.rope().uk_2(), mat.rope().attachments(), mat.rope().nodes().first().map(|n| *n.position()));
+            println!(
+                "   rope: {} nodes, uk_1 {}, uk_2 {}, attachments {:?}, first {:?}",
+                mat.rope().nodes().len(),
+                mat.rope().uk_1(),
+                mat.rope().uk_2(),
+                mat.rope().attachments(),
+                mat.rope().nodes().first().map(|n| *n.position())
+            );
         }
     }
 }

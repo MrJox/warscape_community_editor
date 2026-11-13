@@ -211,7 +211,13 @@ fn main() {
         let mut docs = DocumentManager::default();
         let doc = TileDocument::new(TileProject::open(dir).unwrap(), Some(files.clone()));
         let t = doc.tile();
-        println!("tile {} title [{}] instances {} fallbacks {}", dir.strip_prefix(&fx).unwrap().to_string_lossy(), doc.title(), t.instances().len(), t.model_fallbacks().len());
+        println!(
+            "tile {} title [{}] instances {} fallbacks {}",
+            dir.strip_prefix(&fx).unwrap().to_string_lossy(),
+            doc.title(),
+            t.instances().len(),
+            t.model_fallbacks().len()
+        );
         for (ty, n) in t.type_counts() {
             println!("  type {ty} {n}");
         }
@@ -242,8 +248,14 @@ fn main() {
         let t = d.tile();
         let g = t.ground_info();
         println!(
-            "  start scene {:016x} terrain [{}] water [{}] ground {} {} {} links {}", scene_hash(&scene), t.terrain_note(), t.water_note(),
-            u8::from(g.game_shaders), g.layers, g.climate, t.link_cells().len()
+            "  start scene {:016x} terrain [{}] water [{}] ground {} {} {} links {}",
+            scene_hash(&scene),
+            t.terrain_note(),
+            t.water_note(),
+            u8::from(g.game_shaders),
+            g.layers,
+            g.climate,
+            t.link_cells().len()
         );
 
         for c in t.link_cells() {
@@ -437,7 +449,13 @@ fn main() {
 
                 20 => {
                     let kind = kinds[(r.next() % 5) as usize];
-                    let s = BrushSettings { radius_m: r.f(3.0, 30.0), strength: r.f(1.0, 20.0), falloff: r.f(0.0, 1.0), flatten_height: r.f(-5.0, 20.0), ..Default::default() };
+                    let s = BrushSettings {
+                        radius_m: r.f(3.0, 30.0),
+                        strength: r.f(1.0, 20.0),
+                        falloff: r.f(0.0, 1.0),
+                        flatten_height: r.f(-5.0, 20.0),
+                        ..Default::default()
+                    };
                     let steps = 1 + r.next() % 4;
                     for _ in 0..steps {
                         let (x, z, dt) = (r.f(0.0, 250.0), r.f(0.0, 250.0), r.f(0.005, 0.08));
@@ -502,8 +520,14 @@ fn main() {
             d.tile_mut().set_highlight(&mut scene, &sel, point, 1.5, &tool);
             let bytes = d.tile().tscene().save();
             println!(
-                "  {k} op {op} {res} ted {:016x} hist {}/{} mod {} struct {} scene {:016x} water [{}]", fnv(&bytes, START), d.history().size(), d.history().position(),
-                u8::from(d.modified()), d.tile().structure_version(), scene_hash(&scene), d.tile().water_note()
+                "  {k} op {op} {res} ted {:016x} hist {}/{} mod {} struct {} scene {:016x} water [{}]",
+                fnv(&bytes, START),
+                d.history().size(),
+                d.history().position(),
+                u8::from(d.modified()),
+                d.tile().structure_version(),
+                scene_hash(&scene),
+                d.tile().water_note()
             );
 
             if d.history().position() != 0 {
@@ -538,7 +562,10 @@ fn main() {
         for v in 0..5 {
             let views = [TerrainView::Colour, TerrainView::BlendGroups, TerrainView::GroundTypes, TerrainView::Protection];
             let look = TerrainLook {
-                blended: v != 4, view: views[v % 4], season: if v == 2 { "wi" } else { "su" }.to_owned(), climate: if v == 3 { "ROME_Med" } else { "ROME_Continental" }.to_owned(),
+                blended: v != 4,
+                view: views[v % 4],
+                season: if v == 2 { "wi" } else { "su" }.to_owned(),
+                climate: if v == 3 { "ROME_Med" } else { "ROME_Continental" }.to_owned(),
             };
 
             d.tile_mut().set_terrain_look(&mut scene, look);

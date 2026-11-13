@@ -11,8 +11,12 @@ fn fnv(b: &[u8]) -> u64 {
 #[test]
 fn png_encoder_matches_the_cpp_one() {
     let golden = [
-        (0, 8, 214, 0x4ba1_ef85_16d3_8f98), (0, 16, 362, 0xd5b4_48c2_c44c_11d6), (2, 8, 338, 0x0984_3714_67c8_1d58),
-        (2, 16, 519, 0x775d_376b_33ec_56d9), (6, 8, 394, 0x92eb_05d2_fc96_4efa), (6, 16, 533, 0x2f39_f58a_49cc_38a8),
+        (0, 8, 214, 0x4ba1_ef85_16d3_8f98),
+        (0, 16, 362, 0xd5b4_48c2_c44c_11d6),
+        (2, 8, 338, 0x0984_3714_67c8_1d58),
+        (2, 16, 519, 0x775d_376b_33ec_56d9),
+        (6, 8, 394, 0x92eb_05d2_fc96_4efa),
+        (6, 16, 533, 0x2f39_f58a_49cc_38a8),
     ];
 
     for (color_type, bit_depth, size, hash) in golden {

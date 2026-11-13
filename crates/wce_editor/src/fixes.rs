@@ -161,7 +161,8 @@ impl Editor {
         }
 
         let game = self.game().key;
-        let items = self.fixes.list.iter().filter(|f| f.for_game(game)).map(|f| (f.id().to_owned(), f.title().to_owned())).collect::<Vec<_>>();
+        let items =
+            self.fixes.list.iter().filter(|f| f.for_game(game)).map(|f| (f.id().to_owned(), f.title().to_owned())).collect::<Vec<_>>();
         let data = self.fix_data_folder();
         for (id, title) in &items {
             let on = data.as_deref().zip(self.fix_named(id)).is_some_and(|(d, i)| self.fixes.list[i].installed(d));

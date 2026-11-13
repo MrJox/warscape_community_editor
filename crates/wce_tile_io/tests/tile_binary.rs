@@ -15,8 +15,18 @@ use wce_tile_model::{Blob, MapKind, Samples, Value};
 fn chmf(w: u32, h: u32) -> Vec<u8> {
     let samples = (0..w * h).map(|i| ((i * 37) % 900 + (i / w) * 13) as u16).collect::<Vec<_>>();
     let (tag, offsets, data) = encode_region(w, h, &samples);
-    ChmfFile { version: 5, width: w, height: h, cells_x: 1, cells_y: 1, min: -2.5, max: 27.5, spacing: 1, regions: vec![ChmfRegion { rect: [0, 0, w, h], tag, offsets, data }] }
-        .write()
+    ChmfFile {
+        version: 5,
+        width: w,
+        height: h,
+        cells_x: 1,
+        cells_y: 1,
+        min: -2.5,
+        max: 27.5,
+        spacing: 1,
+        regions: vec![ChmfRegion { rect: [0, 0, w, h], tag, offsets, data }],
+    }
+    .write()
 }
 
 fn point_lights() -> Vec<u8> {
@@ -32,8 +42,14 @@ fn point_lights() -> Vec<u8> {
     rec.extend_from_slice(&12u16.to_le_bytes());
     rec.extend_from_slice(b"WPLFT_SMOOTH");
     MarkersFile {
-        repository: "BASE_MARKER_REPOSITORY".into(), repository_id: 0x9D9BB, repository_u32: 1, repository_u16: 1, class_id: 0x00B7_E42E,
-        class_name: "POINT_LIGHT_MARKER".into(), version: 3, records: vec![rec.clone(), rec],
+        repository: "BASE_MARKER_REPOSITORY".into(),
+        repository_id: 0x9D9BB,
+        repository_u32: 1,
+        repository_u16: 1,
+        class_id: 0x00B7_E42E,
+        class_name: "POINT_LIGHT_MARKER".into(),
+        version: 3,
+        records: vec![rec.clone(), rec],
         groups: Some(vec![MarkerGroup { key: vec![KeyPart::Wide("Point light".encode_utf16().collect())], indices: vec![0, 1] }]),
     }
     .write()
@@ -69,8 +85,23 @@ fn building_list() -> Vec<u8> {
     pt.set_value(2);
     pt.set_optimized(true);
     let building = vec![
-        NodeType::Ascii("western_ahouse_1".into()), v3(741.2, 5.2, 428.9), f(0.0), f(0.2588), f(0.0), f(0.9659), v3(1.0, 1.0, 1.0), f(1.0),
-        b(false), b(false), b(false), b(true), b(false), b(true), NodeType::U32(pt), b(false), b(false),
+        NodeType::Ascii("western_ahouse_1".into()),
+        v3(741.2, 5.2, 428.9),
+        f(0.0),
+        f(0.2588),
+        f(0.0),
+        f(0.9659),
+        v3(1.0, 1.0, 1.0),
+        f(1.0),
+        b(false),
+        b(false),
+        b(false),
+        b(true),
+        b(false),
+        b(true),
+        NodeType::U32(pt),
+        b(false),
+        b(false),
     ];
 
     let mut block = RecordNode::default();

@@ -23,9 +23,10 @@ pub(crate) fn baked_rivers(dir: &Path, extent_z: f64, unit: f64) -> Option<Water
     let bytes = std::fs::read(dir.join(CARRIED_MESH)).ok()?;
     let (verts, indices) = river_block(&bytes)?;
     let u = unit as f32;
-    let verts = verts.iter().map(|v| WaterVertex {
-        x: v[0], y: v[1] / u, z: extent_z as f32 - v[2], across: v[3], u: v[4], v: v[5], flow: v[6], fade: v[7],
-    }).collect();
+    let verts = verts
+        .iter()
+        .map(|v| WaterVertex { x: v[0], y: v[1] / u, z: extent_z as f32 - v[2], across: v[3], u: v[4], v: v[5], flow: v[6], fade: v[7] })
+        .collect();
 
     Some(Water { river: true, foam: 0.0, verts, indices: indices.into_iter().map(u32::from).collect(), ..Default::default() })
 }
@@ -40,10 +41,20 @@ fn river_block(b: &[u8]) -> Option<(Vec<[f32; 8]>, Vec<u16>)> {
     // The LOD table after the 0x8c byte header: block count, vertex bytes, index bytes, the first block's offset, the distance.
     let (count, mut at) = (u32_at(0x8c)?, u32_at(0x98)? as usize);
     for _ in 0..count {
-        let (kind, size, voff, vcount, ioff, icount) = (u32_at(at)?, u32_at(at + 4)? as usize, u32_at(at + 8)? as usize, u32_at(at + 12)? as usize, u32_at(at + 16)? as usize, u32_at(at + 20)? as usize);
+        let (kind, size, voff, vcount, ioff, icount) = (
+            u32_at(at)?,
+            u32_at(at + 4)? as usize,
+            u32_at(at + 8)? as usize,
+            u32_at(at + 12)? as usize,
+            u32_at(at + 16)? as usize,
+            u32_at(at + 20)? as usize,
+        );
         if RIVER_BLOCKS.contains(&kind) {
             let vb = b.get(at + voff..at + voff + vcount * 32)?;
-            let verts = vb.chunks_exact(32).map(|c| std::array::from_fn(|k| f32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]]))).collect();
+            let verts = vb
+                .chunks_exact(32)
+                .map(|c| std::array::from_fn(|k| f32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]])))
+                .collect();
             let ib = b.get(at + ioff..at + ioff + icount * 2)?;
             let indices = ib.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
             return Some((verts, indices));

@@ -12,13 +12,21 @@ use wce_tile_model::{Blob, Node};
 
 fn show(n: &Node, depth: usize, max: usize, max_depth: usize) {
     let pad = "  ".repeat(depth);
-    let props = n.props().iter().map(|p| format!("{}={}", p.name, format!("{:?}", p.value).chars().take(80).collect::<String>())).collect::<Vec<_>>().join(" ");
+    let props = n
+        .props()
+        .iter()
+        .map(|p| format!("{}={}", p.name, format!("{:?}", p.value).chars().take(80).collect::<String>()))
+        .collect::<Vec<_>>()
+        .join(" ");
     println!("{pad}{} ({} children) {}", n.class, n.children.len(), props.chars().take(3000).collect::<String>());
     if std::env::var_os("WCE_TRIVIA").is_some()
         && let Some(t) = n.trivia()
         && !t.layout.is_empty()
     {
-        println!("{pad}  layout {:?}", t.layout.iter().map(|(c, b)| (format!("{c:#x}"), String::from_utf8_lossy(b).into_owned())).collect::<Vec<_>>());
+        println!(
+            "{pad}  layout {:?}",
+            t.layout.iter().map(|(c, b)| (format!("{c:#x}"), String::from_utf8_lossy(b).into_owned())).collect::<Vec<_>>()
+        );
     }
     if depth >= max_depth {
         return;

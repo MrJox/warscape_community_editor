@@ -68,7 +68,13 @@ fn put_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
 fn paeth(a: i32, b: i32, c: i32) -> u8 {
     let p = a + b - c;
     let (pa, pb, pc) = ((p - a).abs(), (p - b).abs(), (p - c).abs());
-    (if pa <= pb && pa <= pc { a } else if pb <= pc { b } else { c }) as u8
+    (if pa <= pb && pa <= pc {
+        a
+    } else if pb <= pc {
+        b
+    } else {
+        c
+    }) as u8
 }
 
 /// The predictor of filter type `ft` for byte `i` of `row`, against `prev` (zeros for the first row).
@@ -163,7 +169,6 @@ fn deflate_kit(src: &[u8]) -> Result<Vec<u8>, PngError> {
 }
 
 impl PngFile {
-
     /// Bytes per pixel of the colour type and depth (0 for unsupported ones).
     pub fn bytes_per_pixel(&self) -> usize {
         let channels = match self.color_type {
@@ -305,7 +310,12 @@ impl PngFile {
             }
 
             let kind = &b[i + 4..i + 8];
-            if kind == b"IHDR" && (be32(&b[i + 8..]) != self.width || be32(&b[i + 12..]) != self.height || b[i + 16] != self.bit_depth || b[i + 17] != self.color_type) {
+            if kind == b"IHDR"
+                && (be32(&b[i + 8..]) != self.width
+                    || be32(&b[i + 12..]) != self.height
+                    || b[i + 16] != self.bit_depth
+                    || b[i + 17] != self.color_type)
+            {
                 return fail("the original has another size or format");
             }
 

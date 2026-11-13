@@ -9,17 +9,11 @@ pub const EXPORT_TYPE: &[(&str, &str)] = &[
     ("LayerExportType_Escalation3", "Escalation 3"),
 ];
 
-pub const LOW_FREQUENCY_CHANGE: &[(&str, &str)] = &[
-    ("GRM_AS_SINGLE", "Children move as group"),
-    ("GRM_CHILDREN", "Children move independently"),
-];
+pub const LOW_FREQUENCY_CHANGE: &[(&str, &str)] =
+    &[("GRM_AS_SINGLE", "Children move as group"), ("GRM_CHILDREN", "Children move independently")];
 
-pub const POLYGON_SHAPE: &[(&str, &str)] = &[
-    ("PS_CIRCLE", "Circle"),
-    ("PS_SEMICIRCLE", "Semicircle"),
-    ("PS_RECTANGLE", "Rectangle"),
-    ("PS_POLYGON", "Polygon"),
-];
+pub const POLYGON_SHAPE: &[(&str, &str)] =
+    &[("PS_CIRCLE", "Circle"), ("PS_SEMICIRCLE", "Semicircle"), ("PS_RECTANGLE", "Rectangle"), ("PS_POLYGON", "Polygon")];
 
 pub const AI_HINT_TYPE: &[(&str, &str)] = &[
     ("AIH_DEFENSIVE_LINE", "[DEPRECATED] defensive_line"),
@@ -80,23 +74,13 @@ pub const DEPLOYMENT_CATEGORY: &[(&str, &str)] = &[
     ("DAC_ENCAMPMENT", "Encampment"),
 ];
 
-pub const NEW_POLYGON_TYPE: &[(&str, &str)] = &[
-    ("PDM_POLYGON", "Polygon"),
-    ("PDM_FREEHAND", "Freehand"),
-    ("PDM_RECTANGLE", "Square"),
-    ("PDM_CIRCLE", "Circle"),
-];
+pub const NEW_POLYGON_TYPE: &[(&str, &str)] =
+    &[("PDM_POLYGON", "Polygon"), ("PDM_FREEHAND", "Freehand"), ("PDM_RECTANGLE", "Square"), ("PDM_CIRCLE", "Circle")];
 
-pub const LIGHT_ANIMATION: &[(&str, &str)] = &[
-    ("LAT_NONE", "None"),
-    ("LAT_RADIUS_SIN", "Radius Sin"),
-    ("LAT_RADIUS_SIN_SIN", "Radius Sin Sin"),
-];
+pub const LIGHT_ANIMATION: &[(&str, &str)] =
+    &[("LAT_NONE", "None"), ("LAT_RADIUS_SIN", "Radius Sin"), ("LAT_RADIUS_SIN_SIN", "Radius Sin Sin")];
 
-pub const LIGHT_FALLOFF: &[(&str, &str)] = &[
-    ("WPLFT_LINEAR", "Linear"),
-    ("WPLFT_SMOOTH", "Smooth"),
-];
+pub const LIGHT_FALLOFF: &[(&str, &str)] = &[("WPLFT_LINEAR", "Linear"), ("WPLFT_SMOOTH", "Smooth")];
 
 pub const TECH_LEVEL: &[(&str, &str)] = &[
     ("TL_TECH_LEVEL1", "Tech level 1"),
@@ -106,10 +90,7 @@ pub const TECH_LEVEL: &[(&str, &str)] = &[
     ("TL_TECH_LEVEL5", "Tech level 5"),
 ];
 
-pub const CAPTURE_TYPE: &[(&str, &str)] = &[
-    ("CLT_MAJOR", "Major"),
-    ("CLT_MINOR", "Minor"),
-];
+pub const CAPTURE_TYPE: &[(&str, &str)] = &[("CLT_MAJOR", "Major"), ("CLT_MINOR", "Minor")];
 
 pub const SIEGE_EDGE_TYPE: &[(&str, &str)] = &[
     ("SAET_STREET", "Street Edge"),
@@ -125,16 +106,10 @@ pub const SIEGE_NODE_TYPE: &[(&str, &str)] = &[
     ("SANT_ENTRY", "Entry Node"),
 ];
 
-pub const SEPARATOR_TYPE: &[(&str, &str)] = &[
-    ("PALT_NONE", "No Link"),
-    ("PALT_GENERIC", "Generic Area Link"),
-    ("PALT_FORT", "Fort Area Link"),
-];
+pub const SEPARATOR_TYPE: &[(&str, &str)] =
+    &[("PALT_NONE", "No Link"), ("PALT_GENERIC", "Generic Area Link"), ("PALT_FORT", "Fort Area Link")];
 
-pub const UNIT_TYPE: &[(&str, &str)] = &[
-    ("UT_MAIN", "Land/Naval Unit"),
-    ("UT_ASSAULT", "Assault Unit"),
-];
+pub const UNIT_TYPE: &[(&str, &str)] = &[("UT_MAIN", "Land/Naval Unit"), ("UT_ASSAULT", "Assault Unit")];
 
 pub const MARKER_TYPE: &[(&str, &str)] = &[
     ("BMD_GM_PEASANT_SPAWN", "peasant_spawn"),
@@ -142,12 +117,8 @@ pub const MARKER_TYPE: &[(&str, &str)] = &[
     ("BMD_GM_FRONTEND_CHARACTER", "frontend_character"),
 ];
 
-pub const SEASONS: &[(&str, &str)] = &[
-    ("SEASON_BF_WINTER", "Winter"),
-    ("SEASON_BF_SPRING", "Spring"),
-    ("SEASON_BF_SUMMER", "Summer"),
-    ("SEASON_BF_AUTUMN", "Autumn"),
-];
+pub const SEASONS: &[(&str, &str)] =
+    &[("SEASON_BF_WINTER", "Winter"), ("SEASON_BF_SPRING", "Spring"), ("SEASON_BF_SUMMER", "Summer"), ("SEASON_BF_AUTUMN", "Autumn")];
 
 pub const ZONE_PURPOSE: &[(&str, &str)] = &[
     ("EFP_LOW_WALL", "Low wall"),
@@ -204,7 +175,8 @@ pub const ROAD_FENCES: &[(&str, &str)] = &[("none", "None"), ("left", "Left"), (
 pub const ROAD_BRIDGE: &[(&str, &str)] = &[("wood", "Wood (bridge_wood_2)")];
 
 /// Not TEd's: the ground types a `WceRoadSpline` (docs/plans/procedural_roads.md) can be, by the names of `ground_types::GROUND_TYPES`.
-pub const ROAD_GROUND: &[(&str, &str)] = &[("road", "Road"), ("mud", "Mud"), ("sand", "Sand"), ("grass", "Grass"), ("rock", "Rock"), ("wooden floor", "Wooden floor")];
+pub const ROAD_GROUND: &[(&str, &str)] =
+    &[("road", "Road"), ("mud", "Mud"), ("sand", "Sand"), ("grass", "Grass"), ("rock", "Rock"), ("wooden floor", "Wooden floor")];
 
 /// Not TEd's: the base walls a `WceWallSpline` (a procedural wall, docs/plans/procedural_walls.md) is generated from; the keys of
 /// `wce_walls::profile::BASES`, in its order.

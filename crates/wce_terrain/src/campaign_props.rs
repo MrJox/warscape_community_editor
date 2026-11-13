@@ -38,9 +38,7 @@ impl CampaignProps {
                 return Err("empty prop model name".into());
             }
             for &id in &group.indices {
-                let target = models
-                    .get_mut(id as usize)
-                    .ok_or("prop group index is out of range")?;
+                let target = models.get_mut(id as usize).ok_or("prop group index is out of range")?;
                 if !target.is_empty() {
                     return Err("prop belongs to more than one model group".into());
                 }
@@ -50,12 +48,7 @@ impl CampaignProps {
         if models.iter().any(String::is_empty) {
             return Err("prop has no unique model group".into());
         }
-        Ok(Self {
-            original: bytes,
-            file: Arc::new(file),
-            models: Arc::new(models),
-            positions: BTreeMap::new(),
-        })
+        Ok(Self { original: bytes, file: Arc::new(file), models: Arc::new(models), positions: BTreeMap::new() })
     }
 
     pub fn len(&self) -> usize {
@@ -102,9 +95,7 @@ impl CampaignProps {
             return Ok(false);
         }
         let record = &self.file.records[id as usize];
-        let original = std::array::from_fn(|i| {
-            f32::from_le_bytes(record[48 + i * 4..52 + i * 4].try_into().unwrap())
-        });
+        let original = std::array::from_fn(|i| f32::from_le_bytes(record[48 + i * 4..52 + i * 4].try_into().unwrap()));
         if position == original {
             self.positions.remove(&id);
         } else {
@@ -120,8 +111,7 @@ impl CampaignProps {
         let mut file = self.file.as_ref().clone();
         for (&id, position) in &self.positions {
             for (i, value) in position.iter().enumerate() {
-                file.records[id as usize][48 + i * 4..52 + i * 4]
-                    .copy_from_slice(&value.to_le_bytes());
+                file.records[id as usize][48 + i * 4..52 + i * 4].copy_from_slice(&value.to_le_bytes());
             }
         }
         Arc::from(file.write())
@@ -155,9 +145,7 @@ mod tests {
             version,
             records: vec![record.clone(), record],
             groups: Some(vec![MarkerGroup {
-                key: vec![KeyPart::Wide(
-                    "model.rigid_model_v2".encode_utf16().collect(),
-                )],
+                key: vec![KeyPart::Wide("model.rigid_model_v2".encode_utf16().collect())],
                 indices: vec![0, 1],
             }]),
         }
@@ -173,12 +161,7 @@ mod tests {
             p.translate(1, [10., 20., 30.]).unwrap();
             let file = MarkersFile::parse(&p.write()).unwrap();
             let mut expected = fixture(version);
-            expected.records[1][48..60].copy_from_slice(
-                &[10f32, 20., 30.]
-                    .iter()
-                    .flat_map(|v| v.to_le_bytes())
-                    .collect::<Vec<_>>(),
-            );
+            expected.records[1][48..60].copy_from_slice(&[10f32, 20., 30.].iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>());
             assert_eq!(file, expected);
             p.translate(1, before).unwrap();
             assert_eq!(p.write(), original);

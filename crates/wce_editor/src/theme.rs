@@ -53,13 +53,21 @@ pub struct Palette {
 }
 
 const DARK_PALETTE: Palette = Palette {
-    error: [1.0, 0.45, 0.4, 1.0], warning: [1.0, 0.76, 0.35, 1.0], modified: [1.0, 0.75, 0.3, 1.0], success: [0.45, 0.85, 0.5, 1.0],
-    highlight: [1.0, 0.82, 0.24, 1.0], error_bg: [0.45, 0.15, 0.15, 1.0],
+    error: [1.0, 0.45, 0.4, 1.0],
+    warning: [1.0, 0.76, 0.35, 1.0],
+    modified: [1.0, 0.75, 0.3, 1.0],
+    success: [0.45, 0.85, 0.5, 1.0],
+    highlight: [1.0, 0.82, 0.24, 1.0],
+    error_bg: [0.45, 0.15, 0.15, 1.0],
 };
 
 const LIGHT_PALETTE: Palette = Palette {
-    error: [0.8, 0.13, 0.1, 1.0], warning: [0.68, 0.42, 0.0, 1.0], modified: [0.75, 0.42, 0.0, 1.0], success: [0.1, 0.52, 0.2, 1.0],
-    highlight: [0.9, 0.6, 0.0, 1.0], error_bg: [1.0, 0.8, 0.78, 1.0],
+    error: [0.8, 0.13, 0.1, 1.0],
+    warning: [0.68, 0.42, 0.0, 1.0],
+    modified: [0.75, 0.42, 0.0, 1.0],
+    success: [0.1, 0.52, 0.2, 1.0],
+    highlight: [0.9, 0.6, 0.0, 1.0],
+    error_bg: [1.0, 0.8, 0.78, 1.0],
 };
 
 static PALETTE: RwLock<Palette> = RwLock::new(DARK_PALETTE);
@@ -137,7 +145,14 @@ pub unsafe fn load_fonts() {
             (*cfg).MergeMode = merge;
             (*cfg).GlyphOffset.y = offset_y;
             (*cfg).GlyphMinAdvanceX = min_advance;
-            let font = sys::ImFontAtlas_AddFontFromMemoryTTF(atlas, data.as_ptr().cast_mut().cast(), data.len() as i32, REFERENCE_SIZE * scale, cfg, std::ptr::null());
+            let font = sys::ImFontAtlas_AddFontFromMemoryTTF(
+                atlas,
+                data.as_ptr().cast_mut().cast(),
+                data.len() as i32,
+                REFERENCE_SIZE * scale,
+                cfg,
+                std::ptr::null(),
+            );
             sys::ImFontConfig_destroy(cfg);
             font
         };

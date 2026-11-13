@@ -129,7 +129,12 @@ fn png_round_trip(bytes: &[u8]) -> RoundTrip {
     match p.encode() {
         Ok(out) if out == bytes => RoundTrip { ok: true, error: String::new() },
         Ok(out) => RoundTrip {
-            ok: false, error: format!("{}{}", if p.has_ancillary { "ancillary chunks (not kit encoder); " } else { "encoder differs; " }, describe_diff(bytes, &out)),
+            ok: false,
+            error: format!(
+                "{}{}",
+                if p.has_ancillary { "ancillary chunks (not kit encoder); " } else { "encoder differs; " },
+                describe_diff(bytes, &out)
+            ),
         },
 
         Err(e) => RoundTrip { ok: false, error: format!("parse: {}", e.0) },
@@ -181,9 +186,17 @@ fn formats() -> Vec<Format> {
         rpfm::<Bmd>,
     ));
     f.push(simple("markers", |p, _| p.ends_with(".markers"), markers_round_trip));
-    f.push(Format { name: "dds", claims: Box::new(|p, h| ends_with_ci(p, ".dds") && h.starts_with(b"DDS ")), round_trip: Box::new(dds_round_trip) });
+    f.push(Format {
+        name: "dds",
+        claims: Box::new(|p, h| ends_with_ci(p, ".dds") && h.starts_with(b"DDS ")),
+        round_trip: Box::new(dds_round_trip),
+    });
     f.push(simple("tga", |p, _| ends_with_ci(p, ".tga"), |b| TgaFile::parse(b).map(|t| t.write()).map_err(|e| e.0)));
-    f.push(Format { name: "tiff", claims: Box::new(|p, h| ends_with_ci(p, ".tif") && h.starts_with(b"II*\0")), round_trip: Box::new(tiff_round_trip) });
+    f.push(Format {
+        name: "tiff",
+        claims: Box::new(|p, h| ends_with_ci(p, ".tif") && h.starts_with(b"II*\0")),
+        round_trip: Box::new(tiff_round_trip),
+    });
     f.push(simple("chmf", |_, h| h.starts_with(b"CHMF"), chmf_round_trip));
     f.push(Format {
         name: "png",
@@ -192,7 +205,9 @@ fn formats() -> Vec<Format> {
     });
 
     // Files the editor carries through unchanged: authoring leftovers, text not interpreted yet, binaries checked by magic only.
-    f.push(identity("opaque_authoring", |p, _| [".jpg", ".max", ".psd", ".session", ".tmd", ".tmp", ".editor", ".outlines", ".cs2"].contains(&lower_ext(p).as_str())));
+    f.push(identity("opaque_authoring", |p, _| {
+        [".jpg", ".max", ".psd", ".session", ".tmd", ".tmp", ".editor", ".outlines", ".cs2"].contains(&lower_ext(p).as_str())
+    }));
     f.push(identity("opaque_text", |p, _| [".agf", ".bob", ".txt"].contains(&lower_ext(p).as_str())));
     f.push(identity("rmv2_magic", |p, h| lower_ext(p) == ".rigid_model_v2" && h.starts_with(b"RMV2")));
     f.push(identity("opaque_binary", |p, _| {

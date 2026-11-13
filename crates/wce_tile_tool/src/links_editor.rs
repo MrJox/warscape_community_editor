@@ -4,8 +4,8 @@
 
 use wce_editor::editor::Editor;
 use wce_editor::{gui, icons};
-use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 use wce_editor_core::document::Document;
+use wce_formats::tile_entry::{TileLink, TileLinkTarget};
 use wce_scene::render_scene::DocumentId;
 use wce_tile::battle_map::context::{MapPlacement, PlacedMap};
 use wce_tile::battle_map::link_candidates::{Candidate, candidates, pair_ground};
@@ -20,7 +20,8 @@ const RULE_SET_TIP: &str = "The kind of tile (by its link set) the neighbour's c
 const CELL_TIP: &str = "The cell, 128 m: x along +x from 0, y from the +z edge. A rule names a neighbour's cell: x = -1 or the width, y = -1 or the height is just past an edge.";
 const TEST_TIP: &str = "Must be: a tile can only be put here if the neighbour's cell is of that link set (a map cell with no neighbour yet passes). Must not be: it is refused when it is.";
 const ENTRY_TIP: &str = "For rivers: the game takes the flow of a river tile from the is_entry of its river link on the side it was reached from (the river's flip).";
-const BLEND_TIP: &str = "How many pixels of the neighbour's terrain are blended into this tile at that edge (the kit uses 64 mostly, 16, 24, 128).";
+const BLEND_TIP: &str =
+    "How many pixels of the neighbour's terrain are blended into this tile at that edge (the kit uses 64 mostly, 16, 24, 128).";
 const OFFLINE_TIP: &str = "Turns off the export's pre-blend at that edge (from the name; not tested).";
 const BASE_TIP: &str = "Only the export's edge blend reads it: an offset in the link set's linking tile (a 1 x 1 tile, turned as it may be) from the link's cell to the cell of this tile where that tile's terrain is blended in. (1, 0): one cell over, the kit's usual; (0, 0): the link's cell. A reading of the code, not checked in game.";
 
@@ -46,7 +47,8 @@ impl TileTool {
         let origin = gui::cursor_screen_pos();
         let right = origin.x + gui::content_region_avail().x;
         let dl = gui::window_draw_list();
-        let picked = self.link_pick.and_then(|(t, i)| if t { targets.get(i).map(|t| (t.x, t.y)) } else { links.get(i).map(|l| (l.x, l.y)) });
+        let picked =
+            self.link_pick.and_then(|(t, i)| if t { targets.get(i).map(|t| (t.x, t.y)) } else { links.get(i).map(|l| (l.x, l.y)) });
         let mut clicked = None;
         for y in y0..=y1 {
             for x in x0..=x1 {
@@ -72,7 +74,12 @@ impl TileTool {
                     }
 
                     let size = gui::text_line_height().min(side);
-                    dl.text_sized(size, gui::v2(lo.x + (side - 1.0 - size) * 0.5, lo.y + (side - 1.0 - size) * 0.5), gui::col32(255, 255, 255, 255), icons::FLAG);
+                    dl.text_sized(
+                        size,
+                        gui::v2(lo.x + (side - 1.0 - size) * 0.5, lo.y + (side - 1.0 - size) * 0.5),
+                        gui::col32(255, 255, 255, 255),
+                        icons::FLAG,
+                    );
                 }
 
                 if picked == Some((x, y)) {
@@ -113,7 +120,11 @@ impl TileTool {
         let (map_w, map_h) = (nx as f32 * side, ny as f32 * side);
         let beside = right - (origin.x + map_w) >= LEGEND_WIDTH;
         let spacing = 2.0 * gui::item_spacing().x;
-        gui::set_cursor_screen_pos(if beside { gui::v2(origin.x + map_w + spacing, origin.y) } else { gui::v2(origin.x, origin.y + map_h + 4.0) });
+        gui::set_cursor_screen_pos(if beside {
+            gui::v2(origin.x + map_w + spacing, origin.y)
+        } else {
+            gui::v2(origin.x, origin.y + map_h + 4.0)
+        });
         gui::begin_group();
         let mut sets = links.iter().map(|l| l.link_set.as_str()).chain(targets.iter().map(|t| t.tile_set.as_str())).collect::<Vec<_>>();
         sets.sort_unstable();
@@ -123,7 +134,8 @@ impl TileTool {
             let box_side = gui::text_line_height() - 2.0;
             dl.rect_filled(gui::v2(at.x, at.y + 1.0), gui::v2(at.x + box_side, at.y + 1.0 + box_side), set_colour(set, 235), 0.0);
             gui::set_cursor_screen_pos(gui::v2(at.x + box_side + gui::item_spacing().x, at.y));
-            let (rules, offers) = (links.iter().filter(|l| l.link_set == set).count(), targets.iter().filter(|t| t.tile_set == set).count());
+            let (rules, offers) =
+                (links.iter().filter(|l| l.link_set == set).count(), targets.iter().filter(|t| t.tile_set == set).count());
             gui::text(&format!("{set}  {rules}{}", if offers > 0 { format!(" + {offers} {}", icons::FLAG) } else { String::new() }));
         }
 
@@ -178,7 +190,11 @@ impl TileTool {
             } else if here.is_empty() {
                 let on_tile = (0..width).contains(&x) && (0..height).contains(&y);
                 if on_tile {
-                    let tile_set = self.link_pick.filter(|p| p.0).and_then(|p| targets.get(p.1)).map_or_else(|| entry.tile_set(), |t| t.tile_set.clone());
+                    let tile_set = self
+                        .link_pick
+                        .filter(|p| p.0)
+                        .and_then(|p| targets.get(p.1))
+                        .map_or_else(|| entry.tile_set(), |t| t.tile_set.clone());
                     targets.push(TileLinkTarget { elem: 0, serialise_version: 1, tile_set, x, y });
                     self.link_pick = Some((true, targets.len() - 1));
                     changed = Some("Add a link target");
@@ -186,8 +202,18 @@ impl TileTool {
                     // As the one picked, or the last: a tile's rules are mostly alike.
                     let like = self.link_pick.filter(|p| !p.0).and_then(|p| links.get(p.1)).or(links.last()).cloned();
                     let new = like.unwrap_or_else(|| TileLink {
-                        elem: 0, serialise_version: 1, link_set: entry.tile_set(), x, y, base_x: 1, base_y: 0, is_entry: false, blend_size: 64,
-                        no_offline_blend: false, test: "TLT_EQUALS".to_owned(), has_blend_quad: true,
+                        elem: 0,
+                        serialise_version: 1,
+                        link_set: entry.tile_set(),
+                        x,
+                        y,
+                        base_x: 1,
+                        base_y: 0,
+                        is_entry: false,
+                        blend_size: 64,
+                        no_offline_blend: false,
+                        test: "TLT_EQUALS".to_owned(),
+                        has_blend_quad: true,
                     });
                     links.push(TileLink { elem: 0, x, y, ..new });
                     self.link_pick = Some((false, links.len() - 1));
@@ -207,7 +233,9 @@ impl TileTool {
         // The picked one.
         let pick = self.link_pick.filter(|&(t, i)| if t { i < targets.len() } else { i < links.len() });
         if pick.is_none() {
-            gui::text_disabled("Click a link to edit it, right click to remove it. An empty cell gets a new one: a rule around the tile, a target on it.");
+            gui::text_disabled(
+                "Click a link to edit it, right click to remove it. An empty cell gets a new one: a rule around the tile, a target on it.",
+            );
         }
 
         if let Some((is_target, i)) = pick {
@@ -240,7 +268,8 @@ impl TileTool {
                     changed = Some("Change a link target");
                 }
 
-                if int_field("x##ltx", &mut t.x, CELL_TIP, &mut gesture, 0x10) | int_field("y##lty", &mut t.y, CELL_TIP, &mut gesture, 0x11) {
+                if int_field("x##ltx", &mut t.x, CELL_TIP, &mut gesture, 0x10) | int_field("y##lty", &mut t.y, CELL_TIP, &mut gesture, 0x11)
+                {
                     changed = Some("Move a link target");
                 }
             } else {
@@ -262,7 +291,8 @@ impl TileTool {
                     gui::set_tooltip(TEST_TIP);
                 }
 
-                if int_field("x##lrx", &mut l.x, CELL_TIP, &mut gesture, 0x20) | int_field("y##lry", &mut l.y, CELL_TIP, &mut gesture, 0x21) {
+                if int_field("x##lrx", &mut l.x, CELL_TIP, &mut gesture, 0x20) | int_field("y##lry", &mut l.y, CELL_TIP, &mut gesture, 0x21)
+                {
                     changed = Some("Move a link rule");
                 }
 
@@ -289,11 +319,12 @@ impl TileTool {
                     gui::set_tooltip(OFFLINE_TIP);
                 }
 
-                if int_field("base x##lrbx", &mut l.base_x, BASE_TIP, &mut gesture, 0x23) | int_field("base y##lrby", &mut l.base_y, BASE_TIP, &mut gesture, 0x24) {
+                if int_field("base x##lrbx", &mut l.base_x, BASE_TIP, &mut gesture, 0x23)
+                    | int_field("base y##lrby", &mut l.base_y, BASE_TIP, &mut gesture, 0x24)
+                {
                     changed = Some("Change a link rule");
                 }
             }
-
         }
 
         if let Some(name) = changed {
@@ -399,7 +430,9 @@ impl TileTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("Every tile of the kit's database, at every turn it may take and every place along this tile's edges, whose links and this tile's agree as BOB's fill tests them, and that carries one of this tile's joins on (a target its rule asks for). Found again after an edit.");
+            gui::set_tooltip(
+                "Every tile of the kit's database, at every turn it may take and every place along this tile's edges, whose links and this tile's agree as BOB's fill tests them, and that carries one of this tile's joins on (a target its rule asks for). Found again after an edit.",
+            );
         }
 
         let Some((stamp, open, found, db)) = self.link_candidates.clone() else {
@@ -423,10 +456,21 @@ impl TileTool {
             if gui::tree_node(&format!("{set} at ({}, {}): {} placement(s)##join{ti}", t.x, t.y, here.len())) {
                 for (k, c) in here.iter().enumerate() {
                     let tile = &db.tiles[c.tile];
-                    let name = tile.location.rsplit(['\\', '/']).take(2).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("/");
-                    let turn = match c.rotation { 0x20 => 90, 0x40 => 180, 0x80 => 270, _ => 0 };
+                    let name =
+                        tile.location.rsplit(['\\', '/']).take(2).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("/");
+                    let turn = match c.rotation {
+                        0x20 => 90,
+                        0x40 => 180,
+                        0x80 => 270,
+                        _ => 0,
+                    };
                     let size = if matches!(c.rotation, 0x20 | 0x80) { (tile.height, tile.width) } else { (tile.width, tile.height) };
-                    let label = format!("{name}, turned {turn}, on the {} at ({}, {})##cand{ti}_{k}", side_of(c, size, open.width, open.height), c.x, c.y);
+                    let label = format!(
+                        "{name}, turned {turn}, on the {} at ({}, {})##cand{ti}_{k}",
+                        side_of(c, size, open.width, open.height),
+                        c.x,
+                        c.y
+                    );
                     if gui::selectable(&label, false, 0) {
                         show = Some((*c).clone());
                     }
@@ -471,7 +515,14 @@ impl TileTool {
     }
 
     /// Shows a candidate next to the open tile in the map context: a map of the two alone.
-    fn preview_candidate(&mut self, e: &mut Editor, id: DocumentId, open: &wce_tile::battle_map::tile_db::Tile, db: &TileDatabase, c: &Candidate) {
+    fn preview_candidate(
+        &mut self,
+        e: &mut Editor,
+        id: DocumentId,
+        open: &wce_tile::battle_map::tile_db::Tile,
+        db: &TileDatabase,
+        c: &Candidate,
+    ) {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
         let info = &d.project().info;
         let t = &db.tiles[c.tile];
@@ -481,19 +532,46 @@ impl TileTool {
         let (x0, y0) = (c.x.min(0) - 1, c.y.min(0) - 1);
         let (x1, y1) = ((c.x + bw).max(open.width) + 1, (c.y + bh).max(open.height) + 1);
         let placements = vec![
-            MapPlacement { location: info.location.clone(), variation: info.variation.clone(), x: -x0, y: -y0, w: open.width, h: open.height, rotation: 0x10, flipped: false, climate: 0, any_variation: false },
             MapPlacement {
-                location: t.location.clone(), variation: t.variations.first().map(|v| v.location.clone()).unwrap_or_default(), x: c.x - x0, y: c.y - y0, w: t.width,
-                h: t.height, rotation: c.rotation, flipped: false, climate: 0, any_variation: false,
+                location: info.location.clone(),
+                variation: info.variation.clone(),
+                x: -x0,
+                y: -y0,
+                w: open.width,
+                h: open.height,
+                rotation: 0x10,
+                flipped: false,
+                climate: 0,
+                any_variation: false,
+            },
+            MapPlacement {
+                location: t.location.clone(),
+                variation: t.variations.first().map(|v| v.location.clone()).unwrap_or_default(),
+                x: c.x - x0,
+                y: c.y - y0,
+                w: t.width,
+                h: t.height,
+                rotation: c.rotation,
+                flipped: false,
+                climate: 0,
+                any_variation: false,
             },
         ];
         // A flat LF: the ground they stand on.
         let ground = pair_ground(db, [open, t]);
-        let level = ((ground + wce_tile::battle_map::context::VERTICAL_OFFSET) / wce_tile::battle_map::context::LF_HEIGHT * 65535.0).round() as u16;
+        let level =
+            ((ground + wce_tile::battle_map::context::VERTICAL_OFFSET) / wce_tile::battle_map::context::LF_HEIGHT * 65535.0).round() as u16;
         let lf = wce_tile::battle_map::context::LfField::new(1, 1, vec![level]);
         let map = PlacedMap {
-            name: format!("link candidate {}", t.location), width: (x1 - x0) as u32, height: (y1 - y0) as u32, placements, lf: Some(lf), sea_lf: None, unknown: vec![],
-            climates: db.climates.iter().map(|c| c.name.clone()).collect(), ..Default::default()
+            name: format!("link candidate {}", t.location),
+            width: (x1 - x0) as u32,
+            height: (y1 - y0) as u32,
+            placements,
+            lf: Some(lf),
+            sea_lf: None,
+            unknown: vec![],
+            climates: db.climates.iter().map(|c| c.name.clone()).collect(),
+            ..Default::default()
         };
 
         self.context.show_map(e, id, map, 0);

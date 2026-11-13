@@ -67,10 +67,21 @@ pub fn battle_xml(e: &mut Editor, map: &str, w: u32, h: u32, s: &Spot) -> String
         let wind = r.settings.sea_state.clone();
         r.sea_surface_of(&wind)
     });
-    let weather = BattleWeather { environment: String::new(), season: "Summer", precipitation: "dry", time_of_day: "day", climate: String::new() };
+    let weather =
+        BattleWeather { environment: String::new(), season: "Summer", precipitation: "dry", time_of_day: "day", climate: String::new() };
     launch::battle_xml(&Battle {
-        map: BattleMap::Position { map: format!("terrain/battles/{map}/"), x: s.cell.0 / f64::from(w.max(1)), y: s.cell.1 / f64::from(h.max(1)), settlement: s.kind.starts_with("settlement") },
-        cells: s.cells, weather, sea_surface: sea_surface.unwrap_or_default(), army: &army, facts: &profile.launch, zones: &[],
+        map: BattleMap::Position {
+            map: format!("terrain/battles/{map}/"),
+            x: s.cell.0 / f64::from(w.max(1)),
+            y: s.cell.1 / f64::from(h.max(1)),
+            settlement: s.kind.starts_with("settlement"),
+        },
+        cells: s.cells,
+        weather,
+        sea_surface: sea_surface.unwrap_or_default(),
+        army: &army,
+        facts: &profile.launch,
+        zones: &[],
     })
 }
 
@@ -87,7 +98,15 @@ pub struct Prepared {
 ///
 /// No game folder, the game running, Steam not running, stray movie-type packs (unless `ignore_movie_packs`), a launch pack the editor
 /// did not write, the pack not written.
-pub fn prepare(e: &mut Editor, x: &crate::export::Exported, w: u32, h: u32, s: &Spot, dry_run: bool, ignore_movie_packs: bool) -> Result<Prepared, String> {
+pub fn prepare(
+    e: &mut Editor,
+    x: &crate::export::Exported,
+    w: u32,
+    h: u32,
+    s: &Spot,
+    dry_run: bool,
+    ignore_movie_packs: bool,
+) -> Result<Prepared, String> {
     let profile = e.game();
     let game_dir = e.settings_ref().game_dir().ok_or("no game folder (setup <game folder>)")?;
     let data = game_dir.join(profile.data_dir);
@@ -103,7 +122,10 @@ pub fn prepare(e: &mut Editor, x: &crate::export::Exported, w: u32, h: u32, s: &
 
         let stray = launch::stray_movie_packs(&data, &profile.release_pack_names(&game_dir));
         if !stray.is_empty() && !ignore_movie_packs {
-            return Err(format!("movie-type packs in data\\ may shadow the mods' files: {}; move them out, or launch anyway (--ignore-movie-packs)", stray.join(", ")));
+            return Err(format!(
+                "movie-type packs in data\\ may shadow the mods' files: {}; move them out, or launch anyway (--ignore-movie-packs)",
+                stray.join(", ")
+            ));
         }
 
         if let Some(m) = launch::remove_launch_pack(&data, profile.key)? {

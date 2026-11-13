@@ -1,10 +1,10 @@
 //! The editor's own file formats: the ones it edits in place without re-serialising them (XML), and the ones rpfm_lib doesn't cover.
 
-pub mod cas2;
 pub mod anim;
 pub mod anim_meta;
 pub mod anim_tables;
 pub mod c_num;
+pub mod cas2;
 pub mod chmf;
 pub mod dds_decode;
 pub mod env_value;

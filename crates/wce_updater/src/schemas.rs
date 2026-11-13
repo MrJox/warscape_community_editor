@@ -24,7 +24,10 @@ const VERSION_FILE: &str = ".wce-schemas-version";
 /// GitHub can't be reached or doesn't answer with a commit hash.
 pub fn latest() -> Result<String, String> {
     let url = format!("https://api.github.com/repos/{REPO}/commits/{BRANCH}");
-    let text = agent(Some(Duration::from_secs(30))).get(&url).header("Accept", "application/vnd.github.sha").call()
+    let text = agent(Some(Duration::from_secs(30)))
+        .get(&url)
+        .header("Accept", "application/vnd.github.sha")
+        .call()
         .and_then(|mut r| r.body_mut().read_to_string())
         .map_err(|e| format!("cannot reach GitHub: {e}"))?;
     let sha = text.trim();
@@ -81,8 +84,14 @@ pub fn download(dir: &Path, commit: &str, files: &[&str], progress: &Progress) -
 
         let url = format!("https://raw.githubusercontent.com/{REPO}/{commit}/{name}");
         let mut bytes = vec![];
-        agent(None).get(&url).call().map_err(|e| format!("cannot download {name}: {e}"))?
-            .into_body().into_reader().read_to_end(&mut bytes).map_err(|e| format!("cannot download {name}: {e}"))?;
+        agent(None)
+            .get(&url)
+            .call()
+            .map_err(|e| format!("cannot download {name}: {e}"))?
+            .into_body()
+            .into_reader()
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("cannot download {name}: {e}"))?;
 
         let target = dir.join(name);
         let part = dir.join(format!("{name}.part"));
@@ -96,7 +105,8 @@ pub fn download(dir: &Path, commit: &str, files: &[&str], progress: &Progress) -
         progress.done.store(i as u64 + 1, Ordering::Relaxed);
     }
 
-    std::fs::write(dir.join(VERSION_FILE), format!("{commit}\n")).map_err(|e| format!("cannot write {}: {e}", dir.join(VERSION_FILE).display()))?;
+    std::fs::write(dir.join(VERSION_FILE), format!("{commit}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", dir.join(VERSION_FILE).display()))?;
     Ok(written)
 }
 

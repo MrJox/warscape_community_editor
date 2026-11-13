@@ -36,10 +36,22 @@ fn placeholders() -> Vec<Box<dyn Tool>> {
 
     vec![
         Box::new(PlaceholderTool::new(
-            "unit", "Unit", icons::USER,
+            "unit",
+            "Unit",
+            icons::USER,
             "Unit editor: skinned models, animations, variant mesh definition (VMD) assembly. Needs the SkinnedInstance render kind, bone palette and the anim/skeleton formats.",
         )),
-        Box::new(PlaceholderTool::new("vfx", "VFX", icons::SPARKLES, "Particle and effect editor on the existing particle system and vfx definitions: emitter graph, standalone preview scene, vfx XML export.")),
-        Box::new(PlaceholderTool::new("cinematic", "Cinematic", icons::CLAPPERBOARD, "Keyframed scene composition and movie recording over PropertyPaths, with a camera rig, a second viewport and PNG sequence export.")),
+        Box::new(PlaceholderTool::new(
+            "vfx",
+            "VFX",
+            icons::SPARKLES,
+            "Particle and effect editor on the existing particle system and vfx definitions: emitter graph, standalone preview scene, vfx XML export.",
+        )),
+        Box::new(PlaceholderTool::new(
+            "cinematic",
+            "Cinematic",
+            icons::CLAPPERBOARD,
+            "Keyframed scene composition and movie recording over PropertyPaths, with a camera rig, a second viewport and PNG sequence export.",
+        )),
     ]
 }

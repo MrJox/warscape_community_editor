@@ -32,7 +32,14 @@ impl Gpu {
         unsafe {
             let mut d = D3D11_BUFFER_DESC::default();
             buffer.GetDesc(&mut d);
-            let s = D3D11_BUFFER_DESC { ByteWidth: d.ByteWidth, Usage: D3D11_USAGE_STAGING, BindFlags: 0, CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32, MiscFlags: 0, StructureByteStride: 0 };
+            let s = D3D11_BUFFER_DESC {
+                ByteWidth: d.ByteWidth,
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: 0,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ as u32,
+                MiscFlags: 0,
+                StructureByteStride: 0,
+            };
             let mut st = None;
             if self.dev.CreateBuffer(&s, None, Some(&mut st)).is_err() {
                 return "nostaging".to_owned();
@@ -72,8 +79,17 @@ impl Gpu {
     fn mesh(&self, m: &GpuMesh) {
         // The standard material's five slots: the C++ cache has no others.
         let tex = (0..=TEX_NORMAL).map(|k| format!("{},", self.tex(&m.tex[k]))).collect::<String>();
-        println!("    mesh n{} a{} off={}/{} b={}..{} vb={} ib={} tex={tex}", m.index_count, m.alpha_mode, v3(m.offset), i32::from(m.has_offset), v3(m.bmin), v3(m.bmax),
-            self.buf(m.vb.as_ref()), self.buf(m.ib.as_ref()));
+        println!(
+            "    mesh n{} a{} off={}/{} b={}..{} vb={} ib={} tex={tex}",
+            m.index_count,
+            m.alpha_mode,
+            v3(m.offset),
+            i32::from(m.has_offset),
+            v3(m.bmin),
+            v3(m.bmax),
+            self.buf(m.vb.as_ref()),
+            self.buf(m.ib.as_ref())
+        );
     }
 
     fn model(&self, g: &GpuModel) {
@@ -98,7 +114,18 @@ fn main() {
     let (mut dev, mut ctx) = (None, None);
     // SAFETY: device creation with valid arguments.
     unsafe {
-        D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), 0, None, D3D11_SDK_VERSION as u32, Some(&mut dev), None, Some(&mut ctx)).unwrap();
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            HMODULE::default(),
+            0,
+            None,
+            D3D11_SDK_VERSION as u32,
+            Some(&mut dev),
+            None,
+            Some(&mut ctx),
+        )
+        .unwrap();
     }
 
     let (dev, ctx) = (dev.unwrap(), ctx.unwrap());
@@ -120,12 +147,18 @@ fn main() {
     }
 
     for k in 0..3u32 {
-        let mut t = Terrain { nx: 200, nz: 150, origin_x: -100.0, origin_z: -75.0, step: 1.5, lod: k > 0, version: 1, ..Default::default() };
+        let mut t =
+            Terrain { nx: 200, nz: 150, origin_x: -100.0, origin_z: -75.0, step: 1.5, lod: k > 0, version: 1, ..Default::default() };
         t.diffuse = "terrain/textures/battle/default/grass/0_su_diffuse.dds".to_owned();
-        t.heights = Arc::new((0..t.nz).flat_map(|j| (0..t.nx).map(move |i| (i as f32 * 0.1).sin() * (j as f32 * 0.07).cos() * 20.0 + i as f32 * 0.01)).collect());
+        t.heights = Arc::new(
+            (0..t.nz)
+                .flat_map(|j| (0..t.nx).map(move |i| (i as f32 * 0.1).sin() * (j as f32 * 0.07).cos() * 20.0 + i as f32 * 0.01))
+                .collect(),
+        );
         if k == 2 {
             let rgba = (0..160 * 120 * 4).map(|i: usize| (i * 7 + i / 640) as u8).collect();
-            t.skin = Some(Arc::new(TerrainSkin { x0: -110.0, z0: -80.0, w_m: 330.0, h_m: 240.0, w: 160, h: 120, rgba, id: 7, dirty: None }));
+            t.skin =
+                Some(Arc::new(TerrainSkin { x0: -110.0, z0: -80.0, w_m: 330.0, h_m: 240.0, w: 160, h: 120, rgba, id: 7, dirty: None }));
         }
 
         let tg = models.terrain(10 + k, &t).unwrap();

@@ -175,10 +175,32 @@ impl EfLine {
 
 /// The entity formation purposes, by index (the game's enum; the XML names its lines with these).
 pub const EF_PURPOSES: [&str; 26] = [
-    "Low wall", "High wall", "Window", "Overflow", "Marines", "Seamen", "Gunners_overflow", "Captain", "Officer1", "Boarding",
-    "Naval_firing_position_stand", "Naval_firing_position_crouch", "Naval_firing_position_stand_360", "Naval_perimeter_position", "Tree",
-    "Entrance Defence", "Officer2", "Officer3", "Crenel left outer", "Crenel left inner", "Crenel right inner", "Crenel right outer",
-    "Engine_placement", "Secondary_engine_placement", "Disembark_left", "Disembark_right",
+    "Low wall",
+    "High wall",
+    "Window",
+    "Overflow",
+    "Marines",
+    "Seamen",
+    "Gunners_overflow",
+    "Captain",
+    "Officer1",
+    "Boarding",
+    "Naval_firing_position_stand",
+    "Naval_firing_position_crouch",
+    "Naval_firing_position_stand_360",
+    "Naval_perimeter_position",
+    "Tree",
+    "Entrance Defence",
+    "Officer2",
+    "Officer3",
+    "Crenel left outer",
+    "Crenel left inner",
+    "Crenel right inner",
+    "Crenel right outer",
+    "Engine_placement",
+    "Secondary_engine_placement",
+    "Disembark_left",
+    "Disembark_right",
 ];
 
 /// A named point (oar sockets, the flag).
@@ -222,7 +244,11 @@ type Result<T> = std::result::Result<T, String>;
 
 impl Reader<'_> {
     fn take(&mut self, n: usize) -> Result<&[u8]> {
-        let s = self.p.checked_add(n).and_then(|end| self.b.get(self.p..end)).ok_or_else(|| format!("{n} bytes past the end at {:#x}", self.p))?;
+        let s = self
+            .p
+            .checked_add(n)
+            .and_then(|end| self.b.get(self.p..end))
+            .ok_or_else(|| format!("{n} bytes past the end at {:#x}", self.p))?;
         self.p += n;
         Ok(s)
     }
@@ -390,10 +416,15 @@ fn ship(r: &mut Reader) -> Result<ShipLogic> {
     })?;
 
     r.zero("cannon count")?;
-    let damage_parts = r.list(10, |r| Ok(DamagePart { name: r.wide()?, states: r.list(2, Reader::wide)?, panels: r.list(4, |r| r.list(12, Reader::floats))? }))?;
-    let collision = r.list(42, |r| Ok(CollisionFace { name: r.wide()?, index: r.u32()?, vertices: [r.floats()?, r.floats()?, r.floats()?] }))?;
-    let ef_lines = r.list(42, |r| Ok(EfLine { name: r.wide()?, purpose: r.u32()?, ends: [r.floats()?, r.floats()?], direction: r.floats()? }))?;
-    let custom_positions = r.list(34, |r| Ok(CustomPosition { name: r.wide()?, kind: r.u32()?, unknown: r.u32()?, position: r.floats()?, up: r.floats()? }))?;
+    let damage_parts = r.list(10, |r| {
+        Ok(DamagePart { name: r.wide()?, states: r.list(2, Reader::wide)?, panels: r.list(4, |r| r.list(12, Reader::floats))? })
+    })?;
+    let collision =
+        r.list(42, |r| Ok(CollisionFace { name: r.wide()?, index: r.u32()?, vertices: [r.floats()?, r.floats()?, r.floats()?] }))?;
+    let ef_lines =
+        r.list(42, |r| Ok(EfLine { name: r.wide()?, purpose: r.u32()?, ends: [r.floats()?, r.floats()?], direction: r.floats()? }))?;
+    let custom_positions =
+        r.list(34, |r| Ok(CustomPosition { name: r.wide()?, kind: r.u32()?, unknown: r.u32()?, position: r.floats()?, up: r.floats()? }))?;
     r.zero("trailing count")?;
     Ok(ShipLogic {
         key,
@@ -592,7 +623,15 @@ mod tests {
             oars: ["four_l3".into(), "four_l2".into(), "four_l1".into()],
             selection_indicator_shape: "capsule".into(),
             cameras: vec![Camera { name: "navalcam_01".into(), matrix: [0.5; 16] }],
-            bobbies: vec![Bobby { id: 0, mass: 440.5, radius: 1.0, position: [1.0, 2.0, 3.0], breach_radius: 0.8, breach_offset: [0.0, 0.83, 0.0], connections: vec![1, 2] }],
+            bobbies: vec![Bobby {
+                id: 0,
+                mass: 440.5,
+                radius: 1.0,
+                position: [1.0, 2.0, 3.0],
+                breach_radius: 0.8,
+                breach_offset: [0.0, 0.83, 0.0],
+                connections: vec![1, 2],
+            }],
             decks: vec![Deck {
                 name: "deck01".into(),
                 index: 1,
@@ -607,10 +646,20 @@ mod tests {
                 }],
             }],
             pipes: vec![Pipe { id: 31, unknown: 2, start_deck_piece: -1, end_deck_piece: 12, points: vec![[1.0; 3], [2.0; 3], [3.0; 3]] }],
-            damage_parts: vec![DamagePart { name: "bow_01".into(), states: vec!["battle_sail".into()], panels: vec![vec![[1.0; 3]; 3], vec![[2.0; 3]; 4]] }],
+            damage_parts: vec![DamagePart {
+                name: "bow_01".into(),
+                states: vec!["battle_sail".into()],
+                panels: vec![vec![[1.0; 3]; 3], vec![[2.0; 3]; 4]],
+            }],
             collision: vec![CollisionFace { name: "logic_collision3D".into(), index: 1, vertices: [[0.0; 3], [1.0; 3], [2.0; 3]] }],
             ef_lines: vec![EfLine { name: "EFLine001".into(), purpose: 23, ends: [[0.0; 3], [1.0; 3]], direction: [-1.0, 0.0, 0.0] }],
-            custom_positions: vec![CustomPosition { name: "oar_left_l3".into(), kind: 8, unknown: 1, position: [4.5, 1.3, -7.4], up: [0.0, 1.0, 0.0] }],
+            custom_positions: vec![CustomPosition {
+                name: "oar_left_l3".into(),
+                kind: 8,
+                unknown: 1,
+                position: [4.5, 1.3, -7.4],
+                up: [0.0, 1.0, 0.0],
+            }],
         };
 
         let mut other = ship.clone();

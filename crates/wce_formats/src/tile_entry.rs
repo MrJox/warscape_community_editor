@@ -13,13 +13,43 @@ use std::path::{Path, PathBuf};
 use crate::c_num::{strtod, strtol};
 use crate::xml_doc::{XmlDoc, XmlError};
 
-const TILE_ATTRS: &[&str] = &["serialise_version", "location", "tile_set", "mask", "width", "height", "red", "green", "blue", "requires_infield_lodding",
-    "random_rotatable", "custom_alpha_blend_texture", "scalable", "encampable", "custom_blend_tile"];
+const TILE_ATTRS: &[&str] = &[
+    "serialise_version",
+    "location",
+    "tile_set",
+    "mask",
+    "width",
+    "height",
+    "red",
+    "green",
+    "blue",
+    "requires_infield_lodding",
+    "random_rotatable",
+    "custom_alpha_blend_texture",
+    "scalable",
+    "encampable",
+    "custom_blend_tile",
+];
 const GROUP_ATTRS: &[&str] = &["red", "green", "blue", "alpha"];
-const VARIATION_ATTRS: &[&str] = &["serialise_version", "location", "min_height", "scale", "normal_strength", "overlap_border_size", "raw_data_tri_density",
-    "blend_common", "index_common", "normal_common", "red", "green", "blue", "barbarian"];
+const VARIATION_ATTRS: &[&str] = &[
+    "serialise_version",
+    "location",
+    "min_height",
+    "scale",
+    "normal_strength",
+    "overlap_border_size",
+    "raw_data_tri_density",
+    "blend_common",
+    "index_common",
+    "normal_common",
+    "red",
+    "green",
+    "blue",
+    "barbarian",
+];
 const TARGET_ATTRS: &[&str] = &["serialise_version", "tile_set", "x", "y"];
-const LINK_ATTRS: &[&str] = &["serialise_version", "link_set", "x", "y", "base_x", "base_y", "is_entry", "blend_size", "no_offline_blend", "test"];
+const LINK_ATTRS: &[&str] =
+    &["serialise_version", "link_set", "x", "y", "base_x", "base_y", "is_entry", "blend_size", "no_offline_blend", "test"];
 
 /// Errors of reading an entry.
 #[derive(Debug, thiserror::Error)]
@@ -139,7 +169,6 @@ fn append_location(path: &Path, location: &str) -> PathBuf {
 }
 
 impl TileEntry {
-
     /// Reads an entry.
     ///
     /// # Errors
@@ -233,9 +262,11 @@ impl TileEntry {
 
     /// The children of the root's `list` element named `item`.
     fn items(&self, list: &str, item: &str) -> Vec<usize> {
-        self.child(self.root, list).map(|list| {
-            self.doc.elements()[list].children.iter().copied().filter(|&child| self.doc.elements()[child].name == item).collect()
-        }).unwrap_or_default()
+        self.child(self.root, list)
+            .map(|list| {
+                self.doc.elements()[list].children.iter().copied().filter(|&child| self.doc.elements()[child].name == item).collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn serialise_version(&self) -> i32 {
@@ -312,12 +343,14 @@ impl TileEntry {
     }
 
     pub fn texture_group(&self) -> TileTextureGroup {
-        self.child(self.root, "TEXTURE_GROUP").map(|c| TileTextureGroup {
-            red: self.str_attr(c, "red"),
-            green: self.str_attr(c, "green"),
-            blue: self.str_attr(c, "blue"),
-            alpha: self.str_attr(c, "alpha"),
-        }).unwrap_or_default()
+        self.child(self.root, "TEXTURE_GROUP")
+            .map(|c| TileTextureGroup {
+                red: self.str_attr(c, "red"),
+                green: self.str_attr(c, "green"),
+                blue: self.str_attr(c, "blue"),
+                alpha: self.str_attr(c, "alpha"),
+            })
+            .unwrap_or_default()
     }
 
     /// The names of the TEXTURE_GROUP attributes, in the order of the blend map's groups.
@@ -336,50 +369,59 @@ impl TileEntry {
     }
 
     pub fn variations(&self) -> Vec<TileVariation> {
-        self.items("VARIATIONS", "VARIATION").into_iter().map(|c| TileVariation {
-            elem: c,
-            serialise_version: self.int_attr(c, "serialise_version"),
-            location: self.str_attr(c, "location"),
-            min_height: self.num_attr(c, "min_height"),
-            scale: if self.doc.find_attr(c, "scale").is_some() { self.num_attr(c, "scale") } else { 100.0 },
-            normal_strength: self.num_attr(c, "normal_strength"),
-            overlap_border_size: self.num_attr(c, "overlap_border_size"),
-            raw_data_tri_density: self.int_attr(c, "raw_data_tri_density") as u32,
-            blend_common: self.str_attr(c, "blend_common"),
-            index_common: self.str_attr(c, "index_common"),
-            normal_common: self.str_attr(c, "normal_common"),
-            red: self.num_attr(c, "red"),
-            green: self.num_attr(c, "green"),
-            blue: self.num_attr(c, "blue"),
-            barbarian: self.bool_attr(c, "barbarian"),
-        }).collect()
+        self.items("VARIATIONS", "VARIATION")
+            .into_iter()
+            .map(|c| TileVariation {
+                elem: c,
+                serialise_version: self.int_attr(c, "serialise_version"),
+                location: self.str_attr(c, "location"),
+                min_height: self.num_attr(c, "min_height"),
+                scale: if self.doc.find_attr(c, "scale").is_some() { self.num_attr(c, "scale") } else { 100.0 },
+                normal_strength: self.num_attr(c, "normal_strength"),
+                overlap_border_size: self.num_attr(c, "overlap_border_size"),
+                raw_data_tri_density: self.int_attr(c, "raw_data_tri_density") as u32,
+                blend_common: self.str_attr(c, "blend_common"),
+                index_common: self.str_attr(c, "index_common"),
+                normal_common: self.str_attr(c, "normal_common"),
+                red: self.num_attr(c, "red"),
+                green: self.num_attr(c, "green"),
+                blue: self.num_attr(c, "blue"),
+                barbarian: self.bool_attr(c, "barbarian"),
+            })
+            .collect()
     }
 
     pub fn link_targets(&self) -> Vec<TileLinkTarget> {
-        self.items("TILE_LINK_TARGETS", "TILE_LINK_TARGET").into_iter().map(|c| TileLinkTarget {
-            elem: c,
-            serialise_version: self.int_attr(c, "serialise_version"),
-            tile_set: self.str_attr(c, "tile_set"),
-            x: self.int_attr(c, "x"),
-            y: self.int_attr(c, "y"),
-        }).collect()
+        self.items("TILE_LINK_TARGETS", "TILE_LINK_TARGET")
+            .into_iter()
+            .map(|c| TileLinkTarget {
+                elem: c,
+                serialise_version: self.int_attr(c, "serialise_version"),
+                tile_set: self.str_attr(c, "tile_set"),
+                x: self.int_attr(c, "x"),
+                y: self.int_attr(c, "y"),
+            })
+            .collect()
     }
 
     pub fn links(&self) -> Vec<TileLink> {
-        self.items("TILE_LINKS", "TILE_LINK").into_iter().map(|c| TileLink {
-            elem: c,
-            serialise_version: self.int_attr(c, "serialise_version"),
-            link_set: self.str_attr(c, "link_set"),
-            x: self.int_attr(c, "x"),
-            y: self.int_attr(c, "y"),
-            base_x: self.int_attr(c, "base_x"),
-            base_y: self.int_attr(c, "base_y"),
-            is_entry: self.bool_attr(c, "is_entry"),
-            blend_size: self.int_attr(c, "blend_size") as u32,
-            no_offline_blend: self.bool_attr(c, "no_offline_blend"),
-            test: self.str_attr(c, "test"),
-            has_blend_quad: self.child(c, "blend_quad").is_some(),
-        }).collect()
+        self.items("TILE_LINKS", "TILE_LINK")
+            .into_iter()
+            .map(|c| TileLink {
+                elem: c,
+                serialise_version: self.int_attr(c, "serialise_version"),
+                link_set: self.str_attr(c, "link_set"),
+                x: self.int_attr(c, "x"),
+                y: self.int_attr(c, "y"),
+                base_x: self.int_attr(c, "base_x"),
+                base_y: self.int_attr(c, "base_y"),
+                is_entry: self.bool_attr(c, "is_entry"),
+                blend_size: self.int_attr(c, "blend_size") as u32,
+                no_offline_blend: self.bool_attr(c, "no_offline_blend"),
+                test: self.str_attr(c, "test"),
+                has_blend_quad: self.child(c, "blend_quad").is_some(),
+            })
+            .collect()
     }
 
     /// Replaces the link targets and the links (TEd's Tile links), written as the kit writes them: one element a line, tab-indented, the
@@ -392,10 +434,35 @@ impl TileEntry {
     /// The entry has no `TILE_LINK_TARGETS` / `TILE_LINKS` element, or the new text can't be read.
     pub fn set_links(&mut self, targets: &[TileLinkTarget], links: &[TileLink]) -> Result<bool, TileEntryError> {
         let (old_targets, old_links) = (self.link_targets(), self.links());
-        let same = |a: &TileLinkTarget, b: &TileLinkTarget| (a.serialise_version, &a.tile_set, a.x, a.y) == (b.serialise_version, &b.tile_set, b.x, b.y);
+        let same = |a: &TileLinkTarget, b: &TileLinkTarget| {
+            (a.serialise_version, &a.tile_set, a.x, a.y) == (b.serialise_version, &b.tile_set, b.x, b.y)
+        };
         let same_link = |a: &TileLink, b: &TileLink| {
-            (a.serialise_version, &a.link_set, a.x, a.y, a.base_x, a.base_y, a.is_entry, a.blend_size, a.no_offline_blend, &a.test, a.has_blend_quad)
-                == (b.serialise_version, &b.link_set, b.x, b.y, b.base_x, b.base_y, b.is_entry, b.blend_size, b.no_offline_blend, &b.test, b.has_blend_quad)
+            (
+                a.serialise_version,
+                &a.link_set,
+                a.x,
+                a.y,
+                a.base_x,
+                a.base_y,
+                a.is_entry,
+                a.blend_size,
+                a.no_offline_blend,
+                &a.test,
+                a.has_blend_quad,
+            ) == (
+                b.serialise_version,
+                &b.link_set,
+                b.x,
+                b.y,
+                b.base_x,
+                b.base_y,
+                b.is_entry,
+                b.blend_size,
+                b.no_offline_blend,
+                &b.test,
+                b.has_blend_quad,
+            )
         };
         let targets_same = old_targets.len() == targets.len() && old_targets.iter().zip(targets).all(|(a, b)| same(a, b));
         let links_same = old_links.len() == links.len() && old_links.iter().zip(links).all(|(a, b)| same_link(a, b));
@@ -416,7 +483,16 @@ impl TileEntry {
                 for l in links {
                     text += &format!(
                         "\t\t<TILE_LINK serialise_version='{}' link_set='{}' x='{}' y='{}' base_x='{}' base_y='{}' is_entry='{}' blend_size='{}' no_offline_blend='{}' test='{}'",
-                        l.serialise_version, l.link_set, l.x, l.y, l.base_x, l.base_y, b(l.is_entry), l.blend_size, b(l.no_offline_blend), l.test
+                        l.serialise_version,
+                        l.link_set,
+                        l.x,
+                        l.y,
+                        l.base_x,
+                        l.base_y,
+                        b(l.is_entry),
+                        l.blend_size,
+                        b(l.no_offline_blend),
+                        l.test
                     );
                     text += &if l.has_blend_quad { format!(">{nl}\t\t\t<blend_quad/>{nl}\t\t</TILE_LINK>{nl}") } else { format!("/>{nl}") };
                 }
@@ -434,7 +510,10 @@ impl TileEntry {
             } else {
                 text += &format!("<TILE_LINK_TARGETS>{nl}");
                 for t in targets {
-                    text += &format!("\t\t<TILE_LINK_TARGET serialise_version='{}' tile_set='{}' x='{}' y='{}'/>{nl}", t.serialise_version, t.tile_set, t.x, t.y);
+                    text += &format!(
+                        "\t\t<TILE_LINK_TARGET serialise_version='{}' tile_set='{}' x='{}' y='{}'/>{nl}",
+                        t.serialise_version, t.tile_set, t.x, t.y
+                    );
                 }
 
                 text += "\t</TILE_LINK_TARGETS>";

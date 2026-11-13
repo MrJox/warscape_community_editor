@@ -47,7 +47,12 @@ impl TileTool {
         let sel = selected(e);
         let Some(d) = document(e) else { return vec![] };
         let sc = d.tile().tscene();
-        d.tile().instances_below(&sel).into_iter().filter(|&el| sc.type_of(el) == "VEGETATION_INSTANCE").filter_map(|el| sc.doc().get(el, "key")).collect()
+        d.tile()
+            .instances_below(&sel)
+            .into_iter()
+            .filter(|&el| sc.type_of(el) == "VEGETATION_INSTANCE")
+            .filter_map(|el| sc.doc().get(el, "key"))
+            .collect()
     }
 
     /// A new set from the selected trees (each key weighted by how many there are), in the projects' sets.
@@ -100,7 +105,9 @@ impl TileTool {
             return;
         };
 
-        gui::text_wrapped("A set of the selected trees (each kind weighted by how many there are), saved in the projects' vegetation sets.");
+        gui::text_wrapped(
+            "A set of the selected trees (each kind weighted by how many there are), saved in the projects' vegetation sets.",
+        );
         gui::set_next_item_width(320.0);
         let enter = gui::input_text("Name", Some("the set's file name"), &mut name, 128, gui::INPUT_ENTER_RETURNS_TRUE);
         self.new_set_name = Some(name.clone());
@@ -242,7 +249,10 @@ impl TileTool {
 
 /// A set's name as its file's: trimmed, not empty, with no character or name a file system refuses (Windows' the strictest).
 fn set_file_name(name: &str) -> Result<&str, String> {
-    const RESERVED: [&str; 22] = ["CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"];
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2", "LPT3", "LPT4",
+        "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
     let name = name.trim();
     let bad = name.is_empty()
         || name.ends_with('.')

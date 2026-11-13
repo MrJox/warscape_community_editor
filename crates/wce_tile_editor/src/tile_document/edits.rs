@@ -16,15 +16,23 @@ use wce_scene::render_scene::SourceRef;
 use wce_tile::ground_types::{GROUND_COLOURS, NO_GROUND_TYPE};
 use wce_tile::height_field::{Brush, HeightField};
 use wce_tile::properties::{
-    Access, Kind, Prop, RuleContext, format_bool, format_colour, format_float, format_seasons, format_vec2, format_vec3, parse_bool, parse_colour, parse_float,
-    parse_int, parse_seasons, parse_vec2, parse_vec3_text,
+    Access, Kind, Prop, RuleContext, format_bool, format_colour, format_float, format_seasons, format_vec2, format_vec3, parse_bool,
+    parse_colour, parse_float, parse_int, parse_seasons, parse_vec2, parse_vec3_text,
 };
 use wce_tile::ted_scene::TedScene;
-use wce_tile::world_transform::{WorldTransform, euler_from_matrix, euler_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform};
+use wce_tile::world_transform::{
+    WorldTransform, euler_from_matrix, euler_matrix, rotate_world_yaw, set_world_position, set_world_rotation, world_transform,
+};
 
+use super::commands::{
+    BrushStepCommand, GroundFillCommand, HeightFillCommand, PlacementItem, SpliceEffect, TedAttrCommand, TedAttrsCommand, TedFlagCommand,
+    TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand, TextureGroupCommand,
+};
 use super::shift::merged_spans;
-use super::commands::{SpliceEffect, BrushStepCommand, GroundFillCommand, HeightFillCommand, PlacementItem, TextureGroupCommand, TedAttrCommand, TedAttrsCommand, TedFlagCommand, TedMoveCommand, TedPlacementCommand, TedPointAttrsCommand, TedPointCommand, TedSpliceCommand};
-use super::{AlignTo, CopiedItem, Create, BrushKind, BrushSettings, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument, elem_of, item_of, piece_of};
+use super::{
+    AlignTo, BrushKind, BrushSettings, CopiedItem, Create, Follow, OffTerrain, Placement, PlacementCounts, TERRAIN, Tile, TileDocument,
+    elem_of, item_of, piece_of,
+};
 
 fn degrees(r: f64) -> f32 {
     (r * 180.0 / std::f64::consts::PI) as f32
@@ -78,22 +86,25 @@ fn top_level(sc: &TedScene, mut elems: Vec<usize>) -> Vec<usize> {
     elems.sort_unstable();
     elems.dedup();
     let els = sc.doc().elements();
-    elems.iter().copied().filter(|&e| {
-        let mut p = els[e].parent;
-        while let Some(q) = p {
-            if elems.binary_search(&q).is_ok() {
-                return false;
+    elems
+        .iter()
+        .copied()
+        .filter(|&e| {
+            let mut p = els[e].parent;
+            while let Some(q) = p {
+                if elems.binary_search(&q).is_ok() {
+                    return false;
+                }
+
+                p = els[q].parent;
             }
 
-            p = els[q].parent;
-        }
-
-        true
-    }).collect()
+            true
+        })
+        .collect()
 }
 
 impl Tile {
-
     /// Local polygon point of a world position.
     pub fn to_local(&self, elem: usize, world: Float3) -> Double3 {
         let w = world_transform(self.tscene(), elem);
@@ -151,11 +162,16 @@ impl Tile {
     /// Landscape instances further from the terrain than tolerance, worst first.
     pub fn off_terrain(&self, tolerance: f32, among: Option<&[usize]>) -> Vec<OffTerrain> {
         let list = among.unwrap_or(&self.instances);
-        let mut out = list.iter().copied().filter(|&e| self.on_the_terrain(e)).filter_map(|e| {
-            let p = self.world_position(e);
-            let dy = p.y - self.landscape_y(e, p.x, p.z);
-            (dy.abs() > tolerance).then_some(OffTerrain { elem: e, dy })
-        }).collect::<Vec<_>>();
+        let mut out = list
+            .iter()
+            .copied()
+            .filter(|&e| self.on_the_terrain(e))
+            .filter_map(|e| {
+                let p = self.world_position(e);
+                let dy = p.y - self.landscape_y(e, p.x, p.z);
+                (dy.abs() > tolerance).then_some(OffTerrain { elem: e, dy })
+            })
+            .collect::<Vec<_>>();
 
         out.sort_by(|a, b| b.dy.abs().partial_cmp(&a.dy.abs()).unwrap_or(std::cmp::Ordering::Equal));
         out
@@ -216,7 +232,15 @@ impl Tile {
             self.stroke_open = true;
         }
 
-        let mut b = Brush { cx, cy, radius: (f64::from(s.radius_m) / mpp).max(1.0), falloff: f64::from(s.falloff), curve: s.curve, image: s.brush_image(), ..Default::default() };
+        let mut b = Brush {
+            cx,
+            cy,
+            radius: (f64::from(s.radius_m) / mpp).max(1.0),
+            falloff: f64::from(s.falloff),
+            curve: s.curve,
+            image: s.brush_image(),
+            ..Default::default()
+        };
         let dt = dt.min(0.05);
         let soft = (f64::from(s.strength) * f64::from(dt) * 0.5).min(1.0);
         let _ = match kind {
@@ -311,8 +335,13 @@ impl Tile {
         let (ppx, ppz) = (f64::from(blend.width()) / (ex + 2.0 * b), f64::from(blend.height()) / (ez + 2.0 * b));
         let brush = match at {
             Some((x, z)) => Brush {
-                cx: (f64::from(x) + b) * ppx - 0.5, cy: (f64::from(z) + b) * ppz - 0.5, radius: (f64::from(s.radius_m) * ppx).max(1.0), strength: amount,
-                falloff: f64::from(s.falloff), curve: s.curve, image: s.brush_image(),
+                cx: (f64::from(x) + b) * ppx - 0.5,
+                cy: (f64::from(z) + b) * ppz - 0.5,
+                radius: (f64::from(s.radius_m) * ppx).max(1.0),
+                strength: amount,
+                falloff: f64::from(s.falloff),
+                curve: s.curve,
+                image: s.brush_image(),
             },
 
             None => {
@@ -352,7 +381,12 @@ impl Tile {
 
         let rgb = GROUND_COLOURS.get(usize::from(ground)).copied().unwrap_or(NO_GROUND_TYPE);
         let (ppx, ppz) = (f64::from(map.width()) / (ex + 2.0 * b), f64::from(map.height()) / (ez + 2.0 * b));
-        let brush = Brush { cx: (f64::from(x) + b) * ppx - 0.5, cy: (f64::from(z) + b) * ppz - 0.5, radius: (f64::from(s.radius_m) * ppx).max(0.5), ..Default::default() };
+        let brush = Brush {
+            cx: (f64::from(x) + b) * ppx - 0.5,
+            cy: (f64::from(z) + b) * ppz - 0.5,
+            radius: (f64::from(s.radius_m) * ppx).max(0.5),
+            ..Default::default()
+        };
         let _ = map.paint(&brush, rgb);
     }
 
@@ -383,12 +417,24 @@ impl Tile {
     /// map (the bordered tile, `height_map_0.png`'s layout: an edited copy of it comes back where it was): black at `low_m`, white at
     /// `high_m` (metres as the editor shows them), replacing the heights or added to them. The landscape instances move with the ground. One
     /// undo entry; returns the samples changed.
-    pub(crate) fn import_heights(&mut self, image: &wce_tile::brush_image::BrushImage, low_m: f32, high_m: f32, add: bool) -> Result<(usize, Vec<Follow>), String> {
+    pub(crate) fn import_heights(
+        &mut self,
+        image: &wce_tile::brush_image::BrushImage,
+        low_m: f32,
+        high_m: f32,
+        add: bool,
+    ) -> Result<(usize, Vec<Follow>), String> {
         let unit = self.project.unit_scale;
-        let cands = self.instances.iter().copied().filter(|&e| self.placement(e) == Placement::Landscape).map(|e| {
-            let p = self.world_position(e);
-            (e, p.x, p.z, self.terrain_height(p.x, p.z))
-        }).collect::<Vec<_>>();
+        let cands = self
+            .instances
+            .iter()
+            .copied()
+            .filter(|&e| self.placement(e) == Placement::Landscape)
+            .map(|e| {
+                let p = self.world_position(e);
+                (e, p.x, p.z, self.terrain_height(p.x, p.z))
+            })
+            .collect::<Vec<_>>();
 
         let hf = self.project.height.as_mut().ok_or("the tile has no height map")?;
         let (w, h) = (hf.width(), hf.height());
@@ -437,10 +483,16 @@ impl Tile {
         }
 
         let r = s.radius_m + 2.0 * self.project.mpp_x() as f32 + 1.0;
-        let cands = self.instances.iter().copied().filter(|&e| self.placement(e) == Placement::Landscape).filter_map(|e| {
-            let p = self.world_position(e);
-            ((p.x - x).abs() <= r && (p.z - z).abs() <= r).then(|| (e, p.x, p.z, self.terrain_height(p.x, p.z)))
-        }).collect::<Vec<_>>();
+        let cands = self
+            .instances
+            .iter()
+            .copied()
+            .filter(|&e| self.placement(e) == Placement::Landscape)
+            .filter_map(|e| {
+                let p = self.world_position(e);
+                ((p.x - x).abs() <= r && (p.z - z).abs() <= r).then(|| (e, p.x, p.z, self.terrain_height(p.x, p.z)))
+            })
+            .collect::<Vec<_>>();
 
         self.apply_brush(kind, x, z, s, dt);
         for (e, cx, cz, h) in cands {
@@ -541,7 +593,15 @@ impl TileDocument {
     }
 
     /// `push_splice` of an edit of `attrs` of `elems`, by what they are: what the tile's structure hangs on, what is drawn, or neither.
-    fn push_splice_attrs(&mut self, name: String, mark: usize, sel_before: Vec<u64>, sel_after: Vec<u64>, elems: Vec<usize>, attrs: &[&str]) {
+    fn push_splice_attrs(
+        &mut self,
+        name: String,
+        mark: usize,
+        sel_before: Vec<u64>,
+        sel_after: Vec<u64>,
+        elems: Vec<usize>,
+        attrs: &[&str],
+    ) {
         use wce_tile::project_files::{PREFAB_ATTR, ROTATION_ATTR, SURFACE_ATTR};
         let structure = |a: &&str| matches!(*a, "flags" | "position" | "orientation" | "surface_mode" | "export_type");
         let noted = |a: &&str| *a == "name" || *a == SURFACE_ATTR || *a == ROTATION_ATTR || *a == PREFAB_ATTR;
@@ -572,7 +632,8 @@ impl TileDocument {
         let t = self.tile();
         let (known, now) = (t.idx.type_.len(), t.tscene().doc().elements().len());
         let fits = t.idx.valid && if added { known + 1 == now } else { known == now + 1 };
-        let effect = if fits { SpliceEffect::Shift { spans: vec![(span, 1)], added, touched: vec![elem] } } else { SpliceEffect::Structure };
+        let effect =
+            if fits { SpliceEffect::Shift { spans: vec![(span, 1)], added, touched: vec![elem] } } else { SpliceEffect::Structure };
         self.push_splice_as(name, mark, vec![item_of(elem)], vec![item_of(elem)], effect);
     }
 
@@ -631,7 +692,19 @@ impl TileDocument {
         let name = format!("Move {}", if n.is_empty() { sc.type_of(elem).to_owned() } else { n });
         let old_pos_text = old_pos.and_then(|_| sc.doc().get(elem, "position"));
         let old_euler_text = old_euler.and_then(|_| sc.doc().get(elem, "orientation"));
-        self.history.push(Box::new(TedMoveCommand { name, elem, old_pos, new_pos, old_euler, new_euler, old_pos_text, old_euler_text, gesture, below, grounded: vec![] }));
+        self.history.push(Box::new(TedMoveCommand {
+            name,
+            elem,
+            old_pos,
+            new_pos,
+            old_euler,
+            new_euler,
+            old_pos_text,
+            old_euler_text,
+            gesture,
+            below,
+            grounded: vec![],
+        }));
         true
     }
 
@@ -731,13 +804,22 @@ impl TileDocument {
         let t = self.tile();
         let sc = t.tscene();
         let n = sc.doc().elements().len();
-        let wanted = elems.iter().copied().filter(|&e| e < n && (t.is_instance(e) || (sc.is_layer(e) && sc.type_of(e) != "SCENE_GRAPH"))).collect::<Vec<_>>();
-        wanted.iter().copied().filter(|&e| !wanted.iter().any(|&a| a != e && sc.is_descendant(e, a))).map(|e| {
-            let w = world_transform(sc, e);
-            let u = t.unit();
-            let at = Float3::new((w.position.x / u) as f32, (w.position.y / u) as f32, (w.position.z / u) as f32);
-            CopiedItem { text: sc.element_text(e), at, rotation: w.rotation, landscape: t.placement_of_attr(e) == Placement::Landscape }
-        }).collect()
+        let wanted = elems
+            .iter()
+            .copied()
+            .filter(|&e| e < n && (t.is_instance(e) || (sc.is_layer(e) && sc.type_of(e) != "SCENE_GRAPH")))
+            .collect::<Vec<_>>();
+        wanted
+            .iter()
+            .copied()
+            .filter(|&e| !wanted.iter().any(|&a| a != e && sc.is_descendant(e, a)))
+            .map(|e| {
+                let w = world_transform(sc, e);
+                let u = t.unit();
+                let at = Float3::new((w.position.x / u) as f32, (w.position.y / u) as f32, (w.position.z / u) as f32);
+                CopiedItem { text: sc.element_text(e), at, rotation: w.rotation, landscape: t.placement_of_attr(e) == Placement::Landscape }
+            })
+            .collect()
     }
 
     /// Pastes copied elements into `into`, each moved by `offset` (metres; a landscape one stands on the terrain where it lands), in one
@@ -757,7 +839,11 @@ impl TileDocument {
         let result = self.paste_elements(items, into, offset);
         match result {
             Ok(new) => {
-                let name = if new.len() == 1 { format!("Paste {}", self.tile().tscene().type_of(new[0])) } else { format!("Paste {} items", new.len()) };
+                let name = if new.len() == 1 {
+                    format!("Paste {}", self.tile().tscene().type_of(new[0]))
+                } else {
+                    format!("Paste {} items", new.len())
+                };
                 self.push_splice_added(name, mark, vec![], new.iter().map(|&g| item_of(g)).collect(), &new);
                 Ok(new)
             }
@@ -822,13 +908,22 @@ impl TileDocument {
     /// # Errors
     ///
     /// No key, or no building to copy.
-    pub fn add_building_in(&mut self, key: &str, template_elem: Option<usize>, at: Option<Float3>, mode: Placement, into: Option<usize>) -> Result<usize, String> {
+    pub fn add_building_in(
+        &mut self,
+        key: &str,
+        template_elem: Option<usize>,
+        at: Option<Float3>,
+        mode: Placement,
+        into: Option<usize>,
+    ) -> Result<usize, String> {
         if key.is_empty() {
             return Err(String::new());
         }
 
         let sc = self.tile().tscene();
-        let Some(tmpl) = template_elem.filter(|&e| sc.type_of(e) == "BUILDING_INSTANCE").or_else(|| sc.find_all("BUILDING_INSTANCE").first().copied()) else {
+        let Some(tmpl) =
+            template_elem.filter(|&e| sc.type_of(e) == "BUILDING_INSTANCE").or_else(|| sc.find_all("BUILDING_INSTANCE").first().copied())
+        else {
             return self.add_building_from_defaults(key, at, mode, into);
         };
 
@@ -871,11 +966,13 @@ impl TileDocument {
     fn add_building_from_defaults(&mut self, key: &str, at: Option<Float3>, mode: Placement, into: Option<usize>) -> Result<usize, String> {
         let mut d = super::draft::Draft::new("BUILDING_INSTANCE", key);
         if mode != Placement::None {
-            d.attrs.insert("surface_mode".to_owned(), if mode == Placement::Landscape { "MSM_LANDSCAPE" } else { "MSM_FREEFORM" }.to_owned());
+            d.attrs
+                .insert("surface_mode".to_owned(), if mode == Placement::Landscape { "MSM_LANDSCAPE" } else { "MSM_FREEFORM" }.to_owned());
         }
 
         let text = self.draft_text(&d).ok_or("no building key")?;
-        let into = into.or(self.tile().tscene().scene_graph()).ok_or("this tile has no SCENE_GRAPH, so there is no layer to add a building to")?;
+        let into =
+            into.or(self.tile().tscene().scene_graph()).ok_or("this tile has no SCENE_GRAPH, so there is no layer to add a building to")?;
         let on_terrain = mode != Placement::Freeform;
         self.place_text(&format!("Add {key}"), &text, into, at.unwrap_or(Float3::new(0.0, 0.0, 0.0)), None, on_terrain)
     }
@@ -982,7 +1079,9 @@ impl TileDocument {
             let world = if t.is_wall(elem) && (index == 0 || index + 1 == pts.len()) { t.snap_wall_end(world) } else { world };
 
             // A procedural spline's point with handles written: they go with it.
-            if self.has_handles(elem) && wce_tile::splines::written(t.tscene(), elem).get(index).is_some_and(|h| h.iter().any(Option::is_some)) {
+            if self.has_handles(elem)
+                && wce_tile::splines::written(t.tscene(), elem).get(index).is_some_and(|h| h.iter().any(Option::is_some))
+            {
                 return self.spline_point(elem, "move", index, world, gesture);
             }
 
@@ -1080,11 +1179,13 @@ impl TileDocument {
 
         let local = t.to_local(elem, world);
         // An attribute not written (a procedural spline's handle made from the points) is as it is drawn now.
-        let text = |i: usize, attr: &str| sc.doc().get(elems[i], attr).filter(|v| !v.is_empty()).unwrap_or_else(|| match attr {
-            "controlIn" => point_text(pts[i].control_in),
-            "controlOut" => point_text(pts[i].control_out),
-            _ => String::new(),
-        });
+        let text = |i: usize, attr: &str| {
+            sc.doc().get(elems[i], attr).filter(|v| !v.is_empty()).unwrap_or_else(|| match attr {
+                "controlIn" => point_text(pts[i].control_in),
+                "controlOut" => point_text(pts[i].control_out),
+                _ => String::new(),
+            })
+        };
         let step = |i: usize, attr: &str, v: Double3| (i, attr.to_owned(), text(i, attr), point_text(v));
         let (first, last) = (index == 0, index + 1 == n);
         let attrs = match op {
@@ -1130,7 +1231,11 @@ impl TileDocument {
 
             // A handle the point has not written yet: written first as it is, in a text splice (its undo takes the attribute away
             // again, which setting it back cannot), then edited as the others.
-            let missing = steps.iter().filter(|s| self.tile().tscene().doc().get(elems[s.0], &s.1).is_none_or(|v| v.is_empty())).cloned().collect::<Vec<_>>();
+            let missing = steps
+                .iter()
+                .filter(|s| self.tile().tscene().doc().get(elems[s.0], &s.1).is_none_or(|v| v.is_empty()))
+                .cloned()
+                .collect::<Vec<_>>();
             if !missing.is_empty() {
                 let mark = self.begin()?;
                 let before = self.tile().tscene().polygon_points(elem);
@@ -1244,17 +1349,24 @@ impl TileDocument {
 
         // Every point's attributes as written, the handles under each other's name.
         let doc = sc.doc();
-        let texts = elems.iter().map(|&p| {
-            doc.elements()[p].attrs.iter().map(|a| {
-                let name = match a.name.as_str() {
-                    "controlIn" => "controlOut",
-                    "controlOut" => "controlIn",
-                    other => other,
-                };
+        let texts = elems
+            .iter()
+            .map(|&p| {
+                doc.elements()[p]
+                    .attrs
+                    .iter()
+                    .map(|a| {
+                        let name = match a.name.as_str() {
+                            "controlIn" => "controlOut",
+                            "controlOut" => "controlIn",
+                            other => other,
+                        };
 
-                (name.to_owned(), doc.get(p, &a.name).unwrap_or_default())
-            }).collect::<Vec<_>>()
-        }).collect::<Vec<_>>();
+                        (name.to_owned(), doc.get(p, &a.name).unwrap_or_default())
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
 
         let mark = self.begin()?;
         let sc = self.tscene_mut();
@@ -1279,10 +1391,13 @@ impl TileDocument {
 
         let sc = self.tile().tscene();
         let elems = sc.polygon_points(elem);
-        let steps = points.iter().filter_map(|&i| {
-            let before = sc.doc().get(*elems.get(i)?, attr).unwrap_or_default();
-            Some((i, attr.to_owned(), before, value.to_owned()))
-        }).collect::<Vec<_>>();
+        let steps = points
+            .iter()
+            .filter_map(|&i| {
+                let before = sc.doc().get(*elems.get(i)?, attr).unwrap_or_default();
+                Some((i, attr.to_owned(), before, value.to_owned()))
+            })
+            .collect::<Vec<_>>();
         if steps.is_empty() {
             return false;
         }
@@ -1392,7 +1507,9 @@ impl TileDocument {
         let t = self.tile();
         // Only elements with a flags attribute (layers and instances; TEd writes none on the scene graph): own_flag reads a missing attribute
         // as every flag set, which set_flag cannot write, and an added attribute is text the attribute edits of the command cannot take back.
-        let todo = elems.iter().copied()
+        let todo = elems
+            .iter()
+            .copied()
             .filter(|&e| e < t.tscene().doc().elements().len() && t.tscene().doc().get(e, "flags").is_some() && t.own_flag(e, flag) != on)
             .collect::<Vec<_>>();
         if todo.is_empty() {
@@ -1628,7 +1745,10 @@ impl TileDocument {
         self.check_structure(elems, Some(into))?;
         let sc = self.tile().tscene();
         let n = sc.doc().elements().len();
-        let groups = top_level(sc, elems.iter().copied().filter(|&e| e < n && matches!(sc.type_of(e), "UserInstanceGroup" | "INSTANCE_GROUP")).collect());
+        let groups = top_level(
+            sc,
+            elems.iter().copied().filter(|&e| e < n && matches!(sc.type_of(e), "UserInstanceGroup" | "INSTANCE_GROUP")).collect(),
+        );
         if groups.is_empty() || into >= n || !sc.is_layer(into) {
             return Err("no instance group selected".to_owned());
         }
@@ -1679,7 +1799,12 @@ impl TileDocument {
 
         match result {
             Ok(freed) => {
-                self.push_splice(if groups.len() == 1 { "Ungroup".to_owned() } else { format!("Ungroup {} groups", groups.len()) }, mark, sel_before, freed.iter().map(|&m| item_of(m)).collect());
+                self.push_splice(
+                    if groups.len() == 1 { "Ungroup".to_owned() } else { format!("Ungroup {} groups", groups.len()) },
+                    mark,
+                    sel_before,
+                    freed.iter().map(|&m| item_of(m)).collect(),
+                );
                 Ok(freed)
             }
 
@@ -1713,7 +1838,14 @@ impl TileDocument {
     /// # Errors
     ///
     /// As `create`.
-    pub fn create_with(&mut self, kind: &str, into: usize, shape: &Create, key: &str, attrs: &BTreeMap<String, String>) -> Result<usize, String> {
+    pub fn create_with(
+        &mut self,
+        kind: &str,
+        into: usize,
+        shape: &Create,
+        key: &str,
+        attrs: &BTreeMap<String, String>,
+    ) -> Result<usize, String> {
         self.check_structure(&[], Some(into))?;
         use wce_tile::new_instances::{NewInstance, NewPoint, element_text};
 
@@ -1736,8 +1868,13 @@ impl TileDocument {
         let element = match (kind, shape) {
             (_, Create::Point(p)) => point_instance(kind, local(*p), key, unit)?,
             (
-                "ZONE_POLYGON_INSTANCE" | "CivilianDeploymentZone" | "LiteBuildingZone" | "AI_HINT_POLYGON_INSTANCE" | "NOGO_REGION_POLYGON_INSTANCE"
-                | "GO_REGION_POLYGON_INSTANCE" | "VegetationExclusionPolygonInstance",
+                "ZONE_POLYGON_INSTANCE"
+                | "CivilianDeploymentZone"
+                | "LiteBuildingZone"
+                | "AI_HINT_POLYGON_INSTANCE"
+                | "NOGO_REGION_POLYGON_INSTANCE"
+                | "GO_REGION_POLYGON_INSTANCE"
+                | "VegetationExclusionPolygonInstance",
                 Create::Line(pts),
             ) => {
                 let (c, points) = line(pts)?;
@@ -1806,7 +1943,8 @@ impl TileDocument {
                 } else {
                     // A new group around it (scripts: `add_polygon`; the editor draws regions in a zone), the polygon with the values asked
                     // for it (they were left out here before).
-                    let mut g = NewInstance::new("DeploymentZonePolygonInstanceGroup").position(c).attr("deployment_category", NEW_ZONE_CATEGORY);
+                    let mut g =
+                        NewInstance::new("DeploymentZonePolygonInstanceGroup").position(c).attr("deployment_category", NEW_ZONE_CATEGORY);
                     let mut p = new_polygon(kind, points, true);
                     p.attrs.extend(attrs.iter().map(|(k, v)| (k.clone(), v.clone())));
                     g.children.push(element_text(&p)?);
@@ -1843,12 +1981,15 @@ impl TileDocument {
                     n = n.attr(wce_tile::river_files::RIVER_HEIGHT_ATTR, "game");
                 }
 
-                n.points = wce_tile::splines::new_points(&positions).into_iter().map(|p| {
-                    let mut q = NewPoint::at(p.position);
-                    q.attrs.insert("controlIn".to_owned(), wce_tile::new_instances::point_text(p.control_in));
-                    q.attrs.insert("controlOut".to_owned(), wce_tile::new_instances::point_text(p.control_out));
-                    q
-                }).collect();
+                n.points = wce_tile::splines::new_points(&positions)
+                    .into_iter()
+                    .map(|p| {
+                        let mut q = NewPoint::at(p.position);
+                        q.attrs.insert("controlIn".to_owned(), wce_tile::new_instances::point_text(p.control_in));
+                        q.attrs.insert("controlOut".to_owned(), wce_tile::new_instances::point_text(p.control_out));
+                        q
+                    })
+                    .collect();
                 n
             }
 
@@ -2003,13 +2144,14 @@ impl TileDocument {
             return Err("draw it inside a siege AI node or edge, a deployment zone or a capture location".to_owned());
         };
 
-        let role = match named.filter(|n| !n.is_empty()) {
-            Some(n) => shapes.iter().find(|c| c.0.name == n).map(|c| c.0).ok_or_else(|| {
-                format!("a {} has no shape named {n}", wce_tile::parents::label(self.tile().tscene().type_of(holder)))
-            })?,
+        let role =
+            match named.filter(|n| !n.is_empty()) {
+                Some(n) => shapes.iter().find(|c| c.0.name == n).map(|c| c.0).ok_or_else(|| {
+                    format!("a {} has no shape named {n}", wce_tile::parents::label(self.tile().tscene().type_of(holder)))
+                })?,
 
-            None => shapes.iter().find(|c| c.0.most == 0 || c.1.len() < c.0.most).map_or(first, |c| c.0),
-        };
+                None => shapes.iter().find(|c| c.0.most == 0 || c.1.len() < c.0.most).map_or(first, |c| c.0),
+            };
 
         let have = shapes.iter().find(|c| c.0 == role).map_or(0, |c| c.1.len());
         if role.most > 1 && have >= role.most {
@@ -2070,7 +2212,12 @@ impl TileDocument {
             Some("PS_CIRCLE") => BoundaryShape { kind: BoundaryKind::Circle, centre: position, size: radius().unwrap_or(20.0), turn: 0.0 },
             Some("PS_SEMICIRCLE") => {
                 let mid = pts.get(pts.len() / 2).copied().unwrap_or(position);
-                BoundaryShape { kind: BoundaryKind::Semicircle, centre: position, size: radius().unwrap_or(20.0), turn: angle(mid.x - position.x, mid.z - position.z) }
+                BoundaryShape {
+                    kind: BoundaryKind::Semicircle,
+                    centre: position,
+                    size: radius().unwrap_or(20.0),
+                    turn: angle(mid.x - position.x, mid.z - position.z),
+                }
             }
 
             Some("PS_RECTANGLE") if pts.len() >= 2 => {
@@ -2102,7 +2249,9 @@ impl TileDocument {
             return Err("not a capture location's boundary".to_owned());
         }
 
-        let holder = self.holder_for("CaptureLocationPolygonInstance", sc.doc().elements()[boundary].parent.unwrap_or(boundary)).ok_or("the boundary is not in a capture location")?;
+        let holder = self
+            .holder_for("CaptureLocationPolygonInstance", sc.doc().elements()[boundary].parent.unwrap_or(boundary))
+            .ok_or("the boundary is not in a capture location")?;
         let (r, turn) = (shape.size.max(0.5), shape.turn.to_radians());
 
         // On the ground, around the centre (metres): the canonical shape (a semicircle's round side and a square's top on +z) turned.
@@ -2125,7 +2274,10 @@ impl TileDocument {
         // Local to the capture location; the boundary at the centre (a circle's and a semicircle's points are around it, as TEd's).
         let centre = t.to_local(holder, c);
         let local = world.iter().map(|&p| t.to_local(holder, p) - centre).collect::<Vec<_>>();
-        let mut n = new_polygon("CaptureLocationPolygonInstance", local, true).position(centre).attr("polygon_shape", kind).attr("polygon_closed", "1");
+        let mut n = new_polygon("CaptureLocationPolygonInstance", local, true)
+            .position(centre)
+            .attr("polygon_shape", kind)
+            .attr("polygon_closed", "1");
         if matches!(shape.kind, BoundaryKind::Circle | BoundaryKind::Semicircle) {
             n = n.attr("radius", wce_tile::ted_scene::format_number(f64::from(r) * t.unit()));
         }
@@ -2133,14 +2285,18 @@ impl TileDocument {
         // Its own attributes kept (not what the shape decides).
         const SHAPED: [&str; 7] = ["position", "orientation", "polygon_shape", "radius", "area", "polygon_closed", "points"];
         for a in &sc.doc().elements()[boundary].attrs {
-            if !SHAPED.contains(&a.name.as_str()) && !n.attrs.contains_key(&a.name) && let Some(v) = sc.doc().get(boundary, &a.name) {
+            if !SHAPED.contains(&a.name.as_str())
+                && !n.attrs.contains_key(&a.name)
+                && let Some(v) = sc.doc().get(boundary, &a.name)
+            {
                 n.attrs.insert(a.name.clone(), v);
             }
         }
 
         let text = wce_tile::new_instances::element_text(&n)?;
         let mark = self.begin()?;
-        let result = self.tscene_mut().insert_element_text(holder, &text).and_then(|e| self.put_shape(e, holder, Some(boundary), Some(boundary)));
+        let result =
+            self.tscene_mut().insert_element_text(holder, &text).and_then(|e| self.put_shape(e, holder, Some(boundary), Some(boundary)));
         match result {
             Ok(e) => {
                 let after = select.unwrap_or(e);
@@ -2174,7 +2330,9 @@ impl TileDocument {
     /// The boundary of a capture location (its first `CaptureLocationPolygonInstance`).
     pub fn capture_boundary(&self, location: usize) -> Option<usize> {
         let sc = self.tile().tscene();
-        (location < sc.doc().elements().len()).then(|| sc.children(location).into_iter().find(|&c| sc.type_of(c) == "CaptureLocationPolygonInstance")).flatten()
+        (location < sc.doc().elements().len())
+            .then(|| sc.children(location).into_iter().find(|&c| sc.type_of(c) == "CaptureLocationPolygonInstance"))
+            .flatten()
     }
 
     /// The Inspector's rows of a capture location's boundary in place of TEd's shape and radius: its shape (Circle, Semicircle, Square,
@@ -2189,20 +2347,37 @@ impl TileDocument {
         }
 
         if shape.kind != BoundaryKind::Polygon {
-            for (field, label, value, speed) in [("wce_boundary_size", "size (m: radius or half side)", shape.size, 0.1), ("wce_boundary_turn", "turn (deg; 0: +z)", shape.turn, 1.0)] {
+            for (field, label, value, speed) in [
+                ("wce_boundary_size", "size (m: radius or half side)", shape.size, 0.1),
+                ("wce_boundary_turn", "turn (deg; 0: +z)", shape.turn, 1.0),
+            ] {
                 if field == "wce_boundary_turn" && !shape.kind.turns() {
                     continue;
                 }
 
                 let key = (e, field.to_owned());
                 let mut v = self.tile().drafts.get(&key).and_then(|d| d.parse::<f32>().ok()).unwrap_or(value);
-                if ins.edit_float(field, label, &mut v, speed, if field == "wce_boundary_size" { 0.5 } else { -360.0 }, if field == "wce_boundary_size" { 500.0 } else { 360.0 }) {
+                if ins.edit_float(
+                    field,
+                    label,
+                    &mut v,
+                    speed,
+                    if field == "wce_boundary_size" { 0.5 } else { -360.0 },
+                    if field == "wce_boundary_size" { 500.0 } else { 360.0 },
+                ) {
                     self.tile_mut().drafts.insert(key.clone(), v.to_string());
                 }
 
-                if ins.gesture_ended() && let Some(d) = self.tile_mut().drafts.remove(&key).and_then(|d| d.parse::<f32>().ok()) && (d - value).abs() > 1e-4 {
+                if ins.gesture_ended()
+                    && let Some(d) = self.tile_mut().drafts.remove(&key).and_then(|d| d.parse::<f32>().ok())
+                    && (d - value).abs() > 1e-4
+                {
                     let mut s = shape;
-                    if field == "wce_boundary_size" { s.size = d } else { s.turn = d }
+                    if field == "wce_boundary_size" {
+                        s.size = d
+                    } else {
+                        s.turn = d
+                    }
                     apply = Some(s);
                 }
             }
@@ -2219,7 +2394,8 @@ impl TileDocument {
         let doc = self.tile().tscene().doc();
         let els = doc.elements();
         let locked = |e: usize, itself: bool| -> Option<usize> {
-            let mut chain = std::iter::successors(if itself { Some(e) } else { els.get(e)?.parent }, |&p| els.get(p).and_then(|x| x.parent));
+            let mut chain =
+                std::iter::successors(if itself { Some(e) } else { els.get(e)?.parent }, |&p| els.get(p).and_then(|x| x.parent));
             chain.find(|&p| self.is_prefab_reference(p))
         };
 
@@ -2308,7 +2484,14 @@ impl TileDocument {
         }
 
         let attrs = back.iter().map(|(a, _)| a.as_str()).collect::<Vec<_>>();
-        self.push_splice_attrs(format!("Revert the overrides of an item of {key}"), mark, vec![item_of(elem)], vec![item_of(elem)], vec![elem], &attrs);
+        self.push_splice_attrs(
+            format!("Revert the overrides of an item of {key}"),
+            mark,
+            vec![item_of(elem)],
+            vec![item_of(elem)],
+            vec![elem],
+            &attrs,
+        );
         back.len()
     }
 
@@ -2349,14 +2532,17 @@ impl TileDocument {
             self.revert_overrides(e);
         }
 
-        let marks = diffs.into_iter().map(|(a, v)| {
-            let note = match v {
-                Some(v) => format!("Override: the prefab has {v}"),
-                None => "Override: the prefab's item has no such value".to_owned(),
-            };
+        let marks = diffs
+            .into_iter()
+            .map(|(a, v)| {
+                let note = match v {
+                    Some(v) => format!("Override: the prefab has {v}"),
+                    None => "Override: the prefab's item has no such value".to_owned(),
+                };
 
-            (a, note)
-        }).collect::<Vec<_>>();
+                (a, note)
+            })
+            .collect::<Vec<_>>();
         if !marks.is_empty() {
             ins.mark_fields(marks);
         }
@@ -2533,7 +2719,16 @@ impl TileDocument {
                 Placement::None => 0,
             };
 
-            let mut it = PlacementItem { elem: e, mode_old: None, mode_new: None, pos_old: None, pos_new: None, idx_old: code(cur), idx_new: code(mode), pos_old_text: None };
+            let mut it = PlacementItem {
+                elem: e,
+                mode_old: None,
+                mode_new: None,
+                pos_old: None,
+                pos_new: None,
+                idx_old: code(cur),
+                idx_new: code(mode),
+                pos_old_text: None,
+            };
             if cur != mode {
                 it.mode_old = t.tscene().doc().get(e, "surface_mode");
                 it.mode_new = Some(text.to_owned());
@@ -2569,7 +2764,11 @@ impl TileDocument {
         }
 
         let n = items.len();
-        let name = format!("{}{}", if mode == Placement::Landscape { "Landscape placement" } else { "Freeform placement" }, if n == 1 { String::new() } else { format!(" ({n} items)") });
+        let name = format!(
+            "{}{}",
+            if mode == Placement::Landscape { "Landscape placement" } else { "Freeform placement" },
+            if n == 1 { String::new() } else { format!(" ({n} items)") }
+        );
         self.history.push(Box::new(TedPlacementCommand { name, items }));
         n
     }
@@ -2594,7 +2793,13 @@ impl TileDocument {
 
             let code = if cur == Placement::Landscape { 1 } else { 2 };
             items.push(PlacementItem {
-                elem: e, mode_old: None, mode_new: None, pos_old: t.tscene().position(e), pos_new: Some(t.local_for_world_y(e, f64::from(y))), idx_old: code, idx_new: code,
+                elem: e,
+                mode_old: None,
+                mode_new: None,
+                pos_old: t.tscene().position(e),
+                pos_new: Some(t.local_for_world_y(e, f64::from(y))),
+                idx_old: code,
+                idx_new: code,
                 pos_old_text: t.tscene().doc().get(e, "position"),
             });
         }
@@ -2635,7 +2840,13 @@ impl TileDocument {
                 Placement::None => 0,
             };
             items.push(PlacementItem {
-                elem: e, mode_old: None, mode_new: None, pos_old: t.tscene().position(e), pos_new: Some(lp), idx_old: code, idx_new: code,
+                elem: e,
+                mode_old: None,
+                mode_new: None,
+                pos_old: t.tscene().position(e),
+                pos_new: Some(lp),
+                idx_old: code,
+                idx_new: code,
                 pos_old_text: t.tscene().doc().get(e, "position"),
             });
         }
@@ -2654,7 +2865,11 @@ impl TileDocument {
     /// height lines up the freeform ones only (a landscape instance stands on the terrain). One undo entry; how many moved.
     pub fn align(&mut self, elems: &[usize], axis: usize, to: AlignTo) -> usize {
         let t = self.tile();
-        let items = elems.iter().copied().filter(|&e| t.is_instance(e) && !(axis == 1 && t.placement(e) == Placement::Landscape)).collect::<Vec<_>>();
+        let items = elems
+            .iter()
+            .copied()
+            .filter(|&e| t.is_instance(e) && !(axis == 1 && t.placement(e) == Placement::Landscape))
+            .collect::<Vec<_>>();
         if items.len() < 2 {
             return 0;
         }
@@ -2669,11 +2884,14 @@ impl TileDocument {
             AlignTo::First => values[0],
         };
 
-        let moves = items.iter().map(|&e| {
-            let mut p = t.world_position(e).to_arr();
-            p[axis] = v;
-            (e, Float3::new(p[0], p[1], p[2]))
-        }).collect::<Vec<_>>();
+        let moves = items
+            .iter()
+            .map(|&e| {
+                let mut p = t.world_position(e).to_arr();
+                p[axis] = v;
+                (e, Float3::new(p[0], p[1], p[2]))
+            })
+            .collect::<Vec<_>>();
         self.move_instances(&format!("Align {}", ["x", "height", "z"][axis]), &moves)
     }
 
@@ -2693,11 +2911,14 @@ impl TileDocument {
                 by.sort_by(|a, b| a.0.total_cmp(&b.0));
                 let (lo, hi) = (by[0].0, by[by.len() - 1].0);
                 let n = (by.len() - 1) as f32;
-                by.iter().enumerate().map(|(i, &(_, e))| {
-                    let mut p = pos(e).to_arr();
-                    p[axis] = lo + (hi - lo) * i as f32 / n;
-                    (e, Float3::new(p[0], p[1], p[2]))
-                }).collect::<Vec<_>>()
+                by.iter()
+                    .enumerate()
+                    .map(|(i, &(_, e))| {
+                        let mut p = pos(e).to_arr();
+                        p[axis] = lo + (hi - lo) * i as f32 / n;
+                        (e, Float3::new(p[0], p[1], p[2]))
+                    })
+                    .collect::<Vec<_>>()
             }
 
             None => {
@@ -2740,7 +2961,17 @@ impl TileDocument {
         }
 
         let stroke = t.stroke_id;
-        self.history.push(Box::new(BrushStepCommand { kind, x, z, settings, dt, stroke, first: true, moved: vec![], where_: HashMap::new() }));
+        self.history.push(Box::new(BrushStepCommand {
+            kind,
+            x,
+            z,
+            settings,
+            dt,
+            stroke,
+            first: true,
+            moved: vec![],
+            where_: HashMap::new(),
+        }));
         let version = self.history.version();
         self.tile_mut().stroke_version = version;
     }
@@ -2757,12 +2988,36 @@ impl TileDocument {
     /// # Errors
     ///
     /// The tile has no database entry.
-    pub fn set_links(&mut self, name: &str, targets: Vec<wce_formats::tile_entry::TileLinkTarget>, links: Vec<wce_formats::tile_entry::TileLink>, gesture: u64) -> Result<bool, String> {
+    pub fn set_links(
+        &mut self,
+        name: &str,
+        targets: Vec<wce_formats::tile_entry::TileLinkTarget>,
+        links: Vec<wce_formats::tile_entry::TileLink>,
+        gesture: u64,
+    ) -> Result<bool, String> {
         let Some(entry) = self.tile().project.entry.as_ref() else { return Err("the tile has no database entry".to_owned()) };
         let before = (entry.link_targets(), entry.links());
-        let strip_t = |v: &[wce_formats::tile_entry::TileLinkTarget]| v.iter().map(|t| (t.serialise_version, t.tile_set.clone(), t.x, t.y)).collect::<Vec<_>>();
+        let strip_t = |v: &[wce_formats::tile_entry::TileLinkTarget]| {
+            v.iter().map(|t| (t.serialise_version, t.tile_set.clone(), t.x, t.y)).collect::<Vec<_>>()
+        };
         let strip_l = |v: &[wce_formats::tile_entry::TileLink]| {
-            v.iter().map(|l| (l.serialise_version, l.link_set.clone(), l.x, l.y, l.base_x, l.base_y, l.is_entry, l.blend_size, l.no_offline_blend, l.test.clone(), l.has_blend_quad)).collect::<Vec<_>>()
+            v.iter()
+                .map(|l| {
+                    (
+                        l.serialise_version,
+                        l.link_set.clone(),
+                        l.x,
+                        l.y,
+                        l.base_x,
+                        l.base_y,
+                        l.is_entry,
+                        l.blend_size,
+                        l.no_offline_blend,
+                        l.test.clone(),
+                        l.has_blend_quad,
+                    )
+                })
+                .collect::<Vec<_>>()
         };
         if strip_t(&before.0) == strip_t(&targets) && strip_l(&before.1) == strip_l(&links) {
             return Ok(false);
@@ -2785,13 +3040,20 @@ impl TileDocument {
         let before = match v {
             Some(v) => entry.variation_attr(v, attr),
             None => entry.tile_attr(attr),
-        }.unwrap_or_default();
+        }
+        .unwrap_or_default();
         if before == value {
             return Ok(false);
         }
 
         self.end_stroke();
-        self.history.push(Box::new(super::commands::EntryAttrCommand { variation: v, attr: attr.to_owned(), before, after: value.to_owned(), gesture }));
+        self.history.push(Box::new(super::commands::EntryAttrCommand {
+            variation: v,
+            attr: attr.to_owned(),
+            before,
+            after: value.to_owned(),
+            gesture,
+        }));
         Ok(true)
     }
 
@@ -2964,7 +3226,11 @@ impl TileDocument {
 
         let spline = self.is_spline(elem);
         let sc = t.tscene();
-        let closed = if spline { sc.doc().get(elem, "closed").is_some_and(|v| v == "1") } else { sc.doc().get(elem, "polygon_closed").is_none_or(|v| v != "0") };
+        let closed = if spline {
+            sc.doc().get(elem, "closed").is_some_and(|v| v == "1")
+        } else {
+            sc.doc().get(elem, "polygon_closed").is_none_or(|v| v != "0")
+        };
         let mut path = if spline { t.spline_world_curve(elem) } else { t.polygon_world_points(elem) };
 
         // The points' widths (metres), when they have them, at every sample of the curve.
@@ -3135,7 +3401,10 @@ impl TileDocument {
                 self.tile_mut().drafts.insert(drafts_key.clone(), shown);
             }
 
-            if ins.gesture_ended() && let Some(v) = self.tile_mut().drafts.remove(&drafts_key) && v != before {
+            if ins.gesture_ended()
+                && let Some(v) = self.tile_mut().drafts.remove(&drafts_key)
+                && v != before
+            {
                 self.rename(e, &v);
             }
         } else {
@@ -3173,7 +3442,11 @@ impl TileDocument {
         let mut shown = vec!["name", wce_tile::project_files::PREFAB_ATTR];
 
         // A reference's ground has its own rows, above.
-        shown.extend([super::prefab_ground::TERRAIN_ATTR, super::prefab_ground::TERRAIN_OPACITY_ATTR, super::prefab_ground::TERRAIN_FEATHER_ATTR]);
+        shown.extend([
+            super::prefab_ground::TERRAIN_ATTR,
+            super::prefab_ground::TERRAIN_OPACITY_ATTR,
+            super::prefab_ground::TERRAIN_FEATHER_ATTR,
+        ]);
 
         // A stage's group: the Prefab tool's rows (its ground's settings), below.
         shown.extend([wce_tile::prefab_stage::STAGE_ATTR, wce_tile::prefab_stage::NORMALIZE_ATTR, wce_tile::prefab_stage::FEATHER_ATTR]);
@@ -3254,7 +3527,13 @@ impl TileDocument {
         let state = match time {
             Some(t) => {
                 let (amount, stage) = super::fire::fire_at(t);
-                let what = if stage == 1 { "flames" } else if t < super::fire::STAGE_ONE_SECONDS + super::fire::STAGE_TWO_SECONDS { "collapse" } else { "burnt" };
+                let what = if stage == 1 {
+                    "flames"
+                } else if t < super::fire::STAGE_ONE_SECONDS + super::fire::STAGE_TWO_SECONDS {
+                    "collapse"
+                } else {
+                    "burnt"
+                };
                 format!("{t:.0} s: {what} {amount:.2}")
             }
 
@@ -3262,7 +3541,10 @@ impl TileDocument {
         };
 
         // Lucide's play and square (`wce_editor::icons`).
-        match ins.row_buttons(&[("fire_play", "\u{e13c}", "Play the fire", true), ("fire_stop", "\u{e167}", "Stop the fire", time.is_some())], &state) {
+        match ins.row_buttons(
+            &[("fire_play", "\u{e13c}", "Play the fire", true), ("fire_stop", "\u{e167}", "Stop the fire", time.is_some())],
+            &state,
+        ) {
             Some(0) => {
                 let now = self.tile().fire_now();
                 self.tile_mut().fire_start(e, now);
@@ -3411,14 +3693,22 @@ impl TileDocument {
         let category = if tag == "BUILDING_INSTANCE" { t.building_category(&key) } else { None };
         let shape = sc.doc().get(e, "polygon_shape");
         let capture_location = wce_tile::export_as_prop::capture_location_set(sc.doc().get(e, "capture_location").as_deref());
-        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: text.is_some(), capture_location, export_as_prop: t.exports_as_prop(e) };
+        let ctx = RuleContext {
+            category: category.as_deref(),
+            shape: shape.as_deref(),
+            present: text.is_some(),
+            capture_location,
+            export_as_prop: t.exports_as_prop(e),
+        };
         let access = wce_tile::properties::access(prop, &ctx);
         if access == Access::Hidden {
             return;
         }
 
         // What a wall's row does (its tooltip).
-        if tag == super::WALL_SPLINE && let Some(tip) = wce_tile::properties::wall_tip(prop.attr) {
+        if tag == super::WALL_SPLINE
+            && let Some(tip) = wce_tile::properties::wall_tip(prop.attr)
+        {
             ins.hint(tip);
         }
 
@@ -3432,7 +3722,11 @@ impl TileDocument {
         // The ones that have their own handling.
         match prop.kind {
             Kind::Flags => {
-                let (mut vis, mut act, mut drag) = (self.tile().own_flag(e, "OIF_VISIBLE"), self.tile().own_flag(e, "OIF_ACTIVE"), self.tile().own_flag(e, "OIF_DRAGGABLE"));
+                let (mut vis, mut act, mut drag) = (
+                    self.tile().own_flag(e, "OIF_VISIBLE"),
+                    self.tile().own_flag(e, "OIF_ACTIVE"),
+                    self.tile().own_flag(e, "OIF_DRAGGABLE"),
+                );
                 if self.tile().tscene().doc().get(e, "flags").is_none() {
                     return;
                 }
@@ -3557,7 +3851,9 @@ impl TileDocument {
                 self.tile_mut().drafts.insert(drafts_key.clone(), shown);
             }
 
-            if ins.gesture_ended() && let Some(v) = self.tile_mut().drafts.remove(&drafts_key) {
+            if ins.gesture_ended()
+                && let Some(v) = self.tile_mut().drafts.remove(&drafts_key)
+            {
                 new = Some(v);
             }
         }
@@ -3579,7 +3875,13 @@ impl TileDocument {
         let category = if t.tscene().type_of(e) == "BUILDING_INSTANCE" { t.building_category(&key) } else { None };
         let shape = doc.get(e, "polygon_shape");
         let capture_location = wce_tile::export_as_prop::capture_location_set(doc.get(e, "capture_location").as_deref());
-        let ctx = RuleContext { category: category.as_deref(), shape: shape.as_deref(), present: doc.get(e, prop.attr).is_some(), capture_location, export_as_prop: t.exports_as_prop(e) };
+        let ctx = RuleContext {
+            category: category.as_deref(),
+            shape: shape.as_deref(),
+            present: doc.get(e, prop.attr).is_some(),
+            capture_location,
+            export_as_prop: t.exports_as_prop(e),
+        };
         wce_tile::properties::access(prop, &ctx)
     }
 
@@ -3588,7 +3890,12 @@ impl TileDocument {
     /// it on all of them, one undo entry (a drag merges). False when fewer than two of the items are elements.
     pub(crate) fn inspect_elements(&mut self, items: &[SourceRef], ins: &mut dyn Inspector) -> bool {
         let n = self.tile().tscene().doc().elements().len();
-        let mut elems = items.iter().filter(|r| r.doc == self.id() && piece_of(r.item).is_none()).filter_map(|r| elem_of(r.item)).filter(|&e| e < n).collect::<Vec<_>>();
+        let mut elems = items
+            .iter()
+            .filter(|r| r.doc == self.id() && piece_of(r.item).is_none())
+            .filter_map(|r| elem_of(r.item))
+            .filter(|&e| e < n)
+            .collect::<Vec<_>>();
         elems.dedup();
         if elems.len() < 2 {
             return false;
@@ -3612,24 +3919,35 @@ impl TileDocument {
                 break;
             };
 
-            let mine = schema.iter().filter(|p| !excluded(p)).filter_map(|p| {
-                let access = self.prop_access(e, p);
-                (access != Access::Hidden).then_some((*p, access == Access::Edit))
-            }).collect::<Vec<_>>();
+            let mine = schema
+                .iter()
+                .filter(|p| !excluded(p))
+                .filter_map(|p| {
+                    let access = self.prop_access(e, p);
+                    (access != Access::Hidden).then_some((*p, access == Access::Edit))
+                })
+                .collect::<Vec<_>>();
 
             common = Some(match common {
                 None => mine,
-                Some(c) => c.into_iter().filter_map(|(p, edit)| mine.iter().find(|(m, _)| m.attr == p.attr && m.kind == p.kind).map(|(_, e2)| (p, edit && *e2))).collect(),
+                Some(c) => c
+                    .into_iter()
+                    .filter_map(|(p, edit)| mine.iter().find(|(m, _)| m.attr == p.attr && m.kind == p.kind).map(|(_, e2)| (p, edit && *e2)))
+                    .collect(),
             });
         }
 
         // Flags and placement need the attribute in every element (an added one is text the attribute edits cannot take back).
         let doc = self.tile().tscene().doc();
-        let common = common.unwrap_or_default().into_iter().filter(|(p, _)| match p.kind {
-            Kind::Flags => elems.iter().all(|&e| doc.get(e, "flags").is_some()),
-            Kind::Placement => elems.iter().all(|&e| self.tile().is_instance(e) && doc.get(e, "surface_mode").is_some()),
-            _ => true,
-        }).collect::<Vec<_>>();
+        let common = common
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(p, _)| match p.kind {
+                Kind::Flags => elems.iter().all(|&e| doc.get(e, "flags").is_some()),
+                Kind::Placement => elems.iter().all(|&e| self.tile().is_instance(e) && doc.get(e, "surface_mode").is_some()),
+                _ => true,
+            })
+            .collect::<Vec<_>>();
 
         if common.is_empty() {
             ins.text("none", "", "no property in common");
@@ -3699,16 +4017,19 @@ impl TileDocument {
                 let mut on = before;
                 if editable && ins.edit_checks(prop.attr, prop.attr, &["Winter", "Spring", "Summer", "Autumn"], &mut on) {
                     let doc = self.tile().tscene().doc();
-                    let values = elems.iter().map(|&e| {
-                        let mut s = doc.get(e, prop.attr).map_or([true; 4], |v| parse_seasons(&v));
-                        for i in 0..4 {
-                            if on[i] != before[i] {
-                                s[i] = on[i];
+                    let values = elems
+                        .iter()
+                        .map(|&e| {
+                            let mut s = doc.get(e, prop.attr).map_or([true; 4], |v| parse_seasons(&v));
+                            for i in 0..4 {
+                                if on[i] != before[i] {
+                                    s[i] = on[i];
+                                }
                             }
-                        }
 
-                        format_seasons(s)
-                    }).collect::<Vec<_>>();
+                            format_seasons(s)
+                        })
+                        .collect::<Vec<_>>();
                     self.set_property_each(elems, prop, &values, 0);
                 } else if !editable {
                     ins.text(prop.attr, prop.attr, &cur);
@@ -3732,10 +4053,14 @@ impl TileDocument {
 
         let gesture = base ^ (attr_hash(prop.attr) << 4) ^ 0x9;
         let prop = &self.tile().game_choices(prop);
-        let levels = elems.iter().map(|&e| {
-            let key = self.tile().tscene().doc().get(e, "key").unwrap_or_default();
-            i64::from(self.tile().destruction_levels(&key))
-        }).min().unwrap_or(1);
+        let levels = elems
+            .iter()
+            .map(|&e| {
+                let key = self.tile().tscene().doc().get(e, "key").unwrap_or_default();
+                i64::from(self.tile().destruction_levels(&key))
+            })
+            .min()
+            .unwrap_or(1);
         let mut new = edit_value(prop, &cur, text.is_some(), levels, ins);
         if prop.kind == Kind::Text {
             // Typed text is applied when the typing ends (a key edit loads models).
@@ -3745,7 +4070,9 @@ impl TileDocument {
                 self.tile_mut().drafts.insert(drafts_key.clone(), shown);
             }
 
-            if ins.gesture_ended() && let Some(v) = self.tile_mut().drafts.remove(&drafts_key) {
+            if ins.gesture_ended()
+                && let Some(v) = self.tile_mut().drafts.remove(&drafts_key)
+            {
                 new = Some(v);
             }
         }
@@ -3766,10 +4093,13 @@ impl TileDocument {
     /// One of them does not have the property, or it is read-only for it.
     pub fn set_common(&mut self, elems: &[usize], attr: &str, value: &str) -> Result<usize, String> {
         let first = *elems.first().ok_or("nothing selected")?;
-        let prop = wce_tile::properties::schema(self.tile().tscene().type_of(first)).and_then(|s| s.iter().find(|p| p.attr == attr)).copied()
+        let prop = wce_tile::properties::schema(self.tile().tscene().type_of(first))
+            .and_then(|s| s.iter().find(|p| p.attr == attr))
+            .copied()
             .ok_or_else(|| format!("{} has no property {attr}", self.tile().tscene().type_of(first)))?;
         for &e in elems {
-            let has = wce_tile::properties::schema(self.tile().tscene().type_of(e)).is_some_and(|s| s.iter().any(|p| p.attr == attr && p.kind == prop.kind));
+            let has = wce_tile::properties::schema(self.tile().tscene().type_of(e))
+                .is_some_and(|s| s.iter().any(|p| p.attr == attr && p.kind == prop.kind));
             if !has || self.prop_access(e, &prop) != Access::Edit {
                 return Err(format!("element {e} ({}) cannot edit {attr}", self.tile().tscene().type_of(e)));
             }
@@ -3784,7 +4114,11 @@ impl TileDocument {
     /// Sets an attribute of several elements, one undo entry (a text splice; empty: as [`Self::set_attribute`] does with it).
     pub fn set_attribute_all(&mut self, elems: &[usize], attr: &str, value: &str) -> bool {
         let n = self.tile().tscene().doc().elements().len();
-        let todo = elems.iter().copied().filter(|&e| e < n && self.tile().tscene().doc().get(e, attr).as_deref() != Some(value)).collect::<Vec<_>>();
+        let todo = elems
+            .iter()
+            .copied()
+            .filter(|&e| e < n && self.tile().tscene().doc().get(e, attr).as_deref() != Some(value))
+            .collect::<Vec<_>>();
         if todo.is_empty() {
             return true;
         }
@@ -3808,7 +4142,15 @@ impl TileDocument {
 
         // The attributes missing (an empty optional text stays out of the file, as `set_property` keeps it).
         let doc = self.tile().tscene().doc();
-        let missing = pairs.iter().flat_map(|(e, v)| attrs.iter().filter(move |a| doc.get(*e, a).is_none() && !(v.is_empty() && prop.kind == Kind::Text)).map(move |a| (*e, *a, v.clone()))).collect::<Vec<_>>();
+        let missing = pairs
+            .iter()
+            .flat_map(|(e, v)| {
+                attrs
+                    .iter()
+                    .filter(move |a| doc.get(*e, a).is_none() && !(v.is_empty() && prop.kind == Kind::Text))
+                    .map(move |a| (*e, *a, v.clone()))
+            })
+            .collect::<Vec<_>>();
         if !missing.is_empty() {
             let Ok(mark) = self.begin() else { return false };
             for (e, a, v) in &missing {
@@ -3818,16 +4160,35 @@ impl TileDocument {
             let items = missing.iter().map(|(e, _, _)| item_of(*e)).collect::<Vec<_>>();
             let mut touched = missing.iter().map(|(e, _, _)| *e).collect::<Vec<_>>();
             touched.dedup();
-            self.push_splice_attrs(format!("Set {} of {} items", prop.attr, pairs.len()), mark, items.clone(), items, touched, &[prop.attr]);
+            self.push_splice_attrs(
+                format!("Set {} of {} items", prop.attr, pairs.len()),
+                mark,
+                items.clone(),
+                items,
+                touched,
+                &[prop.attr],
+            );
             self.history.break_merge();
         }
 
         let doc = self.tile().tscene().doc();
-        let edits = pairs.iter().filter_map(|(e, v)| {
-            let tag = self.tile().tscene().type_of(*e);
-            let steps = attrs.iter().filter_map(|a| doc.get(*e, a).filter(|old| old != v).map(|old| ((*a).to_owned(), old, v.clone()))).collect::<Vec<_>>();
-            (!steps.is_empty()).then(|| TedAttrCommand { name: String::new(), elem: *e, steps, gesture, rebuild: tag == "BUILDING_INSTANCE" && prop.attr == "key" })
-        }).collect::<Vec<_>>();
+        let edits = pairs
+            .iter()
+            .filter_map(|(e, v)| {
+                let tag = self.tile().tscene().type_of(*e);
+                let steps = attrs
+                    .iter()
+                    .filter_map(|a| doc.get(*e, a).filter(|old| old != v).map(|old| ((*a).to_owned(), old, v.clone())))
+                    .collect::<Vec<_>>();
+                (!steps.is_empty()).then(|| TedAttrCommand {
+                    name: String::new(),
+                    elem: *e,
+                    steps,
+                    gesture,
+                    rebuild: tag == "BUILDING_INSTANCE" && prop.attr == "key",
+                })
+            })
+            .collect::<Vec<_>>();
 
         if edits.is_empty() {
             return true;
@@ -3845,7 +4206,9 @@ impl TileDocument {
             return false;
         }
 
-        let Some(prop) = wce_tile::properties::schema("CivilianShelter").and_then(|s| s.iter().find(|p| p.attr == "target")) else { return false };
+        let Some(prop) = wce_tile::properties::schema("CivilianShelter").and_then(|s| s.iter().find(|p| p.attr == "target")) else {
+            return false;
+        };
         let pw = parent_transform(self.tile().tscene(), elem);
         let v = pw.rotation.transpose() * (scene_point(at, self.tile().unit()) - pw.position);
         self.set_property(elem, prop, &wce_tile::properties::format_vec3([v.x as f32, v.y as f32, v.z as f32]), gesture)
@@ -3858,7 +4221,9 @@ impl TileDocument {
             return false;
         }
 
-        let Some(prop) = wce_tile::properties::schema("POINT_LIGHT_INSTANCE").and_then(|s| s.iter().find(|p| p.attr == "radius")) else { return false };
+        let Some(prop) = wce_tile::properties::schema("POINT_LIGHT_INSTANCE").and_then(|s| s.iter().find(|p| p.attr == "radius")) else {
+            return false;
+        };
         let (lo, hi) = match prop.kind {
             Kind::Slider(lo, hi) => (lo, hi),
             _ => (0.0, f32::MAX),
@@ -3914,7 +4279,13 @@ impl TileDocument {
             Some(h) => {
                 ins.text("height_map", "height map", &format!("{} x {} px", h.width(), h.height()));
                 let found = if p.info.found { "" } else { "  [tile database entry not found]" };
-                let range = format!("{:.2} .. {:.2} m (min {:.3} scale {:.3}){found}", h.min_height(), h.min_height() + h.scale(), p.info.min_height, p.info.scale);
+                let range = format!(
+                    "{:.2} .. {:.2} m (min {:.3} scale {:.3}){found}",
+                    h.min_height(),
+                    h.min_height() + h.scale(),
+                    p.info.min_height,
+                    p.info.scale
+                );
                 ins.text("range", "heights", &range);
                 ins.text("scale", "resolution", &format!("{:.3} m/px, border {:.0} m", p.mpp_x(), p.border_m()));
             }
@@ -3942,25 +4313,34 @@ impl TileDocument {
     pub(crate) fn scale_selected(&mut self, items: &[SourceRef], factor: [f32; 3], gesture: u64) {
         if self.tile().scale_drag.as_ref().is_none_or(|(g, _)| *g != gesture) {
             let t = self.tile();
-            let base = items.iter().filter(|r| r.doc == self.id() && piece_of(r.item).is_none()).filter_map(|r| elem_of(r.item)).filter(|&e| self.scale_prop(e).is_some()).map(|e| {
-                let s = t.tscene().scale(e).map_or([1.0; 3], |s| [s.x as f32, s.y as f32, s.z as f32]);
-                (e, s)
-            }).collect();
+            let base = items
+                .iter()
+                .filter(|r| r.doc == self.id() && piece_of(r.item).is_none())
+                .filter_map(|r| elem_of(r.item))
+                .filter(|&e| self.scale_prop(e).is_some())
+                .map(|e| {
+                    let s = t.tscene().scale(e).map_or([1.0; 3], |s| [s.x as f32, s.y as f32, s.z as f32]);
+                    (e, s)
+                })
+                .collect();
             self.tile_mut().scale_drag = Some((gesture, base));
         }
 
         let Some((_, base)) = self.tile().scale_drag.clone() else { return };
         let uniform = factor.into_iter().max_by(|a, b| (a - 1.0).abs().total_cmp(&(b - 1.0).abs())).unwrap_or(1.0);
-        let scaled = base.iter().filter_map(|(&e, s)| {
-            let prop = self.scale_prop(e)?;
-            let value = match prop.kind {
-                Kind::Vec3 => format_vec3([s[0] * factor[0], s[1] * factor[1], s[2] * factor[2]]),
-                Kind::Slider(lo, hi) => format_float((s[0] * uniform).clamp(lo, hi)),
-                _ => format_float(s[0] * uniform),
-            };
+        let scaled = base
+            .iter()
+            .filter_map(|(&e, s)| {
+                let prop = self.scale_prop(e)?;
+                let value = match prop.kind {
+                    Kind::Vec3 => format_vec3([s[0] * factor[0], s[1] * factor[1], s[2] * factor[2]]),
+                    Kind::Slider(lo, hi) => format_float((s[0] * uniform).clamp(lo, hi)),
+                    _ => format_float(s[0] * uniform),
+                };
 
-            Some((e, prop, value))
-        }).collect::<Vec<_>>();
+                Some((e, prop, value))
+            })
+            .collect::<Vec<_>>();
 
         // One attribute: the types' props differ only in how the value is written, done above.
         let Some(&(_, prop, _)) = scaled.first() else { return };
@@ -4086,7 +4466,12 @@ fn bounding_rectangle(points: Vec<Double3>) -> Vec<Double3> {
         if len > 1e-6 && depth.abs() > 1e-6 {
             let off = Double3::new(nx * depth, 0.0, nz * depth);
             let (c, d) = (b + off, a + off);
-            return vec![a, b, Double3::new(c.x, (b.y + points[2].y) / 2.0, c.z), Double3::new(d.x, (a.y + points[points.len() - 1].y) / 2.0, d.z)];
+            return vec![
+                a,
+                b,
+                Double3::new(c.x, (b.y + points[2].y) / 2.0, c.z),
+                Double3::new(d.x, (a.y + points[points.len() - 1].y) / 2.0, d.z),
+            ];
         }
     }
 
@@ -4122,10 +4507,17 @@ fn side_lines(points: &[Double3], off: f64) -> Vec<Vec<Double3>> {
         if len > 1e-6 { (sx / len, sz / len) } else { b }
     };
 
-    [1.0, -1.0].iter().map(|&s| (0..n).map(|i| {
-        let (nx, nz) = at(i);
-        points[i] + Double3::new(nx * off * s, 0.0, nz * off * s)
-    }).collect()).collect()
+    [1.0, -1.0]
+        .iter()
+        .map(|&s| {
+            (0..n)
+                .map(|i| {
+                    let (nx, nz) = at(i);
+                    points[i] + Double3::new(nx * off * s, 0.0, nz * off * s)
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// The type of an element's text: its start tag's name.
@@ -4178,7 +4570,8 @@ pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> R
         "POINT_LIGHT_INSTANCE" | "WceRefHuman" | "WceRefUnit" | "WceRefShip" => NewInstance::new(kind).position(at),
         "CivilianShelter" => NewInstance::new(kind).position(at).attr("target", vector(at + Double3::new(0.0, 0.0, 10.0 * unit))),
         "CaptureLocationInstance" => {
-            let boundary = new_polygon("CaptureLocationPolygonInstance", circle_points(20.0 * unit), true).attr("radius", wce_tile::ted_scene::format_number(20.0 * unit));
+            let boundary = new_polygon("CaptureLocationPolygonInstance", circle_points(20.0 * unit), true)
+                .attr("radius", wce_tile::ted_scene::format_number(20.0 * unit));
             let mut n = NewInstance::new(kind).position(at);
             n.children.push(element_text(&boundary)?);
             n
@@ -4188,7 +4581,9 @@ pub(crate) fn point_instance(kind: &str, at: Double3, key: &str, unit: f64) -> R
             // TEd's shapes, by name: the Bounding Box (the occupiable rectangle) and the Boundary (the walkable outline) around it.
             let mut n = NewInstance::new(kind).position(at);
             for (name, half) in [("Bounding Box", 10.0), ("Boundary", 12.0)] {
-                n.children.push(element_text(&new_polygon("SIEGE_AI_POLYGON_INSTANCE", square(half), true).attr("polygon_closed", "1").attr("name", name))?);
+                n.children.push(element_text(
+                    &new_polygon("SIEGE_AI_POLYGON_INSTANCE", square(half), true).attr("polygon_closed", "1").attr("name", name),
+                )?);
             }
 
             n
@@ -4284,7 +4679,9 @@ pub(crate) fn edit_value(prop: &Prop, cur: &str, present: bool, levels: i64, ins
                 idx = choices.len() as i32 - 1;
             }
 
-            if ins.edit_choice(field, label, &mut idx, &choices) && let Some((f, _)) = usize::try_from(idx).ok().and_then(|i| table.get(i)) {
+            if ins.edit_choice(field, label, &mut idx, &choices)
+                && let Some((f, _)) = usize::try_from(idx).ok().and_then(|i| table.get(i))
+            {
                 new = Some((*f).to_owned());
             }
         }

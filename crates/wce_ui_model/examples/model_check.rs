@@ -52,7 +52,11 @@ fn main() {
         if m.to_xml() != x.xml {
             let a = m.to_xml();
             let at = a.bytes().zip(x.xml.bytes()).position(|(p, q)| p != q).unwrap_or(0);
-            fail(&format!("tree prints different text at byte {at}: {:?} vs {:?}", &a[at.saturating_sub(40)..(at + 40).min(a.len())], &x.xml[at.saturating_sub(40)..(at + 40).min(x.xml.len())]));
+            fail(&format!(
+                "tree prints different text at byte {at}: {:?} vs {:?}",
+                &a[at.saturating_sub(40)..(at + 40).min(a.len())],
+                &x.xml[at.saturating_sub(40)..(at + 40).min(x.xml.len())]
+            ));
             continue;
         }
         match m.to_bytes() {
@@ -137,7 +141,9 @@ fn main() {
     for path in vfs.list("font/", ".cuf") {
         let Ok(bytes) = vfs.read(path) else { continue };
         match wce_ui_model::cuf::Cuf::parse(&bytes) {
-            Ok(f) if f.glyph_of('A').is_some() && f.layout("Attackers", 400, 40, 1, 1).len() >= 8 && f.line_width("Attackers") > 20 => fonts += 1,
+            Ok(f) if f.glyph_of('A').is_some() && f.layout("Attackers", 400, 40, 1, 1).len() >= 8 && f.line_width("Attackers") > 20 => {
+                fonts += 1
+            }
             Ok(_) => {
                 fails += 1;
                 println!("FAIL {path}: no letters or no layout");
@@ -149,7 +155,9 @@ fn main() {
         }
     }
 
-    println!("{n} files, {entries_total} entries, {draw_total} draw items, {anim_total} animations ({frame_total} frames), {fonts} fonts, {fails} failures");
+    println!(
+        "{n} files, {entries_total} entries, {draw_total} draw items, {anim_total} animations ({frame_total} frames), {fonts} fonts, {fails} failures"
+    );
     if fails > 0 {
         std::process::exit(1);
     }

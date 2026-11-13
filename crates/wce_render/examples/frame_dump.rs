@@ -9,7 +9,7 @@ use wce_d3d11::*;
 use wce_formats::xml_doc::XmlDoc;
 use wce_foundation::clock::Clock;
 use wce_foundation::math::{Float3, Float4x4, rotation_y, translation};
-use wce_render::files::{FolderFiles, Files};
+use wce_render::files::{Files, FolderFiles};
 use wce_render::gpu_adapter::choose_adapter;
 use wce_render::render_target::RenderTarget;
 use wce_render::renderer::{Renderer, View, ViewParams};
@@ -53,13 +53,23 @@ fn add_world(s: &mut RenderScene, models: &[String]) {
         let (a, r) = (k as f32 * 0.7, 60.0 + k as f32 * 9.0);
         let (x, z) = (a.sin() * r, -a.cos() * r);
         let mi = MeshInstance { model: model.clone(), ..Default::default() };
-        s.add(b, translation(Float3::new(x, hill_y(x, z), z)) * rotation_y(a), Payload::MeshInstance(mi), SourceRef { doc: 2, item: k as u64 + 1 });
+        s.add(
+            b,
+            translation(Float3::new(x, hill_y(x, z), z)) * rotation_y(a),
+            Payload::MeshInstance(mi),
+            SourceRef { doc: 2, item: k as u64 + 1 },
+        );
     }
 
     let o = s.add_layer(3, "overlays");
     let mut up = Overlay::default();
     up.line(Float3::new(0.0, 41.0, 0.0), Float3::new(0.0, 110.0, 0.0), overlay_colour(1.0, 0.0, 1.0, 1.0));
-    up.triangle(Float3::new(-20.0, 45.0, 0.0), Float3::new(20.0, 45.0, 0.0), Float3::new(0.0, 70.0, 0.0), overlay_colour(0.2, 0.6, 1.0, 0.5));
+    up.triangle(
+        Float3::new(-20.0, 45.0, 0.0),
+        Float3::new(20.0, 45.0, 0.0),
+        Float3::new(0.0, 70.0, 0.0),
+        overlay_colour(0.2, 0.6, 1.0, 0.5),
+    );
     s.add(o, Float4x4::IDENTITY, Payload::Overlay(up), SourceRef { doc: 3, item: 1 });
     let mut top = Overlay { depth_test: false, ..Default::default() };
     top.box_wire(Float3::new(-30.0, 0.0, -30.0), Float3::new(30.0, 20.0, 30.0), overlay_colour(0.0, 1.0, 0.0, 1.0));
@@ -150,7 +160,18 @@ fn main() {
         let adapter = choose_adapter();
         let (mut dev, mut ctx) = (None, None);
         let driver = if adapter.is_some() { D3D_DRIVER_TYPE_UNKNOWN } else { D3D_DRIVER_TYPE_HARDWARE };
-        D3D11CreateDevice(adapter.as_ref(), driver, HMODULE::default(), 0, Some(&[D3D_FEATURE_LEVEL_11_0]), D3D11_SDK_VERSION as u32, Some(&mut dev), None, Some(&mut ctx)).unwrap();
+        D3D11CreateDevice(
+            adapter.as_ref(),
+            driver,
+            HMODULE::default(),
+            0,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION as u32,
+            Some(&mut dev),
+            None,
+            Some(&mut ctx),
+        )
+        .unwrap();
         (dev.unwrap(), ctx.unwrap())
     };
 
@@ -162,10 +183,32 @@ fn main() {
         let px = t.read_rgba8(&dev, &ctx).unwrap_or_default();
         std::fs::write(out.join(format!("{name}.rgba")), &px).unwrap();
         let d = r.draw_stats();
-        println!("{name} {:016x} items {} batches {} models {} waiting {} views {} inst {} calls {} tris {} cam {}/{} shadow {}/{} patches {}", fnv(&px), d.items, d.batches, d.models,
-            d.waiting_models, d.views, d.instances, d.draw_calls, d.triangles, d.camera_instances, d.camera_triangles, d.shadow_instances, d.shadow_triangles, d.terrain_patches);
-        println!("  luma {:08x} {:08x} sun {:08x} clouds {} wind {:08x} amb {}", r.luma_black().to_bits(), r.luma_white().to_bits(), r.sun_visibility().to_bits(), r.cloud_sprites(),
-            r.wind_direction_degrees(&dry).to_bits(), r.engine_ambient_faces());
+        println!(
+            "{name} {:016x} items {} batches {} models {} waiting {} views {} inst {} calls {} tris {} cam {}/{} shadow {}/{} patches {}",
+            fnv(&px),
+            d.items,
+            d.batches,
+            d.models,
+            d.waiting_models,
+            d.views,
+            d.instances,
+            d.draw_calls,
+            d.triangles,
+            d.camera_instances,
+            d.camera_triangles,
+            d.shadow_instances,
+            d.shadow_triangles,
+            d.terrain_patches
+        );
+        println!(
+            "  luma {:08x} {:08x} sun {:08x} clouds {} wind {:08x} amb {}",
+            r.luma_black().to_bits(),
+            r.luma_white().to_bits(),
+            r.sun_visibility().to_bits(),
+            r.cloud_sprites(),
+            r.wind_direction_degrees(&dry).to_bits(),
+            r.engine_ambient_faces()
+        );
     };
 
     let run = |name: &str, env: &EnvironmentParams, what: u32, cam: Camera, frames: u32| {
@@ -200,8 +243,16 @@ fn main() {
         dump(&r, &t, name);
         if what & 16 != 0 {
             let views = [
-                (View::HdrRaw, "hdr"), (View::Albedo, "albedo"), (View::Normal, "normal"), (View::Specular, "specular"), (View::Depth, "depth"), (View::SkyCube, "skycube"),
-                (View::Bloom, "bloom"), (View::Quarter, "quarter"), (View::ToneMapped, "tonemapped"), (View::Ao, "ao"),
+                (View::HdrRaw, "hdr"),
+                (View::Albedo, "albedo"),
+                (View::Normal, "normal"),
+                (View::Specular, "specular"),
+                (View::Depth, "depth"),
+                (View::SkyCube, "skycube"),
+                (View::Bloom, "bloom"),
+                (View::Quarter, "quarter"),
+                (View::ToneMapped, "tonemapped"),
+                (View::Ao, "ao"),
             ];
 
             for (v, view_name) in views {

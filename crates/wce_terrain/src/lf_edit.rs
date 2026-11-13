@@ -123,7 +123,9 @@ impl LfStroke {
                 let new = match op {
                     LfOp::Raise(d) => cur + d * w,
                     LfOp::Flatten(t) => cur + (t - cur) * w,
-                    LfOp::Noise { amount, scale } => cur + amount * w * fractal_noise(f64::from(x) / scale.max(1.0), f64::from(y) / scale.max(1.0)),
+                    LfOp::Noise { amount, scale } => {
+                        cur + amount * w * fractal_noise(f64::from(x) / scale.max(1.0), f64::from(y) / scale.max(1.0))
+                    }
                     LfOp::Smooth => {
                         let mut sum = 0.0;
                         let mut n = 0.0;
@@ -180,7 +182,9 @@ impl LfStroke {
     /// The stroke's undo record: the pages it touched that changed (none when nothing did).
     pub fn finish(self, field: &PagedU16) -> Option<LfRecord> {
         let rect = self.rect?;
-        let pages: Vec<(u32, Box<[u16]>, Box<[u16]>)> = self.before.into_iter()
+        let pages: Vec<(u32, Box<[u16]>, Box<[u16]>)> = self
+            .before
+            .into_iter()
             .filter_map(|(p, before)| {
                 let after = field.page_at(p);
                 (*before != *after).then_some((p, before, after))
@@ -223,7 +227,8 @@ mod tests {
 
     #[test]
     fn flatten_smooth_and_the_aspect() {
-        let mut f = PagedU16::from_le_rows(64, 64, &(0..64 * 64).flat_map(|i: u32| ((i % 64) as u16 * 100).to_le_bytes()).collect::<Vec<_>>());
+        let mut f =
+            PagedU16::from_le_rows(64, 64, &(0..64 * 64).flat_map(|i: u32| ((i % 64) as u16 * 100).to_le_bytes()).collect::<Vec<_>>());
         let mut s = LfStroke::default();
         for _ in 0..30 {
             s.dab(&mut f, &brush(32.0, 32.0, 6.0), LfOp::Flatten(2000.0));

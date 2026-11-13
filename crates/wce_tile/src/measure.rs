@@ -136,7 +136,9 @@ mod tests {
         let m = measure(&[[0.0, 0.0, 0.0], [3.0, 0.0, 4.0], [3.0, 0.0, 14.0]], &|_, _| 0.0);
         assert_eq!(m.stretches.len(), 2);
         assert!(close(m.stretches[0].straight, 5.0) && close(m.stretches[0].horizontal, 5.0) && close(m.stretches[0].ground, 5.0));
-        assert!(close(m.total.straight, 15.0) && close(m.total.horizontal, 15.0) && close(m.total.ground, 15.0) && close(m.total.rise, 0.0));
+        assert!(
+            close(m.total.straight, 15.0) && close(m.total.horizontal, 15.0) && close(m.total.ground, 15.0) && close(m.total.rise, 0.0)
+        );
     }
 
     #[test]

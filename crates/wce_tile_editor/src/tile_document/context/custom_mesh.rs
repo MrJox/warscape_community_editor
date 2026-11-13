@@ -47,7 +47,11 @@ pub fn from_cs2(cs2: &Cas2File, albedo: String, id: u64, depth: f32) -> Result<C
                 let (p, n) = (m.positions[c], m.normals.get(c).copied().unwrap_or([0.0, 1.0, 0.0]));
                 let weight = m.colours.get(c).map_or(0.0, |c| c[3]);
                 let uv = m.uvs.get(c).and_then(|u| u.first()).map_or([0.0, 0.0], |u| [u[0], u[1]]);
-                let v = CustomTerrainVertex { position: p, normal: [unorm(n[2]), unorm(n[1]), unorm(n[0]), (weight.clamp(0.0, 1.0) * 255.0).round() as u8], uv };
+                let v = CustomTerrainVertex {
+                    position: p,
+                    normal: [unorm(n[2]), unorm(n[1]), unorm(n[0]), (weight.clamp(0.0, 1.0) * 255.0).round() as u8],
+                    uv,
+                };
                 // Shared by the vertices whose drawn bytes are the same. BOB keeps a few more apart (3501 against 3482 in the LOD 0 of
                 // 2x2_lb_rb/aa), by its tangent bytes (N1), which no pixel shader reads.
                 let key = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits(), u32::from_le_bytes(v.normal), uv[0].to_bits(), uv[1].to_bits()];
@@ -80,7 +84,13 @@ fn half(bits: u16) -> f32 {
     let (sign, exp, frac) = (if bits & 0x8000 == 0 { 1.0 } else { -1.0 }, i32::from((bits >> 10) & 0x1f), f32::from(bits & 0x3ff));
     match exp {
         0 => sign * frac * 2f32.powi(-24),
-        31 => if frac == 0.0 { sign * f32::INFINITY } else { f32::NAN },
+        31 => {
+            if frac == 0.0 {
+                sign * f32::INFINITY
+            } else {
+                f32::NAN
+            }
+        }
         _ => sign * (1.0 + frac / 1024.0) * 2f32.powi(exp - 15),
     }
 }

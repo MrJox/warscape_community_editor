@@ -47,14 +47,24 @@ pub struct FillInputs {
 impl FillInputs {
     /// The model's tile map, climates, explicit tiles and LF as they are (none without a tile map).
     pub fn of(m: &wce_terrain::MapModel) -> Option<Self> {
-        let lf_of = |m: &wce_terrain::MapModel| m.lf(LfRole::Land).map(|f| {
-            // The model's own samples (shared: no copy).
-            LfField::shared(f.get().grid().clone())
-        });
+        let lf_of = |m: &wce_terrain::MapModel| {
+            m.lf(LfRole::Land).map(|f| {
+                // The model's own samples (shared: no copy).
+                LfField::shared(f.get().grid().clone())
+            })
+        };
 
         if let Some(list) = m.tile_list.as_ref().filter(|_| m.built) {
             let l = list.get();
-            return Some(Self { w: l.battle_size[0], h: l.battle_size[1], tiles: vec![], climate: None, explicit: None, lf: lf_of(m), list: Some(l.clone()) });
+            return Some(Self {
+                w: l.battle_size[0],
+                h: l.battle_size[1],
+                tiles: vec![],
+                climate: None,
+                explicit: None,
+                lf: lf_of(m),
+                list: Some(l.clone()),
+            });
         }
 
         let tiles = m.layer(&LayerRole::TileMap).map(|l| l.get())?;
@@ -73,7 +83,13 @@ impl FillInputs {
         // The LF from `self.lf`, read by the fill's LF step under its lock (`place_images`).
         let lf = None;
         let images = MapImages {
-            width: self.w, height: self.h, tile_map: &self.tiles, climate_map: self.climate.as_deref(), explicit_tiles: self.explicit.as_deref(), lf: None, lf_u16: lf,
+            width: self.w,
+            height: self.h,
+            tile_map: &self.tiles,
+            climate_map: self.climate.as_deref(),
+            explicit_tiles: self.explicit.as_deref(),
+            lf: None,
+            lf_u16: lf,
             // The header only: the placements are the same.
             campaign: false,
         };
@@ -106,15 +122,24 @@ pub struct Refill {
 
 /// A cell layer's colours, row by row (RGB).
 fn rgb(l: &wce_terrain::cells::CellLayer) -> Vec<[u8; 3]> {
-    l.cells().iter().map(|&i| {
-        let c = l.palette()[usize::from(i)];
-        [c[0], c[1], c[2]]
-    }).collect()
+    l.cells()
+        .iter()
+        .map(|&i| {
+            let c = l.palette()[usize::from(i)];
+            [c[0], c[1], c[2]]
+        })
+        .collect()
 }
 
 /// A placement as the comparison of two fills sees it.
 fn same(a: &MapPlacement, b: &MapPlacement) -> bool {
-    a.location == b.location && a.variation == b.variation && a.x == b.x && a.y == b.y && a.rotation == b.rotation && a.flipped == b.flipped && a.climate == b.climate
+    a.location == b.location
+        && a.variation == b.variation
+        && a.x == b.x
+        && a.y == b.y
+        && a.rotation == b.rotation
+        && a.flipped == b.flipped
+        && a.climate == b.climate
 }
 
 /// The chunks to build again after a fill: those whose placements (by origin cell) differ, and every chunk the old and new placements of
@@ -130,14 +155,24 @@ fn changed_chunks(old: &PlacedMap, new: &PlacedMap) -> Vec<ChunkKey> {
     };
 
     let (a, b) = (by_chunk(old), by_chunk(new));
-    let differ: Vec<ChunkKey> = a.keys().chain(b.keys()).copied().filter(|k| {
-        let (pa, pb) = (a.get(k).map_or(&[][..], Vec::as_slice), b.get(k).map_or(&[][..], Vec::as_slice));
-        pa.len() != pb.len() || pa.iter().zip(pb).any(|(&i, &j)| !same(&old.placements[i], &new.placements[j]))
-    }).collect();
+    let differ: Vec<ChunkKey> = a
+        .keys()
+        .chain(b.keys())
+        .copied()
+        .filter(|k| {
+            let (pa, pb) = (a.get(k).map_or(&[][..], Vec::as_slice), b.get(k).map_or(&[][..], Vec::as_slice));
+            pa.len() != pb.len() || pa.iter().zip(pb).any(|(&i, &j)| !same(&old.placements[i], &new.placements[j]))
+        })
+        .collect();
 
     let mut out = differ.clone();
     for k in &differ {
-        let rects = a.get(k).into_iter().flatten().map(|&i| old.placements[i].rect()).chain(b.get(k).into_iter().flatten().map(|&j| new.placements[j].rect()));
+        let rects = a
+            .get(k)
+            .into_iter()
+            .flatten()
+            .map(|&i| old.placements[i].rect())
+            .chain(b.get(k).into_iter().flatten().map(|&j| new.placements[j].rect()));
         for r in rects {
             for cy in r[1].div_euclid(CHUNK)..=(r[3] - 1).div_euclid(CHUNK) {
                 for cx in r[0].div_euclid(CHUNK)..=(r[2] - 1).div_euclid(CHUNK) {
@@ -182,7 +217,8 @@ impl Refill {
         }
 
         let Some(fill) = d.model().and_then(FillInputs::of) else { return false };
-        let inputs = Inputs { doc, name: d.placed.name.clone(), db: d.db.clone(), fill, old: d.placed.clone(), frame, roads: d.start_roads() };
+        let inputs =
+            Inputs { doc, name: d.placed.name.clone(), db: d.db.clone(), fill, old: d.placed.clone(), frame, roads: d.start_roads() };
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let _ = tx.send(run(inputs));
@@ -208,13 +244,29 @@ mod tests {
     use super::*;
 
     fn p(x: i32, y: i32, loc: &str) -> MapPlacement {
-        MapPlacement { location: loc.to_owned(), variation: "aa".to_owned(), x, y, w: 1, h: 1, rotation: 0x10, flipped: false, climate: 0, any_variation: false }
+        MapPlacement {
+            location: loc.to_owned(),
+            variation: "aa".to_owned(),
+            x,
+            y,
+            w: 1,
+            h: 1,
+            rotation: 0x10,
+            flipped: false,
+            climate: 0,
+            any_variation: false,
+        }
     }
 
     #[test]
     fn only_the_chunks_that_differ() {
         let old = PlacedMap { width: 64, height: 64, placements: vec![p(1, 1, "a"), p(9, 1, "b"), p(17, 1, "c")], ..Default::default() };
-        let new = PlacedMap { width: 64, height: 64, placements: vec![p(1, 1, "a"), p(9, 1, "x"), p(17, 1, "c"), p(30, 30, "d")], ..Default::default() };
+        let new = PlacedMap {
+            width: 64,
+            height: 64,
+            placements: vec![p(1, 1, "a"), p(9, 1, "x"), p(17, 1, "c"), p(30, 30, "d")],
+            ..Default::default()
+        };
         assert_eq!(changed_chunks(&old, &new), vec![(1, 0), (3, 3)]);
 
         // A 12 x 12 tile at (14, 2) reaches into the chunks to its right and below.

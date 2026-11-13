@@ -76,10 +76,7 @@ pub fn parse_curves(text: &str) -> BTreeMap<String, VfxCurve> {
         let parts = getline_split(curve, ';');
         let Some(head) = parts.first() else { continue };
         let name = head.split(',').next().unwrap_or_default().to_owned();
-        let mut keys = parts[1..].iter()
-            .filter_map(|key| key.split_once(','))
-            .map(|(t, value)| (atof(t), atof(value)))
-            .collect::<Vec<_>>();
+        let mut keys = parts[1..].iter().filter_map(|key| key.split_once(',')).map(|(t, value)| (atof(t), atof(value))).collect::<Vec<_>>();
 
         keys.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         out.insert(name, VfxCurve { keys });
@@ -124,7 +121,6 @@ pub struct VfxProps {
 }
 
 impl VfxProps {
-
     pub fn find(&self, name: &str) -> Option<&VfxProp> {
         self.props.get(name)
     }
@@ -290,7 +286,6 @@ pub struct VfxFile {
 }
 
 impl VfxFile {
-
     pub fn camera_following(&self) -> bool {
         self.vfx_attrs.get("camera_following").is_some_and(|value| truthy(value))
     }
@@ -425,19 +420,30 @@ pub fn parse_vfx(doc: &XmlDoc) -> VfxFile {
                 }
 
                 if let Some(list) = child(doc, r, "behaviour_chains") {
-                    f.chains.extend(els[list].children.iter().filter(|&&c| els[c].name == "behaviour_chain").map(|&c| VfxChain {
-                        id: text(c, "id"),
-                        modifiers: els[c].children.iter().filter(|&&m| els[m].name == "modifier").map(|&m| VfxModifier {
-                            fragment: text(m, "fragment"),
-                            props: read_props(doc, m),
-                        }).collect(),
+                    f.chains.extend(els[list].children.iter().filter(|&&c| els[c].name == "behaviour_chain").map(|&c| {
+                        VfxChain {
+                            id: text(c, "id"),
+                            modifiers: els[c]
+                                .children
+                                .iter()
+                                .filter(|&&m| els[m].name == "modifier")
+                                .map(|&m| VfxModifier { fragment: text(m, "fragment"), props: read_props(doc, m) })
+                                .collect(),
+                        }
                     }));
                 }
 
                 if let Some(list) = child(doc, r, "effect_render_stacks") {
                     for &s in els[list].children.iter().filter(|&&s| els[s].name == "effect_render_stack") {
-                        let ids = |name: &str| child(doc, s, name).map(|list| els[list].children.iter().map(|&e| text(e, "id")).collect()).unwrap_or_default();
-                        let mut stack = VfxStack { id: text(s, "id"), emitters: ids("emitters_selected"), chains: ids("behaviour_chains_selected"), ..Default::default() };
+                        let ids = |name: &str| {
+                            child(doc, s, name).map(|list| els[list].children.iter().map(|&e| text(e, "id")).collect()).unwrap_or_default()
+                        };
+                        let mut stack = VfxStack {
+                            id: text(s, "id"),
+                            emitters: ids("emitters_selected"),
+                            chains: ids("behaviour_chains_selected"),
+                            ..Default::default()
+                        };
                         if let Some(rp) = child(doc, s, "render_params") {
                             stack.scene_view_type = num(doc.get(rp, "scene_view_type"), 0.0) as i32;
                             stack.cast_shadows = truthy(&doc.get(rp, "cast_shadows").unwrap_or_else(|| "false".to_owned()));
@@ -460,17 +466,32 @@ pub fn parse_vfx(doc: &XmlDoc) -> VfxFile {
                         pos: [n("pos_x", 0.0), n("pos_y", 0.0), n("pos_z", 0.0)],
                         start_time: n("start_time", 0.0),
                         infinite_life: truthy(&doc.get(v, "infinite_life").unwrap_or_else(|| "true".to_owned())),
-                        emitters: els[v].children.iter().filter(|&&e| els[e].name == "emitter").map(|&e| {
-                            let n = |name: &str, default: f32| num(doc.get(e, name), default);
-                            VfxRefEmitter {
-                                name: text(e, "name"),
-                                enable: truthy(&doc.get(e, "enable").unwrap_or_else(|| "true".to_owned())),
-                                tint_min: std::array::from_fn(|k| n(&format!("tint_min_{}", ['r', 'g', 'b', 'a'][k]), n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0))),
-                                tint_max: std::array::from_fn(|k| n(&format!("tint_max_{}", ['r', 'g', 'b', 'a'][k]), n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0))),
-                                particle_lifetime_bias: [n("particle_lifetime_bias_min", 0.0), n("particle_lifetime_bias_max", 0.0)],
-                                emitter_lifetime_bias: [n("emitter_lifetime_bias_min", 0.0), n("emitter_lifetime_bias_max", 0.0)],
-                            }
-                        }).collect(),
+                        emitters: els[v]
+                            .children
+                            .iter()
+                            .filter(|&&e| els[e].name == "emitter")
+                            .map(|&e| {
+                                let n = |name: &str, default: f32| num(doc.get(e, name), default);
+                                VfxRefEmitter {
+                                    name: text(e, "name"),
+                                    enable: truthy(&doc.get(e, "enable").unwrap_or_else(|| "true".to_owned())),
+                                    tint_min: std::array::from_fn(|k| {
+                                        n(
+                                            &format!("tint_min_{}", ['r', 'g', 'b', 'a'][k]),
+                                            n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0),
+                                        )
+                                    }),
+                                    tint_max: std::array::from_fn(|k| {
+                                        n(
+                                            &format!("tint_max_{}", ['r', 'g', 'b', 'a'][k]),
+                                            n(&format!("tint_{}", ['r', 'g', 'b', 'a'][k]), 1.0),
+                                        )
+                                    }),
+                                    particle_lifetime_bias: [n("particle_lifetime_bias_min", 0.0), n("particle_lifetime_bias_max", 0.0)],
+                                    emitter_lifetime_bias: [n("emitter_lifetime_bias_min", 0.0), n("emitter_lifetime_bias_max", 0.0)],
+                                }
+                            })
+                            .collect(),
                     });
                 }
             }

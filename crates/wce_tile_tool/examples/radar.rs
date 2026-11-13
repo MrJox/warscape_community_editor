@@ -25,7 +25,12 @@ fn main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mods = flag(&args, "--mods");
     let kit = flag(&args, "--kit").map(PathBuf::from);
-    let positional: Vec<&String> = args.iter().enumerate().filter(|(i, a)| !a.starts_with("--") && (*i == 0 || !args[i - 1].starts_with("--"))).map(|(_, a)| a).collect();
+    let positional: Vec<&String> = args
+        .iter()
+        .enumerate()
+        .filter(|(i, a)| !a.starts_with("--") && (*i == 0 || !args[i - 1].starts_with("--")))
+        .map(|(_, a)| a)
+        .collect();
     let [game, out, dirs @ ..] = positional.as_slice() else {
         return Err("usage: radar <game folder> <out folder> <tile folder>... [--mods a.pack;b.pack] [--kit <kit>]".to_owned());
     };
@@ -83,16 +88,26 @@ fn main() -> Result<(), String> {
         let t3 = Instant::now();
         println!(
             "{name}: {} trees, {} buildings, {} wall pieces, {} streets, {} squares, {} cliffs{}{}{}; stage B {:.1} s, input {:.1} s, drawn {:.1} s",
-            input.trees.len(), input.buildings.len(), input.walls.len(), input.streets.len(), input.plazas.len(), input.cliffs.len(),
-            if input.sea { ", sea" } else { "" }, if input.water.is_some() { ", water" } else { "" }, if input.roads.is_some() { ", roads" } else { "" },
-            (t1 - t0).as_secs_f64(), (t2 - t1).as_secs_f64(), (t3 - t2).as_secs_f64(),
+            input.trees.len(),
+            input.buildings.len(),
+            input.walls.len(),
+            input.streets.len(),
+            input.plazas.len(),
+            input.cliffs.len(),
+            if input.sea { ", sea" } else { "" },
+            if input.water.is_some() { ", water" } else { "" },
+            if input.roads.is_some() { ", roads" } else { "" },
+            (t1 - t0).as_secs_f64(),
+            (t2 - t1).as_secs_f64(),
+            (t3 - t2).as_secs_f64(),
         );
 
         // `$RADAR_PROBE=x0,x1,z`: the ground's heights along a line, every metre.
         if let Ok(probe) = std::env::var("RADAR_PROBE") {
             let v: Vec<f64> = probe.split(',').filter_map(|t| t.parse().ok()).collect();
             if let [x0, x1, z] = v[..] {
-                let line: Vec<String> = (x0 as i64..=x1 as i64).map(|x| format!("{x}:{:.2}", doc.project().height_at(x as f64, z))).collect();
+                let line: Vec<String> =
+                    (x0 as i64..=x1 as i64).map(|x| format!("{x}:{:.2}", doc.project().height_at(x as f64, z))).collect();
                 println!("  z {z}: {}", line.join(" "));
             }
         }
@@ -112,11 +127,26 @@ fn main() -> Result<(), String> {
                     let v = (deg / 45.0 * 255.0).min(255.0) as u8;
                     let k = (j * w + i) * 4;
                     let wet = input.water.as_ref().map_or(0.0, |f| f.sample(x, z));
-                    px[k..k + 3].copy_from_slice(&if wet > 0.0 { [0, (60.0 + wet * 60.0).min(255.0) as u8, 0] } else if y < 0.0 { [v / 2, v / 2, 160] } else { [v, v, v] });
+                    px[k..k + 3].copy_from_slice(&if wet > 0.0 {
+                        [0, (60.0 + wet * 60.0).min(255.0) as u8, 0]
+                    } else if y < 0.0 {
+                        [v / 2, v / 2, 160]
+                    } else {
+                        [v, v, v]
+                    });
                 }
             }
-            let png = PngFile { width: w as u32, height: h as u32, bit_depth: 8, color_type: 6, pixels: px, pixels_edited: true, ..PngFile::default() };
-            std::fs::write(Path::new(out).join(format!("{name}_slope.png")), png.encode().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            let png = PngFile {
+                width: w as u32,
+                height: h as u32,
+                bit_depth: 8,
+                color_type: 6,
+                pixels: px,
+                pixels_edited: true,
+                ..PngFile::default()
+            };
+            std::fs::write(Path::new(out).join(format!("{name}_slope.png")), png.encode().map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
         }
 
         if std::env::var("RADAR_TREE_DUMP").is_ok() {
@@ -131,14 +161,35 @@ fn main() -> Result<(), String> {
                     px[k..k + 3].copy_from_slice(&[0, 90, 0]);
                 }
             }
-            let png = PngFile { width: w as u32, height: h as u32, bit_depth: 8, color_type: 6, pixels: px, pixels_edited: true, ..PngFile::default() };
-            std::fs::write(Path::new(out).join(format!("{name}_trees.png")), png.encode().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            let png = PngFile {
+                width: w as u32,
+                height: h as u32,
+                bit_depth: 8,
+                color_type: 6,
+                pixels: px,
+                pixels_edited: true,
+                ..PngFile::default()
+            };
+            std::fs::write(Path::new(out).join(format!("{name}_trees.png")), png.encode().map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
         }
 
         if std::env::var("RADAR_DEBUG").is_ok() {
             let t = doc.tile();
-            println!("  area {:?}, extent {} x {}, unit {}, border {}", input.area, t.extent_x(), t.extent_z(), t.unit(), doc.project().border_m());
-            println!("  height field {} x {} over {:?}", input.height.w, input.height.h, [input.height.x0, input.height.z0, input.height.w_m, input.height.h_m]);
+            println!(
+                "  area {:?}, extent {} x {}, unit {}, border {}",
+                input.area,
+                t.extent_x(),
+                t.extent_z(),
+                t.unit(),
+                doc.project().border_m()
+            );
+            println!(
+                "  height field {} x {} over {:?}",
+                input.height.w,
+                input.height.h,
+                [input.height.x0, input.height.z0, input.height.w_m, input.height.h_m]
+            );
             for b in input.buildings.iter().take(3) {
                 println!("  building {} polygons, first {:?}", b.polys.len(), b.polys.first());
             }
@@ -150,7 +201,15 @@ fn main() -> Result<(), String> {
 
         let jpeg = wce_tile_tool::minimap_panel::radar_jpeg(img.size, &img.rgba)?;
         std::fs::write(Path::new(out).join(format!("{name}_radar.jpg")), jpeg).map_err(|e| e.to_string())?;
-        let png = PngFile { width: img.size, height: img.size, bit_depth: 8, color_type: 6, pixels: img.rgba, pixels_edited: true, ..PngFile::default() };
+        let png = PngFile {
+            width: img.size,
+            height: img.size,
+            bit_depth: 8,
+            color_type: 6,
+            pixels: img.rgba,
+            pixels_edited: true,
+            ..PngFile::default()
+        };
         let bytes = png.encode().map_err(|e| e.to_string())?;
         std::fs::write(Path::new(out).join(format!("{name}_radar.png")), bytes).map_err(|e| e.to_string())?;
         let ca = dir.join("loading_screen_radar.jpg");

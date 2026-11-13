@@ -197,8 +197,16 @@ pub struct PlacedMap {
 impl Default for PlacedMap {
     fn default() -> Self {
         Self {
-            name: String::new(), lf_height: LF_HEIGHT, vertical_offset: VERTICAL_OFFSET, width: 0, height: 0, placements: vec![], lf: None, sea_lf: None,
-            unknown: vec![], climates: vec![],
+            name: String::new(),
+            lf_height: LF_HEIGHT,
+            vertical_offset: VERTICAL_OFFSET,
+            width: 0,
+            height: 0,
+            placements: vec![],
+            lf: None,
+            sea_lf: None,
+            unknown: vec![],
+            climates: vec![],
         }
     }
 }
@@ -232,7 +240,12 @@ impl Sizes {
     fn new(db: &TileDatabase) -> Self {
         Self {
             by_location: db.tiles.iter().map(|t| (norm(&t.location), (t.width, t.height))).collect(),
-            variations: db.tiles.iter().filter(|t| !t.variations.is_empty()).map(|t| (norm(&t.location), t.variations.iter().map(|v| v.location.clone()).collect())).collect(),
+            variations: db
+                .tiles
+                .iter()
+                .filter(|t| !t.variations.is_empty())
+                .map(|t| (norm(&t.location), t.variations.iter().map(|v| v.location.clone()).collect()))
+                .collect(),
             names: Default::default(),
         }
     }
@@ -243,7 +256,16 @@ impl PlacedMap {
     /// tile list's byte 12, its tile map's cell byte 12: the game clamps it to the tile's variations, fn 0x115b9940); a tile named alone
     /// without one takes its first variation.
     #[allow(clippy::too_many_arguments)]
-    fn placement(&mut self, sizes: &mut Sizes, name: &str, (x, y): (i32, i32), flags: u16, flipped: bool, climate: u8, variation: Option<u8>) -> MapPlacement {
+    fn placement(
+        &mut self,
+        sizes: &mut Sizes,
+        name: &str,
+        (x, y): (i32, i32),
+        flags: u16,
+        flipped: bool,
+        climate: u8,
+        variation: Option<u8>,
+    ) -> MapPlacement {
         if !sizes.names.contains_key(name) {
             let ((location, first), any) = match sizes.variations.get(&norm(name)) {
                 Some(v) => ((name.replace('/', "\\"), v[0].clone()), true),
@@ -288,7 +310,14 @@ impl PlacedMap {
 
     /// From a battle field (`terrain.tile_list`, or the fill of a kit map); not its geometry-only placements ([`Self::GEOMETRY_ONLY`]).
     pub fn from_tile_list(name: &str, list: &TileList, db: &TileDatabase, lf: Option<LfField>) -> Self {
-        let mut m = Self { name: name.to_owned(), width: list.battle_size[0], height: list.battle_size[1], lf, climates: climate_names(db), ..Default::default() };
+        let mut m = Self {
+            name: name.to_owned(),
+            width: list.battle_size[0],
+            height: list.battle_size[1],
+            lf,
+            climates: climate_names(db),
+            ..Default::default()
+        };
         let mut sizes = Sizes::new(db);
         for p in list.placements.iter().filter(|p| p.flags & 0x700 != Self::GEOMETRY_ONLY) {
             let n = list.names.get(p.name).map_or("", String::as_str);
@@ -304,13 +333,22 @@ impl PlacedMap {
     /// From a saved tile map (the campaign's `tile_map.tiles`): the origin cells of both layers, not the geometry-only ones
     /// ([`Self::GEOMETRY_ONLY`]).
     pub fn from_tile_map(name: &str, map: &TileMap, db: &TileDatabase, lf: Option<LfField>) -> Self {
-        let mut m = Self { name: name.to_owned(), width: map.width, height: map.height, lf, climates: climate_names(db), ..Default::default() };
+        let mut m =
+            Self { name: name.to_owned(), width: map.width, height: map.height, lf, climates: climate_names(db), ..Default::default() };
         let mut sizes = Sizes::new(db);
         for layer in &map.layers {
             for c in layer.iter().filter(|c| c.index > 0 && c.flags & 0x700 != Self::GEOMETRY_ONLY) {
                 let n = map.names.get(c.index as usize - 1).map_or("", String::as_str);
                 let (climate, variation) = if map.version < 8 { (u8::MAX, Some(c.climate)) } else { (c.climate, None) };
-                let pl = m.placement(&mut sizes, n, (i32::from(c.origin[0]), i32::from(c.origin[1])), c.flags, c.flipped != 0, climate, variation);
+                let pl = m.placement(
+                    &mut sizes,
+                    n,
+                    (i32::from(c.origin[0]), i32::from(c.origin[1])),
+                    c.flags,
+                    c.flipped != 0,
+                    climate,
+                    variation,
+                );
                 m.placements.push(pl);
             }
         }
@@ -340,7 +378,9 @@ impl PlacedMap {
 
     /// The LF height in metres at a map point in cells (0 without a field).
     pub fn lf_metres(&self, x: f64, y: f64) -> f64 {
-        self.lf.as_ref().map_or(0.0, |f| (f.metres(x, y, self.width, self.height) + VERTICAL_OFFSET) / LF_HEIGHT * self.lf_height - self.vertical_offset)
+        self.lf.as_ref().map_or(0.0, |f| {
+            (f.metres(x, y, self.width, self.height) + VERTICAL_OFFSET) / LF_HEIGHT * self.lf_height - self.vertical_offset
+        })
     }
 
     /// The median and range (max - min) of the LF over a cell rectangle, sampled every quarter cell. The median: the campaign LF is flat
@@ -387,13 +427,28 @@ pub struct Context {
 }
 
 impl PlacedMap {
-
     /// The tiles within `radius` cells of the open tile (`w` x `h` cells) placed at the spot: every placement that overlaps the window and not
     /// the open tile's own cells.
     pub fn context(&self, spot: &Spot, w: i32, h: i32, radius: i32) -> Context {
-        let me = MapPlacement { location: String::new(), variation: String::new(), x: spot.x, y: spot.y, w, h, rotation: spot.rotation, flipped: false, climate: 0, any_variation: false };
+        let me = MapPlacement {
+            location: String::new(),
+            variation: String::new(),
+            x: spot.x,
+            y: spot.y,
+            w,
+            h,
+            rotation: spot.rotation,
+            flipped: false,
+            climate: 0,
+            any_variation: false,
+        };
         let r = me.rect();
-        let window = [(r[0] - radius).max(0), (r[1] - radius).max(0), (r[2] + radius).min(self.width as i32), (r[3] + radius).min(self.height as i32)];
+        let window = [
+            (r[0] - radius).max(0),
+            (r[1] - radius).max(0),
+            (r[2] + radius).min(self.width as i32),
+            (r[3] + radius).min(self.height as i32),
+        ];
 
         let inside = self.in_rect(window);
         let to_map = me.to_map();
@@ -413,7 +468,6 @@ impl PlacedMap {
 }
 
 impl Context {
-
     /// The cells of `area` that neither a neighbour nor one of the `covered` rectangles (the open tile's, ...) covers, as rectangles (x0, y0, x1,
     /// y1 exclusive): rows of uncovered cells cut into runs, a run grown down while the rows below have the same run free.
     pub fn uncovered(&self, map: &PlacedMap, covered: &[[i32; 4]], area: [i32; 4]) -> Vec<[i32; 4]> {
@@ -474,7 +528,18 @@ mod tests {
     use super::*;
 
     fn placed(x: i32, y: i32, w: i32, h: i32, rotation: u16) -> MapPlacement {
-        MapPlacement { location: String::new(), variation: String::new(), x, y, w, h, rotation, flipped: false, climate: 0, any_variation: false }
+        MapPlacement {
+            location: String::new(),
+            variation: String::new(),
+            x,
+            y,
+            w,
+            h,
+            rotation,
+            flipped: false,
+            climate: 0,
+            any_variation: false,
+        }
     }
 
     #[test]

@@ -6,7 +6,9 @@ use wce_foundation::math::{Float3, Float4x4, translation};
 use wce_scene::clouds::{CloudField, cloud_texture, generate_clouds};
 use wce_scene::environment::{blend_environments, build_scurve, colour_matrix, parse_graphics_options, read_environment};
 use wce_scene::half::f32_to_f16;
-use wce_scene::render_scene::{Kind, LfMap, MeshInstance, Overlay, Payload, RenderScene, SkinnedInstance, SourceRef, StructureChange, Terrain, overlay_colour};
+use wce_scene::render_scene::{
+    Kind, LfMap, MeshInstance, Overlay, Payload, RenderScene, SkinnedInstance, SourceRef, StructureChange, Terrain, overlay_colour,
+};
 
 const ENVIRONMENT: &str = "<ENVIRONMENT>\
 <LIGHTING sun_direction_azimuth='90' sun_direction_elevation='0' sun_colour='rgb(1,0.5,0.25)' use_custom_ambient_cube_colours='false'/>\
@@ -117,7 +119,10 @@ fn render_scene() {
         faction_scale: 0.0,
     };
 
-    let (soldier, other) = (scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), source), scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), source));
+    let (soldier, other) = (
+        scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), source),
+        scene.add(layer, Float4x4::IDENTITY, Payload::CameraRig(Default::default()), source),
+    );
     scene.update_pose(soldier, Float4x4::IDENTITY, skinned());
     let (revision, structure) = (scene.revision(), scene.structure_revision());
     let mut moved = 0;
@@ -160,14 +165,19 @@ fn structure_log() {
     let layer = scene.add_layer(1, "context");
     let mut cursor = 0;
     let _ = scene.structure_since(&mut cursor);
-    let ids: Vec<_> = (0..6).map(|_| scene.add(layer, Float4x4::IDENTITY, Payload::MeshInstance(MeshInstance::default()), SourceRef::default())).collect();
+    let ids: Vec<_> = (0..6)
+        .map(|_| scene.add(layer, Float4x4::IDENTITY, Payload::MeshInstance(MeshInstance::default()), SourceRef::default()))
+        .collect();
 
     // Additions are not logged (their ids follow the last one seen); removals by ranges are, one pass for all.
     assert_eq!(scene.structure_since(&mut cursor), Some(vec![]));
     scene.remove_ranges(&[ids[4]..ids[5] + 1, ids[0]..ids[2]]);
     assert_eq!(scene.entities().iter().map(|e| e.id).collect::<Vec<_>>(), [ids[2], ids[3]]);
     assert!(scene.find(ids[3]).is_some() && scene.find(ids[0]).is_none());
-    assert_eq!(scene.structure_since(&mut cursor), Some(vec![StructureChange::Removed(ids[0]..ids[2]), StructureChange::Removed(ids[4]..ids[5] + 1)]));
+    assert_eq!(
+        scene.structure_since(&mut cursor),
+        Some(vec![StructureChange::Removed(ids[0]..ids[2]), StructureChange::Removed(ids[4]..ids[5] + 1)])
+    );
     scene.remove_range(ids[3]..ids[4]);
     assert_eq!(scene.structure_since(&mut cursor), Some(vec![StructureChange::Removed(ids[3]..ids[4])]));
 
@@ -181,7 +191,17 @@ fn structure_log() {
 #[test]
 fn lf_map_and_ground() {
     // 3 x 2 samples 10 apart from (100, 200): values 0, 65535 ... scaled by 30, less 5.
-    let lf = LfMap { x0: 100.0, z0: 200.0, step: 10.0, nx: 3, nz: 2, values: wce_scene::render_scene::LfSamples::new(vec![0, 65535, 0, 65535, 65535, 65535]), scale: 30.0, offset: 5.0, ..Default::default() };
+    let lf = LfMap {
+        x0: 100.0,
+        z0: 200.0,
+        step: 10.0,
+        nx: 3,
+        nz: 2,
+        values: wce_scene::render_scene::LfSamples::new(vec![0, 65535, 0, 65535, 65535, 65535]),
+        scale: 30.0,
+        offset: 5.0,
+        ..Default::default()
+    };
     assert!((lf.height_at(100.0, 200.0) + 5.0).abs() < 1e-4);
     assert!((lf.height_at(105.0, 200.0) - 10.0).abs() < 1e-3);
     assert!((lf.height_at(105.0, 205.0) - 17.5).abs() < 1e-3);
@@ -189,7 +209,15 @@ fn lf_map_and_ground() {
     assert_eq!(lf.range(100.0, 200.0, 101.0, 201.0), (-5.0, 25.0));
 
     // A 2 x 2 grid (heights 0, 1 / 2, 3) turned a quarter about y and moved: world (x, z) = (z + 50, -x + 60).
-    let t = Terrain { nx: 2, nz: 2, origin_x: 0.0, origin_z: 0.0, step: 10.0, heights: std::sync::Arc::new(vec![0.0, 1.0, 2.0, 3.0]), ..Default::default() };
+    let t = Terrain {
+        nx: 2,
+        nz: 2,
+        origin_x: 0.0,
+        origin_z: 0.0,
+        step: 10.0,
+        heights: std::sync::Arc::new(vec![0.0, 1.0, 2.0, 3.0]),
+        ..Default::default()
+    };
     let mut w = Float4x4::IDENTITY;
     w.m[0] = [0.0, 0.0, 1.0, 50.0];
     w.m[2] = [-1.0, 0.0, 0.0, 60.0];

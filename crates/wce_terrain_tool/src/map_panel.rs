@@ -103,7 +103,12 @@ fn picture(d: &MapDocument, layer: &Layer) -> Option<(u32, u32, Vec<u8>)> {
             }
 
             for p in &m.placements {
-                let c = d.db.tiles.iter().find(|t| t.location.eq_ignore_ascii_case(&p.location)).and_then(|t| t.set).map_or([200.0, 0.0, 200.0], |s| d.db.sets[s].colour);
+                let c =
+                    d.db.tiles
+                        .iter()
+                        .find(|t| t.location.eq_ignore_ascii_case(&p.location))
+                        .and_then(|t| t.set)
+                        .map_or([200.0, 0.0, 200.0], |s| d.db.sets[s].colour);
                 let r = p.rect();
                 for y in r[1].max(0)..r[3].min(h as i32) {
                     for x in r[0].max(0)..r[2].min(w as i32) {
@@ -183,7 +188,15 @@ impl MapPanel {
                 [(m[1][0] * sy) as f32, (m[1][1] * sy) as f32, (m[1][2] * sy) as f32],
             ];
 
-            Some(wce_scene::render_scene::GroundOverlay { to_texel, w: *w, h: *h, rgba: self.texels.clone()?, id: self.picture_id, opacity: self.opacity, layer: view.layer() })
+            Some(wce_scene::render_scene::GroundOverlay {
+                to_texel,
+                w: *w,
+                h: *h,
+                rgba: self.texels.clone()?,
+                id: self.picture_id,
+                opacity: self.opacity,
+                layer: view.layer(),
+            })
         })();
 
         e.scene.set_ground_overlay(overlay);
@@ -314,7 +327,9 @@ impl MapPanel {
 
         let mut centre = self.centre.unwrap_or([mw * 0.5, mh * 0.5]);
         let mut scale = fit * self.zoom;
-        let to_cell = |p: Vec2, centre: [f64; 2], scale: f64| [centre[0] + f64::from(p.x - mid.x) / scale, centre[1] + f64::from(p.y - mid.y) / scale];
+        let to_cell = |p: Vec2, centre: [f64; 2], scale: f64| {
+            [centre[0] + f64::from(p.x - mid.x) / scale, centre[1] + f64::from(p.y - mid.y) / scale]
+        };
         let mouse = gui::mouse_pos();
         if hovered {
             let wheel = f64::from(gui::io().MouseWheel);
@@ -366,7 +381,12 @@ impl MapPanel {
             let reach = f64::from(cam.zfar) / CELL;
             let (dx, dy) = (tx - ex, ty - ey);
             let l = dx.hypot(dy).max(1e-9);
-            dl.line(screen(ex, ey), screen(ex + dx / l * reach.min(l.max(8.0)), ey + dy / l * reach.min(l.max(8.0))), col32(255, 255, 255, 160), 1.0);
+            dl.line(
+                screen(ex, ey),
+                screen(ex + dx / l * reach.min(l.max(8.0)), ey + dy / l * reach.min(l.max(8.0))),
+                col32(255, 255, 255, 160),
+                1.0,
+            );
             dl.circle_filled(screen(ex, ey), 4.0, col32(230, 60, 50, 255));
         }
 
@@ -378,7 +398,9 @@ impl MapPanel {
         if hovered || (self.paint && active) {
             let c = to_cell(mouse, centre, scale);
             self.input = Some(MapInput {
-                cell: (c[0].floor() as i64, c[1].floor() as i64), pressed: hovered && gui::is_mouse_clicked(0), down: active && gui::is_mouse_down(0),
+                cell: (c[0].floor() as i64, c[1].floor() as i64),
+                pressed: hovered && gui::is_mouse_clicked(0),
+                down: active && gui::is_mouse_down(0),
                 released: gui::is_mouse_released(0),
             });
         }
@@ -396,7 +418,13 @@ impl MapPanel {
                     if (x as u32) < l.width() && (y as u32) < l.height() {
                         let col = l.colour(x as u32, y as u32);
                         let name = colour_name(d, role.as_ref(), col);
-                        s += &format!("  colour {}, {}, {}{}", col[0], col[1], col[2], if name.is_empty() { String::new() } else { format!(": {name}") });
+                        s += &format!(
+                            "  colour {}, {}, {}{}",
+                            col[0],
+                            col[1],
+                            col[2],
+                            if name.is_empty() { String::new() } else { format!(": {name}") }
+                        );
                     }
                 }
 

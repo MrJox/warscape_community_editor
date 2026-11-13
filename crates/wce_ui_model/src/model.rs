@@ -65,7 +65,11 @@ fn int_of(e: &Element) -> Option<i64> {
 
 /// The direct leaves called `name`, as (index in children, element).
 pub(crate) fn leaves<'a>(e: &'a Element, name: &str) -> Vec<(usize, &'a Element)> {
-    e.children.iter().enumerate().filter_map(|(i, n)| if let Node::Elem(c) = n { (c.name == name).then_some((i, c)) } else { None }).collect()
+    e.children
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| if let Node::Elem(c) = n { (c.name == name).then_some((i, c)) } else { None })
+        .collect()
 }
 
 pub(crate) fn nth_int(e: &Element, name: &str, n: usize) -> Option<i64> {
@@ -180,7 +184,10 @@ impl UiModel {
         let class = if v >= 43 { ss.get(1).map(|(_, c)| c.text()).unwrap_or_default() } else { String::new() };
         let x = nth_int(el, "i", 0).unwrap_or(0) as i32;
         let y = nth_int(el, "i", 1).unwrap_or(0) as i32;
-        let (w, h) = self.default_state(el).map(|s| (nth_int(s, "i", 0).unwrap_or(0) as i32, nth_int(s, "i", 1).unwrap_or(0) as i32)).unwrap_or((0, 0));
+        let (w, h) = self
+            .default_state(el)
+            .map(|s| (nth_int(s, "i", 0).unwrap_or(0) as i32, nth_int(s, "i", 1).unwrap_or(0) as i32))
+            .unwrap_or((0, 0));
         let (ax, ay) = (ox + x, oy + y);
         let me = out.len();
         let visible = self.own_visible(el);
@@ -201,7 +208,22 @@ impl UiModel {
                 "template" => {
                     let name = leaves(c, "s").first().map(|(_, e)| e.text()).unwrap_or_default();
                     let t = out.len();
-                    out.push(Entry { path: p.clone(), depth: depth + 1, parent: Some(me), kind: EntryKind::Template, id: 0, name, class: "template".into(), x: 0, y: 0, w: 0, h: 0, ax, ay, visible: true });
+                    out.push(Entry {
+                        path: p.clone(),
+                        depth: depth + 1,
+                        parent: Some(me),
+                        kind: EntryKind::Template,
+                        id: 0,
+                        name,
+                        class: "template".into(),
+                        x: 0,
+                        y: 0,
+                        w: 0,
+                        h: 0,
+                        ax,
+                        ay,
+                        visible: true,
+                    });
                     if let Some(tc) = c.find_idx("children") {
                         let tch = c.elem_at(tc).unwrap();
                         for (j, n2) in tch.children.iter().enumerate() {
@@ -242,7 +264,9 @@ impl UiModel {
         if self.version >= 55 {
             let ds_idx = if self.version >= 77 { 5 } else { 3 };
             if let Some(ds) = nth_int(el, "i", ds_idx) {
-                if let Some(s) = all.iter().find(|s| leaves(s, "u").first().and_then(|(_, c)| int_of(c)).map(|u| u as u32) == Some(ds as u32)) {
+                if let Some(s) =
+                    all.iter().find(|s| leaves(s, "u").first().and_then(|(_, c)| int_of(c)).map(|u| u as u32) == Some(ds as u32))
+                {
                     return Some(s);
                 }
             }
@@ -271,7 +295,13 @@ impl UiModel {
             .iter()
             .enumerate()
             .filter_map(|(i, n)| match n {
-                Node::Elem(c) if c.is_leaf() && matches!(c.name.as_str(), "u" | "i" | "u2" | "i2" | "byte" | "flt" | "s" | "unicode" | "uuid" | "yes" | "no" | "key" | "value") => {
+                Node::Elem(c)
+                    if c.is_leaf()
+                        && matches!(
+                            c.name.as_str(),
+                            "u" | "i" | "u2" | "i2" | "byte" | "flt" | "s" | "unicode" | "uuid" | "yes" | "no" | "key" | "value"
+                        ) =>
+                {
                     let value = match c.name.as_str() {
                         "yes" => "yes".to_string(),
                         "no" => "no".to_string(),
@@ -494,7 +524,13 @@ impl UiModel {
     }
 
     /// Moves an entry into another entry's children (at the end, or at `index` among them), keeping its place on screen if asked.
-    pub fn reparent(&mut self, path: &[usize], new_parent: &[usize], index: Option<usize>, keep_screen_position: bool) -> Result<Vec<usize>, String> {
+    pub fn reparent(
+        &mut self,
+        path: &[usize],
+        new_parent: &[usize],
+        index: Option<usize>,
+        keep_screen_position: bool,
+    ) -> Result<Vec<usize>, String> {
         if new_parent.starts_with(path) {
             return Err("an entry cannot move into itself".into());
         }
@@ -569,7 +605,10 @@ impl UiModel {
             Some(l) => l.to_vec(),
             None => {
                 let mut p = parent.to_vec();
-                match par.find_idx("children").and_then(|ci| par.elem_at(ci).and_then(|c| c.children.iter().position(|n| matches!(n, Node::Elem(e) if e.name == "uientry")).map(|k| (ci, k)))) {
+                match par.find_idx("children").and_then(|ci| {
+                    par.elem_at(ci)
+                        .and_then(|c| c.children.iter().position(|n| matches!(n, Node::Elem(e) if e.name == "uientry")).map(|k| (ci, k)))
+                }) {
                     Some((ci, k)) => {
                         p.push(ci);
                         p.push(k);

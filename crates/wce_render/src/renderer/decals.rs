@@ -126,7 +126,6 @@ fn axis_sizes(m: &Float4x4) -> [f32; 3] {
 }
 
 impl Renderer {
-
     fn make_decal_resources(&mut self) {
         if self.decals.box_vb.is_some() {
             return;
@@ -136,7 +135,11 @@ impl Renderer {
         let d = &mut self.decals;
         let mut verts = vec![];
         for k in 0..8 {
-            verts.extend([if k & 1 != 0 { 0.5f32 } else { -0.5 }, if k & 2 != 0 { 0.5 } else { -0.5 }, if k & 4 != 0 { 0.5 } else { -0.5 }]);
+            verts.extend([
+                if k & 1 != 0 { 0.5f32 } else { -0.5 },
+                if k & 2 != 0 { 0.5 } else { -0.5 },
+                if k & 4 != 0 { 0.5 } else { -0.5 },
+            ]);
         }
 
         // Two triangles per face, both sides drawn: a far face passes the depth test where the scene is inside or in front of the box, a near
@@ -144,22 +147,47 @@ impl Renderer {
         let idx: [u16; 36] = [0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4, 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5];
         d.box_vb = immutable_buffer(&dev, &f32_bytes(&verts), D3D11_BIND_VERTEX_BUFFER);
         d.box_ib = immutable_buffer(&dev, &idx.iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>(), D3D11_BIND_INDEX_BUFFER);
-        let rd = D3D11_RASTERIZER_DESC { FillMode: D3D11_FILL_SOLID, CullMode: D3D11_CULL_NONE, DepthClipEnable: false.into(), ..Default::default() };
+        let rd = D3D11_RASTERIZER_DESC {
+            FillMode: D3D11_FILL_SOLID,
+            CullMode: D3D11_CULL_NONE,
+            DepthClipEnable: false.into(),
+            ..Default::default()
+        };
         d.rs = dev.create_rasterizer_state(&rd).ok();
         // Only the pixels that take decals (the ground and the TerrainBlend meshes: stencil bit `DECAL_RECEIVER`), as the game.
         let receiver = D3D11_DEPTH_STENCILOP_DESC {
-            StencilFailOp: D3D11_STENCIL_OP_KEEP, StencilDepthFailOp: D3D11_STENCIL_OP_KEEP, StencilPassOp: D3D11_STENCIL_OP_KEEP, StencilFunc: D3D11_COMPARISON_EQUAL,
+            StencilFailOp: D3D11_STENCIL_OP_KEEP,
+            StencilDepthFailOp: D3D11_STENCIL_OP_KEEP,
+            StencilPassOp: D3D11_STENCIL_OP_KEEP,
+            StencilFunc: D3D11_COMPARISON_EQUAL,
         };
-        d.ds = dev.create_depth_stencil_state(&D3D11_DEPTH_STENCIL_DESC {
-            DepthEnable: true.into(), DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO, DepthFunc: D3D11_COMPARISON_GREATER_EQUAL, StencilEnable: true.into(),
-            StencilReadMask: DECAL_RECEIVER, StencilWriteMask: 0, FrontFace: receiver, BackFace: receiver,
-        }).ok();
+        d.ds = dev
+            .create_depth_stencil_state(&D3D11_DEPTH_STENCIL_DESC {
+                DepthEnable: true.into(),
+                DepthWriteMask: D3D11_DEPTH_WRITE_MASK_ZERO,
+                DepthFunc: D3D11_COMPARISON_GREATER_EQUAL,
+                StencilEnable: true.into(),
+                StencilReadMask: DECAL_RECEIVER,
+                StencilWriteMask: 0,
+                FrontFace: receiver,
+                BackFace: receiver,
+            })
+            .ok();
 
         let rgb = (D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE) as u8;
-        d.bs = crate::particles::blend_state(&dev, D3D11_RENDER_TARGET_BLEND_DESC {
-            BlendEnable: true.into(), SrcBlend: D3D11_BLEND_SRC_ALPHA, DestBlend: D3D11_BLEND_INV_SRC_ALPHA, BlendOp: D3D11_BLEND_OP_ADD,
-            SrcBlendAlpha: D3D11_BLEND_ZERO, DestBlendAlpha: D3D11_BLEND_ONE, BlendOpAlpha: D3D11_BLEND_OP_ADD, RenderTargetWriteMask: rgb,
-        });
+        d.bs = crate::particles::blend_state(
+            &dev,
+            D3D11_RENDER_TARGET_BLEND_DESC {
+                BlendEnable: true.into(),
+                SrcBlend: D3D11_BLEND_SRC_ALPHA,
+                DestBlend: D3D11_BLEND_INV_SRC_ALPHA,
+                BlendOp: D3D11_BLEND_OP_ADD,
+                SrcBlendAlpha: D3D11_BLEND_ZERO,
+                DestBlendAlpha: D3D11_BLEND_ONE,
+                BlendOpAlpha: D3D11_BLEND_OP_ADD,
+                RenderTargetWriteMask: rgb,
+            },
+        );
     }
 
     /// The diffuse and normal map of a decal model (`<model>_diffuse.dds`, `_normal.dds` or else `_parallax.dds`).
@@ -240,11 +268,13 @@ impl Renderer {
     fn update_decals(&mut self, scene: &RenderScene) -> bool {
         let d = &mut self.decals;
         let models = &self.models;
-        let carries = |id: EntityId| scene.find(id).is_some_and(|e| match &e.payload {
-            Payload::Decal(_) => true,
-            Payload::MeshInstance(mi) => models.peek(&mi.model).0.is_some_and(|m| !m.decals.is_empty()),
-            _ => false,
-        });
+        let carries = |id: EntityId| {
+            scene.find(id).is_some_and(|e| match &e.payload {
+                Payload::Decal(_) => true,
+                Payload::MeshInstance(mi) => models.peek(&mi.model).0.is_some_and(|m| !m.decals.is_empty()),
+                _ => false,
+            })
+        };
 
         let mut cursor = d.structure_cursor;
         let Some(log) = scene.structure_since(&mut cursor) else { return false };
@@ -274,10 +304,17 @@ impl Renderer {
         }
 
         // The pending meshes whose models have come, then the entities added since.
-        let ready: Vec<EntityId> = d.pending.iter().copied().filter(|&id| scene.find(id).is_some_and(|e| match &e.payload {
-            Payload::MeshInstance(mi) => matches!(models.peek(&mi.model).1, State::Ready | State::Failed),
-            _ => true,
-        })).collect();
+        let ready: Vec<EntityId> = d
+            .pending
+            .iter()
+            .copied()
+            .filter(|&id| {
+                scene.find(id).is_some_and(|e| match &e.payload {
+                    Payload::MeshInstance(mi) => matches!(models.peek(&mi.model).1, State::Ready | State::Failed),
+                    _ => true,
+                })
+            })
+            .collect();
 
         d.pending.retain(|id| !ready.contains(id));
         let all = scene.entities();
@@ -303,7 +340,8 @@ impl Renderer {
         if d.scene_id == id && d.units == units && d.built && d.origin != o {
             wce_prof!("render.decals_origin");
             for item in &mut d.items {
-                (item.inst[3], item.inst[7], item.inst[11]) = ((item.sphere[0] - o.x) * units, (item.sphere[1] - o.y) * units, (item.sphere[2] - o.z) * units);
+                (item.inst[3], item.inst[7], item.inst[11]) =
+                    ((item.sphere[0] - o.x) * units, (item.sphere[1] - o.y) * units, (item.sphere[2] - o.z) * units);
             }
 
             d.origin = o;
@@ -376,7 +414,10 @@ impl Renderer {
             return;
         }
 
-        let (Some(vs), Some(plain_ps)) = (self.shader(DECAL_VS), self.scene_shader(DECAL_PS).or_else(|| self.scene_shader(DECAL_PS_PLAIN))) else { return };
+        let (Some(vs), Some(plain_ps)) = (self.shader(DECAL_VS), self.scene_shader(DECAL_PS).or_else(|| self.scene_shader(DECAL_PS_PLAIN)))
+        else {
+            return;
+        };
         let parallax_ps = self.scene_shader(DECAL_PARALLAX_PS).or_else(|| self.scene_shader(DECAL_PARALLAX_PS_PLAIN));
         self.make_decal_resources();
         let el: Vec<InputElement> = std::iter::once(element(c"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, false))
@@ -397,7 +438,11 @@ impl Renderer {
 
         // The G-buffer normal before the decals.
         let (w, h, samples) = (self.gbuffer.w, self.gbuffer.h, self.gbuffer.samples());
-        if self.decals.normal_copy.tex.is_none() || self.decals.copy_w != w || self.decals.copy_h != h || self.decals.copy_samples != samples {
+        if self.decals.normal_copy.tex.is_none()
+            || self.decals.copy_w != w
+            || self.decals.copy_h != h
+            || self.decals.copy_samples != samples
+        {
             self.decals.normal_copy = super::targets::make_target_ms(&self.dev, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, samples);
             (self.decals.copy_w, self.decals.copy_h, self.decals.copy_samples) = (w, h, samples);
         }

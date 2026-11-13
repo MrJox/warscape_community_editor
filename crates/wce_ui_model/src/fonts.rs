@@ -90,7 +90,11 @@ impl FontLibrary {
         let avail = self.sizes.get(&family)?;
         let pick = *avail.iter().min_by_key(|s| ((**s - size).abs(), **s))?;
         let key = format!("{family}_{pick}");
-        let cuf = self.fonts.entry(key.clone()).or_insert_with(|| vfs.read(&format!("font/{key}.cuf")).ok().and_then(|b| Cuf::parse(&b).ok()).map(Rc::new)).clone()?;
+        let cuf = self
+            .fonts
+            .entry(key.clone())
+            .or_insert_with(|| vfs.read(&format!("font/{key}.cuf")).ok().and_then(|b| Cuf::parse(&b).ok()).map(Rc::new))
+            .clone()?;
         Some((cuf, key))
     }
 

@@ -31,7 +31,9 @@ impl Tile {
             }
 
             // The outline's bounding box, grown by the reach: most polygons are far from the click.
-            let (lo, hi) = pts.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(lo, hi), p| ([lo[0].min(p.x), lo[1].min(p.z)], [hi[0].max(p.x), hi[1].max(p.z)]));
+            let (lo, hi) = pts
+                .iter()
+                .fold(([f32::MAX; 2], [f32::MIN; 2]), |(lo, hi), p| ([lo[0].min(p.x), lo[1].min(p.z)], [hi[0].max(p.x), hi[1].max(p.z)]));
             if x < lo[0] - reach || x > hi[0] + reach || z < lo[1] - reach || z > hi[1] + reach {
                 continue;
             }

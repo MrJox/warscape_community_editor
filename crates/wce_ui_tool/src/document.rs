@@ -86,7 +86,16 @@ pub fn index_of(item: u64) -> Option<usize> {
 
 impl UiDocument {
     pub fn new(source: Source, model: UiModel, out_dir: PathBuf) -> Self {
-        Self { core: DocumentCore::new(), saved: model.clone(), history: CommandStack::new(model), source, out_dir, entries: RefCell::new(None), draw: RefCell::new(None), xml: RefCell::new(None) }
+        Self {
+            core: DocumentCore::new(),
+            saved: model.clone(),
+            history: CommandStack::new(model),
+            source,
+            out_dir,
+            entries: RefCell::new(None),
+            draw: RefCell::new(None),
+            xml: RefCell::new(None),
+        }
     }
 
     pub fn model(&self) -> &UiModel {

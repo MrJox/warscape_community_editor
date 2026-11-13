@@ -103,7 +103,12 @@ pub fn migrate_extracted(projects_raw: &std::path::Path, busy: &[std::path::Path
 }
 
 /// One old extracted tile (its entry file, the entry's new name); returns what was done.
-fn migrate_one(projects_raw: &std::path::Path, entry: &std::path::Path, new_name: &str, busy: &[std::path::PathBuf]) -> Result<String, String> {
+fn migrate_one(
+    projects_raw: &std::path::Path,
+    entry: &std::path::Path,
+    new_name: &str,
+    busy: &[std::path::PathBuf],
+) -> Result<String, String> {
     let text = std::fs::read_to_string(entry).map_err(|e| e.to_string())?;
     let location = wce_formats::tile_entry::TileEntry::parse(text.clone().into_bytes()).map_err(|e| e.to_string())?.location();
     let old = projects_raw.join(location.replace('\\', "/"));
@@ -175,9 +180,11 @@ pub fn ted_number_text(_element: &str, attr: &str, value: &str) -> Option<String
 
     let num = |t: &str| -> Option<f64> {
         let t = t.trim();
-        (!t.is_empty() && t.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'+' | b'.' | b'e' | b'E')) && t.bytes().any(|b| b.is_ascii_digit()))
-            .then(|| t.parse::<f64>().ok())
-            .flatten()
+        (!t.is_empty()
+            && t.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'+' | b'.' | b'e' | b'E'))
+            && t.bytes().any(|b| b.is_ascii_digit()))
+        .then(|| t.parse::<f64>().ok())
+        .flatten()
     };
 
     for prefix in ["vector", "euler"] {
@@ -270,9 +277,14 @@ fn reference_spans(doc: &wce_formats::xml_doc::XmlDoc, text: &[u8]) -> Vec<RefSp
         let ch = &els[c];
         let line_start = |at: usize| text[..at].iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
         let indent = String::from_utf8_lossy(&text[line_start(ch.start_off)..ch.start_off]).into_owned();
-        let overrides_range = el.children.iter().find(|&&o| els[o].name == crate::prefab_refs::OVERRIDES_ELEMENT).map(|&o| (line_start(els[o].start_off).saturating_sub(1), els[o].end_off));
+        let overrides_range = el
+            .children
+            .iter()
+            .find(|&&o| els[o].name == crate::prefab_refs::OVERRIDES_ELEMENT)
+            .map(|&o| (line_start(els[o].start_off).saturating_sub(1), els[o].end_off));
         let overrides = crate::prefab_refs::read_overrides(doc, e);
-        let (start, end, open) = if ch.self_closing { (ch.start_off, ch.end_off, false) } else { (ch.start_end, ch.end_off - "</children>".len(), true) };
+        let (start, end, open) =
+            if ch.self_closing { (ch.start_off, ch.end_off, false) } else { (ch.start_end, ch.end_off - "</children>".len(), true) };
         out.push(RefSpan { start, end, open, indent, key, overrides, overrides_range });
     }
 
@@ -493,7 +505,9 @@ pub fn to_ted(wce: Vec<u8>) -> Result<(Vec<u8>, TedReport), String> {
 
     // - an item on another thing (Entity: Above) is freeform at its height already: TEd gets it as such (the mark goes);
     // - a tilted item (Follow surface) has its tilted orientation: TEd gets it (the mark goes).
-    let count = |attr: &str, value: &str| (0..scene.doc().elements().len()).filter(|&e| scene.doc().get(e, attr).is_some_and(|v| v == value)).count();
+    let count = |attr: &str, value: &str| {
+        (0..scene.doc().elements().len()).filter(|&e| scene.doc().get(e, attr).is_some_and(|v| v == value)).count()
+    };
     let on_entities = count(SURFACE_ATTR, "entity");
     if on_entities != 0 {
         report.polyfilled.push(format!("{on_entities} item(s) placed on other things written as freeform at their height"));
@@ -616,7 +630,10 @@ mod tests {
         let wce = b"<project version=\"16\" wce_version=\"1\">\n    <scene/>\n</project>\n".to_vec();
         assert!(!is_extracted_text(&wce));
         let marked = mark_extracted_text(wce);
-        assert!(is_extracted_text(&marked) && String::from_utf8_lossy(&marked).starts_with("<project version=\"16\" wce_version=\"1\" wce_extracted_tile=\"true\">"));
+        assert!(
+            is_extracted_text(&marked)
+                && String::from_utf8_lossy(&marked).starts_with("<project version=\"16\" wce_version=\"1\" wce_extracted_tile=\"true\">")
+        );
         let (ted, report) = to_ted(marked).unwrap();
         assert!(!String::from_utf8_lossy(&ted).contains("wce_") && report == TedReport::default(), "the flag goes silently");
 
@@ -629,7 +646,9 @@ mod tests {
             let old = raw.join(format!("terrain/tiles/battle/{tile}/1x1_extracted/aa"));
             std::fs::create_dir_all(&old).unwrap();
             std::fs::write(old.join(WCE_FILE), b"<project version=\"16\" wce_version=\"1\">\n</project>\n").unwrap();
-            let entry = format!("<TILE serialise_version='3' location='terrain\\tiles\\battle\\{tile}\\1x1_extracted' tile_set='{tile}'>\r\n</TILE>\r\n");
+            let entry = format!(
+                "<TILE serialise_version='3' location='terrain\\tiles\\battle\\{tile}\\1x1_extracted' tile_set='{tile}'>\r\n</TILE>\r\n"
+            );
             std::fs::write(tiles.join(format!("{tile}_1x1_extracted.xml")), entry).unwrap();
             if taken {
                 std::fs::create_dir_all(raw.join(format!("terrain/tiles/battle/{tile}/1x1/aa"))).unwrap();
@@ -641,7 +660,9 @@ mod tests {
         let moved = raw.join("terrain/tiles/battle/farm_nordic/1x1/aa");
         assert!(is_extracted_dir(&moved) && !raw.join("terrain/tiles/battle/farm_nordic/1x1_extracted").exists());
         let entry = std::fs::read_to_string(tiles.join("farm_nordic_1x1.xml")).unwrap();
-        assert!(entry.contains("location='terrain\\tiles\\battle\\farm_nordic\\1x1'") && !tiles.join("farm_nordic_1x1_extracted.xml").exists());
+        assert!(
+            entry.contains("location='terrain\\tiles\\battle\\farm_nordic\\1x1'") && !tiles.join("farm_nordic_1x1_extracted.xml").exists()
+        );
         assert!(tiles.join("farm_western_1x1_extracted.xml").exists(), "the taken one stays");
 
         let entry = "<TILE serialise_version='3' location='terrain\\tiles\\battle\\farm_nordic\\1x1' tile_set='farm_nordic'>";
@@ -693,12 +714,19 @@ mod tests {
 
         let (ted, report) = to_ted(filled).unwrap();
         let ted = String::from_utf8(ted).unwrap();
-        assert!(ted.contains("<UserInstanceGroup name=\"rocks\" position=\"vector(5,0,5)\">") && ted.contains("key=\"rock\""), "baked: {ted}");
+        assert!(
+            ted.contains("<UserInstanceGroup name=\"rocks\" position=\"vector(5,0,5)\">") && ted.contains("key=\"rock\""),
+            "baked: {ted}"
+        );
         assert_eq!((report.polyfilled.len(), report.dropped.len()), (1, 0), "{report:?}");
 
         let (_, missing) = expand_prefabs(stored, &|_| None).unwrap();
         assert_eq!(missing, vec!["rocks".to_owned()]);
-        assert!(String::from_utf8(mark_wce_text(b"<INSTANCE_SELECTION version=\"17\">\n</INSTANCE_SELECTION>\n".to_vec())).unwrap().starts_with("<INSTANCE_SELECTION version=\"17\" wce_version=\"1\">"));
+        assert!(
+            String::from_utf8(mark_wce_text(b"<INSTANCE_SELECTION version=\"17\">\n</INSTANCE_SELECTION>\n".to_vec()))
+                .unwrap()
+                .starts_with("<INSTANCE_SELECTION version=\"17\" wce_version=\"1\">")
+        );
     }
 
     #[test]
@@ -706,7 +734,11 @@ mod tests {
         let wce = b"<project version=\"16\" wce_version=\"1\">\n    <BUILDING_INSTANCE key=\"a\" scale=\"vector(2,2,2)\" name=\"a\"/>\n    <SIMPLE_MESH_INSTANCE key=\"b\" scale=\"vector(2,2,2)\" name=\"b\"/>\n</project>\n".to_vec();
         let (ted, report) = to_ted(wce).unwrap();
         let ted = String::from_utf8(ted).unwrap();
-        assert!(ted.contains("<BUILDING_INSTANCE key=\"a\" name=\"a\"/>") && ted.contains("<SIMPLE_MESH_INSTANCE key=\"b\" scale=\"vector(2,2,2)\""), "{ted}");
+        assert!(
+            ted.contains("<BUILDING_INSTANCE key=\"a\" name=\"a\"/>")
+                && ted.contains("<SIMPLE_MESH_INSTANCE key=\"b\" scale=\"vector(2,2,2)\""),
+            "{ted}"
+        );
         assert_eq!(report.dropped.len(), 1, "{report:?}");
     }
 
@@ -736,7 +768,10 @@ mod tests {
         assert!(ted.contains("vector(2,0,7)") && !ted.contains("Wce") && !ted.contains("wce_"), "{ted}");
 
         // Contents that differ by more keep them all.
-        let more = String::from_utf8(edited).unwrap().replace("<BUILDING_INSTANCE key=\"rock\" name=\"rock\" position=\"vector(1,0,0)\"/>\n", "").into_bytes();
+        let more = String::from_utf8(edited)
+            .unwrap()
+            .replace("<BUILDING_INSTANCE key=\"rock\" name=\"rock\" position=\"vector(1,0,0)\"/>\n", "")
+            .into_bytes();
         let (kept_text, kept) = strip_prefab_contents_with(more.clone(), Some(&base));
         assert_eq!((kept_text, kept.len()), (more, 1));
     }

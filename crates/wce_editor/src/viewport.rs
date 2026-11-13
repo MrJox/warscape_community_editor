@@ -6,7 +6,9 @@
 use std::path::Path;
 
 use dear_imguizmo_sys as gz;
-use wce_editor_core::camera_controller::{CameraController, CameraInput, CameraMode, CameraOptions, FlyCamera, OrbitCamera, TopDownCamera, TotalWarCamera, WalkCamera};
+use wce_editor_core::camera_controller::{
+    CameraController, CameraInput, CameraMode, CameraOptions, FlyCamera, OrbitCamera, TopDownCamera, TotalWarCamera, WalkCamera,
+};
 use wce_foundation::log;
 use wce_foundation::math::{Float3, Float4x4, inverse, length, normalize};
 use wce_foundation::{clock::Clock, wce_prof};
@@ -135,12 +137,56 @@ pub struct Viewport {
 impl Default for Viewport {
     fn default() -> Self {
         Self {
-            total_war: TotalWarCamera::default(), top_down: TopDownCamera::default(), walk: WalkCamera::default(), fly: FlyCamera::default(),
-            orbit: OrbitCamera::default(), mode: CameraMode::default(),
-            camera_options: CameraOptions::default(), edge_scroll: false, obstacles: Default::default(), target: RenderTarget::default(), texture: None, gizmo: GizmoMode::Translate,
-            local_coordinates: false, snap: false, snap_move: 1.0, snap_angle: 15.0, snap_scale: 0.1, gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE, gizmo_clip: 0.16, show_grid: false, game_view: false, fog: 1.0, hovered: false, frames_rendered: 0, show_compass: true, chips_width: 0.0, chips_top: 6.0, tool_chips_width: 0.0, show_coords: true, map_frame: None, battle_frame: None, cursor_ground: None, probe: Default::default(),
-            north: [0.0, 1.0], trace: String::new(),
-            trace_w: 0, trace_h: 0, trace_n: 0, gizmo_was_using: false, gizmo_offset: None, wheel_owned: false, gesture: 0, press: (0.0, 0.0), pressed: false, right_press: None, tool_drag: false, orbit_drag: false, box_from: None, box_active: false, image_origin: gui::v2(0.0, 0.0),
+            total_war: TotalWarCamera::default(),
+            top_down: TopDownCamera::default(),
+            walk: WalkCamera::default(),
+            fly: FlyCamera::default(),
+            orbit: OrbitCamera::default(),
+            mode: CameraMode::default(),
+            camera_options: CameraOptions::default(),
+            edge_scroll: false,
+            obstacles: Default::default(),
+            target: RenderTarget::default(),
+            texture: None,
+            gizmo: GizmoMode::Translate,
+            local_coordinates: false,
+            snap: false,
+            snap_move: 1.0,
+            snap_angle: 15.0,
+            snap_scale: 0.1,
+            gizmo_points: wce_foundation::settings::DEFAULT_GIZMO_SIZE,
+            gizmo_clip: 0.16,
+            show_grid: false,
+            game_view: false,
+            fog: 1.0,
+            hovered: false,
+            frames_rendered: 0,
+            show_compass: true,
+            chips_width: 0.0,
+            chips_top: 6.0,
+            tool_chips_width: 0.0,
+            show_coords: true,
+            map_frame: None,
+            battle_frame: None,
+            cursor_ground: None,
+            probe: Default::default(),
+            north: [0.0, 1.0],
+            trace: String::new(),
+            trace_w: 0,
+            trace_h: 0,
+            trace_n: 0,
+            gizmo_was_using: false,
+            gizmo_offset: None,
+            wheel_owned: false,
+            gesture: 0,
+            press: (0.0, 0.0),
+            pressed: false,
+            right_press: None,
+            tool_drag: false,
+            orbit_drag: false,
+            box_from: None,
+            box_active: false,
+            image_origin: gui::v2(0.0, 0.0),
         }
     }
 }
@@ -271,7 +317,14 @@ impl Viewport {
 
     /// The coordinates readout's lines, with the cursor's last ground point.
     pub fn coords_lines(&self, scene: &RenderScene) -> Vec<String> {
-        crate::coords::lines(&self.camera(), !matches!(self.mode, CameraMode::Walk | CameraMode::Fly), self.cursor_ground, scene.game_units, self.map_frame.as_ref(), self.battle_frame.as_ref())
+        crate::coords::lines(
+            &self.camera(),
+            !matches!(self.mode, CameraMode::Walk | CameraMode::Fly),
+            self.cursor_ground,
+            scene.game_units,
+            self.map_frame.as_ref(),
+            self.battle_frame.as_ref(),
+        )
     }
 
     pub fn ray(&self, x: i32, y: i32) -> Option<(Float3, Float3)> {
@@ -303,7 +356,11 @@ pub fn update_camera(e: &mut Editor, input: &CameraInput) {
     let opts = vp.camera_options;
     let far = vp.controller_ref().lens().zfar;
     let mut world = crate::camera_world::ViewportWorld {
-        scene: &e.scene, ground: &mut vp.probe, obstacles: &mut vp.obstacles, models: e.renderer.as_mut().map(|r| &*r.models()), far,
+        scene: &e.scene,
+        ground: &mut vp.probe,
+        obstacles: &mut vp.obstacles,
+        models: e.renderer.as_mut().map(|r| &*r.models()),
+        far,
     };
 
     let c: &mut dyn CameraController = match vp.mode {
@@ -327,7 +384,8 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     let Some(r) = e.renderer.as_mut() else { return };
     if let Some(go) = go {
         // Nothing lights the scene yet: the default environment with the player's output settings.
-        e.scene.environment.active = Some(EnvironmentParams { output_gamma: go.gamma, output_brightness: go.brightness, ..Default::default() });
+        e.scene.environment.active =
+            Some(EnvironmentParams { output_gamma: go.gamma, output_brightness: go.brightness, ..Default::default() });
     }
 
     let vp = &mut e.viewport;
@@ -376,7 +434,12 @@ pub fn pick(e: &mut Editor, x: i32, y: i32) -> EntityId {
 
 /// The surface under a pixel of the viewport image: the nearest mesh or terrain (overlays, locked layers and what `skip` says left out), its
 /// world point and normal (`Renderer::pick_surface`). For placing things on other things.
-pub fn surface_under(e: &mut Editor, x: i32, y: i32, skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool) -> Option<wce_render::renderer::SurfaceHit> {
+pub fn surface_under(
+    e: &mut Editor,
+    x: i32,
+    y: i32,
+    skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool,
+) -> Option<wce_render::renderer::SurfaceHit> {
     wce_prof!("viewport.surface_under");
     let r = e.renderer.as_mut()?;
     if !e.viewport.target.valid() {
@@ -391,7 +454,13 @@ pub fn surface_under(e: &mut Editor, x: i32, y: i32, skip: &dyn Fn(&wce_scene::r
 /// The topmost surfaces over a `size` metres square of the ground around `center`, seen straight down at `res` x `res` pixels
 /// (`Renderer::surfaces_below`; overlays, locked layers and what `skip` says left out). For putting things on whatever is below a ground
 /// point, wherever the camera is.
-pub fn surfaces_below(e: &mut Editor, center: wce_foundation::math::Float3, size: f32, res: u32, skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool) -> Option<wce_render::renderer::SurfaceGrid> {
+pub fn surfaces_below(
+    e: &mut Editor,
+    center: wce_foundation::math::Float3,
+    size: f32,
+    res: u32,
+    skip: &dyn Fn(&wce_scene::render_scene::Entity) -> bool,
+) -> Option<wce_render::renderer::SurfaceGrid> {
     wce_prof!("viewport.surfaces_below");
     let r = e.renderer.as_mut()?;
     let params = ViewParams { camera: e.viewport.camera(), time_s: e.clock.time() as f32 };
@@ -670,7 +739,9 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
         // Local coordinates: the gizmo works on a stand-in with the parent's axes at the item (the delta it makes is the same world move);
         // the scale is the item's own.
-        let parent = (!tools && vp.local_coordinates && vp.gizmo != GizmoMode::Scale).then(|| e.docs.find(primary.doc).and_then(|d| d.item_parent_transform(primary))).flatten();
+        let parent = (!tools && vp.local_coordinates && vp.gizmo != GizmoMode::Scale)
+            .then(|| e.docs.find(primary.doc).and_then(|d| d.item_parent_transform(primary)))
+            .flatten();
         let frame = parent.map_or(world, |pm| axes_at(&pm, &world));
         let mut m = to_gizmo(&frame);
         let mode = if tools || parent.is_some() || vp.gizmo == GizmoMode::Scale && vp.local_coordinates { gz::LOCAL } else { gz::WORLD };
@@ -693,13 +764,25 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
         // The whole gizmo takes the mouse: inside it but off its handles, it is shown the closest one.
         let (right, _, forward) = cam.axes();
         let aspect = w as f32 / h as f32;
-        let project = |p: Float3| cam.project(p, aspect).map(|(x, y)| [origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y]);
+        let project =
+            |p: Float3| cam.project(p, aspect).map(|(x, y)| [origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y]);
         let centre = Float3::new(frame.m[0][3], frame.m[1][3], frame.m[2][3]);
         let axis = |c: usize| normalize(Float3::new(frame.m[0][c], frame.m[1][c], frame.m[2][c]));
         let local_axes = tools || parent.is_some() || vp.gizmo == GizmoMode::Scale;
-        let axes = if local_axes { [axis(0), axis(1), axis(2)] } else { [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)] };
+        let axes = if local_axes {
+            [axis(0), axis(1), axis(2)]
+        } else {
+            [Float3::new(1.0, 0.0, 0.0), Float3::new(0.0, 1.0, 0.0), Float3::new(0.0, 0.0, 1.0)]
+        };
         let shape = crate::gizmo_reach::Gizmo {
-            project: &project, view: [size.x, size.y], centre, axes, right, forward, orthographic: cam.is_ortho(), size: gizmo_clip,
+            project: &project,
+            view: [size.x, size.y],
+            centre,
+            axes,
+            right,
+            forward,
+            orthographic: cam.is_ortho(),
+            size: gizmo_clip,
         };
 
         let held_offset = vp.gizmo_offset;
@@ -730,8 +813,15 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
             gui::with_mouse_at(shown.map(|[x, y]| gui::v2(x, y)), || {
                 gz::ImGuizmo_Manipulate(
-                    v.as_ptr(), p.as_ptr(), op, mode, m.as_mut_ptr(), std::ptr::null_mut(),
-                    if vp.snap && !tools { snap_values.as_ptr() } else { std::ptr::null() }, std::ptr::null(), std::ptr::null(),
+                    v.as_ptr(),
+                    p.as_ptr(),
+                    op,
+                    mode,
+                    m.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                    if vp.snap && !tools { snap_values.as_ptr() } else { std::ptr::null() },
+                    std::ptr::null(),
+                    std::ptr::null(),
                 );
                 using_gizmo = gz::ImGuizmo_IsUsing();
                 over_gizmo_handle = gz::ImGuizmo_IsOver_Nil();
@@ -796,7 +886,13 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
 
     // ---- the active tool's mouse events (hover every frame, the left button's press / drag / release)
     let event = |kind| ViewportEvent {
-        kind, x: ((mouse_x - origin.x) * density) as i32, y: ((mouse_y - origin.y) * density) as i32, ctrl, shift, alt, ..Default::default()
+        kind,
+        x: ((mouse_x - origin.x) * density) as i32,
+        y: ((mouse_y - origin.y) * density) as i32,
+        ctrl,
+        shift,
+        alt,
+        ..Default::default()
     };
     let has_tool = e.has_active_tool();
     if has_tool && hovered && !over_gizmo {
@@ -891,8 +987,20 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     if e.viewport.edge_scroll && hovered && !active {
         const EDGE: f32 = 12.0;
         let (rx, ry) = (mouse_x - origin.x, mouse_y - origin.y);
-        input.edge[0] = if rx < EDGE { -1.0 } else if rx > size.x - EDGE { 1.0 } else { 0.0 };
-        input.edge[1] = if ry < EDGE { 1.0 } else if ry > size.y - EDGE { -1.0 } else { 0.0 };
+        input.edge[0] = if rx < EDGE {
+            -1.0
+        } else if rx > size.x - EDGE {
+            1.0
+        } else {
+            0.0
+        };
+        input.edge[1] = if ry < EDGE {
+            1.0
+        } else if ry > size.y - EDGE {
+            -1.0
+        } else {
+            0.0
+        };
     }
 
     update_camera(e, &input);

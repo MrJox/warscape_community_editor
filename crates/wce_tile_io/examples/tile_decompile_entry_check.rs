@@ -41,7 +41,10 @@ fn main() {
                 // Same elements and attribute names, other values: the database and the kit disagree on data, not on layout.
                 let shape = |b: &[u8]| {
                     let d = XmlDoc::parse(b.to_vec()).expect("xml");
-                    d.elements().iter().map(|e| (e.name.clone(), e.attrs.iter().map(|a| a.name.clone()).collect::<Vec<_>>())).collect::<Vec<_>>()
+                    d.elements()
+                        .iter()
+                        .map(|e| (e.name.clone(), e.attrs.iter().map(|a| a.name.clone()).collect::<Vec<_>>()))
+                        .collect::<Vec<_>>()
                 };
 
                 if shape(&mine) == shape(&kit) {
@@ -50,7 +53,8 @@ fn main() {
 
                 if differ <= 12 {
                     let i = mine.iter().zip(&kit).take_while(|(a, b)| a == b).count();
-                    let show = |x: &[u8]| String::from_utf8_lossy(&x[i.saturating_sub(30)..(i + 50).min(x.len())]).replace(['\r', '\n'], "|");
+                    let show =
+                        |x: &[u8]| String::from_utf8_lossy(&x[i.saturating_sub(30)..(i + 50).min(x.len())]).replace(['\r', '\n'], "|");
                     println!("{}: at {i}: mine {:?} / kit {:?}", file.display(), show(&mine), show(&kit));
                 }
             }

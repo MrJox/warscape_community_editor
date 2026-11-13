@@ -81,5 +81,11 @@ pub fn adapter_info(adapter: &IDXGIAdapter1) -> Option<AdapterInfo> {
     let name = String::from_utf16_lossy(&d.description[..len]);
     #[cfg(not(windows))]
     let name = d.description[..len].iter().map(|&c| char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER)).collect();
-    Some(AdapterInfo { name, vendor_id: d.vendor_id, device_id: d.device_id, flags: d.flags, video_memory: d.dedicated_video_memory as u64 })
+    Some(AdapterInfo {
+        name,
+        vendor_id: d.vendor_id,
+        device_id: d.device_id,
+        flags: d.flags,
+        video_memory: d.dedicated_video_memory as u64,
+    })
 }

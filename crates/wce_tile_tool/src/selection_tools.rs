@@ -2,8 +2,8 @@
 //! drag in any mode; Shift adds, Ctrl takes away), selecting by the primary's type or key, everything, the inverse, and selections saved by name for the session.
 
 use wce_editor::editor::Editor;
-use wce_editor_core::document::Document;
 use wce_editor::{gui, icons, theme};
+use wce_editor_core::document::Document;
 use wce_scene::render_scene::{DocumentId, SourceRef};
 use wce_tile_editor::tile_document::{TileDocument, item_of};
 
@@ -185,7 +185,9 @@ impl TileTool {
                 let (lo, hi) = ((from.0.min(to.0) as f32, from.1.min(to.1) as f32), (from.0.max(to.0) as f32, from.1.max(to.1) as f32));
                 let io = gui::io();
                 let inside = Self::instances_where(e, |d, el| {
-                    e.viewport.project(d.tile().world_position(el)).is_some_and(|(px, py)| px >= lo.0 && px <= hi.0 && py >= lo.1 && py <= hi.1)
+                    e.viewport
+                        .project(d.tile().world_position(el))
+                        .is_some_and(|(px, py)| px >= lo.0 && px <= hi.0 && py >= lo.1 && py <= hi.1)
                 });
 
                 let mut now = if io.KeyShift || io.KeyCtrl { selected(e) } else { vec![] };

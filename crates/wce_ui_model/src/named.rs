@@ -96,7 +96,9 @@ fn label_node(el: &Element, idx: usize) -> Option<usize> {
         match n {
             Node::Comment { text, inline: true } => {
                 let t = text.trim();
-                let note = t.starts_with("ID (") || t.ends_with("degrees") || (t.len() == 11 && t.chars().all(|c| c.is_ascii_hexdigit() || c == ':'));
+                let note = t.starts_with("ID (")
+                    || t.ends_with("degrees")
+                    || (t.len() == 11 && t.chars().all(|c| c.is_ascii_hexdigit() || c == ':'));
                 if !note {
                     found = Some(k);
                 }
@@ -146,7 +148,9 @@ fn stem_of(el: &Element, kind: &str, it: &Item, v: u32) -> Option<String> {
 
         match def {
             // several different unknowns each keep the converter's label as their name
-            Some(df) if (df.name.starts_with("Unknown") || df.name.starts_with("Has ")) && !it.label.trim().is_empty() => Some(snake(it.label.trim().trim_end_matches('?'))),
+            Some(df) if (df.name.starts_with("Unknown") || df.name.starts_with("Has ")) && !it.label.trim().is_empty() => {
+                Some(snake(it.label.trim().trim_end_matches('?')))
+            }
             Some(df) => Some(snake(df.name)),
             None if !it.label.trim().is_empty() => Some(snake(it.label.trim().trim_end_matches('?'))),
             // the unlabelled id every component, state, picture and mouse action starts with (its bytes are noted beside it)
@@ -155,7 +159,13 @@ fn stem_of(el: &Element, kind: &str, it: &Item, v: u32) -> Option<String> {
         }
     };
 
-    name.map(|n| if LEAF.contains(&n.as_str()) || RESERVED.contains(&n.as_str()) || STRUCT.iter().any(|(r, s)| *r == n || *s == n) { format!("{n}_value") } else { n })
+    name.map(|n| {
+        if LEAF.contains(&n.as_str()) || RESERVED.contains(&n.as_str()) || STRUCT.iter().any(|(r, s)| *r == n || *s == n) {
+            format!("{n}_value")
+        } else {
+            n
+        }
+    })
 }
 
 fn fields(el: &Element, v: u32) -> Vec<Field> {
@@ -199,7 +209,9 @@ pub fn collect(dom: &Dom, version: u32, out: &mut BTreeMap<(String, String, Stri
 fn known(parent: &str, f: &Field, v: u32) -> Option<usize> {
     let e = table().get(&(parent, f.stem.as_str()))?;
     let here: Vec<_> = e.iter().filter(|(_, _, lo, hi)| (*lo..=*hi).contains(&v)).collect();
-    here.iter().any(|(t, l, _, _)| *t == f.tag && *l == f.label).then(|| here.iter().map(|(t, _, _, _)| if *t == "yes" || *t == "no" { "bool" } else { *t }).collect::<BTreeSet<_>>().len())
+    here.iter()
+        .any(|(t, l, _, _)| *t == f.tag && *l == f.label)
+        .then(|| here.iter().map(|(t, _, _, _)| if *t == "yes" || *t == "no" { "bool" } else { *t }).collect::<BTreeSet<_>>().len())
 }
 
 /// The converter's element (a component, the whole file) with the names of the game.
@@ -217,8 +229,16 @@ pub fn element_to_named(el: &Element, version: u32) -> Element {
                     let k = used.entry(f.stem.clone()).or_insert(0);
                     *k += 1;
                     let name = if *k == 1 { f.stem.clone() } else { format!("{}_{}", f.stem, k) };
-                    let attrs = if *count > 1 { vec![("type".to_string(), if f.tag == "yes" || f.tag == "no" { "bool".to_string() } else { f.tag.clone() })] } else { vec![] };
-                    let (children, form) = if f.tag == "yes" || f.tag == "no" { (vec![Node::Text(f.tag.clone())], Form::Normal) } else { (c.children.clone(), c.form) };
+                    let attrs = if *count > 1 {
+                        vec![("type".to_string(), if f.tag == "yes" || f.tag == "no" { "bool".to_string() } else { f.tag.clone() })]
+                    } else {
+                        vec![]
+                    };
+                    let (children, form) = if f.tag == "yes" || f.tag == "no" {
+                        (vec![Node::Text(f.tag.clone())], Form::Normal)
+                    } else {
+                        (c.children.clone(), c.form)
+                    };
                     out.children.push(Node::Elem(Element { name, attrs, children, form }));
                 }
                 None => out.children.push(Node::Elem(element_to_named(c, version))),
@@ -236,7 +256,15 @@ pub fn to_named(dom: &Dom, version: u32) -> Dom {
 }
 
 fn lookup(parent: &str, name: &str, ty: Option<&str>, v: u32) -> Option<(&'static str, &'static str)> {
-    let pick = |n: &str| table().get(&(parent, n)).and_then(|e| e.iter().find(|(t, _, lo, hi)| (*lo..=*hi).contains(&v) && ty.is_none_or(|y| y == *t || (y == "bool" && (*t == "yes" || *t == "no")))).map(|(t, l, _, _)| (*t, *l)));
+    let pick = |n: &str| {
+        table().get(&(parent, n)).and_then(|e| {
+            e.iter()
+                .find(|(t, _, lo, hi)| {
+                    (*lo..=*hi).contains(&v) && ty.is_none_or(|y| y == *t || (y == "bool" && (*t == "yes" || *t == "no")))
+                })
+                .map(|(t, l, _, _)| (*t, *l))
+        })
+    };
     if let Some(r) = pick(name) {
         return Some(r);
     }
@@ -269,7 +297,12 @@ pub fn element_to_raw(el: &Element, version: u32) -> Result<Element, String> {
                                 other => return Err(format!("<{}> is yes or no, not {:?}", c.name, other)),
                             };
 
-                            out.children.push(Node::Elem(Element { name: tag.into(), attrs: vec![], children: vec![], form: Form::SelfClosing { space: true } }));
+                            out.children.push(Node::Elem(Element {
+                                name: tag.into(),
+                                attrs: vec![],
+                                children: vec![],
+                                form: Form::SelfClosing { space: true },
+                            }));
                             (None, Form::Normal)
                         } else {
                             (Some(c.children.clone()), c.form)

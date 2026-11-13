@@ -90,7 +90,11 @@ fn assembly_kits() {
     // The old single kit becomes the first of the list, once.
     let paths = Paths::in_dir(&dir.path().join("config"));
     std::fs::create_dir_all(paths.config_dir()).unwrap();
-    std::fs::write(paths.settings_file(), format!("[games.attila]\nassembly_kit = {:?}\nassembly_kits = [{:?}]\n", a.display().to_string(), b.display().to_string())).unwrap();
+    std::fs::write(
+        paths.settings_file(),
+        format!("[games.attila]\nassembly_kit = {:?}\nassembly_kits = [{:?}]\n", a.display().to_string(), b.display().to_string()),
+    )
+    .unwrap();
     let mut settings = Settings::load(paths.clone());
     assert_eq!(settings.assembly_kit_dirs(), [a.clone(), b.clone()]);
     settings.save().unwrap();
@@ -120,7 +124,9 @@ fn settings_per_game() {
     let paths = Paths::in_dir(dir.path());
 
     // A file from before: one output folder and the tile tool's recent list shared by both games.
-    std::fs::write(paths.settings_file(), r#"
+    std::fs::write(
+        paths.settings_file(),
+        r#"
 game = "rome_2"
 output_dir = "/out"
 [games.attila]
@@ -130,7 +136,9 @@ dir = "/games/rome2"
 [tools.tile]
 kits = ["/recent"]
 show_sea = true
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let mut s = Settings::load(paths.clone());
     s.set_game_fields("tile", &["kits"]);
 
@@ -204,7 +212,11 @@ fn db_schemas_folder() {
 #[test]
 fn settings_from_the_old_ini() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("wce.ini"), "# comment\r\ngame_dir=/games/attila\r\nmod_packs=a.pack;b.pack\nframe_cap=30\ntile_show_sea=0\ntile_kits=/k1;/k2\nempty=\n").unwrap();
+    std::fs::write(
+        dir.path().join("wce.ini"),
+        "# comment\r\ngame_dir=/games/attila\r\nmod_packs=a.pack;b.pack\nframe_cap=30\ntile_show_sea=0\ntile_kits=/k1;/k2\nempty=\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.path().join("layouts")).unwrap();
     let s = Settings::load(Paths::in_dir(dir.path()));
     assert_eq!(s.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
@@ -249,7 +261,12 @@ fn job_pool_order() {
     let (release, gate) = mpsc::channel::<()>();
 
     // The first job holds the only thread while the others queue up.
-    pool.post(move || { let _ = gate.recv(); }, 0.0);
+    pool.post(
+        move || {
+            let _ = gate.recv();
+        },
+        0.0,
+    );
     while pool.running() == 0 {
         std::thread::yield_now();
     }

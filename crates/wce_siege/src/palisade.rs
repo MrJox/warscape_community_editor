@@ -72,7 +72,11 @@ pub fn runs(pieces: &[PalisadePiece]) -> Vec<Run> {
         let mut chain = vec![s];
         used[s] = true;
         let mut at = s;
-        while let Some(next) = near(at).into_iter().filter(|&j| !used[j]).min_by(|&a, &b| dist(pieces[at].at, pieces[a].at).total_cmp(&dist(pieces[at].at, pieces[b].at))) {
+        while let Some(next) = near(at)
+            .into_iter()
+            .filter(|&j| !used[j])
+            .min_by(|&a, &b| dist(pieces[at].at, pieces[a].at).total_cmp(&dist(pieces[at].at, pieces[b].at)))
+        {
             used[next] = true;
             chain.push(next);
             at = next;
@@ -89,10 +93,18 @@ pub fn runs(pieces: &[PalisadePiece]) -> Vec<Run> {
 /// The openings between runs: each run's end paired with the nearest end of another run ahead of it (closest pairs first).
 pub fn openings(runs: &[Run]) -> Vec<Opening> {
     // End e of run r: (r, e), its last piece and the direction out of the run.
-    let ends: Vec<(usize, P, P)> = runs.iter().enumerate().filter(|(_, r)| r.pieces.len() >= 2).flat_map(|(i, r)| {
-        let n = r.pieces.len();
-        [(i, r.pieces[0], unit([r.pieces[0][0] - r.pieces[1][0], r.pieces[0][1] - r.pieces[1][1]])), (i, r.pieces[n - 1], unit([r.pieces[n - 1][0] - r.pieces[n - 2][0], r.pieces[n - 1][1] - r.pieces[n - 2][1]]))]
-    }).collect();
+    let ends: Vec<(usize, P, P)> = runs
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.pieces.len() >= 2)
+        .flat_map(|(i, r)| {
+            let n = r.pieces.len();
+            [
+                (i, r.pieces[0], unit([r.pieces[0][0] - r.pieces[1][0], r.pieces[0][1] - r.pieces[1][1]])),
+                (i, r.pieces[n - 1], unit([r.pieces[n - 1][0] - r.pieces[n - 2][0], r.pieces[n - 1][1] - r.pieces[n - 2][1]])),
+            ]
+        })
+        .collect();
     let mut pairs = vec![];
     for x in 0..ends.len() {
         for y in x + 1..ends.len() {

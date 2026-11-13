@@ -164,7 +164,10 @@ pub fn pieces(x: f32, y: f32, w: f32, h: f32, iw: f32, ih: f32, margins: [f32; 4
                 continue;
             }
 
-            let (nx, ny) = (if tiled && xstretch { (dw / sw).ceil().max(1.0) } else { 1.0 }, if tiled && ystretch { (dh / sh).ceil().max(1.0) } else { 1.0 });
+            let (nx, ny) = (
+                if tiled && xstretch { (dw / sw).ceil().max(1.0) } else { 1.0 },
+                if tiled && ystretch { (dh / sh).ceil().max(1.0) } else { 1.0 },
+            );
             if (nx * ny) as usize + out.len() > MAX_PIECES {
                 out.push(Piece { x: x + dx0, y: y + dy0, w: dw, h: dh, u0: sx0 / iw, v0: sy0 / ih, u1: sx1 / iw, v1: sy1 / ih });
                 continue;
@@ -180,7 +183,16 @@ pub fn pieces(x: f32, y: f32, w: f32, h: f32, iw: f32, ih: f32, margins: [f32; 4
                     }
 
                     let (fu, fv) = (if nx > 1.0 { pw / sw } else { 1.0 }, if ny > 1.0 { ph / sh } else { 1.0 });
-                    out.push(Piece { x: x + px, y: y + py, w: pw, h: ph, u0: sx0 / iw, v0: sy0 / ih, u1: (sx0 + sw * fu) / iw, v1: (sy0 + sh * fv) / ih });
+                    out.push(Piece {
+                        x: x + px,
+                        y: y + py,
+                        w: pw,
+                        h: ph,
+                        u0: sx0 / iw,
+                        v0: sy0 / ih,
+                        u1: (sx0 + sw * fu) / iw,
+                        v1: (sy0 + sh * fv) / ih,
+                    });
                 }
             }
         }
@@ -222,7 +234,11 @@ impl UiModel {
 
     /// The names of a component's states, in file order.
     pub fn entry_state_names(&self, path: &[usize]) -> Vec<String> {
-        self.dom.at(path).and_then(|el| el.find("states")).map(|st| st.elems().filter(|s| s.name == "state").map(state_title).collect()).unwrap_or_default()
+        self.dom
+            .at(path)
+            .and_then(|el| el.find("states"))
+            .map(|st| st.elems().filter(|s| s.name == "state").map(state_title).collect())
+            .unwrap_or_default()
     }
 
     /// Index of the component's default state among its states.
@@ -358,18 +374,35 @@ impl UiModel {
                     y: rect.y + p.y,
                     w: p.w,
                     h: p.h,
-                    kind: DrawKind::Image { path: normalize_image_path(path), tiled: yes(u, 0), flip_x: yes(u, 1), flip_y: yes(u, 2), tint, margins: margins_of(u, self.version) },
+                    kind: DrawKind::Image {
+                        path: normalize_image_path(path),
+                        tiled: yes(u, 0),
+                        flip_x: yes(u, 1),
+                        flip_y: yes(u, 2),
+                        tint,
+                        margins: margins_of(u, self.version),
+                    },
                 });
             }
         }
 
         let text = state.elems().find(|c| c.name == "unicode").map(|c| c.text()).unwrap_or_default();
         if !text.is_empty() {
-            let size = by_label(state, "font size").and_then(|i| if let Some(Node::Elem(c)) = state.children.get(i) { c.text().trim().parse::<f32>().ok() } else { None }).unwrap_or(10.0);
+            let size = by_label(state, "font size")
+                .and_then(|i| if let Some(Node::Elem(c)) = state.children.get(i) { c.text().trim().parse::<f32>().ok() } else { None })
+                .unwrap_or(10.0);
             let strings: Vec<String> = state.elems().filter(|c| c.name == "s").map(|c| c.text()).collect();
-            let font = by_label(state, "font").and_then(|i| if let Some(Node::Elem(c)) = state.children.get(i) { Some(c.text()) } else { None }).unwrap_or_else(|| strings.get(1).cloned().unwrap_or_default());
-            let category = by_label(state, "font category").and_then(|i| if let Some(Node::Elem(c)) = state.children.get(i) { Some(c.text()) } else { None }).unwrap_or_default();
-            let margin = |label: &str| by_label(state, label).and_then(|i| if let Some(Node::Elem(c)) = state.children.get(i) { c.text().trim().parse::<i32>().ok() } else { None }).unwrap_or(0);
+            let font = by_label(state, "font")
+                .and_then(|i| if let Some(Node::Elem(c)) = state.children.get(i) { Some(c.text()) } else { None })
+                .unwrap_or_else(|| strings.get(1).cloned().unwrap_or_default());
+            let category = by_label(state, "font category")
+                .and_then(|i| if let Some(Node::Elem(c)) = state.children.get(i) { Some(c.text()) } else { None })
+                .unwrap_or_default();
+            let margin = |label: &str| {
+                by_label(state, label)
+                    .and_then(|i| if let Some(Node::Elem(c)) = state.children.get(i) { c.text().trim().parse::<i32>().ok() } else { None })
+                    .unwrap_or(0)
+            };
             out.push(DrawItem {
                 entry: ei,
                 x: rect.x,

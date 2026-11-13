@@ -134,7 +134,9 @@ impl Assembler<'_> {
 
         // A ship's list of points: a part on each, picked each time. **ASSUMPTION**: `use_different_attach_point_parts` (on every such slot of
         // Attila's ships) asks for that.
-        if self.ship && let Some(points) = slot.attach_point.as_deref().filter(|a| a.contains(',')) {
+        if self.ship
+            && let Some(points) = slot.attach_point.as_deref().filter(|a| a.contains(','))
+        {
             for point in points.split(',').map(str::trim).filter(|p| !p.is_empty()) {
                 let one = Slot { attach_point: Some(point.to_owned()), probability: None, ..slot.clone() };
                 self.slot(&one, parent, attach, depth);
@@ -157,7 +159,9 @@ impl Assembler<'_> {
         match &slot.alternatives[pick] {
             Alternative::Mesh(mesh) => self.mesh(mesh, parent, &attach, depth),
             Alternative::Reference { definition, .. } => {
-                if depth < 32 && let Some(file) = self.file(definition) {
+                if depth < 32
+                    && let Some(file) = self.file(definition)
+                {
                     self.mesh(&file.root, parent, &attach, depth + 1);
                 }
             }
@@ -212,14 +216,18 @@ mod tests {
 
     fn files() -> HashMap<String, Vec<u8>> {
         let mut f = HashMap::new();
-        f.insert("a.variantmeshdefinition".to_owned(), br#"<VARIANT_MESH>
+        f.insert(
+            "a.variantmeshdefinition".to_owned(),
+            br#"<VARIANT_MESH>
             <SLOT name="skin"><VARIANT_MESH model="Body.rigid_model_v2" mask0="2" mask1="0" mask2="1" /></SLOT>
             <SLOT name="never" probability="0"><VARIANT_MESH model="no.rigid_model_v2" /></SLOT>
             <SLOT name="weapon_1" attach_point="weapon_03">
                 <VARIANT_MESH_REFERENCE definition="B.VariantMeshDefinition" />
             </SLOT>
             <SLOT name="other"><VARIANT_MESH_REFERENCE definition="gone.VariantMeshDefinition" /></SLOT>
-        </VARIANT_MESH>"#.to_vec());
+        </VARIANT_MESH>"#
+                .to_vec(),
+        );
         f.insert("b.variantmeshdefinition".to_owned(), br#"<VARIANT_MESH>
             <SLOT name="s"><VARIANT_MESH model="shield.rigid_model_v2" decal_diffuse="P/d"><TINT red="1" green="0.5" blue="0.25" random_range="0" /></VARIANT_MESH></SLOT>
         </VARIANT_MESH>"#.to_vec());
@@ -254,8 +262,15 @@ mod tests {
         let read = |p: &str| f.get(p).cloned();
         let ship = assemble_ship(&read, "s.variantmeshdefinition", 3).expect("assembles");
         let models: Vec<&str> = ship.parts.iter().map(|p| p.model.as_str()).collect();
-        assert_eq!(models, ["bow1.rigid_model_v2", "port.rigid_model_v2", "shield.rigid_model_v2", "shield.rigid_model_v2", "shield.rigid_model_v2"]);
-        assert_eq!(assemble(&read, "s.variantmeshdefinition", 3).expect("assembles").parts.len(), 4, "a unit's slot takes the list's first point");
+        assert_eq!(
+            models,
+            ["bow1.rigid_model_v2", "port.rigid_model_v2", "shield.rigid_model_v2", "shield.rigid_model_v2", "shield.rigid_model_v2"]
+        );
+        assert_eq!(
+            assemble(&read, "s.variantmeshdefinition", 3).expect("assembles").parts.len(),
+            4,
+            "a unit's slot takes the list's first point"
+        );
         assert!(damaged("stern_02_dm2") && !damaged("stern_02_dm1") && !damaged("sails") && !damaged("x_dmz"));
     }
 

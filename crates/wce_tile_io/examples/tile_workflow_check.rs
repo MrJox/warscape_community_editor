@@ -115,8 +115,11 @@ fn main() -> Result<(), String> {
         }
 
         // The packs' names are lower case; BOB's keep the categories' case.
-        let saved: std::collections::BTreeMap<String, PathBuf> =
-            std::fs::read_dir(&dir).map_err(|e| e.to_string())?.flatten().map(|e| (e.file_name().to_string_lossy().to_lowercase(), e.path())).collect();
+        let saved: std::collections::BTreeMap<String, PathBuf> = std::fs::read_dir(&dir)
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .map(|e| (e.file_name().to_string_lossy().to_lowercase(), e.path()))
+            .collect();
         let (mut same, mut differ, mut missing) = (vec![], vec![], vec![]);
         for (name, blob) in &files.folder {
             let theirs = blob.bytes().map_err(|e| e.to_string())?;
@@ -132,15 +135,30 @@ fn main() -> Result<(), String> {
         }
 
         let extra = saved.keys().filter(|n| !files.folder.keys().any(|k| k.to_lowercase() == **n)).cloned().collect::<Vec<_>>();
-        println!("  files: {} the same, {} differ {:?}, {} missing {:?}, {} extra {:?}", same.len(), differ.len(), differ, missing.len(), missing, extra.len(), extra);
+        println!(
+            "  files: {} the same, {} differ {:?}, {} missing {:?}, {} extra {:?}",
+            same.len(),
+            differ.len(),
+            differ,
+            missing.len(),
+            missing,
+            extra.len(),
+            extra
+        );
 
         let kind = folder.split('/').nth(2).unwrap_or("battle");
         // Rome 2: the tile's set file, against the packs'.
         if let Some(xml) = game.data.xml_databases.get(kind) {
-            let location = folder.trim_start_matches("terrain/tiles/").rsplit_once('/').map(|(l, _)| format!("terrain\\tiles\\{}", l.replace('/', "\\"))).unwrap_or_default();
-            let tile = xml.database.tiles().iter().find(|t| t.location().eq_ignore_ascii_case(&location)).ok_or("the tile is in no set file")?;
+            let location = folder
+                .trim_start_matches("terrain/tiles/")
+                .rsplit_once('/')
+                .map(|(l, _)| format!("terrain\\tiles\\{}", l.replace('/', "\\")))
+                .unwrap_or_default();
+            let tile =
+                xml.database.tiles().iter().find(|t| t.location().eq_ignore_ascii_case(&location)).ok_or("the tile is in no set file")?;
             let file = xml.set_file(tile.tile_set()).ok_or("no set file")?;
-            let saved = std::fs::read(out.join(wce_tile_io::rome2::tile_database::Rome2TileDatabase::folder(kind)).join(file)).map_err(|e| e.to_string())?;
+            let saved = std::fs::read(out.join(wce_tile_io::rome2::tile_database::Rome2TileDatabase::folder(kind)).join(file))
+                .map_err(|e| e.to_string())?;
             println!("  tile set file {file}: {}", if saved == xml.files[file] { "the same" } else { "differs" });
             continue;
         }
@@ -149,7 +167,9 @@ fn main() -> Result<(), String> {
         let saved = read_database(&saved)?;
         let base = game.data.database(kind).ok_or("no database")?;
         let location = folder.trim_start_matches("terrain/tiles/").rsplit_once('/').map(|(l, _)| l.replace('/', "\\")).unwrap_or_default();
-        let find = |db: &rpfm_lib::files::tile_database::TileDatabase| db.tiles().iter().position(|t| t.location().to_lowercase().ends_with(&location.to_lowercase()));
+        let find = |db: &rpfm_lib::files::tile_database::TileDatabase| {
+            db.tiles().iter().position(|t| t.location().to_lowercase().ends_with(&location.to_lowercase()))
+        };
         let (a, b) = (find(base), find(&saved));
         println!(
             "  tile database: {} tiles (in effect {}), the entry at {:?} (in effect {:?}), {}",

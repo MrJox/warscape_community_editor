@@ -218,23 +218,34 @@ impl ShipModel {
     /// Returns which link of the unit's data is missing.
     pub fn load(read: &Reader, catalog: &UnitCatalog, unit: &str, faction: &str, seed: u64) -> Result<Self, String> {
         let naval = catalog.naval_units.get(unit).ok_or_else(|| format!("'{unit}' is not a naval unit"))?;
-        let entry = catalog.ship_entry(&naval.naval_unit, faction).ok_or_else(|| format!("no unit_variants_ships row for '{}'", naval.naval_unit))?;
+        let entry = catalog
+            .ship_entry(&naval.naval_unit, faction)
+            .ok_or_else(|| format!("no unit_variants_ships row for '{}'", naval.naval_unit))?;
         let definition = variant_path(&entry.variant);
         let assembled = assemble_ship(read, &definition, seed).ok_or_else(|| format!("{definition} could not be read"))?;
         let mut missing = assembled.missing;
-        let mut parts: Vec<ShipPart> = assembled.parts.into_iter().map(|p| {
-            let local = match &p.attach {
-                Attach::Point { matrix, .. } => rows_matrix(matrix),
-                Attach::None | Attach::Bone(_) => Float4x4::IDENTITY,
-            };
+        let mut parts: Vec<ShipPart> = assembled
+            .parts
+            .into_iter()
+            .map(|p| {
+                let local = match &p.attach {
+                    Attach::Point { matrix, .. } => rows_matrix(matrix),
+                    Attach::None | Attach::Bone(_) => Float4x4::IDENTITY,
+                };
 
-            ShipPart { model: p.model, local, masks: p.masks, what: PartMeshes::default(), row: None, row_offset: 0.0, cloth: None }
-        }).collect();
+                ShipPart { model: p.model, local, masks: p.masks, what: PartMeshes::default(), row: None, row_offset: 0.0, cloth: None }
+            })
+            .collect();
 
         let logic = catalog.ship_logic.get(&naval.model).cloned();
         if let Some(logic) = &logic {
             let mut clips: HashMap<String, Option<Arc<Animation>>> = HashMap::new();
-            let mut clip = |path: &str| clips.entry(path.to_owned()).or_insert_with(|| read(path).and_then(|b| Animation::decode(&b, usize::MAX)).map(Arc::new)).clone();
+            let mut clip = |path: &str| {
+                clips
+                    .entry(path.to_owned())
+                    .or_insert_with(|| read(path).and_then(|b| Animation::decode(&b, usize::MAX)).map(Arc::new))
+                    .clone()
+            };
             let mut rng = crate::unit_assembly::Rng(seed ^ 0x0A12_5EED);
             let mut add = |model: String, local: Float4x4, row: Option<Arc<Animation>>| {
                 if read(&model).is_some() {
@@ -284,7 +295,8 @@ impl ShipModel {
     /// would rest on the waves of the moment, without its inertia.
     pub fn afloat(&self, wave: &dyn Fn(f32, f32) -> f32) -> Float4x4 {
         let Some(logic) = self.logic.as_ref().filter(|l| !l.bobbies.is_empty()) else { return Float4x4::IDENTITY };
-        let points: Vec<([f32; 2], f32, f32)> = logic.bobbies.iter().map(|b| ([b.position[0], b.position[2]], wave(b.position[0], b.position[2]), b.mass.max(0.0))).collect();
+        let points: Vec<([f32; 2], f32, f32)> =
+            logic.bobbies.iter().map(|b| ([b.position[0], b.position[2]], wave(b.position[0], b.position[2]), b.mass.max(0.0))).collect();
         let (heave, along_x, along_z) = fit_plane(&points);
         let up = normalize(Float3::new(-along_x, 1.0, -along_z));
         let right = normalize(cross(up, Float3::new(0.0, along_z, 1.0)));
@@ -334,7 +346,8 @@ mod tests {
     #[test]
     fn a_plane_is_fitted_through_the_waves() {
         let plane = |x: f32, z: f32| 0.5 + 0.1 * x - 0.02 * z;
-        let points: Vec<([f32; 2], f32, f32)> = [[-4.0, -20.0], [4.0, -20.0], [-4.0, 20.0], [4.0, 20.0], [0.0, 0.0]].iter().map(|p| (*p, plane(p[0], p[1]), 1.0)).collect();
+        let points: Vec<([f32; 2], f32, f32)> =
+            [[-4.0, -20.0], [4.0, -20.0], [-4.0, 20.0], [4.0, 20.0], [0.0, 0.0]].iter().map(|p| (*p, plane(p[0], p[1]), 1.0)).collect();
         let (h, a, b) = fit_plane(&points);
         assert!((h - 0.5).abs() < 1e-4 && (a - 0.1).abs() < 1e-4 && (b + 0.02).abs() < 1e-4, "{h} {a} {b}");
         assert_eq!(fit_plane(&[([1.0, 1.0], 2.0, 1.0)]), (2.0, 0.0, 0.0), "one point: level at its height");
@@ -357,7 +370,11 @@ mod tests {
     #[test]
     fn men_fill_the_highest_marines_lines_first() {
         let logic = ShipLogic {
-            ef_lines: vec![line(4, [-1.0, 2.0, 0.0], [1.0, 2.0, 0.0]), line(10, [0.0, 9.0, 9.0], [2.0, 9.0, 9.0]), line(4, [0.0, 4.0, 5.0], [1.5, 4.0, 5.0])],
+            ef_lines: vec![
+                line(4, [-1.0, 2.0, 0.0], [1.0, 2.0, 0.0]),
+                line(10, [0.0, 9.0, 9.0], [2.0, 9.0, 9.0]),
+                line(4, [0.0, 4.0, 5.0], [1.5, 4.0, 5.0]),
+            ],
             ..ShipLogic::default()
         };
 

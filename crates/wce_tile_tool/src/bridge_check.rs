@@ -32,7 +32,8 @@ impl TileTool {
             report.bridges, report.walls, report.wall_joints
         );
 
-        let msg = if report.unread.is_empty() { msg } else { format!("{msg}; without a logic file (not checked): {}", report.unread.join(", ")) };
+        let msg =
+            if report.unread.is_empty() { msg } else { format!("{msg}; without a logic file (not checked): {}", report.unread.join(", ")) };
         self.bridge_check = Some((stamp, report));
         msg
     }
@@ -60,7 +61,12 @@ impl TileTool {
             return false;
         }
 
-        gui::text_wrapped(&format!("{} problem(s) in {} bridge(s) and {} wall building(s):", report.problems.len(), report.bridges, report.walls));
+        gui::text_wrapped(&format!(
+            "{} problem(s) in {} bridge(s) and {} wall building(s):",
+            report.problems.len(),
+            report.bridges,
+            report.walls
+        ));
         let mut pick = None;
         for (i, p) in report.problems.iter().enumerate() {
             if gui::selectable(&format!("{}  {}##bridge{i}", icons::TRIANGLE_ALERT, p.message), false, 0) {
