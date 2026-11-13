@@ -903,9 +903,12 @@ fn draw_siege(dl: &gui::DrawList, f: &Frame, s: &MinimapSiege) {
         fill(p, col32(200, 200, 200, 110));
     }
 
-    for w in &input.walls {
-        for r in &w.footprint {
-            fill(r, if w.gate { col32(170, 51, 204, 220) } else { col32(110, 110, 110, 220) });
+    // The walls: their footprints' triangles, cut once (`MinimapSiege::wall_fills`).
+    for (gate, tris) in &s.wall_fills {
+        let col = if *gate { col32(170, 51, 204, 220) } else { col32(110, 110, 110, 220) };
+        let at = |q: [f32; 2]| f.screen(f64::from(q[0]) / u, f64::from(q[1]) / u);
+        for t in tris {
+            dl.triangle_filled(at(t[0]), at(t[1]), at(t[2]), col);
         }
     }
 
