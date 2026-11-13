@@ -183,6 +183,31 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
+        "weather_gallery",
+        "weather_gallery on|off|refresh [filter words]",
+        "the Weather gallery: open or close it (with the Files panel's filter set to the words), or draw it again from the camera",
+        |e, a| {
+            let Some(what) = a.first().cloned() else { return fail("usage: weather_gallery on|off|refresh [filter words]") };
+            let words = a[1..].join(" ");
+            with_weather(e, |t, e| {
+                match what.as_str() {
+                    "on" => t.gallery.open = true,
+                    "off" => t.gallery.open = false,
+                    "refresh" => t.gallery.refresh(e),
+                    _ => return fail("usage: weather_gallery on|off|refresh [filter words]"),
+                }
+
+                if !words.is_empty() {
+                    t.filter = words.clone();
+                    t.listing_dirty = true;
+                }
+
+                ok("")
+            })
+        },
+    );
+
+    c.add(
         "weather_without",
         "weather_without <fog|clouds|precipitation|tone curve|colour grading|depth of field> on|off",
         "a preview switch: that part of the file left out of the viewport's light (the file keeps it)",
