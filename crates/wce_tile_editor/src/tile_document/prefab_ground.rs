@@ -321,6 +321,7 @@ impl super::TileDocument {
         let mode = if terrain.normalize { "normalized: level under it, feathered into the ground" } else { "adds to the ground under it" };
         let opacity = number(doc, e, TERRAIN_OPACITY_ATTR).unwrap_or(1.0).clamp(0.0, 1.0);
         let feather = number(doc, e, TERRAIN_FEATHER_ATTR);
+        ins.hint("Whether the reference brings its prefab's ground here. Sculpting here goes under that ground: change it in the prefab, switch it off, or unpack the prefab.");
         if ins.edit_bool("ground_on", "brings ground", &mut on) {
             self.set_attribute(e, TERRAIN_ATTR, if on { "on" } else { "off" });
         }
@@ -347,8 +348,10 @@ impl super::TileDocument {
             }
         };
 
+        ins.hint("How much of the prefab's ground is applied (0 to 1). Set when the drag ends.");
         draft(self, TERRAIN_OPACITY_ATTR, opacity, &mut |ins, v| ins.edit_slider("ground_opacity", "opacity", v, 0.0, 1.0), ins);
         if terrain.normalize {
+            ins.hint("How far (in the prefab's units) the levelled ground blends into the ground around it. Set when the drag ends.");
             draft(
                 self,
                 TERRAIN_FEATHER_ATTR,
@@ -363,12 +366,11 @@ impl super::TileDocument {
                 )]);
             }
 
+            ins.hint("Gives the feather back to the prefab's own.");
             if ins.button("ground_feather_reset", "The prefab's feather", feather.is_some()) {
                 self.set_attribute(e, TERRAIN_FEATHER_ATTR, "");
             }
         }
-
-        ins.hint("Sculpting here goes under the prefab's ground: change it in the prefab, switch it off, or unpack the prefab.");
     }
 }
 

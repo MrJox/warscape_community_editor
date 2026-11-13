@@ -51,6 +51,10 @@ impl TileTool {
         let Some((when, report)) = self.bridge_check.as_ref().filter(|(s, _)| s.0 == id) else { return false };
         gui::same_line();
         gui::checkbox("show edges##platforms", &mut self.bridge_overlay);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Draws the checked edges in the viewport (colours: see Check platforms' tooltip).");
+        }
+
         if *when != stamp {
             gui::text_disabled("The tile changed since: check again.");
         }
@@ -71,6 +75,10 @@ impl TileTool {
         for (i, p) in report.problems.iter().enumerate() {
             if gui::selectable(&format!("{}  {}##bridge{i}", icons::TRIANGLE_ALERT, p.message), false, 0) {
                 pick = Some(p.elems.clone());
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Selects the buildings concerned and frames them.");
             }
         }
 

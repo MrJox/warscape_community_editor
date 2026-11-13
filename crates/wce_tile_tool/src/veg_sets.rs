@@ -117,6 +117,10 @@ impl TileTool {
             gui::close_current_popup();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Saves the selected trees as a set under this name (Enter).");
+        }
+
         gui::same_line();
         if gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true) {
             self.new_set_name = None;
@@ -182,6 +186,10 @@ impl TileTool {
             let can_save = !name.trim().is_empty() && !set.entries.is_empty();
             gui::begin_disabled(!can_save);
             save = gui::small_button(&format!("{}  Save", icons::SAVE)) || (enter && can_save);
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Saves the set under its name in the projects' vegetation sets (a name and a tree first).");
+            }
+
             gui::end_disabled();
 
             // Placing with it already from the first tree; again after Esc.
@@ -189,11 +197,18 @@ impl TileTool {
                 gui::same_line();
                 gui::begin_disabled(set.entries.is_empty());
                 use_it = gui::small_button(&format!("{}  Place / paint", icons::MOUSE_POINTER_2));
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip("Places or paints trees with the set again; Esc stops.");
+                }
+
                 gui::end_disabled();
             }
 
             gui::same_line();
             drop = gui::small_button(&format!("{}  Discard", icons::X));
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Throws the new set away, unsaved, and stops placing with it.");
+            }
             self.scratch_name = name;
         }
 
@@ -321,6 +336,10 @@ fn set_rows(set: &mut VegetationSet) {
                 gui::set_next_item_width(-1.0);
                 if gui::drag_float2("##scale", &mut v, 0.01, "%.2f") {
                     (*lo, *hi) = (v[0].clamp(0.1, 3.0), v[1].clamp(0.1, 3.0));
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The smallest and largest scale this tree is placed at (0.1 to 3).");
                 }
             } else {
                 gui::text_disabled("brush's");

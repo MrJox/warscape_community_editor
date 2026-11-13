@@ -49,6 +49,10 @@ impl TileTool {
     fn draw_layer_list(&mut self, d: &mut TileDocument, kind: LayerType) {
         let (rows, working) = d.terrain_layers(kind);
         let can_add = gui::button(&format!("{} New layer", icons::PLUS));
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Adds an empty layer of this type on top; it becomes the working layer.");
+        }
+
         if can_add {
             let name = format!("Layer {}", rows.len() + 1);
             if let Err(why) = d.add_terrain_layer(kind, &name) {
@@ -71,9 +75,17 @@ impl TileTool {
                 d.set_terrain_layer_visible(kind, row.id, !row.visible);
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Shows or hides the layer; a hidden layer leaves the terrain as if it weren't there.");
+            }
+
             gui::same_line();
             if gui::selectable(&row.name, working == Some(row.id), 0) {
                 d.set_working_layer(kind, Some(row.id));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Makes it the working layer: brushes of this type paint into it.");
             }
 
             gui::pop_id();
@@ -81,9 +93,17 @@ impl TileTool {
 
         gui::push_id("layer_base");
         gui::small_button(icons::LAYERS);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The base: the tile's own terrain, always at the bottom.");
+        }
+
         gui::same_line();
         if gui::selectable("Base", working.is_none(), 0) {
             d.set_working_layer(kind, None);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Paint straight into the tile's own terrain, no layer.");
         }
 
         gui::pop_id();
@@ -117,6 +137,10 @@ impl TileTool {
             d.set_terrain_layer_opacity(kind, row.id, opacity);
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("How much of the layer applies: 0 none, 1 all of it.");
+        }
+
         if gui::is_item_deactivated() {
             d.commit_terrain_layer("Layer opacity", kind);
         }
@@ -135,6 +159,10 @@ impl TileTool {
         let items = names.iter().map(String::as_str).collect::<Vec<_>>();
         if gui::combo("##layer_depends", &mut chosen, &items) {
             d.set_terrain_layer_dependency(kind, row.id, (chosen > 0).then(|| scene[chosen as usize - 1].0));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(EXPORTS_WITH_TIP);
         }
 
         let note = match &dependency {
@@ -161,11 +189,19 @@ impl TileTool {
             d.move_terrain_layer(kind, row.id, 1);
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Moves the layer up the stack (it applies later).");
+        }
+
         gui::end_disabled();
         gui::same_line();
         gui::begin_disabled(at == 0);
         if gui::small_button(icons::ARROW_BIG_DOWN) {
             d.move_terrain_layer(kind, row.id, -1);
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Moves the layer down the stack (it applies earlier).");
         }
 
         gui::end_disabled();
@@ -174,9 +210,17 @@ impl TileTool {
             d.merge_terrain_layer(kind, row.id);
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Merges the layer into the one below it, or into the base.");
+        }
+
         gui::same_line();
         if gui::small_button(icons::TRASH_2) {
             d.remove_terrain_layer(kind, row.id);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Removes the layer and what it did.");
         }
     }
 }

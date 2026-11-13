@@ -115,6 +115,10 @@ impl TileTool {
             t.display_changed();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Draws the tile's polygons (areas) in the viewport.");
+        }
+
         let v = t.display_mut();
         if gui::checkbox("Over buildings##areas", &mut v.polygon_over_buildings) {
             t.polygons_changed();
@@ -128,6 +132,10 @@ impl TileTool {
         if gui::small_button("Reset##areas") {
             look = PolygonLook::default();
             ended = true;
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Puts the outlines and fills above back to their defaults.");
         }
 
         gui::end_disabled();

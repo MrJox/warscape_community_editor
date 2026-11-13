@@ -473,9 +473,17 @@ impl PrefabTool {
                 self.report(e, r);
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Saves the stage's prefab, with its ground.");
+            }
+
             gui::same_line();
             if gui::button("Save as...") {
                 ask_now = Some((Ask::SaveAs, key.clone()));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Saves the stage as a new prefab of the projects and opens it; the old one stays as its file has it.");
             }
 
             gui::same_line();
@@ -484,10 +492,18 @@ impl PrefabTool {
                 self.report(e, r);
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Drops the unsaved changes: the prefab as its file has it again.");
+            }
+
             gui::same_line();
             if gui::button("Save for Assembly Kit") {
                 let r = self.save_for_kit(e);
                 self.report(e, r);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Writes the prefab as TEd reads it (no ground) into an Assembly Kit; save it first.");
             }
 
             gui::text_wrapped("Settings in the Inspector: select the prefab (its ground) or the root (the stage)");
@@ -497,9 +513,17 @@ impl PrefabTool {
         // New.
         gui::set_next_item_width(140.0);
         gui::input_text("##new_name", Some("new prefab"), &mut self.new_name, 128, 0);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The new prefab's name (its key and file name).");
+        }
+
         gui::same_line();
         gui::set_next_item_width(100.0);
         gui::input_text("##new_folder", Some("folder"), &mut self.new_folder, 256, 0);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The new prefab's folder below art/prefabs, e.g. global/rocks (optional).");
+        }
+
         gui::same_line();
         if gui::button(&format!("{}##new", icons::PACKAGE_PLUS)) {
             let (name, folder) = (self.new_name.clone(), self.new_folder.clone());
@@ -579,16 +603,34 @@ impl PrefabTool {
                             open = Some(p.key.clone());
                         }
 
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip("Opens the prefab on the stage.");
+                        }
+
                         if gui::menu_item("Duplicate...", None, false, true) {
                             ask_now = Some((Ask::Duplicate, p.key.clone()));
+                        }
+
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip("Copies the prefab as a new one of the projects, under a name you give.");
                         }
 
                         if gui::menu_item("Rename...", None, false, ours) {
                             ask_now = Some((Ask::Rename, p.key.clone()));
                         }
 
+                        if gui::is_item_hovered_allow_disabled() {
+                            gui::set_tooltip(
+                                "Renames the projects' prefab; tiles' references to the old name are not changed. Only the projects' prefabs.",
+                            );
+                        }
+
                         if gui::menu_item("Delete...", None, false, ours) {
                             ask_now = Some((Ask::Delete, p.key.clone()));
+                        }
+
+                        if gui::is_item_hovered_allow_disabled() {
+                            gui::set_tooltip("Deletes the projects' prefab file, after asking. Only the projects' prefabs.");
                         }
 
                         gui::end_popup();
@@ -649,6 +691,9 @@ impl PrefabTool {
                 if what != Ask::Rename {
                     gui::set_next_item_width(220.0);
                     gui::input_text("folder##ask", Some("below art/prefabs"), folder, 256, 0);
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("The new prefab's folder below art/prefabs (optional).");
+                    }
                 }
             }
         }
@@ -693,10 +738,18 @@ impl PrefabTool {
             self.stage_draft.cells = cells.clamp(1, 8) as u32;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The stage's size, in cells of 128 m a side. Takes effect on Apply.");
+        }
+
         let mut height = self.stage_draft.height as f32;
         gui::set_next_item_width(120.0);
         if gui::drag_float("ground height", &mut height, 0.5, -500.0, 2000.0, "%.1f") {
             self.stage_draft.height = f64::from(height);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The height of the stage's flat ground (m). Takes effect on Apply.");
         }
 
         let densities = wce_tile::new_tile::DENSITIES;
@@ -960,13 +1013,25 @@ impl Tool for PrefabTool {
                 r = Some(self.save(e));
             }
 
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Saves the stage's prefab, with its ground.");
+            }
+
             if gui::menu_item("Revert", None, false, open) {
                 r = Some(self.revert(e));
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Drops the unsaved changes: the prefab as its file has it again.");
             }
 
             gui::separator();
             if gui::menu_item("Close the stage", None, false, open) {
                 r = Some(self.close_stage(e, false).map(|()| "stage closed".to_owned()));
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("Closes the prefab's stage; refused while it has unsaved changes.");
             }
 
             gui::end_menu();

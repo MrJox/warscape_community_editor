@@ -81,6 +81,10 @@ impl TileTool {
                 forget = Some(v.name.clone());
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Forgets this view.");
+            }
+
             gui::same_line();
             if gui::selectable(&format!("{}##view{i}", v.name), false, 0) {
                 go = Some(v.name.clone());
@@ -90,8 +94,19 @@ impl TileTool {
         gui::separator();
         gui::set_next_item_width(160.0);
         let enter = gui::input_text("##viewname", Some("name"), &mut self.view_name, 64, gui::INPUT_ENTER_RETURNS_TRUE);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The new view's name; Enter saves it.");
+        }
+
         gui::same_line();
-        if (gui::small_button("Save the current view") || enter) && !self.view_name.trim().is_empty() {
+        let save = gui::small_button("Save the current view");
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Saves where the camera is under the name on the left; a view of that name is replaced. Kept in the settings, not in the tile.",
+            );
+        }
+
+        if (save || enter) && !self.view_name.trim().is_empty() {
             let name = self.view_name.trim().to_owned();
             self.save_camera_view(e, &name);
             self.view_name.clear();

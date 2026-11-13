@@ -56,9 +56,17 @@ impl TileTool {
             done = Some(self.open_exported(e, &p.target, None, false));
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Opens the project as it is, with its edits; nothing is extracted.");
+        }
+
         gui::same_line();
         if gui::button("Overwrite") {
             done = Some(self.open_exported(e, &p.target, None, true));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Extracts the tile again over the project and opens it; the project's edits are lost.");
         }
 
         gui::same_line();

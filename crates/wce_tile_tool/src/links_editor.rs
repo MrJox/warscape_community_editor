@@ -429,7 +429,7 @@ impl TileTool {
             }
         }
 
-        if gui::is_item_hovered() {
+        if !fresh && gui::is_item_hovered() {
             gui::set_tooltip(
                 "Every tile of the kit's database, at every turn it may take and every place along this tile's edges, whose links and this tile's agree as BOB's fill tests them, and that carries one of this tile's joins on (a target its rule asks for). Found again after an edit.",
             );

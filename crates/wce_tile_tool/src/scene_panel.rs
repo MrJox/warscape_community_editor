@@ -394,6 +394,10 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
             }
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Adds a layer inside the selected layer, else next to the selected item, else at the root; then name it.");
+        }
+
         gui::same_line_or_wrap(gui::button_width("Group"));
         gui::begin_disabled(sel.is_empty());
         let into = tool.new_items_layer(d);
@@ -404,7 +408,7 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
                 .map_or_else(|err| err, |_| "grouped".to_owned());
         }
 
-        if gui::is_item_hovered() {
+        if gui::is_item_hovered_allow_disabled() {
             gui::set_tooltip("Put the selected items into a new instance group in the working layer (Ctrl+G)");
         }
 
@@ -420,12 +424,16 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
         }
 
         gui::end_disabled();
-        if gui::is_item_hovered() {
+        if gui::is_item_hovered_allow_disabled() {
             gui::set_tooltip("Take the selected instance groups apart into the working layer (Ctrl+U)");
         }
 
         gui::same_line_or_wrap(gui::button_width("Delete"));
         let delete = gui::button("Delete");
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Deletes the selected items, with everything in them (Delete); asks first for a big selection.");
+        }
+
         gui::end_disabled();
         gui::same_line_or_wrap(gui::button_width("Duplicate"));
         gui::begin_disabled(!one_layer);
@@ -433,6 +441,10 @@ pub fn draw_layers_panel(tool: &mut TileTool, e: &mut Editor) {
             && let Err(err) = d.duplicate_layer(sel[0])
         {
             tool.status = err;
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Copies the selected layer with everything in it (one layer selected).");
         }
 
         gui::end_disabled();
@@ -591,9 +603,17 @@ fn draw_type_filter(e: &mut Editor, id: wce_scene::render_scene::DocumentId, lab
         change = Some(counts.keys().map(|t| (t.clone(), true)).collect());
     }
 
+    if gui::is_item_hovered() {
+        gui::set_tooltip("Shows every type in the tree and the viewport.");
+    }
+
     gui::same_line();
     if gui::small_button("None") {
         change = Some(counts.keys().map(|t| (t.clone(), false)).collect());
+    }
+
+    if gui::is_item_hovered() {
+        gui::set_tooltip("Hides every type from the tree and the viewport.");
     }
 
     gui::same_line();
@@ -841,8 +861,14 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                     actions.push(RowAction::Ungroup(sel.clone()));
                 }
 
-                if !sel.is_empty() && gui::menu_item("Group into a new layer", None, false, true) {
-                    actions.push(RowAction::GroupIntoLayer(sel.clone()));
+                if !sel.is_empty() {
+                    if gui::menu_item("Group into a new layer", None, false, true) {
+                        actions.push(RowAction::GroupIntoLayer(sel.clone()));
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("Moves the selected items into a new layer, then name it.");
+                    }
                 }
 
                 // Prefabs: a copy is edited, unpacked; a plain instance group is saved as one.
@@ -856,13 +882,27 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                             actions.push(RowAction::Prefab(PrefabAction::Unpack(el)));
                         }
 
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip("Makes this copy of the prefab a plain group, no longer tied to the prefab.");
+                        }
+
                         if gui::menu_item("Save prefab for Assembly Kit", None, false, true) {
                             actions.push(RowAction::Prefab(PrefabAction::SaveForKit(el)));
                         }
+
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip("Writes the prefab as TEd reads it (no ground) into an Assembly Kit's art/prefabs.");
+                        }
                     }
 
-                    None if sc.type_of(el) == "UserInstanceGroup" && gui::menu_item("Save as prefab...", None, false, true) => {
-                        actions.push(RowAction::Prefab(PrefabAction::Save(el)));
+                    None if sc.type_of(el) == "UserInstanceGroup" => {
+                        if gui::menu_item("Save as prefab...", None, false, true) {
+                            actions.push(RowAction::Prefab(PrefabAction::Save(el)));
+                        }
+
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip("Writes the group as a new prefab; the group becomes a reference to it.");
+                        }
                     }
 
                     None => {}
@@ -873,21 +913,32 @@ fn draw_tree(tool: &mut TileTool, e: &mut Editor, id: wce_scene::render_scene::D
                         if Some(el) != stage && gui::menu_item("Clear the working layer", None, false, true) {
                             actions.push(RowAction::SetWorking(None));
                         }
-                    } else if gui::menu_item("Set as the working layer", None, false, true) {
-                        actions.push(RowAction::SetWorking(Some(el)));
+                    } else {
+                        if gui::menu_item("Set as the working layer", None, false, true) {
+                            actions.push(RowAction::SetWorking(Some(el)));
+                        }
+
+                        if gui::is_item_hovered() {
+                            gui::set_tooltip("Makes it the working layer: new items go into it.");
+                        }
                     }
                 }
 
                 // Into a layer, or a holder (`wce_tile::parents`): what goes only inside a holder goes into one alone.
                 let holder = wce_tile::parents::child_kind(sc.type_of(el)).is_some();
                 let fits = sel.iter().all(|&s| wce_tile::parents::fits(sc.type_of(s), sc.type_of(el)).is_ok());
-                if (row.layer || holder)
-                    && in_stage(el)
-                    && !sel.is_empty()
-                    && !sel.contains(&el)
-                    && gui::menu_item("Move selection here", None, false, fits)
-                {
-                    actions.push(RowAction::MoveInto(sel.clone(), el));
+                if (row.layer || holder) && in_stage(el) && !sel.is_empty() && !sel.contains(&el) {
+                    if gui::menu_item("Move selection here", None, false, fits) {
+                        actions.push(RowAction::MoveInto(sel.clone(), el));
+                    }
+
+                    if gui::is_item_hovered_allow_disabled() {
+                        gui::set_tooltip(if fits {
+                            "Moves the selected items into this one."
+                        } else {
+                            "Moves the selected items into this one; some of them can't go in it."
+                        });
+                    }
                 }
 
                 gui::separator();

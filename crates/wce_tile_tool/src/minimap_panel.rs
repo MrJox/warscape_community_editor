@@ -560,6 +560,14 @@ impl MinimapUi {
                     if gui::radio_button(&format!("{name}##minimapbase"), self.base == base) {
                         self.base = base;
                     }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(match base {
+                            Base::Height => "A picture of the ground's heights.",
+                            Base::Radar => "The radar the tile would ship (its radar map in the game).",
+                            _ => "No picture under the overlays.",
+                        });
+                    }
                 }
 
                 gui::end_popup();
@@ -599,7 +607,15 @@ impl MinimapUi {
     fn draw_overlays(&mut self) {
         gui::text_disabled("Overlays");
         gui::checkbox("Siege AI##minimap", &mut self.show_siege);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The siege AI's layout: perimeter, nodes and edges, approaches, captures, the forts' pieces.");
+        }
+
         gui::checkbox("Deployment##minimap", &mut self.show_zones);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The deployment zones: the defender's blue, the attacker's red, any other alliance's yellow.");
+        }
+
         gui::checkbox("Cells##minimap", &mut self.show_cells);
         if gui::is_item_hovered() {
             gui::set_tooltip(
@@ -613,6 +629,9 @@ impl MinimapUi {
         }
 
         gui::checkbox("Camera##minimap", &mut self.show_camera);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The viewport's camera: where it is, what it sees and what it looks at.");
+        }
     }
 
     /// The fit pill at the bottom right of the map (`hi`): the whole tile again; false while the cursor is over it.

@@ -257,12 +257,19 @@ impl TileTool {
         }
 
         ins.section("Vegetation brush (Ctrl + drag takes trees away)");
+        ins.hint("The brush circle's radius, in metres.");
         ins.edit_slider("veg_radius", "radius (m)", &mut b.radius, 1.0, 100.0);
+        ins.hint("The least distance between two trees, in metres (the tile's trees count too).");
         ins.edit_slider("veg_spacing", "spacing (m)", &mut b.spacing, 0.5, 40.0);
+        ins.hint("The least distance from the other things' footprints (buildings, rocks...), in metres.");
         ins.edit_slider("veg_clearance", "clearance (m)", &mut b.clearance, 0.0, 20.0);
+        ins.hint("How much of the room the spacing leaves is planted: 1 tries as many trees as would fit.");
         ins.edit_slider("veg_fill", "fill", &mut b.fill, 0.0, 1.0);
+        ins.hint("The smallest scale a tree gets (each is scaled at random between these; a vegetation set's own range wins).");
         ins.edit_slider("veg_scale_min", "scale from", &mut b.scale_min, 0.1, 3.0);
+        ins.hint("The largest scale a tree gets (each is scaled at random between these; a vegetation set's own range wins).");
         ins.edit_slider("veg_scale_max", "scale to", &mut b.scale_max, 0.1, 3.0);
+        ins.hint("Each tree turned at random; off: all face the same way.");
         ins.edit_bool("veg_yaw", "random turn", &mut b.random_yaw);
         if b != before {
             self.set_veg_brush(e, b);

@@ -300,6 +300,10 @@ impl TileTool {
         gui::text_disabled("Each file replaced or moved aside is kept as <name>.bak.");
         gui::separator();
         let overwrite = gui::button("Overwrite");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Imports the shared project over yours; each file replaced or moved aside is kept as <name>.bak.");
+        }
+
         gui::same_line();
         let cancelled = gui::button("Cancel") || gui::is_key_pressed(gui::KEY_ESCAPE, true);
         if overwrite || cancelled {

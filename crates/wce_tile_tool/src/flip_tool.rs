@@ -190,9 +190,16 @@ impl TileTool {
             [flip.plane.x, flip.plane.z] = at;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A point the plane goes through: x and z, in metres.");
+        }
+
         row("Angle");
         gui::set_next_item_width(-1.0);
         gui::drag_float("##flipangle", &mut flip.plane.angle, 0.5, -360.0, 360.0, "%.1f deg");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The plane's heading in degrees: 0 flips along x, 90 along z.");
+        }
         row("Align to");
         if choice(
             "X axis##flip",
@@ -218,6 +225,10 @@ impl TileTool {
             (flip.plane.x, flip.plane.z) = (camera.x, camera.z);
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Puts the plane through the point the camera looks at; its angle stays.");
+        }
+
         self.flip = Some(flip);
         gui::spacing();
         gui::separator();
@@ -230,11 +241,19 @@ impl TileTool {
             self.status = self.do_flip(e).unwrap_or_else(|why| why);
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Mirrors the selection across the plane (moved or as a copy, as chosen above).");
+        }
+
         gui::pop_style_color(1);
         gui::end_disabled();
         gui::same_line();
         if gui::button("Done##flip") {
             self.flip = None;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Leaves Flip mode (Esc too).");
         }
 
         gui::spacing();

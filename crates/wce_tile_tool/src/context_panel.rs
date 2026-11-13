@@ -520,8 +520,17 @@ impl ContextUi {
             if self.shown { changed = true } else { self.clear(e) }
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Shows the tile among its neighbours in the battle map chosen below.");
+        }
+
         let names: Vec<&str> = self.maps.iter().map(String::as_str).collect();
-        if gui::combo("map", &mut self.map, &names) || (self.shown && self.loaded.is_none() && self.rx.is_none() && !names.is_empty()) {
+        let map_picked = gui::combo("map", &mut self.map, &names);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The battle map to read the neighbours from: the game's campaign battle map or one of the kit's.");
+        }
+
+        if map_picked || (self.shown && self.loaded.is_none() && self.rx.is_none() && !names.is_empty()) {
             self.loaded = None;
             self.start_map(&raw, files.clone());
         }
@@ -571,18 +580,49 @@ impl ContextUi {
                 gui::end_combo();
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Where in the map the tile goes: one of its placements there, or a cell you enter.");
+            }
+
             if self.choice >= self.placements.len() {
                 changed |= gui::input_int("cell x", &mut self.manual[0]);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The map column (cell x) the tile is placed at.");
+                }
+
                 changed |= gui::input_int("cell y", &mut self.manual[1]);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The map row (cell y) the tile is placed at.");
+                }
+
                 changed |= gui::combo("rotation", &mut self.manual[2], &["0", "90", "180", "270"]);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The tile's turn in the map, in degrees.");
+                }
             }
         }
 
         // The rings change the streamer's levels; the rest builds a new one.
         let mut rings = gui::slider_int("full detail (cells)", &mut self.near, 1, 64);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Cells around the focus whose tiles are drawn with everything on them.");
+        }
+
         rings |= gui::slider_int("buildings (cells)", &mut self.mid, 1, 128);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Cells around the focus whose tiles show their buildings.");
+        }
+
         rings |= gui::slider_int("tile ground (cells)", &mut self.ground, 1, 1024);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Cells around the focus whose tiles show their own coarse ground.");
+        }
+
         rings |= gui::slider_int("LF ground (cells)", &mut self.far, 1, 1024);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Cells around the focus covered by the map's LF ground; at least what the camera sees.");
+        }
+
         if rings {
             let r = self.rings();
             self.view.set_rings(&r);
@@ -596,13 +636,28 @@ impl ContextUi {
         let whole =
             self.loaded.as_ref().map_or(GAME_FAR_PLANE * 4.0, |(_, m, _)| (m.width.max(m.height) as f32 * CELL as f32).max(GAME_FAR_PLANE));
         gui::slider_float("view distance", &mut self.view_distance, GAME_FAR_PLANE, whole, "%.0f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("How far the camera sees while the context shows; the game's battle camera sees 13 000.");
+        }
+
         gui::checkbox("overview map", &mut self.minimap);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Shows a small map of the battle map over the viewport, the tile's placement marked.");
+        }
+
         if self.view_distance > GAME_FAR_PLANE * 2.0 {
             gui::text_disabled("far views draw many chunks: slower frames");
         }
 
         changed |= gui::checkbox("their trees", &mut self.trees);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Draws the neighbours' trees too.");
+        }
+
         gui::checkbox("follow the camera", &mut self.follow);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The rings stream around the camera; off: they stay around the tile.");
+        }
 
         // The tiles around are drawn in the climates the map gives them; the open tile in the one its panel has.
         let map_climate = self
@@ -621,13 +676,24 @@ impl ContextUi {
                     d.tile_mut().set_terrain_look(&mut e.scene, TerrainLook { climate, ..look });
                     changed = true;
                 }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Gives the tile's ground the map's climate at this placement.");
+                }
             }
         }
 
         // The season's snow where the map has it (winter on the campaign map): the ground, buildings, decals and trees of those cells.
         gui::checkbox("snow where the map says", &mut self.snow_on);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Covers the cells the map's snow map marks for the tile's season with snow.");
+        }
+
         if self.snow_on {
             gui::slider_float("snow amount", &mut self.snow_amount, 0.05, 1.0, "%.2f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("How thick the snow lies on those cells.");
+            }
             let season = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().terrain_look().season.clone()).unwrap_or_default();
             match self.view.snowy_cells(&season) {
                 Some(0) => gui::text_disabled("no snow on the map this season"),
