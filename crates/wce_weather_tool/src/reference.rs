@@ -48,10 +48,13 @@ fn luma(c: [u8; 3]) -> f32 {
 /// The comparison in words: how much brighter or darker, warmer or cooler the render is than the screenshot there.
 pub(crate) fn describe(p: &Pick) -> String {
     let (a, b) = (luma(p.reference), luma(p.render));
+    let change = (b / a.max(1e-3) - 1.0) * 100.0;
     let bright = if a < 1.0 {
         "the screenshot is black there".to_owned()
+    } else if change.abs() < 3.0 {
+        "the render is as bright".to_owned()
     } else {
-        format!("the render is {:+.0} % as bright", (b / a - 1.0) * 100.0)
+        format!("the render is {:.0} % {}", change.abs(), if change > 0.0 { "brighter" } else { "darker" })
     };
     let warmth = |c: [u8; 3]| (f32::from(c[0]) + 1.0) / (f32::from(c[2]) + 1.0);
     let (wa, wb) = (warmth(p.reference), warmth(p.render));
