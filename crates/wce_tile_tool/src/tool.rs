@@ -4019,9 +4019,9 @@ impl Tool for TileTool {
             d.tile_mut().set_game_layers(&mut e.scene, layers);
         }
 
-        // The weather follows the tile's climate (a map context's placement gives it its own).
-        if let Some(climate) = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().terrain_look().climate.clone()) {
-            self.weather.follow_climate(e, &climate);
+        // The weather follows the tile's climate and season (the chips, a map context's placement, `tile_terrain`).
+        if let Some(look) = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().terrain_look().clone()) {
+            self.weather.follow_look(e, &look.climate, &look.season);
         }
 
         self.sync_brush_curve(e);
