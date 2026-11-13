@@ -672,6 +672,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let origin = gui::cursor_screen_pos();
     e.viewport.image_origin = origin;
     gui::image(tex.id(), size);
+    e.with_active_tool(|t, e| t.viewport_underlay(e, origin, size));
     if e.viewport.show_compass {
         draw_compass(origin, size, &e.viewport.camera(), e.viewport.north);
     }

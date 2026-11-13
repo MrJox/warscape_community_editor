@@ -1080,6 +1080,21 @@ impl Renderer {
     /// # Errors
     ///
     /// Fails if the helper shaders don't compile.
+    /// A second renderer of the same device and files that shares `other`'s loaded models and textures, with its own frame state:
+    /// exposure adaptation, sky and environment cubes, wind, particles, targets. For drawing the scene a second way at the same time (the
+    /// Weather tool's split compare, gallery and sky strips) without disturbing `other`'s temporal state.
+    ///
+    /// # Errors
+    ///
+    /// As `new`.
+    pub fn new_sharing(other: &Renderer) -> Result<Self, RenderError> {
+        let mut r = Self::new(&other.dev, &other.ctx, other.files.clone())?;
+        r.textures = other.textures.clone();
+        r.models = other.models.sharing();
+        r.settings = other.settings.clone();
+        Ok(r)
+    }
+
     pub fn new(dev: &ID3D11Device, ctx: &ID3D11DeviceContext, files: Arc<dyn Files>) -> Result<Self, RenderError> {
         // Which GPU renders matters for reproducing pixels (two adapters: results differ between them).
         let mut video_memory = 0;

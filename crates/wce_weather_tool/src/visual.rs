@@ -19,6 +19,10 @@ use wce_weather::xml_file_document::XmlFileDocument;
 
 const SUN_DRAG: &str = "weather.sun_drag";
 
+/// The split compare's image (`ImageTextures::show_view`) and how near a press must be to grab its line (points).
+const WIPE_KEY: &str = "weather_wipe";
+const SPLIT_GRAB: f32 = 8.0;
+
 /// The preview switches: what each takes out of the light shown (not out of the file), and what it does.
 pub(crate) const SWITCHES: [(&str, &str); 6] = [
     ("fog", "The battle fog (distance and height fog) taken out of the preview."),
@@ -103,6 +107,13 @@ pub(crate) struct Visual {
     /// The saved file lights the scene instead of the edits (the check box); C held over the viewport does it too.
     pub(crate) compare: bool,
     compare_key: bool,
+
+    /// The split compare: the saved file drawn by a renderer of its own left of the line (`split`, a share of the viewport's width), the
+    /// line being dragged, the first frames drawn.
+    wipe: crate::preview::Preview,
+    split: Option<f32>,
+    split_drag: bool,
+    wipe_warm: bool,
 
     /// The saved file's parameters while comparing (the document they are of).
     baseline: Option<(DocumentId, EnvironmentParams)>,
@@ -208,12 +219,74 @@ impl Visual {
             return None;
         }
 
+        let saved = self.saved(e, doc);
+        saved.filter(|_| self.compare_key)
+    }
+
+    /// The file as saved (read once per compare).
+    fn saved(&mut self, e: &Editor, doc: DocumentId) -> Option<EnvironmentParams> {
         if self.baseline.as_ref().is_none_or(|(d, _)| *d != doc) {
             let x = e.docs.find_as::<XmlFileDocument>(doc)?;
             self.baseline = saved_params(e, x).map(|p| (doc, p));
         }
 
         self.baseline.as_ref().map(|(_, p)| p.clone())
+    }
+
+    /// The split compare's share of the viewport's width on the saved side.
+    fn split(&self) -> f32 {
+        self.split.unwrap_or(0.5)
+    }
+
+    /// The split compare (Compare with saved checked, C not held): the saved file drawn by its own renderer at the viewport's size from
+    /// its camera, shown left of the line; the line drags.
+    pub(crate) fn draw_wipe(&mut self, e: &mut Editor, doc: DocumentId, origin: gui::Vec2, size: gui::Vec2) {
+        let dl = gui::window_draw_list();
+        let now = e.clock.time();
+        if !self.compare || self.compare_key || doc == 0 {
+            self.wipe_warm = false;
+            self.wipe.drop_if_idle(now);
+            return;
+        }
+
+        let Some(mut env) = self.saved(e, doc) else { return };
+        self.apply_switches(&mut env);
+        let px = (e.viewport.width(), e.viewport.height());
+        let camera = e.viewport.camera();
+
+        // The first frames let its exposure settle.
+        let (frames, restart) = if self.wipe_warm { (1, false) } else { (24, true) };
+        if !self.wipe.render(e, env, camera, px, frames, 1.0 / 30.0, restart) {
+            return;
+        }
+
+        self.wipe_warm = true;
+        if let Some(srv) = self.wipe.target.srv() {
+            e.images.show_view(WIPE_KEY, srv, px.0, px.1);
+        }
+
+        let s = self.split();
+        let x = origin.x + size.x * s;
+        if let Some(img) = e.images.get(WIPE_KEY) {
+            dl.image(img.id, origin, gui::v2(x, origin.y + size.y), gui::v2(0.0, 0.0), gui::v2(s, 1.0), gui::col32(255, 255, 255, 255));
+        }
+
+        dl.line(gui::v2(x, origin.y), gui::v2(x, origin.y + size.y), gui::col32(10, 10, 12, 200), 4.0);
+        dl.line(gui::v2(x, origin.y), gui::v2(x, origin.y + size.y), gui::col32(255, 210, 80, 255), 2.0);
+        let mid = gui::v2(x, origin.y + size.y * 0.5);
+        dl.circle_filled(mid, 7.0, gui::col32(255, 210, 80, 255));
+        let label = |at: f32, text: &str| {
+            let w = gui::calc_text_width(text);
+            dl.rect_filled(gui::v2(at - 4.0, origin.y + 66.0), gui::v2(at + w + 4.0, origin.y + 86.0), gui::col32(10, 10, 12, 200), 3.0);
+            dl.text(gui::v2(at, origin.y + 68.0), gui::col32(255, 210, 80, 255), text);
+        };
+        let saved = "saved";
+        label(x - gui::calc_text_width(saved) - 12.0, saved);
+        label(x + 12.0, "edits");
+        let mouse = gui::io().MousePos;
+        if !self.split_drag && (mouse.x - x).abs() <= SPLIT_GRAB && mouse.y >= origin.y && mouse.y <= origin.y + size.y {
+            gui::set_tooltip("Drag the line: the file as saved on the left, with the edits on the right.");
+        }
     }
 
     /// The file's sun as written (azimuth, elevation), and how far the scene turns it (the shown azimuth minus the file's: a tile's battle
@@ -268,6 +341,23 @@ impl Visual {
                 self.focus_armed = false;
                 self.pick_focus(e, doc, ev.x, ev.y);
                 true
+            }
+
+            ViewportEventKind::Press if self.compare && !self.compare_key && self.wipe_warm => {
+                let line = origin.x + (e.viewport.width() as f32 / density) * self.split();
+                self.split_drag = (at.x - line).abs() <= SPLIT_GRAB;
+                self.split_drag
+            }
+
+            ViewportEventKind::Drag if self.split_drag => {
+                let w = e.viewport.width().max(1) as f32;
+                self.split = Some((ev.x as f32 / w).clamp(0.02, 0.98));
+                true
+            }
+
+            ViewportEventKind::Release if self.split_drag => {
+                self.split_drag = false;
+                false
             }
 
             ViewportEventKind::Press => {
@@ -471,7 +561,7 @@ impl Visual {
 
     /// True while the left button is the tool's: the focus pick armed, or the sun being dragged.
     pub(crate) fn claims_left_button(&self) -> bool {
-        self.focus_armed || self.sun_from.is_some() || self.wind_from.is_some()
+        self.focus_armed || self.sun_from.is_some() || self.wind_from.is_some() || self.split_drag
     }
 
     /// Over the viewport: the sun's disc in the sky (grab it to move the sun), the focus pick's hint, the compare label.
@@ -515,8 +605,8 @@ impl Visual {
 
         let top = gui::v2(origin.x + size.x * 0.5, origin.y + 40.0);
         let off = SWITCHES.iter().zip(self.without).filter(|(_, on)| *on).map(|((name, _), _)| *name).collect::<Vec<_>>();
-        let banner = if self.comparing() {
-            Some(("THE SAVED FILE (comparing: uncheck Compare, or let go of C, for the edits)".to_owned(), theme::warning()))
+        let banner = if self.compare_key {
+            Some(("THE SAVED FILE (let go of C for the edits)".to_owned(), theme::warning()))
         } else if !off.is_empty() {
             Some((format!("preview without {} (the file keeps them)", off.join(", ")), theme::warning()))
         } else if self.focus_armed {
@@ -550,7 +640,7 @@ impl Visual {
         gui::checkbox("Compare with saved", &mut self.compare);
         if gui::is_item_hovered_allow_disabled() {
             gui::set_tooltip(&format!(
-                "Lights the scene with the file as saved instead of the edits, to see what they change. Holding {} over the viewport does it too.",
+                "Splits the viewport: the file as saved on the left of a line you drag, with the edits on the right (drawn by a renderer of its own, its exposure its own). Holding {} over the viewport shows the saved file in the whole view instead.",
                 shortcuts::label(COMPARE).unwrap_or_default()
             ));
         }

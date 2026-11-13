@@ -140,6 +140,12 @@ pub trait Tool: Any {
 
     /// Widgets over the viewport image (inside the viewport window, after the image): `origin` and `size` are the image's, in screen
     /// pixels. A child window there takes the mouse before the viewport.
+    /// Drawn on the viewport's image right after it, under the editor's own overlays (the compass, the coordinates) and the tool's
+    /// `viewport_overlay`: a picture that stands in for part of the image (the Weather tool's split compare).
+    fn viewport_underlay(&mut self, editor: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        let _ = (editor, origin, size);
+    }
+
     fn viewport_overlay(&mut self, editor: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
         let _ = (editor, origin, size);
     }
