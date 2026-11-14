@@ -590,20 +590,29 @@ pub struct TileTool {
     pub(crate) launch_worker: Option<std::thread::JoinHandle<()>>,
     pub(crate) launch_progress_open: bool,
 
-    /// The Tiles panel's extracted tiles (keys of the projects' rows), found when the rows are.
+    /// The Tiles panel's extracted tiles (keys of the projects' rows), and the list and kit they were looked for in: looked for again
+    /// only when those change (it reads each tile's folder), not at each key typed in the filter.
     browse_extracted: std::collections::HashSet<String>,
+    browse_extracted_for: (usize, usize),
 
     /// The new vegetation set (not saved; Ctrl + click on trees in the Create panel) and the name it will be saved with.
     pub(crate) scratch_set: Option<wce_tile::vegetation_sets::VegetationSet>,
     pub(crate) scratch_name: String,
 
     /// The Problems section's trees, and the (tile, history, structure) they were found for.
-    problems: Option<((DocumentId, u64, u64), Vec<usize>)>,
+    problems: Option<((DocumentId, u64, u64), Arc<Vec<usize>>)>,
 
     /// The rivers against the link targets (`TileDocument::river_link_problems`), for the same stamp.
-    river_problems: Option<((DocumentId, u64, u64), Vec<(Option<usize>, String)>)>,
-    link_problems: Option<((DocumentId, u64, u64), Vec<wce_tile::link_checks::LinkProblem>)>,
-    integrity: Option<((DocumentId, u64, u64), Vec<(usize, String)>)>,
+    river_problems: Option<((DocumentId, u64, u64), Arc<Vec<(Option<usize>, String)>>)>,
+    link_problems: Option<((DocumentId, u64, u64), Arc<Vec<wce_tile::link_checks::LinkProblem>>)>,
+    integrity: Option<((DocumentId, u64, u64), Arc<Vec<(usize, String)>>)>,
+
+    /// The snapping's outlines (`Tile::snap_outlines`) and what they were made for: the tile (its history's version, its structure's) and
+    /// the item left out. Made again only when one of those changes, not on every frame the mouse moves.
+    snap_outlines: std::cell::RefCell<Option<((DocumentId, u64, u64, Option<usize>), Arc<Vec<(Vec<Float3>, bool)>>)>>,
+
+    /// The tile's state the Problems are behind, and since when (`gui::time`): they are made again once it has stayed so a moment.
+    problems_wait: Option<((DocumentId, u64, u64), f64)>,
 
     /// The last bridge check (`Tile::check_bridges`), for the tile and the edit it was made at; whether the viewport shows its edges.
     pub(crate) bridge_check: Option<((DocumentId, u64, u64), wce_tile_editor::tile_document::BridgeReport)>,
@@ -854,12 +863,15 @@ impl Default for TileTool {
             launch_worker: None,
             launch_progress_open: false,
             browse_extracted: Default::default(),
+            browse_extracted_for: (0, usize::MAX),
             scratch_set: None,
             scratch_name: String::new(),
             problems: None,
             river_problems: None,
             link_problems: None,
             integrity: None,
+            problems_wait: None,
+            snap_outlines: Default::default(),
             bridge_check: None,
             bridge_overlay: true,
             open_kit_copy: false,
@@ -1385,7 +1397,56 @@ impl TileTool {
         Ok(game)
     }
 
-    /// The tiles of the game's packs (the tile databases in effect, battle and campaign) as index rows, read on first use.
+    /// [`Self::exported_game`] without waiting: the data when it is read (the one kept, else the background read's once it has finished);
+    /// `None` while it is being read, the read started if none is running. For what draws every frame: the caller says it is being read and
+    /// asks again (reading the game's tile data takes seconds, which froze the UI).
+    pub(crate) fn exported_game_ready(&mut self, e: &mut Editor) -> Option<Result<Arc<wce_tile_io::attila::workflow::Game>, String>> {
+        let Some(vfs) = e.vfs().cloned() else { return Some(Err("the game's packs are not mounted (setup <game folder>)".to_owned())) };
+        let kits = kit_raws(e);
+        if let Some(g) = self.exported_game.as_ref().filter(|g| Arc::ptr_eq(&g.files, &vfs) && g.made_for(&kits)) {
+            return Some(Ok(g.clone()));
+        }
+
+        let rx = self.game_preload.get_or_insert_with(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (files, kits) = (vfs.clone(), kits.clone());
+            std::thread::spawn(move || {
+                let r = wce_tile_io::attila::workflow::Game::from_vfs(files, &kits).map(|g| {
+                    for w in &g.warnings {
+                        log::warn(format!("exported tiles: {w}"));
+                    }
+
+                    Arc::new(g)
+                });
+                let _ = tx.send(r);
+            });
+            rx
+        });
+        match rx.try_recv() {
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.game_preload = None;
+                Some(Err("reading the game's tile data stopped".to_owned()))
+            }
+
+            Ok(r) => {
+                self.game_preload = None;
+                match r {
+                    // Read for packs or kits mounted before: read again.
+                    Ok(g) if !(Arc::ptr_eq(&g.files, &vfs) && g.made_for(&kits)) => None,
+                    Ok(g) => {
+                        self.exported_game = Some(g.clone());
+                        Some(Ok(g))
+                    }
+
+                    Err(err) => Some(Err(err)),
+                }
+            }
+        }
+    }
+
+    /// The tiles of the game's packs (the tile databases in effect, battle and campaign) as index rows, read on first use (in the
+    /// background: `Err` saying so meanwhile, not kept).
     fn pack_entries(&mut self, e: &mut Editor) -> Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String> {
         let mount = e.vfs().map_or(0, |v| wce_vfs::files::Files::mount_id(v.as_ref()));
         if let Some((m, r)) = &self.browse_packs
@@ -1394,7 +1455,8 @@ impl TileTool {
             return r.clone();
         }
 
-        let r = self.exported_game(e).map(|game| {
+        let Some(game) = self.exported_game_ready(e) else { return Err("reading the game's tiles...".to_owned()) };
+        let r = game.map(|game| {
             let mut rows = vec![];
             for kind in ["battle", "campaign"] {
                 let Some(db) = game.data.database(kind) else { continue };
@@ -1445,6 +1507,11 @@ impl TileTool {
         };
         self.browse_filter = filter.to_owned();
         gui::set_window_focus("Tiles");
+        // Asked for (a script, a command): read now, not in the background as the panel does.
+        if source == "packs" {
+            self.exported_game(e)?;
+        }
+
         let rows = if source == "packs" { self.pack_entries(e)?.len() } else { TileIndex::shared(&roots[self.browse_kit]).entries().len() };
         Ok(format!("{rows} tiles in the source"))
     }
@@ -1734,10 +1801,16 @@ impl TileTool {
 
         self.context.neighbours = None;
         self.context.neighbours_for = made_for;
-        let game = match self.exported_game(e) {
-            Ok(g) => g,
-            Err(m) => {
+        let game = match self.exported_game_ready(e) {
+            Some(Ok(g)) => g,
+            Some(Err(m)) => {
                 self.context.status = m;
+                return;
+            }
+
+            // Being read: the next frame asks again.
+            None => {
+                self.context.status = "reading the game's tiles...".to_owned();
                 return;
             }
         };
@@ -2076,7 +2149,7 @@ impl TileTool {
         if let Some(hit) = d.tile().pick_terrain(o, dir) {
             self.terrain_hit = true;
             self.cursor = hit;
-            let snapped = self.snap_point(d.tile(), hit, self.grab().map(|g| g.elem));
+            let snapped = self.snap_point(d, hit, self.grab().map(|g| g.elem));
             self.snapped_cursor = Float3::new(snapped.x, d.tile().terrain_height(snapped.x, snapped.z), snapped.z);
         }
 
@@ -2245,21 +2318,31 @@ impl TileTool {
     /// A ground point with the snapping applied (x, z): onto the nearest instance or polygon point or building corner (snap to points; not
     /// `skip`'s own), else onto the nearest edge (snap to edges: polygon and line edges, building footprint sides), else to the grid (each
     /// axis, within the tolerance when there is one).
-    pub(crate) fn snap_point(&self, t: &wce_tile_editor::tile_document::Tile, p: Float3, skip: Option<usize>) -> Float3 {
-        self.snap_axes(t, p, skip, true, true)
+    pub(crate) fn snap_point(&self, d: &TileDocument, p: Float3, skip: Option<usize>) -> Float3 {
+        self.snap_axes(d, p, skip, true, true)
+    }
+
+    /// The tile's outlines for the snapping, from the cache while the tile and `skip` are the same.
+    fn outlines_for(&self, d: &TileDocument, skip: Option<usize>) -> Arc<Vec<(Vec<Float3>, bool)>> {
+        let key = (d.id(), d.history().version(), d.tile().structure_version(), skip);
+        let mut cache = self.snap_outlines.borrow_mut();
+        if let Some((k, o)) = cache.as_ref()
+            && *k == key
+        {
+            return o.clone();
+        }
+
+        let o = Arc::new(d.tile().snap_outlines(skip));
+        *cache = Some((key, o.clone()));
+        o
     }
 
     /// `snap_point` for a move along some axes only (a gizmo handle): the grid snaps the axes asked for, the points need both.
-    pub(crate) fn snap_axes(
-        &self,
-        t: &wce_tile_editor::tile_document::Tile,
-        p: Float3,
-        skip: Option<usize>,
-        snap_x: bool,
-        snap_z: bool,
-    ) -> Float3 {
+    pub(crate) fn snap_axes(&self, d: &TileDocument, p: Float3, skip: Option<usize>, snap_x: bool, snap_z: bool) -> Float3 {
         let reach = if self.snap_tolerance > 0.0 { self.snap_tolerance } else { 1.5 };
-        let outlines = if (self.snap_vertices || self.snap_edges) && snap_x && snap_z { t.snap_outlines(skip) } else { vec![] };
+        let t = d.tile();
+        let outlines =
+            if (self.snap_vertices || self.snap_edges) && snap_x && snap_z { self.outlines_for(d, skip) } else { Arc::default() };
         if self.snap_vertices && snap_x && snap_z {
             let mut best = (reach * reach, None);
             let mut try_point = |q: Float3| {
@@ -2703,14 +2786,25 @@ impl TileTool {
     /// out), counted again after each edit; a click selects one and frames it.
     fn draw_problems_section(&mut self, e: &mut Editor, id: DocumentId) {
         let Some(d) = e.docs.find_as::<TileDocument>(id) else { return };
+        // Made again once the tile has stayed as it is for a moment: a drag or a brush stroke changes it every frame, and the analyses (every
+        // tree against every polygon, the links, TEd's integrity checks) ran each frame of it, the header closed or not. Meanwhile the count
+        // is the one from before. The first time, at once.
         let stamp = (id, d.history().version(), d.tile().structure_version());
-        if self.problems.as_ref().is_none_or(|(s, _)| *s != stamp) {
-            self.problems = Some((stamp, d.trees_outside_exclusions()));
-            self.river_problems = Some((stamp, d.river_link_problems()));
-            self.link_problems = Some((stamp, d.link_problems()));
-            self.integrity = Some((stamp, d.tile().integrity_errors()));
+        let now = gui::time();
+        if self.problems_wait.is_none_or(|(s, _)| s != stamp) {
+            self.problems_wait = Some((stamp, now));
         }
 
+        let settled = self.problems_wait.is_some_and(|(_, since)| now - since >= 0.3);
+        let first = self.problems.as_ref().is_none_or(|(s, _)| s.0 != id);
+        if self.problems.as_ref().is_none_or(|(s, _)| *s != stamp) && (settled || first) {
+            self.problems = Some((stamp, Arc::new(d.trees_outside_exclusions())));
+            self.river_problems = Some((stamp, Arc::new(d.river_link_problems())));
+            self.link_problems = Some((stamp, Arc::new(d.link_problems())));
+            self.integrity = Some((stamp, Arc::new(d.tile().integrity_errors())));
+        }
+
+        // Shared, not copied each frame.
         let trees = self.problems.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
         let rivers = self.river_problems.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
         let links = self.link_problems.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
@@ -3104,6 +3198,21 @@ impl TileTool {
             Arc::as_ptr(&source),
             self.browse_marks_version
         );
+        // The projects' extracted tiles (a variation's tile.wce marked), shown so.
+        let extracted_for = (Arc::as_ptr(&source) as usize, self.browse_kit);
+        if extracted_for != self.browse_extracted_for {
+            self.browse_extracted_for = extracted_for;
+            self.browse_extracted.clear();
+            if !packs && self.browse_roots[self.browse_kit] == projects_raw {
+                let raw = &self.browse_roots[self.browse_kit];
+                self.browse_extracted = source
+                    .iter()
+                    .filter(|en| en.variations.iter().any(|v| wce_tile::project_files::is_extracted_dir(&raw.join(&en.key).join(v))))
+                    .map(|en| en.key.clone())
+                    .collect();
+            }
+        }
+
         if key != self.browse_rows_key {
             self.browse_rows_key = key;
             let words = self.browse_filter.split(' ').filter(|w| !w.is_empty()).map(str::to_lowercase).collect::<Vec<_>>();
@@ -3120,16 +3229,6 @@ impl TileTool {
 
             self.browse_rows = source.iter().enumerate().filter(|(_, en)| pass(en)).map(|(i, _)| i).collect();
 
-            // The projects' extracted tiles (a variation's tile.wce marked), shown so.
-            self.browse_extracted.clear();
-            if !packs && self.browse_roots[self.browse_kit] == projects_raw {
-                let raw = &self.browse_roots[self.browse_kit];
-                self.browse_extracted = source
-                    .iter()
-                    .filter(|en| en.variations.iter().any(|v| wce_tile::project_files::is_extracted_dir(&raw.join(&en.key).join(v))))
-                    .map(|en| en.key.clone())
-                    .collect();
-            }
             let by_key: HashMap<&str, usize> = source.iter().enumerate().map(|(i, en)| (en.key.as_str(), i)).collect();
             let (fav, recent) = self.browse_marks.as_ref().expect("read above");
             let row = |r: &TileRef| (r.source == src).then(|| by_key.get(r.key.as_str()).copied()).flatten().filter(|&i| pass(&source[i]));
@@ -5060,7 +5159,7 @@ impl Tool for TileTool {
             return to;
         }
 
-        let p = self.snap_axes(d.tile(), Float3::new(to[0], to[1], to[2]), Some(elem), snap_x, snap_z);
+        let p = self.snap_axes(d, Float3::new(to[0], to[1], to[2]), Some(elem), snap_x, snap_z);
         let y = if snap_y { self.snap_height(to[1]) } else { to[1] };
         [p.x, y, p.z]
     }
