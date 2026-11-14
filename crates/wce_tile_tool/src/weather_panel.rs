@@ -71,7 +71,7 @@ fn value_name(category: &str, value: &str) -> String {
     let named = match (category, value) {
         ("map", "cha_attila_map") => "Age of Charlemagne",
         ("map", "bel_attila_map") => "The Last Roman",
-        ("map", "default_map") => "any other, custom battles",
+        ("map", "default_map") => "any other: the main campaign (TDD's too), custom battles",
         ("season", "sp") => "spring",
         ("season", "su") => "summer",
         ("season", "au") => "autumn",
@@ -455,7 +455,11 @@ impl WeatherUi {
         let value = if value.is_empty() {
             String::new()
         } else {
-            values.into_iter().find(|v| v.eq_ignore_ascii_case(value)).ok_or_else(|| format!("{category} has no '{value}'"))?
+            let known = values.join(", ");
+            values
+                .into_iter()
+                .find(|v| v.eq_ignore_ascii_case(value))
+                .ok_or_else(|| format!("{category} has no '{value}' (it has: {known})"))?
         };
         self.choice.query.insert(category.to_owned(), value);
         self.remember(e);
