@@ -1027,7 +1027,6 @@ fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: boo
         all.iter().filter(|w| w.role == Role::Defence).collect::<Vec<_>>(),
         all.iter().filter(|w| w.role == Role::Access).collect::<Vec<_>>(),
     );
-    let in_line = |w: &Way| w.turn.abs() < IN_LINE && w.shift.abs() < JOG_SHIFT;
     let steps = all.iter().filter(|w| w.role == Role::Step && in_line(w)).collect::<Vec<_>>();
     let Some(longest) = laid.iter().filter(|w| w.role == Role::Straight).max_by(|a, b| a.span.total_cmp(&b.span)).copied() else {
         out.notes.push(format!("{}: no straight piece", cat.base));
@@ -1165,31 +1164,11 @@ fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: boo
             break;
         };
 
-        // A step in its place where the ground ahead is nearer the level it goes to (a step that joins here and that a piece goes on from).
-        // In place of an in-line piece; in place of a curve or a kink too where the ground is a whole step or more off, when the step follows
-        // the line nearly as well (a long curve up a hill would otherwise keep its level and be cut into it).
-        if let Some(g) = ground {
-            let level = walk_at - walk;
-            let d = [heading.cos(), heading.sin()];
-            let span = f64::from(w.span);
-            let there = [0.5, 0.75, 1.0, 1.25, 1.5].iter().map(|k| g(p[0] + d[0] * span * k, p[1] + d[1] * span * k)).sum::<f64>() / 5.0;
-            let off = |rise: f64| (there - level - rise).abs();
-            let cost = |x: &Way| ahead(&line, &laid, x, (p, heading), at, AHEAD);
-            let best_cost = if in_line(w) { None } else { cost(w) };
-            let step = steps
-                .iter()
-                .copied()
-                .filter(|s| meets(&edges, &s.entry_edges) && laid.iter().any(|n| meets(&s.exit_edges, &n.entry_edges)))
-                .filter(|s| off(f64::from(s.rise)) < off(0.0))
-                .filter(|s| {
-                    in_line(w)
-                        || off(0.0) >= f64::from(s.rise.abs())
-                            && best_cost.zip(cost(s)).is_some_and(|(b, c)| c <= b + straight * STEP_DETOUR)
-                })
-                .min_by(|a, b| off(f64::from(a.rise)).total_cmp(&off(f64::from(b.rise))));
-            if let Some(s) = step {
-                w = s;
-            }
+        // A step in its place where the ground ahead is nearer the level it goes to.
+        if let Some(g) = ground
+            && let Some(s) = step_for(w, &steps, &laid, &line, &edges, (p, heading), at, walk_at - walk, straight, g)
+        {
+            w = s;
         }
 
         // A tower or door section in its place: of the same shape, joining as it does (not a step's).
@@ -1272,15 +1251,67 @@ fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: boo
         out.short_by = (line.length() - at).max(0.0);
     }
 
-    // The caps of the free ends: a cap's one joint on the wall's end, joining it, its outer side on the wall's.
-    let caps = cat.of(Role::Cap).collect::<Vec<_>>();
     let start = (
         line.pts[0],
         (line.pts[1][1] - line.pts[0][1]).atan2(line.pts[1][0] - line.pts[0][0]),
         level + walk,
         entries.first().cloned().unwrap_or(first_edges),
     );
-    for (k, (joint, wall_way, cap_walk, end_edges)) in [(0, start), (1, (p, heading, walk_at, edges))] {
+    place_caps(&mut out, cat, options, [start, (p, heading, walk_at, edges)], walk, &outer);
+    out
+}
+
+/// Whether a piece goes on in line (no turn, no jog).
+fn in_line(w: &Way) -> bool {
+    w.turn.abs() < IN_LINE && w.shift.abs() < JOG_SHIFT
+}
+
+/// A step in place of `w` where the ground ahead (`g`, from half to one and a half of `w`'s span ahead of `p`) is nearer the level it goes
+/// to than `level` is: one of `steps` that joins `edges` and that a `laid` piece goes on from. In place of an in-line piece; in place of a
+/// curve or a kink too where the ground is a whole step or more off, when the step follows the line nearly as well (a long curve up a
+/// hill would otherwise keep its level and be cut into it).
+fn step_for<'a>(
+    w: &Way,
+    steps: &[&'a Way],
+    laid: &[&Way],
+    line: &Line,
+    edges: &[JointEdge],
+    (p, heading): ([f64; 2], f64),
+    at: f64,
+    level: f64,
+    straight: f64,
+    g: &dyn Fn(f64, f64) -> f64,
+) -> Option<&'a Way> {
+    let d = [heading.cos(), heading.sin()];
+    let span = f64::from(w.span);
+    let there = [0.5, 0.75, 1.0, 1.25, 1.5].iter().map(|k| g(p[0] + d[0] * span * k, p[1] + d[1] * span * k)).sum::<f64>() / 5.0;
+    let off = |rise: f64| (there - level - rise).abs();
+    let cost = |x: &Way| ahead(line, laid, x, (p, heading), at, AHEAD);
+    let best_cost = if in_line(w) { None } else { cost(w) };
+    steps
+        .iter()
+        .copied()
+        .filter(|s| meets(edges, &s.entry_edges) && laid.iter().any(|n| meets(&s.exit_edges, &n.entry_edges)))
+        .filter(|s| off(f64::from(s.rise)) < off(0.0))
+        .filter(|s| {
+            in_line(w)
+                || off(0.0) >= f64::from(s.rise.abs()) && best_cost.zip(cost(s)).is_some_and(|(b, c)| c <= b + straight * STEP_DETOUR)
+        })
+        .min_by(|a, b| off(f64::from(a.rise)).total_cmp(&off(f64::from(b.rise))))
+}
+
+/// The caps of the free ends (`options.caps`, an end not on a building): a cap's one joint on the wall's end (`ends`, first and last: the
+/// joint, the wall's way there, the walk's height, the edges there), joining it, its outer side on the wall's (`outer` of a way).
+fn place_caps(
+    out: &mut KitLayout,
+    cat: &Catalogue,
+    options: &LayOptions,
+    ends: [([f64; 2], f64, f64, Vec<JointEdge>); 2],
+    walk: f64,
+    outer: &dyn Fn(f64) -> [f64; 2],
+) {
+    let caps = cat.of(Role::Cap).collect::<Vec<_>>();
+    for (k, (joint, wall_way, cap_walk, end_edges)) in ends.into_iter().enumerate() {
         if !options.caps[k] || options.ends[k].is_some() {
             continue;
         }
@@ -1315,8 +1346,6 @@ fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: boo
         };
         if k == 0 { out.placed.insert(0, placed) } else { out.placed.push(placed) }
     }
-
-    out
 }
 
 #[cfg(test)]
