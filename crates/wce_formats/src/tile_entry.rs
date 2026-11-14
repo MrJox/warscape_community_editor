@@ -535,6 +535,18 @@ impl TileEntry {
         true
     }
 
+    /// Takes away an attribute of the `<TILE>` element an edit added (the undo of setting one it did not have): false for one of the
+    /// file's own.
+    pub fn remove_added_tile_attr(&mut self, name: &str) -> bool {
+        self.doc.remove_added(self.root, name)
+    }
+
+    /// As [`Self::remove_added_tile_attr`], of a variation.
+    pub fn remove_added_variation_attr(&mut self, index: usize, name: &str) -> bool {
+        let Some(&elem) = self.items("VARIATIONS", "VARIATION").get(index) else { return false };
+        self.doc.remove_added(elem, name)
+    }
+
     /// An attribute of the `<TILE>` element, as written.
     pub fn tile_attr(&self, name: &str) -> Option<String> {
         self.doc.get(self.root, name)

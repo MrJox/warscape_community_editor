@@ -802,22 +802,30 @@ impl Command<Tile> for TextureGroupCommand {
 pub(crate) struct EntryAttrCommand {
     pub variation: Option<usize>,
     pub attr: String,
-    pub before: String,
+
+    /// `None`: the entry did not have the attribute; undo takes it away again (an empty value would stay in the file).
+    pub before: Option<String>,
     pub after: String,
     pub gesture: u64,
+
+    /// The tile's normal strength before the first apply (`normal_strength` only): what undo puts back when the attribute was not there.
+    pub strength_before: Option<f64>,
 }
 
 impl EntryAttrCommand {
-    fn put(&self, t: &mut Tile, value: &str) {
+    fn put(&mut self, t: &mut Tile, value: Option<&str>) {
         if let Some(entry) = t.project.entry.as_mut() {
-            match self.variation {
-                Some(v) => entry.set_variation_attr(v, &self.attr, value),
-                None => entry.set_tile_attr(&self.attr, value),
+            match (self.variation, value) {
+                (Some(v), Some(value)) => entry.set_variation_attr(v, &self.attr, value),
+                (None, Some(value)) => entry.set_tile_attr(&self.attr, value),
+                (Some(v), None) => entry.remove_added_variation_attr(v, &self.attr),
+                (None, None) => entry.remove_added_tile_attr(&self.attr),
             };
         }
 
         if self.attr == "normal_strength" {
-            t.project.info.normal_strength = value.trim().parse().unwrap_or(t.project.info.normal_strength);
+            let before = *self.strength_before.get_or_insert(t.project.info.normal_strength);
+            t.project.info.normal_strength = value.and_then(|v| v.trim().parse().ok()).unwrap_or(before);
             t.material_base = None;
             t.skin = None;
         }
@@ -832,11 +840,13 @@ impl Command<Tile> for EntryAttrCommand {
     }
 
     fn apply(&mut self, t: &mut Tile) {
-        self.put(t, &self.after.clone());
+        let after = self.after.clone();
+        self.put(t, Some(&after));
     }
 
     fn revert(&mut self, t: &mut Tile) {
-        self.put(t, &self.before.clone());
+        let before = self.before.clone();
+        self.put(t, before.as_deref());
     }
 
     fn merge_key(&self) -> u64 {

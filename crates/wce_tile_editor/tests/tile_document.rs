@@ -2414,3 +2414,24 @@ fn a_procedural_roads_points_have_handles_that_turn_it_and_go_with_them() {
     d.history_mut().undo();
     assert!(text(&d) == original, "undoing the road");
 }
+
+#[test]
+fn undoing_an_entry_attribute_the_entry_did_not_have_takes_it_away() {
+    use wce_tile::new_tile::{DEFAULT_DENSITY, NewTile, create};
+    let raw = tempfile::tempdir().unwrap();
+    let t = NewTile { name: "undo_attr".to_owned(), cells_x: 1, cells_y: 1, height: 0.0, density: DEFAULT_DENSITY, seed: 7 };
+    let dir = create(&t, raw.path(), &[]).unwrap();
+    let mut d = TileDocument::new(TileProject::open(&dir).unwrap(), None);
+    let entry = |d: &TileDocument| d.project().entry.as_ref().unwrap().save();
+    let original = entry(&d);
+
+    // One the tile has not, then one its variation has not: set, undone, the entry's bytes as they were (no `attr=""` left).
+    assert!(d.set_entry_attr(false, "wce_test_attr", "1", 1).unwrap());
+    assert!(d.set_entry_attr(true, "wce_test_attr", "2", 2).unwrap());
+    assert_ne!(entry(&d), original);
+    d.history_mut().undo();
+    d.history_mut().undo();
+    assert_eq!(String::from_utf8_lossy(&entry(&d)), String::from_utf8_lossy(&original));
+    d.history_mut().redo();
+    assert!(String::from_utf8_lossy(&entry(&d)).contains("wce_test_attr"));
+}

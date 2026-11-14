@@ -3060,9 +3060,8 @@ impl TileDocument {
         let before = match v {
             Some(v) => entry.variation_attr(v, attr),
             None => entry.tile_attr(attr),
-        }
-        .unwrap_or_default();
-        if before == value {
+        };
+        if before.as_deref().unwrap_or_default() == value {
             return Ok(false);
         }
 
@@ -3073,6 +3072,7 @@ impl TileDocument {
             before,
             after: value.to_owned(),
             gesture,
+            strength_before: None,
         }));
         Ok(true)
     }
