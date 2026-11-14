@@ -44,7 +44,7 @@ impl TileTool {
     /// moved.
     pub(crate) fn hover_surface(&mut self, e: &mut Editor, ev: &ViewportEvent) {
         let (surface, _) = self.placement_modes(e);
-        if surface != SurfaceMode::Entity || (self.placing.is_none() && !self.grabbing) {
+        if surface != SurfaceMode::Entity || (self.placing.is_none() && !self.grabbing()) {
             self.surface_hit = None;
             return;
         }
@@ -54,7 +54,7 @@ impl TileTool {
         }
 
         self.surface_px = Some((ev.x, ev.y));
-        let (doc, grabbed) = (document_id(e).unwrap_or(0), self.grab_elem.filter(|_| self.grabbing));
+        let (doc, grabbed) = (document_id(e).unwrap_or(0), self.grab().map(|g| g.elem));
         let skip = |en: &wce_scene::render_scene::Entity| {
             en.source.doc == doc
                 && grabbed.is_some_and(|g| elem_of(en.source.item) == Some(g) || piece_of(en.source.item).is_some_and(|(p, _)| p == g))
@@ -121,7 +121,7 @@ impl TileTool {
 
     /// The chips at the top right of the viewport while placing or grabbing: the surface modes and the rotation modes.
     pub(crate) fn draw_placement_chips(&mut self, e: &mut Editor, origin: gui::Vec2, size: gui::Vec2, top: f32) {
-        if (self.placing.is_none() && !self.grabbing) || document(e).is_none() {
+        if (self.placing.is_none() && !self.grabbing()) || document(e).is_none() {
             return;
         }
 
