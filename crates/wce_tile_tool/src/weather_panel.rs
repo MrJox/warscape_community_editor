@@ -9,7 +9,8 @@
 //!
 //! The climate and the season are set in one place, the climate and season chips: they are the tile's terrain look (the ground's textures,
 //! its trees and grass), and the weather's climate and season filters follow it (`follow_look`), as the game lights a battle with its
-//! climate's and season's weather. The Weather panel shows those two filters without changing them.
+//! climate's and season's weather. The rest are chips too (precipitation, time of day, climate change with its auto), or in the cloud chip's
+//! popup with the files (campaign, snow attrition); battle type is land. The Weather panel this was is gone.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -63,11 +64,23 @@ pub const FILTERS: [(&str, &str, &str); 8] = [
 /// The filters that follow the tile's terrain look (set by the climate and season chips), not set on their own.
 const LOOK_FILTERS: [&str; 2] = ["climate", "season"];
 
+/// The filters in the cloud chip's popup (the others have chips of their own, follow the tile's look, or are fixed).
+const POPUP_FILTERS: [&str; 2] = ["map", "snow_attrition"];
+
+/// The climate change chip's auto: seconds per phase.
+const AUTO_PHASE_S: f64 = 30.0;
+
 /// The filters fixed for a tile: (category, the value it always has).
 const FIXED_FILTERS: [(&str, &str); 1] = [("battle_types", "land")];
 
 /// A filter's value as the panel shows it.
 fn value_name(category: &str, value: &str) -> String {
+    if category == "climate_change_index"
+        && let Some(n) = value.strip_prefix("cc")
+    {
+        return format!("phase {n} ({value})");
+    }
+
     let named = match (category, value) {
         ("map", "cha_attila_map") => "Age of Charlemagne",
         ("map", "bel_attila_map") => "The Last Roman",
@@ -108,6 +121,9 @@ pub(crate) struct WeatherUi {
 
     /// The Map context's map the campaign filter was last set from (`follow_campaign`).
     campaign: Option<String>,
+
+    /// The climate change chip's auto: when the phase last changed (`update` steps it every `AUTO_PHASE_S`).
+    cc_auto: Option<f64>,
 }
 
 /// True when `file` holds every word of `search` (case-insensitive).
@@ -470,8 +486,9 @@ impl WeatherUi {
         search.clone_into(&mut self.search);
     }
 
-    /// The Weather panel: the light, every filter, the files they let through (searchable); a click lights the tile with one.
-    pub(crate) fn draw(&mut self, e: &mut Editor) {
+    /// The cloud chip's popup (it replaced the Weather panel): the light, the campaign and snow attrition filters (the others are chips),
+    /// the files the filters let through (searchable); a click lights the tile with one, a right click opens it in the Weather tool.
+    fn draw_files_popup(&mut self, e: &mut Editor) {
         // The light: the chosen file, followed live while the Weather tool edits it.
         let live = e.weather_preview_document().and_then(|id| e.docs.find(id)).map(|d| d.modified());
         let lit_by = e.weather_preview().map_or_else(|| "the default light".to_owned(), str::to_owned);
@@ -501,7 +518,7 @@ impl WeatherUi {
         };
 
         let mut filter_changed = None;
-        for (label, category, tip) in FILTERS {
+        for (label, category, tip) in FILTERS.into_iter().filter(|f| POPUP_FILTERS.contains(&f.1)) {
             let value = self.choice.query.get(category).cloned().unwrap_or_default();
             let vals = env.category(category).map(|m| m.values().clone()).unwrap_or_default();
             gui::set_next_item_width(260.0);
@@ -530,10 +547,10 @@ impl WeatherUi {
         }
 
         if let Some((category, value)) = filter_changed {
-            let _ = self.set_filter(e, category, &value);
+            self.chip_changed(e, category, &value);
         }
 
-        gui::set_next_item_width(-1.0);
+        gui::set_next_item_width(560.0);
         gui::input_text(
             "##weather_search",
             Some(&format!("{}  search the files (words are and-ed)", icons::SEARCH)),
@@ -554,7 +571,7 @@ impl WeatherUi {
             files.len(),
             if self.search.trim().is_empty() { "" } else { " found" },
         ));
-        gui::begin_child("envlist", gui::v2(0.0, 180.0), gui::CHILD_BORDERS, 0);
+        gui::begin_child("envlist", gui::v2(560.0, 260.0), gui::CHILD_BORDERS, 0);
         let chosen = e.weather_preview().map(str::to_owned);
         let mut pick = None;
         let mut open = None;
@@ -688,7 +705,7 @@ impl WeatherUi {
 
     /// The chips over the viewport: climate and season (the tile's, `draw_look_chips`), the weather's precipitation and time of day (a
     /// value no file passes is greyed), then the file lighting the tile (icons, the values in their tooltips; a click on the cloud opens
-    /// the Weather panel) and a pencil that edits it in the Weather tool (the tile follows the edits).
+    /// its popup: the files and the rarer filters) and a pencil that edits it in the Weather tool (the tile follows the edits).
     pub(crate) fn draw_chips(&mut self, e: &mut Editor) {
         self.draw_look_chips(e);
         let Some(env) = &self.env else { return };
@@ -727,10 +744,76 @@ impl WeatherUi {
             }
         }
 
+        // The climate change phase, and its auto (a phase every AUTO_PHASE_S, the tile lit with a file of each).
+        let cc = "climate_change_index";
+        let value = self.choice.query.get(cc).cloned().unwrap_or_default();
+        let values = env.category(cc).map(|m| m.values().clone()).unwrap_or_default();
+        let auto = self.cc_auto.is_some();
+        let shown = if auto {
+            "auto".to_owned()
+        } else if value.is_empty() {
+            "any".to_owned()
+        } else {
+            value_name(cc, &value)
+        };
+        let tip = format!(
+            "climate change: {shown}\nThe campaign's climate change phase (cc0 at its start; Attila's darkening world raises it with the turns, \
+             or with the leading player's imperium). Click: pick one, or auto"
+        );
+        if chip(auto || !value.is_empty(), icons::CLOUD_FOG, "buttoncc", &tip) {
+            gui::open_popup("chipcc");
+        }
+
+        gui::same_line_touching();
+        let mut cc_auto = None;
+        if begin_chip_popup("chipcc") {
+            gui::text_disabled("climate change");
+            if gui::selectable("any", value.is_empty() && !auto, 0) {
+                changed = Some((cc, String::new()));
+                cc_auto = Some(false);
+            }
+
+            for v in &values {
+                let ok = self.passes(cc, v);
+                gui::begin_disabled(!ok);
+                if gui::selectable(&value_name(cc, v), *v == value && !auto, 0) {
+                    changed = Some((cc, v.clone()));
+                    cc_auto = Some(false);
+                }
+
+                if !ok && gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip("No weather file has this phase with the other filters as they are.");
+                }
+
+                gui::end_disabled();
+            }
+
+            gui::separator();
+            if gui::selectable(&format!("auto: each phase in turn, {AUTO_PHASE_S:.0} s each"), auto, 0) {
+                cc_auto = Some(true);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Steps through the phases (cc0, cc1, ... and back), lighting the tile with a weather of each, to see how the world darkens.",
+                );
+            }
+
+            gui::end_popup();
+        }
+
         let file = e.weather_preview().map(str::to_owned);
-        let tip = format!("Lit by {}\nClick: every filter and file (the Weather panel)", file.as_deref().unwrap_or("the default light"));
+        let tip = format!(
+            "Lit by {}\nClick: the files the filters let through (search, campaign, snow attrition); a click lights the tile with one",
+            file.as_deref().unwrap_or("the default light")
+        );
         if chip(false, icons::CLOUD_SUN, "weatherfile", &tip) {
-            e.pending_focus = Some("Weather".to_owned());
+            gui::open_popup("chipweatherfile");
+        }
+
+        if begin_chip_popup("chipweatherfile") {
+            self.draw_files_popup(e);
+            gui::end_popup();
         }
 
         if let Some(f) = file {
@@ -747,6 +830,64 @@ impl WeatherUi {
 
         if let Some((category, value)) = changed {
             self.chip_changed(e, category, &value);
+        }
+
+        match cc_auto {
+            Some(true) if self.cc_auto.is_none() => {
+                self.cc_auto = Some(f64::NEG_INFINITY);
+            }
+            Some(false) => self.cc_auto = None,
+            _ => {}
+        }
+    }
+
+    /// Every frame: the climate change chip's auto steps to the next phase every `AUTO_PHASE_S` (the first step at once).
+    pub(crate) fn update(&mut self, e: &mut Editor) {
+        let Some(at) = self.cc_auto else { return };
+        let now = e.clock.time();
+        if self.tile.is_empty() || now - at < AUTO_PHASE_S {
+            return;
+        }
+
+        self.cc_auto = Some(now);
+        let cc = "climate_change_index";
+        let Some(values) = self.env.as_ref().and_then(|env| env.category(cc)).map(|m| m.values().clone()) else { return };
+        let phases = values.iter().filter(|v| self.passes(cc, v)).cloned().collect::<Vec<_>>();
+        if phases.is_empty() {
+            return;
+        }
+
+        let current = self.choice.query.get(cc).cloned().unwrap_or_default();
+        let next = phases.iter().position(|v| *v == current).map_or(0, |i| (i + 1) % phases.len());
+        let phase = phases[next].clone();
+        self.choice.query.insert(cc.to_owned(), phase.clone());
+        self.remember(e);
+
+        // A file of this phase: a dry day's where precipitation and time of day are any (as `first_dry` prefers), else any the filters
+        // let through; the phase's index picks among them, so the phases do not all show the one file every phase allows.
+        let mut query: BTreeMap<String, String> =
+            self.choice.query.iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.clone(), v.clone())).collect();
+        for (category, value) in [("precipitation", "dry"), ("time_of_day", "day")] {
+            if !query.contains_key(category)
+                && let Some(v) = self.value_of(category, value)
+            {
+                query.insert(category.to_owned(), v);
+            }
+        }
+
+        let mut pool = self.env.as_ref().map_or_else(Vec::new, |env| {
+            env.matches("environment", &query).variations.iter().map(|v| v.filename().clone()).collect::<Vec<_>>()
+        });
+        pool.dedup();
+        if pool.is_empty() {
+            pool = self.passing();
+        }
+
+        if let Some(file) = pool.get(next % pool.len().max(1)).cloned() {
+            match self.set_file(e, &file) {
+                Ok(_) => e.status(&format!("climate change {} (auto): {file}", value_name(cc, &phase)), false),
+                Err(m) => e.status(&m, true),
+            }
         }
     }
 
