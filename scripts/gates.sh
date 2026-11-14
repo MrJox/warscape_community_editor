@@ -79,6 +79,7 @@ run audio_music       ex wce_audio audio_music_check "$GAME"            # playli
 run audio_recipes     ex wce_audio audio_recipes_check "$GAME"          # music named by its switches, animation sounds (existing / new), culture lines
 run models_naval      ex wce_formats models_naval_check "attila=$GAME"   # the ships' logic table read and written back, against the kit's logic.xml (docs/formats/models_naval.md)
 run unit_render       ex wce_render unit_render_check "$OUT/unit_render"
+run unit_db           ex wce_unit_tool unit_db_check "$OUT/unit_db"   # the Unit tool's DB files: game rows read back, files written again to the same bytes
 [ -f "$CBS" ] && run env_vs_dump_all ex wce_render env_vs_dump --all "$CBS"
 
 # ---- tile gates

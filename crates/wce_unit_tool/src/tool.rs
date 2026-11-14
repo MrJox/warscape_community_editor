@@ -33,6 +33,7 @@ use wce_scene::environment::{EnvironmentParams, read_environment};
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, SourceRef};
 use wce_vfs::normalize;
 
+use crate::db::{LooksTables, Row, project_path};
 use crate::document::{Source, Structural, VmdDocument};
 use crate::problems::{Problem, WEAPON_POINTS, check};
 
@@ -83,6 +84,18 @@ struct Listings {
     weathers: Vec<String>,
 }
 
+/// A change to the previewed unit's DB rows.
+enum LooksEdit {
+    /// Columns of its `unit_variants` row.
+    Set(Vec<(&'static str, String)>),
+
+    /// Its own colours for the faction (primary, secondary, tertiary), or none.
+    Colours(Option<[[f32; 3]; 3]>),
+
+    /// The project's rows of it taken away.
+    Revert,
+}
+
 /// What the panels asked for this frame, done after them.
 enum Action {
     Select(Option<NodePath>),
@@ -94,7 +107,14 @@ enum Action {
 pub struct UnitTool {
     settings: UnitSettings,
     catalog: Option<Arc<UnitCatalog>>,
-    catalog_rx: Option<Receiver<Result<UnitCatalog, String>>>,
+    catalog_rx: Option<Receiver<Result<(UnitCatalog, Arc<Schema>), String>>>,
+    schema: Option<Arc<Schema>>,
+
+    /// The DB rows of the unit's looks (read when the section opens), and the height being dragged.
+    looks: Option<LooksTables>,
+    looks_error: String,
+    height_draft: Option<[f32; 2]>,
+    copy_name: String,
     catalog_failed: bool,
     status: String,
 
@@ -173,6 +193,11 @@ impl Default for UnitTool {
             settings: UnitSettings::default(),
             catalog: None,
             catalog_rx: None,
+            schema: None,
+            looks: None,
+            looks_error: String::new(),
+            height_draft: None,
+            copy_name: String::new(),
             catalog_failed: false,
             status: String::new(),
             doc: 0,
@@ -229,6 +254,27 @@ fn number(v: f32) -> String {
     if s.ends_with('.') { format!("{s}0") } else { s.to_owned() }
 }
 
+/// `RRGGBB` as linear-free 0..1 components (the colour pickers' space, as the tables' bytes).
+fn hex_to_rgb(hex: &str) -> [f32; 3] {
+    let hex = hex.trim().trim_start_matches('#');
+    std::array::from_fn(|i| hex.get(i * 2..i * 2 + 2).and_then(|h| u8::from_str_radix(h, 16).ok()).map_or(0.0, |b| f32::from(b) / 255.0))
+}
+
+fn rgb_to_hex(rgb: [f32; 3]) -> String {
+    rgb.iter().map(|c| format!("{:02X}", (c.clamp(0.0, 1.0) * 255.0).round() as u8)).collect()
+}
+
+/// The `unit_variants_colours` row of a unit's soldiers for a faction.
+fn colours_key<'a>(unit_variant: &'a str, faction: &'a str) -> [(&'static str, &'a str); 3] {
+    [("unit_variant", unit_variant), ("faction", faction), ("soldier_type", "soldier")]
+}
+
+/// A table's number, plainly.
+fn number_text(v: f32) -> String {
+    let s = format!("{v:.4}");
+    s.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
 fn file_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
@@ -266,7 +312,7 @@ impl UnitTool {
             let result = rpfm_schema_path(vfs.profile())
                 .ok_or_else(|| "no rpfm schema of the game (Help > Update Manager downloads it)".to_owned())
                 .and_then(|path| Schema::load(&path, None).map_err(|e| e.to_string()))
-                .and_then(|schema| UnitCatalog::load(&vfs, &schema));
+                .and_then(|schema| UnitCatalog::load(&vfs, &schema).map(|c| (c, Arc::new(schema))));
             let _ = tx.send(result);
         });
     }
@@ -274,8 +320,9 @@ impl UnitTool {
     fn poll(&mut self) {
         if let Some(rx) = &self.catalog_rx {
             match rx.try_recv() {
-                Ok(Ok(catalog)) => {
+                Ok(Ok((catalog, schema))) => {
                     self.catalog = Some(Arc::new(catalog));
+                    self.schema = Some(schema);
                     self.catalog_rx = None;
                     self.status.clear();
                 }
@@ -536,7 +583,17 @@ impl UnitTool {
         (self.unit, self.faction) = (unit.to_owned(), faction.to_owned());
         self.default_pending = self.catalog.is_none();
         let Some(c) = &self.catalog else { return };
-        if let Some(entry) = c.entries.iter().find(|u| variant_path(&u.variant) == path && c.land_units.contains_key(&u.unit)) {
+
+        // The game's default if it wears the file, else a row of its unit, else any.
+        let wears = |u: &&wce_render::unit_catalog::UnitEntry| variant_path(&u.variant) == path && c.land_units.contains_key(&u.unit);
+        let found = c
+            .entries
+            .iter()
+            .filter(wears)
+            .find(|u| u.unit == unit && u.faction == faction)
+            .or_else(|| c.entries.iter().filter(wears).find(|u| u.unit == unit))
+            .or_else(|| c.entries.iter().find(wears));
+        if let Some(entry) = found {
             (self.unit, self.faction) = (entry.unit.clone(), entry.faction.clone());
             return;
         }
@@ -1130,6 +1187,8 @@ impl UnitTool {
             self.settings.weather = w;
         }
 
+        self.draw_looks(e);
+
         gui::separator_text("State");
         if let Some(m) = self.models.first() {
             gui::text_colored(theme::dim(), &format!("skeleton {}, scale {:.3}", m.man.rig.skeleton.skeleton, m.scale));
@@ -1156,6 +1215,319 @@ impl UnitTool {
 
         gui::end();
         actions
+    }
+
+    /// The tables read again after the project's rows changed: the catalog, and the soldiers with it.
+    fn reload_tables(&mut self, e: &mut Editor, changed: &[String]) {
+        for path in changed {
+            e.loose_changed(path);
+        }
+
+        self.catalog = None;
+        self.catalog_rx = None;
+        self.catalog_failed = false;
+        self.models_for = None;
+        self.failed.clear();
+        self.load_catalog(e);
+    }
+
+    /// Writes the project's rows, then reads the tables again.
+    fn save_looks(&mut self, e: &mut Editor) {
+        let Some(looks) = &mut self.looks else { return };
+        match looks.save(e.game().key, &e.loose_dir()) {
+            Ok(changed) => {
+                e.status(&format!("the project's DB rows: {} files written", changed.len()), false);
+                self.reload_tables(e, &changed);
+            }
+
+            Err(error) => e.status(&error, true),
+        }
+    }
+
+    /// The DB rows of the previewed unit for its faction: which definition it wears, its height, its own colours.
+    fn draw_looks(&mut self, e: &mut Editor) {
+        if !gui::collapsing_header("The unit's looks (DB)", 0) {
+            return;
+        }
+
+        if self.looks.is_none() && self.looks_error.is_empty() {
+            if self.schema.is_none() {
+                gui::text_colored(theme::dim(), "reading the unit tables...");
+                return;
+            }
+
+            if let Err(error) = self.ensure_looks(e) {
+                self.looks_error = error;
+            }
+        }
+
+        if !self.looks_error.is_empty() {
+            gui::text_wrapped(&self.looks_error);
+            return;
+        }
+
+        let Some(c) = self.catalog.clone() else { return };
+        let Some(entry) = c.entry(&self.unit, &self.faction).cloned() else {
+            gui::text_colored(theme::dim(), "The unit has no unit_variants row.");
+            return;
+        };
+
+        let definitions: Vec<String> = self
+            .listings(e)
+            .definitions
+            .iter()
+            .filter_map(|p| p.strip_prefix(DEFINITIONS)?.strip_suffix(".variantmeshdefinition").map(str::to_owned))
+            .collect();
+        let faction = self.faction.clone();
+        let this_row = [("unit", entry.unit.as_str()), ("faction", entry.faction.as_str())];
+        let key = colours_key(&entry.name, &faction);
+        let (row, changed, own, own_changed, project_rows) = {
+            let Some(looks) = &self.looks else { return };
+            let uv = looks.table("unit_variants");
+            let colours = looks.table("unit_variants_colours");
+            let project_rows = usize::from(uv.changed(&this_row)) + usize::from(colours.changed(&key));
+            (uv.row(&this_row), uv.changed(&this_row), colours.row(&key), colours.changed(&key), project_rows)
+        };
+
+        let Some(row) = row else {
+            gui::text_colored(theme::dim(), &format!("No unit_variants row named '{}'.", entry.name));
+            return;
+        };
+
+        gui::text_wrapped(&format!(
+            "unit_variants row '{}' ({}){}",
+            entry.name,
+            if entry.faction.is_empty() { "any faction".to_owned() } else { entry.faction.clone() },
+            if changed { ": the project's" } else { "" }
+        ));
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Edits are saved at once into the project's own table files (db/<table>_tables/!wce_unit_tool in its loose folder): \
+                 the editor reads them before the game's, File > Export > To mod pack ships them. Not undoable: Revert takes the \
+                 project's rows of this unit away.",
+            );
+        }
+
+        let mut edits: Vec<(&str, String)> = vec![];
+
+        // The definition.
+        let variant = row.get("variant").cloned().unwrap_or_default();
+        gui::text_colored(theme::dim(), "definition (variant)");
+        gui::text(&variant);
+        gui::same_line();
+        let filter = self.combo_filters.entry("variant#pick".to_owned()).or_default();
+        if let Some(v) = pick_button("variant", "Another definition for the unit.", filter, &variant, &definitions) {
+            edits.push(("variant", v));
+        }
+
+        let open = document(e).map(|d| d.source().vfs_path.clone()).unwrap_or_default();
+        let open_name = open.strip_prefix(DEFINITIONS).and_then(|p| p.strip_suffix(".variantmeshdefinition")).map(str::to_owned);
+        gui::begin_disabled(open_name.as_ref().is_none_or(|n| *n == variant));
+        if gui::small_button("Wear the open file")
+            && let Some(n) = &open_name
+        {
+            edits.push(("variant", n.clone()));
+        }
+
+        gui::end_disabled();
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("The unit wears the definition open in the tool (one of variantmeshes/variantmeshdefinitions).");
+        }
+
+        gui::same_line();
+        if gui::small_button("Its own copy...") {
+            self.copy_name = format!("{variant}_{}", entry.unit.to_lowercase());
+            gui::open_popup("##own_copy");
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "A copy of the unit's definition under a new name, worn by this unit only: what to edit without changing the others that wear it.",
+            );
+        }
+
+        if gui::begin_popup("##own_copy") {
+            gui::text("The copy's name:");
+            gui::set_next_item_width(360.0);
+            gui::input_text("##copy_name", None, &mut self.copy_name, 128, 0);
+            let name = self.copy_name.trim().to_lowercase();
+            let exists = definitions.contains(&name);
+            if exists {
+                gui::text_colored(theme::warning(), "A definition of that name exists.");
+            }
+
+            gui::begin_disabled(name.is_empty() || exists);
+            if gui::button("Copy and wear it") {
+                gui::close_current_popup();
+                let source = variant_path(&variant);
+                let bytes = e.vfs().and_then(|v| v.read(&source).ok());
+                let to = format!("{DEFINITIONS}{name}.variantmeshdefinition");
+                match bytes.map(|b| wce_foundation::files::write_replacing(e.loose_dir().join(&to), b)) {
+                    Some(Ok(())) => {
+                        e.loose_changed(&to);
+                        self.listings = None;
+                        edits.push(("variant", name.clone()));
+                        self.pending_preview = Some((to.clone(), self.unit.clone(), self.faction.clone()));
+                        if let Err(error) = e.open_path_from(self, &to, true, true) {
+                            e.status(&error, true);
+                        }
+                    }
+
+                    Some(Err(error)) => e.status(&format!("{to}: {error}"), true),
+                    None => e.status(&format!("{source} isn't in the packs"), true),
+                }
+            }
+
+            gui::end_disabled();
+            gui::end_popup();
+        }
+
+        // The height.
+        let number = |r: &Row, c: &str| r.get(c).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(0.0);
+        let mut height = self.height_draft.unwrap_or([number(&row, "height_scale"), number(&row, "height_variation")]);
+        gui::set_next_item_width(-130.0);
+        if gui::drag_float("height_scale", &mut height[0], 0.005, 0.1, 5.0, "%.3f") {
+            self.height_draft = Some(height);
+        }
+
+        if gui::is_item_deactivated_after_edit() {
+            edits.push(("height_scale", number_text(height[0])));
+            self.height_draft = None;
+        }
+
+        gui::set_next_item_width(-130.0);
+        if gui::drag_float("height_variation", &mut height[1], 0.001, 0.0, 1.0, "%.3f") {
+            self.height_draft = Some(height);
+        }
+
+        if gui::is_item_deactivated_after_edit() {
+            edits.push(("height_variation", number_text(height[1])));
+            self.height_draft = None;
+        }
+
+        // The unit's own colours for the faction (its soldiers').
+        let mut has_own = own.is_some();
+        let mut colour_edit = None;
+        if gui::checkbox(&format!("Own colours for {faction}"), &mut has_own) {
+            colour_edit = Some(has_own.then(|| {
+                let f = c.colours.get(&faction).copied().unwrap_or([[1.0; 3]; 4]);
+                [f[0], f[1], f[2]]
+            }));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("unit_variants_colours: the unit's soldiers wear these instead of the faction's colours.");
+        }
+
+        if let Some(own) = &own {
+            let mut rgb: [[f32; 3]; 3] = std::array::from_fn(|k| {
+                hex_to_rgb(own.get(["primary_colour_hex", "secondary_colour_hex", "tertiary_colour_hex"][k]).map_or("", String::as_str))
+            });
+            let mut changed = false;
+            for (k, name) in ["Primary##own", "Secondary##own", "Tertiary##own"].iter().enumerate() {
+                gui::color_edit3(name, &mut rgb[k], 0);
+                changed |= gui::is_item_deactivated_after_edit();
+            }
+
+            if changed {
+                colour_edit = Some(Some(rgb));
+            }
+
+            if !own_changed {
+                gui::text_colored(theme::dim(), "(the game's row)");
+            }
+        }
+
+        // Revert.
+        let mut revert = false;
+        if project_rows > 0 {
+            revert = gui::small_button(&format!("Revert ({project_rows} rows of the project)"));
+        }
+
+        // Applied after the reads above.
+        let mut todo = vec![];
+        if !edits.is_empty() {
+            todo.push(LooksEdit::Set(edits));
+        }
+
+        if let Some(colour) = colour_edit {
+            todo.push(LooksEdit::Colours(colour));
+        }
+
+        if revert {
+            todo.push(LooksEdit::Revert);
+        }
+
+        if !todo.is_empty()
+            && let Err(error) = self.edit_looks(e, todo)
+        {
+            e.status(&error, true);
+        }
+    }
+
+    /// Reads the looks' tables if they aren't.
+    fn ensure_looks(&mut self, e: &Editor) -> Result<(), String> {
+        if self.looks.is_some() {
+            return Ok(());
+        }
+
+        let (Some(vfs), Some(schema)) = (e.vfs().cloned(), self.schema.clone()) else {
+            return Err("the unit tables aren't read yet".to_owned());
+        };
+        self.looks = Some(LooksTables::load(&vfs, &schema, &e.loose_dir())?);
+        Ok(())
+    }
+
+    /// Changes the previewed unit's rows for its faction, then saves them.
+    fn edit_looks(&mut self, e: &mut Editor, todo: Vec<LooksEdit>) -> Result<(), String> {
+        self.ensure_looks(e)?;
+        let c = self.catalog.clone().ok_or("the unit tables aren't read yet")?;
+        let entry = c.entry(&self.unit, &self.faction).cloned().ok_or("the unit has no unit_variants row")?;
+        let faction = self.faction.clone();
+        let this_row = [("unit", entry.unit.as_str()), ("faction", entry.faction.as_str())];
+        let key = colours_key(&entry.name, &faction);
+        let looks = self.looks.as_mut().ok_or("no tables")?;
+        for edit in todo {
+            match edit {
+                LooksEdit::Set(edits) => {
+                    let row = looks.table("unit_variants").row(&this_row).ok_or("no unit_variants row")?;
+                    let values: Vec<(&str, &str)> = edits.iter().map(|(c, v)| (*c, v.as_str())).collect();
+                    looks.table_mut("unit_variants").set(&row, &values)?;
+
+                    // A new definition's name in `variants`, as the game's rows have theirs.
+                    if let Some((_, v)) = edits.iter().find(|(c, _)| *c == "variant")
+                        && looks.table("variants").row(&[("variant_name", v)]).is_none()
+                    {
+                        let base = looks.table("variants").game_rows().first().cloned().unwrap_or_default();
+                        looks.table_mut("variants").set(&base, &[("variant_name", v)])?;
+                    }
+                }
+
+                LooksEdit::Colours(None) => looks.table_mut("unit_variants_colours").remove(&key),
+                LooksEdit::Colours(Some(rgb)) => {
+                    let table = looks.table_mut("unit_variants_colours");
+                    let base = table.row(&key).or_else(|| table.game_rows().first().cloned()).unwrap_or_default();
+                    let hex: Vec<String> = rgb.iter().map(|c| rgb_to_hex(*c)).collect();
+                    let values = [
+                        ("unit_variant", entry.name.as_str()),
+                        ("faction", faction.as_str()),
+                        ("soldier_type", "soldier"),
+                        ("primary_colour_hex", hex[0].as_str()),
+                        ("secondary_colour_hex", hex[1].as_str()),
+                        ("tertiary_colour_hex", hex[2].as_str()),
+                    ];
+                    table.set(&base, &values)?;
+                }
+
+                LooksEdit::Revert => {
+                    looks.table_mut("unit_variants").remove(&this_row);
+                    looks.table_mut("unit_variants_colours").remove(&key);
+                }
+            }
+        }
+
+        self.save_looks(e);
+        Ok(())
     }
 
     fn draw_problems(&mut self) -> Vec<Action> {
@@ -1754,6 +2126,33 @@ impl Tool for UnitTool {
         self.selected.as_ref().map(|p| hash_of(p) | 1)
     }
 
+    fn export_menu(&mut self, e: &mut Editor) -> bool {
+        if gui::menu_item("To mod pack...", None, false, true) {
+            let files = project_files(&e.loose_dir());
+            if files.is_empty() {
+                e.status("the project has no definitions or DB rows of the Unit tool to export", true);
+            } else if let Some(path) = e.pick_export_file(
+                "unit_pack",
+                "wce_units.pack",
+                &[("Mod pack".to_owned(), "*.pack".to_owned()), ("All files".to_owned(), "*.*".to_owned())],
+            ) {
+                match export_pack(e, &path) {
+                    Ok(n) => e.status(&format!("wrote {n} files into {}", path.display()), false),
+                    Err(error) => e.status(&error, true),
+                }
+            }
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "Into a mod pack (a new one, or added to one): the project's definitions (its loose variantmeshes folder) and the \
+                 DB rows of the Unit tool.",
+            );
+        }
+
+        true
+    }
+
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {
         let (source, bytes) = if from_packs {
             // The project's loose copy (where Save writes it) wins over the packs: it is mounted before them.
@@ -1775,6 +2174,47 @@ impl Tool for UnitTool {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
+}
+
+/// File > Export > To mod pack: the project's files of the tool into the pack (made, or added to). Returns how many.
+fn export_pack(e: &Editor, path: &std::path::Path) -> Result<usize, String> {
+    let files = project_files(&e.loose_dir());
+    if files.is_empty() {
+        return Err("the project has no definitions or DB rows of the Unit tool to export".to_owned());
+    }
+
+    wce_vfs::mod_pack::write_files(e.game(), path, &[], &files).map_err(|error| format!("{}: {error}", path.display()))?;
+    Ok(files.len())
+}
+
+/// What File > Export > To mod pack takes from the project's loose folder: its definitions (`variantmeshes/**.variantmeshdefinition`)
+/// and the tool's DB files, as (path in the pack, bytes).
+fn project_files(loose: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut out = vec![];
+    let mut pending = vec![loose.join("variantmeshes")];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                pending.push(p);
+            } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("variantmeshdefinition"))
+                && let (Ok(rel), Ok(bytes)) = (p.strip_prefix(loose), std::fs::read(&p))
+            {
+                out.push((rel.to_string_lossy().replace('\\', "/"), bytes));
+            }
+        }
+    }
+
+    for table in crate::db::TABLES {
+        let path = project_path(table);
+        if let Ok(bytes) = std::fs::read(loose.join(&path)) {
+            out.push((path, bytes));
+        }
+    }
+
+    out.sort();
+    out
 }
 
 // ---- script commands
@@ -1947,6 +2387,34 @@ fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add(
+        "unit_db",
+        "unit_db <variant NAME | height SCALE VARIATION | colours RRGGBB RRGGBB RRGGBB | colours off | revert>",
+        "change the previewed unit's DB rows for its faction (saved into the project at once)",
+        |e, a| {
+            let edit = match a.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+                ["variant", v] => LooksEdit::Set(vec![("variant", (*v).to_owned())]),
+                ["height", s, v] => LooksEdit::Set(vec![("height_scale", (*s).to_owned()), ("height_variation", (*v).to_owned())]),
+                ["colours", "off"] => LooksEdit::Colours(None),
+                ["colours", p, q, r] => LooksEdit::Colours(Some([hex_to_rgb(p), hex_to_rgb(q), hex_to_rgb(r)])),
+                ["revert"] => LooksEdit::Revert,
+                _ => return fail("usage: unit_db <variant NAME | height SCALE VARIATION | colours HEX HEX HEX | colours off | revert>"),
+            };
+            with_unit(e, |t, e| match t.edit_looks(e, vec![edit]) {
+                Ok(()) => ok(""),
+                Err(error) => fail(error),
+            })
+        },
+    );
+
+    c.add("unit_export", "unit_export <pack>", "File > Export > To mod pack, into this pack", |e, a| {
+        let Some(path) = a.first() else { return fail("usage: unit_export <pack>") };
+        match export_pack(e, std::path::Path::new(path)) {
+            Ok(n) => ok(format!("{n} files")),
+            Err(error) => fail(error),
+        }
+    });
+
     c.add("unit_summary", "unit_summary", "what the preview shows: unit, soldiers, parts, problems", |e, _| {
         with_unit(e, |t, _| {
             let parts: Vec<String> = t
@@ -1955,12 +2423,21 @@ fn register(c: &mut CommandRegistry<Editor>) {
                 .map(|m| m.man.parts.parts.iter().map(|p| file_name(&p.model).to_owned()).collect::<Vec<_>>().join(","))
                 .collect();
             let problems: Vec<String> = t.problems.iter().map(|p| format!("{:?} {}", p.path, p.text)).collect();
+            let colours = t.models.first().map(|m| m.faction_colours[..3].iter().map(|c| format!("{:.3},{:.3},{:.3}", c[0], c[1], c[2])).collect::<Vec<_>>().join(" "));
+            let scale = t.models.first().map_or(0.0, |m| m.scale);
+            let rows: Vec<String> = t
+                .looks
+                .as_ref()
+                .map(|l| l.tables.iter().flat_map(|(n, tb)| tb.project_rows().into_iter().map(move |r| format!("{n}: {r:?}"))).collect())
+                .unwrap_or_default();
+            let entry = t.catalog.as_ref().and_then(|c| c.entry(&t.unit, &t.faction)).map(|u| format!("{u:?}"));
             ok(format!(
-                "unit {} faction {} seed {} soldiers {} selected {:?} pins {} parts [{}] missing {:?} problems [{}] status '{}'",
+                "unit {} faction {} entry {entry:?} project rows {rows:?} seed {} soldiers {} scale {scale:.3} colours {colours:?} worn '{}' selected {:?} pins {} parts [{}] missing {:?} problems [{}] status '{}'",
                 t.unit,
                 t.faction,
                 t.seed,
                 t.models.len(),
+                t.worn_how,
                 t.selected,
                 t.pins.slots.len(),
                 parts.join(" | "),
