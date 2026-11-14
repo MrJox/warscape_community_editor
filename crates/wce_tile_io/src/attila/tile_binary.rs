@@ -794,14 +794,18 @@ fn write_fastbin_list(doc: &Document) -> std::result::Result<Vec<u8>, String> {
 
 // ---- rpfm structs through serde
 
-/// rpfm_lib gives some structs an `id` that is not in the file (a new random u64 at every read: the capture locations of the BMD files,
-/// the trees of the tree lists). They are set to 0, so a re-read is the same model; the round trip checks that no `id` is file data.
-fn zero_ids(n: &mut Node) {
-    if n.get("id").is_some() {
-        n.set("id", Value::Int(0));
-    }
+/// The arrays whose items rpfm_lib gives an `id` that is not in the file (a new random u64 at every read): the capture locations of the BMD
+/// files (`CaptureLocation`). Other `id`s are file data (a deployment region's, `DeploymentRegion`) and are kept.
+const RANDOM_ID_ARRAYS: &[&str] = &["capture_locations"];
 
+/// Sets the random `id`s (`RANDOM_ID_ARRAYS`) to 0, so a re-read is the same model.
+fn zero_ids(n: &mut Node) {
+    let random = RANDOM_ID_ARRAYS.iter().any(|a| n.class == *a);
     for c in &mut n.children {
+        if random && c.get("id").is_some() {
+            c.set("id", Value::Int(0));
+        }
+
         zero_ids(c);
     }
 }
@@ -1007,5 +1011,25 @@ mod tests {
 
             assert_eq!(half_bits(v), bits, "{bits:#06x}");
         }
+    }
+
+    #[test]
+    fn only_rpfms_random_ids_are_zeroed() {
+        let with_id = |class: &str, id: i64| {
+            let mut n = Node::new(class);
+            n.set("id", Value::Int(id));
+            n
+        };
+
+        let mut locations = Node::new("capture_locations");
+        locations.children.push(with_id("item", 123_456));
+        let mut regions = Node::new("deployment_regions");
+        regions.children.push(with_id("item", 7));
+        let mut root = Node::new("BMD");
+        root.children = vec![locations, regions];
+
+        zero_ids(&mut root);
+        assert_eq!(root.children[0].children[0].get("id"), Some(&Value::Int(0)), "a capture location's id is rpfm's own");
+        assert_eq!(root.children[1].children[0].get("id"), Some(&Value::Int(7)), "a deployment region's id is the file's");
     }
 }
