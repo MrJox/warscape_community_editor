@@ -45,6 +45,9 @@ const FLANGE_THRESHOLD_TIP: &str = "The stroke weight (0..1) where the group tak
     it the pixel is all the group, variations 0 to 3 from the edge inwards. 0: no rim, the group everywhere the brush touches.";
 
 /// The terrain modes in the toolbar (`TileMode` order after Select), their icons and tips.
+/// The brushes' names in the mode strip's flyouts, in `BRUSHES`' order.
+const BRUSH_NAMES: [&str; 9] = ["Raise", "Lower", "Smooth", "Flatten", "Level", "Noise", "Stamp", "Ground textures", "Ground types"];
+
 const BRUSHES: [(&str, &str); 9] = [
     (icons::ARROW_BIG_UP, "Raise the terrain"),
     (icons::ARROW_BIG_DOWN, "Lower the terrain"),
@@ -74,46 +77,68 @@ pub(crate) const FOOTPRINT_GROUND: u8 = 8;
 
 impl TileTool {
     /// The toolbar: the terrain brushes (a click on the active one goes back to selecting).
-    pub(crate) fn draw_toolbar(&mut self, e: &mut Editor) {
+    /// The tool's modes in the viewport's mode strip: a Sculpt chip (raise, lower, smooth, flatten, level, noise, stamp) and a Paint chip
+    /// (the ground's textures, its ground types; a prefab's ground types paint its footprint, and it has no textures), each opening its
+    /// brushes to the right; lit, with the brush's icon, while one of its brushes is on. True while a brush is on.
+    pub(crate) fn draw_mode_chips(&mut self, e: &mut Editor) -> bool {
         if document_id(e).is_none() {
-            return;
+            return false;
         }
 
-        gui::text_disabled("|");
-        gui::same_line();
         let prefab = self.profile == crate::tool::Profile::Prefab;
-        for (i, (icon, tip)) in BRUSHES.iter().enumerate() {
-            let mode = TileMode::from_index(i + 1);
-
-            // A prefab's ground is heights only (textures would be another thing in each tile); ground types paint its footprint.
-            if prefab && mode == TileMode::Paint {
-                continue;
+        let sculpt: Vec<usize> = (0..7).collect();
+        let paint: Vec<usize> = if prefab { vec![8] } else { vec![7, 8] };
+        gui::separator();
+        for (name, icon, brushes) in [("Sculpt", icons::MOUNTAIN, sculpt), ("Paint", icons::BRUSH, paint)] {
+            let current = brushes.iter().copied().find(|&i| self.mode == TileMode::from_index(i + 1));
+            let shown = current.map_or(icon, |i| BRUSHES[i].0);
+            let tip = match current {
+                Some(i) => format!(
+                    "{name}: {}\nIts settings are in the Inspector; Esc goes back to selecting. Click: another brush",
+                    self.brush_tip(i, prefab)
+                ),
+                None => format!("{name}: click for its brushes"),
+            };
+            let id = format!("modes{name}");
+            if wce_editor::chips::chip(current.is_some(), shown, &id, &tip) {
+                gui::open_popup(&id);
             }
 
-            let tip = if prefab && mode == TileMode::Ground { FOOTPRINT_TIP } else { *tip };
-            let on = self.mode == mode;
-            if on {
-                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
-            }
+            // The brushes open to the right of the strip.
+            let (lo, hi) = gui::item_rect();
+            gui::set_next_window_pos(gui::v2(hi.x + 6.0, lo.y), gui::COND_ALWAYS, gui::v2(0.0, 0.0));
+            if gui::begin_popup(&id) {
+                gui::text_disabled(name);
+                for &i in &brushes {
+                    let mode = TileMode::from_index(i + 1);
+                    let (icon, _) = BRUSHES[i];
+                    let on = self.mode == mode;
+                    if gui::selectable(&format!("{icon}  {}", BRUSH_NAMES[i]), on, 0) {
+                        self.set_mode(if on { TileMode::Select } else { mode });
+                        if !on {
+                            // Its settings.
+                            e.pending_focus = Some("Inspector".to_owned());
+                        }
+                    }
 
-            if gui::small_button(&format!("{icon}##brush{i}")) {
-                self.set_mode(if on { TileMode::Select } else { mode });
-                if !on {
-                    // Its settings.
-                    e.pending_focus = Some("Inspector".to_owned());
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(&format!(
+                            "{}\nIts settings are in the Inspector; Esc goes back to selecting",
+                            self.brush_tip(i, prefab)
+                        ));
+                    }
                 }
-            }
 
-            if on {
-                gui::pop_style_color(1);
+                gui::end_popup();
             }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{tip}\nIts settings are in the Inspector; Esc goes back to selecting"));
-            }
-
-            gui::same_line();
         }
+
+        self.mode != TileMode::Select
+    }
+
+    /// A brush's tooltip (a prefab's ground types paint its footprint).
+    fn brush_tip(&self, i: usize, prefab: bool) -> &'static str {
+        if prefab && TileMode::from_index(i + 1) == TileMode::Ground { FOOTPRINT_TIP } else { BRUSHES[i].1 }
     }
 
     /// The tile's snapping in the viewport's snap chip: of the grab (G), of the move gizmo and of the placing (to the grid, to points), and

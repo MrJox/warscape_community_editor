@@ -101,6 +101,55 @@ pub(crate) fn draw(e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
     gui::pop_style_color(1);
 }
 
+/// The viewport's mode strip, a vertical pill at the image's left edge (`origin`, `size`), under the tool's chips there: what the left
+/// mouse does (Select / Move / Rotate / Scale, 1 to 4), the gizmo's coordinates (Global / Local, L), then the tool's own modes
+/// (`Tool::viewport_modes`).
+pub(crate) fn draw_mode_strip(e: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+    const TOP: f32 = 100.0;
+    if size.y < TOP + 160.0 {
+        return;
+    }
+
+    gui::set_cursor_screen_pos(gui::v2(origin.x + 8.0, origin.y + TOP));
+    gui::push_style_color(gui::COL_CHILD_BG, gui::v4(0.08, 0.08, 0.09, 0.78));
+    if gui::begin_pill("##modestrip") {
+        // Whether one of the tool's modes is on is the last frame's (its chips are drawn after these).
+        let tool_mode = e.viewport.tool_mode_on;
+        for (g, (icon, name)) in
+            [(icons::MOUSE_POINTER_2, "Select"), (icons::MOVE, "Move"), (icons::ROTATE_3D, "Rotate"), (icons::SCALE_3D, "Scale")]
+                .iter()
+                .enumerate()
+        {
+            let mode = crate::viewport::GizmoMode::from_index(g);
+            let on = !tool_mode && e.viewport.gizmo == mode;
+            let tip = format!("{name} ({}){}", g + 1, if tool_mode { "\nLeaves the brush" } else { "" });
+            if chip(on, icon, &format!("gizmo{g}"), &tip) {
+                e.viewport.gizmo = mode;
+                e.with_active_tool(|t, e| t.leave_mode(e));
+            }
+        }
+
+        let local = e.viewport.local_coordinates;
+        let tip = if local {
+            "Local coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the parent's (the group, \
+             prefab or layer the item is in), as the file holds them. Click: global"
+        } else {
+            "Global coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the world's. Click: local \
+             (relative to the group, prefab or layer the item is in)"
+        };
+        gui::separator();
+        if chip(local, if local { icons::BOX } else { icons::GLOBE }, "coords", tip) {
+            e.viewport.local_coordinates = !local;
+        }
+
+        let on = e.with_active_tool(|t, e| t.viewport_modes(e)).unwrap_or(false);
+        e.viewport.tool_mode_on = on;
+    }
+
+    gui::end_child();
+    gui::pop_style_color(1);
+}
+
 fn draw_camera_chip(e: &mut Editor) {
     let (mode, game) = (e.viewport.mode(), e.viewport.game_view);
     let tip = format!(

@@ -127,8 +127,16 @@ pub trait Tool: Any {
         vec![]
     }
 
-    /// Buttons of the tool in the toolbar, after the gizmo's.
-    fn toolbar(&mut self, editor: &mut Editor) {
+    /// The tool's modes in the viewport's mode strip (`chips::draw_mode_strip`), under the editor's Select / Move / Rotate / Scale and
+    /// Global / Local: chips of what the left mouse does in the tool (the Tile tool's sculpt and paint brushes). True while one of them is
+    /// on (the gizmo's buttons then show unlit).
+    fn viewport_modes(&mut self, editor: &mut Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
+    /// One of the mode strip's Select / Move / Rotate / Scale was clicked: the tool leaves its own mode (a brush).
+    fn leave_mode(&mut self, editor: &mut Editor) {
         let _ = editor;
     }
 
