@@ -217,3 +217,22 @@ fn height_field() {
     while hf.redo() {}
     assert_eq!(hf.samples(), after.as_slice(), "redo reproduces the edit");
 }
+
+#[test]
+fn saving_into_the_kit_twice_keeps_the_kits_own_file_in_the_backup() {
+    let project = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("tile.ted"), TED).unwrap();
+    std::fs::write(project.path().join("height_map_0.png"), height_png().1).unwrap();
+    let tile = wce_tile::tile_project::TileProject::open(project.path()).unwrap();
+
+    // The kit's variation folder has a tile.ted of its own (TEd's): the first save keeps it as the backup, and so does the second.
+    let kit = tempfile::tempdir().unwrap();
+    let kits_own = TED.replace("name=\"c\"", "name=\"the kit's\"");
+    std::fs::write(kit.path().join("tile.ted"), &kits_own).unwrap();
+    let scene = tile.scene.save();
+    tile.save_for_kit_scene(kit.path(), scene.clone(), vec![], &[]).unwrap();
+    let edited = String::from_utf8(scene).unwrap().replace("name=\"a\"", "name=\"edited\"").into_bytes();
+    tile.save_for_kit_scene(kit.path(), edited, vec![], &[]).unwrap();
+    assert_eq!(std::fs::read_to_string(kit.path().join("tile.ted.bak")).unwrap(), kits_own);
+    assert!(std::fs::read_to_string(kit.path().join("tile.ted")).unwrap().contains("name=\"edited\""));
+}
