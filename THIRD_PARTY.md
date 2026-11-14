@@ -58,4 +58,5 @@ rustls-webpki and untrusted (ISC), subtle (BSD-3-Clause) and webpki-roots (CDLA-
 
 ## Windows release
 
-The release zip (`.github/workflows/release.yml`) ships `wce.exe` and the `SDL3.dll` that sdl3-sys builds from SDL's source (zlib licence).
+The release zip (`.github/workflows/release.yml`) ships `wce.exe` (with README.md and this file): SDL3, which sdl3-sys builds from SDL's
+source (zlib licence), is linked into it statically, so there is no `SDL3.dll` beside it.
