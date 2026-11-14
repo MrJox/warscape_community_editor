@@ -1071,6 +1071,10 @@ impl TileDocument {
         self.history.model()
     }
 
+    /// The tile for its view state (the display, the look, the preview, the caches it keeps): outside this crate it changes nothing
+    /// that is saved. The tile's data (`project`, `tscene_mut`) is this crate's, and every public method of `Tile` that takes `&mut self`
+    /// writes view state or caches only; an edit goes through this document's methods, on the undo stack. Keep it so: a public `Tile`
+    /// method that wrote the data would bypass undo and the save tracking.
     pub fn tile_mut(&mut self) -> &mut Tile {
         self.history.model_mut()
     }
