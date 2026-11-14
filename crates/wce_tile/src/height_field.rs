@@ -122,20 +122,19 @@ pub struct HeightField {
 impl HeightField {
     /// # Errors
     ///
-    /// The image is not 16-bit grey.
+    /// The image is not 16-bit grey, or has fewer pixels than its size says.
     pub fn from_png(png: &PngFile, min_height: f64, scale: f64) -> Result<Self> {
         if png.bit_depth != 16 || png.color_type != 0 {
             return Err("height map must be 16-bit grey".to_owned());
         }
 
-        let v = png
-            .pixels
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .take(png.width as usize * png.height as usize)
-            .map(|p| (f64::from(u16::from_be_bytes(*p)) / 65535.0 * scale) as f32)
-            .collect();
+        let n = png.width as usize * png.height as usize;
+        if png.pixels.len() < n * 2 {
+            return Err(format!("height map of {} x {} with {} bytes of pixels", png.width, png.height, png.pixels.len()));
+        }
+
+        let v =
+            png.pixels.as_chunks::<2>().0.iter().take(n).map(|p| (f64::from(u16::from_be_bytes(*p)) / 65535.0 * scale) as f32).collect();
         Ok(Self { w: png.width, h: png.height, min: min_height, scale, base: min_height, v, ..Default::default() })
     }
 
@@ -651,6 +650,15 @@ fn quantize(m: f64, min_height: f64, scale: f64) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_height_map_shorter_than_its_size_is_an_error() {
+        let png =
+            |pixels: usize| PngFile { width: 4, height: 4, bit_depth: 16, color_type: 0, pixels: vec![0; pixels], ..Default::default() };
+        assert!(HeightField::from_png(&png(31), 0.0, 1.0).is_err());
+        let f = HeightField::from_png(&png(32), 0.0, 1.0).unwrap();
+        assert_eq!((f.width(), f.height(), f.metres(3, 3)), (4, 4, 0.0));
+    }
 
     #[test]
     fn the_noise_is_bounded_repeatable_and_not_flat() {

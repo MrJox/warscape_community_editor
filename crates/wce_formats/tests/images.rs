@@ -36,6 +36,21 @@ fn png_encoder_matches_the_cpp_one() {
 }
 
 #[test]
+fn a_png_whose_header_asks_for_more_pixels_than_its_data_holds_is_an_error() {
+    let mut png = PngFile { width: 4, height: 4, bit_depth: 8, color_type: 0, ..Default::default() };
+    png.pixels = vec![7; 16];
+    let encoded = png.encode().unwrap();
+
+    // IHDR's width and height (big endian, after the signature and the chunk's length and type): huge, and the size overflowing.
+    for (w, h) in [(60_000u32, 60_000u32), (u32::MAX, u32::MAX)] {
+        let mut b = encoded.clone();
+        b[16..20].copy_from_slice(&w.to_be_bytes());
+        b[20..24].copy_from_slice(&h.to_be_bytes());
+        assert!(PngFile::parse(&b).is_err(), "{w} x {h}");
+    }
+}
+
+#[test]
 fn containers_round_trip() {
     let payload = (0..4 * 3 * 4).map(|i| i as u8).collect::<Vec<_>>();
     let dds = DdsFile::make_r32f(4, 3, payload.clone());

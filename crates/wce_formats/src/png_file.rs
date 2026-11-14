@@ -247,7 +247,14 @@ impl PngFile {
 
         let stride = f.width as usize * bpp;
         let height = f.height as usize;
-        let mut raw = vec![0u8; (stride + 1) * height];
+        // Deflate makes at most about 1032 bytes of each one: a header asking for more than the image data can hold is a broken file, not an
+        // allocation to try (a hostile one would abort the editor).
+        let size = stride.checked_add(1).and_then(|row| row.checked_mul(height));
+        let Some(size) = size.filter(|&n| n <= idat.len().saturating_mul(1032)) else {
+            return fail(&format!("{} x {} pixels in {} bytes of image data", f.width, f.height, idat.len()));
+        };
+
+        let mut raw = vec![0u8; size];
         inflate_exact(&idat, &mut raw)?;
 
         f.pixels = vec![0u8; stride * height];
