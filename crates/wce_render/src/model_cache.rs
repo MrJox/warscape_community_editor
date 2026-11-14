@@ -355,6 +355,9 @@ struct TextureInner {
     dev: SharedDevice,
     read: SharedReader,
     cache: Mutex<HashMap<String, Arc<OnceLock<Option<SharedTexture>>>>>,
+
+    /// When each was last asked for: one fetched every frame and not kept (a sky's, the ground's) is in use though only the cache holds it.
+    touched: Mutex<HashMap<String, std::time::Instant>>,
     errors: Mutex<Vec<String>>,
 
     /// What went to the log already: each problem is logged once.
@@ -406,6 +409,7 @@ impl TextureCache {
                 dev: SharedDevice(dev.clone()),
                 read,
                 cache: Mutex::new(HashMap::new()),
+                touched: Mutex::new(HashMap::new()),
                 errors: Mutex::new(vec![]),
                 logged: Mutex::new(HashSet::new()),
                 loaded: AtomicUsize::new(0),
@@ -446,6 +450,7 @@ impl TextureCache {
 
     fn get_or_load(&self, path: &str, srgb: bool, quiet: bool) -> Option<SharedTexture> {
         let key = format!("{}|{}", wce_vfs::normalize(path), if srgb { "s" } else { "l" });
+        lock(&self.inner.touched).insert(key.clone(), std::time::Instant::now());
         let slot = lock(&self.inner.cache).entry(key).or_default().clone();
         slot.get_or_init(|| self.load(path, srgb, quiet)).clone()
     }
@@ -535,6 +540,21 @@ impl TextureCache {
         }
     }
 
+    /// Drops the textures only the cache holds (no model's material, no terrain, no upgrade in flight) that were not asked for in `idle`:
+    /// their GPU memory goes back. One asked for again loads again; ones that failed or are loading stay. Returns how many went.
+    pub fn evict_unreferenced(&self, idle: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let mut touched = lock(&self.inner.touched);
+        let mut cache = lock(&self.inner.cache);
+        let before = cache.len();
+        cache.retain(|key, slot| {
+            let held = Arc::strong_count(slot) > 1 || slot.get().is_none_or(|t| t.as_ref().is_none_or(|t| Arc::strong_count(t) > 1));
+            held || touched.get(key).is_some_and(|t| now.duration_since(*t) <= idle)
+        });
+        touched.retain(|key, _| cache.contains_key(key));
+        before - cache.len()
+    }
+
     pub fn upgrades_pending(&self) -> usize {
         self.inner.upgrades_inflight.load(Ordering::Acquire)
     }
@@ -601,6 +621,9 @@ struct Entry {
     state: State,
     model: Option<Arc<GpuModel>>,
     handle: Handle,
+
+    /// When it was last asked for (`try_get`, `peek`, `model`): one ready but not in a draw list yet is not idle.
+    touched: Option<std::time::Instant>,
 }
 
 struct ModelInner {
@@ -1391,6 +1414,7 @@ impl ModelCache {
         let mut models = lock(&inner.models);
         loop {
             let entry = models.entry(path.to_owned()).or_default();
+            entry.touched = Some(std::time::Instant::now());
             match entry.state {
                 State::Ready => return entry.model.clone(),
                 State::Failed => return None,
@@ -1418,6 +1442,7 @@ impl ModelCache {
     pub fn try_get(&self, path: &str, priority: f32) -> Option<Arc<GpuModel>> {
         let mut models = lock(&self.inner.models);
         let entry = models.entry(path.to_owned()).or_default();
+        entry.touched = Some(std::time::Instant::now());
         match entry.state {
             State::Ready => entry.model.clone(),
             State::Absent => {
@@ -1443,9 +1468,24 @@ impl ModelCache {
 
     /// The model if it is ready, without queueing anything, and its state (Absent counts as still to come).
     pub fn peek(&self, path: &str) -> (Option<Arc<GpuModel>>, State) {
-        lock(&self.inner.models)
-            .get(path)
-            .map_or((None, State::Absent), |entry| (entry.model.clone().filter(|_| entry.state == State::Ready), entry.state))
+        lock(&self.inner.models).get_mut(path).map_or((None, State::Absent), |entry| {
+            entry.touched = Some(std::time::Instant::now());
+            (entry.model.clone().filter(|_| entry.state == State::Ready), entry.state)
+        })
+    }
+
+    /// Drops the ready models nothing else holds (no draw list, no preview) that were not asked for in `idle`: their GPU memory (and their
+    /// textures', with `TextureCache::evict_unreferenced`) goes back. One asked for again loads again. Failed and loading ones stay.
+    /// Returns how many went.
+    pub fn evict_idle(&self, idle: std::time::Duration) -> usize {
+        let now = std::time::Instant::now();
+        let mut models = lock(&self.inner.models);
+        let before = models.len();
+        models.retain(|_, e| {
+            let unused = e.model.as_ref().is_some_and(|m| Arc::strong_count(m) == 1);
+            !(e.state == State::Ready && unused && e.touched.is_none_or(|t| now.duration_since(t) > idle))
+        });
+        before - models.len()
     }
 
     /// Re-ranks a queued load.

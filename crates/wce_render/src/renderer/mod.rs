@@ -1005,6 +1005,9 @@ pub struct Renderer {
     pub(crate) lights: lights::LightGpu,
     pub(crate) grass: grass::GrassGpu,
     pub settings: RenderSettings,
+
+    /// When the caches last gave back what nothing draws (`release_unused`).
+    released_at: Option<std::time::Instant>,
 }
 
 /// An immutable buffer.
@@ -1181,7 +1184,25 @@ impl Renderer {
             lights: lights::LightGpu::default(),
             grass: grass::GrassGpu::default(),
             settings: RenderSettings::default(),
+            released_at: None,
         })
+    }
+
+    /// Every 10 s: the models and textures nothing has drawn or asked for in a minute go (a map context streamed
+    /// across a large map kept every chunk's models on the GPU before).
+    fn release_unused(&mut self) {
+        const EVERY: std::time::Duration = std::time::Duration::from_secs(10);
+        const IDLE: std::time::Duration = std::time::Duration::from_secs(60);
+        let now = std::time::Instant::now();
+        if self.released_at.is_some_and(|t| now.duration_since(t) < EVERY) {
+            return;
+        }
+
+        self.released_at = Some(now);
+        let (models, textures) = (self.models.evict_idle(IDLE), self.textures.evict_unreferenced(IDLE));
+        if models + textures > 0 {
+            wce_foundation::log::info(format!("released {models} model(s) and {textures} texture(s) nothing draws"));
+        }
     }
 
     // ---- Public accessors.
@@ -1553,6 +1574,8 @@ impl Renderer {
         for r in wce_d3d11::safe::take_rejected() {
             self.error(format!("d3d11: refused {r}"));
         }
+
+        self.release_unused();
 
         self.grass.season.clone_from(&scene.vegetation_season);
         if !self.climate.eq_ignore_ascii_case(&scene.climate) {
