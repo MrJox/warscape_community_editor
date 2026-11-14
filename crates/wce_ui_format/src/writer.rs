@@ -221,10 +221,18 @@ fn put_str(out: &mut Vec<u8>, s: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// An integer of a field `bits` wide, signed or unsigned: from the smallest signed value to the largest unsigned one.
+fn in_width(s: &str, bits: u32) -> Result<i64, String> {
+    let v = int(s)?;
+    let (lo, hi) = (-(1i64 << (bits - 1)), (1i64 << bits) - 1);
+    if (lo..=hi).contains(&v) { Ok(v) } else { Err(format!("{v} does not fit a {bits}-bit field")) }
+}
+
 fn put_text(out: &mut Vec<u8>, t: Text, s: &str) -> Result<(), String> {
     match t {
-        Text::U | Text::I => out.extend_from_slice(&(int(s)? as u32).to_le_bytes()),
-        Text::U2 | Text::I2 => out.extend_from_slice(&(int(s)? as u16).to_le_bytes()),
+        // Signed or unsigned, as the reader writes it: what the field's width can hold, else an error (70000 in a <u2> was 4464).
+        Text::U | Text::I => out.extend_from_slice(&(in_width(s, 32)? as u32).to_le_bytes()),
+        Text::U2 | Text::I2 => out.extend_from_slice(&(in_width(s, 16)? as u16).to_le_bytes()),
         Text::Byte => {
             let v = int(s)?;
             if !(0..=255).contains(&v) {
@@ -263,4 +271,20 @@ fn put_text(out: &mut Vec<u8>, t: Text, s: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_width;
+
+    #[test]
+    fn an_integer_must_fit_its_field_signed_or_unsigned() {
+        assert_eq!(in_width("65535", 16), Ok(65535));
+        assert_eq!(in_width("-32768", 16), Ok(-32768));
+        assert!(in_width("70000", 16).is_err(), "was written as 4464");
+        assert!(in_width("-32769", 16).is_err());
+        assert_eq!(in_width("4294967295", 32), Ok(4_294_967_295));
+        assert_eq!(in_width("-1", 32), Ok(-1));
+        assert!(in_width("4294967296", 32).is_err());
+    }
 }

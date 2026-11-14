@@ -157,9 +157,19 @@ impl GameData {
             wce_foundation::wce_prof!("game_data.cs2");
             let levels = cs2
                 .par_iter()
-                .map(|(key, n)| vfs.read(n).ok().and_then(|bytes| destruction_levels(&bytes)).map(|l| (key.to_string(), l)))
+                .map(|(key, n)| match vfs.read(n) {
+                    Ok(bytes) => Ok(destruction_levels(&bytes).map(|l| (key.to_string(), l))),
+                    Err(e) => Err(format!("{n}: {e}")),
+                })
                 .collect::<Vec<_>>();
-            levels.into_iter().flatten().collect()
+            // One that does not read is a building whose destruction levels fall back (the decompiled damage values change): said.
+            let failed = levels.iter().filter_map(|r| r.as_ref().err()).collect::<Vec<_>>();
+            if !failed.is_empty() {
+                let some = failed.iter().take(3).map(|s| s.as_str()).collect::<Vec<_>>().join("; ");
+                warnings.push(format!("{} collision files did not read, their destruction levels fall back: {some}", failed.len()));
+            }
+
+            levels.into_iter().filter_map(Result::ok).flatten().collect()
         };
 
         let rows = schema.as_ref().map_or_else(Vec::new, |schema| building_table_rows(vfs, schema, &mut warnings));

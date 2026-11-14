@@ -48,11 +48,7 @@ pub fn write_files(game: &GameProfile, pack_path: &Path, replace: &[&str], files
         pack.insert(RFile::new_from_vec(data, FileType::Unknown, 0, inside)).map_err(|e| e.to_string())?;
     }
 
-    if let Some(parent) = pack_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
-    pack.save(Some(pack_path), info, &None).map_err(|e| e.to_string())
+    save_replacing(&mut pack, pack_path, info)
 }
 
 /// Writes a new mod pack of `game` (an existing file at `pack_path` is replaced) holding `files`: (path inside the pack, bytes).
@@ -70,9 +66,25 @@ pub fn write_new(game: &GameProfile, pack_path: &Path, files: &[(String, Vec<u8>
         pack.insert(RFile::new_from_vec(data, FileType::Unknown, 0, inside)).map_err(|e| e.to_string())?;
     }
 
+    save_replacing(&mut pack, pack_path, info)
+}
+
+/// Saves the pack beside `pack_path` and puts it in its place once written whole: a pack in the game's data folder cut short (a crash, a
+/// full disk) would break the game's start, the old one is kept until then.
+fn save_replacing(pack: &mut Pack, pack_path: &Path, info: &rpfm_lib::games::GameInfo) -> Result<(), String> {
     if let Some(parent) = pack_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
     }
 
-    pack.save(Some(pack_path), info, &None).map_err(|e| e.to_string())
+    let name = pack_path.file_name().and_then(|n| n.to_str()).unwrap_or("mod.pack");
+    let tmp = pack_path.with_file_name(format!(".{name}.{}.wce-saving", std::process::id()));
+    let saved = pack.save(Some(&tmp), info, &None).map_err(|e| e.to_string()).and_then(|()| {
+        std::fs::OpenOptions::new().write(true).open(&tmp).and_then(|f| f.sync_all()).map_err(|e| format!("{}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, pack_path).map_err(|e| format!("{}: {e}", pack_path.display()))
+    });
+    if saved.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    saved
 }
