@@ -1393,7 +1393,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 let Some((g, y_offset, gesture)) = t.grab().map(|g| (g.elem, g.y_offset, g.gesture)) else { return fail("no grab") };
                 let d = document(e).expect("a tile");
                 let (raw_x, raw_z) = (x, z);
-                let p = t.snap_point(d.tile(), Float3::new(x, 0.0, z), Some(g));
+                let p = t.snap_point(d, Float3::new(x, 0.0, z), Some(g));
                 let (x, z) = (p.x, p.z);
                 let y = d.tile().terrain_height(x, z) + y_offset as f32;
                 let piece = if t.snap_vertices { d.tile().snap_piece(g, Float3::new(raw_x, y, raw_z), t.piece_reach()) } else { None };
