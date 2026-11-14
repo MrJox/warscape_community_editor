@@ -53,6 +53,7 @@ pub enum KeyKind {
     U32,
 }
 
+use crate::bytes::{ByteReader, Short, format_reader};
 use Field::*;
 
 const MATRIX: Field = Matrix("transform");
@@ -200,33 +201,18 @@ pub struct MarkersFile {
     pub groups: Option<Vec<MarkerGroup>>,
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    p: usize,
+format_reader!(Reader);
+
+impl From<Short> for MarkersError {
+    fn from(s: Short) -> Self {
+        MarkersError(format!("truncated at {}", s.at))
+    }
 }
 
 impl<'a> Reader<'a> {
-    fn take(&mut self, n: usize) -> Result<&'a [u8], MarkersError> {
-        let r = self.b.get(self.p..self.p + n).ok_or_else(|| MarkersError(format!("truncated at {}", self.p)))?;
-        self.p += n;
-        Ok(r)
-    }
-
-    fn u32(&mut self) -> Result<u32, MarkersError> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("4 bytes")))
-    }
-
-    fn u16(&mut self) -> Result<u16, MarkersError> {
-        Ok(u16::from_le_bytes(self.take(2)?.try_into().expect("2 bytes")))
-    }
-
-    fn f32(&mut self) -> Result<f32, MarkersError> {
-        Ok(f32::from_bits(self.u32()?))
-    }
-
     fn wide(&mut self) -> Result<Vec<u16>, MarkersError> {
         let n = usize::from(self.u16()?);
-        Ok(self.take(2 * n)?.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect())
+        Ok(self.utf16(n)?)
     }
 
     fn narrow(&mut self) -> Result<Vec<u8>, MarkersError> {
@@ -240,14 +226,11 @@ impl<'a> Reader<'a> {
             return fail(format!("an id at {} does not start with 12 zero bytes", self.p - 12));
         }
 
-        self.u32()
+        Ok(self.u32()?)
     }
 
     fn points(&mut self) -> Result<Vec<[f32; 2]>, MarkersError> {
-        let n = self.u32()? as usize;
-        if n > self.b.len() / 8 {
-            return fail("point count");
-        }
+        let n = self.count(8).map_err(|_| MarkersError("point count".into()))?;
 
         (0..n).map(|_| Ok([self.f32()?, self.f32()?])).collect()
     }
@@ -278,10 +261,7 @@ impl<'a> Reader<'a> {
                 Str(n) => (n, Value::Str(self.narrow()?)),
                 Points(n) => (n, Value::Points(self.points()?)),
                 PointLists(n) => {
-                    let count = self.u32()? as usize;
-                    if count > self.b.len() / 4 {
-                        return fail("polyline count");
-                    }
+                    let count = self.count(4).map_err(|_| MarkersError("polyline count".into()))?;
 
                     (n, Value::PointLists((0..count).map(|_| self.points()).collect::<Result<_, _>>()?))
                 }
@@ -315,7 +295,7 @@ impl MarkersFile {
     ///
     /// Not a markers file, a truncated one, or records of a class / version without a layout.
     pub fn parse(bytes: &[u8]) -> Result<Self, MarkersError> {
-        let mut r = Reader { b: bytes, p: 0 };
+        let mut r = Reader(ByteReader::new(bytes));
         let repository = String::from_utf16_lossy(&r.wide()?);
         if repository != "BASE_MARKER_REPOSITORY" {
             return fail("not a markers file");
@@ -364,10 +344,7 @@ impl MarkersFile {
                     })
                     .collect::<Result<Vec<_>, MarkersError>>()?;
 
-                let k = r.u32()? as usize;
-                if k > bytes.len() / 4 {
-                    return fail("index count");
-                }
+                let k = r.count(4).map_err(|_| MarkersError("index count".into()))?;
 
                 groups.push(MarkerGroup { key, indices: (0..k).map(|_| r.u32()).collect::<Result<_, _>>()? });
             }
@@ -431,7 +408,7 @@ impl MarkersFile {
     pub fn fields(&self, i: usize) -> Result<Vec<(&'static str, Value)>, MarkersError> {
         let Some((layout, _)) = layout(&self.class_name, self.version) else { return fail("no layout") };
         let mut out = vec![];
-        let mut r = Reader { b: &self.records[i], p: 0 };
+        let mut r = Reader(ByteReader::new(&self.records[i]));
         r.fields(layout, 0, Some(&mut out))?;
         Ok(out)
     }

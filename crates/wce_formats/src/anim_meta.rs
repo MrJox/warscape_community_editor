@@ -18,6 +18,8 @@
 //!   (a number, and from version 3 two floats), `SPLICE` (another clip, its time range and weights, not traced), `PROP`, `ANIMATED_PROP`
 //!   (a model, a clip, position, rotation, bone, up to two numbers) and the sounds and positions the game logic reads.
 
+use crate::bytes::{ByteReader, format_reader};
+
 /// An effect a piece plays (an `EFFECT`, or a `VOLUMETRIC_EFFECT`: then `volume` is its box's size and `position` / `rotation` its centre
 /// and rotation).
 #[derive(Clone, Debug, PartialEq)]
@@ -119,29 +121,12 @@ fn grammar(kind: &str, version: u32) -> Option<String> {
     })
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    p: usize,
-}
+format_reader!(Reader);
 
 impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Option<&[u8]> {
-        let s = self.b.get(self.p..self.p.checked_add(n)?)?;
-        self.p += n;
-        Some(s)
-    }
-
-    fn u32(&mut self) -> Option<u32> {
-        self.take(4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
-    }
-
-    fn f32(&mut self) -> Option<f32> {
-        self.u32().map(f32::from_bits)
-    }
-
     fn string(&mut self) -> Option<String> {
-        let n = self.take(2).map(|s| u16::from_le_bytes([s[0], s[1]]) as usize)?;
-        self.take(n).and_then(|s| String::from_utf8(s.to_vec()).ok())
+        let n = usize::from(self.u16().ok()?);
+        self.take(n).ok().and_then(|s| String::from_utf8(s.to_vec()).ok())
     }
 }
 
@@ -153,26 +138,26 @@ fn put_string(out: &mut Vec<u8>, s: &str) {
 impl Meta {
     /// Decodes a `.meta`; `None` when an entry isn't a known kind or the file doesn't end with the last entry.
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        let mut r = Reader { b: bytes, p: 0 };
-        let version = r.u32()?;
-        let count = r.u32()?;
+        let mut r = Reader(ByteReader::new(bytes));
+        let version = r.u32().ok()?;
+        let count = r.u32().ok()?;
         let mut entries = vec![];
         for _ in 0..count {
             let kind = r.string()?;
 
             // The word after the name is the entry's version, or already the start time: the two forms are told apart by its value (the
             // bits of any time in the files are far from these, and a start of 0 reads the same either way).
-            let word = r.u32()?;
+            let word = r.u32().ok()?;
             let version = (1..=5).contains(&word).then_some(word);
-            let start = if version.is_some() { r.f32()? } else { f32::from_bits(word) };
-            let end = r.f32()?;
+            let start = if version.is_some() { r.f32().ok()? } else { f32::from_bits(word) };
+            let end = r.f32().ok()?;
             let v = version.unwrap_or(0);
             let tag = if v >= 2 { r.string()? } else { String::new() };
             let fields = grammar(&kind, v)?
                 .chars()
                 .map(|c| match c {
-                    'u' => r.u32().map(MetaField::U32),
-                    'f' => r.f32().map(MetaField::F32),
+                    'u' => r.u32().ok().map(MetaField::U32),
+                    'f' => r.f32().ok().map(MetaField::F32),
                     _ => r.string().map(MetaField::Str),
                 })
                 .collect::<Option<Vec<_>>>()?;
