@@ -625,10 +625,10 @@ impl TileTool {
             && let Some(files) = e.vfs().cloned()
         {
             self.game_preload_tried = true;
-            let kit = crate::tool::tiles_kit(e);
+            let kits = crate::tool::kit_raws(e);
             let (tx, rx) = channel();
             std::thread::spawn(move || {
-                let r = Game::from_vfs(files, kit.as_deref()).map(|g| {
+                let r = Game::from_vfs(files, &kits).map(|g| {
                     for w in &g.warnings {
                         log::warn(format!("exported tiles: {w}"));
                     }

@@ -41,9 +41,9 @@ impl TileTool {
         name: &str,
         variation: &str,
     ) -> Result<String, String> {
-        let kit = self.battle_database_root(e);
+        let kits = self.battle_database_roots(e);
         let d = e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile")?;
-        let msg = d.save_tile_as(set, name, variation, kit.as_deref())?;
+        let msg = d.save_tile_as(set, name, variation, &kits)?;
         self.status = msg.clone();
         Ok(msg)
     }

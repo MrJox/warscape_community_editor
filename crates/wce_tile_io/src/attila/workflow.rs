@@ -30,8 +30,12 @@ pub struct Game {
     /// The game's packs, as the editor mounted them.
     pub files: Arc<Vfs>,
 
-    /// The kit's `raw_data`, when it has the tiles (`terrain/tiles`; not Rome 2's).
-    pub kit_raw: Option<PathBuf>,
+    /// The Assembly Kits' `raw_data` folders that have the tiles (`terrain/tiles`; not Rome 2's), in the settings' order: the first that
+    /// has a file wins (`wce_tile::sources`).
+    pub kits: Vec<PathBuf>,
+
+    /// The `raw_data` folders it was made with (`from_vfs`), for its users' caches.
+    roots: Vec<PathBuf>,
     pub data: GameData,
     vegetation: Option<(GenerationParams, Option<GrassParams>)>,
 
@@ -51,45 +55,62 @@ impl Game {
         config.use_mods = false;
         config.mod_packs = Some(profile.available_mod_packs(dir));
         let files = Arc::new(Vfs::mount(&config).map_err(|e| e.to_string())?);
-        Self::from_vfs(files, Some(&dir.join("assembly_kit")))
+        Self::from_vfs(files, &[dir.join("assembly_kit").join("raw_data")])
     }
 
-    /// The game of mounted packs (their profile) and its kit (the folder with `raw_data`, if any): the packs' tile data and the kit's
-    /// vegetation parameters.
+    /// The game of mounted packs (their profile) and its kits (`raw_data` folders in the order they are looked in, `wce_tile::sources`;
+    /// those without the tiles are left out): the packs' tile data and the vegetation parameters of the first kit that has them.
     ///
     /// # Errors
     ///
     /// None for now: what can't be read is a warning.
-    pub fn from_vfs(files: Arc<Vfs>, kit: Option<&Path>) -> Result<Self, String> {
+    pub fn from_vfs(files: Arc<Vfs>, roots: &[PathBuf]) -> Result<Self, String> {
         let profile = files.profile().clone();
         let data = GameData::from_vfs(&files, super::game_data::default_schema_path(&profile).as_deref())?;
         let mut warnings = data.warnings.clone();
-        let kit_raw = kit.map(|k| k.join("raw_data")).filter(|r| r.join("terrain/tiles").is_dir());
-        let vegetation = match &kit_raw {
-            Some(raw) => match super::stage_c::kit_params(raw) {
-                Ok(v) => Some(v),
-                Err(e) => {
-                    warnings.push(format!("no vegetation parameters in the kit ({e}): tree and grass lists are carried only"));
-                    None
+        let kits = roots.iter().filter(|r| r.join("terrain/tiles").is_dir()).cloned().collect::<Vec<_>>();
+        let mut vegetation = None;
+        let mut why = vec![];
+        for raw in roots {
+            match super::stage_c::kit_params(raw) {
+                Ok(v) => {
+                    vegetation = Some(v);
+                    break;
                 }
-            },
 
-            None => {
-                warnings.push(format!(
-                    "{}: no Assembly Kit with the tiles: the vegetation is carried only, BOB's inputs are the projects'",
-                    profile.display_name
-                ));
-                None
+                Err(e) => why.push(format!("{}: {e}", raw.display())),
             }
-        };
+        }
 
-        Ok(Self { profile, files, kit_raw, data, vegetation, warnings })
+        if kits.is_empty() {
+            warnings.push(format!(
+                "{}: no Assembly Kit with the tiles: BOB's inputs are the projects'{}",
+                profile.display_name,
+                if vegetation.is_none() { ", the vegetation is carried only" } else { "" }
+            ));
+        } else if vegetation.is_none() {
+            warnings.push(format!("no vegetation parameters in the kits ({}): tree and grass lists are carried only", why.join("; ")));
+        }
+
+        Ok(Self { profile, files, kits, roots: roots.to_vec(), data, vegetation, warnings })
     }
 
-    /// The `raw_data` BOB's stages read for a project under `project_raw` (a workspace's or a kit's `raw_data`): the kit's when the game
-    /// has one with the tiles, else the project's own (the workspace has the database's settings).
-    pub fn bob_raw_data(&self, project_raw: &Path) -> PathBuf {
-        self.kit_raw.clone().unwrap_or_else(|| project_raw.to_path_buf())
+    /// Whether it was made with these `raw_data` folders (a cached one stays right while the settings' kits are the same).
+    pub fn made_for(&self, roots: &[PathBuf]) -> bool {
+        self.roots == roots
+    }
+
+    /// Whether the game has an Assembly Kit with the tiles (not Rome 2): its tile database's files are the kit's.
+    pub fn has_kit(&self) -> bool {
+        !self.kits.is_empty()
+    }
+
+    /// The `raw_data` folders BOB's stages read for a project under `project_raw` (a workspace's or a kit's `raw_data`), the first that has
+    /// a file winning: the project's own, then the kits'.
+    pub fn bob_roots(&self, project_raw: &Path) -> Vec<PathBuf> {
+        let mut roots = vec![project_raw.to_path_buf()];
+        roots.extend(self.kits.iter().filter(|k| k.as_path() != project_raw).cloned());
+        roots
     }
 
     /// An exported tile's files from the game's packs (`terrain/tiles/battle/.../aa`).
@@ -155,8 +176,9 @@ impl Game {
     ///
     /// Neither has it.
     pub fn kit_settings(&self, kind: &str) -> Result<Vec<u8>, String> {
-        if let Some(raw) = &self.kit_raw {
-            let path = raw.join("terrain/tiles").join(kind).join("_tile_database/_settings.xml");
+        if self.has_kit() {
+            let rel = format!("terrain/tiles/{kind}/_tile_database/_settings.xml");
+            let path = wce_tile::sources::first_file(&self.kits, &rel).ok_or_else(|| format!("no kit has {rel}"))?;
             return std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()));
         }
 
@@ -195,7 +217,7 @@ pub fn open_exported(game: &Game, files: &TileFiles, folder: &str, workspace: &P
     // A kit's settings are copied once; without a kit (Rome 2) they are made from the packs' database, so a stale copy (an older
     // conversion) is made again.
     let settings = database.join("_settings.xml");
-    if !settings.is_file() || game.kit_raw.is_none() {
+    if !settings.is_file() || !game.has_kit() {
         let bytes = game.kit_settings(&kind_of(folder))?;
         if std::fs::read(&settings).ok().as_deref() != Some(bytes.as_slice()) {
             wce_foundation::files::write_replacing(&settings, bytes).map_err(|e| format!("{}: {e}", settings.display()))?;
@@ -344,24 +366,25 @@ pub fn save_exported_with(
 
     let project_raw =
         project_dir.ancestors().find(|a| a.file_name().is_some_and(|n| n.eq_ignore_ascii_case("raw_data"))).unwrap_or(project_dir);
-    let kit_raw = game.bob_raw_data(project_raw);
+    let roots = game.bob_roots(project_raw);
     let mut early_notes = vec![];
-    if game.kit_raw.is_none()
-        && let Err(e) = provide_linking_tiles(game, &raw, &kit_raw)
+    if !game.has_kit()
+        && let Err(e) = provide_linking_tiles(game, &raw, project_raw)
     {
         early_notes.push(format!("the linking tiles for stage B: {e}"));
     }
 
     let models = |k: &str| game.files.read(k).ok();
     let exists = |k: &str| game.files.owner(k).is_some();
-    let settings = kit_raw.join("terrain/tiles/battle/_tile_database/_settings.xml");
+    let battle_settings = "terrain/tiles/battle/_tile_database/_settings.xml";
+    let settings = wce_tile::sources::first_file(&roots, battle_settings).unwrap_or_else(|| project_raw.join(battle_settings));
     let mut ctx: CompileContext = game.data.compile_context();
     let (levels, thresholds) = (ctx.building_levels, ctx.building_thresholds);
     let levels_or_base = |k: &str| levels.and_then(|f| f(k).or_else(|| base_of(k).and_then(|b| f(&b))));
     let thresholds_or_base = |k: &str| thresholds.and_then(|f| f(k).or_else(|| base_of(k).and_then(|b| f(&b))));
     ctx.building_levels = Some(&levels_or_base);
     ctx.building_thresholds = Some(&thresholds_or_base);
-    ctx.stage_b = Some(StageB { raw_data: &kit_raw, models: &models });
+    ctx.stage_b = Some(StageB { roots: &roots, models: &models });
     ctx.stage_c = game.vegetation.as_ref().map(|(params, grass)| StageC {
         params,
         grass: grass.as_ref(),
@@ -469,7 +492,7 @@ pub fn save_exported_with(
 fn provide_linking_tiles(game: &Game, raw: &wce_tile_model::Tile, raw_data: &Path) -> Result<(), String> {
     use super::bob_tile::{HeightNumbers, InfluenceLinks, dds_r32f, final_heights};
     let Some(entry) = raw.entry.as_ref() else { return Ok(()) };
-    let linking = super::terrain_mesh::linking_tiles(raw_data);
+    let linking = super::terrain_mesh::linking_tiles(&[raw_data.to_path_buf()]);
     let own = entry.root.get("tile_set").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
     let mut wanted = std::collections::BTreeSet::new();
     let sets = entry

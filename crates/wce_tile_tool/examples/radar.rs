@@ -39,7 +39,7 @@ fn main() -> Result<(), String> {
     config.mod_packs = mods.map(|m| m.split(';').filter(|s| !s.is_empty()).map(str::to_owned).collect());
     let vfs = Arc::new(Vfs::mount(&config).map_err(|e| e.to_string())?);
     let files: Arc<dyn Files> = vfs.clone();
-    let game = match wce_tile_io::attila::workflow::Game::from_vfs(vfs, kit.as_deref()) {
+    let game = match wce_tile_io::attila::workflow::Game::from_vfs(vfs, &kit.iter().map(|k| k.join("raw_data")).collect::<Vec<_>>()) {
         Ok(g) => Some(g),
         Err(e) => {
             println!("no game data (water planes left out): {e}");

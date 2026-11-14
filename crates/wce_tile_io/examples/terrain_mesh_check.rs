@@ -15,9 +15,10 @@ use wce_tile_io::{TileFiles, TileFormat};
 fn main() {
     let args = std::env::args().skip(1).map(PathBuf::from).collect::<Vec<_>>();
     let (raw, work, kit) = (&args[0], &args[1], &args[2]);
+    let roots = std::slice::from_ref(kit);
     let files = TileFiles::from_kit_dir(raw).expect("the raw tile");
     let (project, _) = TedProject.read(&files).expect("the project");
-    let (stamps, missing) = building_stamps(&project, kit);
+    let (stamps, missing) = building_stamps(&project, roots);
     println!(
         "{} building stamps{}",
         stamps.len(),
@@ -26,7 +27,7 @@ fn main() {
     let t0 = std::time::Instant::now();
     // BOB's VFS for the water planes' models: the game's packs (the kit's `../../data`).
     let models = wce_tile_io::attila::stage_b::pack_models(&kit.join("../../data"));
-    let out = terrain_files(&project, kit, decimation_angle(kit), &stamps, &models, Default::default()).expect("stage B");
+    let out = terrain_files(&project, roots, decimation_angle(roots), &stamps, &models, Default::default()).expect("stage B");
     println!("built in {:?}", t0.elapsed());
     for (name, ours) in out {
         // BOB writes the final heights and alpha into the raw folder: look there too.

@@ -318,6 +318,9 @@ struct OpenInputs {
     name: String,
     game_dir: &'static str,
     raw: PathBuf,
+
+    /// The `raw_data` folders kit-layout files are looked for in (`kit_roots`: the projects', then the kits'; the packs' tree in Rome 2).
+    roots: Vec<PathBuf>,
     db: Arc<TileDatabase>,
     render_lf: Option<(f64, f64)>,
     files: Option<Arc<dyn Files>>,
@@ -505,12 +508,6 @@ fn built_files(i: &OpenInputs, folder: &str) -> Result<wce_terrain_io::MapFiles,
     Ok(wce_terrain_io::MapFiles::from_bytes(out))
 }
 
-/// The first source with both tile databases (its `raw_data`): an Assembly Kit, or a projects folder made like one.
-fn whole_kit_root(e: &Editor) -> Option<PathBuf> {
-    let has = |r: &PathBuf, kind: &str| r.join(format!("terrain/tiles/{kind}/_tile_database")).is_dir();
-    kit_roots(e).into_iter().find(|r| has(r, "battle") && has(r, "campaign"))
-}
-
 /// The kit with the battle tile database (its `raw_data`).
 fn database_root(e: &Editor) -> Option<PathBuf> {
     // A whole kit first (battle and campaign databases: decompiling a pack's tile reads both); a project with only a battle database
@@ -543,7 +540,7 @@ fn lf_field(f: &wce_terrain::paged::PagedU16) -> LfField {
 }
 
 /// A campaign's roads at its start (`wce_terrain_io::attila::roads`): its map's `map_data.esf`, its startpos (a loose file of the game's
-/// `data` folder), `tile_upgrades.xml` (a kit's or project's first, then the packs') and the db. None when one is missing (logged).
+/// `data` folder), `tile_upgrades.xml` (the first of the projects and the kits that has it, then the packs') and the db. None when one is missing (logged).
 fn campaign_roads(i: &OpenInputs) -> Option<Arc<wce_terrain_io::attila::roads::CampaignRoads>> {
     let started = std::time::Instant::now();
     let (_, name) = map_kind(&i.name);
@@ -559,8 +556,8 @@ fn campaign_roads(i: &OpenInputs) -> Option<Arc<wce_terrain_io::attila::roads::C
         let startpos = std::fs::read(i.install.as_ref().ok_or("no game folder")?.join(format!("data/campaigns/{campaign}/startpos.esf")))
             .map_err(|e| format!("startpos.esf: {e}"))?;
         const UPGRADES: &str = "terrain/tiles/campaign/tile_upgrades.xml";
-        let upgrades = std::fs::read(i.raw.join(UPGRADES))
-            .ok()
+        let upgrades = wce_tile::sources::first_file(&i.roots, UPGRADES)
+            .and_then(|p| std::fs::read(p).ok())
             .or_else(|| files.read(UPGRADES).ok().map(|b| b.to_vec()))
             .ok_or("no tile_upgrades.xml")?;
         let dynamic = files.read(&format!("campaign_maps/{name}/dynamic_resources.esf")).ok();
@@ -677,14 +674,14 @@ impl TerrainTool {
 
     /// The packs' tiles in the kit's layout, for the current packs.
     fn prepare_packs(&mut self, e: &Editor) {
-        let stale = self.packs.as_ref().is_some_and(|t| e.vfs().is_none_or(|v| !t.same_vfs(v)));
+        let kits = wce_tile::sources::assembly_kit_roots(e.settings_ref());
+        let stale = self.packs.as_ref().is_some_and(|t| e.vfs().is_none_or(|v| !t.same_sources(v, &kits)));
         if (self.packs.is_none() || stale)
             && let Some(vfs) = e.vfs().cloned()
         {
-            // Only a whole kit (both tile databases: decompiling reads them); a projects folder with a database copied in is not one,
-            // and Rome 2 has none (the packs' database then).
-            let kit = whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf));
-            let tree = Arc::new(PacksTree::new(vfs, kit, &e.settings_ref().paths().cache_dir().join("neighbours"), e.game().key));
+            // The Assembly Kits, not the projects' layout (decompiling reads the tile databases' settings of the first kit that has each;
+            // a projects folder with one copied in is not a kit), none in Rome 2 (the packs' database then).
+            let tree = Arc::new(PacksTree::new(vfs, kits, &e.settings_ref().paths().cache_dir().join("neighbours"), e.game().key));
             let t = tree.clone();
             self.provider = Some(Arc::new(move |location: &str, variation: &str| t.tile(location, variation)));
             self.packs = Some(tree);
@@ -735,6 +732,7 @@ impl TerrainTool {
             return Ok(OpenInputs {
                 name: name.to_owned(),
                 game_dir: e.game().campaign_battle_map,
+                roots: vec![raw.clone()],
                 raw,
                 db,
                 render_lf,
@@ -759,6 +757,7 @@ impl TerrainTool {
         Ok(OpenInputs {
             name: name.to_owned(),
             game_dir: e.game().campaign_battle_map,
+            roots,
             raw,
             db,
             render_lf,
@@ -833,7 +832,7 @@ impl TerrainTool {
             bake_ground: e.game().key != wce_vfs::GameProfile::ROME_2.key,
             raw_root: database_root(e).or_else(|| self.packs.as_ref().and_then(|p| p.raw().ok()))?,
             tile_roots: roots,
-            game_kit: whole_kit_root(e).and_then(|r| r.parent().map(std::path::Path::to_path_buf)),
+            game_kit: wce_tile::vegetation::params_kit(&wce_tile::sources::kit_raw_roots(e.settings_ref())),
             look: TerrainLook { season: self.season.clone(), ..TerrainLook::default() },
             trees: true,
             plain: None,

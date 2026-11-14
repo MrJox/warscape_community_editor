@@ -444,7 +444,7 @@ fn check(name: &str, folder: &str, files: &TileFiles, ctx: &Context, kit: &Path,
                 building_thresholds: ctx.building_thresholds,
                 marker_versions: Some(&version_of),
                 conventions: ctx.conventions,
-                stage_b: models.map(|m| wce_tile_io::attila::stage_b::StageB { raw_data: &raw_data, models: m }),
+                stage_b: models.map(|m| wce_tile_io::attila::stage_b::StageB { roots: std::slice::from_ref(&raw_data), models: m }),
                 stage_c,
                 model_exists: None,
             };

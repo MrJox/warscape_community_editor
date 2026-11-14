@@ -36,6 +36,7 @@ fn inputs(raw: PathBuf, roots: &[PathBuf]) -> OpenInputs {
     OpenInputs {
         name: "campaigns/main_attila_map".into(),
         game_dir: "terrain/battles/main_attila_map",
+        roots: roots.to_vec(),
         raw,
         db: Arc::new(TileDatabase::load_layered(&folders.iter().map(PathBuf::as_path).collect::<Vec<_>>()).unwrap()),
         render_lf: campaign_render_lf(roots, MapKind::Campaign),

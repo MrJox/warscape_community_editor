@@ -19,7 +19,7 @@ fn main() {
     for dir in &args[1..] {
         let files = TileFiles::from_kit_dir(dir).expect("the raw tile");
         let (project, _) = TedProject.read(&files).expect("the project");
-        let f = match water_fields(&project, kit, &models) {
+        let f = match water_fields(&project, std::slice::from_ref(kit), &models) {
             Ok(f) => f,
             Err(e) => {
                 println!("{}: {e}", dir.display());

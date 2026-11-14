@@ -51,6 +51,13 @@ fn param_kits(project: &TileProject) -> impl Iterator<Item = PathBuf> + '_ {
     project.raw_root.as_ref().and_then(|raw| raw.parent()).map(Path::to_path_buf).into_iter().chain(project.game_kit.clone())
 }
 
+/// The kit (its folder) whose vegetation parameters a tile without its own uses (`TileProject::game_kit`): the first of `roots` (`raw_data`
+/// folders, `wce_tile::sources::kit_raw_roots`: the projects' kit layout, then every Assembly Kit in the settings' order) that has them. The
+/// packs have none (the exported tiles carry their tree lists).
+pub fn params_kit(roots: &[PathBuf]) -> Option<PathBuf> {
+    roots.iter().filter_map(|raw| raw.parent()).find(|kit| kit_params_dir(kit).is_some()).map(Path::to_path_buf)
+}
+
 /// The Assembly Kit's `max_grass.xml` for a tile (BOB names it `<raw>/terrain/...`; the kit has it in working_data).
 pub fn grass_params_path(project: &TileProject) -> Option<PathBuf> {
     param_kits(project)

@@ -16,6 +16,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::time::Instant;
 
 use wce_editor::editor::Editor;
+use wce_foundation::log;
 use wce_scene::render_scene::DocumentId;
 use wce_terrain_editor::MapDocument;
 use wce_terrain_io::attila::build::{BuildInputs, build};
@@ -51,9 +52,16 @@ impl ExportJob {
     }
 }
 
-/// The first of the kits' files (`raw_data` relative), in the data source order.
-fn kit_file(roots: &[PathBuf], rel: &str) -> Vec<u8> {
-    roots.iter().find_map(|r| std::fs::read(r.join(rel)).ok()).unwrap_or_default()
+/// The first of the kits' files (`raw_data` relative), in the data source order, else the packs' (`pack_path`); empty, with a warning in
+/// the log, when none has it.
+fn kit_file(roots: &[PathBuf], rel: &str, packs: Option<&dyn wce_vfs::files::Files>, pack_path: &str) -> Vec<u8> {
+    wce_tile::sources::first_file(roots, rel)
+        .and_then(|p| std::fs::read(p).ok())
+        .or_else(|| packs.and_then(|f| f.read(pack_path).ok()))
+        .unwrap_or_else(|| {
+            log::warn(format!("terrain export: no kit or pack has {rel}: the export goes on without it"));
+            vec![]
+        })
 }
 
 /// A map's folder in the packs (`terrain/battles/<map>`, a campaign map's `terrain/campaigns/<map>`) and its bare name.
@@ -99,8 +107,9 @@ pub fn start(e: &Editor, doc: DocumentId, db: Arc<TileDatabase>, kit_roots: &[Pa
     let model = d.model().ok_or("a map of the game's packs can't be exported (open the kit's map)")?.clone();
     let map = d.name.clone();
     let revision = wce_editor_core::document::Document::history(d).version();
-    let env = kit_file(kit_roots, "warscape_asset_variation_db/environment_map.xml");
-    let upgrades = kit_file(kit_roots, "terrain/tiles/battle/tile_upgrades.xml");
+    let env = kit_file(kit_roots, "warscape_asset_variation_db/environment_map.xml", None, "");
+    let upgrades =
+        kit_file(kit_roots, "terrain/tiles/battle/tile_upgrades.xml", e.files().as_deref(), "terrain/tiles/battle/tile_upgrades.xml");
     let profile = e.game();
     let packs = e.files();
     let (tx, rx) = channel();
