@@ -4938,8 +4938,12 @@ impl Tool for TileTool {
         }
     }
 
-    fn toolbar(&mut self, e: &mut Editor) {
-        self.draw_toolbar(e);
+    fn viewport_modes(&mut self, e: &mut Editor) -> bool {
+        self.draw_mode_chips(e)
+    }
+
+    fn leave_mode(&mut self, _: &mut Editor) {
+        self.set_mode(TileMode::Select);
     }
 
     fn camera_chip(&mut self, e: &mut Editor) {

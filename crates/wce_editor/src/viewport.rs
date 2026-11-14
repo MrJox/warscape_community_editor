@@ -94,6 +94,9 @@ pub struct Viewport {
     /// both do not fit beside it.
     pub chips_width: f32,
     pub chips_top: f32,
+
+    /// One of the tool's modes (a brush) was on last frame (`Tool::viewport_modes`): the mode strip shows the gizmo's buttons unlit.
+    pub tool_mode_on: bool,
     pub tool_chips_width: f32,
 
     /// The coordinates readout (crate::coords), the map a tool places the scene in (cells, height above the sea), the ground point under
@@ -163,6 +166,7 @@ impl Default for Viewport {
             frames_rendered: 0,
             show_compass: true,
             chips_width: 0.0,
+            tool_mode_on: false,
             chips_top: 6.0,
             tool_chips_width: 0.0,
             show_coords: true,
@@ -708,6 +712,9 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     }
 
     e.with_active_tool(|t, e| t.viewport_overlay(e, origin, size));
+    if size.x >= 120.0 && !e.viewport.game_view {
+        crate::chips::draw_mode_strip(e, origin, size);
+    }
 
     let (ctrl, shift, alt) = (io.KeyCtrl, io.KeyShift, io.KeyAlt);
     // ---- gizmo (not while the tool owns the left button: a grab or a brush must not hand the click to the gizmo under the cursor)

@@ -1009,8 +1009,12 @@ impl Tool for PrefabTool {
         self.open.is_some().then(|| self.revert(e))
     }
 
-    fn toolbar(&mut self, e: &mut Editor) {
-        self.tile.toolbar(e);
+    fn viewport_modes(&mut self, e: &mut Editor) -> bool {
+        self.tile.viewport_modes(e)
+    }
+
+    fn leave_mode(&mut self, e: &mut Editor) {
+        self.tile.leave_mode(e);
     }
 
     fn edit_menu(&mut self, e: &mut Editor) {

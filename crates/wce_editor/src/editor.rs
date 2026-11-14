@@ -1786,6 +1786,8 @@ impl Editor {
             self.update_lighting();
         }
 
+        // The status bar first: it takes its row off the work area the host window fills.
+        self.draw_status_bar();
         let vp = gui::main_viewport();
         gui::set_next_window_pos(vp.WorkPos, 0, gui::v2(0.0, 0.0));
         gui::set_next_window_size(vp.WorkSize, 0);
@@ -1947,13 +1949,40 @@ impl Editor {
         self.with_tool_at(self.active_tool, |t, e| t.draw_panels(e));
     }
 
+    /// The toolbar: the tools' tabs, then the game list (the game, its mod packs, remount, fixes) at the right. What the left mouse does in the
+    /// viewport is the viewport's mode strip (`chips::draw_mode_strip`); messages are the status bar's (`draw_status_bar`).
     fn draw_toolbar(&mut self) {
         gui::set_cursor_pos_x(gui::cursor_pos_x() + 6.0);
         gui::align_text_to_frame_padding();
+        for (k, i) in self.shown_tools().into_iter().enumerate() {
+            let active = i == self.active_tool;
+            if active {
+                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+            }
+
+            let info = &self.tool_info[i];
+            let label = if info.icon.is_empty() { info.title.clone() } else { format!("{}  {}", info.icon, info.title) };
+            if gui::button(&format!("{label}##tool{i}")) {
+                let id = self.tool_info[i].id.clone();
+                self.set_tool(&id);
+            }
+
+            if k < 9 && gui::is_item_hovered() {
+                gui::set_tooltip(&format!("{}  (Ctrl+{})", self.tool_info[i].title, k + 1));
+            }
+
+            if active {
+                gui::pop_style_color(1);
+            }
+
+            gui::same_line();
+        }
 
         // The game, switched from here (the documents close, asking about unsaved ones).
         let current = self.game();
-        gui::set_next_item_width(gui::calc_text_size(current.display_name).x + 60.0);
+        let width = gui::calc_text_size(current.display_name).x + 60.0;
+        gui::same_line_at(gui::window_width() - width - 8.0);
+        gui::set_next_item_width(width);
         if gui::begin_combo("##game", &format!("{}  {}", icons::SWORDS, current.display_name)) {
             for game in GameProfile::ALL {
                 if gui::selectable(game.display_name, game.key == current.key, 0)
@@ -1991,89 +2020,64 @@ impl Editor {
             gui::set_tooltip("The game the editor works on (switching closes the open documents), its mod packs and fixes");
         }
 
-        gui::same_line();
-        gui::text_disabled("|");
-        gui::same_line();
-        for (k, i) in self.shown_tools().into_iter().enumerate() {
-            let active = i == self.active_tool;
-            if active {
-                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
-            }
-
-            let info = &self.tool_info[i];
-            let label = if info.icon.is_empty() { info.title.clone() } else { format!("{}  {}", info.icon, info.title) };
-            if gui::button(&format!("{label}##tool{i}")) {
-                let id = self.tool_info[i].id.clone();
-                self.set_tool(&id);
-            }
-
-            if k < 9 && gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{}  (Ctrl+{})", self.tool_info[i].title, k + 1));
-            }
-
-            if active {
-                gui::pop_style_color(1);
-            }
-
-            gui::same_line();
-        }
-
-        gui::text_disabled("|");
-        gui::same_line();
-        for (g, (icon, name)) in
-            [(icons::MOUSE_POINTER_2, "Select"), (icons::MOVE, "Move"), (icons::ROTATE_3D, "Rotate"), (icons::SCALE_3D, "Scale")]
-                .iter()
-                .enumerate()
-        {
-            let mode = crate::viewport::GizmoMode::from_index(g);
-            let on = self.viewport.gizmo == mode;
-            if on {
-                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
-            }
-
-            if gui::small_button(&format!("{icon}  {name}")) {
-                self.viewport.gizmo = mode;
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{name} ({})", g + 1));
-            }
-
-            if on {
-                gui::pop_style_color(1);
-            }
-
-            gui::same_line();
-        }
-
-        // The coordinate system of the gizmo and the Inspector.
-        let local = self.viewport.local_coordinates;
-        let label = if local { format!("{}  Local##coords", icons::BOX) } else { format!("{}  Global##coords", icons::GLOBE) };
-        if gui::small_button(&label) {
-            self.viewport.local_coordinates = !local;
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(if local {
-                "Local coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the parent's (the group, \
-                 prefab or layer the item is in), as the file holds them. Click: global"
-            } else {
-                "Global coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the world's. Click: local \
-                 (relative to the group, prefab or layer the item is in)"
-            });
-        }
-
-        gui::same_line();
-        self.with_tool_at(self.active_tool, |t, e| t.toolbar(e));
-        gui::text_disabled("|");
-        gui::same_line();
-        gui::push_style_color(
-            gui::COL_TEXT,
-            if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) },
-        );
-        gui::text(&self.status.clone());
-        gui::pop_style_color(1);
         gui::separator();
+    }
+
+    /// The status bar at the window's bottom: the last message (red for an error; a click opens the Log), the active document (amber while
+    /// it has unsaved changes) and the frame rate at the right.
+    fn draw_status_bar(&mut self) {
+        gui::push_style_var_v(gui::VAR_WINDOW_PADDING, gui::v2(0.0, 2.0));
+        let open = gui::begin_bottom_bar("##statusbar", gui::frame_height() + 4.0);
+        gui::pop_style_var(1);
+        if !open {
+            gui::end();
+            return;
+        }
+
+        gui::set_cursor_pos_x(gui::cursor_pos_x() + 8.0);
+        gui::align_text_to_frame_padding();
+        let colour = if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) };
+        gui::push_style_color(gui::COL_TEXT, colour);
+        let status = if self.status.is_empty() { " ".to_owned() } else { self.status.clone() };
+        gui::text(&status);
+        gui::pop_style_color(1);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&format!("{status}\nClick: the Log, with every message"));
+        }
+
+        if gui::is_item_clicked() {
+            self.panels.log = true;
+            self.pending_focus = Some("Log".to_owned());
+        }
+
+        // The frame rate (not in scripted runs: their shots must not depend on the machine's speed); the active document left of it.
+        let fps = if self.perf.count() > 10 && !self.clock.fixed_step() {
+            let ms = self.perf.mean_frame_ms(60);
+            format!("{:.0} fps  {ms:.1} ms", if ms > 0.0 { 1000.0 / ms } else { 0.0 })
+        } else {
+            String::new()
+        };
+
+        let fps_w = if fps.is_empty() { 0.0 } else { gui::calc_text_width(&fps) + 24.0 };
+        let label = self.document_label();
+        if !label.is_empty() {
+            gui::same_line();
+            gui::set_cursor_pos_x(gui::window_width() - fps_w - gui::calc_text_width(&label) - 16.0);
+
+            if self.docs.active().is_some_and(|d| d.modified()) {
+                gui::text_colored(crate::theme::modified(), &label);
+            } else {
+                gui::text(&label);
+            }
+        }
+
+        if !fps.is_empty() {
+            gui::same_line();
+            gui::set_cursor_pos_x(gui::window_width() - gui::calc_text_width(&fps) - 16.0);
+            gui::text_disabled(&fps);
+        }
+
+        gui::end();
     }
 
     /// File > Revert > To saved: the active tool's own revert, else its document's (`Document::revert`); the outcome in the status line.
@@ -2330,31 +2334,6 @@ impl Editor {
             }
 
             gui::end_menu();
-        }
-
-        // Frame rate readout, right aligned (not in scripted runs: their shots must not depend on the machine's speed); the active tool's
-        // document left of it (amber while it has unsaved changes).
-        let fps = if self.perf.count() > 10 && !self.clock.fixed_step() {
-            let ms = self.perf.mean_frame_ms(60);
-            format!("{:.0} fps  {ms:.1} ms", if ms > 0.0 { 1000.0 / ms } else { 0.0 })
-        } else {
-            String::new()
-        };
-
-        let fps_w = if fps.is_empty() { 0.0 } else { gui::calc_text_width(&fps) + 24.0 };
-        let label = self.document_label();
-        if !label.is_empty() {
-            gui::same_line_at(gui::window_width() - fps_w - gui::calc_text_width(&label) - 16.0);
-            if self.docs.active().is_some_and(|d| d.modified()) {
-                gui::text_colored(crate::theme::modified(), &label);
-            } else {
-                gui::text(&label);
-            }
-        }
-
-        if !fps.is_empty() {
-            gui::same_line_at(gui::window_width() - gui::calc_text_width(&fps) - 16.0);
-            gui::text_disabled(&fps);
         }
 
         gui::end_menu_bar();
