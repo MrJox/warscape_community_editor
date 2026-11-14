@@ -1425,7 +1425,7 @@ mod tests {
             let ground = move |x: f64, _: f64| if x > len - 0.8 { 0.9 } else { 0.0 };
             let plan = solve(&input, p, &ground);
             assert!(
-                plan.runs.len() >= 1 && plan.steps.is_empty(),
+                !plan.runs.is_empty() && plan.steps.is_empty(),
                 "wall of {len}: runs {:?} steps {:?}",
                 plan.runs.iter().map(|r| (r.s, r.level)).collect::<Vec<_>>(),
                 plan.steps.iter().map(|st| st.s).collect::<Vec<_>>()

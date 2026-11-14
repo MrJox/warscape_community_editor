@@ -202,6 +202,50 @@ mod tests {
         assert_eq!(write_png(&back, Some(&trivia)).unwrap().0, bytes);
     }
 
+    /// The bitwise CRC-32 of PNG chunks (type and data).
+    fn crc32(data: &[u8]) -> u32 {
+        let mut c = !0u32;
+        for &b in data {
+            c ^= u32::from(b);
+            for _ in 0..8 {
+                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            }
+        }
+
+        !c
+    }
+
+    /// A PNG another encoder wrote (an ancillary chunk after IHDR) is written back as its own bytes while its pixels are the same (the
+    /// fingerprint matches), the kit's way once they change, and as its own bytes again once the change is taken back.
+    #[test]
+    fn a_png_with_ancillary_chunks_is_kept_while_its_pixels_are_the_same() {
+        let raster = Raster { width: 3, height: 2, channels: 1, samples: Samples::U16(vec![0, 1, 65535, 300, 4000, 7]) };
+        let (plain, _) = write_png(&raster, None).unwrap();
+        let mut chunk = b"tEXt".to_vec();
+        chunk.extend_from_slice(b"Software\0another encoder");
+        let mut foreign = plain[..8 + 25].to_vec();
+        foreign.extend_from_slice(&(chunk.len() as u32 - 4).to_be_bytes());
+        foreign.extend_from_slice(&chunk);
+        foreign.extend_from_slice(&crc32(&chunk).to_be_bytes());
+        foreign.extend_from_slice(&plain[8 + 25..]);
+
+        let (mut back, trivia) = read_png(&foreign).unwrap();
+        assert_eq!(back, raster);
+        assert!(matches!(&trivia, ImageTrivia::Png { kept: Some(_), .. }));
+        assert_eq!(write_png(&back, Some(&trivia)).unwrap(), (foreign.clone(), Encoded::Kept));
+
+        let Samples::U16(v) = &mut back.samples else { unreachable!() };
+        v[4] += 1;
+        let (edited, how) = write_png(&back, Some(&trivia)).unwrap();
+        assert_eq!(how, Encoded::Encoded);
+        assert!(!edited.windows(4).any(|w| w == b"tEXt"));
+        assert_eq!(read_png(&edited).unwrap().0, back);
+
+        let Samples::U16(v) = &mut back.samples else { unreachable!() };
+        v[4] -= 1;
+        assert_eq!(write_png(&back, Some(&trivia)).unwrap(), (foreign, Encoded::Kept));
+    }
+
     #[test]
     fn tiff_template_round_trip() {
         let raster = Raster { width: 2, height: 2, channels: 16, samples: Samples::U16((0..64).collect()) };

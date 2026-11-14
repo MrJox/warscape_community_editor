@@ -2188,4 +2188,120 @@ mod tests {
                 .is_none()
         );
     }
+
+    /// The name the synthetic logic file's ui flag has (its length places the pieces' count in the bytes).
+    const UI_FLAG: &str = "ui_flag";
+
+    /// A logic file made in code, written at `version`: one piece with one level holding a walkway, a hard outline, a footprint ring, a
+    /// door link and a firing line on the walkway, in a box x -10..10, y 0..15, z 0..9.
+    fn synthetic_logic(version: u32) -> (Cs2Parsed, Vec<u8>) {
+        use rpfm_lib::files::cs2_parsed::{Destruct, EFLine, Piece, Pipe};
+
+        let ring = |pts: &[[f32; 3]]| json!({ "outline": pts.iter().map(|&p| point3(p)).collect::<Vec<_>>() });
+        let walk = [[-10.0, 15.0, 0.5], [10.0, 15.0, 0.5], [10.0, 15.0, 9.0], [-10.0, 15.0, 9.0]];
+        let cube = json!({ "min_x": -10.0, "min_y": 0.0, "min_z": 0.0, "max_x": 10.0, "max_y": 15.0, "max_z": 9.0 });
+
+        let mut line = serde_json::to_value(EFLine::default()).unwrap();
+        line["name"] = json!("ef_line_0");
+        line["start"] = point3([-8.0, 15.0, 1.0]);
+        line["end"] = point3([8.0, 15.0, 1.0]);
+        line["direction"] = point3([0.0, 0.0, -1.0]);
+
+        let mut pipe = serde_json::to_value(Pipe::default()).unwrap();
+        pipe["name"] = json!("door_0");
+        pipe["line"] = ring(&[[0.0, 0.0, 10.0], [0.0, 15.0, 8.0]]);
+
+        let mut d = serde_json::to_value(Destruct::default()).unwrap();
+        d["name"] = json!("piece01_destruct01");
+        d["bounding_box"] = cube.clone();
+        d["platforms"] =
+            json!([{ "normal": point3([0.0, 1.0, 0.0]), "vertices": ring(&walk), "flag_1": true, "flag_2": false, "flag_3": true }]);
+        d["collision_outlines"] = json!([{ "name": "outline_0", "vertices": ring(&[[-10.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 0.0, 9.0], [-10.0, 0.0, 9.0]]), "uk_1": 7 }]);
+        d["orange_thingies"] = json!([[
+            { "vertex": { "x": -10.0, "y": 0.0 }, "vertex_type": 1 },
+            { "vertex": { "x": 10.0, "y": 0.0 }, "vertex_type": 0 },
+            { "vertex": { "x": 10.0, "y": 9.0 }, "vertex_type": 0 },
+        ]]);
+        d["pipes"] = json!([pipe]);
+        d["ef_lines"] = json!([line]);
+        d["f_1"] = json!(0.25);
+
+        let mut piece = serde_json::to_value(Piece::default()).unwrap();
+        piece["name"] = json!("piece01");
+        piece["node_name"] = json!("piece01_node");
+        piece["destructs"] = json!([d]);
+        piece["f_6"] = json!(1.5);
+
+        let mut v = serde_json::to_value(Cs2Parsed::default()).unwrap();
+        v["version"] = json!(version);
+        v["bounding_box"] = cube;
+        v["ui_flag"]["name"] = json!(UI_FLAG);
+        v["int_1"] = json!(3);
+        v["pieces"] = json!([piece]);
+
+        let mut parsed: Cs2Parsed = serde_json::from_value(v).unwrap();
+        let mut bytes = vec![];
+        parsed.encode(&mut bytes, &None).unwrap();
+        (parsed, bytes)
+    }
+
+    /// A logic file made in code (no game file) reads back to what was written and writes back to the same bytes, at every version the
+    /// reader knows; its serde form, as the warp edits it, too; and what the module reads of it is what was put in.
+    #[test]
+    fn a_synthetic_logic_file_round_trips_byte_for_byte() {
+        for version in [0, 8, 9, 10, 11, 12, 13, 18, 20, 21] {
+            let (built, bytes) = synthetic_logic(version);
+            let mut once = Cs2Parsed::decode(&mut Cursor::new(&bytes), &None).unwrap_or_else(|e| panic!("v{version}: {e}"));
+            let mut again = vec![];
+            once.encode(&mut again, &None).unwrap();
+            assert_eq!(again, bytes, "v{version}: written again, not the same bytes");
+            let twice = Cs2Parsed::decode(&mut Cursor::new(&again), &None).unwrap();
+            assert_eq!(once, twice, "v{version}");
+            assert_eq!(round_trips(&bytes), Ok(true), "v{version}");
+
+            // The file's box is in versions 8 to 18 (0, 20 and 21 have none).
+            if (8..=18).contains(&version) {
+                assert_eq!(extent_x(&bytes), Ok((-10.0, 10.0)), "v{version}");
+                assert_eq!(extent_xz(&bytes), Ok([(-10.0, 10.0), (0.0, 9.0)]), "v{version}");
+            }
+
+            // Version 11 holds every field set here (13 has no level's `f_1`, and so on), so it reads back to what was built.
+            if version == 11 {
+                assert_eq!(once, built);
+                assert_eq!(walkway_z(&bytes, 15.0), Some((0.5, 9.0)));
+            }
+        }
+    }
+
+    /// A logic file cut short anywhere, with a byte too many, of a version the reader does not know, or with a count far past its end is
+    /// an error, never a panic.
+    #[test]
+    fn a_truncated_or_malformed_logic_file_is_an_error() {
+        let (_, bytes) = synthetic_logic(13);
+        for n in 0..bytes.len() {
+            assert!(round_trips(&bytes[..n]).is_err(), "cut at {n} of {}", bytes.len());
+            assert!(extent_x(&bytes[..n]).is_err(), "cut at {n}");
+            assert!(ends(&bytes[..n]).is_err(), "cut at {n}");
+            assert!(walkway_z(&bytes[..n], 15.0).is_none(), "cut at {n}");
+        }
+
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert!(round_trips(&longer).is_err());
+
+        let mut unknown = bytes.clone();
+        unknown[..4].copy_from_slice(&99u32.to_le_bytes());
+        assert!(round_trips(&unknown).is_err());
+        assert!(warp_logic(&unknown, &crate::warp::Bend::turning(-10.0, 10.0, 0.0), &Cuts { step: 5.0, at: vec![] }).is_err());
+
+        // The pieces' count: after the version, the box (6 f32), the ui flag's name (u16 length, UTF-16) and transform (16 f32), and
+        // `int_1`.
+        let at = 4 + 24 + 2 + 2 * UI_FLAG.len() + 64 + 4;
+        assert_eq!(bytes[at..at + 4], 1u32.to_le_bytes());
+        let mut huge = bytes.clone();
+        huge[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(round_trips(&huge).is_err());
+
+        assert!(round_trips(&[]).is_err());
+    }
 }
