@@ -25,8 +25,7 @@ the front of its message (docs/editor.md, "Problems").
 
 ## Autosave
 
-Autosave of modified documents, from the old tile plan's cross-cutting items; nothing exists yet. To decide: where the copies go (never
-over the user's file) and how they are offered back after a crash.
+Planned 2026-11-14: [autosave.md](autosave.md).
 
 ## Share / Import shared project: visible errors
 
