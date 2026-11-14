@@ -8,6 +8,8 @@
 //! The table decodes byte for byte and [`encode`] writes it back identically; fields whose meaning isn't known keep their raw values, and
 //! the counts that are always zero in the games (cannons, the trailing list) fail the decode when they aren't.
 
+use crate::bytes::{ByteReader, format_reader};
+
 /// The whole table.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelsNaval {
@@ -235,59 +237,16 @@ pub fn custom_position_kind(kind: u32) -> Option<&'static str> {
     }
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    p: usize,
-}
+format_reader!(Reader);
 
 type Result<T> = std::result::Result<T, String>;
 
 impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Result<&[u8]> {
-        let s = self
-            .p
-            .checked_add(n)
-            .and_then(|end| self.b.get(self.p..end))
-            .ok_or_else(|| format!("{n} bytes past the end at {:#x}", self.p))?;
-        self.p += n;
-        Ok(s)
-    }
-
-    fn u8(&mut self) -> Result<u8> {
-        Ok(self.take(1)?[0])
-    }
-
-    fn u16(&mut self) -> Result<u16> {
-        let s = self.take(2)?;
-        Ok(u16::from_le_bytes([s[0], s[1]]))
-    }
-
-    fn u32(&mut self) -> Result<u32> {
-        let s = self.take(4)?;
-        Ok(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
-    }
-
-    fn i32(&mut self) -> Result<i32> {
-        self.u32().map(|v| v as i32)
-    }
-
-    fn f32(&mut self) -> Result<f32> {
-        self.u32().map(f32::from_bits)
-    }
-
-    fn floats<const N: usize>(&mut self) -> Result<[f32; N]> {
-        let mut out = [0.0; N];
-        for v in &mut out {
-            *v = self.f32()?;
-        }
-        Ok(out)
-    }
-
     /// A list's count, checked against what is left so a bad count fails instead of allocating.
     fn count(&mut self, min_item: usize) -> Result<usize> {
         let at = self.p;
         let n = self.u32()? as usize;
-        if n.saturating_mul(min_item) > self.b.len() - self.p {
+        if n.saturating_mul(min_item) > self.left() {
             return Err(format!("count {n} at {at:#x} is more than the bytes left"));
         }
         Ok(n)
@@ -341,7 +300,7 @@ const VERSION_MARK: [u8; 4] = [0xFC, 0xFD, 0xFE, 0xFF];
 ///
 /// The bytes end early, a count or flag is out of range, a list that is always empty isn't, or bytes are left over.
 pub fn decode(bytes: &[u8]) -> Result<ModelsNaval> {
-    let mut r = Reader { b: bytes, p: 0 };
+    let mut r = Reader(ByteReader::new(bytes));
     let mut out = ModelsNaval::default();
     if bytes.starts_with(&GUID_MARK) {
         r.p = 4;
@@ -383,7 +342,7 @@ fn ship(r: &mut Reader) -> Result<ShipLogic> {
             position: r.floats()?,
             breach_radius: r.f32()?,
             breach_offset: r.floats()?,
-            connections: r.list(4, Reader::u32)?,
+            connections: r.list(4, |r| Ok(r.u32()?))?,
         })
     })?;
 
@@ -409,7 +368,7 @@ fn ship(r: &mut Reader) -> Result<ShipLogic> {
         let id = r.u32()?;
         let unknown = r.u32()?;
         let start_deck_piece = r.i32()?;
-        let mut points = (0..n - 1).map(|_| r.floats()).collect::<Result<Vec<_>>>()?;
+        let mut points = (0..n - 1).map(|_| Ok(r.floats()?)).collect::<Result<Vec<_>>>()?;
         let end_deck_piece = r.i32()?;
         points.push(r.floats()?);
         Ok(Pipe { id, unknown, start_deck_piece, end_deck_piece, points })
@@ -417,7 +376,7 @@ fn ship(r: &mut Reader) -> Result<ShipLogic> {
 
     r.zero("cannon count")?;
     let damage_parts = r.list(10, |r| {
-        Ok(DamagePart { name: r.wide()?, states: r.list(2, Reader::wide)?, panels: r.list(4, |r| r.list(12, Reader::floats))? })
+        Ok(DamagePart { name: r.wide()?, states: r.list(2, Reader::wide)?, panels: r.list(4, |r| r.list(12, |r| Ok(r.floats()?)))? })
     })?;
     let collision =
         r.list(42, |r| Ok(CollisionFace { name: r.wide()?, index: r.u32()?, vertices: [r.floats()?, r.floats()?, r.floats()?] }))?;

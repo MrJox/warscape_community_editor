@@ -13,6 +13,7 @@
 //! - A **track**: u32 present; then u32 type, u32, f32, a list of f32 keys, a list of values of the type (8 integers, 0 floats, 3
 //!   vec3, 5 and 6 quaternions, 9 vec4).
 
+use crate::bytes::{ByteReader, Short, format_reader};
 use std::fmt;
 
 #[derive(Debug)]
@@ -60,46 +61,23 @@ pub struct Cas2File {
     pub nodes: Vec<Cas2Node>,
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    p: usize,
+format_reader!(Reader);
+
+impl From<Short> for Cas2Error {
+    fn from(s: Short) -> Self {
+        Cas2Error(format!("truncated at {}", s.at))
+    }
 }
 
 impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Result<&[u8]> {
-        let r = self.b.get(self.p..self.p + n).ok_or_else(|| Cas2Error(format!("truncated at {}", self.p)))?;
-        self.p += n;
-        Ok(r)
-    }
-
-    fn u32(&mut self) -> Result<u32> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("4 bytes")))
-    }
-
-    fn f32(&mut self) -> Result<f32> {
-        Ok(f32::from_le_bytes(self.take(4)?.try_into().expect("4 bytes")))
-    }
-
-    fn floats<const N: usize>(&mut self) -> Result<[f32; N]> {
-        let mut out = [0.0; N];
-        for v in &mut out {
-            *v = self.f32()?;
-        }
-
-        Ok(out)
-    }
-
     fn string(&mut self) -> Result<String> {
-        let n = u16::from_le_bytes(self.take(2)?.try_into().expect("2 bytes")) as usize;
-        let units = self.take(n * 2)?.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect::<Vec<_>>();
-        Ok(String::from_utf16_lossy(&units))
+        let n = usize::from(self.u16()?);
+        Ok(String::from_utf16_lossy(&self.utf16(n)?))
     }
 
     fn list<T>(&mut self, mut f: impl FnMut(&mut Self) -> Result<T>) -> Result<Vec<T>> {
-        let n = self.u32()? as usize;
-        if n > self.b.len() {
-            return Err(Cas2Error(format!("a list of {n} at {}", self.p)));
-        }
+        let at = self.p;
+        let n = self.count(1).map_err(|s| Cas2Error(format!("a list of {} at {at}", s.need)))?;
 
         (0..n).map(|_| f(self)).collect()
     }
@@ -117,13 +95,13 @@ impl Reader<'_> {
 
         self.u32()?;
         self.f32()?;
-        self.list(Self::f32)?;
+        self.list(|r| Ok(r.f32()?))?;
         let width = match t {
             8 | 0 => 1,
             3 => 3,
             _ => 4,
         };
-        let values = self.list(|r| (0..width).map(|_| r.f32()).collect::<Result<Vec<_>>>())?;
+        let values = self.list(|r| (0..width).map(|_| Ok(r.f32()?)).collect::<Result<Vec<_>>>())?;
         Ok(values.into_iter().next())
     }
 
@@ -163,7 +141,7 @@ impl Cas2File {
                 return Err(Cas2Error(format!("chunk at {p} of size {size}")));
             }
 
-            let mut r = Reader { b: &b[..p + size], p: p + 8 };
+            let mut r = Reader(ByteReader { b: &b[..p + size], p: p + 8 });
             match kind {
                 0 => {
                     out.version = r.f32()?;
@@ -198,17 +176,17 @@ impl Cas2File {
 
             r.u32()?;
             r.f32()?;
-            r.list(Reader::f32)?;
-            r.list(Reader::floats::<6>)?;
+            r.list(|r| Ok(r.f32()?))?;
+            r.list(|r| Ok(r.floats::<6>()?))?;
         }
 
-        r.list(Reader::u32)?;
-        r.list(Reader::u32)?;
+        r.list(|r| Ok(r.u32()?))?;
+        r.list(|r| Ok(r.u32()?))?;
         let vertices = r.list(|r| {
             let p = r.floats::<3>()?;
             let n = r.floats::<3>()?;
             let c = r.floats::<4>()?;
-            let uv = r.list(Reader::floats::<3>)?;
+            let uv = r.list(|r| Ok(r.floats::<3>()?))?;
             if from(v, 1.03) && r.u32()? != 0 {
                 return Err(Cas2Error("vertex extras".into()));
             }

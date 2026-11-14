@@ -3,6 +3,7 @@
 pub mod anim;
 pub mod anim_meta;
 pub mod anim_tables;
+pub(crate) mod bytes;
 pub mod c_num;
 pub mod cas2;
 pub mod chmf;

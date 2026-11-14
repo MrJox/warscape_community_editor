@@ -18,6 +18,8 @@
 //! [`encode_region`] is the encoder: one value gives mode 0; up to 128 values a palette, unless the delta (bits of max - min) is smaller;
 //! more values the delta, unless it is 513 bytes or more (then raw). The region's two u16 are its smallest and largest sample.
 
+use crate::bytes::{ByteReader, Short};
+
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct ChmfError(pub String);
@@ -56,24 +58,9 @@ pub struct ChmfFile {
     pub regions: Vec<ChmfRegion>,
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    p: usize,
-}
-
-impl Reader<'_> {
-    fn take(&mut self, n: usize) -> Result<&[u8], ChmfError> {
-        let r = self.b.get(self.p..self.p + n).ok_or_else(|| ChmfError(format!("truncated at {}", self.p)))?;
-        self.p += n;
-        Ok(r)
-    }
-
-    fn u32(&mut self) -> Result<u32, ChmfError> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().expect("4 bytes")))
-    }
-
-    fn u16(&mut self) -> Result<u16, ChmfError> {
-        Ok(u16::from_le_bytes(self.take(2)?.try_into().expect("2 bytes")))
+impl From<Short> for ChmfError {
+    fn from(s: Short) -> Self {
+        ChmfError(format!("truncated at {}", s.at))
     }
 }
 
@@ -144,7 +131,7 @@ impl ChmfFile {
     ///
     /// Not a version 4 or 5 CHMF file, or a truncated one.
     pub fn parse(b: &[u8]) -> Result<Self, ChmfError> {
-        let mut r = Reader { b, p: 0 };
+        let mut r = ByteReader::new(b);
         if r.take(4)? != b"CHMF" {
             return fail("not CHMF");
         }
