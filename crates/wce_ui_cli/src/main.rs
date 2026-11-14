@@ -18,10 +18,10 @@ fn parse_value(s: &str) -> Value {
     if let Ok(i) = s.parse::<i64>() {
         return json!(i);
     }
-    if let Ok(f) = s.parse::<f64>() {
-        if s.contains('.') {
-            return json!(f);
-        }
+    if let Ok(f) = s.parse::<f64>()
+        && s.contains('.')
+    {
+        return json!(f);
     }
     match s {
         "true" => json!(true),
@@ -100,12 +100,10 @@ fn run_line(s: &mut Session, argv: &[String]) -> Result<(), String> {
     let needs_doc = !matches!(tool, "files" | "open" | "close" | "list_open");
     let save = a.remove("save").is_some_and(|v| v != json!(false)) || save_after;
     let mut opened = false;
-    if needs_doc {
-        if let Some(src) = a.remove("source") {
-            s.call("open", &json!({ "source": src, "id": "cli" }))?;
-            a.insert("id".into(), json!("cli"));
-            opened = true;
-        }
+    if needs_doc && let Some(src) = a.remove("source") {
+        s.call("open", &json!({ "source": src, "id": "cli" }))?;
+        a.insert("id".into(), json!("cli"));
+        opened = true;
     }
     let r = s.call(tool, &Value::Object(a.clone()))?;
     if tool == "xml" {

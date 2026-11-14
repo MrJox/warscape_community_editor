@@ -89,7 +89,7 @@ impl GroundTypeField {
         let v = self.layer.values();
         for y in y0 as usize..y1 as usize {
             let (a, b) = (y * w + x0 as usize, y * w + x1 as usize);
-            for (o, p) in out[a * 4..b * 4].chunks_exact_mut(4).zip(v[a * c..b * c].chunks_exact(c)) {
+            for (o, p) in out[a * 4..b * 4].as_chunks_mut::<4>().0.iter_mut().zip(v[a * c..b * c].chunks_exact(c)) {
                 o.copy_from_slice(&[p[0], p[1], p[2], 255]);
             }
         }

@@ -63,10 +63,10 @@ impl FontLibrary {
         self.sizes_ready = true;
         for p in vfs.list("font/", ".cuf") {
             let stem = p.trim_start_matches("font/").trim_end_matches(".cuf");
-            if let Some((name, size)) = stem.rsplit_once('_') {
-                if let Ok(n) = size.parse::<i32>() {
-                    self.sizes.entry(name.to_string()).or_default().push(n);
-                }
+            if let Some((name, size)) = stem.rsplit_once('_')
+                && let Ok(n) = size.parse::<i32>()
+            {
+                self.sizes.entry(name.to_string()).or_default().push(n);
             }
         }
 
@@ -100,11 +100,12 @@ impl FontLibrary {
 
     /// The font for text: a category other than the default one decides font, size and colour; otherwise the state's font and size.
     pub fn resolve(&mut self, vfs: &Vfs, font: &str, size: i32, category: &str) -> Option<ResolvedFont> {
-        if !category.is_empty() && category != DEFAULT_CATEGORY {
-            if let Some(c) = self.category(vfs, category) {
-                let (cuf, key) = self.font_file(vfs, &c.font, c.size)?;
-                return Some(ResolvedFont { cuf, key, color: Some(c.color) });
-            }
+        if !category.is_empty()
+            && category != DEFAULT_CATEGORY
+            && let Some(c) = self.category(vfs, category)
+        {
+            let (cuf, key) = self.font_file(vfs, &c.font, c.size)?;
+            return Some(ResolvedFont { cuf, key, color: Some(c.color) });
         }
 
         let (cuf, key) = self.font_file(vfs, font, size)?;

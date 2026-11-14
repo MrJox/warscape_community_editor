@@ -186,7 +186,7 @@ impl Nis {
         let _ = ctx.update_subresource(&cb, 0, None, &bytes, 0, 0);
         ctx.cs_set_shader(self.cs.as_ref());
         ctx.cs_set_constant_buffers(0, &[Some(cb)]);
-        ctx.cs_set_samplers(0, &[self.sampler.clone()]);
+        ctx.cs_set_samplers(0, std::slice::from_ref(&self.sampler));
         ctx.cs_set_shader_resources(0, &[Some(src.clone()), self.coef_scaler.clone(), self.coef_usm.clone()]);
         ctx.cs_set_unordered_access_views(0, &[Some(uav)]);
         ctx.dispatch(dst.0.div_ceil(BLOCK_WIDTH), dst.1.div_ceil(BLOCK_HEIGHT), 1);

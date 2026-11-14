@@ -314,8 +314,8 @@ fn edges(region: &Region) -> Edges {
     }
 
     for (k, (y0, y1, s)) in bands.iter().enumerate() {
-        let above = (k > 0 && bands[k - 1].1 + 1 == *y0).then(|| bands[k - 1].2.as_slice()).unwrap_or(&[]);
-        let below = (k + 1 < bands.len() && bands[k + 1].0 == y1 + 1).then(|| bands[k + 1].2.as_slice()).unwrap_or(&[]);
+        let above = if k > 0 && bands[k - 1].1 + 1 == *y0 { bands[k - 1].2.as_slice() } else { &[] };
+        let below = if k + 1 < bands.len() && bands[k + 1].0 == y1 + 1 { bands[k + 1].2.as_slice() } else { &[] };
         let index = |x: i32| first[k] + s.iter().position(|&(a, b)| a <= x && x <= b).unwrap_or(0);
         for (a, b) in uncovered(s, above) {
             for x in a..=b {

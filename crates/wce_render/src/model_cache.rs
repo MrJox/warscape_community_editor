@@ -921,7 +921,7 @@ fn model_top(model: &RigidModel) -> Option<ModelTop> {
                 Float3::new(p.x, p.y, p.z) + pivot
             })
         };
-        for t in mesh.indices().chunks_exact(3) {
+        for t in mesh.indices().as_chunks::<3>().0 {
             if let (Some(a), Some(b), Some(c)) = (at(t[0] as usize), at(t[1] as usize), at(t[2] as usize)) {
                 tris.push([a, b, c]);
             }
@@ -1789,7 +1789,7 @@ fn skin_piece(s: &TerrainSkin, (i0, j0, w, h): (i32, i32, i32, i32)) -> Vec<u8> 
     for (j, row) in out.chunks_exact_mut(w as usize * 4).enumerate() {
         let sj = (j0 + j as i32).clamp(0, s.h as i32 - 1) as usize;
         let src = &s.rgba[sj * stride..(sj + 1) * stride];
-        for (i, px) in row.chunks_exact_mut(4).enumerate() {
+        for (i, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let si = (i0 + i as i32).clamp(0, s.w as i32 - 1) as usize * 4;
             px.copy_from_slice(&src[si..si + 4]);
         }

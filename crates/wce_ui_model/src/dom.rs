@@ -266,11 +266,11 @@ fn open_tag(e: &Element, out: &mut String) {
 fn write_elem(e: &Element, depth: usize, out: &mut String) {
     indent(depth, out);
     open_tag(e, out);
-    if let Form::SelfClosing { space } = e.form {
-        if e.children.is_empty() {
-            out.push_str(if space { " />" } else { "/>" });
-            return;
-        }
+    if let Form::SelfClosing { space } = e.form
+        && e.children.is_empty()
+    {
+        out.push_str(if space { " />" } else { "/>" });
+        return;
     }
     out.push('>');
     if e.form == Form::EmptyBlock && e.children.is_empty() {

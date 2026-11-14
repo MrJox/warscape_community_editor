@@ -22,3 +22,6 @@ sdl3-sys = "0.7"
 
 [dev-dependencies]
 wce_render = { path = "../wce_render" }
+
+[lints]
+workspace = true

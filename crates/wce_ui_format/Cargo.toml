@@ -9,3 +9,6 @@ license.workspace = true
 
 [dev-dependencies]
 wce_vfs = { path = "../wce_vfs" }
+
+[lints]
+workspace = true

@@ -43,10 +43,9 @@ fn layer_role(name: &str) -> Option<LayerRole> {
         _ => {
             if let Some(season) = stem.strip_prefix("snow_map_") {
                 LayerRole::Snow(season.to_owned())
-            } else if let Some(season) = stem.strip_prefix("season_mask_").and_then(|s| s.strip_suffix("_01")) {
-                LayerRole::SeasonMask(season.to_owned())
             } else {
-                return None;
+                let season = stem.strip_prefix("season_mask_").and_then(|s| s.strip_suffix("_01"))?;
+                LayerRole::SeasonMask(season.to_owned())
             }
         }
     })
@@ -89,7 +88,7 @@ fn map_lf(path: &std::path::Path) -> Option<PagedU16> {
     let mut entries = vec![0u8; usize::from(u16::from_le_bytes(count)) * 12];
     f.read_exact(&mut entries).ok()?;
     let mut tag = std::collections::HashMap::new();
-    for e in entries.chunks_exact(12) {
+    for e in entries.as_chunks::<12>().0 {
         let (id, kind, n) =
             (u16::from_le_bytes([e[0], e[1]]), u16::from_le_bytes([e[2], e[3]]), u32::from_le_bytes([e[4], e[5], e[6], e[7]]));
         // One value in the entry (a short in its first two bytes).

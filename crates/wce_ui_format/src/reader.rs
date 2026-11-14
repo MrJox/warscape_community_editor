@@ -162,7 +162,7 @@ impl<'a> Reader<'a> {
     fn get_unicode(&mut self) -> R<String> {
         let n = self.get_u2()? as usize;
         let b = self.get(n * 2)?;
-        let units: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         match String::from_utf16(&units) {
             Ok(s) => Ok(s),
             Err(_) => self.err("Unicode string has an unpaired surrogate"),
@@ -339,10 +339,8 @@ impl<'a> Reader<'a> {
 
     fn c_data(&mut self, size: usize, c: Option<&str>, zero: bool) -> R<()> {
         let v = self.get(size)?;
-        if !zero {
-            if let Some(c) = c {
-                self.out(&format!("<!-- {} -->", c));
-            }
+        if !zero && let Some(c) = c {
+            self.out(&format!("<!-- {} -->", c));
         }
         self.out(&format!("<data size=\"{}\">", size));
         for slice in v.chunks(16) {

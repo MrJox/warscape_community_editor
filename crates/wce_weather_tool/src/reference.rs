@@ -82,7 +82,7 @@ impl Reference {
         let png = PngFile::parse(&bytes).map_err(|err| format!("{}: {err:?}", path.display()))?;
         let rgba = match (png.bit_depth, png.color_type) {
             (8, 6) => png.pixels,
-            (8, 2) => png.pixels.chunks_exact(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
+            (8, 2) => png.pixels.as_chunks::<3>().0.iter().flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
             (d, t) => return Err(format!("{}: a PNG of 8-bit RGB or RGBA is needed (this one: {d}-bit, colour type {t})", path.display())),
         };
 

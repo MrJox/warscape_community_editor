@@ -88,7 +88,7 @@ impl Reader<'_> {
     /// A UTF-16 string (u16 characters, then the characters).
     fn wide(&mut self) -> Result<String, String> {
         let n = usize::from(self.u16()?);
-        let units: Vec<u16> = self.take(n * 2)?.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let units: Vec<u16> = self.take(n * 2)?.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         Ok(String::from_utf16_lossy(&units))
     }
 

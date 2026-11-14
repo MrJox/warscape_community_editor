@@ -1506,7 +1506,7 @@ impl Renderer {
 
         // The cascades read world positions in the same frame.
         let mut splits = self.camera.shadow_splits;
-        for c in splits.chunks_exact_mut(16) {
+        for c in splits.as_chunks_mut::<16>().0 {
             let mut m = Float4x4::IDENTITY;
             m.m.as_flattened_mut().copy_from_slice(c);
             c.copy_from_slice((m * t).data());

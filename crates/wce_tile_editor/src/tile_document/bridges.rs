@@ -581,7 +581,7 @@ impl Tile {
             }
         };
         let mut found = gaps.into_iter().filter(|(pair, _)| !joined.contains_key(pair)).collect::<Vec<_>>();
-        found.sort_by(|a, b| a.0.cmp(&b.0));
+        found.sort_by_key(|a| a.0);
         for (((ea, _), (eb, _)), (across, rise, a, b, c, d, ka, kb)) in found {
             report.edges.push((a, b, BridgeEdge::WallGap));
             report.edges.push((c, d, BridgeEdge::WallGap));

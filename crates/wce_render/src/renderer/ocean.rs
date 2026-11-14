@@ -177,7 +177,7 @@ fn chunk_vertices(job: &ChunkJob, out: &mut [f32], height: &(dyn Fn(f32, f32) ->
     let cells = job.cells;
     let at = |i: u32, j: u32| (job.x0 + i as f32 * job.sx, job.z0 + j as f32 * job.sz);
     let along = |on: bool, k: u32, r: u32, point: &dyn Fn(u32) -> (f32, f32)| -> Option<f32> {
-        (on && r > 1 && k % r != 0).then(|| {
+        (on && r > 1 && !k.is_multiple_of(r)).then(|| {
             let lo = k - k % r;
             let (a, b) = (point(lo), point(lo + r));
             let w = (k % r) as f32 / r as f32;
@@ -856,7 +856,7 @@ impl Renderer {
         if o.vb.is_some()
             && let Some((ib, count)) = &o.ib
         {
-            self.ctx.set_vertex_buffers(0, &[o.vb.clone()], &[OCEAN_VERTEX], &[0]);
+            self.ctx.set_vertex_buffers(0, std::slice::from_ref(&o.vb), &[OCEAN_VERTEX], &[0]);
             self.ctx.set_index_buffer(Some(ib), DXGI_FORMAT_R32_UINT, 0);
             for c in &chunks {
                 self.ctx.draw_indexed(*count, 0, c.base as i32);

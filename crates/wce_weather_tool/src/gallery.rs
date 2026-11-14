@@ -57,7 +57,7 @@ impl Gallery {
             return;
         }
 
-        let (Some(camera), Some(file)) = (self.camera.clone(), self.queue.pop_front()) else {
+        let (Some(camera), Some(file)) = (self.camera, self.queue.pop_front()) else {
             self.preview.drop_if_idle(now);
             return;
         };

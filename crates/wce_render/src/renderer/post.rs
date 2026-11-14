@@ -398,6 +398,7 @@ impl Renderer {
     ///   0) when shorter than 0.01): ((x / w + 1) / 2, 0.5 - y / w / 2, z / w); nothing tests a sun behind the camera.
     /// - HDR_GOD_RAYS_BLURX / _BLURY (the view's size, fns 0x1174a190 / 0x1174a2c0): the 9 tap gaussian blurs of the red, stepping a texel
     ///   of their input (`g_input_size_ps` = its size and reciprocal, fn 0x11798830).
+    ///
     /// The three targets: fn 0x1197b480 makes them at their scale of the view (fn 0x117701b0, the descriptor the reflections' buffers use)
     /// in the first of TTF_L8 / TTF_A8R8G8B8 the device takes (fn 0x117ca2f0): TTF_L8 is R8_UNORM (fn 0x118163e0). The samplers (fns
     /// 0x1174a3f0, 0x11745a90, 0x1174b440): `depth_sampler` point clamp, the blurs' `s_input_sampler` point wrap,
@@ -459,6 +460,7 @@ impl Renderer {
     ///   `MLAA_ComputeLineLength_PS` with `g_IterationDepth` = its draw count mod 3 (0, 1, 2), each draw reading the lengths the one before
     ///   wrote and writing the other pair (fns 0x11728db0, 0x11749530).
     /// - MLAA_PASS3_FINAL_BLEND (fn 0x116e0750): `MLAA_Blend_PS` blends each line's pixels with their neighbours, the rest as they are.
+    ///
     /// The targets (fns 0x11765d60, 0x11765e60): R8_UINT at the view's size (TTF_R8_UINT on DX11). The game blends into its frame; the
     /// editor into its own target, copied back into `final_`.
     /// With MSAA: the MS light buffer averaged into the one-sample one the tone mapping and the debug views read.

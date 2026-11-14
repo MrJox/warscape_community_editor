@@ -315,7 +315,7 @@ pub fn lower_walls(
     }
 
     // Lower the walls, the last first (an edit only moves the indices of the elements after it).
-    lowered.sort_by(|a, b| b.0.cmp(&a.0));
+    lowered.sort_by_key(|w| std::cmp::Reverse(w.0));
     let read = |k: &str| files.read(&format!("{}{k}_tech.cs2.parsed", crate::building::folder(k))).ok();
     for (wall, placed) in lowered {
         // Its towers' capture locations with it. A layer made at the end of the scene graph comes after every wall: removing one does not

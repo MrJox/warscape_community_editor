@@ -223,14 +223,14 @@ impl UiTool {
             let pd = e.loose_dir();
             for cand in skins::candidates(path, skin.as_deref()) {
                 let f = pd.join(&cand);
-                if let Ok(bytes) = std::fs::read(&f) {
-                    if let Ok(img) = images::decode(&cand, &bytes) {
-                        let stamp = std::fs::metadata(&f).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
-                        let px0 = img.px.get(..4).map(|p| [p[0], p[1], p[2], p[3]]).unwrap_or([0; 4]);
-                        self.loose_imgs.insert(key.clone(), (f, stamp, px0));
-                        e.images.submit(&key, img.w, img.h, img.px);
-                        return;
-                    }
+                if let Ok(bytes) = std::fs::read(&f)
+                    && let Ok(img) = images::decode(&cand, &bytes)
+                {
+                    let stamp = std::fs::metadata(&f).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+                    let px0 = img.px.get(..4).map(|p| [p[0], p[1], p[2], p[3]]).unwrap_or([0; 4]);
+                    self.loose_imgs.insert(key.clone(), (f, stamp, px0));
+                    e.images.submit(&key, img.w, img.h, img.px);
+                    return;
                 }
             }
         }
@@ -242,11 +242,11 @@ impl UiTool {
 
         let skin = skin.as_deref();
         for cand in skins::candidates(path, skin) {
-            if let Ok(bytes) = vfs.read(&cand) {
-                if let Ok(img) = images::decode(&cand, &bytes) {
-                    e.images.submit(&key, img.w, img.h, img.px);
-                    return;
-                }
+            if let Ok(bytes) = vfs.read(&cand)
+                && let Ok(img) = images::decode(&cand, &bytes)
+            {
+                e.images.submit(&key, img.w, img.h, img.px);
+                return;
             }
         }
 
@@ -255,16 +255,16 @@ impl UiTool {
 
     /// The skin folders, read once.
     fn load_skins(&mut self, e: &Editor) {
-        if self.skins.is_none() {
-            if let Some(vfs) = e.vfs() {
-                let pd = e.loose_dir();
-                let list = skins::list(vfs, Some(&pd));
-                if !self.skin.is_empty() && !list.iter().any(|s| s.name == self.skin) {
-                    self.skin.clear();
-                }
-
-                self.skins = Some(list);
+        if self.skins.is_none()
+            && let Some(vfs) = e.vfs()
+        {
+            let pd = e.loose_dir();
+            let list = skins::list(vfs, Some(&pd));
+            if !self.skin.is_empty() && !list.iter().any(|s| s.name == self.skin) {
+                self.skin.clear();
             }
+
+            self.skins = Some(list);
         }
     }
 
@@ -380,10 +380,10 @@ Only the preview: the file is not changed.");
 
         if cur.as_ref().is_some_and(|s| s.loose) {
             gui::same_line();
-            if gui::small_button("Open skin folder") {
-                if let Err(m) = self.open_skin_folder(e) {
-                    e.status(&m, true);
-                }
+            if gui::small_button("Open skin folder")
+                && let Err(m) = self.open_skin_folder(e)
+            {
+                e.status(&m, true);
             }
         }
     }
@@ -556,10 +556,10 @@ Only the preview: the file is not changed.");
             return vec![];
         }
 
-        if let Some((p, list)) = &self.rel_list {
-            if *p == path {
-                return list.clone();
-            }
+        if let Some((p, list)) = &self.rel_list
+            && *p == path
+        {
+            return list.clone();
         }
 
         if self.rel_index.is_none() {
@@ -604,10 +604,10 @@ Only the preview: the file is not changed.");
             self.related_generic,
             self.anim.as_ref().map(|a| a.t as i64).unwrap_or(-1)
         );
-        if let Some((k, l)) = &self.rel_layers {
-            if *k == key {
-                return Some(l.clone());
-            }
+        if let Some((k, l)) = &self.rel_layers
+            && *k == key
+        {
+            return Some(l.clone());
         }
 
         let main = d.model().clone();
@@ -747,26 +747,26 @@ linked by the component name '{}'",
         };
 
         // toolbar
-        if gui::small_button("-") {
-            if let Some(v) = &mut self.view {
-                v.zoom = (v.zoom / 1.25).max(0.05);
-            }
+        if gui::small_button("-")
+            && let Some(v) = &mut self.view
+        {
+            v.zoom = (v.zoom / 1.25).max(0.05);
         }
 
         gui::same_line();
-        if gui::small_button("+") {
-            if let Some(v) = &mut self.view {
-                v.zoom = (v.zoom * 1.25).min(16.0);
-            }
+        if gui::small_button("+")
+            && let Some(v) = &mut self.view
+        {
+            v.zoom = (v.zoom * 1.25).min(16.0);
         }
 
         gui::same_line();
         let fit_now = gui::small_button("Fit");
         gui::same_line();
-        if gui::small_button("100%") {
-            if let Some(v) = &mut self.view {
-                v.zoom = 1.0;
-            }
+        if gui::small_button("100%")
+            && let Some(v) = &mut self.view
+        {
+            v.zoom = 1.0;
         }
 
         gui::same_line();
@@ -812,7 +812,7 @@ linked by the component name '{}'",
             view.oy = before.1 - (m.y - p0.y) / view.zoom;
         }
 
-        let space = gui::is_key_down(sys::ImGuiKey_Space as i32);
+        let space = gui::is_key_down(sys::ImGuiKey_Space);
         let panning = (canvas_active && gui::is_mouse_down(2)) || (canvas_active && space && gui::is_mouse_down(0));
         if panning {
             view.ox -= io.MouseDelta.x / view.zoom;
@@ -962,11 +962,13 @@ linked by the component name '{}'",
                 })
                 .map(|(i, _)| i)
         };
-        if hovered && !panning && self.drag.is_none() {
-            if let Some(i) = pick(mx, my) {
-                let r = rects[i];
-                dl.rect(to_screen(r.x, r.y), to_screen(r.x + r.w, r.y + r.h), col32(255, 255, 255, 120), 0.0, 1.0);
-            }
+        if hovered
+            && !panning
+            && self.drag.is_none()
+            && let Some(i) = pick(mx, my)
+        {
+            let r = rects[i];
+            dl.rect(to_screen(r.x, r.y), to_screen(r.x + r.w, r.y + r.h), col32(255, 255, 255, 120), 0.0, 1.0);
         }
 
         let mut handle_rects: Vec<(u8, Vec2, Vec2)> = vec![];
@@ -1006,19 +1008,19 @@ linked by the component name '{}'",
                 },
             };
 
-            if let Some((kind, i)) = target {
-                if let Some(en) = entries.get(i).filter(|en| en.kind == EntryKind::Entry) {
-                    self.gesture += 1;
-                    let key = ((u64::from(id) << 40) ^ (self.gesture << 8) ^ 0x61) | 1;
-                    self.drag = Some(Drag {
-                        kind,
-                        entry: i,
-                        start_mouse: (m.x, m.y),
-                        start: (en.x, en.y, en.w, en.h),
-                        key,
-                        last: (en.x, en.y, en.w, en.h),
-                    });
-                }
+            if let Some((kind, i)) = target
+                && let Some(en) = entries.get(i).filter(|en| en.kind == EntryKind::Entry)
+            {
+                self.gesture += 1;
+                let key = ((u64::from(id) << 40) ^ (self.gesture << 8) ^ 0x61) | 1;
+                self.drag = Some(Drag {
+                    kind,
+                    entry: i,
+                    start_mouse: (m.x, m.y),
+                    start: (en.x, en.y, en.w, en.h),
+                    key,
+                    last: (en.x, en.y, en.w, en.h),
+                });
             }
         }
 
@@ -1083,52 +1085,53 @@ linked by the component name '{}'",
         }
 
         // keys
-        if hovered && self.drag.is_none() {
-            if let Some(i) = sel {
-                use wce_editor::shortcuts::pressed;
-                let nudge = [
-                    ("ui.nudge_left", -1, 0),
-                    ("ui.nudge_right", 1, 0),
-                    ("ui.nudge_up", 0, -1),
-                    ("ui.nudge_down", 0, 1),
-                    ("ui.nudge_left_10", -10, 0),
-                    ("ui.nudge_right_10", 10, 0),
-                    ("ui.nudge_up_10", 0, -10),
-                    ("ui.nudge_down_10", 0, 10),
-                ];
-                for (key, dx, dy) in nudge {
-                    if pressed(key, true) {
-                        if let Some(en) = entries.get(i).filter(|en| en.kind == EntryKind::Entry) {
-                            let path = en.path.clone();
-                            let (x, y) = (en.x + dx, en.y + dy);
-                            let k = ((u64::from(id) << 40) ^ ((i as u64) << 8) ^ 0x62) | 1;
-                            if let Some(doc) = ui_doc(e, id) {
-                                let _ = doc.edit("Nudge", k, |mm| mm.set_offset(&path, x, y));
-                            }
-                        }
+        if hovered
+            && self.drag.is_none()
+            && let Some(i) = sel
+        {
+            use wce_editor::shortcuts::pressed;
+            let nudge = [
+                ("ui.nudge_left", -1, 0),
+                ("ui.nudge_right", 1, 0),
+                ("ui.nudge_up", 0, -1),
+                ("ui.nudge_down", 0, 1),
+                ("ui.nudge_left_10", -10, 0),
+                ("ui.nudge_right_10", 10, 0),
+                ("ui.nudge_up_10", 0, -10),
+                ("ui.nudge_down_10", 0, 10),
+            ];
+            for (key, dx, dy) in nudge {
+                if pressed(key, true)
+                    && let Some(en) = entries.get(i).filter(|en| en.kind == EntryKind::Entry)
+                {
+                    let path = en.path.clone();
+                    let (x, y) = (en.x + dx, en.y + dy);
+                    let k = ((u64::from(id) << 40) ^ ((i as u64) << 8) ^ 0x62) | 1;
+                    if let Some(doc) = ui_doc(e, id) {
+                        let _ = doc.edit("Nudge", k, |mm| mm.set_offset(&path, x, y));
                     }
                 }
+            }
 
-                if pressed("ui.delete", false) {
-                    self.delete_selected(e);
-                }
+            if pressed("ui.delete", false) {
+                self.delete_selected(e);
+            }
 
-                if pressed("ui.duplicate", false) {
-                    self.duplicate_selected(e);
-                }
+            if pressed("ui.duplicate", false) {
+                self.duplicate_selected(e);
             }
         }
 
-        if let Some(doc) = ui_doc(e, id) {
-            if !gui::is_mouse_down(0) {
-                // key nudges merge until the keys stop
-                if !(gui::is_key_down(sys::ImGuiKey_LeftArrow as i32)
-                    || gui::is_key_down(sys::ImGuiKey_RightArrow as i32)
-                    || gui::is_key_down(sys::ImGuiKey_UpArrow as i32)
-                    || gui::is_key_down(sys::ImGuiKey_DownArrow as i32))
-                {
-                    doc.break_merge();
-                }
+        if let Some(doc) = ui_doc(e, id)
+            && !gui::is_mouse_down(0)
+        {
+            // key nudges merge until the keys stop
+            if !(gui::is_key_down(sys::ImGuiKey_LeftArrow)
+                || gui::is_key_down(sys::ImGuiKey_RightArrow)
+                || gui::is_key_down(sys::ImGuiKey_UpArrow)
+                || gui::is_key_down(sys::ImGuiKey_DownArrow))
+            {
+                doc.break_merge();
             }
         }
 
@@ -1217,7 +1220,6 @@ linked by the component name '{}'",
         })
     }
 
-    /// Throws away every change since the layout was opened or saved (one undo step).
     // ---- XML pane
 
     fn xml_pane(&mut self, e: &mut Editor) {
@@ -1416,10 +1418,10 @@ linked by the component name '{}'",
             } else {
                 0
             };
-            if let Some(d) = ui_doc(e, id) {
-                if let Err(msg) = d.edit(&name, key, |m| m.edit_prop(&path, idx, change)) {
-                    e.status(&msg, true);
-                }
+            if let Some(d) = ui_doc(e, id)
+                && let Err(msg) = d.edit(&name, key, |m| m.edit_prop(&path, idx, change))
+            {
+                e.status(&msg, true);
             }
         }
 
@@ -1884,10 +1886,10 @@ linked by the component name '{}'",
                 }
 
                 let r = self.add_child(e, "new_component");
-                if r.is_ok() {
-                    if let Some(i) = selected(e, id) {
-                        self.rename = Some((i, "new_component".to_owned(), 0));
-                    }
+                if r.is_ok()
+                    && let Some(i) = selected(e, id)
+                {
+                    self.rename = Some((i, "new_component".to_owned(), 0));
                 }
 
                 r
@@ -1967,10 +1969,10 @@ linked by the component name '{}'",
             }
         }
 
-        if let Some((src, target, place)) = f.drop {
-            if let Err(m) = self.drop_layer(e, id, src, target, place) {
-                e.status(&m, true);
-            }
+        if let Some((src, target, place)) = f.drop
+            && let Err(m) = self.drop_layer(e, id, src, target, place)
+        {
+            e.status(&m, true);
         }
 
         gui::end();
@@ -2282,10 +2284,8 @@ fn layer_row(rename: &mut Option<(usize, String, u8)>, f: &mut LayerFrame, ents:
                     Place::Inside => dl.rect(mn, mx, col, 0.0, 2.0),
                 }
 
-                if delivered {
-                    if let Some(&src) = data.first() {
-                        f.drop = Some((src as usize, i, place));
-                    }
+                if delivered && let Some(&src) = data.first() {
+                    f.drop = Some((src as usize, i, place));
                 }
             }
 
@@ -2452,10 +2452,10 @@ impl Tool for UiTool {
             let has = active_doc(e).is_some();
             let sel = has && active_doc(e).and_then(|id| selected(e, id)).is_some();
             gui::begin_disabled(!sel);
-            if gui::menu_item("Add child", None, false, true) {
-                if let Err(m) = self.add_child(e, "new_component") {
-                    e.status(&m, true);
-                }
+            if gui::menu_item("Add child", None, false, true)
+                && let Err(m) = self.add_child(e, "new_component")
+            {
+                e.status(&m, true);
             }
 
             if gui::menu_item("Duplicate", wce_editor::shortcuts::label("ui.duplicate").as_deref(), false, true) {
@@ -2468,23 +2468,23 @@ impl Tool for UiTool {
 
             gui::separator();
             for (label, d) in [("Bring forward (draw later)", 1), ("Send backward (draw earlier)", -1)] {
-                if gui::menu_item(label, None, false, true) {
-                    if let Err(m) = self.move_in_order(e, d) {
-                        e.status(&m, true);
-                    }
-                }
-            }
-
-            if gui::menu_item("Move into previous sibling", None, false, true) {
-                if let Err(m) = self.move_into_previous(e) {
+                if gui::menu_item(label, None, false, true)
+                    && let Err(m) = self.move_in_order(e, d)
+                {
                     e.status(&m, true);
                 }
             }
 
-            if gui::menu_item("Move out of parent", None, false, true) {
-                if let Err(m) = self.move_out(e) {
-                    e.status(&m, true);
-                }
+            if gui::menu_item("Move into previous sibling", None, false, true)
+                && let Err(m) = self.move_into_previous(e)
+            {
+                e.status(&m, true);
+            }
+
+            if gui::menu_item("Move out of parent", None, false, true)
+                && let Err(m) = self.move_out(e)
+            {
+                e.status(&m, true);
             }
 
             gui::end_disabled();

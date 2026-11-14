@@ -130,7 +130,7 @@ pub fn pieces_at(files: &[String], level: i64) -> Result<Vec<String>, String> {
             (2..=wanted)
                 .rev()
                 .map(|l| p.replacen("destruct01", &format!("destruct{l:02}"), 1))
-                .find(|q| p.contains("destruct01") && files.iter().any(|f| *f == q))
+                .find(|q| p.contains("destruct01") && files.contains(&q))
                 .unwrap_or_else(|| (**p).clone())
         })
         .collect::<Vec<_>>();

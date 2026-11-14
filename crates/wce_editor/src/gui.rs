@@ -502,7 +502,7 @@ pub fn end_menu_bar() {
 /// windows do not cover, the viewport's work area (what the host window takes) shrunk by it. Pair with [`end`] whatever it returns.
 pub fn begin_bottom_bar(id: &str, height: f32) -> bool {
     let c = cs(id);
-    let flags = (sys::ImGuiWindowFlags_NoScrollbar | sys::ImGuiWindowFlags_NoSavedSettings | sys::ImGuiWindowFlags_NoTitleBar) as i32;
+    let flags = sys::ImGuiWindowFlags_NoScrollbar | sys::ImGuiWindowFlags_NoSavedSettings | sys::ImGuiWindowFlags_NoTitleBar;
     call!(sys::igBeginViewportSideBar(c.as_ptr(), sys::igGetMainViewport(), sys::ImGuiDir_Down, height, flags))
 }
 
@@ -764,7 +764,7 @@ impl DrawList {
     /// Lines through `pts`, back to the first one when `closed`.
     pub fn polyline(&self, pts: &[Vec2], col: u32, closed: bool, thickness: f32) {
         if pts.len() >= 2 {
-            let flags = if closed { sys::ImDrawFlags_Closed as i32 } else { 0 };
+            let flags = if closed { sys::ImDrawFlags_Closed } else { 0 };
             call!(sys::ImDrawList_AddPolyline(self.0, pts.as_ptr(), pts.len() as i32, col, thickness, flags))
         }
     }
@@ -1254,7 +1254,7 @@ extern "C" fn resize_callback(data: *mut sys::ImGuiInputTextCallbackData) -> i32
     // SAFETY: Dear ImGui passes its callback data; UserData is the `Vec<u8>` of `input_text_multiline`, which outlives the call.
     unsafe {
         let d = &mut *data;
-        if d.EventFlag == sys::ImGuiInputTextFlags_CallbackResize as i32 {
+        if d.EventFlag == sys::ImGuiInputTextFlags_CallbackResize {
             let v = &mut *d.UserData.cast::<Vec<u8>>();
             v.resize(d.BufSize.max(1) as usize, 0);
             d.Buf = v.as_mut_ptr().cast();
@@ -1274,7 +1274,7 @@ pub fn input_text_multiline(label: &str, value: &mut String, size: Vec2, flags: 
         buf.as_mut_ptr().cast(),
         buf.len(),
         size,
-        flags | sys::ImGuiInputTextFlags_CallbackResize as i32,
+        flags | sys::ImGuiInputTextFlags_CallbackResize,
         Some(resize_callback),
         (&raw mut buf).cast(),
     ));

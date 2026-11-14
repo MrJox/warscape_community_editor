@@ -928,7 +928,12 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
                 }
 
                 let bytes = &b.cpu[(v.offset as usize).min(b.cpu.len())..((v.offset + v.size) as usize).min(b.cpu.len())];
-                let vals = bytes.chunks_exact(4).map(|c| format!("{}", f32::from_le_bytes([c[0], c[1], c[2], c[3]]))).collect::<Vec<_>>();
+                let vals = bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|c| format!("{}", f32::from_le_bytes([c[0], c[1], c[2], c[3]])))
+                    .collect::<Vec<_>>();
                 lines.push(format!("{name}.{var} {}", vals.join(" ")));
             }
 
@@ -1009,7 +1014,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
 
     c.add("fix", "fix list | open <id> | apply <id> | remove <id>", "the Fixes menu: its window, or its work without it", |e, a| {
         match (a.first().map(String::as_str), a.get(1)) {
-            (Some("list"), _) => ok(&e.fix_names().join(" ")),
+            (Some("list"), _) => ok(e.fix_names().join(" ")),
             (Some("open"), Some(id)) if e.open_fix(id) => ok(""),
             (Some("apply"), Some(id)) => e.run_fix(id, true).map_or_else(|why| fail(&why), |done| ok(&done)),
             (Some("remove"), Some(id)) => e.run_fix(id, false).map_or_else(|why| fail(&why), |done| ok(&done)),

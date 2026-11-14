@@ -81,7 +81,7 @@ pub fn item_of(index: usize) -> u64 {
 
 /// The entry index of a selection item.
 pub fn index_of(item: u64) -> Option<usize> {
-    (item >= 1 && item < 0xffff_0000).then(|| item as usize - 1)
+    (1..0xffff_0000).contains(&item).then(|| item as usize - 1)
 }
 
 impl UiDocument {

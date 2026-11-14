@@ -62,7 +62,7 @@ fn dds32(b: &[u8]) -> Option<(u32, u32, Vec<[u8; 4]>)> {
 
     let (h, w) = (u(12)?, u(16)?);
     let px = b.get(128..128 + (w * h * 4) as usize)?;
-    Some((w, h, px.chunks_exact(4).map(|c| [c[2], c[1], c[0], c[3]]).collect()))
+    Some((w, h, px.as_chunks::<4>().0.iter().map(|c| [c[2], c[1], c[0], c[3]]).collect()))
 }
 
 /// The built files of a battle map's model.

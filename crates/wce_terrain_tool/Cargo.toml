@@ -20,3 +20,6 @@ wce_tile = { path = "../wce_tile" }
 wce_tile_editor = { path = "../wce_tile_editor" }
 wce_tile_tool = { path = "../wce_tile_tool" }
 wce_vfs = { path = "../wce_vfs" }
+
+[lints]
+workspace = true

@@ -2918,7 +2918,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
 
     c.add("view_save", "view_save <name>", "save the camera as a view of the open tile (the viewport's camera chip)", |e, a| {
         let Some(name) = a.first().cloned() else { return fail("usage: view_save <name>") };
-        with_tile(e, |t, e| t.save_camera_view(e, &name).map_or_else(|| no_tile(), |i| ok(format!("view {i}"))))
+        with_tile(e, |t, e| t.save_camera_view(e, &name).map_or_else(no_tile, |i| ok(format!("view {i}"))))
     });
 
     c.add("view_go", "view_go <name>", "put the camera on a saved view of the open tile", |e, a| {
@@ -3177,7 +3177,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 "play" => d.tile_mut().fire_start(el, now),
                 "stop" => d.tile_mut().fire_stop(Some(el)),
                 "state" => {
-                    return ok(&d.tile().fire_time(el).map_or("not burning".to_owned(), |t| {
+                    return ok(d.tile().fire_time(el).map_or("not burning".to_owned(), |t| {
                         let (amount, stage) = wce_tile_editor::tile_document::fire::fire_at(t);
                         format!("{t:.2} s, stage {stage}, char {amount:.3}")
                     }));
@@ -3276,7 +3276,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         "Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one not exported",
         |e, _| {
             with_tile(e, |t, e| match t.generate_siege_ai_now(e) {
-                Ok(l) => ok(&format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("\n  {w}")).collect::<String>())),
+                Ok(l) => ok(format!("{}{}", l.summary(), l.warnings.iter().map(|w| format!("\n  {w}")).collect::<String>())),
                 Err(err) => fail(&err),
             })
         },
@@ -4248,12 +4248,12 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 },
 
                 Some("range") => match a.get(1).and_then(|m| number(m)) {
-                    Some(m) if m > 0.0 => s.distance = m as f32,
+                    Some(m) if m > 0.0 => s.distance = m,
                     _ => return fail("usage: tile_tech range <m>"),
                 },
 
                 Some("fill") => match a.get(1).and_then(|m| number(m)) {
-                    Some(k) => s.fill = (k as f32).clamp(0.0, 1.0),
+                    Some(k) => s.fill = k.clamp(0.0, 1.0),
                     None => return fail("usage: tile_tech fill <0..1>"),
                 },
 

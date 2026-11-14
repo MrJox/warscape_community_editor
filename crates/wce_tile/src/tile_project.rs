@@ -1398,7 +1398,7 @@ impl FinalHeights {
             return None;
         }
 
-        let values = bytes[128..128 + w * h * 4].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let values = bytes[128..128 + w * h * 4].as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
         Some(Self { w, h, sx: (w - 1) as f64 / extent_x, sz: (h - 1) as f64 / extent_z, values })
     }
 

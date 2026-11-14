@@ -299,8 +299,12 @@ impl Shared {
         let mean = self.files.as_ref().and_then(|f| f.read(path).ok()).and_then(|bytes| {
             let image = dds_decode_mip(&bytes, dds_info(&bytes).mips.saturating_sub(4)).ok()?;
             let n = (image.px.len() / 4).max(1) as f32;
-            let sum =
-                image.px.chunks_exact(4).fold([0.0f32; 3], |s, p| std::array::from_fn(|k| s[k] + (f32::from(p[k]) / 255.0).powf(2.2)));
+            let sum = image
+                .px
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .fold([0.0f32; 3], |s, p| std::array::from_fn(|k| s[k] + (f32::from(p[k]) / 255.0).powf(2.2)));
             Some(sum.map(|v| v / n))
         });
 

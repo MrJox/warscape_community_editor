@@ -435,7 +435,7 @@ impl Tile {
                     })
                 };
 
-                for t in idx.chunks_exact(3) {
+                for t in idx.as_chunks::<3>().0 {
                     let (Some(a), Some(b), Some(c)) = (at(t[0]), at(t[1]), at(t[2])) else { continue };
                     tris.push([a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]]);
                 }

@@ -98,7 +98,7 @@ fn picture(d: &MapDocument, layer: &Layer) -> Option<(u32, u32, Vec<u8>)> {
         Layer::Placements => {
             let (w, h) = (m.width, m.height);
             let mut px = vec![0u8; (w * h * 4) as usize];
-            for p in px.chunks_exact_mut(4) {
+            for p in px.as_chunks_mut::<4>().0 {
                 p.copy_from_slice(&[18, 18, 22, 255]);
             }
 
