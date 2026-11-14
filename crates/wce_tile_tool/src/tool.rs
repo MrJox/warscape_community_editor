@@ -2460,17 +2460,7 @@ impl TileTool {
         let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
         let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
         let pts = d.tile().polygon_display_points(sel);
-        let mut best = None;
-        let mut best_t = 1e30f32;
-        for (i, &c) in pts.iter().enumerate() {
-            let t = dot(c - o, dir);
-            if t > 0.0 && length(c - (o + dir * t)) < 1.2f32.max(t * 0.015) && t < best_t {
-                best_t = t;
-                best = Some(i);
-            }
-        }
-
-        if let Some(i) = best {
+        if let Some(i) = nearest_handle(pts.iter().copied(), o, dir) {
             self.status = match d.polygon_point(sel, "remove", i, self.cursor, 0) {
                 Ok(()) => {
                     self.poly_point = None;
@@ -4705,36 +4695,28 @@ impl Tool for TileTool {
                 let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                 if let (Some((o, dir)), Some(sel)) = (ray, sel)
                     && let Some((k, r)) = d.tile().light_radius_handle(sel)
+                    && handle_under_ray(k, o, dir).is_some()
                 {
-                    let t = dot(k - o, dir);
-                    if t > 0.0 && length(k - (o + dir * t)) < 1.2f32.max(t * 0.015) {
-                        let c = d.tile().world_position(sel);
-                        let grab = light_plane_distance(c, o, dir).map_or(0.0, |at| r - at);
-                        self.gesture = Some(Gesture::LightRadius { light: sel, grab, gesture: d.next_gesture() });
-                        return true;
-                    }
+                    let c = d.tile().world_position(sel);
+                    let grab = light_plane_distance(c, o, dir).map_or(0.0, |at| r - at);
+                    self.gesture = Some(Gesture::LightRadius { light: sel, grab, gesture: d.next_gesture() });
+                    return true;
                 }
 
                 // A civilian shelter's target handle starts a drag of the target over the ground.
                 if let (Some((o, dir)), Some(sel)) = (ray, sel)
                     && let Some(k) = d.tile().shelter_target(sel)
+                    && handle_under_ray(Float3::new(k.x, k.y + 0.3, k.z), o, dir).is_some()
                 {
-                    let k = Float3::new(k.x, k.y + 0.3, k.z);
-                    let t = dot(k - o, dir);
-                    if t > 0.0 && length(k - (o + dir * t)) < 1.2f32.max(t * 0.015) {
-                        self.gesture = Some(Gesture::ShelterTarget { shelter: sel, gesture: d.next_gesture() });
-                        return true;
-                    }
+                    self.gesture = Some(Gesture::ShelterTarget { shelter: sel, gesture: d.next_gesture() });
+                    return true;
                 }
 
                 // A polygon point handle starts a drag, shift + click near an edge inserts a point.
                 let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
                 let pts = d.tile().polygon_display_points(sel);
                 let spline = d.is_spline(sel);
-                let near = |c: Float3| {
-                    let t = dot(c - o, dir);
-                    (t > 0.0 && length(c - (o + dir * t)) < 1.2f32.max(t * 0.015)).then_some(t)
-                };
+                let near = |c: Float3| handle_under_ray(c, o, dir);
 
                 // A spline's handles (drawn at their point's height) before its points; the procedural roads' and walls' too.
                 if d.has_handles(sel) {
@@ -4757,21 +4739,7 @@ impl Tool for TileTool {
                     }
                 }
 
-                let mut best = None;
-                let mut best_t = 1e30f32;
-                for (i, &c) in pts.iter().enumerate() {
-                    let t = dot(c - o, dir);
-                    if t <= 0.0 {
-                        continue;
-                    }
-
-                    let perp = length(c - (o + dir * t));
-                    if perp < 1.2f32.max(t * 0.015) && t < best_t {
-                        best_t = t;
-                        best = Some(i);
-                    }
-                }
-
+                let best = nearest_handle(pts.iter().copied(), o, dir);
                 if best.is_some() {
                     self.poly_point = best;
                     self.gesture = Some(Gesture::Point { handle: None, gesture: d.next_gesture() });
@@ -5398,6 +5366,27 @@ pub fn wall_summary(l: &WallLayout) -> String {
 /// Half the width of the line being drawn (`tool_overlay`): thinner than the finished edges (0.3).
 const DRAWING_HALF: f32 = 0.2;
 
+/// How far along the ray (`o`, the unit `dir`) a handle at `c` is when the ray passes over it: within 1.2 m of it, or 1.5 % of the
+/// distance farther out (handles are drawn the same size on screen). `None` behind the camera or beside the handle.
+fn handle_under_ray(c: Float3, o: Float3, dir: Float3) -> Option<f32> {
+    let t = dot(c - o, dir);
+    (t > 0.0 && length(c - (o + dir * t)) < 1.2f32.max(t * 0.015)).then_some(t)
+}
+
+/// The nearest of `handles` under the ray (`handle_under_ray`): its index (the first of equally near ones).
+fn nearest_handle(handles: impl IntoIterator<Item = Float3>, o: Float3, dir: Float3) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
+    for (i, c) in handles.into_iter().enumerate() {
+        if let Some(t) = handle_under_ray(c, o, dir)
+            && best.is_none_or(|(_, b)| t < b)
+        {
+            best = Some((i, t));
+        }
+    }
+
+    best.map(|(i, _)| i)
+}
+
 fn light_plane_distance(c: Float3, o: Float3, dir: Float3) -> Option<f32> {
     if dir.y.abs() < 1e-4 {
         return None;
@@ -5469,5 +5458,20 @@ mod snap_tests {
         assert!((s.m[0][3] - 3.0).abs() < 1e-5 && (s.m[2][3] - 4.0).abs() < 1e-5, "turned about its own position");
         let s = snap_heading(m, 15.0, 1.0);
         assert!((s.m[0][2].atan2(s.m[2][2]).to_degrees() - 47.0).abs() < 1e-3);
+    }
+
+    /// A handle is under the ray within 1.2 m up close and 1.5 % of the distance far out, never behind the camera; the nearest of several
+    /// wins.
+    #[test]
+    fn handles_under_the_ray() {
+        use super::{Float3, handle_under_ray, nearest_handle};
+        let (o, dir) = (Float3::new(0.0, 0.0, 0.0), Float3::new(0.0, 0.0, 1.0));
+        assert_eq!(handle_under_ray(Float3::new(1.0, 0.0, 10.0), o, dir), Some(10.0));
+        assert_eq!(handle_under_ray(Float3::new(1.3, 0.0, 10.0), o, dir), None);
+        assert_eq!(handle_under_ray(Float3::new(2.9, 0.0, 200.0), o, dir), Some(200.0));
+        assert_eq!(handle_under_ray(Float3::new(0.0, 0.0, -5.0), o, dir), None);
+        let handles = [Float3::new(5.0, 0.0, 10.0), Float3::new(0.5, 0.0, 30.0), Float3::new(0.0, 0.5, 20.0), Float3::new(0.0, 0.0, 20.0)];
+        assert_eq!(nearest_handle(handles, o, dir), Some(2));
+        assert_eq!(nearest_handle([], o, dir), None);
     }
 }
