@@ -2119,6 +2119,10 @@ impl Tool for TerrainTool {
         }
     }
 
+    fn open_gesture(&self) -> Option<&'static str> {
+        (self.painting.is_some() || self.cells.stroke_open()).then_some("the brush stroke")
+    }
+
     fn claims_left_button(&self, _: &Editor) -> bool {
         self.paint.on || self.cells.on || self.explicit.placing || self.terry.claims_left_button() || self.placements.claims()
     }

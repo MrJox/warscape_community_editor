@@ -2358,6 +2358,10 @@ impl Tool for UiTool {
         "loose/ui"
     }
 
+    fn open_gesture(&self) -> Option<&'static str> {
+        self.drag.is_some().then_some("the drag")
+    }
+
     fn game_settings_fields(&self) -> &'static [&'static str] {
         crate::settings::GAME_FIELDS
     }

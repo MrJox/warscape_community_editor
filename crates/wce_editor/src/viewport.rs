@@ -112,7 +112,7 @@ pub struct Viewport {
     trace_w: u32,
     trace_h: u32,
     trace_n: u32,
-    gizmo_was_using: bool,
+    pub(crate) gizmo_was_using: bool,
 
     /// A drag of the gizmo that began off its handles (`gizmo_reach`): where it is shown the mouse, from the mouse.
     gizmo_offset: Option<[f32; 2]>,

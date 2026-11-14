@@ -727,6 +727,15 @@ impl Editor {
         self.with_tool_at(self.active_tool, f)
     }
 
+    /// The edit under way that undo and redo wait for: a drag of the gizmo, or the active tool's gesture ([`Tool::open_gesture`]).
+    pub fn open_gesture(&self) -> Option<&'static str> {
+        if self.viewport.gizmo_was_using {
+            return Some("the gizmo drag");
+        }
+
+        self.tools.get(self.active_tool)?.as_ref()?.open_gesture()
+    }
+
     pub fn active_tool_id(&self) -> &str {
         self.tool_info.get(self.active_tool).map_or("", |t| t.id.as_str())
     }
@@ -1856,12 +1865,17 @@ impl Editor {
                 }
             }
 
-            if pressed("undo", true) {
-                let _ = CommandRegistry::run(self, "undo");
-            }
+            for what in ["undo", "redo"] {
+                if !pressed(what, true) {
+                    continue;
+                }
 
-            if pressed("redo", true) {
-                let _ = CommandRegistry::run(self, "redo");
+                match self.open_gesture() {
+                    Some(gesture) => self.status(&format!("No {what} during {gesture}: finish or cancel it first"), true),
+                    None => {
+                        let _ = CommandRegistry::run(self, what);
+                    }
+                }
             }
 
             // Not while the tool has the left button (placing, drawing, a brush): its keys are its own then.
@@ -2232,7 +2246,11 @@ impl Editor {
         }
 
         if gui::begin_menu("Edit") {
-            let h = self.docs.active().map(|d| (d.history().can_undo(), d.history().can_redo(), d.history().position()));
+            let h = self
+                .docs
+                .active()
+                .map(|d| (d.history().can_undo(), d.history().can_redo(), d.history().position()))
+                .filter(|_| self.open_gesture().is_none());
             let name = |i: usize| self.docs.active().map(|d| d.history().name(i)).unwrap_or_default();
             let undo = match h {
                 Some((true, _, p)) => format!("{}  Undo {}", icons::UNDO_2, name(p - 1)),

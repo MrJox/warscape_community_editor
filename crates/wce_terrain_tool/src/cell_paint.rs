@@ -105,6 +105,11 @@ fn palette(db: &TileDatabase, role: &LayerRole, used: &[Rgba]) -> Palette {
 }
 
 impl CellPaint {
+    /// A stroke is being painted (the button not released yet).
+    pub fn stroke_open(&self) -> bool {
+        self.painting.is_some()
+    }
+
     /// The section in the Terrain panel.
     pub fn draw_section(&mut self, e: &mut Editor, doc: DocumentId) {
         if !gui::collapsing_header("Cell layers", 0) {

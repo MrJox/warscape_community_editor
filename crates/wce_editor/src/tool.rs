@@ -246,6 +246,13 @@ pub trait Tool: Any {
         false
     }
 
+    /// The edit the tool has under way (a grab, a drag of a handle, a brush stroke), as the status line names it; `None` without one. Undo
+    /// and redo are refused meanwhile: the gesture's entries merge and it keeps where it began in the history and which items it moves, which
+    /// an undo under it would take apart.
+    fn open_gesture(&self) -> Option<&'static str> {
+        None
+    }
+
     /// True while the left mouse button belongs to the tool (a brush is active, a polygon is being drawn): Press always goes to the tool, the
     /// left button does not rotate the camera and a click does not select.
     fn claims_left_button(&self, editor: &Editor) -> bool {
