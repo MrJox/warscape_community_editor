@@ -219,8 +219,14 @@ reads it, with a warning, and Save writes that repaired text.
   time, own colours, the stage's weather. **Pins** force what a slot shows (the seed's, nothing, or an alternative), a mesh's tint and its
   `.texture_array` decal; by default the slots above the selected node show it (*Show the selection*), and *Isolate* draws only its parts.
   A pin changes only its node: each node draws from a generator of its own.
-- **Structure**: the tree (slots with their attach point and probability, meshes by their model, references by their file; double-click
-  opens one), with + Slot, + Mesh, + Reference, Copy, Up, Down, Delete. The **Inspector** edits the selected node: a mesh's model, decals
+- **Structure** (`structure.rs`, laid out as the Tile tool's Scene panel): one row per node, an arrow, its icon (the root, a slot, a mesh,
+  a group of slots, a reference), its name (a model's or a file's without the folder) and its details dimmed (attach point, probability,
+  tints, decal); at the right edge a warning for its problems (dimmed on a closed node with problems below) and what the preview shows (a
+  slot's eye: the seed's pick or nothing; an alternative's target: shown whatever the seed picks). A filter (slots, models, files), a toolbar
+  (+ Slot, + Mesh, + Reference, Duplicate, Move up, Move down, Delete), a context menu per row (with Expand / Collapse all below), rename
+  in place for a slot (F2, double-click; a new slot starts in it), the arrow keys, Delete, Ctrl+D, and drag and drop: a node among its
+  siblings (one undo entry), a definition from Unit files onto a slot (a reference to it). A double-click on a reference opens it. The
+  counts and the problems are at the bottom. The **Inspector** edits the selected node: a mesh's model, decals
   and imposter (with a filtered list of the packs' files), its colour mask, tints; a slot's name, attach point (the weapon bones and the
   points of the model above), probability; a reference's file; attributes the panel doesn't know as text.
 - **Problems**: files the packs don't have (models, decals and the textures of their arrays, references), masks and probabilities out of
@@ -231,7 +237,7 @@ reads it, with a warning, and Save writes that repaired text.
   `loose/db/<table>_tables/!wce_unit_tool`; they sort before the game's, so they are read first.
 - While the tool is active the other tools' layers are hidden (`Tool::deactivated` shows them again).
 - Script commands: `unit_preview`, `unit_seed`, `unit_select`, `unit_pin`, `unit_set`, `unit_edit`, `unit_play`, `unit_isolate`,
-  `unit_db`, `unit_export`, `unit_ready` (waits for the soldiers), `unit_summary`.
+  `unit_reorder`, `unit_db`, `unit_export`, `unit_ready` (waits for the soldiers), `unit_summary`.
 
 ## Cross-tool composition (Phase 7)
 

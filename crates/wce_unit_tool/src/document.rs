@@ -175,6 +175,11 @@ impl VmdDocument {
         if self.source.vfs_path.is_empty() { self.source.disk.clone() } else { self.loose_dir.join(&self.source.vfs_path) }
     }
 
+    /// The last `n` edits as one undo entry named `name` (a node dragged several places: one move each).
+    pub fn join_last(&mut self, n: usize, name: &str) {
+        self.history.join_last(n, name);
+    }
+
     /// Ends a drag's merging: the next edit is an undo entry of its own.
     pub fn break_merge(&mut self) {
         self.history.break_merge();
