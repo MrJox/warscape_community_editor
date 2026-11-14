@@ -7,9 +7,9 @@
 use std::path::{Path, PathBuf};
 
 use wce_editor::editor::Editor;
+use wce_editor::images::read_png_rgba8;
 use wce_editor::steam_detect::file_dialog;
 use wce_editor::{gui, theme};
-use wce_formats::png_file::PngFile;
 
 const KEY: &str = "weather_reference";
 
@@ -78,21 +78,14 @@ impl Reference {
     ///
     /// The file can't be read or is not such a PNG.
     pub(crate) fn load(&mut self, e: &mut Editor, path: &Path) -> Result<(), String> {
-        let bytes = std::fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
-        let png = PngFile::parse(&bytes).map_err(|err| format!("{}: {err:?}", path.display()))?;
-        let rgba = match (png.bit_depth, png.color_type) {
-            (8, 6) => png.pixels,
-            (8, 2) => png.pixels.as_chunks::<3>().0.iter().flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
-            (d, t) => return Err(format!("{}: a PNG of 8-bit RGB or RGBA is needed (this one: {d}-bit, colour type {t})", path.display())),
-        };
-
+        let (w, h, rgba) = read_png_rgba8(path)?;
         if self.made {
             e.images.forget(KEY);
         }
 
-        e.images.submit(KEY, png.width, png.height, rgba.clone());
+        e.images.submit(KEY, w, h, rgba.clone());
         self.made = true;
-        self.image = Some((png.width, png.height, rgba));
+        self.image = Some((w, h, rgba));
         self.path = path.display().to_string();
         self.pick = None;
         if self.show == Show::Off {

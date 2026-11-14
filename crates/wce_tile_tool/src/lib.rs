@@ -31,6 +31,7 @@ pub mod placement_modes;
 pub mod prefab_panel;
 pub mod prefab_tool;
 mod ref_units;
+mod reference_image;
 mod resize_tile;
 mod save_tile_as;
 pub mod scene_panel;

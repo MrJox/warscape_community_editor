@@ -611,6 +611,9 @@ pub struct TileTool {
     /// The Minimap panel.
     pub(crate) minimap: crate::minimap_panel::MinimapUi,
 
+    /// The reference image laid over the tile (reference_image.rs).
+    pub(crate) reference: crate::reference_image::ReferenceUi,
+
     /// The Map context section (the tiles around the open one).
     pub(crate) context: crate::context_panel::ContextUi,
 
@@ -932,6 +935,7 @@ impl Default for TileTool {
             workspaces: HashSet::new(),
             weather: Default::default(),
             minimap: Default::default(),
+            reference: Default::default(),
             context: Default::default(),
             exported_game: None,
             game_preload: None,
@@ -2531,6 +2535,14 @@ impl TileTool {
         true
     }
 
+    /// Tile > Screenshot: the viewport's picture into the screenshot folder; says where on the status line.
+    fn screenshot(&mut self, e: &mut Editor) {
+        match crate::reference_image::save_screenshot(e, None) {
+            Ok(p) => e.status(&format!("screenshot saved: {}", p.display()), false),
+            Err(m) => e.status(&format!("screenshot failed: {m}"), true),
+        }
+    }
+
     fn handle_keys(&mut self, e: &mut Editor) {
         use wce_editor::shortcuts::pressed;
         let io = gui::io();
@@ -2539,6 +2551,10 @@ impl TileTool {
         }
 
         let sel = primary(e);
+        if pressed("tile.screenshot", false) {
+            self.screenshot(e);
+        }
+
         if pressed("tile.cancel", false) {
             if self.flip.take().is_some() {
                 self.status = "flip left".to_owned();
@@ -2735,6 +2751,8 @@ impl TileTool {
         self.draw_entry_section(e, id);
         self.prepare_neighbours(e);
         self.context.draw(e, id);
+        gui::separator();
+        self.reference.draw_section(e);
         gui::separator();
         self.draw_layers_section(e, id);
         gui::separator();
@@ -3862,6 +3880,7 @@ const SHORTCUTS: &[wce_editor::shortcuts::Action] = {
         a("tile.paste", "Tile", "Paste at the mouse", &["Ctrl+V"]),
         a("tile.paste_in_place", "Tile", "Paste in place", &["Ctrl+Shift+V"]),
         a("tile.quick_add", "Tile", "Add here... (the quick-add popup)", &["Space"]),
+        a("tile.screenshot", "Tile", "Screenshot of the viewport", &["F12"]),
         a("tile.turn_placing", "Tile: placing and drawing", "Turn what is placed", &["R"]),
         a("tile.turn_placing_back", "Tile: placing and drawing", "Turn what is placed back", &["Shift+R"]),
         a(
@@ -4299,6 +4318,12 @@ impl Tool for TileTool {
             gui::set_tooltip("A tile opens with the VFXInstance markers drawn; the effects play either way.");
         }
         settings_window::help("What a tile shows when it opens; the Tile panel and the Tile menu change the open tile.");
+
+        gui::separator_text("Screenshots");
+        settings_window::folder_field("Folder", &mut s.screenshot_folder, &draft.projects_dir().join("screenshots").display().to_string());
+        settings_window::help(
+            "Where Tile > Screenshot saves the viewport's picture, named after the tile and numbered; empty: the projects folder's screenshots.",
+        );
 
         gui::separator_text("Launch in game");
         settings_window::label("Delivery");
@@ -4746,6 +4771,18 @@ impl Tool for TileTool {
         }
 
         gui::separator();
+        if gui::menu_item("Screenshot", wce_editor::shortcuts::label("tile.screenshot").as_deref(), false, document(e).is_some()) {
+            self.screenshot(e);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&format!(
+                "Saves the viewport's picture (the render, without the chips over it) as a PNG named after the tile in {} (Settings > Tile).",
+                crate::reference_image::screenshot_folder(e).display()
+            ));
+        }
+
+        gui::separator();
         if gui::menu_item("Generate SiegeAI", None, false, document(e).is_some()) {
             self.generate_siege_ai(e);
         }
@@ -4954,6 +4991,9 @@ impl Tool for TileTool {
         if document(e).is_none() || size.x < 200.0 {
             return;
         }
+
+        // The reference image under everything else drawn over the image.
+        self.reference.draw_overlay(e, origin, size);
 
         // The weather chips at the top left of the image, beside the compass (under it when the image is too narrow for both).
         let compass_left = origin.x + size.x * 0.5 - (size.x - 16.0).min(360.0) * 0.5;

@@ -96,6 +96,12 @@ pub struct TileSettings {
     /// Each tile's saved camera views (bookmarks), by the tile's folder (lower case, `/` separators).
     pub camera_views: BTreeMap<String, Vec<CameraView>>,
 
+    /// Each tile's reference image (a plan or a picture to lay a city out over), by the tile's folder (lower case, `/` separators).
+    pub reference_images: BTreeMap<String, ReferenceImage>,
+
+    /// Where Tile > Screenshot saves the viewport's picture; none: `<projects folder>/screenshots`.
+    pub screenshot_folder: Option<std::path::PathBuf>,
+
     /// Launch in game (`launch.rs`): the battle the game starts into, and its armies (the game's).
     pub launch: LaunchSettings,
     pub launch_army: LaunchArmy,
@@ -227,6 +233,42 @@ pub struct CameraView {
     pub target: [f32; 3],
 }
 
+/// How a tile's reference image is shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceShow {
+    /// Not shown.
+    #[default]
+    Off,
+
+    /// Over the viewport, fitted to it keeping its proportions (it does not follow the camera).
+    Screen,
+
+    /// Laid on the tile's ground from above, in metres (it moves with the world).
+    Ground,
+}
+
+/// A tile's reference image: the PNG, how it is shown and where it lies on the ground.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ReferenceImage {
+    pub path: String,
+    pub show: ReferenceShow,
+    pub opacity: f32,
+
+    /// On the ground: the picture's centre (world metres, x and z), its width (metres; the height follows its proportions) and its turn
+    /// (degrees, clockwise seen from above).
+    pub centre: [f32; 2],
+    pub width: f32,
+    pub rotation: f32,
+}
+
+impl Default for ReferenceImage {
+    fn default() -> Self {
+        Self { path: String::new(), show: ReferenceShow::Off, opacity: 0.5, centre: [0.0, 0.0], width: 0.0, rotation: 0.0 }
+    }
+}
+
 impl Default for TileSettings {
     fn default() -> Self {
         Self {
@@ -250,6 +292,8 @@ impl Default for TileSettings {
             brush_curve: BrushCurve::default(),
             brush_image: ImageBrush::default(),
             camera_views: BTreeMap::new(),
+            reference_images: BTreeMap::new(),
+            screenshot_folder: None,
             mod_packs: BTreeMap::new(),
             launch: LaunchSettings::default(),
             launch_army: LaunchArmy::default(),

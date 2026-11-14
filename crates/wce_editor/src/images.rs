@@ -168,3 +168,20 @@ impl ImageTextures {
         }
     }
 }
+
+/// Reads a PNG of 8-bit RGB or RGBA as RGBA rows (width, height, pixels; top row first): a reference picture to show over a viewport.
+///
+/// # Errors
+///
+/// The file can't be read or is not such a PNG.
+pub fn read_png_rgba8(path: &std::path::Path) -> Result<(u32, u32, Vec<u8>), String> {
+    let bytes = std::fs::read(path).map_err(|err| format!("{}: {err}", path.display()))?;
+    let png = wce_formats::png_file::PngFile::parse(&bytes).map_err(|err| format!("{}: {err:?}", path.display()))?;
+    let rgba = match (png.bit_depth, png.color_type) {
+        (8, 6) => png.pixels,
+        (8, 2) => png.pixels.as_chunks::<3>().0.iter().flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
+        (d, t) => return Err(format!("{}: a PNG of 8-bit RGB or RGBA is needed (this one: {d}-bit, colour type {t})", path.display())),
+    };
+
+    Ok((png.width, png.height, rgba))
+}
