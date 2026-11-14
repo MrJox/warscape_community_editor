@@ -777,17 +777,27 @@ impl Line {
         ([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t], (b[1] - a[1]).atan2(b[0] - a[0]))
     }
 
-    /// The nearest point to `p`: its distance along, its distance from the line, and the line's way there (radians).
-    fn nearest(&self, p: [f64; 2]) -> (f64, f64, f64) {
-        let mut best = (0.0, f64::MAX, 0.0);
+    /// The nearest point to `p` between `lo` and `hi` along: its distance along, its distance from the line, and the line's way there
+    /// (radians). Pieces are followed along a window around where the wall has got to, not over the whole line: where the line comes back
+    /// near itself (a closed ring, a U whose legs are close) the nearest point anywhere may be a part already laid or still to come.
+    fn nearest_in(&self, p: [f64; 2], lo: f64, hi: f64) -> (f64, f64, f64) {
+        let (lo, hi) = (lo.max(0.0), hi.min(self.length()).max(lo.max(0.0)));
+        let mut best = (lo, f64::MAX, 0.0);
         for (i, w) in self.pts.windows(2).enumerate() {
+            let (s0, s1) = (self.s[i], self.s[i + 1]);
+            if s1 < lo || s0 > hi {
+                continue;
+            }
+
             let (a, b) = (w[0], w[1]);
             let (dx, dz) = (b[0] - a[0], b[1] - a[1]);
+            let len = s1 - s0;
             let len2 = dx * dx + dz * dz;
-            let t = if len2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            let (t0, t1) = if len > 0.0 { (((lo - s0) / len).clamp(0.0, 1.0), ((hi - s0) / len).clamp(0.0, 1.0)) } else { (0.0, 0.0) };
+            let t = if len2 > 0.0 { (((p[0] - a[0]) * dx + (p[1] - a[1]) * dz) / len2).clamp(t0, t1) } else { 0.0 };
             let d = (p[0] - a[0] - dx * t).hypot(p[1] - a[1] - dz * t);
             if d < best.1 {
-                best = (self.s[i] + t * len2.sqrt(), d, dz.atan2(dx));
+                best = (s0 + t * len, d, dz.atan2(dx));
             }
         }
 
@@ -833,13 +843,16 @@ const AHEAD: usize = 3;
 const PIECE_COST: f64 = 1.5;
 const LENGTH_WORTH: f64 = 0.1;
 
+/// How far along past where it starts a piece's end is looked for on the line (in its spans): further than any piece goes along it.
+const FOLLOW_REACH: f64 = 3.0;
+
 /// How far a heading off the line's counts, in scene units a radian.
 const HEADING_WEIGHT: f64 = 12.0;
 
 /// How well a joint at `p` going `heading` follows the line past `s_from` (a piece of `span` must go forward a quarter of itself), and
 /// where along the line it is. `None` when it went back.
 fn fit(line: &Line, p: [f64; 2], heading: f64, s_from: f64, span: f64) -> Option<(f64, f64)> {
-    let (at, d, way) = line.nearest(p);
+    let (at, d, way) = line.nearest_in(p, s_from - span, s_from + span * FOLLOW_REACH);
     if at < s_from + span * 0.25 {
         return None;
     }
@@ -1210,9 +1223,9 @@ fn lay_from(line: &[[f64; 2]], cat: &Catalogue, options: &LayOptions, right: boo
         entries.push(w.entry_edges.clone());
         (p, heading) = (q, h);
         edges.clone_from(&w.exit_edges);
-        let (s, d, _) = line.nearest(p);
+        let (s, d, _) = line.nearest_in(p, at - f64::from(w.span), at + f64::from(w.span) * FOLLOW_REACH);
         out.stray = out.stray.max(d);
-        at = s;
+        at = s.max(at);
     }
 
     // The last end on its building: met by the pieces, else a stretch from the last of them (taken back while it came too near, or ends
@@ -1366,6 +1379,25 @@ mod tests {
         assert!(laid.stray < 1e-6 && laid.short_by < 1e-6, "{} {}", laid.stray, laid.short_by);
         // A piece's frame: its first joint at -10 along its x, so its origin is 10 along the wall.
         assert!((laid.placed[0].origin[0] - 10.0).abs() < 1e-9 && laid.placed[0].yaw.abs() < 1e-9, "{:?}", laid.placed[0]);
+    }
+
+    #[test]
+    fn a_closed_ring_is_laid_once_around() {
+        // 400 m round, back to its start: about twenty 20 m pieces and its corners, not laid round and round (the pieces' end near the
+        // start was taken for the start).
+        let ring = [[0.0, 0.0], [100.0, 0.0], [100.0, -100.0], [0.0, -100.0], [0.0, 0.0]];
+        let laid = lay(&ring, &culture(), LayOptions::default());
+        let n = laid.placed.len();
+        assert!((15..=30).contains(&n), "{n} pieces: {:?}", laid.placed.iter().map(|p| &p.key).collect::<Vec<_>>());
+        assert!(laid.stray < 12.0, "{}", laid.stray);
+
+        // Round all four sides, a corner at each of the line's three (the near end was not taken for the start: no piece turned in short
+        // of it), its last joint by the start.
+        let keys = laid.placed.iter().map(|p| p.key.as_str()).collect::<Vec<_>>();
+        assert_eq!(keys.iter().filter(|k| **k == "x_fort_external_corner").count(), 3, "{keys:?}");
+        assert!(!keys.contains(&"x_fort_internal_corner"), "{keys:?}");
+        let last = laid.placed[n - 1].joints[1];
+        assert!(last[0].hypot(last[1]) < 20.0, "ends at {last:?}");
     }
 
     #[test]
