@@ -37,6 +37,9 @@ pub struct ContextUi {
     /// tile's folder in it (`workflow::neighbour_tile`). See [`Self::raw_of`].
     pub neighbours: Option<(PathBuf, TileProvider)>,
 
+    /// What `neighbours` was made for: the mount of the game's files (`Files::mount_id`) and the kits (`tool::kit_raws`).
+    pub neighbours_for: (u64, Vec<PathBuf>),
+
     /// For a game whose kit has tiles: the packs' tiles, for a placement whose tile no kit has (`TileTool::prepare_neighbours`), and their
     /// tree (whose tile database reads the game's battle maps: a mod's map names the mod's tiles).
     pub packs_fallback: Option<TileProvider>,
@@ -92,7 +95,8 @@ pub struct ContextUi {
     /// The variation of the open tile the map has, when it hasn't the open one (`find_placements`): looking for it goes over the whole map,
     /// too slow for each frame the section shows.
     placed_variation: Option<String>,
-    maps_for: PathBuf,
+    /// What the map list was made from: the `raw_data` folders (`map_roots`) and the mount of the game's files (`Files::mount_id`).
+    maps_for: (Vec<PathBuf>, u64),
 
     /// The season's snow where the map has it (its `snow_map_<season>.png`), how much.
     pub snow_on: bool,
@@ -106,6 +110,7 @@ impl Default for ContextUi {
             neighbours: None,
             packs_fallback: None,
             packs_tree: None,
+            neighbours_for: (0, vec![]),
             tile_roots: vec![],
             tile_roots_time: None,
             shown: false,
@@ -132,7 +137,7 @@ impl Default for ContextUi {
             build: 0,
             build_look: None,
             db: None,
-            maps_for: PathBuf::new(),
+            maps_for: (vec![], 0),
             snow_on: true,
             snow_amount: 1.0,
         }
@@ -158,19 +163,40 @@ pub(crate) fn database(ui: &mut ContextUi, raw: &Path) -> Result<Arc<TileDatabas
 }
 
 impl ContextUi {
-    /// The maps to choose from for a kit.
+    /// The `raw_data` folders kit maps are looked for in: the tile's own, then the tile roots (the projects', then the kits' in the
+    /// settings' order); a map's name from the first that has it.
+    pub(crate) fn map_roots(&self, raw: &Path) -> Vec<PathBuf> {
+        let mut roots = vec![raw.to_path_buf()];
+        roots.extend(self.tile_roots.iter().filter(|r| r.as_path() != raw).cloned());
+        roots
+    }
+
+    /// The `raw_data` folder a kit map is read from: the first of `map_roots` that has it (`raw` for a map of the packs).
+    pub(crate) fn map_raw(&self, raw: &Path, name: &str) -> PathBuf {
+        self.map_roots(raw).into_iter().find(|r| r.join("terrain/battles").join(name).is_dir()).unwrap_or_else(|| raw.to_path_buf())
+    }
+
+    /// The maps to choose from: the packs' battle maps, then every kit's (a tile of the projects is not in a kit with maps).
     pub fn refresh_maps(&mut self, raw: &Path, files: Option<&dyn Files>) {
-        if self.maps_for == raw && !self.maps.is_empty() {
+        let key = (self.map_roots(raw), files.map_or(0, Files::mount_id));
+        if self.maps_for == key && !self.maps.is_empty() {
             return;
         }
 
-        self.maps_for = raw.to_path_buf();
         self.maps.clear();
         if let Some(f) = files {
             self.maps.extend(game_maps(f, self.game_dir, false));
         }
 
-        self.maps.extend(kit_maps(raw));
+        for root in &key.0 {
+            for m in kit_maps(root) {
+                if !self.maps.contains(&m) {
+                    self.maps.push(m);
+                }
+            }
+        }
+
+        self.maps_for = key;
         self.map = self.map.clamp(0, (self.maps.len() as i32 - 1).max(0));
     }
 
@@ -186,7 +212,7 @@ impl ContextUi {
         };
 
         let (tx, rx) = channel();
-        let raw = raw.to_path_buf();
+        let raw = self.map_raw(raw, &name);
         let game_dir = self.game_dir;
         let packs = self.packs_tree.clone().filter(|_| game_map_folder(&name, game_dir).is_some());
         self.busy = format!("reading {name}...");

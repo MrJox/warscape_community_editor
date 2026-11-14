@@ -963,50 +963,56 @@ pub fn rmv2(
     o
 }
 
-/// The records of a kit table (`raw_data/db/<table>.xml`): per record its fields, in order.
-fn kit_table(raw_data: &std::path::Path, name: &str) -> Vec<Vec<(String, String)>> {
-    let text = std::fs::read_to_string(raw_data.join("db").join(format!("{name}.xml"))).unwrap_or_default();
-    let open = format!("<{name} ");
-    text.split(&open)
-        .skip(1)
-        .map(|rec| {
+/// The records of a kit table (`raw_data/db/<table>.xml`) over the `roots` (`raw_data` folders, `wce_tile::sources` order): per record its
+/// fields, in order; a key's record from the first root that has it (a project's or a mod kit's row in place of a later kit's).
+fn kit_table(roots: &[std::path::PathBuf], name: &str) -> Vec<Vec<(String, String)>> {
+    let mut keys = std::collections::HashSet::new();
+    let mut out = vec![];
+    for root in roots {
+        let text = std::fs::read_to_string(root.join("db").join(format!("{name}.xml"))).unwrap_or_default();
+        let open = format!("<{name} ");
+        for rec in text.split(&open).skip(1) {
             let rec = rec.split(&format!("</{name}>")).next().unwrap_or_default();
-            rec.split('<')
+            let fields: Vec<(String, String)> = rec
+                .split('<')
                 .filter_map(|t| {
                     let (tag, value) = t.split_once('>')?;
                     (!tag.starts_with('/') && !tag.contains(' ')).then(|| (tag.to_owned(), value.to_owned()))
                 })
-                .collect()
-        })
-        .collect()
+                .collect();
+            let key = fields.iter().find(|(f, _)| f == "key").map(|(_, v)| v.clone());
+            if key.is_none_or(|k| keys.insert(k)) {
+                out.push(fields);
+            }
+        }
+    }
+
+    out
 }
 
-/// A file of the kit by its path below `raw_data`, whatever the case of its name (BOB runs on Windows).
-fn kit_file(raw_data: &std::path::Path, rel: &str) -> Option<std::path::PathBuf> {
-    let p = raw_data.join(rel.replace('\\', "/"));
-    let name = p.file_name()?.to_str()?.to_lowercase();
-    std::fs::read_dir(p.parent()?)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .find(|e| e.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.to_lowercase() == name))
+/// The tile database's battle `_settings.xml` of the first of `roots` that has it.
+fn battle_settings(roots: &[std::path::PathBuf]) -> String {
+    wce_tile::sources::first_file(roots, "terrain/tiles/battle/_tile_database/_settings.xml")
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default()
 }
 
 /// A building's height mesh and its [`stamp_matrix`].
 pub type Stamp = (std::sync::Arc<HeightMesh>, [f32; 16]);
 
 /// The height-mesh stamps of a project's buildings (BOB_Tile `FUN_1000bb10`): each `BUILDING_INSTANCE` whose `battlefield_buildings`
-/// row has `height_map_mesh` 1, its [`HeightMesh`] from `models_building.cs2_file` under the kit's `raw_data`, and its
-/// [`stamp_matrix`]. The keys without a mesh file come back apart (BOB fails the tile: "Height map mesh file ... is missing").
-pub fn building_stamps(raw: &wce_tile_model::Tile, raw_data: &std::path::Path) -> (Vec<Stamp>, Vec<String>) {
+/// row has `height_map_mesh` 1, its [`HeightMesh`] from `models_building.cs2_file` in the first of `roots` (`raw_data` folders, the
+/// projects' then the kits') that has it, and its [`stamp_matrix`]. The keys without a mesh file come back apart (BOB fails the tile:
+/// "Height map mesh file ... is missing").
+pub fn building_stamps(raw: &wce_tile_model::Tile, roots: &[std::path::PathBuf]) -> (Vec<Stamp>, Vec<String>) {
     wce_foundation::wce_prof!("stage_b.building_stamps");
     let get = |r: &Vec<(String, String)>, k: &str| r.iter().find(|(f, _)| f == k).map(|(_, v)| v.clone()).unwrap_or_default();
-    let with_mesh = kit_table(raw_data, "battlefield_buildings")
+    let with_mesh = kit_table(roots, "battlefield_buildings")
         .iter()
         .filter(|r| get(r, "height_map_mesh") == "1")
         .map(|r| get(r, "key"))
         .collect::<std::collections::HashSet<_>>();
-    let cs2 = kit_table(raw_data, "models_building")
+    let cs2 = kit_table(roots, "models_building")
         .iter()
         .map(|r| (get(r, "key"), get(r, "cs2_file")))
         .collect::<std::collections::HashMap<_, _>>();
@@ -1018,7 +1024,7 @@ pub fn building_stamps(raw: &wce_tile_model::Tile, raw_data: &std::path::Path) -
         }
 
         let mesh = meshes.entry(key.clone()).or_insert_with(|| {
-            let path = cs2.get(&key).and_then(|c| kit_file(raw_data, c))?;
+            let path = cs2.get(&key).and_then(|c| wce_tile::sources::first_file(roots, c))?;
             let f = wce_formats::cas2::Cas2File::parse(&std::fs::read(path).ok()?).ok()?;
             Some(std::sync::Arc::new(HeightMesh::of(&f)))
         });
@@ -1034,9 +1040,9 @@ pub fn building_stamps(raw: &wce_tile_model::Tile, raw_data: &std::path::Path) -
 
 /// The decimation angle of the kit's battle tiles (`_tile_database/_settings.xml`, `CONVERSION_PARAMS`
 /// `triangle_decimation_angle_factors0`; 20 degrees in the vanilla kit and when missing).
-pub fn decimation_angle(raw_data: &std::path::Path) -> f32 {
-    let text = std::fs::read_to_string(raw_data.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
-    text.split("triangle_decimation_angle_factors0=\"")
+pub fn decimation_angle(roots: &[std::path::PathBuf]) -> f32 {
+    battle_settings(roots)
+        .split("triangle_decimation_angle_factors0=\"")
         .nth(1)
         .and_then(|t| t.split('"').next())
         .and_then(|v| v.parse().ok())
@@ -1044,9 +1050,9 @@ pub fn decimation_angle(raw_data: &std::path::Path) -> f32 {
 }
 
 /// The kit's tile sets' linking tiles (`_settings.xml`'s `TILE_SET` `name` and `linking_tile`), for [`super::bob_tile::InfluenceLinks`].
-pub fn linking_tiles(raw_data: &std::path::Path) -> std::collections::HashMap<String, String> {
+pub fn linking_tiles(roots: &[std::path::PathBuf]) -> std::collections::HashMap<String, String> {
     wce_foundation::wce_prof!("stage_b.linking_tiles");
-    let text = std::fs::read_to_string(raw_data.join("terrain/tiles/battle/_tile_database/_settings.xml")).unwrap_or_default();
+    let text = battle_settings(roots);
     let attr = |t: &str, k: &str| t.split(&format!(" {k}=\"")).nth(1).and_then(|v| v.split('"').next()).map(str::to_owned);
     text.split("<TILE_SET ").skip(1).filter_map(|t| Some((attr(t, "name")?, attr(t, "linking_tile")?))).collect()
 }
@@ -1084,11 +1090,11 @@ impl WaterFields {
 /// As [`terrain_files`].
 pub fn water_fields(
     raw: &wce_tile_model::Tile,
-    raw_data: &std::path::Path,
+    roots: &[std::path::PathBuf],
     models: &dyn Fn(&str) -> Option<Vec<u8>>,
 ) -> Result<WaterFields, String> {
     use super::bob_tile::{HeightNumbers, InfluenceLinks, final_heights};
-    let linking = linking_tiles(raw_data);
+    let linking = linking_tiles(roots);
     let links = &InfluenceLinks::of(raw, &linking);
     let hm = raw.map(wce_tile_model::MapKind::Height, 0).ok_or("the project has no height map")?;
     let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err("the height map is not 16 bit".into()) };
@@ -1099,7 +1105,7 @@ pub fn water_fields(
     }
 
     let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &n, links)?;
-    super::tile_links::blend_links(raw, raw_data, &linking, &mut heights, w, h)?;
+    super::tile_links::blend_links(raw, roots, &linking, &mut heights, w, h)?;
     let river = super::river::tessellate(&super::river::river_splines(raw, (h - 1) / t), super::river::RiverFormat::Attila);
     let planes = super::compile::water_planes(raw);
     let water = (!river.triangles.is_empty() || !planes.is_empty()).then(|| {
@@ -1120,7 +1126,7 @@ pub fn water_fields(
 /// Stage B's terrain files of a battle tile (BOB's `process_tile_internal`): `outfield_mesh.rigid_model_v2`, `mesh.rigid_model_v2`,
 /// `hf_height_map.data` (the infield mesh rasterised, the stamps raised into it) and `terrain_outlines.xml`, from the project's height map, the variation's
 /// numbers, its tile links (the height influence joins them, [`super::tile_links::blend_links`] eases the heights into the linking
-/// tiles', under the kit's `raw_data`) and `protection_map.dds`; with a river (its block in both meshes) or water planes,
+/// tiles', in the first of `roots` that has them) and `protection_map.dds`; with a river (its block in both meshes) or water planes,
 /// `hf_water_map.data`. `models` gives a model's bytes by its key (BOB's VFS: the game's packs) for the water planes; `river_format`
 /// the game's river block.
 ///
@@ -1129,14 +1135,14 @@ pub fn water_fields(
 /// The project has no 16-bit height map, or a linking tile's heights are missing.
 pub fn terrain_files(
     raw: &wce_tile_model::Tile,
-    raw_data: &std::path::Path,
+    roots: &[std::path::PathBuf],
     angle: f32,
     stamps: &[Stamp],
     models: &dyn Fn(&str) -> Option<Vec<u8>>,
     river_format: super::river::RiverFormat,
 ) -> Result<Vec<(String, Vec<u8>)>, String> {
     use super::bob_tile::{CELL, HeightNumbers, InfluenceLinks, chmf, final_heights, influence};
-    let linking = linking_tiles(raw_data);
+    let linking = linking_tiles(roots);
     let links = &InfluenceLinks::of(raw, &linking);
     let hm = raw.map(wce_tile_model::MapKind::Height, 0).ok_or("the project has no height map")?;
     let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err("the height map is not 16 bit".into()) };
@@ -1148,7 +1154,7 @@ pub fn terrain_files(
         return Err(format!("raw_data_tri_density {t} does not divide 128"));
     }
     let (mut heights, w, h) = final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &n, links)?;
-    super::tile_links::blend_links(raw, raw_data, &linking, &mut heights, w, h)?;
+    super::tile_links::blend_links(raw, roots, &linking, &mut heights, w, h)?;
     // BOB writes these two into the raw folder: the blended final heights and the influence (with the links).
     let mut out = vec![
         ("final_heights.dds".to_owned(), super::bob_tile::dds_r32f(&heights, w, h)),

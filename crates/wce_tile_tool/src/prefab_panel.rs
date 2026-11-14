@@ -140,10 +140,12 @@ impl TileTool {
     }
 
     /// The folders the library is read from: the projects' `raw_data/art/prefabs` (new prefabs go there), then `art/prefabs` of the open
-    /// tile's kit and of the kits the Tiles panel lists (the Assembly Kit).
+    /// tile's kit and of every Assembly Kit in the settings' order (`wce_tile::sources::kit_raw_roots`: a kit of prefabs alone, without
+    /// tiles, too), then any other the Tiles panel lists.
     pub(crate) fn prefab_folders(&self, e: &mut Editor) -> Vec<std::path::PathBuf> {
         let mut folders = vec![prefabs::prefab_root(&Self::workspace_dir(e).join("raw_data"))];
-        let mut kits = self.kit_roots(e);
+        let mut kits = wce_tile::sources::kit_raw_roots(e.settings_ref());
+        kits.extend(self.kit_roots(e));
         if let Some(raw) = document(e).and_then(|d| d.project().raw_root.clone()) {
             kits.insert(0, raw);
         }

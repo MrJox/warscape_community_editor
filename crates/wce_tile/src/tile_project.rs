@@ -250,8 +250,9 @@ pub struct TileProject {
     /// What the last save found about the references (each one that kept its contents: they differ from its prefab by more than values).
     pub prefab_notes: Vec<String>,
 
-    /// The game's Assembly Kit with the tiles (its folder): the vegetation and grass parameters come from it when the tile's own kit has
-    /// none (the projects' kit layout, where new tiles are, holds raw_data only), as the exports take theirs.
+    /// The kit (its folder) with the vegetation and grass parameters, the first of the sources that has them (`vegetation::params_kit`):
+    /// they come from it when the tile's own kit has none (the projects' kit layout, where new tiles are, holds raw_data only), as the
+    /// exports take theirs.
     pub game_kit: Option<PathBuf>,
 }
 
@@ -1454,7 +1455,7 @@ mod tests {
     /// A new tile (its entry in the projects) with one sample raised to `metres` (its range is 10 .. 60 m).
     fn edited_tile(raw: &std::path::Path, metres: f64) -> (super::TileProject, std::path::PathBuf, std::path::PathBuf) {
         let t = crate::new_tile::NewTile { name: "range_home".to_owned(), cells_x: 1, cells_y: 1, height: 10.0, density: 32, seed: 1 };
-        let dir = crate::new_tile::create(&t, raw, None).unwrap();
+        let dir = crate::new_tile::create(&t, raw, &[]).unwrap();
         let mut p = super::TileProject::open(&dir).unwrap();
         let field = p.height.as_mut().unwrap();
         field.begin_edit().unwrap();

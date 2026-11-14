@@ -158,12 +158,12 @@ pub fn clock_seed() -> u32 {
     ((ms % (1 << 32)) as u32 / 2).max(1)
 }
 
-/// Where a tile of that name already is, if it is anywhere: a project (its entry or its folder), the kit's raw_data or the kit's
-/// `working_data` (TEd's battlefields keep their entries in `_ak_bf_tile_database`).
-pub fn existing(name: &str, projects_raw: &Path, kit: Option<&Path>) -> Option<PathBuf> {
+/// Where a tile of that name already is, if it is anywhere: a project (its entry or its folder), a kit's raw_data or a kit's
+/// `working_data` (TEd's battlefields keep their entries in `_ak_bf_tile_database`), of every kit (`kits`: their folders).
+pub fn existing(name: &str, projects_raw: &Path, kits: &[PathBuf]) -> Option<PathBuf> {
     let probe = NewTile { name: name.to_owned(), cells_x: 1, cells_y: 1, height: 0.0, density: DEFAULT_DENSITY, seed: 0 };
     let mut places = vec![probe.entry_file(projects_raw), probe.folder(projects_raw).parent()?.to_path_buf()];
-    if let Some(kit) = kit {
+    for kit in kits {
         let raw = kit.join("raw_data");
         places.extend([probe.entry_file(&raw), probe.folder(&raw).parent()?.to_path_buf()]);
         places.push(kit.join("working_data/terrain/tiles/battle/_ak_bf_tile_database/TILES").join(format!("{TILE_SET}_{name}.xml")));
@@ -187,11 +187,11 @@ pub fn colours_in(tiles_dirs: &[PathBuf]) -> HashSet<[u8; 3]> {
     colours
 }
 
-/// The `TILES` folders whose colours a new tile's must differ from: the projects' and the kit's battle tiles (raw_data and TEd's
+/// The `TILES` folders whose colours a new tile's must differ from: the projects' and every kit's battle tiles (raw_data and TEd's
 /// battlefields in working_data).
-pub fn colour_sources(projects_raw: &Path, kit: Option<&Path>) -> Vec<PathBuf> {
+pub fn colour_sources(projects_raw: &Path, kits: &[PathBuf]) -> Vec<PathBuf> {
     let mut dirs = vec![tiles_dir(projects_raw)];
-    if let Some(kit) = kit {
+    for kit in kits {
         dirs.push(tiles_dir(&kit.join("raw_data")));
         dirs.push(kit.join("working_data/terrain/tiles/battle/_ak_bf_tile_database/TILES"));
     }
@@ -284,9 +284,11 @@ pub fn scene_text(t: &NewTile) -> String {
 /// # Errors
 ///
 /// The values are out of the dialog's limits, the tile exists, or a file can't be written.
-pub fn create(t: &NewTile, projects_raw: &Path, kit: Option<&Path>) -> Result<PathBuf, String> {
+pub fn create(t: &NewTile, projects_raw: &Path, kits: &[PathBuf]) -> Result<PathBuf, String> {
     t.check()?;
-    if let Some(there) = existing(&t.name, projects_raw, kit) {
+    // TEd's colour is of the first kit's working data; a name or a colour taken in any kit is taken.
+    let kit = kits.first().map(PathBuf::as_path);
+    if let Some(there) = existing(&t.name, projects_raw, kits) {
         return Err(format!("a tile named '{}' exists: {}", t.name, there.display()));
     }
 
@@ -297,7 +299,7 @@ pub fn create(t: &NewTile, projects_raw: &Path, kit: Option<&Path>) -> Result<Pa
     mkdir(&dir)?;
     mkdir(entry.parent().expect("TILES"))?;
 
-    let colour = colour(&t.name, kit, &colours_in(&colour_sources(projects_raw, kit)));
+    let colour = colour(&t.name, kit, &colours_in(&colour_sources(projects_raw, kits)));
     write(&entry, entry_text(t, colour).as_bytes())?;
 
     // The tile database's settings, beside the entries (the vegetation generator reads the links' tile sets there).
@@ -389,9 +391,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let raw = tmp.path().join("assembly_kit/raw_data");
         let t = tile("test_new");
-        let dir = create(&t, &raw, None).unwrap();
+        let dir = create(&t, &raw, &[]).unwrap();
         assert_eq!(dir, raw.join("terrain/tiles/battle/assembly_kit/test_new/battlefield"));
-        assert!(create(&t, &raw, None).unwrap_err().contains("exists"), "a second one is refused");
+        assert!(create(&t, &raw, &[]).unwrap_err().contains("exists"), "a second one is refused");
 
         let entry = std::fs::read_to_string(t.entry_file(&raw)).unwrap();
         assert!(entry.starts_with("<TILE serialise_version='3' location='terrain\\tiles\\battle\\assembly_kit\\test_new' tile_set='assembly_kit' mask='' width='2' height='1' "), "{entry}");
@@ -421,7 +423,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let raw = tmp.path().join("assembly_kit/raw_data");
         let t = tile("test_range");
-        let dir = create(&t, &raw, None).unwrap();
+        let dir = create(&t, &raw, &[]).unwrap();
         let mut p = crate::tile_project::TileProject::open(&dir).unwrap();
 
         // Below the flat map's range and far above it: the range follows.

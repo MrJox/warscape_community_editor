@@ -3,8 +3,6 @@
 //! (`Tile::set_water_depth`) while a view shows it, and the automatic no-go areas of the same final heights (`Tile::set_auto_nogos`) while
 //! they show; worked out again once the tile has not changed for a moment after an edit.
 
-use std::path::Path;
-
 use wce_editor::editor::Editor;
 use wce_editor_core::document::Document;
 use wce_foundation::log;
@@ -160,11 +158,16 @@ pub fn stage_b_of(
     }
 
     let (raw, _) = TedProject.read(&files).map_err(|e| e.to_string())?;
-    let kit_raw = game.and_then(|g| g.kit_raw.clone()).or_else(|| p.raw_root.clone()).unwrap_or_default();
+    // As the export reads them: the tile's own raw_data first, then the kits'.
+    let roots = match (game, &p.raw_root) {
+        (Some(g), Some(raw)) => g.bob_roots(raw),
+        (Some(g), None) => g.kits.clone(),
+        (None, raw) => raw.iter().cloned().collect(),
+    };
     let none = |_: &str| None;
     let packs = |k: &str| game.and_then(|g| g.files.read(k).ok());
     let models: &dyn Fn(&str) -> Option<Vec<u8>> = if game.is_some() { &packs } else { &none };
-    let f = water_fields(&raw, Path::new(&kit_raw), models)?;
+    let f = water_fields(&raw, &roots, models)?;
     let depth = match &f.water {
         Some(water) => water.iter().zip(&f.heights).map(|(&w, &h)| if w <= -999.0 { f32::NAN } else { w - h }).collect(),
         None => vec![f32::NAN; f.w * f.h],

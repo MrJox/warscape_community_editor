@@ -204,9 +204,9 @@ pub(crate) struct Exported {
 
 /// An export's inputs (`TileTool::export_inputs`): everything the compile reads, owned, so that it can run on another thread.
 pub(crate) struct ExportInputs {
-    /// The game's packs as the editor mounted them, and the kit with the tiles (`tiles_kit`).
+    /// The game's packs as the editor mounted them, and the Assembly Kits (`kit_raws`).
     files: Arc<wce_vfs::Vfs>,
-    kit: Option<PathBuf>,
+    kits: Vec<PathBuf>,
 
     /// The game's tile data if it was read before (else read by `run`), or being read (`TileTool::game_preload`).
     pub game: Option<Arc<wce_tile_io::attila::workflow::Game>>,
@@ -245,7 +245,7 @@ impl ExportInputs {
             return Ok(g);
         }
 
-        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.files.clone(), self.kit.as_deref())?);
+        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.files.clone(), &self.kits)?);
         for w in &game.warnings {
             log::warn(format!("exported tiles: {w}"));
         }
@@ -1408,19 +1408,21 @@ impl TileTool {
     /// read on first use; again when the packs are mounted again.
     pub(crate) fn exported_game(&mut self, e: &mut Editor) -> Result<Arc<wce_tile_io::attila::workflow::Game>, String> {
         let vfs = e.vfs().cloned().ok_or("the game's packs are not mounted (setup <game folder>)")?;
-        if let Some(g) = self.exported_game.as_ref().filter(|g| Arc::ptr_eq(&g.files, &vfs)) {
+        let kits = kit_raws(e);
+        if let Some(g) = self.exported_game.as_ref().filter(|g| Arc::ptr_eq(&g.files, &vfs) && g.made_for(&kits)) {
             return Ok(g.clone());
         }
 
         // Being read on a thread already: waited for.
         if let Some(Ok(Ok(g))) = self.game_preload.take().map(|rx| rx.recv())
             && Arc::ptr_eq(&g.files, &vfs)
+            && g.made_for(&kits)
         {
             self.exported_game = Some(g.clone());
             return Ok(g);
         }
 
-        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(vfs, tiles_kit(e).as_deref())?);
+        let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(vfs, &kits)?);
         for w in &game.warnings {
             log::warn(format!("exported tiles: {w}"));
         }
@@ -1671,8 +1673,8 @@ impl TileTool {
     /// No tile or game folder, the project can't be saved, or a tile with procedural walls has no game files or schema.
     pub(crate) fn export_inputs(&mut self, e: &mut Editor) -> Result<ExportInputs, String> {
         let files = e.vfs().cloned().ok_or("the game's packs are not mounted (setup <game folder>)")?;
-        let kit = tiles_kit(e);
-        let game = self.exported_game.clone().filter(|g| Arc::ptr_eq(&g.files, &files));
+        let kits = kit_raws(e);
+        let game = self.exported_game.clone().filter(|g| Arc::ptr_eq(&g.files, &files) && g.made_for(&kits));
         let id = document_id(e).ok_or("no tile is open")?;
         // The roads being made finished first: what they change is in the maps the save writes and the compile reads.
         e.docs.find_as_mut::<TileDocument>(id).ok_or("no tile is open")?.tile_mut().finish_road_jobs();
@@ -1689,7 +1691,7 @@ impl TileTool {
         let kit_walls = d.tile_mut().kit_walls_for_export();
         let walls = if generated { Some((e.files().ok_or("no game files are mounted")?, walls_schema_path(e)?)) } else { None };
         let pending = if game.is_none() { self.game_preload.take() } else { None };
-        Ok(ExportInputs { files, kit, game, pending, project_dir, text, walls, kit_walls })
+        Ok(ExportInputs { files, kits, game, pending, project_dir, text, walls, kit_walls })
     }
 
     /// Saves the open tile, then writes it as an exported tile (stages A, B and C) with the tile database's files into a mod pack
@@ -1746,13 +1748,14 @@ impl TileTool {
 
         if e.game().features.kit_tiles {
             // Another set of packs (mods enabled or not) is another tree.
-            let stale = self.context.packs_tree.as_ref().is_some_and(|t| e.vfs().is_none_or(|v| !t.same_vfs(v)));
+            let kits = kit_raws(e);
+            let stale = self.context.packs_tree.as_ref().is_some_and(|t| e.vfs().is_none_or(|v| !t.same_sources(v, &kits)));
             if (self.context.packs_fallback.is_none() || stale)
                 && let Some(vfs) = e.vfs().cloned()
             {
                 let tree = Arc::new(crate::context_panel::PacksTree::new(
                     vfs,
-                    tiles_kit(e),
+                    kits,
                     &e.settings_ref().paths().cache_dir().join("neighbours"),
                     e.game().key,
                 ));
@@ -1766,10 +1769,14 @@ impl TileTool {
             return;
         }
 
-        if self.context.neighbours.is_some() {
+        // Made again for another mount (mods added or taken away) or other kits: the old one reads the old packs.
+        let made_for = (e.vfs().map_or(0, |v| wce_vfs::files::Files::mount_id(v.as_ref())), kit_raws(e));
+        if self.context.neighbours.is_some() && self.context.neighbours_for == made_for {
             return;
         }
 
+        self.context.neighbours = None;
+        self.context.neighbours_for = made_for;
         let game = match self.exported_game(e) {
             Ok(g) => g,
             Err(m) => {
@@ -1815,11 +1822,12 @@ impl TileTool {
         self.kits_for(e, kind).into_iter().next()
     }
 
-    /// The kit (its folder, with `raw_data`) whose battle tile database a new or renamed tile joins (its settings, the names and colours
-    /// taken): the first kit with one; for a game whose kit has no tiles (Rome 2), the packs' database in the kit's format.
-    pub(crate) fn battle_database_root(&mut self, e: &mut Editor) -> Option<PathBuf> {
-        let raw = if e.game().features.kit_tiles { self.kit_for(e, "battle") } else { self.packs_database(e) };
-        raw.and_then(|raw| raw.parent().map(Path::to_path_buf))
+    /// The kits (their folders, with `raw_data`) with a battle tile database, in the settings' order: the first is the one a new or
+    /// renamed tile's colour is TEd's of; the names and colours taken are every one's. For a game whose kit has no tiles (Rome 2), the
+    /// packs' database in the kit's format.
+    pub(crate) fn battle_database_roots(&mut self, e: &mut Editor) -> Vec<PathBuf> {
+        let raws = if e.game().features.kit_tiles { self.kits_for(e, "battle") } else { self.packs_database(e).into_iter().collect() };
+        raws.into_iter().filter_map(|raw| raw.parent().map(Path::to_path_buf)).collect()
     }
 
     /// The kind (`battle`, `campaign`) of the open tile, from its folder under terrain/tiles.
@@ -5286,7 +5294,7 @@ impl TileTool {
         project.prefab_base = Some(self.prefab_source());
         project.prefab_ground = Some(self.prefab_ground_source());
 
-        project.game_kit = tiles_kit(e);
+        project.game_kit = wce_tile::vegetation::params_kit(&wce_tile::sources::kit_raw_roots(e.settings_ref()));
 
         // From the Assembly Kit: the groups that are exact copies of a prefab become references to it (Tile > Prefabs does it again).
         if !project.dir.starts_with(&projects) {
@@ -5328,7 +5336,7 @@ impl TileTool {
         }
 
         doc.set_projects_root(Some(projects));
-        doc.set_colour_kit(self.battle_database_root(e));
+        doc.set_colour_kit(self.battle_database_roots(e));
 
         if let Some(w) = doc.exclusion_warning() {
             log::error(format!("{}: {w}", doc.title()));
@@ -5346,9 +5354,8 @@ impl TileTool {
 
 /// The Assembly Kit with the tiles (its folder, with `raw_data/terrain/tiles`): the first of the settings' kits that has them (the exports'
 /// vegetation parameters come from it).
-pub(crate) fn tiles_kit(e: &Editor) -> Option<PathBuf> {
-    let raw = e.settings_ref().assembly_kit_raw_dirs().into_iter().find(|raw| raw.join("terrain/tiles").is_dir())?;
-    raw.parent().map(Path::to_path_buf)
+pub(crate) fn kit_raws(e: &Editor) -> Vec<PathBuf> {
+    wce_tile::sources::assembly_kit_roots(e.settings_ref())
 }
 
 impl TileTool {

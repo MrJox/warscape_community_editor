@@ -9,12 +9,13 @@ use wce_tile_model::Tile;
 
 use super::compile::CompileNotes;
 
-/// What stage B needs besides the project: the kit's `raw_data` (the tile database's `_settings.xml`, the linking tiles' final
+/// What stage B needs besides the project: the `raw_data` folders its kit-layout inputs come from, the first that has one winning (the
+/// projects', then the Assembly Kits' in the settings' order: the tile database's `_settings.xml` and entries, the linking tiles' final
 /// heights, the db tables and the buildings' raw height-map meshes) and a model's bytes by key (BOB's VFS: the game's packs, for the
 /// water planes).
 #[derive(Clone, Copy)]
 pub struct StageB<'a> {
-    pub raw_data: &'a Path,
+    pub roots: &'a [std::path::PathBuf],
     pub models: &'a (dyn Fn(&str) -> Option<Vec<u8>> + Sync),
 }
 
@@ -233,7 +234,7 @@ pub fn made_files(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) ->
 /// [`made_files`]' terrain: the building stamps, the meshes, the height fields, the outlines.
 fn made_terrain(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) -> Result<(Files, CompileNotes), String> {
     let mut notes = CompileNotes::default();
-    let (stamps, missing) = super::terrain_mesh::building_stamps(raw, ctx.raw_data);
+    let (stamps, missing) = super::terrain_mesh::building_stamps(raw, ctx.roots);
     if !missing.is_empty() {
         notes.notes.push(format!(
             "stage B: no height-map mesh for {} (BOB: \"Height map mesh file ... is missing\", no hf_height_map.data nor terrain_outlines.xml)",
@@ -241,8 +242,8 @@ fn made_terrain(raw: &Tile, ctx: &StageB, river: super::river::RiverFormat) -> R
         ));
     }
 
-    let angle = super::terrain_mesh::decimation_angle(ctx.raw_data);
-    let terrain = super::terrain_mesh::terrain_files(raw, ctx.raw_data, angle, &stamps, ctx.models, river)?;
+    let angle = super::terrain_mesh::decimation_angle(ctx.roots);
+    let terrain = super::terrain_mesh::terrain_files(raw, ctx.roots, angle, &stamps, ctx.models, river)?;
     Ok((terrain, notes))
 }
 

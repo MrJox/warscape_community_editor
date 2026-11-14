@@ -403,14 +403,20 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 ui.map = k as i32;
                 if ui.loaded.as_ref().is_none_or(|l| l.0 != want) {
                     // A map of the packs names the packs' tiles (a mod's among them): read with their database.
+                    // A kit map: from the first root that has it, with the tile databases layered as the panel reads them (a project's
+                    // alone misses the map's tiles).
                     let packs = ui.packs_tree.clone().filter(|_| crate::context_panel::game_map_folder(&want, ui.game_dir).is_some()).and_then(|t| t.raw().ok());
-                    let db_raw = packs.unwrap_or_else(|| raw.clone());
-                    let db = match wce_tile::battle_map::tile_db::TileDatabase::load(&db_raw.join("terrain/tiles/battle/_tile_database")) {
+                    let db = match packs {
+                        Some(p) => wce_tile::battle_map::tile_db::TileDatabase::load(&p.join("terrain/tiles/battle/_tile_database")).map(std::sync::Arc::new),
+                        None => crate::context_panel::database(ui, &raw),
+                    };
+                    let db = match db {
                         Ok(db) => db,
                         Err(err) => return fail(err),
                     };
 
-                    match load_map(&want, ui.game_dir, &raw, &db, files.as_deref()) {
+                    let map_raw = ui.map_raw(&raw, &want);
+                    match load_map(&want, ui.game_dir, &map_raw, &db, files.as_deref()) {
                         Ok((m, l)) => ui.loaded = Some((want.clone(), m, l)),
                         Err(err) => return fail(err),
                     }

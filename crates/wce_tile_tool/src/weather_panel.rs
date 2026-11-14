@@ -295,10 +295,11 @@ impl WeatherUi {
     }
 
     /// Which environment files the game picks: the packs' variation database when a mod pack overrides it (the kit's environment_map.xml is
-    /// the vanilla one, without the mod's weather), else the kit's environment_map.xml when the tile is in a kit that has one, else the packs'
-    /// database (an exported tile decompiled into the workspace has no kit around it).
+    /// the vanilla one, without the mod's weather), else the first environment_map.xml of the tile's own kit, the projects' kit layout and
+    /// the Assembly Kits in the settings' order, else the packs' database.
     fn load_database(&mut self, e: &Editor, tile_dir: &Path) {
-        let kit = Self::kit_environment_map(tile_dir).filter(|_| !Self::mod_overrides_database(e));
+        let roots = wce_tile::sources::kit_raw_roots(e.settings_ref());
+        let kit = Self::kit_environment_map(tile_dir, &roots).filter(|_| !Self::mod_overrides_database(e));
         let (loaded, source) = match kit {
             Some(Ok(db)) => (Ok(db), "the kit's environment_map.xml"),
             Some(Err(err)) => (Err(err), "the kit's environment_map.xml"),
@@ -330,10 +331,12 @@ impl WeatherUi {
     }
 
     /// The environment_map.xml of the kit around the tile; `None` when the tile is in no kit or the kit has none.
-    fn kit_environment_map(tile_dir: &Path) -> Option<Result<AssetVariationDb, String>> {
+    fn kit_environment_map(tile_dir: &Path, roots: &[std::path::PathBuf]) -> Option<Result<AssetVariationDb, String>> {
         let g = tile_dir.display().to_string().replace('\\', "/");
-        let at = g.find("/raw_data/")?;
-        let p = Path::new(&g[..at + 10]).join("warscape_asset_variation_db").join("environment_map.xml");
+        let own = g.find("/raw_data/").map(|at| std::path::PathBuf::from(&g[..at + 10]));
+        let mut all = own.into_iter().collect::<Vec<_>>();
+        all.extend(roots.iter().cloned());
+        let p = wce_tile::sources::first_file(&all, "warscape_asset_variation_db/environment_map.xml")?;
         let bytes = std::fs::read(&p).ok()?;
         Some(AssetVariationDb::from_environment_map(&String::from_utf8_lossy(&bytes)).map_err(|err| err.to_string()))
     }

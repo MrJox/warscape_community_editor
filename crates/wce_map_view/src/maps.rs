@@ -64,30 +64,35 @@ pub const GAME_FILES: &str = " (game files)";
 
 /// The packs' tiles in the kit's layout (`workflow::neighbour_root`: every tile database entry of the mounted packs, mods included; the
 /// tiles' folders decompiled on demand), made the first time something needs it (reading the game's tile data takes a while). Its folder
-/// is keyed by the mounted packs, so another set of mods gets its own tree.
+/// is keyed by the mounted packs and the kits, so another set of mods or kits gets its own tree.
 pub struct PacksTree {
     vfs: Arc<wce_vfs::Vfs>,
-    kit: Option<PathBuf>,
+    kits: Vec<PathBuf>,
     root: PathBuf,
     built: std::sync::OnceLock<Result<(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String>>,
 }
 
 impl PacksTree {
-    /// `cache` is the folder the trees go in (`<cache>/neighbours`), `key` the game's.
-    pub fn new(vfs: Arc<wce_vfs::Vfs>, kit: Option<PathBuf>, cache: &Path, key: &str) -> Self {
+    /// `kits` are the Assembly Kits' `raw_data` folders in the settings' order (`wce_tile::sources::assembly_kit_roots`: the tile
+    /// databases' settings and the vegetation parameters come from the first that has them), `cache` the folder the trees go in
+    /// (`<cache>/neighbours`), `key` the game's.
+    pub fn new(vfs: Arc<wce_vfs::Vfs>, kits: Vec<PathBuf>, cache: &Path, key: &str) -> Self {
         let packs = vfs.packs().iter().fold(0xCBF2_9CE4_8422_2325u64, |h, p| {
             let len = std::fs::metadata(&p.path).map_or(0, |m| m.len());
             p.name.to_lowercase().bytes().chain(len.to_le_bytes()).fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
         });
 
         // `_2`: the decompiler's tiles changed (a campaign tile's rivers in its own unit); the older trees are not these.
-        Self { vfs, kit, root: cache.join(format!("{key}_{packs:016x}_2")), built: std::sync::OnceLock::new() }
+        let sources = kits.iter().fold(packs, |h, k| {
+            k.to_string_lossy().to_lowercase().bytes().fold(h, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3))
+        });
+        Self { vfs, kits, root: cache.join(format!("{key}_{sources:016x}_2")), built: std::sync::OnceLock::new() }
     }
 
     fn get(&self) -> Result<&(Arc<wce_tile_io::attila::workflow::Game>, PathBuf), String> {
         self.built
             .get_or_init(|| {
-                let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.vfs.clone(), self.kit.as_deref())?);
+                let game = Arc::new(wce_tile_io::attila::workflow::Game::from_vfs(self.vfs.clone(), &self.kits)?);
                 let raw = wce_tile_io::attila::workflow::neighbour_root(&game, &self.root)?;
                 Ok((game, raw))
             })
@@ -95,9 +100,9 @@ impl PacksTree {
             .map_err(Clone::clone)
     }
 
-    /// Whether it is the tree of these mounted packs.
-    pub fn same_vfs(&self, vfs: &Arc<wce_vfs::Vfs>) -> bool {
-        Arc::ptr_eq(&self.vfs, vfs)
+    /// Whether it is the tree of these mounted packs and kits.
+    pub fn same_sources(&self, vfs: &Arc<wce_vfs::Vfs>, kits: &[PathBuf]) -> bool {
+        Arc::ptr_eq(&self.vfs, vfs) && self.kits == kits
     }
 
     /// Its `raw_data` folder (the packs' tile database in the kit's format).

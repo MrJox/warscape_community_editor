@@ -76,8 +76,8 @@ impl TileDocument {
     }
 
     /// The Assembly Kit whose battle tiles' colours a tile made by Save as must differ from (`save_as_new_tile`).
-    pub fn set_colour_kit(&mut self, kit: Option<PathBuf>) {
-        self.tile_mut().colour_kit = kit;
+    pub fn set_colour_kit(&mut self, kits: Vec<PathBuf>) {
+        self.tile_mut().colour_kits = kits;
     }
 
     /// The tile set, name and variation a Save as into `target` makes, when it makes a new tile: a battle tile's variation folder in the
@@ -172,7 +172,7 @@ impl TileDocument {
     ///
     /// No projects folder, a bad name, no database entry, a tile of another size or a variation that exists already, or a file can't be
     /// written.
-    pub fn save_tile_as(&mut self, set: &str, name: &str, variation: &str, kit: Option<&Path>) -> Result<String, String> {
+    pub fn save_tile_as(&mut self, set: &str, name: &str, variation: &str, kits: &[PathBuf]) -> Result<String, String> {
         use wce_formats::tile_entry::TileEntry;
         use wce_tile::new_tile::{check_name, colour_of, colour_sources, colours_in};
 
@@ -213,8 +213,8 @@ impl TileDocument {
             there.set_file(&entry_path);
             there.set_tile_attr("location", &format!("terrain\\tiles\\battle\\{set}\\{name}"));
             there.set_tile_attr("tile_set", &set);
-            let taken = colours_in(&colour_sources(&raw, kit));
-            let c = colour_of(&format!("{set}/{name}/{variation}"), kit, &taken);
+            let taken = colours_in(&colour_sources(&raw, kits));
+            let c = colour_of(&format!("{set}/{name}/{variation}"), kits.first().map(PathBuf::as_path), &taken);
             for (attr, value) in ["red", "green", "blue"].into_iter().zip(c) {
                 there.set_tile_attr(attr, &format!("{:.6}", f64::from(value)));
             }

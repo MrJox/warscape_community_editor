@@ -4,7 +4,7 @@
 //! `final_heights.dds`, rotated, tiled from the cell's corner. docs/formats/tile_compile.md has the RE.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use wce_tile_model::{Node, Tile};
 
@@ -155,21 +155,31 @@ fn load_field(path: &Path, r: usize) -> Option<Field> {
     Some((dw, dh, out))
 }
 
-/// The width and height of the database tile at `location` (`TILE_DATABASE::tile_from_location`: the variation dropped).
-fn tile_size_of(raw_data: &Path, location: &str) -> Option<(i32, i32)> {
+/// The width and height of the database tile at `location` (`TILE_DATABASE::tile_from_location`: the variation dropped), from the entry in
+/// the first of `roots` that has one.
+fn tile_size_of(roots: &[PathBuf], location: &str) -> Option<(i32, i32)> {
     let tile = location.trim_end_matches('\\');
     let tile = tile.rsplit_once('\\').map_or(tile, |(t, _)| t).to_lowercase();
-    let dir = raw_data.join("terrain/tiles/battle/_tile_database/TILES");
-    for e in std::fs::read_dir(dir).ok()?.flatten() {
-        let text = std::fs::read_to_string(e.path()).unwrap_or_default();
-        let head = text.split('>').next().unwrap_or_default();
-        let attr = |k: &str| head.split(&format!(" {k}='")).nth(1).and_then(|v| v.split('\'').next());
-        if attr("location").is_some_and(|l| l.to_lowercase() == tile) {
-            return Some((attr("width")?.parse().ok()?, attr("height")?.parse().ok()?));
+    for root in roots {
+        let Ok(dir) = std::fs::read_dir(root.join("terrain/tiles/battle/_tile_database/TILES")) else { continue };
+        for e in dir.flatten() {
+            let text = std::fs::read_to_string(e.path()).unwrap_or_default();
+            let head = text.split('>').next().unwrap_or_default();
+            let attr = |k: &str| head.split(&format!(" {k}='")).nth(1).and_then(|v| v.split('\'').next());
+            if attr("location").is_some_and(|l| l.to_lowercase() == tile) {
+                return Some((attr("width")?.parse().ok()?, attr("height")?.parse().ok()?));
+            }
         }
     }
 
     None
+}
+
+/// A linking tile's folder (`terrain\tiles\battle\...\aa`) in the first of `roots` that has it (else where the first would have it, for
+/// the message that it is missing).
+fn linking_dir(roots: &[PathBuf], location: &str) -> PathBuf {
+    let rel = location.replace('\\', "/");
+    wce_tile::sources::first_dir(roots, &rel).unwrap_or_else(|| roots.first().map_or_else(|| PathBuf::from(&rel), |r| r.join(&rel)))
 }
 
 fn int(n: &Node, k: &str) -> i32 {
@@ -196,7 +206,7 @@ fn text<'a>(n: &'a Node, k: &str) -> &'a str {
 fn straight_self_tiling(
     raw: &Tile,
     entry: &Node,
-    raw_data: &Path,
+    roots: &[PathBuf],
     linking_tiles: &HashMap<String, String>,
     field: &mut [f32],
     w: usize,
@@ -244,7 +254,7 @@ fn straight_self_tiling(
     let source = if own {
         None
     } else {
-        let file = raw_data.join(one.replace('\\', "/")).join("final_heights");
+        let file = linking_dir(roots, &one).join("final_heights");
         Some(load_field(&file, 0).ok_or_else(|| format!("You need to convert {one} first."))?)
     };
     let s = |field: &[f32], row: usize, col: usize| source.as_ref().map_or(field[row * w + col], |(sw, _, v)| v[row * sw + col]);
@@ -301,7 +311,7 @@ fn straight_self_tiling(
 }
 
 /// Blends `field` (the final heights, `w` x `h`, rows as `final_heights.dds`) into the project's linking tiles, as BOB does before it
-/// builds the meshes. `raw_data` is the kit's, where the linking tiles' `final_heights.dds` are; `linking_tiles` maps a tile set to its
+/// builds the meshes. `roots` are the `raw_data` folders the linking tiles' `final_heights.dds` are looked for in (the projects', then the kits'); `linking_tiles` maps a tile set to its
 /// linking tile. A tile that tiles with itself (BOB's `apply_straight_self_tiling`) is left as it is: not ported.
 ///
 /// # Errors
@@ -309,7 +319,7 @@ fn straight_self_tiling(
 /// A linking tile that is not in the database, or whose heights are missing ("You need to convert ... first").
 pub fn blend_links(
     raw: &Tile,
-    raw_data: &Path,
+    roots: &[PathBuf],
     linking_tiles: &HashMap<String, String>,
     field: &mut [f32],
     w: usize,
@@ -317,7 +327,7 @@ pub fn blend_links(
 ) -> Result<(), String> {
     wce_foundation::wce_prof!("stage_b.blend_links");
     let Some(entry) = raw.entry.as_ref().map(|e| &e.root) else { return Ok(()) };
-    if super::bob_tile::self_tiling(entry, linking_tiles) && straight_self_tiling(raw, entry, raw_data, linking_tiles, field, w, h)? {
+    if super::bob_tile::self_tiling(entry, linking_tiles) && straight_self_tiling(raw, entry, roots, linking_tiles, field, w, h)? {
         return Ok(());
     }
 
@@ -340,7 +350,7 @@ pub fn blend_links(
                 continue;
             }
 
-            let (lw, lh) = tile_size_of(raw_data, linking).ok_or_else(|| format!("Failed to find link tile {linking} in database."))?;
+            let (lw, lh) = tile_size_of(roots, linking).ok_or_else(|| format!("Failed to find link tile {linking} in database."))?;
             let is_self = linking.trim_end_matches('\\').rsplit_once('\\').is_some_and(|(t, _)| t.eq_ignore_ascii_case(location));
             let point = (int(l, "x"), int(l, "y"));
             let base = (int(l, "base_x"), int(l, "base_y"));
@@ -370,7 +380,7 @@ pub fn blend_links(
                 }
 
                 let corner = (size * cell.0.clamp(0, tw - 1), size * cell.1.clamp(0, th - 1));
-                let file = raw_data.join(linking.replace('\\', "/")).join(if is_self { "height_map_0" } else { "final_heights" });
+                let file = linking_dir(roots, linking).join(if is_self { "height_map_0" } else { "final_heights" });
                 let (fw, fh, link_field) = load_field(&file, r).ok_or_else(|| format!("You need to convert {linking} first."))?;
                 let tris = region(inverted, corner, cell, size as f32, blend, &quad);
                 if tris.is_empty() {

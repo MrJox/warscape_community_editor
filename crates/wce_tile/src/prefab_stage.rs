@@ -67,7 +67,7 @@ pub fn make(root: &Path, settings: &StageSettings, group_text: &[u8]) -> Result<
         density: settings.density,
         seed: 1,
     };
-    let dir = new_tile::create(&t, root, None)?;
+    let dir = new_tile::create(&t, root, &[])?;
     let mut project = TileProject::open(&dir).map_err(|e| e.to_string())?;
     let graph = project.scene.scene_graph().ok_or("the stage has no scene graph")?;
     let group = project.scene.insert_element_text(graph, group_text).map_err(|e| e.to_string())?;
