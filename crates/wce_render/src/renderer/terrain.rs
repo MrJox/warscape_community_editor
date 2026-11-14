@@ -1621,7 +1621,7 @@ impl Renderer {
         }
 
         // The geometry, placements and LF maps of terrains that are gone go (only when the scene's terrains changed).
-        let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision(), scene.terrain_revision());
+        let key = (scene.uid(), scene.structure_revision(), scene.terrain_revision());
         if key != self.terrain.prune_key {
             self.terrain.prune_key = key;
             let mut lfs = std::collections::BTreeSet::new();
@@ -1683,7 +1683,7 @@ impl Renderer {
 
         if self.game == super::game::RenderGame::Rome2 {
             let ents = self.terrain_surface_entities(scene);
-            let key = (std::ptr::from_ref(scene) as usize, terrain_set_key(&ents), scene.terrain_revision());
+            let key = (scene.uid(), terrain_set_key(&ents), scene.terrain_revision());
             if key != self.terrain.materials_key {
                 self.terrain.materials_key = key;
                 self.update_terrain_materials(&ents);
@@ -1718,7 +1718,7 @@ impl Renderer {
         let ents = self.terrain_surface_entities(scene);
 
         // The materials (and texture arrays) the scene's terrains use stay; the others go. Only when the terrains changed.
-        let key = (std::ptr::from_ref(scene) as usize, terrain_set_key(&ents), scene.terrain_revision());
+        let key = (scene.uid(), terrain_set_key(&ents), scene.terrain_revision());
         if key != self.terrain.materials_key {
             self.terrain.materials_key = key;
             self.update_terrain_materials(&ents);
@@ -2316,7 +2316,7 @@ impl Renderer {
     fn surface_from(&self, scene: &RenderScene) -> SurfaceFrom {
         let o = self.camera.origin;
         SurfaceFrom {
-            scene: std::ptr::from_ref(scene) as usize,
+            scene: scene.uid(),
             revision: scene.revision(),
             entities: self.terrain.entities.iter().fold(0xCBF2_9CE4_8422_2325u64 ^ self.terrain.entities.len() as u64, |h, &id| {
                 (h ^ u64::from(id)).wrapping_mul(0x0100_0000_01B3)

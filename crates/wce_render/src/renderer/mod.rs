@@ -891,7 +891,7 @@ pub(crate) struct KindIndex {
 
 impl KindIndex {
     fn refresh(&mut self, scene: &RenderScene) {
-        let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision());
+        let key = (scene.uid(), scene.structure_revision());
         if (self.scene, self.revision) == key {
             return;
         }
@@ -1860,8 +1860,7 @@ impl Renderer {
 
         // The placed effects (tile VFX instances), gathered again when the scene changes.
         let units = self.camera.units;
-        let scene_key =
-            (std::ptr::from_ref(scene) as usize, scene.revision(), units.to_bits(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
+        let scene_key = (scene.uid(), scene.revision(), units.to_bits(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
         if self.vfx_scene != scene_key {
             // A new origin moves the effects (the particles alive keep where they were).
             self.vfx_scene = scene_key;

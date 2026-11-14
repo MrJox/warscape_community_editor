@@ -566,7 +566,7 @@ impl Renderer {
         // Four batches: lines / triangles, with and without the depth test. The scene's overlays are cached between frames, the small ones
         // that keep changing apart; the grid and the selected lights' reach are made per frame. A structural change puts them all back in
         // the cache.
-        let scene_id = scene as *const RenderScene as usize;
+        let scene_id = scene.uid();
         let changed = scene.overlays_changed_since(&mut self.editor.ovl_log_cursor);
         let log = scene.structure_since(&mut self.editor.ovl_structure_cursor);
         let was_big = self.editor.ovl_big.keys().copied().collect::<std::collections::BTreeSet<_>>();
@@ -1047,7 +1047,7 @@ impl Renderer {
             .filter(|&id| scene.find(id).is_some_and(|e| scene.drawable(e)))
             .collect::<std::collections::HashSet<_>>();
         drop(prof_select);
-        let key = (std::ptr::from_ref(scene) as usize, scene.overlay_revision());
+        let key = (scene.uid(), scene.overlay_revision());
         if self.editor.outline_overlays.0 != key {
             self.editor.outline_overlays =
                 (key, scene.entities().iter().filter(|e| matches!(e.payload, Payload::Overlay(_))).map(|e| e.id).collect());

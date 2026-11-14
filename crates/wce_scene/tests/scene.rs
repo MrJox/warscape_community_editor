@@ -228,3 +228,18 @@ fn lf_map_and_ground() {
     let with_lf = Terrain { lf: Some(std::sync::Arc::new(lf)), ..t };
     assert!((with_lf.ground_at(&w, 50.0, 50.0).unwrap() - (1.0 - 5.0)).abs() < 1e-4, "the LF clamped to its first sample");
 }
+
+#[test]
+fn every_scene_has_its_own_uid_even_where_another_was_dropped() {
+    let mut seen = std::collections::HashSet::new();
+    let mut slot = None;
+    for _ in 0..4 {
+        // A scene made in the slot of the one before (as the thumbnailer's jobs are): its address may repeat, its uid does not.
+        slot = Some(RenderScene::default());
+        assert!(seen.insert(slot.as_ref().unwrap().uid()));
+    }
+
+    let a = slot.unwrap();
+    let b = a.clone();
+    assert_ne!(a.uid(), b.uid(), "a clone is a scene of its own");
+}

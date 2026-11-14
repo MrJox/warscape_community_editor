@@ -80,7 +80,7 @@ fn cell_of(x: f32, z: f32) -> (i32, i32) {
 
 impl Renderer {
     fn collect_grass(&mut self, scene: &RenderScene) {
-        let id = std::ptr::from_ref(scene) as usize;
+        let id = scene.uid();
         let g = &mut self.grass;
         if g.scene_id == id && g.revision == scene.structure_revision() {
             return;

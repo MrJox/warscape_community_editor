@@ -757,7 +757,7 @@ pub struct Tile {
 }
 
 pub(crate) fn scene_key(scene: &RenderScene) -> usize {
-    scene as *const RenderScene as usize
+    scene.uid()
 }
 
 /// Ids of ground skins, materials and normal maps. The renderer keeps GPU copies by these ids, so they must differ between tiles: a counter per

@@ -317,7 +317,7 @@ impl Renderer {
     /// The mesh entities of visible layers, as culling items. Models still loading (live runs) are requested nearest first and picked up
     /// when they finish; fixed-step runs wait for every model so that frame N is the same every run.
     pub(crate) fn build_draws(&mut self, scene: &RenderScene, eye: Float3) {
-        let scene_id = scene as *const RenderScene as usize;
+        let scene_id = scene.uid();
         let same = self.draw_lists.scene_id == scene_id && self.draw_lists.revision == scene.structure_revision();
         if same && (self.draw_lists.waiting == 0 || self.models.revision() == self.draw_lists.model_revision) {
             self.follow_burns(scene);
