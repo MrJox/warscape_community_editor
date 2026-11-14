@@ -117,6 +117,65 @@ fn a_stroke_interrupted_by_another_edit_is_two_entries_with_their_own_heights() 
     assert_eq!(heights()(&d), h0);
 }
 
+#[test]
+fn a_stroke_that_changes_nothing_does_not_undo_the_stroke_before_it() {
+    let (_dir, mut d) = open();
+    let heights = |d: &TileDocument| d.project().height.as_ref().unwrap().samples().to_vec();
+    let h0 = heights(&d);
+    d.brush_step(BrushKind::Raise, 40.0, 40.0, BrushSettings::default(), 0.05);
+    d.end_stroke();
+    let h1 = heights(&d);
+    assert_ne!(h1, h0);
+
+    // No sample changes: the height field keeps no record for this stroke, but the history has its entry.
+    d.brush_step(BrushKind::Raise, 40.0, 40.0, BrushSettings { strength: 0.0, ..BrushSettings::default() }, 0.05);
+    d.end_stroke();
+    assert_eq!(heights(&d), h1);
+    assert_eq!(d.history().size(), 2);
+
+    d.history_mut().undo();
+    assert_eq!(heights(&d), h1, "undoing the empty stroke keeps the first stroke's heights");
+    d.history_mut().undo();
+    assert_eq!(heights(&d), h0);
+    d.history_mut().redo();
+    assert_eq!(heights(&d), h1);
+    d.history_mut().redo();
+    assert_eq!(heights(&d), h1);
+    d.history_mut().undo();
+    d.history_mut().undo();
+    assert_eq!(heights(&d), h0, "undo and redo stay paired with the field's records");
+}
+
+#[test]
+fn paint_after_an_undo_back_to_the_saved_depth_is_saved() {
+    use wce_editor_core::document::SaveTarget;
+    let (dir, mut d) = open_with_blend();
+    let file = || std::fs::read(dir.path().join("blend_map.tif")).unwrap();
+    let weights = |d: &TileDocument| d.project().blend.as_ref().unwrap().weights().to_vec();
+    let s = BrushSettings { opacity: 1.0, ..BrushSettings::default() };
+    let here = SaveTarget { path: std::path::PathBuf::new() };
+    let b0 = file();
+
+    d.brush_step(BrushKind::Paint(9), 40.0, 40.0, s.clone(), 0.05);
+    d.end_stroke();
+    Document::save(&mut d, &here).unwrap();
+    let b1 = file();
+    assert_ne!(b1, b0, "the first stroke is saved");
+
+    // A save with nothing new: the map on disk is the one in memory, nothing marks it to be written again.
+    Document::save(&mut d, &here).unwrap();
+    assert_eq!(file(), b1);
+
+    // Back to the saved number of records, then a different stroke: as many records as at the save, but not the same ones.
+    d.history_mut().undo();
+    let w = weights(&d);
+    d.brush_step(BrushKind::Paint(9), 90.0, 90.0, s, 0.05);
+    d.end_stroke();
+    assert_ne!(weights(&d), w);
+    Document::save(&mut d, &here).unwrap();
+    assert_ne!(file(), b1, "the second stroke is saved too");
+}
+
 /// An inspector that records the rows and applies one scripted edit.
 #[derive(Default)]
 struct Rows {

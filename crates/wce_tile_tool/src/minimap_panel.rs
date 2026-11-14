@@ -111,13 +111,13 @@ struct GroundKey {
     view: TerrainView,
     climate: String,
     season: String,
-    maps: (usize, usize, usize),
+    maps: (u64, u64, usize),
 }
 
 fn ground_key(d: &TileDocument, doc: DocumentId, view: TerrainView) -> GroundKey {
     let (p, t) = (d.project(), d.tile());
-    let blend = p.blend.as_ref().map_or(0, BlendField::edit_depth);
-    let ground = p.ground.as_ref().map_or(0, GroundTypeField::edit_depth);
+    let blend = p.blend.as_ref().map_or(0, BlendField::top_id);
+    let ground = p.ground.as_ref().map_or(0, GroundTypeField::top_id);
     let water = t.water_depth().map_or(0, |w| std::ptr::from_ref(w) as usize);
     let maps = match view {
         TerrainView::Colour | TerrainView::BlendGroups => (blend, 0, 0),

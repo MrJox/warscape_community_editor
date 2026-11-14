@@ -550,15 +550,15 @@ impl Tile {
     }
 
     fn height_modified(&self) -> bool {
-        self.project.height.as_ref().is_some_and(|h| h.edit_depth() != self.saved_height_depth)
+        self.project.height.as_ref().is_some_and(|h| h.top_id() != self.saved_height_top)
     }
 
     fn blend_modified(&self) -> bool {
-        self.project.blend.as_ref().is_some_and(|b| b.edit_depth() != self.saved_blend_depth)
+        self.project.blend.as_ref().is_some_and(|b| b.top_id() != self.saved_blend_top)
     }
 
     fn ground_modified(&self) -> bool {
-        self.project.ground.as_ref().is_some_and(|g| g.edit_depth() != self.saved_ground_depth)
+        self.project.ground.as_ref().is_some_and(|g| g.top_id() != self.saved_ground_top)
     }
 
     fn save_scene_needed(&self) -> bool {
@@ -2989,6 +2989,8 @@ impl TileDocument {
             first: true,
             moved: vec![],
             where_: HashMap::new(),
+            before_top: 0,
+            recorded: None,
         }));
         let version = self.history.version();
         self.tile_mut().stroke_version = version;
@@ -3362,13 +3364,13 @@ impl TileDocument {
         if !elsewhere {
             t.ted_on_disk_edited = t.tscene().modified();
             t.png_on_disk_edited = t.height_modified();
-            t.saved_height_depth = t.project.height.as_ref().map_or(0, |h| h.edit_depth());
+            t.saved_height_top = t.project.height.as_ref().map_or(0, |h| h.top_id());
             t.project.height_dirty = false;
             t.blend_on_disk_edited = t.blend_modified();
-            t.saved_blend_depth = t.project.blend.as_ref().map_or(0, |b| b.edit_depth());
+            t.saved_blend_top = t.project.blend.as_ref().map_or(0, |b| b.top_id());
             t.project.blend_dirty = false;
             t.ground_on_disk_edited = t.ground_modified();
-            t.saved_ground_depth = t.project.ground.as_ref().map_or(0, |g| g.edit_depth());
+            t.saved_ground_top = t.project.ground.as_ref().map_or(0, |g| g.top_id());
             t.project.ground_dirty = false;
             t.project.river_texts = t.project.current_river_texts();
             self.history.mark_saved();
