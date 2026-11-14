@@ -1127,6 +1127,10 @@ impl Tool for PrefabTool {
         self.tile.claims_left_button(e)
     }
 
+    fn open_gesture(&self) -> Option<&'static str> {
+        self.tile.open_gesture()
+    }
+
     fn tool_gizmo(&self, e: &Editor, dragging: bool) -> Option<wce_foundation::math::Float4x4> {
         self.tile.tool_gizmo(e, dragging)
     }

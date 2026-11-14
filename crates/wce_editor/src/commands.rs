@@ -582,6 +582,10 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add("undo", "undo [n]", "undo the last edit (or n edits) of the active document", |e, a| {
+        if let Some(gesture) = e.open_gesture() {
+            return fail(format!("not during {gesture}"));
+        }
+
         let n = a.first().map_or(1, |x| atoi(x).max(1));
         let mut any = false;
         if let Some(d) = e.docs.active_mut() {
@@ -594,6 +598,10 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     });
 
     c.add("redo", "redo [n]", "redo (n edits)", |e, a| {
+        if let Some(gesture) = e.open_gesture() {
+            return fail(format!("not during {gesture}"));
+        }
+
         let n = a.first().map_or(1, |x| atoi(x).max(1));
         let mut any = false;
         if let Some(d) = e.docs.active_mut() {

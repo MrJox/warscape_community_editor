@@ -5149,6 +5149,20 @@ impl Tool for TileTool {
         self.flip_gizmo_moved(frame);
     }
 
+    fn open_gesture(&self) -> Option<&'static str> {
+        if self.grabbing {
+            Some("the grab")
+        } else if self.stroke_active || self.stroke.is_some() {
+            Some("the brush stroke")
+        } else if self.point_drag || self.light_drag.is_some() || self.target_drag.is_some() {
+            Some("the handle drag")
+        } else if self.alt_rotate.is_some() {
+            Some("the rotation")
+        } else {
+            None
+        }
+    }
+
     fn claims_left_button(&self, _e: &Editor) -> bool {
         self.flip.is_some()
             || self.mode != TileMode::Select
