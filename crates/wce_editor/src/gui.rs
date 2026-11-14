@@ -905,6 +905,11 @@ pub fn is_window_hovered_with_children() -> bool {
     call!(sys::igIsWindowHovered(sys::ImGuiHoveredFlags_ChildWindows | sys::ImGuiHoveredFlags_RootAndChildWindows))
 }
 
+/// The window (or a child of it) has the keyboard focus.
+pub fn is_window_focused_with_children() -> bool {
+    call!(sys::igIsWindowFocused(sys::ImGuiFocusedFlags_ChildWindows | sys::ImGuiFocusedFlags_RootAndChildWindows))
+}
+
 /// The last item's rectangle on screen: (top left, bottom right).
 pub fn item_rect() -> (Vec2, Vec2) {
     (call!(sys::igGetItemRectMin()), call!(sys::igGetItemRectMax()))
@@ -1258,6 +1263,8 @@ pub const CHILD_AUTO_RESIZE: i32 =
 pub const COL_CHILD_BG: i32 = sys::ImGuiCol_ChildBg;
 pub const CHILD_AUTO_RESIZE_Y: i32 = sys::ImGuiChildFlags_AutoResizeY | sys::ImGuiChildFlags_AlwaysUseWindowPadding;
 pub const KEY_UP_ARROW: i32 = sys::ImGuiKey_UpArrow;
+pub const KEY_LEFT_ARROW: i32 = sys::ImGuiKey_LeftArrow;
+pub const KEY_RIGHT_ARROW: i32 = sys::ImGuiKey_RightArrow;
 pub const KEY_DOWN_ARROW: i32 = sys::ImGuiKey_DownArrow;
 pub const KEY_PAGE_UP: i32 = sys::ImGuiKey_PageUp;
 pub const KEY_C: i32 = sys::ImGuiKey_C;

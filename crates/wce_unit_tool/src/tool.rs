@@ -33,6 +33,9 @@ use wce_scene::environment::{EnvironmentParams, read_environment};
 use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, SourceRef};
 use wce_vfs::normalize;
 
+#[path = "structure.rs"]
+mod structure;
+
 use crate::db::{LooksTables, Row, project_path};
 use crate::document::{Source, Structural, VmdDocument};
 use crate::problems::{Problem, WEAPON_POINTS, check};
@@ -100,6 +103,15 @@ enum LooksEdit {
 enum Action {
     Select(Option<NodePath>),
     Edit(Structural, usize),
+
+    /// A slot's new name.
+    Rename(usize, String),
+
+    /// A node to another place among its siblings.
+    Reorder(NodePath, usize),
+
+    /// What a slot shows in the preview (`None`: the seed's pick).
+    Pin(NodePath, Option<SlotPin>),
     Open(String),
     OpenUnit(String, String),
 }
@@ -181,6 +193,10 @@ pub struct UnitTool {
     /// A unit asked for with its file (Units panel), applied when that file is open.
     pending_preview: Option<(String, String, String)>,
 
+    /// The Structure panel's view, and the definition dragged from Unit files.
+    tree: structure::TreeState,
+    dragging_file: Option<String>,
+
     // The filters of the lists and pickers.
     file_filter: String,
     unit_filter: String,
@@ -235,6 +251,8 @@ impl Default for UnitTool {
             default_pending: false,
             wearer_rx: None,
             pending_preview: None,
+            tree: structure::TreeState::default(),
+            dragging_file: None,
             file_filter: String::new(),
             unit_filter: String::new(),
             combo_filters: BTreeMap::new(),
@@ -817,6 +835,11 @@ impl UnitTool {
                                 self.selected = path.or_else(|| self.selected.clone().filter(|p| tree.node(p).is_some()));
                             }
 
+                            // A new slot: its name in edit mode.
+                            if matches!(op, Structural::AddSlot(_)) {
+                                self.rename_new_slot(&tree);
+                            }
+
                             // Pins name places, and the places moved.
                             if matches!(op, Structural::Remove | Structural::MoveUp | Structural::MoveDown) {
                                 self.pins = Pins::default();
@@ -824,6 +847,28 @@ impl UnitTool {
                         }
 
                         Err(error) => e.status(&error, true),
+                    }
+                }
+
+                Action::Rename(elem, name) => {
+                    if let Some(d) = document(e) {
+                        d.set_value(elem, "name", name.trim(), 0);
+                    }
+                }
+
+                Action::Pin(path, pin) => match pin {
+                    Some(p) => {
+                        self.pins.slots.insert(path, p);
+                    }
+
+                    None => {
+                        self.pins.slots.remove(&path);
+                    }
+                },
+
+                Action::Reorder(from, to) => {
+                    if let Err(error) = self.reorder(e, &from, to) {
+                        e.status(&error, true);
                     }
                 }
 
@@ -854,6 +899,39 @@ impl UnitTool {
         }
     }
 
+    /// A node moved to place `to` among its siblings, one swap at a time, as one undo entry. Pins name places: they go.
+    fn reorder(&mut self, e: &mut Editor, from: &NodePath, to: usize) -> Result<(), String> {
+        let d = document(e).ok_or("no definition open")?;
+        let mut elem = d.tree().node(from).ok_or("no such node")?.element();
+        let mut steps = 0;
+        for _ in 0..256 {
+            let tree = d.tree();
+            let Some(at) = tree.path_of(elem).and_then(|p| p.last().copied()) else { break };
+            if at == to {
+                break;
+            }
+
+            let op = if at > to { Structural::MoveUp } else { Structural::MoveDown };
+            match d.structural(&op, elem) {
+                Ok(Some(next)) => {
+                    elem = next;
+                    steps += 1;
+                }
+
+                Ok(None) => break,
+                Err(error) => {
+                    d.join_last(steps, "Move");
+                    return Err(error);
+                }
+            }
+        }
+
+        d.join_last(steps, &format!("Move {}", from.iter().map(ToString::to_string).collect::<Vec<_>>().join("/")));
+        self.selected = d.tree().path_of(elem);
+        self.pins = Pins::default();
+        Ok(())
+    }
+
     // ---- panels
 
     fn draw_files(&mut self, e: &mut Editor) -> Vec<Action> {
@@ -868,7 +946,8 @@ impl UnitTool {
         let words: Vec<String> = self.file_filter.split_whitespace().map(str::to_lowercase).collect();
         let open = e.docs.of_tool(UNIT_TOOL_ID).and_then(|id| e.docs.find_as::<VmdDocument>(id)).map(|d| d.source().vfs_path.clone());
         let shown: Vec<String> = self.listings(e).definitions.iter().filter(|p| wce_editor::pickers::matches(p, &words)).cloned().collect();
-        gui::text_colored(theme::dim(), &format!("{} definitions", shown.len()));
+        gui::text_colored(theme::dim(), &format!("{} definitions; drag one onto a slot for a reference to it", shown.len()));
+        let mut dragged = None;
         if gui::begin_child("##vmd_list", gui::v2(0.0, 0.0), 0, 0) {
             gui::clipped(shown.len(), |k| {
                 let p = &shown[k];
@@ -878,10 +957,21 @@ impl UnitTool {
                 if gui::selectable(&text, open.as_deref() == Some(p.as_str()), 0) {
                     actions.push(Action::Open(p.clone()));
                 }
+
+                if gui::begin_drag_drop_source() {
+                    gui::set_drag_drop_payload(structure::FILE_PAYLOAD, &[0]);
+                    gui::text(&format!("{} {label}", wce_editor::icons::LINK_2));
+                    dragged = Some(p.clone());
+                    gui::end_drag_drop_source();
+                }
             });
         }
 
         gui::end_child();
+        if dragged.is_some() {
+            self.dragging_file = dragged;
+        }
+
         gui::end();
         actions
     }
@@ -931,120 +1021,6 @@ impl UnitTool {
             gui::end_table();
         }
 
-        gui::end();
-        actions
-    }
-
-    fn draw_structure(&mut self, e: &mut Editor) -> Vec<Action> {
-        let mut actions = vec![];
-        if !gui::begin("Structure", None, 0) {
-            gui::end();
-            return actions;
-        }
-
-        let Some(d) = document(e) else {
-            gui::text_wrapped("Open a variant mesh definition: from Unit files, from Units (a unit's own), or File > Open.");
-            gui::end();
-            return actions;
-        };
-
-        let tree = d.tree();
-        let source = d.source().clone();
-        let repaired = d.repaired();
-        gui::text(&d.title());
-        gui::same_line();
-        gui::text_colored(theme::dim(), &format!("({})", source.label));
-        if repaired {
-            gui::text_colored(
-                theme::warning(),
-                "This file isn't valid XML: it is shown as the game most likely reads it, and Save writes that repaired text.",
-            );
-        }
-
-        // The selected node's buttons.
-        let sel = self.selected.clone().filter(|p| tree.node(p).is_some());
-        let node = sel.as_ref().and_then(|p| tree.node(p));
-        let elem = node.map(|n| n.element());
-        let mut first = true;
-        let mut add = |label: &str, enabled: bool, tip: &str| {
-            if !first {
-                gui::same_line_or_wrap(gui::button_width(label));
-            }
-
-            first = false;
-            gui::begin_disabled(!enabled);
-            let clicked = gui::small_button(label);
-            gui::end_disabled();
-            if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip(tip);
-            }
-
-            clicked
-        };
-        let is_mesh = matches!(node, Some(Node::Mesh(_))) || sel.is_none();
-        let target = if sel.is_none() { Some(tree.root.element) } else { elem };
-        if add("+ Slot", is_mesh, "A slot in the selected mesh (or the file's root): a place for one part, among its alternatives.")
-            && let Some(t) = target
-        {
-            actions.push(Action::Edit(Structural::AddSlot("new_slot".to_owned()), t));
-        }
-
-        let is_slot = matches!(node, Some(Node::Slot(_)));
-        if add("+ Mesh", is_slot, "An alternative of the selected slot: a model with its decals, masks and tints.")
-            && let Some(t) = elem
-        {
-            actions.push(Action::Edit(Structural::AddMesh(String::new()), t));
-        }
-
-        if add("+ Reference", is_slot, "An alternative of the selected slot that is another definition file.")
-            && let Some(t) = elem
-        {
-            actions.push(Action::Edit(Structural::AddReference(String::new()), t));
-        }
-
-        let any = sel.as_ref().is_some_and(|p| !p.is_empty());
-        if add("Copy", any, "A copy of the selected node right after it.")
-            && let Some(t) = elem
-        {
-            actions.push(Action::Edit(Structural::Duplicate, t));
-        }
-
-        if add("Up", any, "Before the node above it.")
-            && let Some(t) = elem
-        {
-            actions.push(Action::Edit(Structural::MoveUp, t));
-        }
-
-        if add("Down", any, "After the node below it.")
-            && let Some(t) = elem
-        {
-            actions.push(Action::Edit(Structural::MoveDown, t));
-        }
-
-        if add("Delete", any, "The selected node and everything in it.")
-            && let Some(t) = elem
-        {
-            actions.push(Action::Edit(Structural::Remove, t));
-        }
-
-        gui::separator();
-        if gui::begin_child("##vmd_tree", gui::v2(0.0, 0.0), 0, 0) {
-            let root_flags = gui::TREE_DEFAULT_OPEN
-                | gui::TREE_OPEN_ON_ARROW
-                | gui::TREE_SPAN_AVAIL_WIDTH
-                | if sel.as_ref().is_some_and(Vec::is_empty) { gui::TREE_SELECTED } else { 0 };
-            let open = gui::tree_node_ex_id("root", root_flags, &mesh_label(&tree.root, true));
-            if gui::is_item_clicked() && !gui::is_item_toggled_open() {
-                actions.push(Action::Select(Some(vec![])));
-            }
-
-            if open {
-                draw_mesh_children(&tree.root, &mut vec![], sel.as_ref(), &self.pins, &mut actions);
-                gui::tree_pop();
-            }
-        }
-
-        gui::end_child();
         gui::end();
         actions
     }
@@ -1898,92 +1874,6 @@ fn other_attributes(d: &mut VmdDocument, elem: usize, known: &[&str]) {
     }
 }
 
-fn draw_mesh_children(mesh: &VariantMesh, path: &mut NodePath, sel: Option<&NodePath>, pins: &Pins, actions: &mut Vec<Action>) {
-    for (i, slot) in mesh.slots.iter().enumerate() {
-        path.push(i);
-        let mut label = if slot.name.is_empty() { "(slot)".to_owned() } else { slot.name.clone() };
-        if let Some(a) = &slot.attach_point {
-            label.push_str(&format!("  @{a}"));
-        }
-
-        if let Some(p) = slot.probability {
-            label.push_str(&format!("  {:.0}%", p * 100.0));
-        }
-
-        match pins.slots.get(path) {
-            Some(SlotPin::Off) => label.push_str("  [pinned: nothing]"),
-            Some(SlotPin::Alternative(k)) => label.push_str(&format!("  [pinned: {}]", k + 1)),
-            None => {}
-        }
-
-        let flags = gui::TREE_OPEN_ON_ARROW
-            | gui::TREE_SPAN_AVAIL_WIDTH
-            | gui::TREE_DEFAULT_OPEN
-            | if slot.alternatives.is_empty() { gui::TREE_LEAF } else { 0 }
-            | if sel == Some(path) { gui::TREE_SELECTED } else { 0 };
-        let id = path.iter().map(ToString::to_string).collect::<Vec<_>>().join("/");
-        let open = gui::tree_node_ex_id(&id, flags, &label);
-        if gui::is_item_clicked() && !gui::is_item_toggled_open() {
-            actions.push(Action::Select(Some(path.clone())));
-        }
-
-        if open {
-            for (j, alternative) in slot.alternatives.iter().enumerate() {
-                path.push(j);
-                let id = path.iter().map(ToString::to_string).collect::<Vec<_>>().join("/");
-                let selected = if sel == Some(path) { gui::TREE_SELECTED } else { 0 };
-                match alternative {
-                    Alternative::Mesh(m) => {
-                        let leaf = if m.slots.is_empty() { gui::TREE_LEAF } else { 0 };
-                        let open = gui::tree_node_ex_id(
-                            &id,
-                            gui::TREE_OPEN_ON_ARROW | gui::TREE_SPAN_AVAIL_WIDTH | gui::TREE_DEFAULT_OPEN | leaf | selected,
-                            &mesh_label(m, false),
-                        );
-                        if gui::is_item_clicked() && !gui::is_item_toggled_open() {
-                            actions.push(Action::Select(Some(path.clone())));
-                        }
-
-                        if open {
-                            draw_mesh_children(m, path, sel, pins, actions);
-                            gui::tree_pop();
-                        }
-                    }
-
-                    Alternative::Reference { definition, .. } => {
-                        let open = gui::tree_node_ex_id(
-                            &id,
-                            gui::TREE_LEAF | gui::TREE_SPAN_AVAIL_WIDTH | selected,
-                            &format!("-> {}", file_name(definition)),
-                        );
-                        if gui::is_item_clicked() {
-                            actions.push(Action::Select(Some(path.clone())));
-                        }
-
-                        if gui::is_item_hovered() {
-                            gui::set_tooltip(&format!("{definition}\nDouble-click to open it."));
-                        }
-
-                        if gui::is_item_hovered() && gui::is_mouse_double_clicked(0) {
-                            actions.push(Action::Open(normalize(definition)));
-                        }
-
-                        if open {
-                            gui::tree_pop();
-                        }
-                    }
-                }
-
-                path.pop();
-            }
-
-            gui::tree_pop();
-        }
-
-        path.pop();
-    }
-}
-
 impl Tool for UnitTool {
     fn id(&self) -> &str {
         UNIT_TOOL_ID
@@ -2343,6 +2233,21 @@ fn register(c: &mut CommandRegistry<Editor>) {
                 let Some(elem) = document(e).and_then(|d| d.tree().node(&path).map(|n| n.element())) else { return fail("no such node") };
                 t.apply(e, vec![Action::Edit(op, elem)]);
                 ok(format!("selected {:?}", t.selected))
+            })
+        },
+    );
+
+    c.add(
+        "unit_reorder",
+        "unit_reorder <path> <place>",
+        "a node to another place among its siblings (what a drag in Structure does)",
+        |e, a| {
+            let (Some(from), Some(to)) = (a.first().and_then(|p| parse_path(p)), a.get(1).and_then(|t| t.parse().ok())) else {
+                return fail("usage: unit_reorder <path> <place>");
+            };
+            with_unit(e, |t, e| match t.reorder(e, &from, to) {
+                Ok(()) => ok(format!("selected {:?}", t.selected)),
+                Err(error) => fail(error),
             })
         },
     );
