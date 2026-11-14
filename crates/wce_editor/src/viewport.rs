@@ -424,6 +424,44 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     vp.trace_n += 1;
 }
 
+/// Why the selection shows no gizmo (`None`: it does), by the rules `draw` follows: for the status line's hint and `gizmo_why`.
+pub fn gizmo_blocker(e: &mut Editor) -> Option<String> {
+    if e.viewport.game_view {
+        return Some("the game view (camera chip) hides the gizmo".to_owned());
+    }
+
+    if e.selection.is_empty() {
+        return Some("nothing selected".to_owned());
+    }
+
+    if e.with_active_tool(|t, e| t.tool_gizmo(e, false)).flatten().is_some() {
+        return None;
+    }
+
+    if e.viewport.gizmo == GizmoMode::Off {
+        return Some("the Select mode (the arrow in the mode strip) has no gizmo: Move, Rotate or Scale (2 to 4)".to_owned());
+    }
+
+    if e.viewport_and_tool_claims() {
+        return Some("the tool has the left mouse button (a brush, placing, drawing, a grab, box select or the flip): Esc".to_owned());
+    }
+
+    let primary = e.selection.items()[0];
+    let Some(d) = e.docs.find(primary.doc) else { return Some("the selection's document is closed".to_owned()) };
+    if d.item_locked(primary) {
+        return Some("its draggable flag is off (Inspector > flags)".to_owned());
+    }
+
+    if d.item_transform(primary).is_none() {
+        return Some(format!(
+            "the first selected ({}) is not something the gizmo moves: a layer, a point, or hidden / not selectable here or in a layer above",
+            d.describe(primary)
+        ));
+    }
+
+    None
+}
+
 /// What is under a pixel of the last rendered image.
 pub fn pick(e: &mut Editor, x: i32, y: i32) -> EntityId {
     wce_prof!("viewport.pick");

@@ -4394,7 +4394,12 @@ impl TileDocument {
     }
 
     pub(crate) fn transform_selected(&mut self, items: &[SourceRef], delta: &Float4x4, gesture: u64) {
-        for &r in items {
+        // An item inside a selected group moves with the group, not twice.
+        let mine = items.iter().filter(|r| r.doc == self.id()).filter_map(|r| elem_of(r.item)).collect::<std::collections::HashSet<_>>();
+        let els = self.tile().tscene().doc().elements();
+        let inside = |e: usize| std::iter::successors(els[e].parent, |&p| els[p].parent).any(|p| mine.contains(&p));
+        let items = items.iter().copied().filter(|r| elem_of(r.item).is_none_or(|e| e >= els.len() || !inside(e))).collect::<Vec<_>>();
+        for r in items {
             let t = self.tile();
             let Some(before) = t.item_transform(r).filter(|_| r.doc == self.id()) else { continue };
             let Some(e) = elem_of(r.item) else { continue };

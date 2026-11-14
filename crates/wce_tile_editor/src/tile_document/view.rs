@@ -2375,14 +2375,16 @@ impl Tile {
         format!("{}{}", self.tscene().type_of(e), if n.is_empty() { String::new() } else { format!("  '{n}'") })
     }
 
-    /// The gizmo's pivot (no scale); a hidden or locked item has none.
+    /// The gizmo's pivot (no scale); a hidden or locked item has none. A group (a prefab's copy, TEd's instance group) has one: it moves
+    /// with everything in it (`set_local`).
     pub(crate) fn item_transform(&self, item: SourceRef) -> Option<Float4x4> {
         if item.doc != self.id {
             return None;
         }
 
         let e = elem_of(item.item)?;
-        if !self.is_instance(e) || !self.shown(e) || !self.selectable(e) {
+        let group = matches!(self.tscene().type_of(e), "UserInstanceGroup" | "INSTANCE_GROUP") && self.tscene().position(e).is_some();
+        if !(self.is_instance(e) || group) || !self.shown(e) || !self.selectable(e) {
             return None;
         }
 
