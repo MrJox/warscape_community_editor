@@ -15,7 +15,7 @@ use wce_tile_editor::tile_document::brush::Footprint;
 use wce_tile_editor::tile_document::{TileDocument, elem_of, turned, with_root_attr};
 
 use crate::settings::{SETTINGS_ID, SurfaceMode, TileSettings, VegBrush};
-use crate::tool::{TileTool, document, document_id};
+use crate::tool::{TileTool, document};
 
 /// A painted tree: where (world metres), its key, scale and turn (degrees), and the normal of what it stands on when that is not the terrain
 /// (Entity: Above).
@@ -85,7 +85,7 @@ impl TileTool {
     /// A stroke begins at the mouse (`erase`: Ctrl held).
     pub(crate) fn begin_stroke(&mut self, e: &mut Editor, erase: bool) {
         let Some(d) = document(e) else { return };
-        self.stroke = Some(Stroke { erase, footprints: d.footprints(), ..Default::default() });
+        self.gesture = Some(crate::gesture::Gesture::VegStroke(Stroke { erase, footprints: d.footprints(), ..Default::default() }));
         self.dab(e);
     }
 
@@ -93,7 +93,7 @@ impl TileTool {
     pub(crate) fn dab(&mut self, e: &mut Editor) {
         let b = self.veg_brush(e);
         let at = self.cursor;
-        let Some(stroke) = self.stroke.as_ref() else { return };
+        let Some(stroke) = self.veg_stroke() else { return };
         if stroke.last.is_some_and(|l| (l.x - at.x).hypot(l.z - at.z) < b.radius * 0.25) {
             return;
         }
@@ -102,7 +102,8 @@ impl TileTool {
         let below =
             if !stroke.erase && self.placement_modes(e).0 == SurfaceMode::Entity { self.surfaces_in_circle(e, at, b.radius) } else { None };
         let set = self.set_in_use(e);
-        let Some(stroke) = self.stroke.as_mut() else { return };
+        // The field alone (the draft and the random numbers are read and drawn from with the stroke held).
+        let Some(crate::gesture::Gesture::VegStroke(stroke)) = &mut self.gesture else { return };
 
         stroke.last = Some(at);
         let r2 = b.radius * b.radius;
@@ -174,7 +175,7 @@ impl TileTool {
     /// The topmost surfaces over the brush's circle (Entity: Above), the trees left out, and which of the entities there are the terrain.
     fn surfaces_in_circle(&self, e: &mut Editor, at: Float3, radius: f32) -> Option<(SurfaceGrid, HashSet<EntityId>)> {
         let doc = crate::tool::document_id(e)?;
-        let trees = self.stroke.as_ref()?.footprints.iter().filter(|f| f.tree).map(|f| f.elem).collect::<HashSet<_>>();
+        let trees = self.veg_stroke()?.footprints.iter().filter(|f| f.tree).map(|f| f.elem).collect::<HashSet<_>>();
         let size = radius * 2.0 + 1.0;
 
         // About 10 cm a pixel.
@@ -195,13 +196,16 @@ impl TileTool {
 
     /// The stroke ends: its trees go into the working layer (one undo entry), or the trees it took away go.
     pub(crate) fn end_stroke_veg(&mut self, e: &mut Editor) -> String {
-        let id = document_id(e).unwrap_or(0);
-        self.end_stroke_veg_in(e, id)
+        if self.veg_stroke().is_none() {
+            return String::new();
+        }
+
+        self.end_gesture(e, crate::gesture::End::Confirm);
+        self.status.clone()
     }
 
-    /// [`Self::end_stroke_veg`] on tile `id` (the stroke's, which may no longer be the one shown).
-    pub(crate) fn end_stroke_veg_in(&mut self, e: &mut Editor, id: DocumentId) -> String {
-        let Some(stroke) = self.stroke.take() else { return String::new() };
+    /// Puts a finished stroke's trees into tile `id` (the stroke's, which may no longer be the one shown), or takes away those it erased.
+    pub(crate) fn commit_veg_stroke(&mut self, e: &mut Editor, id: DocumentId, stroke: Stroke) -> String {
         let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return String::new() };
         if stroke.erase {
             let elems = stroke.erased.into_iter().collect::<Vec<_>>();
@@ -228,7 +232,7 @@ impl TileTool {
 
     /// The preview of the stroke's trees: one group of them around the origin (the preview puts landscape ones on the terrain).
     pub(crate) fn stroke_preview(&self, e: &mut Editor) -> Option<Vec<u8>> {
-        let stroke = self.stroke.as_ref()?;
+        let stroke = self.veg_stroke()?;
         let d = document(e)?;
         let unit = d.tile().unit();
         let landscape = self.modes.unwrap_or_default().0 == SurfaceMode::Landscape;
@@ -252,7 +256,7 @@ impl TileTool {
 
     /// The trees the erasing stroke takes, for the overlay.
     pub(crate) fn erased_points(&self, d: &wce_tile_editor::tile_document::TileDocument) -> Vec<Float3> {
-        let Some(s) = self.stroke.as_ref().filter(|s| s.erase) else { return vec![] };
+        let Some(s) = self.veg_stroke().filter(|s| s.erase) else { return vec![] };
         s.erased.iter().map(|&el| d.tile().world_position(el)).collect()
     }
 

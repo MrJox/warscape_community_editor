@@ -26,6 +26,7 @@ use wce_tile_editor::tile_document::{
     piece_of,
 };
 
+use crate::gesture::{End, Gesture, Grab};
 use crate::settings::{PACKS_SOURCE, RECENT_KEEP, SETTINGS_ID, TileRef, TileSettings, source_of};
 
 /// The polygon types `add_polygon` makes (the `add_polygon` command; the Create panel makes them with `create_with`); the last is not
@@ -326,8 +327,9 @@ pub struct TileTool {
     /// While placing with Alt held: what is placed stays where it was when Alt went down and turns with the mouse (`AltTurn`).
     pub(crate) alt_turn: Option<crate::create_panel::AltTurn>,
 
-    /// Alt + a left drag in Select mode: the selection turning around its centre (`AltRotate`).
-    pub(crate) alt_rotate: Option<crate::create_panel::AltRotate>,
+    /// What the left button (or G) is doing in the viewport: a grab, a stroke, a handle's drag, a turn (`gesture::Gesture`); one at a
+    /// time, ended in one place (`end_gesture_in`).
+    pub(crate) gesture: Option<crate::gesture::Gesture>,
 
     /// Flip mode (the plane, in the viewport and the Inspector).
     pub(crate) flip: Option<crate::flip_tool::FlipMode>,
@@ -471,17 +473,6 @@ pub struct TileTool {
     /// What Copy / Cut took (any tile of the session can paste it).
     pub(crate) clipboard: Vec<wce_tile_editor::tile_document::CopiedItem>,
 
-    /// The point light whose radius handle is being dragged, and the drag's undo gesture.
-    light_drag: Option<usize>,
-    light_gesture: u64,
-
-    /// The radius minus where the mouse grabbed the handle (the handle does not jump to the mouse).
-    light_grab: f32,
-
-    /// The civilian shelter whose target handle is being dragged, and the drag's undo gesture.
-    target_drag: Option<usize>,
-    target_gesture: u64,
-
     /// The water depth view (`water_view.rs`): the tile and version its depth was worked out for, and the version last seen with when it
     /// started being (the settling after an edit).
     pub(crate) water_for: Option<(DocumentId, u64)>,
@@ -505,31 +496,11 @@ pub struct TileTool {
     pub(crate) flange_threshold: f32,
     pub(crate) grouped_variation: f32,
 
-    // Gestures.
-    stroke_active: bool,
-    pub(crate) grabbing: bool,
-    pub(crate) grab_elem: Option<usize>,
-    pub(crate) grab_y_offset: f64,
-    grab_history: usize,
-    pub(crate) grab_gesture: u64,
-
-    /// The grab started by a drag of the move gizmo's centre: its release confirms it (a G grab waits for a click).
-    grab_drag: bool,
-
-    /// The other selected items a grab carries (their offset from the grabbed one kept on the ground), and where the grabbed one was
-    /// last (metres): they move by its steps.
-    grab_others: Vec<SourceRef>,
-    grab_last: Float3,
     pub(crate) poly_point: Option<usize>,
-
-    /// A spline's handle of `poly_point` is dragged, not the point: its controlOut (true) or controlIn.
-    spline_handle: Option<bool>,
 
     /// The spline values panel edits every point, not only the selected one; the gesture of the value being dragged.
     spline_all: bool,
     value_gesture: u64,
-    point_drag: bool,
-    point_gesture: u64,
     pub(crate) drawing: bool,
     pub(crate) draw_pts: Vec<Float3>,
 
@@ -570,9 +541,8 @@ pub struct TileTool {
     /// The building technology chip's width (tech_chip.rs), last frame.
     pub(crate) tech_chip_width: f32,
 
-    /// The vegetation brush's settings (read from the settings on first use), its stroke, and its random numbers.
+    /// The vegetation brush's settings (read from the settings on first use) and its random numbers (its stroke: `gesture`).
     pub(crate) veg: Option<crate::settings::VegBrush>,
-    pub(crate) stroke: Option<crate::veg_brush::Stroke>,
     pub(crate) random: crate::veg_brush::Random,
 
     /// The vegetation sets (read on first use, again after a change, counted by the version) and the one being placed or painted.
@@ -756,7 +726,7 @@ impl Default for TileTool {
             grab_normal_offset: 0.0,
             angle_step: 15.0,
             alt_turn: None,
-            alt_rotate: None,
+            gesture: None,
             off_tol: 0.5,
             off_list: vec![],
             off_doc_version: None,
@@ -819,11 +789,6 @@ impl Default for TileTool {
             tile_db: None,
             link_candidates: None,
             clipboard: vec![],
-            light_drag: None,
-            light_gesture: 0,
-            light_grab: 0.0,
-            target_drag: None,
-            target_gesture: 0,
             water_for: None,
             water_seen: None,
             water_since: 0.0,
@@ -836,21 +801,9 @@ impl Default for TileTool {
             filter_slope: [wce_tile::blend_field::NOGO_SLOPE_DEGREES, 90.0],
             flange_threshold: 0.0,
             grouped_variation: 1.5,
-            stroke_active: false,
-            grabbing: false,
-            grab_elem: None,
-            grab_y_offset: 0.0,
-            grab_history: 0,
-            grab_gesture: 0,
-            grab_drag: false,
-            grab_others: vec![],
-            grab_last: Float3::new(0.0, 0.0, 0.0),
             poly_point: None,
-            spline_handle: None,
             spline_all: false,
             value_gesture: 0,
-            point_drag: false,
-            point_gesture: 0,
             ref_units: Default::default(),
             bspline_ui: Default::default(),
             drawing: false,
@@ -875,7 +828,6 @@ impl Default for TileTool {
             surface_px: None,
             place_chips_width: 0.0,
             veg: None,
-            stroke: None,
             random: crate::veg_brush::Random::new(),
             veg_sets: None,
             veg_sets_version: 0,
@@ -2124,18 +2076,19 @@ impl TileTool {
         if let Some(hit) = d.tile().pick_terrain(o, dir) {
             self.terrain_hit = true;
             self.cursor = hit;
-            let snapped = self.snap_point(d.tile(), hit, self.grab_elem);
+            let snapped = self.snap_point(d.tile(), hit, self.grab().map(|g| g.elem));
             self.snapped_cursor = Float3::new(snapped.x, d.tile().terrain_height(snapped.x, snapped.z), snapped.z);
         }
 
-        if let (true, true, Some(g)) = (self.grabbing, self.terrain_hit, self.grab_elem) {
+        let grab = self.grab().map(|g| (g.elem, g.y_offset, g.gesture, g.last, g.others.clone()));
+        if let (true, Some((g, y_offset, gesture, last, others))) = (self.terrain_hit, grab) {
             let (gx, gz) = (self.snapped_cursor.x, self.snapped_cursor.z);
 
             // Entity: Above: on what is under the mouse; else at the height it had above the terrain. A freeform one moved along the
             // normal (PageUp / PageDown) is offset along the terrain's normal there.
             let gy = match (self.modes.unwrap_or_default().0, self.surface_hit) {
                 (crate::settings::SurfaceMode::Entity, Some(h)) => h.point.y,
-                _ => d.tile().terrain_height(gx, gz) + self.grab_y_offset as f32,
+                _ => d.tile().terrain_height(gx, gz) + y_offset as f32,
             };
 
             let n = d.tile().terrain_normal(gx, gz);
@@ -2151,24 +2104,26 @@ impl TileTool {
             };
             match piece {
                 Some(w) => {
-                    d.set_world_transform(g, &w, self.grab_gesture);
+                    d.set_world_transform(g, &w, gesture);
                 }
 
                 None => {
-                    d.set_world_metres(g, at, self.grab_gesture);
+                    d.set_world_metres(g, at, gesture);
                 }
             }
 
             // The rest of the selection by the grabbed one's step.
             let now = d.tile().world_position(g);
-            let (dx, dz) = (now.x - self.grab_last.x, now.z - self.grab_last.z);
-            if !self.grab_others.is_empty() && (dx != 0.0 || dz != 0.0) {
+            let (dx, dz) = (now.x - last.x, now.z - last.z);
+            if !others.is_empty() && (dx != 0.0 || dz != 0.0) {
                 let mut step = Float4x4::IDENTITY;
                 (step.m[0][3], step.m[2][3]) = (dx, dz);
-                d.transform_items(&self.grab_others, &step, self.grab_gesture ^ 0x6f74_6865_7273);
+                d.transform_items(&others, &step, gesture ^ 0x6f74_6865_7273);
             }
 
-            self.grab_last = now;
+            if let Some(Gesture::Grab(grab)) = &mut self.gesture {
+                grab.last = now;
+            }
 
             // An item that follows its surface is tilted to the one it is moved onto.
             if d.tile().tscene().doc().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
@@ -2179,7 +2134,7 @@ impl TileTool {
                     _ => d.tile().terrain_normal(gx, gz),
                 };
 
-                d.tilt_to_surface(g, n, self.grab_gesture);
+                d.tilt_to_surface(g, n, gesture);
             }
         }
     }
@@ -2189,27 +2144,23 @@ impl TileTool {
     pub fn begin_grab(&mut self, e: &mut Editor) -> bool {
         let el = primary(e);
         let Some(d) = document(e) else { return false };
-        let Some(el) = el.filter(|_| !self.grabbing) else { return false };
+        let Some(el) = el.filter(|_| self.gesture.is_none()) else { return false };
         if !d.tile().draggable(el) {
             self.status = "not draggable: its draggable flag (Inspector) is off, so the mouse does not move it".to_owned();
             return false;
         }
 
         let p = d.tile().world_position(el);
-        self.grab_elem = Some(el);
-        self.grab_y_offset = f64::from(p.y - d.tile().terrain_height(p.x, p.z));
+        let y_offset = f64::from(p.y - d.tile().terrain_height(p.x, p.z));
+        let (history, gesture, doc) = (d.history().position(), d.next_gesture(), d.id());
         self.grab_normal_offset = 0.0;
-        self.grab_history = d.history().position();
-        self.grab_gesture = d.next_gesture();
-        self.grab_last = p;
-        let doc = d.id();
-        self.grab_others = selected(e)
+        let others = selected(e)
             .into_iter()
             .filter(|&o| o != el)
             .filter(|&o| document(e).is_some_and(|d| d.tile().draggable(o)))
             .map(|o| SourceRef { doc, item: wce_tile_editor::tile_document::item_of(o) })
             .collect();
-        self.grabbing = true;
+        self.gesture = Some(Gesture::Grab(Grab { elem: el, history, gesture, y_offset, others, last: p, drag: false }));
         self.status = "grab: move the mouse over the ground, click to confirm, Esc / right click to cancel; PageUp / PageDown: along the ground's normal (freeform)".to_owned();
         true
     }
@@ -2365,31 +2316,8 @@ impl TileTool {
     }
 
     pub fn end_grab(&mut self, e: &mut Editor, commit: bool) {
-        let id = document_id(e).unwrap_or(0);
-        self.end_grab_in(e, id, commit);
-    }
-
-    /// [`Self::end_grab`] on tile `id` (the grab's, which may no longer be the one shown).
-    fn end_grab_in(&mut self, e: &mut Editor, id: DocumentId, commit: bool) {
-        if !self.grabbing {
-            return;
-        }
-
-        self.grabbing = false;
-        self.grab_drag = false;
-        self.grab_elem = None;
-        self.grab_others.clear();
-        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
-        let h = d.history_mut();
-        h.break_merge();
-        if !commit {
-            h.jump_to(self.grab_history);
-            h.drop_redo();
-        } else {
-            let n = d.history().position().saturating_sub(self.grab_history);
-            if n > 1 {
-                d.join_last(n, "Grab");
-            }
+        if self.grabbing() {
+            self.end_gesture(e, if commit { End::Confirm } else { End::Cancel });
         }
     }
 
@@ -2403,26 +2331,7 @@ impl TileTool {
             return;
         }
 
-        self.end_grab_in(e, old, false);
-        if self.stroke.is_some() {
-            self.status = self.end_stroke_veg_in(e, old);
-        }
-
-        let stroke = std::mem::take(&mut self.stroke_active);
-        let dragged = std::mem::take(&mut self.point_drag)
-            | self.light_drag.take().is_some()
-            | self.target_drag.take().is_some()
-            | self.alt_rotate.take().is_some();
-        self.spline_handle = None;
-        if let Some(d) = e.docs.find_as_mut::<TileDocument>(old) {
-            if stroke {
-                d.end_stroke();
-            }
-
-            if dragged {
-                d.history_mut().break_merge();
-            }
-        }
+        self.end_gesture_in(e, old, End::Cancel);
     }
 
     /// Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one out of the export; the warnings in the log.
@@ -2539,7 +2448,7 @@ impl TileTool {
             } else if self.box_select.armed {
                 self.box_select = Default::default();
                 self.status = "box select cancelled".to_owned();
-            } else if self.grabbing {
+            } else if self.grabbing() {
                 self.end_grab(e, false);
             } else if self.drawing || self.placing.is_some() {
                 self.stop_making();
@@ -2549,7 +2458,7 @@ impl TileTool {
         }
 
         // While grabbing: move a freeform item along the ground's normal (a quarter metre; the "more" keys: a metre).
-        if self.grabbing {
+        if self.grabbing() {
             let steps =
                 [("tile.grab_raise", 0.25), ("tile.grab_lower", -0.25), ("tile.grab_raise_more", 1.0), ("tile.grab_lower_more", -1.0)];
             let dk: f32 = steps.iter().filter(|(id, _)| pressed(id, true)).map(|(_, d)| d).sum();
@@ -2559,7 +2468,7 @@ impl TileTool {
             }
         }
 
-        if self.grabbing && gui::is_mouse_clicked(1) {
+        if self.grabbing() && gui::is_mouse_clicked(1) {
             self.right_used = true;
             self.end_grab(e, false);
         }
@@ -2581,7 +2490,7 @@ impl TileTool {
             self.request_quick_add();
         }
 
-        let grabbing = self.grabbing;
+        let grabbing = self.grabbing();
         if let (Some(s), false) = (sel, grabbing) {
             if pressed("tile.duplicate", false) {
                 let d = document(e).expect("a tile");
@@ -2637,12 +2546,13 @@ impl TileTool {
         }
 
         // Box select (the next drag draws the rectangle).
-        if pressed("tile.box_select", false) && !self.grabbing && self.mode == TileMode::Select && !self.drawing && self.placing.is_none() {
+        if pressed("tile.box_select", false) && !self.grabbing() && self.mode == TileMode::Select && !self.drawing && self.placing.is_none()
+        {
             self.box_select = crate::selection_tools::BoxSelect { armed: true, ..Default::default() };
             self.status = "box select: drag a rectangle (Shift adds, Ctrl takes away; Esc cancels)".to_owned();
         }
 
-        if pressed("tile.delete", false) && !self.grabbing {
+        if pressed("tile.delete", false) && !self.grabbing() {
             let is_polygon = sel.is_some_and(|s| document(e).is_some_and(|d| d.tile().is_polygon(s)));
             if let (Some(s), Some(pt), true) = (sel, self.poly_point, is_polygon) {
                 let d = document(e).expect("a tile");
@@ -4315,9 +4225,9 @@ impl Tool for TileTool {
         d.tile_mut().update_fire(&mut e.scene, now);
         d.update_view(&mut e.scene, eye);
         d.tile_mut().set_preview(&mut e.scene, preview.as_deref(), at, yaw, normal);
-        let hot = if self.light_drag.is_some() {
+        let hot = if matches!(self.gesture, Some(Gesture::LightRadius { .. })) {
             Some(wce_tile_editor::tile_document::LIGHT_RADIUS_HANDLE)
-        } else if self.target_drag.is_some() {
+        } else if matches!(self.gesture, Some(Gesture::ShelterTarget { .. })) {
             Some(wce_tile_editor::tile_document::SHELTER_TARGET_HANDLE)
         } else {
             self.poly_point
@@ -4588,12 +4498,12 @@ impl Tool for TileTool {
             }
 
             // A grab of the move gizmo's centre: the release confirms it.
-            ViewportEventKind::Release if self.grabbing && self.grab_drag => {
+            ViewportEventKind::Release if self.grab().is_some_and(|g| g.drag) => {
                 self.end_grab(e, true);
                 true
             }
 
-            ViewportEventKind::Drag if self.grabbing && self.grab_drag => {
+            ViewportEventKind::Drag if self.grab().is_some_and(|g| g.drag) => {
                 self.on_hover(e, ev);
                 true
             }
@@ -4620,7 +4530,7 @@ impl Tool for TileTool {
             ViewportEventKind::Click if self.flip.is_some() => true,
             ViewportEventKind::Press => {
                 self.on_hover(e, ev);
-                if self.grabbing {
+                if self.grabbing() {
                     self.end_grab(e, true);
                     return true;
                 }
@@ -4678,13 +4588,13 @@ impl Tool for TileTool {
                     let dt = e.clock.dt();
                     let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
                     if self.terrain_hit && d.project().has_height() {
-                        self.stroke_active = true;
+                        self.gesture = Some(Gesture::TerrainStroke);
                         d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
 
                         // A stamp is one click.
                         if self.mode == TileMode::Stamp {
                             d.end_stroke();
-                            self.stroke_active = false;
+                            self.gesture = None;
                         }
                     }
 
@@ -4700,9 +4610,8 @@ impl Tool for TileTool {
                     let t = dot(k - o, dir);
                     if t > 0.0 && length(k - (o + dir * t)) < 1.2f32.max(t * 0.015) {
                         let c = d.tile().world_position(sel);
-                        self.light_grab = light_plane_distance(c, o, dir).map_or(0.0, |at| r - at);
-                        self.light_drag = Some(sel);
-                        self.light_gesture = d.next_gesture();
+                        let grab = light_plane_distance(c, o, dir).map_or(0.0, |at| r - at);
+                        self.gesture = Some(Gesture::LightRadius { light: sel, grab, gesture: d.next_gesture() });
                         return true;
                     }
                 }
@@ -4714,8 +4623,7 @@ impl Tool for TileTool {
                     let k = Float3::new(k.x, k.y + 0.3, k.z);
                     let t = dot(k - o, dir);
                     if t > 0.0 && length(k - (o + dir * t)) < 1.2f32.max(t * 0.015) {
-                        self.target_drag = Some(sel);
-                        self.target_gesture = d.next_gesture();
+                        self.gesture = Some(Gesture::ShelterTarget { shelter: sel, gesture: d.next_gesture() });
                         return true;
                     }
                 }
@@ -4745,14 +4653,11 @@ impl Tool for TileTool {
 
                     if let Some((i, out)) = best {
                         self.poly_point = Some(i);
-                        self.spline_handle = Some(out);
-                        self.point_drag = true;
-                        self.point_gesture = d.next_gesture();
+                        self.gesture = Some(Gesture::Point { handle: Some(out), gesture: d.next_gesture() });
                         return true;
                     }
                 }
 
-                self.spline_handle = None;
                 let mut best = None;
                 let mut best_t = 1e30f32;
                 for (i, &c) in pts.iter().enumerate() {
@@ -4770,8 +4675,7 @@ impl Tool for TileTool {
 
                 if best.is_some() {
                     self.poly_point = best;
-                    self.point_drag = true;
-                    self.point_gesture = d.next_gesture();
+                    self.gesture = Some(Gesture::Point { handle: None, gesture: d.next_gesture() });
                     return true;
                 }
 
@@ -4823,88 +4727,72 @@ impl Tool for TileTool {
             }
 
             ViewportEventKind::Drag => {
-                if self.alt_rotate.is_some() {
-                    self.alt_rotate_drag(e, ev.x, ev.shift);
-                    return true;
-                }
-
-                if self.stroke.is_some() {
-                    self.on_hover(e, ev);
-                    if self.terrain_hit {
-                        self.dab(e);
+                match self.gesture {
+                    Some(Gesture::AltRotate(_)) => self.alt_rotate_drag(e, ev.x, ev.shift),
+                    Some(Gesture::VegStroke(_)) => {
+                        self.on_hover(e, ev);
+                        if self.terrain_hit {
+                            self.dab(e);
+                        }
                     }
 
-                    return true;
-                }
+                    Some(Gesture::TerrainStroke) => {
+                        self.on_hover(e, ev);
+                        let dt = e.clock.dt();
+                        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                        self.turn_image_brush();
+                        if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
+                            d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
+                        }
+                    }
 
-                if self.stroke_active {
-                    self.on_hover(e, ev);
-                    let dt = e.clock.dt();
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    self.turn_image_brush();
-                    if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
-                        d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
+                    Some(Gesture::ShelterTarget { shelter, gesture }) => {
+                        self.on_hover(e, ev);
+                        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                        if self.terrain_hit {
+                            d.set_shelter_target(shelter, self.cursor, gesture);
+                        }
                     }
-                } else if let Some(shelter) = self.target_drag {
-                    self.on_hover(e, ev);
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    if self.terrain_hit {
-                        d.set_shelter_target(shelter, self.cursor, self.target_gesture);
+
+                    Some(Gesture::LightRadius { light, grab, gesture }) => {
+                        // The radius: how far from the light, across, the mouse ray meets the light's horizontal plane.
+                        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                        let c = d.tile().world_position(light);
+                        if let Some(at) = ray.and_then(|(o, dir)| light_plane_distance(c, o, dir)) {
+                            d.set_light_radius(light, at + grab, gesture);
+                        }
                     }
-                } else if let Some(light) = self.light_drag {
-                    // The radius: how far from the light, across, the mouse ray meets the light's horizontal plane.
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    let c = d.tile().world_position(light);
-                    if let Some(at) = ray.and_then(|(o, dir)| light_plane_distance(c, o, dir)) {
-                        d.set_light_radius(light, at + self.light_grab, self.light_gesture);
-                    }
-                } else if self.point_drag {
-                    self.on_hover(e, ev);
-                    let sel = primary(e);
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    if let (true, Some(sel), Some(pt)) = (self.terrain_hit, sel, self.poly_point) {
-                        let sc = d.tile().tscene();
-                        let pts = sc.polygon_points(sel);
-                        if let Some(out) = self.spline_handle {
-                            let _ = d.spline_point(sel, if out { "out" } else { "in" }, pt, self.cursor, self.point_gesture);
-                        } else if let Some(&point) = pts.get(pt) {
-                            let before = sc.point_position(point).unwrap_or_default();
-                            let after = d.tile().to_local(sel, self.cursor);
-                            if before != after {
-                                let _ = d.polygon_point(sel, "move", pt, self.cursor, self.point_gesture);
+
+                    Some(Gesture::Point { handle, gesture }) => {
+                        self.on_hover(e, ev);
+                        let sel = primary(e);
+                        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                        if let (true, Some(sel), Some(pt)) = (self.terrain_hit, sel, self.poly_point) {
+                            let sc = d.tile().tscene();
+                            let pts = sc.polygon_points(sel);
+                            if let Some(out) = handle {
+                                let _ = d.spline_point(sel, if out { "out" } else { "in" }, pt, self.cursor, gesture);
+                            } else if let Some(&point) = pts.get(pt) {
+                                let before = sc.point_position(point).unwrap_or_default();
+                                let after = d.tile().to_local(sel, self.cursor);
+                                if before != after {
+                                    let _ = d.polygon_point(sel, "move", pt, self.cursor, gesture);
+                                }
                             }
                         }
                     }
+
+                    // A G grab follows the mouse in `on_hover`; no gesture: the camera's.
+                    Some(Gesture::Grab(_)) | None => return false,
                 }
 
-                self.stroke_active || self.point_drag || self.light_drag.is_some() || self.target_drag.is_some()
+                true
             }
 
+            // The release ends what the press began (a G grab waits for its click).
             ViewportEventKind::Release => {
-                if self.alt_rotate.take().is_some() {
-                    if let Some(d) = e.docs.find_as_mut::<TileDocument>(id) {
-                        d.history_mut().break_merge();
-                    }
-
-                    return true;
-                }
-
-                if self.stroke.is_some() {
-                    self.status = self.end_stroke_veg(e);
-                    return true;
-                }
-
-                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                if self.stroke_active {
-                    self.stroke_active = false;
-                    d.end_stroke();
-                }
-
-                if self.point_drag || self.light_drag.is_some() || self.target_drag.is_some() {
-                    self.point_drag = false;
-                    self.light_drag = None;
-                    self.target_drag = None;
-                    d.history_mut().break_merge();
+                if self.gesture.as_ref().is_some_and(|g| !matches!(g, Gesture::Grab(_))) {
+                    self.end_gesture_in(e, id, End::Confirm);
                 }
 
                 true
@@ -4979,7 +4867,7 @@ impl Tool for TileTool {
 
         // The ground views' chip at the top right, left of the viewport's camera and snap chips, the placement chips (while placing) left of
         // it, beside the compass too (the viewport moves the whole row under it when it does not fit).
-        let placing = self.placing.is_some() || self.grabbing;
+        let placing = self.placing.is_some() || self.grabbing();
         e.viewport.tool_chips_width = self.ground_chip_width
             + self.tech_chip_width
             + self.areas_chip_width
@@ -5059,7 +4947,7 @@ impl Tool for TileTool {
 
     fn can_centre_drag(&self, e: &Editor) -> bool {
         self.mode == TileMode::Select
-            && !self.grabbing
+            && self.gesture.is_none()
             && !self.drawing
             && self.placing.is_none()
             && self.flip.is_none()
@@ -5067,8 +4955,12 @@ impl Tool for TileTool {
     }
 
     fn begin_centre_drag(&mut self, e: &mut Editor) -> bool {
-        self.grab_drag = self.begin_grab(e);
-        self.grab_drag
+        let begun = self.begin_grab(e);
+        if let Some(Gesture::Grab(g)) = &mut self.gesture {
+            g.drag = true;
+        }
+
+        begun
     }
 
     fn camera_chip(&mut self, e: &mut Editor) {
@@ -5189,11 +5081,9 @@ impl Tool for TileTool {
         self.flip.is_none()
             && self.mode == TileMode::Select
             && !self.drawing
-            && !self.grabbing
+            && !matches!(self.gesture, Some(Gesture::Grab(_) | Gesture::LightRadius { .. } | Gesture::ShelterTarget { .. }))
             && self.placing.is_none()
             && !self.box_select.armed
-            && self.light_drag.is_none()
-            && self.target_drag.is_none()
     }
 
     fn box_drag(&mut self, e: &mut Editor, from: (i32, i32), to: (i32, i32), done: bool) {
@@ -5213,24 +5103,14 @@ impl Tool for TileTool {
     }
 
     fn open_gesture(&self) -> Option<&'static str> {
-        if self.grabbing {
-            Some("the grab")
-        } else if self.stroke_active || self.stroke.is_some() {
-            Some("the brush stroke")
-        } else if self.point_drag || self.light_drag.is_some() || self.target_drag.is_some() {
-            Some("the handle drag")
-        } else if self.alt_rotate.is_some() {
-            Some("the rotation")
-        } else {
-            None
-        }
+        self.gesture.as_ref().map(Gesture::name)
     }
 
     fn claims_left_button(&self, _e: &Editor) -> bool {
         self.flip.is_some()
             || self.mode != TileMode::Select
             || self.drawing
-            || self.grabbing
+            || self.grabbing()
             || self.placing.is_some()
             || self.box_select.armed
     }

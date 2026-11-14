@@ -16,6 +16,7 @@ pub mod entity_types;
 pub mod extract_prompt;
 mod falloff_editor;
 pub mod flip_tool;
+mod gesture;
 pub mod ground_views;
 mod height_import_dialog;
 mod image_brush;
