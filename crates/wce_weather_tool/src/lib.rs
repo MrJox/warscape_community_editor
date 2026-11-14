@@ -3,8 +3,14 @@
 //! weather_editor application onto the shared shell; everything it did is a command here too (docs/editor.md).
 
 pub mod commands;
+mod gallery;
+mod mix;
 pub mod picker;
+mod preview;
+mod reference;
+mod sky_strip;
 pub mod tool;
 pub mod variation_editor;
+mod visual;
 
 pub use tool::WeatherTool;

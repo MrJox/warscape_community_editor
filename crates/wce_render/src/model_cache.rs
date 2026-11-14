@@ -1345,6 +1345,11 @@ impl ModelInner {
 }
 
 impl ModelCache {
+    /// A cache for another renderer that shares this one's models (and their textures): only the scene's terrain GPU data is its own.
+    pub fn sharing(&self) -> Self {
+        Self { inner: self.inner.clone(), terrain: BTreeMap::new() }
+    }
+
     pub fn new(dev: &ID3D11Device, read: SharedReader, textures: Arc<TextureCache>) -> Self {
         Self {
             inner: Arc::new(ModelInner {

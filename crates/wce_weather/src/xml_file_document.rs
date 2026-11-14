@@ -154,6 +154,11 @@ impl XmlFileDocument {
         self.xml().elements().get(elem).is_some_and(|e| attr < e.attrs.len())
     }
 
+    /// The last `n` edits as one undo entry named `name` (a drag that edits two attributes at once: the sun's azimuth and elevation).
+    pub fn join_last(&mut self, n: usize, name: &str) {
+        self.history.join_last(n, name);
+    }
+
     /// Sets an attribute to `raw` (already entity-encoded, as it is stored). `gesture` merges the commands of one drag into one entry (0: never merge).
     pub fn set_attr(&mut self, elem: usize, attr: usize, raw: Vec<u8>, gesture: u64) {
         if !self.valid(elem, attr) {
@@ -294,6 +299,13 @@ impl Document for XmlFileDocument {
         true
     }
 
+    /// The file as saved (or as opened): its text again; not undoable (the history is cleared, as a structural edit's snapshot could not
+    /// be replayed over it).
+    fn revert(&mut self) -> Result<String, String> {
+        self.revert_all();
+        Ok(format!("{} as saved", self.title()))
+    }
+
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
         let to = if target.path.as_os_str().is_empty() { self.default_save_path() } else { target.path.clone() };
         let fail = |error: String| format!("save failed: {error}");
@@ -302,6 +314,11 @@ impl Document for XmlFileDocument {
         }
 
         std::fs::write(&to, self.xml().save()).map_err(|_| fail("write failed".to_owned()))?;
+
+        // A game file's copy elsewhere (Save as): the project's file still lacks the edits, so the document stays unsaved.
+        if !self.source.vfs_path.is_empty() && !wce_editor_core::document::same_path(&to, &self.default_save_path()) {
+            return Ok(());
+        }
 
         // The saved file becomes the new baseline.
         let bytes = std::fs::read(&to).map_err(|error| fail(error.to_string()))?;

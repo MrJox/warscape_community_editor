@@ -94,6 +94,9 @@ pub struct Viewport {
     /// both do not fit beside it.
     pub chips_width: f32,
     pub chips_top: f32,
+
+    /// One of the tool's modes (a brush) was on last frame (`Tool::viewport_modes`): the mode strip shows the gizmo's buttons unlit.
+    pub tool_mode_on: bool,
     pub tool_chips_width: f32,
 
     /// The coordinates readout (crate::coords), the map a tool places the scene in (cells, height above the sea), the ground point under
@@ -163,6 +166,7 @@ impl Default for Viewport {
             frames_rendered: 0,
             show_compass: true,
             chips_width: 0.0,
+            tool_mode_on: false,
             chips_top: 6.0,
             tool_chips_width: 0.0,
             show_coords: true,
@@ -420,6 +424,44 @@ fn render(e: &mut Editor, w: u32, h: u32) {
     vp.trace_n += 1;
 }
 
+/// Why the selection shows no gizmo (`None`: it does), by the rules `draw` follows: for the status line's hint and `gizmo_why`.
+pub fn gizmo_blocker(e: &mut Editor) -> Option<String> {
+    if e.viewport.game_view {
+        return Some("the game view (camera chip) hides the gizmo".to_owned());
+    }
+
+    if e.selection.is_empty() {
+        return Some("nothing selected".to_owned());
+    }
+
+    if e.with_active_tool(|t, e| t.tool_gizmo(e, false)).flatten().is_some() {
+        return None;
+    }
+
+    if e.viewport.gizmo == GizmoMode::Off {
+        return Some("the Select mode (the arrow in the mode strip) has no gizmo: Move, Rotate or Scale (2 to 4)".to_owned());
+    }
+
+    if e.viewport_and_tool_claims() {
+        return Some("the tool has the left mouse button (a brush, placing, drawing, a grab, box select or the flip): Esc".to_owned());
+    }
+
+    let primary = e.selection.items()[0];
+    let Some(d) = e.docs.find(primary.doc) else { return Some("the selection's document is closed".to_owned()) };
+    if d.item_locked(primary) {
+        return Some("its draggable flag is off (Inspector > flags)".to_owned());
+    }
+
+    if d.item_transform(primary).is_none() {
+        return Some(format!(
+            "the first selected ({}) is not something the gizmo moves: a layer, a point, or hidden / not selectable here or in a layer above",
+            d.describe(primary)
+        ));
+    }
+
+    None
+}
+
 /// What is under a pixel of the last rendered image.
 pub fn pick(e: &mut Editor, x: i32, y: i32) -> EntityId {
     wce_prof!("viewport.pick");
@@ -672,6 +714,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let origin = gui::cursor_screen_pos();
     e.viewport.image_origin = origin;
     gui::image(tex.id(), size);
+    e.with_active_tool(|t, e| t.viewport_underlay(e, origin, size));
     if e.viewport.show_compass {
         draw_compass(origin, size, &e.viewport.camera(), e.viewport.north);
     }
@@ -707,6 +750,9 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     }
 
     e.with_active_tool(|t, e| t.viewport_overlay(e, origin, size));
+    if size.x >= 120.0 && !e.viewport.game_view {
+        crate::chips::draw_mode_strip(e, origin, size);
+    }
 
     let (ctrl, shift, alt) = (io.KeyCtrl, io.KeyShift, io.KeyAlt);
     // ---- gizmo (not while the tool owns the left button: a grab or a brush must not hand the click to the gizmo under the cursor)
@@ -718,13 +764,46 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     if let Some(frame) = tool_gizmo {
         gizmo_target = Some((SourceRef::default(), frame));
     } else if e.viewport.gizmo != GizmoMode::Off && !e.viewport.game_view && !claims && !e.selection.is_empty() {
+        // No gizmo on an item the mouse must not move (TEd's draggable flag off).
         let primary = e.selection.items()[0];
-        gizmo_target = e.docs.find(primary.doc).and_then(|d| d.item_transform(primary)).map(|world| (primary, world));
+        gizmo_target = e
+            .docs
+            .find(primary.doc)
+            .filter(|d| !d.item_locked(primary))
+            .and_then(|d| d.item_transform(primary))
+            .map(|world| (primary, world));
     }
 
     let mut using_gizmo = false;
     let mut over_gizmo_handle = false;
     let vp_gizmo = e.viewport.gizmo;
+
+    // The move gizmo's centre is the tool's (`Tool::can_centre_drag`): a drag there moves the selection over the surface under the cursor,
+    // as the Tile tool's G does. Taken before ImGuizmo, whose centre would move it in the screen's plane.
+    let mut centre_taken = false;
+    if let Some((_, world)) = gizmo_target.filter(|_| !tools && vp_gizmo == GizmoMode::Translate)
+        && e.with_active_tool(|t, e| t.can_centre_drag(e)).unwrap_or(false)
+        && let Some((x, y)) = e.viewport.camera().project(Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]), w as f32 / h as f32)
+    {
+        const CENTRE_GRAB: f32 = 9.0;
+        let at = gui::v2(origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y);
+        let mouse = gui::io().MousePos;
+        let near = hovered && (mouse.x - at.x).hypot(mouse.y - at.y) <= CENTRE_GRAB;
+        let dl = gui::window_draw_list();
+        dl.circle_filled(at, 6.0, gui::col32(10, 10, 12, 200));
+        dl.circle_filled(at, 4.5, if near { gui::col32(255, 230, 120, 255) } else { gui::col32(235, 235, 235, 230) });
+        if near {
+            gui::set_tooltip(
+                "Drag: move the selection over the surface under the cursor (as G): on the ground, onto what is under it, wall pieces joining",
+            );
+            if gui::is_mouse_clicked(0) && e.with_active_tool(|t, e| t.begin_centre_drag(e)).unwrap_or(false) {
+                e.viewport.tool_drag = true;
+                centre_taken = true;
+                gizmo_target = None;
+            }
+        }
+    }
+
     if let Some((primary, world)) = gizmo_target {
         let vp = &e.viewport;
         let cam = vp.camera();
@@ -859,9 +938,10 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
             }
 
             let delta = moved * inverse(&frame);
-            let items = e.selection.items().to_vec();
+            let mut items = e.selection.items().to_vec();
             let gesture = e.viewport.gesture;
             if let Some(d) = e.docs.find_mut(primary.doc).filter(|_| !tools) {
+                items.retain(|&i| !d.item_locked(i));
                 if vp_gizmo == GizmoMode::Scale {
                     // ImGuizmo keeps the matrix the drag began with: its axes' lengths are the scale since then.
                     let m = &moved.m;
@@ -897,7 +977,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let has_tool = e.has_active_tool();
     if has_tool && hovered && !over_gizmo {
         e.tool_viewport_input(&event(ViewportEventKind::Hover));
-        if gui::is_mouse_clicked(0) {
+        if gui::is_mouse_clicked(0) && !centre_taken {
             let taken = e.tool_viewport_input(&event(ViewportEventKind::Press));
             if taken || claims {
                 e.viewport.tool_drag = true;

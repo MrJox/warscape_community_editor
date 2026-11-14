@@ -1,4 +1,4 @@
-//! A new battle tile (Tile > New tile...), as TEd's New Tile makes it and its first "Save As Battlefield" writes it (static RE of
+//! A new battle tile (File > New tile...), as TEd's New Tile makes it and its first "Save As Battlefield" writes it (static RE of
 //! `TEd.AssemblyKit.exe`, docs/plans/workflow_review.md), written straight away as a project: `<projects>/assembly_kit/raw_data`, the
 //! kit's layout, never the Assembly Kit.
 //!

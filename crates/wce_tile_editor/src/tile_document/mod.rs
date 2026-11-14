@@ -1192,6 +1192,13 @@ impl TileDocument {
     }
 }
 
+impl TileDocument {
+    /// The last `n` edits as one undo entry named `name` (a grab that moved several items).
+    pub fn join_last(&mut self, n: usize, name: &str) {
+        self.history.join_last(n, name);
+    }
+}
+
 impl Document for TileDocument {
     fn core(&self) -> &DocumentCore {
         &self.core
@@ -1229,12 +1236,41 @@ impl Document for TileDocument {
         true
     }
 
+    /// Back through the history to the saved point; not when the tile has changes the history does not hold (painted terrain layers,
+    /// a conversion when it was opened): those only go by opening it again.
+    fn revert(&mut self) -> Result<String, String> {
+        if self.terrain_layers_dirty() || self.tile().converted_on_open {
+            return Err(format!(
+                "{} has changes outside its undo history (painted terrain layers, or its conversion when opened): close it without \
+                 saving and open it again",
+                self.title()
+            ));
+        }
+
+        let to = self
+            .history()
+            .saved_position()
+            .ok_or("the saved state is no longer in the history: close it without saving and open it again")?;
+        self.history_mut().jump_to(to);
+        Ok(format!("{} as saved (Redo brings the edits back)", self.title()))
+    }
+
+    fn save_as_blocked(&self) -> Option<String> {
+        Some(if self.stage.is_some() {
+            "A prefab stage saves into its prefab: Save, or the Prefabs panel's Save as... for a new prefab.".to_owned()
+        } else {
+            "A tile is its folder and its tile database entry: a copy in any folder opens again without its height range, size and colour. \
+             Use File > Save tile as... for another tile, or File > Export."
+                .to_owned()
+        })
+    }
+
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
         if self.stage.is_some() {
             return self.save_stage();
         }
 
-        // Save as into a battle tile's folder in the projects: a new tile there with its own entry (Tile > Save tile as), not a folder
+        // Save as into a battle tile's folder in the projects: a new tile there with its own entry (File > Save tile as), not a folder
         // no entry points to (its heights, size and colour lost on the next open).
         if let Some((set, name, variation)) = self.save_as_new_tile(&target.path) {
             let kit = self.tile().colour_kit.clone();
@@ -1344,6 +1380,10 @@ impl Document for TileDocument {
 
     fn item_parent_transform(&self, item: SourceRef) -> Option<Float4x4> {
         self.tile().item_parent_transform(item)
+    }
+
+    fn item_locked(&self, item: SourceRef) -> bool {
+        elem_of(item.item).is_some_and(|el| !self.tile().draggable(el))
     }
 
     fn transform_items(&mut self, items: &[SourceRef], delta: &Float4x4, gesture: u64) {

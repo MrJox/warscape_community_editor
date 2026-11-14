@@ -82,21 +82,38 @@ impl TileTool {
         gui::text(&format!("now {} x {} cells (128 m each)", ui.old.0, ui.old.1));
         gui::set_next_item_width(160.0);
         gui::input_int("cells along x", &mut ui.size[0]);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The new size along x, in cells of 128 m (1 to 64).");
+        }
+
         gui::set_next_item_width(160.0);
         gui::input_int("cells along z", &mut ui.size[1]);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The new size along z, in cells of 128 m (1 to 64).");
+        }
+
         ui.size = ui.size.map(|v| v.clamp(1, 64));
         gui::checkbox("centre along x", &mut ui.centre[0]);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Puts the old tile in the middle of the new size along x; off, at the cell given below.");
+        }
+
         gui::same_line();
         gui::checkbox("centre along z", &mut ui.centre[1]);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Puts the old tile in the middle of the new size along z; off, at the cell given below.");
+        }
+
         for (i, label) in [(0, "old tile at x cell"), (1, "old tile at z cell")] {
             if !ui.centre[i] {
                 gui::set_next_item_width(160.0);
                 gui::input_int(label, &mut ui.offset[i]);
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "Where the old tile's first cell lands in the new size (negative: the old tile's first cells are cut off).",
+                    );
+                }
             }
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Where the old tile's first cell lands in the new size (negative: the old tile's first cells are cut off).");
         }
 
         gui::checkbox("carry the edges out", &mut ui.extend);
@@ -126,7 +143,12 @@ impl TileTool {
         }
 
         let mut keep = true;
-        if gui::button("Resize") {
+        let resize = gui::button("Resize");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Saves the tile, resizes its maps on disk and opens it again. No undo.");
+        }
+
+        if resize {
             match document_id(e).map(|id| self.resize_tile(e, id, &r)) {
                 Some(Ok(msg)) => {
                     e.status(&msg, false);

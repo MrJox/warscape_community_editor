@@ -132,6 +132,9 @@ static RIVER_SNAP_TIP: std::sync::LazyLock<String> = std::sync::LazyLock::new(||
 const FREEFORM_TINT_TIP: &str = "View filter: lays a blue tint over every freeform instance (MSM_FREEFORM, in effect through its groups: it keeps its own height \
      instead of following the terrain), to tell them from the landscape ones. Only the viewport shows it; the tile and the game do not change.";
 
+/// A row of a list of items (the Problems, the off-terrain report): what its click does.
+const SELECT_AND_FRAME_TIP: &str = "Click: selects it and frames it in the viewport.";
+
 pub const MODE_NAMES: [&str; 10] = ["select", "raise", "lower", "smooth", "flatten", "level", "noise", "stamp", "paint", "ground"];
 const MODES: [TileMode; 10] = [
     TileMode::Select,
@@ -509,6 +512,14 @@ pub struct TileTool {
     pub(crate) grab_y_offset: f64,
     grab_history: usize,
     pub(crate) grab_gesture: u64,
+
+    /// The grab started by a drag of the move gizmo's centre: its release confirms it (a G grab waits for a click).
+    grab_drag: bool,
+
+    /// The other selected items a grab carries (their offset from the grabbed one kept on the ground), and where the grabbed one was
+    /// last (metres): they move by its steps.
+    grab_others: Vec<SourceRef>,
+    grab_last: Float3,
     pub(crate) poly_point: Option<usize>,
 
     /// A spline's handle of `poly_point` is dragged, not the point: its controlOut (true) or controlIn.
@@ -637,7 +648,7 @@ pub struct TileTool {
     /// The right click ended a grab: its release opens no menu.
     right_used: bool,
 
-    /// The dock node of the Tile panel (where the Weather panel goes the first time).
+    /// The dock node of the Tile panel.
     pub(crate) right_dock: Option<gui::ImGuiID>,
 
     /// The keys of each type, per tile.
@@ -826,6 +837,9 @@ impl Default for TileTool {
             grab_y_offset: 0.0,
             grab_history: 0,
             grab_gesture: 0,
+            grab_drag: false,
+            grab_others: vec![],
+            grab_last: Float3::new(0.0, 0.0, 0.0),
             poly_point: None,
             spline_handle: None,
             spline_all: false,
@@ -2127,6 +2141,17 @@ impl TileTool {
                 }
             }
 
+            // The rest of the selection by the grabbed one's step.
+            let now = d.tile().world_position(g);
+            let (dx, dz) = (now.x - self.grab_last.x, now.z - self.grab_last.z);
+            if !self.grab_others.is_empty() && (dx != 0.0 || dz != 0.0) {
+                let mut step = Float4x4::IDENTITY;
+                (step.m[0][3], step.m[2][3]) = (dx, dz);
+                d.transform_items(&self.grab_others, &step, self.grab_gesture ^ 0x6f74_6865_7273);
+            }
+
+            self.grab_last = now;
+
             // An item that follows its surface is tilted to the one it is moved onto.
             if d.tile().tscene().doc().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
                 let n = match (self.modes.unwrap_or_default().0, self.surface_hit) {
@@ -2147,12 +2172,25 @@ impl TileTool {
         let el = primary(e);
         let Some(d) = document(e) else { return false };
         let Some(el) = el.filter(|_| !self.grabbing) else { return false };
+        if !d.tile().draggable(el) {
+            self.status = "not draggable: its draggable flag (Inspector) is off, so the mouse does not move it".to_owned();
+            return false;
+        }
+
         let p = d.tile().world_position(el);
         self.grab_elem = Some(el);
         self.grab_y_offset = f64::from(p.y - d.tile().terrain_height(p.x, p.z));
         self.grab_normal_offset = 0.0;
         self.grab_history = d.history().position();
         self.grab_gesture = d.next_gesture();
+        self.grab_last = p;
+        let doc = d.id();
+        self.grab_others = selected(e)
+            .into_iter()
+            .filter(|&o| o != el)
+            .filter(|&o| document(e).is_some_and(|d| d.tile().draggable(o)))
+            .map(|o| SourceRef { doc, item: wce_tile_editor::tile_document::item_of(o) })
+            .collect();
         self.grabbing = true;
         self.status = "grab: move the mouse over the ground, click to confirm, Esc / right click to cancel; PageUp / PageDown: along the ground's normal (freeform)".to_owned();
         true
@@ -2314,15 +2352,22 @@ impl TileTool {
         }
 
         self.grabbing = false;
+        self.grab_drag = false;
         let Some(d) = document(e) else { return };
         let h = d.history_mut();
         h.break_merge();
         if !commit {
             h.jump_to(self.grab_history);
             h.drop_redo();
+        } else {
+            let n = d.history().position().saturating_sub(self.grab_history);
+            if n > 1 {
+                d.join_last(n, "Grab");
+            }
         }
 
         self.grab_elem = None;
+        self.grab_others.clear();
     }
 
     /// Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one out of the export; the warnings in the log.
@@ -2575,7 +2620,7 @@ impl TileTool {
         self.right_dock = Some(gui::window_dock_id());
 
         let Some(id) = document_id(e) else {
-            gui::text_wrapped("No tile open. File > Open file... (a tile.ted), Tile > Open tile..., or --tile <folder>.");
+            gui::text_wrapped("No tile open. File > Open file... (a tile.ted), File > Open tile..., or --tile <folder>.");
             gui::end();
             return;
         };
@@ -2665,6 +2710,10 @@ impl TileTool {
             d.tile_mut().display_changed();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Draws the cells the links name on the ground in the viewport.");
+        }
+
         gui::same_line();
         gui::checkbox("Follow", &mut self.link_follow);
         if gui::is_item_hovered() {
@@ -2731,6 +2780,10 @@ impl TileTool {
                 if gui::selectable(&format!("{}  {msg}   [{ty} '{name}']##integ{i}", icons::TRIANGLE_ALERT), false, 0) {
                     pick_one = Some(*el);
                 }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(SELECT_AND_FRAME_TIP);
+                }
             }
 
             gui::separator();
@@ -2752,6 +2805,10 @@ impl TileTool {
                     self.link_pick = Some((p.target, p.index));
                     self.status = "picked in the Tile panel's Tile links".to_owned();
                 }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Click: picks this link in the Tile links section.");
+                }
             }
 
             gui::separator();
@@ -2766,6 +2823,10 @@ impl TileTool {
             for (i, (el, msg)) in rivers.iter().enumerate() {
                 if gui::selectable(&format!("{}  {msg}##river{i}", icons::WAVES), false, 0) {
                     pick = *el;
+                }
+
+                if el.is_some() && gui::is_item_hovered() {
+                    gui::set_tooltip(SELECT_AND_FRAME_TIP);
                 }
             }
 
@@ -2811,6 +2872,10 @@ impl TileTool {
                 0,
             ) {
                 pick = Some(el);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(SELECT_AND_FRAME_TIP);
             }
         }
 
@@ -2876,11 +2941,19 @@ impl TileTool {
         gui::text(&format!("{} landscape, {} freeform, {} without a mode", c.landscape, c.freeform, c.other));
         gui::set_next_item_width(90.0);
         gui::drag_float("tolerance (m)", &mut self.off_tol, 0.05, 0.001, 50.0, "%.3f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("How far from the terrain, in metres, a landscape instance may be before the report lists it.");
+        }
+
         gui::same_line();
         if gui::button("Report off-terrain") {
             self.off_list = d.tile().off_terrain(self.off_tol, None);
             self.off_doc = id;
             self.off_doc_version = Some(d.history().version());
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Lists the landscape instances further from the terrain than the tolerance, worst first.");
         }
 
         let Some(version) = self.off_doc_version.filter(|_| self.off_doc == id) else { return };
@@ -2896,12 +2969,20 @@ impl TileTool {
         let elems = self.off_list.iter().map(|o| o.elem).collect::<Vec<_>>();
         gui::begin_disabled(elems.is_empty());
         let select_them = gui::button("Select them");
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Selects every instance in the report.");
+        }
+
         gui::same_line();
         if gui::button("Snap them") {
             let n = d.snap_to_terrain(&elems, false);
             self.status = format!("{n} snapped to the terrain");
             self.off_list.clear();
             self.off_doc_version = Some(d.history().version());
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Puts every instance in the report back on the terrain.");
         }
 
         gui::end_disabled();
@@ -2916,6 +2997,10 @@ impl TileTool {
 
             if gui::selectable(&format!("{:+.2} m  {n}##off{}", o.dy, o.elem), false, 0) {
                 pick = Some(o.elem);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("How far it is above (+) or below (-) the terrain. Click: selects it.");
             }
         }
 
@@ -2933,27 +3018,6 @@ impl TileTool {
         if let Some(el) = pick {
             e.selection.set(d.ref_of(el));
         }
-    }
-
-    /// The Weather panel: which environment the game picks for the tile (every filter and file); the usual filters are chips over the viewport.
-    fn draw_weather_panel(&mut self, e: &mut Editor) {
-        gui::set_next_window_size(gui::v2(420.0, 420.0), gui::COND_FIRST_USE_EVER);
-        if let Some(dock) = self.right_dock.filter(|&d| d != 0) {
-            gui::set_next_window_dock_id(dock, gui::COND_FIRST_USE_EVER);
-        }
-
-        if !gui::begin("Weather", None, 0) {
-            gui::end();
-            return;
-        }
-
-        if document(e).is_some() {
-            self.weather.draw(e);
-        } else {
-            gui::text_disabled("Open a tile first.");
-        }
-
-        gui::end();
     }
 
     /// The tile browser: the entries of the kit's tile database (an index, not a scan), a swatch of the tile's colour, its size and
@@ -3023,11 +3087,18 @@ impl TileTool {
             gui::end_combo();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Where the tiles listed come from: the projects, an Assembly Kit, or the game's packs (exported tiles).");
+        }
+
         let packs = self.browse_kit == self.browse_roots.len();
 
         gui::same_line();
         gui::set_next_item_width(110.0);
         gui::combo("##kind", &mut self.browse_kind, &["all kinds", "battle", "campaign"]);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Lists only the battle tiles, only the campaign tiles, or both.");
+        }
         gui::set_next_item_width(-1.0);
         if focus && self.browse_focus_frames == 0 {
             gui::set_keyboard_focus_here(0);
@@ -3227,6 +3298,10 @@ impl TileTool {
 
                     if gui::button(&format!("{name}##v{v}")) {
                         open = Some((sel.xml.display().to_string(), v.to_string(), sel.key.clone(), name.clone()));
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("Opens this variation of the tile.");
                     }
                 }
             }
@@ -3492,6 +3567,10 @@ impl TileTool {
                 if gui::checkbox("sharp corner (a corner piece instead of a bend)", &mut sharp) {
                     d.set_point_attribute(s, pt, "sharp", wce_tile::properties::format_bool(sharp));
                 }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("The selected point's sharp mark. A turn of 90 degrees or more is a corner whatever the mark.");
+                }
             }
         }
     }
@@ -3515,6 +3594,10 @@ impl TileTool {
         let mut sharp = d.tile().tscene().doc().get(p, "sharp").is_some_and(|v| wce_tile::properties::parse_bool(&v));
         if gui::checkbox("sharp corner (a mitre instead of a curve)", &mut sharp) {
             d.set_point_attribute(wall, pt, "sharp", wce_tile::properties::format_bool(sharp));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The selected point's sharp mark: the wall turns there in a mitre instead of a curve.");
         }
     }
 
@@ -3556,6 +3639,10 @@ impl TileTool {
         }
 
         gui::checkbox("all points", &mut self.spline_all);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The values below go to every point of the spline (they show the first point's); off: the selected point's.");
+        }
+
         let Some(shown) = (if self.spline_all { Some(0) } else { self.poly_point.filter(|&p| p < points.len()) }) else { return };
         let targets = if self.spline_all { (0..points.len()).collect::<Vec<_>>() } else { vec![shown] };
         let kind = sc.type_of(s).to_owned();
@@ -3567,6 +3654,12 @@ impl TileTool {
             let changed = gui::drag_float(attr, &mut v, speed, 0.0, 0.0, "%g");
             if gui::is_item_activated() {
                 self.value_gesture = d.next_gesture();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!(
+                    "The point's {attr} attribute, as TEd stores it; with all points ticked, every point's. Drag or Ctrl+click to type."
+                ));
             }
 
             if changed {
@@ -3823,8 +3916,15 @@ impl Tool for TileTool {
         gui::separator_text("New tiles");
         gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
         gui::checkbox("Show the sea at 0 m", &mut s.show_sea);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A tile opens with the sea drawn at height 0 (the tile's plane and the Map context's sea).");
+        }
+
         gui::set_cursor_pos_x(settings_window::LABEL_WIDTH);
         gui::checkbox("Show the VFX boxes", &mut s.show_vfx_boxes);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("A tile opens with the VFXInstance markers drawn; the effects play either way.");
+        }
         settings_window::help("What a tile shows when it opens; the Tile panel and the Tile menu change the open tile.");
 
         gui::separator_text("Launch in game");
@@ -3833,9 +3933,19 @@ impl Tool for TileTool {
             s.launch.delivery = crate::settings::LaunchDelivery::Pack;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip(
+                "The tile goes into a mod pack (data\\wce_launch.pack) loaded first, with the mod packs chosen in the editor; removed when the game exits.",
+            );
+        }
+
         gui::same_line();
         if gui::radio_button("Loose files", s.launch.delivery == crate::settings::LaunchDelivery::Loose) {
             s.launch.delivery = crate::settings::LaunchDelivery::Loose;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The tile goes into a working folder as loose files, with only the mod packs it needs.");
         }
 
         settings_window::help("Loose files lose to the game's packs; a tile falls back to the pack.");
@@ -3844,9 +3954,17 @@ impl Tool for TileTool {
             s.launch.map = crate::settings::LaunchMap::Tile;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The battle map is the tile on its own.");
+        }
+
         gui::same_line();
         if gui::radio_button("The Map context's placement", s.launch.map == crate::settings::LaunchMap::MapContext) {
             s.launch.map = crate::settings::LaunchMap::MapContext;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The battle map is the tile where the Map context places it in its map, with its neighbours.");
         }
 
         settings_window::help(
@@ -3877,6 +3995,12 @@ impl Tool for TileTool {
             settings_window::label(label);
             gui::set_next_item_width(-1.0);
             gui::input_text(&format!("##launch {label}"), Some(&hint), value, 256, 0);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!(
+                    "The {} Launch in game uses (the game's keys); empty: the game's own, the grey hint.",
+                    label.to_lowercase()
+                ));
+            }
         }
 
         settings_window::help(&format!(
@@ -3903,7 +4027,6 @@ impl Tool for TileTool {
         gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Tile", right);
         gui::dock_builder_dock_window("Inspector", right);
-        gui::dock_builder_dock_window("Weather", right);
         gui::dock_builder_dock_window("Minimap", right_bottom);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
@@ -4022,10 +4145,15 @@ impl Tool for TileTool {
             d.tile_mut().set_game_layers(&mut e.scene, layers);
         }
 
-        // The weather follows the tile's climate (a map context's placement gives it its own).
-        if let Some(climate) = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().terrain_look().climate.clone()) {
-            self.weather.follow_climate(e, &climate);
+        // The weather follows the tile's climate and season (the chips, a map context's placement, `tile_terrain`).
+        if let Some(look) = e.docs.find_as::<TileDocument>(id).map(|d| d.tile().terrain_look().clone()) {
+            self.weather.follow_look(e, &look.climate, &look.season);
         }
+
+        // The weather's campaign follows the Map context's map while it shows one.
+        let campaign = self.context.loaded.as_ref().filter(|_| self.context.shown).map(|(name, _, _)| name.clone());
+        self.weather.follow_campaign(e, campaign.as_deref());
+        self.weather.update(e);
 
         self.sync_brush_curve(e);
         self.sync_image_brush(e);
@@ -4162,7 +4290,6 @@ impl Tool for TileTool {
 
         {
             wce_foundation::wce_prof!("tile.panel.weather");
-            self.draw_weather_panel(e);
         }
 
         if tile {
@@ -4198,24 +4325,6 @@ impl Tool for TileTool {
             return;
         }
 
-        if gui::menu_item("New tile...", None, false, true) {
-            self.open_new_tile_dialog();
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("A new battle tile, flat, as a project in the projects folder (as TEd's New Tile, named at once).");
-        }
-
-        if gui::menu_item("Save tile as...", None, false, document(e).is_some()) {
-            self.open_save_tile_as(e);
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(
-                "TEd's Save Tile As: the tile as another battle tile (tile set, name, variation) in the projects folder, with its own database entry; the document goes on as it.",
-            );
-        }
-
         if gui::menu_item("Tile database...", None, false, true) {
             self.open_tile_database(e);
         }
@@ -4246,36 +4355,6 @@ impl Tool for TileTool {
             );
         }
 
-        if gui::menu_item("Open tile...", None, false, true) {
-            let filters = [
-                ("Tile database entry, tile.wce or tile.ted".to_owned(), "*.xml tile.wce tile.ted *.ted".to_owned()),
-                ("Tile (tile.wce, tile.ted)".to_owned(), "tile.wce tile.ted *.ted".to_owned()),
-                ("All files".to_owned(), "*.*".to_owned()),
-            ];
-            if let Some(p) = file_dialog(false, Path::new(""), &filters) {
-                let msg = self.open_tile(e, &p.display().to_string(), "").unwrap_or_else(|m| format!("open failed: {m}"));
-                e.status(&msg, false);
-            }
-        }
-
-        if gui::menu_item("Migrate old extracted projects", None, false, true) {
-            let msg = self.migrate_extracted(e).unwrap_or_else(|m| format!("migration failed: {m}"));
-            e.status(&msg, false);
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(
-                "Moves the projects of tiles extracted by older versions (<tile>_extracted folders) to their own names, marked as extracted tiles; one whose place has a project, or that is open, stays (see the log).",
-            );
-        }
-
-        if gui::menu_item("Open exported tile...", None, false, true)
-            && let Some(dir) = wce_editor::steam_detect::pick_folder("Exported tile folder (terrain/tiles/.../<variation>)")
-        {
-            let msg = self.extract_or_ask(e, &dir.display().to_string());
-            e.status(&msg, false);
-        }
-
         let label = if self.launch_job.is_some() {
             "Launch in game (preparing)"
         } else if self.launched.is_some() {
@@ -4294,22 +4373,6 @@ impl Tool for TileTool {
             );
         }
 
-        // A game without the tiles in its kit (Rome 2) saves into mod packs only.
-        if e.game().features.kit_tiles {
-            gui::separator();
-            let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
-            if gui::menu_item("Import from Assembly Kit", None, false, project.is_some_and(|p| p.0)) {
-                let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
-                e.status(&msg, false);
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip(
-                    "Opens the kit's copy of this tile (an extracted tile: the game's, extracted again); saving it replaces the project.",
-                );
-            }
-        }
-
         gui::separator();
         if gui::menu_item("Generate SiegeAI", None, false, document(e).is_some()) {
             self.generate_siege_ai(e);
@@ -4322,16 +4385,20 @@ impl Tool for TileTool {
         }
 
         gui::separator();
-        if gui::menu_item("Tile browser", None, false, true) {
-            gui::set_window_focus("Tiles");
-        }
-
         if let Some(d) = document(e) {
             let t = d.tile_mut();
             let mut changed = false;
             let v = t.display_mut();
             changed |= gui::menu_item_toggle("Distance culling of markers", &mut v.lod);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Markers further from the camera than the draw distances below are not drawn; off: every marker is.");
+            }
+
             gui::menu_item_toggle("Tile border", &mut v.show_border);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Draws the tile's own rectangle, inside the bordered height map.");
+            }
+
             gui::menu_item_toggle("Tint freeform instances", &mut v.tint_freeform);
             if gui::is_item_hovered() {
                 gui::set_tooltip(FREEFORM_TINT_TIP);
@@ -4342,6 +4409,10 @@ impl Tool for TileTool {
                 set_vfx_boxes(e, vfx);
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Draws the VFXInstance markers (the effects play either way); kept in the settings for the next tiles.");
+            }
+
             let Some(d) = document(e) else { return gui::end_menu() };
             let t = d.tile_mut();
             let v = t.display_mut();
@@ -4349,16 +4420,100 @@ impl Tool for TileTool {
             gui::text("Draw distances (m)");
             gui::set_next_item_width(160.0);
             changed |= gui::drag_float("vegetation", &mut v.veg_distance, 5.0, 20.0, 20000.0, "%.3f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Tree markers further from the camera than this (metres) are not drawn, with distance culling on.");
+            }
+
             gui::set_next_item_width(160.0);
             changed |= gui::drag_float("decals", &mut v.decal_distance, 5.0, 20.0, 20000.0, "%.3f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Decal markers further from the camera than this (metres) are not drawn, with distance culling on.");
+            }
+
             gui::set_next_item_width(160.0);
             changed |= gui::drag_float("others", &mut v.other_distance, 5.0, 20.0, 40000.0, "%.3f");
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Every other marker further from the camera than this (metres) is not drawn, with distance culling on.");
+            }
             if changed {
                 t.display_changed();
             }
         }
 
         gui::end_menu();
+    }
+
+    fn file_menu(&mut self, e: &mut Editor, part: wce_editor::tool::FileMenu) {
+        use wce_editor::tool::FileMenu;
+        match part {
+            FileMenu::Open => {
+                if gui::menu_item("New tile...", None, false, true) {
+                    self.open_new_tile_dialog();
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("A new battle tile, flat, as a project in the projects folder (as TEd's New Tile, named at once).");
+                }
+
+                if gui::menu_item("Open tile...", None, false, true) {
+                    let filters = [
+                        ("Tile database entry, tile.wce or tile.ted".to_owned(), "*.xml tile.wce tile.ted *.ted".to_owned()),
+                        ("Tile (tile.wce, tile.ted)".to_owned(), "tile.wce tile.ted *.ted".to_owned()),
+                        ("All files".to_owned(), "*.*".to_owned()),
+                    ];
+                    if let Some(p) = file_dialog(false, Path::new(""), &filters) {
+                        let msg = self.open_tile(e, &p.display().to_string(), "").unwrap_or_else(|m| format!("open failed: {m}"));
+                        e.status(&msg, false);
+                    }
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Opens a tile from a file: its tile database entry (.xml), a tile.wce or a tile.ted.");
+                }
+
+                if gui::menu_item("Open exported tile...", None, false, true)
+                    && let Some(dir) = wce_editor::steam_detect::pick_folder("Exported tile folder (terrain/tiles/.../<variation>)")
+                {
+                    let msg = self.extract_or_ask(e, &dir.display().to_string());
+                    e.status(&msg, false);
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "Extracts a tile exported by BOB (a terrain/tiles/.../<variation> folder) into a project and opens it; asks before replacing a project.",
+                    );
+                }
+            }
+
+            FileMenu::Save => {
+                if gui::menu_item("Save tile as...", None, false, document(e).is_some()) {
+                    self.open_save_tile_as(e);
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "TEd's Save Tile As: the tile as another battle tile (tile set, name, variation) in the projects folder, with its own database entry; the document goes on as it.",
+                    );
+                }
+            }
+
+            FileMenu::Revert => {
+                // A game without the tiles in its kit (Rome 2) saves into mod packs only.
+                if e.game().features.kit_tiles {
+                    let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
+                    if gui::menu_item("To the Assembly Kit's version", None, false, project.is_some_and(|p| p.0)) {
+                        let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
+                        e.status(&msg, false);
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(
+                            "Opens the Assembly Kit's copy of this tile in place of the project (an extracted tile: the game's, extracted again); saving it replaces the project, closing it without saving keeps the project as it was.",
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn viewport_input(&mut self, e: &mut Editor, ev: &ViewportEvent) -> bool {
@@ -4372,6 +4527,17 @@ impl Tool for TileTool {
             ViewportEventKind::Hover => {
                 self.on_hover(e, ev);
                 false
+            }
+
+            // A grab of the move gizmo's centre: the release confirms it.
+            ViewportEventKind::Release if self.grabbing && self.grab_drag => {
+                self.end_grab(e, true);
+                true
+            }
+
+            ViewportEventKind::Drag if self.grabbing && self.grab_drag => {
+                self.on_hover(e, ev);
+                true
             }
 
             // The menu of the selection; not while placing or drawing (only Esc stops them), nor for the click that cancelled a grab.
@@ -4824,8 +4990,26 @@ impl Tool for TileTool {
         }
     }
 
-    fn toolbar(&mut self, e: &mut Editor) {
-        self.draw_toolbar(e);
+    fn viewport_modes(&mut self, e: &mut Editor) -> bool {
+        self.draw_mode_chips(e)
+    }
+
+    fn leave_mode(&mut self, _: &mut Editor) {
+        self.set_mode(TileMode::Select);
+    }
+
+    fn can_centre_drag(&self, e: &Editor) -> bool {
+        self.mode == TileMode::Select
+            && !self.grabbing
+            && !self.drawing
+            && self.placing.is_none()
+            && self.flip.is_none()
+            && primary(e).is_some()
+    }
+
+    fn begin_centre_drag(&mut self, e: &mut Editor) -> bool {
+        self.grab_drag = self.begin_grab(e);
+        self.grab_drag
     }
 
     fn camera_chip(&mut self, e: &mut Editor) {
@@ -4998,8 +5182,9 @@ impl Tool for TileTool {
             let mirror = projects.join("raw_data").join(&folder);
             if wce_tile::tile_project::has_tile(&mirror) {
                 project = TileProject::open(&mirror).map_err(|err| err.to_string())?;
-                self.status =
-                    format!("opened the project of {folder} (its tile.wce); Tile > Import from Assembly Kit takes the kit's copy again");
+                self.status = format!(
+                    "opened the project of {folder} (its tile.wce); File > Revert > To the Assembly Kit's version takes the kit's copy again"
+                );
                 log::info(self.status.clone());
             }
         }

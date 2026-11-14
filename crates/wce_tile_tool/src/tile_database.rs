@@ -1,7 +1,7 @@
 //! Tile > Tile database... (Phase 6b of docs/plans/tile_ted_parity.md; TEd's Tile Database Management): the battle tile sets of the
 //! Assembly Kit and of the projects, each with its colour and its tiles (a click opens one), and New tile set (TEd's: a name and a colour)
 //! into the projects' `_settings.xml`; "Save for Assembly Kit" carries a set a tile uses into the kit's. A new tile goes into a set with
-//! Tile > Save tile as.... A game whose kit has no tiles (Rome 2) shows its packs' database instead of the kit's (the map context's copy
+//! File > Save tile as.... A game whose kit has no tiles (Rome 2) shows its packs' database instead of the kit's (the map context's copy
 //! in the kit's format, `workflow::neighbour_root`); its tiles open from the packs.
 
 use std::collections::BTreeMap;
@@ -145,6 +145,10 @@ impl TileTool {
             gui::separator();
             gui::set_next_item_width(160.0);
             gui::input_text("##newset", Some("new set's name"), &mut ui.new_name, 64, 0);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The name of a new tile set; one no other set has.");
+            }
+
             gui::same_line();
             let mut c = ui.new_colour.unwrap_or([0.5; 3]);
             if gui::color_edit3("##newsetcolour", &mut c, gui::COLOR_NO_INPUTS) {
@@ -158,7 +162,12 @@ impl TileTool {
             }
 
             gui::same_line();
-            if gui::small_button(&format!("{}  New tile set", icons::PLUS)) {
+            let add_set = gui::small_button(&format!("{}  New tile set", icons::PLUS));
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Adds the set, with that name and colour, to the projects' tile database.");
+            }
+
+            if add_set {
                 let name = ui.new_name.clone();
                 let colour = ui.new_colour.map(|c| c.map(|v| (v * 255.0).round() as u8));
                 self.tile_db = Some(ui.clone());
@@ -220,6 +229,14 @@ impl TileTool {
                                 0,
                             ) {
                                 open_entry = Some(t.clone());
+                            }
+
+                            if gui::is_item_hovered() {
+                                gui::set_tooltip(if t.packs_folder.is_some() {
+                                    "Size in cells. A click extracts the tile into the projects folder and opens it."
+                                } else {
+                                    "Size in cells. A click opens the tile."
+                                });
                             }
                         }
 

@@ -109,7 +109,7 @@ pub static SECTIONS: &[Section] = &[
                 "sun_flare",
                 "sun_flare",
                 Kind::Number,
-                "Strength of the sun's lens flare. Needs 'Lens flare' on in the Settings menu.",
+                "Strength of the sun's lens flare. Needs Lens flare on (Settings > Graphics).",
             ),
         ],
     },
@@ -330,10 +330,24 @@ pub static SECTIONS: &[Section] = &[
                 "use_DOF",
                 "use_DOF",
                 Kind::Bool,
-                "Blurs what is out of focus. The game only does it when 'Depth of field' is on in its graphics options (Settings menu).",
+                "Blurs what is out of focus. The game only does it when 'Depth of field' is on in its graphics options (Settings > Graphics).",
             ),
-            f("DEPTH_OF_FIELD", "DOF_focus", "DOF_focus", Kind::Pair, "Focus distance (first) and focal length (second)."),
-            f("DEPTH_OF_FIELD", "DOF_blur_size", "DOF_blur_size", Kind::Number, "How big the blur is outside the focus."),
+            f(
+                "DEPTH_OF_FIELD",
+                "DOF_focus",
+                "DOF_focus",
+                Kind::Pair,
+                "First: the distance in focus, in metres from the camera (the shader caps it at 500; Pick focus in the Weather scene panel \
+                 sets it with a click). Second: how far either side of it stays sharp, in metres; the blur grows past that.",
+            ),
+            f(
+                "DEPTH_OF_FIELD",
+                "DOF_blur_size",
+                "DOF_blur_size",
+                Kind::Number,
+                "How much of the blurred image is mixed in out of focus, 0 to 1 (the game's own file with depth of field on uses 0.25). Above \
+                 1 the game's shader overshoots: edges out of focus get bright and dark halos.",
+            ),
         ],
     },
     Section {
@@ -793,8 +807,83 @@ impl XmlFileDocument {
         }
     }
 
+    /// Sets a setting of the sections from outside the Inspector (the viewport's sun handle, its focus pick): `edit` changes the value the
+    /// file holds (else the one the viewport assumes) and it is written as the Inspector writes it (an integer stays one while whole; an
+    /// attribute the element lacks is added). Edits of one `gesture` merge into one undo step.
+    ///
+    /// # Errors
+    ///
+    /// The setting is not one of the sections', or the file has no such element.
+    pub fn edit_setting(&mut self, elem_name: &str, attr: &str, gesture: u64, edit: impl FnOnce(&mut [f32])) -> Result<(), String> {
+        let field = SECTIONS
+            .iter()
+            .flat_map(|s| s.fields)
+            .find(|f| f.elem == elem_name && f.attr == attr)
+            .ok_or_else(|| format!("{elem_name}.{attr} is not a setting of the sections"))?;
+        let elem = *self.elements_named(elem_name).first().ok_or_else(|| format!("this file has no <{elem_name}>"))?;
+        let found = self.attr_value(elem, attr);
+        let at = found.as_ref().map(|(a, _)| *a);
+        let mut v = match found {
+            Some((_, x)) if fits(field.kind, &x) => x,
+            _ => default_of(&EnvironmentParams::default(), field, 0),
+        };
+
+        let (was_int, style) = (v.kind == ValueKind::Int, v.style);
+        edit(&mut v.f);
+        if matches!(v.kind, ValueKind::Int | ValueKind::Float) {
+            v = number(v.f.first().copied().unwrap_or(0.0), was_int, style);
+        }
+
+        self.write_value(elem, attr, at, &v, gesture);
+        Ok(())
+    }
+
+    /// Makes the file's numbers `target`'s (a mix of two files, `blend_environments`): every number, colour and pair of the sections (the
+    /// cloud layers aside) whose value differs from what the file gives is written as the Inspector writes it, an attribute the element
+    /// lacks added; switches, texts and the cloud layers stay the file's (the mix takes them from the nearer file, which is this one).
+    /// Not undoable on its own: for a document made for the mix.
+    pub fn write_numbers_of(&mut self, target: &EnvironmentParams) {
+        let now = wce_scene::environment::read_environment(self.xml());
+        for s in SECTIONS.iter().filter(|s| !s.each_element) {
+            for f in s.fields {
+                let Some(&elem) = self.elements_named(f.elem).first() else { continue };
+                let names: Vec<(String, usize)> = match f.kind {
+                    Kind::Trio(suffixes) => suffixes.iter().enumerate().map(|(i, x)| (format!("{}{x}", f.attr), i)).collect(),
+                    Kind::Number | Kind::Int | Kind::Colour | Kind::ColourA | Kind::Pair => vec![(f.attr.to_owned(), 0)],
+                    Kind::Bool | Kind::Text => continue,
+                };
+
+                for (name, component) in names {
+                    let (want, have) = (default_of(target, f, component), default_of(&now, f, component));
+                    if want.f.len() != have.f.len() || want.f.iter().zip(&have.f).all(|(a, b)| (a - b).abs() <= 1e-6) {
+                        continue;
+                    }
+
+                    let found = self.attr_value(elem, &name);
+                    let at = found.as_ref().map(|(a, _)| *a);
+                    let v = match found {
+                        Some((_, x)) if matches!(x.kind, ValueKind::Int | ValueKind::Float) => {
+                            number(want.f[0], x.kind == ValueKind::Int, x.style)
+                        }
+
+                        Some((_, x)) if x.kind == want.kind => EnvValue { f: want.f.clone(), ..x },
+                        _ => want,
+                    };
+
+                    self.write_value(elem, &name, at, &v, 0);
+                }
+            }
+        }
+    }
+
     /// The Inspector of an environment or lighting file: every section, then the attributes no section lists.
     pub fn inspect_environment(&mut self, ins: &mut dyn Inspector) {
+        self.inspect_environment_with(ins, &mut |_, _| {});
+    }
+
+    /// `inspect_environment`, with `extra` called at the end of each section (its title) for rows of the caller's (the Weather tool's
+    /// sky strips under Sky).
+    pub fn inspect_environment_with(&mut self, ins: &mut dyn Inspector, extra: &mut dyn FnMut(&str, &mut dyn Inspector)) {
         let id = self.id();
         ins.begin(id, 0);
         let defaults = EnvironmentParams::default();
@@ -804,14 +893,22 @@ impl XmlFileDocument {
             let element = s.fields[0].elem;
             let elems = self.elements_named(element);
             if elems.is_empty() {
-                ins.section(s.title);
-                ins.text("missing", &format!("no <{element}>"), "this file has none");
+                if ins.open_section(s.title) {
+                    ins.text("missing", &format!("no <{element}>"), "this file has none");
+                }
+
                 continue;
             }
 
             for (k, &e) in elems.iter().enumerate().take(if s.each_element { usize::MAX } else { 1 }) {
                 let name = self.xml().get(e, "name").filter(|_| s.each_element);
-                ins.section(&name.map_or_else(|| s.title.to_owned(), |name| format!("{} '{name}'", s.title)));
+                // A folded section skips its rows (their numbering, which keys the gestures, goes on as if drawn).
+                let title = name.map_or_else(|| s.title.to_owned(), |name| format!("{} '{name}'", s.title));
+                if !ins.open_section(&format!("{title}##{e}")) {
+                    n += s.fields.len() as u64;
+                    continue;
+                }
+
                 let mut missing = vec![];
                 for fld in s.fields {
                     // A section may span elements (the Sun: LIGHTING and SUN_MESH).
@@ -835,10 +932,40 @@ impl XmlFileDocument {
                 for elem in missing {
                     ins.text("missing", &format!("no <{elem}>"), "this file has none");
                 }
+
+                if s.title == "Fog" {
+                    self.fog_curve(ins);
+                }
+
+                if !s.each_element {
+                    extra(s.title, ins);
+                }
             }
         }
 
         self.inspect_other_attributes(ins, &mut n, gesture_base);
+    }
+
+    /// The Fog section's curve: the fog's opacity over flat ground by the distance from the point below a battle camera 25 m up, as the game's
+    /// fog shader works it out (`wce_scene::environment::fog_opacity`), out to where it levels off.
+    fn fog_curve(&self, ins: &mut dyn Inspector) {
+        const CAMERA_HEIGHT: f32 = 25.0;
+        const SAMPLES: usize = 96;
+        let p = wce_scene::environment::read_environment(self.xml());
+        let at = |r: f32| wce_scene::environment::fog_opacity(&p, r, CAMERA_HEIGHT, 0.0);
+
+        // The x axis: past where the fog reaches 95 % of its strongest (or the clear distance), in round metres.
+        let strongest = (0..=300).map(|k| at(k as f32 * 100.0)).fold(0.0f32, f32::max);
+        let reach = (0..=300).map(|k| k as f32 * 100.0).find(|&r| at(r) >= strongest * 0.95).unwrap_or(30_000.0);
+        let end = (reach.max(p.fog_clear_distance) * 1.2).clamp(500.0, 30_000.0);
+        let end = (end / 500.0).ceil() * 500.0;
+        let values = (0..=SAMPLES).map(|k| at(end * k as f32 / SAMPLES as f32)).collect::<Vec<_>>();
+        ins.hint(
+            "How thick the fog is over flat ground, by the distance from the spot below a battle camera 25 m up (0: none, top: \
+             opaque), as the game's fog shader works it out from these settings: the distance fog, the height fog at the ground and the \
+             clear distance's fade-in. The Weather scene panel's Fog distances rings the ground where it reaches 25, 50 and 75 %.",
+        );
+        ins.plot("fog_curve", "fog by distance", &[([0.75, 0.82, 1.0, 1.0], values)], &format!("{end:.0} m"));
     }
 
     /// The elements of a name, in file order.
@@ -876,7 +1003,10 @@ impl XmlFileDocument {
             return;
         }
 
-        ins.section("Other attributes");
+        if !ins.open_section("Other attributes") {
+            return;
+        }
+
         for (e, elem, attr) in rows {
             let Some((_, mut v)) = self.attr_value(e, &attr) else { continue };
             *n += 1;

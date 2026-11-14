@@ -2348,6 +2348,7 @@ impl TileDocument {
         let kinds = BoundaryKind::ALL.map(|k| k.label().to_owned());
         let mut idx = BoundaryKind::ALL.iter().position(|&k| k == shape.kind).unwrap_or(0) as i32;
         let mut apply = None;
+        ins.hint("The boundary's shape; choosing Circle, Semicircle or Square makes its points again.");
         if ins.edit_choice("wce_boundary_shape", "shape", &mut idx, &kinds) {
             apply = self.boundary_preset(e, BoundaryKind::ALL[idx.clamp(0, 3) as usize]);
         }
@@ -2363,6 +2364,11 @@ impl TileDocument {
 
                 let key = (e, field.to_owned());
                 let mut v = self.tile().drafts.get(&key).and_then(|d| d.parse::<f32>().ok()).unwrap_or(value);
+                ins.hint(if field == "wce_boundary_size" {
+                    "The boundary's size in metres: a circle's radius, half a square's side. Applied when the drag ends."
+                } else {
+                    "Which way the boundary faces, in degrees (0: +z). Applied when the drag ends."
+                });
                 if ins.edit_float(
                     field,
                     label,
@@ -2518,8 +2524,13 @@ impl TileDocument {
                 None => ins.text("overrides", "overrides", "its items differ by more than values (kept as they are)"),
             }
 
+            ins.hint("Gives all the reference's items the prefab's values back (one undo step).");
             if ins.button("revert_all", "Revert all overrides", count.is_some_and(|n| n > 0)) {
                 self.revert_overrides(e);
+            }
+
+            if self.tile().prefab_tool_ready {
+                ins.hint("Opens the prefab itself in the Prefab tool, to change it for every reference.");
             }
 
             if self.tile().prefab_tool_ready && ins.button("open_in_prefab_tool", "Open in Prefab tool", true) {
@@ -2534,6 +2545,7 @@ impl TileDocument {
         ins.text("prefab", "in the prefab", &key);
         ins.text("overrides", "overrides", &if diffs.is_empty() { "none".to_owned() } else { format!("{} (marked)", diffs.len()) });
         let revertible = diffs.iter().any(|(_, v)| v.is_some());
+        ins.hint("Gives this item the prefab's values back (one undo step).");
         if ins.button("revert", "Revert to the prefab's values", revertible) {
             self.revert_overrides(e);
         }
@@ -3403,6 +3415,7 @@ impl TileDocument {
             // TEd renames in the Scene tab; the name is not one of the properties.
             let drafts_key = (e, "name".to_owned());
             let mut shown = self.tile().drafts.get(&drafts_key).cloned().unwrap_or_else(|| before.clone());
+            ins.hint("The element's name, as the Scene panel lists it. Applied when the typing ends.");
             if ins.edit_string("name", "name", &mut shown) {
                 self.tile_mut().drafts.insert(drafts_key.clone(), shown);
             }
@@ -3577,30 +3590,39 @@ impl TileDocument {
         let before = p.clone();
 
         let mut flags = [p.visible, p.active, p.draggable];
+        ins.hint("Visible: the piece is drawn. Active and draggable are only kept, as in TEd.");
         if ins.edit_checks("flags", "flags", &["visible", "active", "draggable"], &mut flags) {
             (p.visible, p.active, p.draggable) = (flags[0], flags[1], flags[2]);
         }
 
         let modes = ["Landscape: Above", "Freeform"].map(str::to_owned);
         let mut idx = i32::from(p.freeform);
+        ins.hint("Only kept: it changes nothing in the viewport, as in TEd.");
         if ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes) {
             p.freeform = idx == 1;
         }
 
+        ins.hint("The piece's position in its building.");
         ins.edit_float3("position", "position", &mut p.position, 0.05);
         let mut deg = p.euler.map(f32::to_degrees);
+        ins.hint("The piece's turn in its building, in degrees.");
         if ins.edit_float3("orientation", "orientation", &mut deg, 0.5) {
             p.euler = deg.map(f32::to_radians);
         }
 
+        ins.hint("The piece's scale along x, y and z.");
         ins.edit_float3("scale", "scale", &mut p.scale, 0.01);
+        ins.hint("How opaque the piece is drawn (0 to 1).");
         ins.edit_slider("opacity", "opacity", &mut p.opacity, 0.0, 1.0);
         ins.edit_bool("burn", "burn", &mut p.burn);
         ins.edit_slider("burn_amount", "burn_amount", &mut p.burn_amount, 0.0, 1.0);
         ins.edit_color4("bounds_colour", "bounds_colour", &mut p.bounds_colour);
+        ins.hint("Draws the building's collision, even when the collision view is off.");
         ins.edit_bool("show_collision", "show_collision", &mut p.show_collision);
+        ins.hint("Only kept: it changes nothing in the viewport, as in TEd.");
         ins.edit_checks("seasons", "seasons", &["Winter", "Spring", "Summer", "Autumn"], &mut p.seasons);
         let mut level = p.destruction_level.clamp(0, levels - 1);
+        ins.hint("Which destruction level's model the piece shows.");
         if ins.edit_int_slider("destruction_level", "destruction_level", &mut level, 0, levels - 1) {
             p.destruction_level = level;
         }
@@ -3633,6 +3655,7 @@ impl TileDocument {
         if ins.local_coordinates() {
             let Some(p) = pos else { return };
             let mut v = p.to_array().map(|c| c as f32);
+            ins.hint("Relative to its parent, in the file's scene units. The toolbar's Global / Local (L) switches.");
             if ins.edit_float3("position", "position (local)", &mut v, 0.5) {
                 self.set_local(e, Some(v.map(f64::from).into()), None, base);
             }
@@ -3644,6 +3667,7 @@ impl TileDocument {
 
             let w = if t.is_instance(e) { t.world_position(e) } else { scene_metres(world_transform(t.tscene(), e).position, t.unit()) };
             let mut v = [w.x, w.y, w.z];
+            ins.hint("In the world, in metres. The toolbar's Global / Local (L) switches.");
             if ins.edit_float3("position_world", "position (world, m)", &mut v, 0.05) {
                 let p = Float3::new(v[0], v[1], v[2]);
                 if self.tile().is_instance(e) {
@@ -3675,6 +3699,11 @@ impl TileDocument {
             return;
         }
 
+        ins.hint(if world {
+            "Its turn in the world, in degrees. The toolbar's Global / Local (L) switches."
+        } else {
+            "Its turn relative to its parent, in degrees. The toolbar's Global / Local (L) switches."
+        });
         if ins.edit_float3(field, label, &mut v, 0.5) {
             let typed: Double3 = v.map(radians).into();
             let euler = if world { euler_from_matrix(&(pw.rotation.transpose() * euler_matrix(typed))) } else { typed };
@@ -3745,6 +3774,10 @@ impl TileDocument {
 
                 let (shown, selectable) = (self.tile().shown(e), self.tile().selectable(e));
                 let mut on = [vis, act, drag];
+                if editable {
+                    ins.hint(FLAGS_TIP);
+                }
+
                 if editable && ins.edit_checks("flags", "flags", &["visible", "active", "draggable"], &mut on) {
                     if on[0] != vis {
                         vis = on[0];
@@ -3781,7 +3814,8 @@ impl TileDocument {
                     let modes = ["Landscape: Above", "Freeform", "Entity: Above"].map(str::to_owned);
                     let mut idx = if on_entity { 2 } else { i32::from(self.tile().placement(e) == Placement::Freeform) };
                     let before = idx;
-                    if ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes) && editable && idx != before {
+                    let tips = SURFACE_TIPS.map(str::to_owned);
+                    if ins.edit_choice_tips("surface_mode", "surface_mode", &mut idx, &modes, &tips) && editable && idx != before {
                         self.set_placement(&[e], if idx == 0 { Placement::Landscape } else { Placement::Freeform });
                         if idx == 2 {
                             self.set_attribute(e, SURFACE_ATTR, "entity");
@@ -3798,7 +3832,8 @@ impl TileDocument {
                     let follow = self.tile().tscene().doc().get(e, ROTATION_ATTR).is_some_and(|v| v == "surface");
                     let rotations = ["Free", "Follow surface"].map(str::to_owned);
                     let mut r = i32::from(follow);
-                    if ins.edit_choice("rotation_mode", "rotation", &mut r, &rotations) && editable && (r == 1) != follow {
+                    let tips = ["Turned as given.", "Tilted to the surface under it, now and again after each grab."].map(str::to_owned);
+                    if ins.edit_choice_tips("rotation_mode", "rotation", &mut r, &rotations, &tips) && editable && (r == 1) != follow {
                         if r == 1 {
                             let p = self.tile().world_position(e);
                             let n = self.tile().terrain_normal(p.x, p.z);
@@ -3996,6 +4031,10 @@ impl TileDocument {
                 let names = ["OIF_VISIBLE", "OIF_ACTIVE", "OIF_DRAGGABLE"];
                 let before = names.map(|f| t.own_flag(first, f));
                 let mut on = before;
+                if editable {
+                    ins.hint(FLAGS_TIP);
+                }
+
                 if editable && ins.edit_checks("flags", "flags", &["visible", "active", "draggable"], &mut on) {
                     for (i, flag) in names.iter().enumerate() {
                         if on[i] != before[i] {
@@ -4013,7 +4052,8 @@ impl TileDocument {
                 let on_entity = doc.get(first, SURFACE_ATTR).is_some_and(|v| v == "entity");
                 let modes = ["Landscape: Above", "Freeform", "Entity: Above"].map(str::to_owned);
                 let mut idx = if on_entity { 2 } else { i32::from(self.tile().placement(first) == Placement::Freeform) };
-                if ins.edit_choice("surface_mode", "surface_mode", &mut idx, &modes) && editable {
+                let tips = SURFACE_TIPS.map(str::to_owned);
+                if ins.edit_choice_tips("surface_mode", "surface_mode", &mut idx, &modes, &tips) && editable {
                     self.set_placement(elems, if idx == 0 { Placement::Landscape } else { Placement::Freeform });
                     self.history.break_merge();
                     self.set_attribute_all(elems, SURFACE_ATTR, if idx == 2 { "entity" } else { "" });
@@ -4027,6 +4067,10 @@ impl TileDocument {
                 let present = text.is_some();
                 let before = if present { parse_seasons(&cur) } else { [true; 4] };
                 let mut on = before;
+                if editable {
+                    ins.hint("A tick changes only that season, on each selected item; the others keep their own.");
+                }
+
                 if editable && ins.edit_checks(prop.attr, prop.attr, &["Winter", "Spring", "Summer", "Autumn"], &mut on) {
                     let doc = self.tile().tscene().doc();
                     let values = elems
@@ -4362,7 +4406,12 @@ impl TileDocument {
     }
 
     pub(crate) fn transform_selected(&mut self, items: &[SourceRef], delta: &Float4x4, gesture: u64) {
-        for &r in items {
+        // An item inside a selected group moves with the group, not twice.
+        let mine = items.iter().filter(|r| r.doc == self.id()).filter_map(|r| elem_of(r.item)).collect::<std::collections::HashSet<_>>();
+        let els = self.tile().tscene().doc().elements();
+        let inside = |e: usize| std::iter::successors(els[e].parent, |&p| els[p].parent).any(|p| mine.contains(&p));
+        let items = items.iter().copied().filter(|r| elem_of(r.item).is_none_or(|e| e >= els.len() || !inside(e))).collect::<Vec<_>>();
+        for r in items {
             let t = self.tile();
             let Some(before) = t.item_transform(r).filter(|_| r.doc == self.id()) else { continue };
             let Some(e) = elem_of(r.item) else { continue };
@@ -4622,6 +4671,13 @@ impl Tile {
         }
     }
 }
+
+/// The flags row's tooltip.
+const FLAGS_TIP: &str = "visible: it is shown\nactive: it can be selected\ndraggable: the gizmo and the grab (G) move it; off, it can be selected without moving it by mistake";
+
+/// The tooltips of the surface_mode choices (Landscape: Above, Freeform, Entity: Above).
+pub(super) const SURFACE_TIPS: [&str; 3] =
+    ["Stands on the terrain and follows it.", "Kept at its height.", "Kept at its height; G puts it on what is under the mouse."];
 
 /// The Export as prop row of a building that cannot be one: off, whatever is stored, as that is what the export does.
 fn greyed_export_as_prop(prop: &Prop, ins: &mut dyn Inspector) {

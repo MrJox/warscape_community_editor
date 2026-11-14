@@ -45,6 +45,9 @@ const FLANGE_THRESHOLD_TIP: &str = "The stroke weight (0..1) where the group tak
     it the pixel is all the group, variations 0 to 3 from the edge inwards. 0: no rim, the group everywhere the brush touches.";
 
 /// The terrain modes in the toolbar (`TileMode` order after Select), their icons and tips.
+/// The brushes' names in the mode strip's flyouts, in `BRUSHES`' order.
+const BRUSH_NAMES: [&str; 9] = ["Raise", "Lower", "Smooth", "Flatten", "Level", "Noise", "Stamp", "Ground textures", "Ground types"];
+
 const BRUSHES: [(&str, &str); 9] = [
     (icons::ARROW_BIG_UP, "Raise the terrain"),
     (icons::ARROW_BIG_DOWN, "Lower the terrain"),
@@ -74,46 +77,68 @@ pub(crate) const FOOTPRINT_GROUND: u8 = 8;
 
 impl TileTool {
     /// The toolbar: the terrain brushes (a click on the active one goes back to selecting).
-    pub(crate) fn draw_toolbar(&mut self, e: &mut Editor) {
+    /// The tool's modes in the viewport's mode strip: a Sculpt chip (raise, lower, smooth, flatten, level, noise, stamp) and a Paint chip
+    /// (the ground's textures, its ground types; a prefab's ground types paint its footprint, and it has no textures), each opening its
+    /// brushes to the right; lit, with the brush's icon, while one of its brushes is on. True while a brush is on.
+    pub(crate) fn draw_mode_chips(&mut self, e: &mut Editor) -> bool {
         if document_id(e).is_none() {
-            return;
+            return false;
         }
 
-        gui::text_disabled("|");
-        gui::same_line();
         let prefab = self.profile == crate::tool::Profile::Prefab;
-        for (i, (icon, tip)) in BRUSHES.iter().enumerate() {
-            let mode = TileMode::from_index(i + 1);
-
-            // A prefab's ground is heights only (textures would be another thing in each tile); ground types paint its footprint.
-            if prefab && mode == TileMode::Paint {
-                continue;
+        let sculpt: Vec<usize> = (0..7).collect();
+        let paint: Vec<usize> = if prefab { vec![8] } else { vec![7, 8] };
+        gui::separator();
+        for (name, icon, brushes) in [("Sculpt", icons::MOUNTAIN, sculpt), ("Paint", icons::BRUSH, paint)] {
+            let current = brushes.iter().copied().find(|&i| self.mode == TileMode::from_index(i + 1));
+            let shown = current.map_or(icon, |i| BRUSHES[i].0);
+            let tip = match current {
+                Some(i) => format!(
+                    "{name}: {}\nIts settings are in the Inspector; Esc goes back to selecting. Click: another brush",
+                    self.brush_tip(i, prefab)
+                ),
+                None => format!("{name}: click for its brushes"),
+            };
+            let id = format!("modes{name}");
+            if wce_editor::chips::chip(current.is_some(), shown, &id, &tip) {
+                gui::open_popup(&id);
             }
 
-            let tip = if prefab && mode == TileMode::Ground { FOOTPRINT_TIP } else { *tip };
-            let on = self.mode == mode;
-            if on {
-                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
-            }
+            // The brushes open to the right of the strip.
+            let (lo, hi) = gui::item_rect();
+            gui::set_next_window_pos(gui::v2(hi.x + 6.0, lo.y), gui::COND_ALWAYS, gui::v2(0.0, 0.0));
+            if gui::begin_popup(&id) {
+                gui::text_disabled(name);
+                for &i in &brushes {
+                    let mode = TileMode::from_index(i + 1);
+                    let (icon, _) = BRUSHES[i];
+                    let on = self.mode == mode;
+                    if gui::selectable(&format!("{icon}  {}", BRUSH_NAMES[i]), on, 0) {
+                        self.set_mode(if on { TileMode::Select } else { mode });
+                        if !on {
+                            // Its settings.
+                            e.pending_focus = Some("Inspector".to_owned());
+                        }
+                    }
 
-            if gui::small_button(&format!("{icon}##brush{i}")) {
-                self.set_mode(if on { TileMode::Select } else { mode });
-                if !on {
-                    // Its settings.
-                    e.pending_focus = Some("Inspector".to_owned());
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(&format!(
+                            "{}\nIts settings are in the Inspector; Esc goes back to selecting",
+                            self.brush_tip(i, prefab)
+                        ));
+                    }
                 }
-            }
 
-            if on {
-                gui::pop_style_color(1);
+                gui::end_popup();
             }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{tip}\nIts settings are in the Inspector; Esc goes back to selecting"));
-            }
-
-            gui::same_line();
         }
+
+        self.mode != TileMode::Select
+    }
+
+    /// A brush's tooltip (a prefab's ground types paint its footprint).
+    fn brush_tip(&self, i: usize, prefab: bool) -> &'static str {
+        if prefab && TileMode::from_index(i + 1) == TileMode::Ground { FOOTPRINT_TIP } else { BRUSHES[i].1 }
     }
 
     /// The tile's snapping in the viewport's snap chip: of the grab (G), of the move gizmo and of the placing (to the grid, to points), and
@@ -127,6 +152,10 @@ impl TileTool {
         }
 
         gui::checkbox("snap to grid", &mut self.snap_grid);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("What is grabbed, moved with the gizmo or placed goes to the grid below. After the points and the edges.");
+        }
+
         gui::same_line();
         gui::checkbox("heights too", &mut self.snap_heights);
         if gui::is_item_hovered() {
@@ -137,6 +166,10 @@ impl TileTool {
 
         gui::set_next_item_width(120.0);
         gui::drag_float("grid (m)", &mut self.grid_m, 0.5, 0.5, 64.0, "%.3f");
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The grid's step in metres (0.5 to 64).");
+        }
+
         gui::checkbox("snap to points", &mut self.snap_vertices);
         if gui::is_item_hovered() {
             gui::set_tooltip(
@@ -441,6 +474,10 @@ impl TileTool {
             self.request_quick_add();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Opens the quick add search: what you pick is placed here.");
+        }
+
         gui::separator();
         self.selection_items(e);
         gui::end_popup();
@@ -461,6 +498,10 @@ impl TileTool {
             return;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Moves the selection with the mouse over the ground; a click drops it, Esc or a right click puts it back.");
+        }
+
         self.select_menu(e);
         let Some(d) = document(e) else { return };
 
@@ -469,10 +510,18 @@ impl TileTool {
             self.status = if n != 0 { format!("on the terrain: {n} item(s)") } else { "already on the terrain".to_owned() };
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Puts the selected items on the ground, the freeform ones too; their placement does not change.");
+        }
+
         if gui::begin_menu_enabled("Placement", some) {
             if gui::menu_item("Landscape (stands on the terrain)", None, false, true) {
                 let n = d.set_placement(&all, Placement::Landscape);
                 self.status = format!("{n} set to landscape (snapped to the terrain)");
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Sets the selected items to landscape: they are snapped to the terrain and follow it when it changes.");
             }
 
             if gui::menu_item("Freeform (keeps its height)", None, false, true) {
@@ -480,9 +529,17 @@ impl TileTool {
                 self.status = format!("{n} set to freeform");
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Sets the selected items to freeform: they keep their height whatever the terrain does.");
+            }
+
             if gui::menu_item("Snap the landscape ones to the terrain", None, false, true) {
                 let n = d.snap_to_terrain(&all, false);
                 self.status = format!("{n} landscape item(s) snapped");
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Puts the selected landscape items back on the ground; the freeform ones keep their height.");
             }
 
             gui::end_menu();
@@ -554,6 +611,10 @@ impl TileTool {
             return;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Pastes the copied items with the first one at the mouse on the ground, the rest around it as they were.");
+        }
+
         if gui::menu_item(
             &one("Paste in place", icons::CLIPBOARD),
             wce_editor::shortcuts::label("tile.paste_in_place").as_deref(),
@@ -564,6 +625,10 @@ impl TileTool {
             return;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Pastes the copied items where they were copied from.");
+        }
+
         let Some(d) = document(e) else { return };
         if gui::menu_item(&one("Duplicate", icons::COPY), wce_editor::shortcuts::label("tile.duplicate").as_deref(), false, some)
             && let Some(s) = sel
@@ -572,8 +637,16 @@ impl TileTool {
             self.status = err;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("A copy of the selected item, 4 m along x from it.");
+        }
+
         if gui::menu_item(&one("Flip...", icons::SPLIT), wce_editor::shortcuts::label("tile.flip").as_deref(), false, true) {
             self.flip_asked = true;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Flip mode: mirror the selection, or the whole tile, across a plane (settings in the Inspector).");
         }
 
         if gui::menu_item(&one("Turn", icons::ROTATE_CW), wce_editor::shortcuts::label("tile.turn").as_deref(), false, some)
@@ -582,9 +655,17 @@ impl TileTool {
             d.rotate(s, self.angle_step);
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Turns the selected item by the rotate step of the snap settings.");
+        }
+
         if gui::menu_item(&one("Group", icons::GROUP), wce_editor::shortcuts::label("tile.group").as_deref(), false, some) {
             self.status = self.group_selection(e).unwrap_or_else(|err| err);
             return;
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Puts the selection into a new instance group in the working layer.");
         }
 
         if gui::menu_item(&one("Ungroup", icons::UNGROUP), wce_editor::shortcuts::label("tile.ungroup").as_deref(), false, some) {
@@ -592,8 +673,16 @@ impl TileTool {
             return;
         }
 
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Takes the selected instance groups apart into the working layer.");
+        }
+
         if gui::menu_item(&one("New vegetation set from the selected trees...", icons::TREES), None, false, self.trees_selected(e)) {
             self.request_new_vegetation_set();
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Makes a new vegetation set out of the selected trees (asks for its name).");
         }
 
         gui::separator();

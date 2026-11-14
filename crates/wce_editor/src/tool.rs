@@ -33,6 +33,19 @@ pub enum ViewportEventKind {
     ContextMenu,
 }
 
+/// The groups of the File menu a tool adds to (`Tool::file_menu`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileMenu {
+    /// After Open file: what the tool makes or opens its own way (New tile..., Open tile...).
+    Open,
+
+    /// After Save as: the tool's own saves (Save tile as...).
+    Save,
+
+    /// In the Revert submenu, after To saved and To the game's version.
+    Revert,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ViewportEvent {
     pub kind: ViewportEventKind,
@@ -114,9 +127,48 @@ pub trait Tool: Any {
         vec![]
     }
 
-    /// Buttons of the tool in the toolbar, after the gizmo's.
-    fn toolbar(&mut self, editor: &mut Editor) {
+    /// The tool's modes in the viewport's mode strip (`chips::draw_mode_strip`), under the editor's Select / Move / Rotate / Scale and
+    /// Global / Local: chips of what the left mouse does in the tool (the Tile tool's sculpt and paint brushes). True while one of them is
+    /// on (the gizmo's buttons then show unlit).
+    fn viewport_modes(&mut self, editor: &mut Editor) -> bool {
         let _ = editor;
+        false
+    }
+
+    /// Whether the move gizmo's centre is a handle of the tool's: a drag there moves the selection over the surface under the cursor
+    /// (`begin_centre_drag`). The viewport draws the handle only then.
+    fn can_centre_drag(&self, editor: &Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
+    /// A press on the move gizmo's centre: the tool starts moving the selection with the mouse (the Tile tool's grab); the Drag and
+    /// Release events that follow are the tool's. False when it did not start.
+    fn begin_centre_drag(&mut self, editor: &mut Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
+    /// One of the mode strip's Select / Move / Rotate / Scale was clicked: the tool leaves its own mode (a brush).
+    fn leave_mode(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
+    /// Items of the tool in a group of the File menu (`FileMenu`): what the tool opens or makes, saves its own way, or reverts to.
+    fn file_menu(&mut self, editor: &mut Editor, part: FileMenu) {
+        let _ = (editor, part);
+    }
+
+    /// Items of the tool at the end of the View menu (its windows, what its viewport shows).
+    fn view_menu(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
+    /// File > Revert > To saved for a tool that reverts its document its own way (the Prefab tool reads its prefab again); `None`: the
+    /// document's own `Document::revert`.
+    fn revert(&mut self, editor: &mut Editor) -> Option<Result<String, String>> {
+        let _ = editor;
+        None
     }
 
     /// Items of the tool at the end of the Edit menu.
@@ -136,6 +188,12 @@ pub trait Tool: Any {
     fn export_menu(&mut self, editor: &mut Editor) -> bool {
         let _ = editor;
         false
+    }
+
+    /// Drawn on the viewport's image right after it, under the editor's own overlays (the compass, the coordinates) and the tool's
+    /// `viewport_overlay`: a picture that stands in for part of the image (the Weather tool's split compare).
+    fn viewport_underlay(&mut self, editor: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
+        let _ = (editor, origin, size);
     }
 
     /// Widgets over the viewport image (inside the viewport window, after the image): `origin` and `size` are the image's, in screen

@@ -247,6 +247,9 @@ Disp8 note: fields below 0x80 are encoded as one byte, so `multi_disp.py`/`disp_
   otherwise the battle camera's values (dumps: 0, 1000, 1) with the plain hdr_to_screen.
 - sample_data_3x3/5x5/9x9 (dump): offsets x / width, y / height, Gaussian weights exp(-(x^2 + y^2) / 8) normalised per
   kernel, w = 1. Only use_DOF='true' files: campaign/porthole lightings and weather/charlemagne/day/1.environment.
+- blur_kernel_scale (DOF_blur_size) is the lerp's factor, so above 1 the composite extrapolates past the blur: halos on edges out of
+  focus (2026-11-13, seen in the editor with at_au_land_day_rain's 6.3, a file that ships with use_DOF off). The shipped file with it on,
+  weather/charlemagne/day/1.environment, has DOF_blur_size 0.25 and DOF_focus variance(0,0).
 
 ## Environment cube (2026-10-08)
 
@@ -554,3 +557,20 @@ the wind. The river, which reflects the cube, is the game's dark slate now. The 
 - ASSUMPTION: which of the two tweakables a battle uses (the game's condition for "battle terrain on") was not traced; one max-settings
   coast battle used 150.
 
+
+## Battle fog (2026-11-13)
+
+`battlefog.hlsl` ps30_main (its DXBC disassembly, `fxc_dump`, and the pack's GLSL listing agree instruction for instruction), with
+`fog_VS_PS` = volume_fog_colour, distance_start, distance_strength, distance_scale, height_bottom, height_top, height_strength,
+colour_blend, clear_distance (as `environment_apply.rs` sets them: start less fog_precipitation_distance_modifier, bottom 0, top >= 0.001).
+For a pixel at world position P, the camera at E, d = |P - E| and r = |(P - E).xz|:
+
+- height = smoothstep(saturate((top - P.y - bottom) / (top - bottom)));
+- distance = saturate(scale - scale / exp(d / L - S)) = saturate(scale * (1 - exp(-(d / L - S)))), L = (1 - saturate(strength)) * 1000,
+  S = 8 * saturate(start) - 4: the files' start (0.52 in med_sp_land_day_dry) is not a distance but an offset; the distance fog begins
+  at d = L * S, at the camera when start <= 0.5;
+- f = height_strength * height + distance; the sky's share of the colour = saturate(f * colour_blend);
+- alpha = saturate(f * smoothstep(min(r / max(clear_distance, 0.001), 1))): clear_distance (metres, horizontal) fades the whole fog in
+  from the camera; in the charlemagne files it is 2500 to 2600 m, so it shapes the fog over the ground more than the distance term.
+
+The Weather tool's fog rings (`wce_weather_tool` `visual.rs` `fog_opacity`) evaluate this over the ground.

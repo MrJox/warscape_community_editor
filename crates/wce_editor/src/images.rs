@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use wce_d3d11::{ID3D11Device, ID3D11DeviceContext};
+use wce_d3d11::{ID3D11Device, ID3D11DeviceContext, ID3D11ShaderResourceView};
 use wce_imgui::renderer::D3D11Renderer;
 use wce_render::texture::{PatchableRgba, Texture, make_rgba_texture};
 
@@ -42,6 +42,9 @@ pub struct ImageTextures {
     keep: HashMap<u64, Texture>,
     patchable: HashMap<u64, PatchableRgba>,
     patches: Vec<Patch>,
+
+    /// Live views of a tool's own GPU textures (`show_view`), registered or re-pointed at the next flush.
+    views: Vec<(String, ID3D11ShaderResourceView, u32, u32)>,
 
     /// Ids forgotten since the last flush: their textures go then (a frame may still draw them until it ends).
     retired: Vec<u64>,
@@ -88,6 +91,13 @@ impl ImageTextures {
         }
     }
 
+    /// Shows a texture the tool renders into itself (a preview's render target) under `key`, without copying it: registered at the next
+    /// flush, re-pointed when the view changes (a resized target makes a new one). The tool keeps the texture alive while it is shown.
+    pub fn show_view(&mut self, key: &str, srv: &ID3D11ShaderResourceView, w: u32, h: u32) {
+        self.views.retain(|v| v.0 != key);
+        self.views.push((key.to_owned(), srv.clone(), w, h));
+    }
+
     pub fn get(&self, key: &str) -> Option<ImageRef> {
         self.ready.get(key).copied()
     }
@@ -95,6 +105,7 @@ impl ImageTextures {
     /// Forgets one picture so the next `submit` replaces it (its file changed).
     pub fn forget(&mut self, key: &str) {
         self.pending.retain(|p| p.key != key);
+        self.views.retain(|v| v.0 != key);
         self.patches.retain(|p| p.key != key);
         if let Some(r) = self.ready.remove(key) {
             self.retired.push(r.id);
@@ -113,6 +124,20 @@ impl ImageTextures {
             textures.unregister(dear_imgui_rs::TextureId::new(id));
             self.keep.remove(&id);
             self.patchable.remove(&id);
+        }
+
+        for (key, srv, w, h) in self.views.drain(..) {
+            match self.ready.get(&key) {
+                Some(r) => {
+                    textures.replace(dear_imgui_rs::TextureId::new(r.id), &srv);
+                    self.ready.insert(key, ImageRef { id: r.id, w, h });
+                }
+
+                None => {
+                    let id = textures.register(&srv).id();
+                    self.ready.insert(key, ImageRef { id, w, h });
+                }
+            }
         }
 
         for p in self.pending.drain(..) {

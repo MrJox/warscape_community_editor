@@ -630,6 +630,27 @@ pub fn read_output_settings(game: &GameProfile) -> (f32, f32) {
     (o.gamma, o.brightness)
 }
 
+/// The battle fog's opacity over the ground (battlefog.hlsl ps30_main, its DXBC and GLSL listing agree; docs/re/renderer.md, "Battle
+/// fog"; the Weather tool's fog rings and the Inspector's fog curve) at `r` metres from the point below the camera, the camera `h` metres over a ground at height `y`:
+/// saturate((height_strength * smoothstep((top - y - bottom) / (top - bottom)) + saturate(scale * (1 - exp(-(d / L - S))))) * smoothstep(min(r /
+/// clear, 1))), with d the distance from the camera, L = (1 - saturate(strength)) * 1000 metres, S = 8 * saturate(start) - 4 (start less
+/// the precipitation modifier) and bottom 0 (as the renderer sets it).
+pub fn fog_opacity(p: &EnvironmentParams, r: f32, h: f32, y: f32) -> f32 {
+    let smooth = |x: f32| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    let top = p.fog_height_top.max(0.001);
+    let height = smooth((top - y) / top);
+    let l = (1.0 - p.fog_distance_strength.clamp(0.0, 1.0)) * 1000.0;
+    let s = 8.0 * (p.fog_distance_start - p.fog_precipitation_distance_modifier).clamp(0.0, 1.0) - 4.0;
+    let d = r.hypot(h);
+    let distance =
+        if l > 1e-6 { (p.fog_distance_scale * (1.0 - (-(d / l - s)).exp())).clamp(0.0, 1.0) } else { p.fog_distance_scale.clamp(0.0, 1.0) };
+    let clear = smooth((r / p.fog_clear_distance.max(0.001)).min(1.0));
+    ((p.fog_height_strength * height + distance) * clear).clamp(0.0, 1.0)
+}
+
 /// A colour of the files to linear light: pow 2.2 (verified against the sun, sky, fog and ambient constants of 3 dumps).
 pub fn colour_to_linear(c: Float3) -> Float3 {
     let l = |x: f32| if x > 0.0 { x.powf(2.2) } else { 0.0 };

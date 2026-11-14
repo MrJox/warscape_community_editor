@@ -73,6 +73,9 @@ pub struct TileSettings {
     /// The Create panel shows its entries as a grid of pictures instead of a list.
     pub create_grid: bool,
 
+    /// The Prefab tool's Prefabs panel shows its prefabs as a grid of pictures instead of a list.
+    pub prefab_grid: bool,
+
     /// How far a siege AI node's adjusted Boundary reaches from its centre (metres; 0: the generator's reach, from the room around it).
     pub boundary_reach: f32,
 
@@ -282,6 +285,7 @@ impl Default for TileSettings {
             create_favourites: vec![],
             create_recent: vec![],
             create_grid: false,
+            prefab_grid: false,
             boundary_reach: 0.0,
             place_surface: SurfaceMode::default(),
             place_rotation: RotationMode::default(),

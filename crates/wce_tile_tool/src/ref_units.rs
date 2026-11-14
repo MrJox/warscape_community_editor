@@ -816,9 +816,14 @@ impl RefUnits {
     }
 
     /// A list with a filter, for a combo: the item picked.
-    fn combo(label: &str, filter: &mut String, value: &str, items: &[&str]) -> Option<String> {
+    fn combo(label: &str, tip: &str, filter: &mut String, value: &str, items: &[&str]) -> Option<String> {
         let mut picked = None;
-        if gui::begin_combo(label, value) {
+        let open = gui::begin_combo(label, value);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(tip);
+        }
+
+        if open {
             gui::input_text(&format!("##{label}_filter"), Some("filter"), filter, 64, 0);
             let words = filter.to_lowercase();
             let shown: Vec<&&str> = items.iter().filter(|i| i.contains(&words)).collect();
@@ -861,19 +866,22 @@ impl RefUnits {
 
         let mut factions: Vec<&str> = catalog.colours.keys().map(String::as_str).collect();
         factions.sort_unstable();
-        if let Some(unit) = Self::combo("Unit##reference", &mut self.unit_filter, &unit, &units) {
+        let unit_tip = if ship.is_some() { "The naval unit whose ship it shows." } else { "The game's unit its soldiers are from." };
+        if let Some(unit) = Self::combo("Unit##reference", unit_tip, &mut self.unit_filter, &unit, &units) {
             edits.insert("unit", unit);
             edits.insert("faction", wanted.faction.clone());
         }
 
-        if let Some(faction) = Self::combo("Faction##reference", &mut self.faction_filter, &wanted.faction, &factions) {
+        let faction_tip = "The faction it belongs to: its colours. Picking one drops the colours set by hand.";
+        if let Some(faction) = Self::combo("Faction##reference", faction_tip, &mut self.faction_filter, &wanted.faction, &factions) {
             edits.insert("unit", unit.clone());
             edits.insert("faction", faction);
             edits.insert("colours", String::new());
         }
 
         let slots = self.models.get(&wanted).map(|m| m[0].slots()).unwrap_or_default();
-        if let Some(slot) = Self::combo("Plays##reference", &mut self.slot_filter, &wanted.slot, &slots) {
+        let plays_tip = "The animation slot the soldiers play.";
+        if let Some(slot) = Self::combo("Plays##reference", plays_tip, &mut self.slot_filter, &wanted.slot, &slots) {
             edits.insert("slot", slot);
         }
 
@@ -883,9 +891,17 @@ impl RefUnits {
             edits.insert("seed", seed_box.unsigned_abs().to_string());
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Which of the unit's soldiers it shows (their looks and kit differ); any number.");
+        }
+
         gui::same_line();
         if gui::small_button("Next##reference") {
             edits.insert("seed", seed.wrapping_add(1).to_string());
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Shows the next soldier of the unit.");
         }
 
         // The faction's colours, or the user's.
@@ -895,14 +911,23 @@ impl RefUnits {
         let mut changed = false;
         for (k, name) in ["Primary", "Secondary", "Uniform"].iter().enumerate() {
             changed |= gui::color_edit3(&format!("{name}##reference"), &mut colours[k], 0);
+            if gui::is_item_hovered() {
+                gui::set_tooltip(&format!("The {} colour, the faction's until you change it.", name.to_lowercase()));
+            }
         }
 
         if changed {
             edits.insert("colours", format_colours(&colours));
         }
 
-        if stored.is_some() && gui::small_button("Faction's colours##reference") {
-            edits.insert("colours", String::new());
+        if stored.is_some() {
+            if gui::small_button("Faction's colours##reference") {
+                edits.insert("colours", String::new());
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Back to the faction's own colours.");
+            }
         }
 
         if let Some(model) = self.models.get(&wanted).and_then(|m| m.first()) {
@@ -928,6 +953,10 @@ impl RefUnits {
             let mut rowing = attr("rowing") == "1";
             if gui::checkbox("Rowing##reference", &mut rowing) {
                 edits.insert("rowing", if rowing { "1" } else { "0" }.to_owned());
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The oars row; off: they are held still.");
             }
         }
 

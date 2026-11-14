@@ -584,6 +584,13 @@ impl Tile {
         self.tscene().doc().get(elem, "flags").is_none_or(|f| f.contains(flag))
     }
 
+    /// Draggable (TEd's OIF_DRAGGABLE on the item itself): the gizmo and the grab move it. Off, it can be selected without the risk of
+    /// moving it by mouse (the Inspector's numbers still do). Not inherited: TEd saves its layers without the flag (` OIF_VISIBLE|OIF_ACTIVE`)
+    /// and their items move all the same.
+    pub fn draggable(&self, elem: usize) -> bool {
+        elem >= self.elements().len() || self.own_flag(elem, "OIF_DRAGGABLE")
+    }
+
     /// Visible itself and in every ancestor. A road piece's guide shows in the Prefab tool's stage only (the index has it too).
     pub fn shown(&self, elem: usize) -> bool {
         let indexed = self.idx.valid && elem < self.idx.state.len();

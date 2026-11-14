@@ -117,6 +117,210 @@ pub fn weather_diagnostics(e: &mut Editor, tool: &WeatherTool) -> String {
 }
 
 pub fn register(c: &mut CommandRegistry<Editor>) {
+    // ---- visual editing (visual.rs)
+    c.add(
+        "weather_sun_disc",
+        "weather_sun_disc",
+        "where the sun's disc is in the viewport image (pixels: x y), for a scripted drag of it; fails when it is not in view",
+        |e, _| {
+            with_weather(e, |t, e| match t.visual.sun_disc_px(e) {
+                Some((x, y)) => ok(format!("{x} {y}")),
+                None => fail("the sun's disc is not in view"),
+            })
+        },
+    );
+
+    c.add("weather_pick_focus", "weather_pick_focus", "the next click in the viewport sets the depth of field's focus", |e, _| {
+        with_weather(e, |t, _| {
+            t.visual.focus_armed = true;
+            ok("")
+        })
+    });
+
+    c.add(
+        "weather_wind_tip",
+        "weather_wind_tip",
+        "where the wind arrow's head is in the viewport image (pixels: x y), for a scripted drag of it; fails when it is not in view",
+        |e, _| {
+            with_weather(e, |t, e| match t.visual.wind_tip_px(e) {
+                Some((x, y)) => ok(format!("{x} {y}")),
+                None => fail("the wind arrow is not in view"),
+            })
+        },
+    );
+
+    c.add(
+        "weather_mix",
+        "weather_mix <file> <t> | off",
+        "cross-fade the open environment file with another (a path in the packs; t 0: this one, 1: the other) in the viewport, as the Mix \
+         section does",
+        |e, a| {
+            if a.first().map(String::as_str) == Some("off") {
+                return with_weather(e, |t, _| {
+                    t.mix.stop();
+                    ok("")
+                });
+            }
+
+            let (Some(file), Some(t)) = (a.first().cloned(), a.get(1).map(|t| num(t) as f32)) else {
+                return fail("usage: weather_mix <file> <t> | off");
+            };
+            with_weather(e, |tool, e| tool.mix.set(e, &file, t).map_or_else(fail, |()| ok("")))
+        },
+    );
+
+    c.add(
+        "weather_mix_save",
+        "weather_mix_save <new path>",
+        "save the mix (weather_mix) as a new .environment file of the project's loose folder",
+        |e, a| {
+            let Some(name) = a.first().cloned() else { return fail("usage: weather_mix_save <new path>") };
+            with_weather(e, |t, e| {
+                let doc = t.env_doc;
+                t.mix.save(e, doc, &name).map_or_else(fail, |p| ok(format!("saved {p}")))
+            })
+        },
+    );
+
+    c.add(
+        "weather_reference",
+        "weather_reference <file.png> [over|corner|off] [opacity]",
+        "load a reference screenshot and show it over the viewport (at the opacity), in its corner, or not",
+        |e, a| {
+            let Some(path) = a.first().cloned() else { return fail("usage: weather_reference <file.png> [over|corner|off] [opacity]") };
+            let show = match a.get(1).map(String::as_str) {
+                None | Some("over") => crate::reference::Show::Over,
+                Some("corner") => crate::reference::Show::Corner,
+                Some("off") => crate::reference::Show::Off,
+                Some(x) => return fail(format!("{x}: over, corner or off")),
+            };
+            let opacity = a.get(2).map(|o| num(o) as f32);
+            with_weather(e, |t, e| {
+                if let Err(m) = t.reference.load(e, std::path::Path::new(&path)) {
+                    return fail(m);
+                }
+
+                t.reference.show = show;
+                if let Some(o) = opacity {
+                    t.reference.opacity = o.clamp(0.0, 1.0);
+                }
+
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "weather_reference_compare",
+        "weather_reference_compare <x> <y>",
+        "compare the reference screenshot and the render at a pixel of the viewport image",
+        |e, a| {
+            let (Some(x), Some(y)) = (a.first().map(|v| int(v) as i32), a.get(1).map(|v| int(v) as i32)) else {
+                return fail("usage: weather_reference_compare <x> <y>");
+            };
+            with_weather(e, |t, e| t.reference.compare_at(e, x, y).map_or_else(fail, |p| ok(crate::reference::describe(&p))))
+        },
+    );
+
+    c.add("weather_sky_png", "weather_sky_png <file.png>", "test: write the Inspector's two sky strips side by side", |e, a| {
+        let Some(path) = a.first().cloned() else { return fail("usage: weather_sky_png <file.png>") };
+        with_weather(e, |t, e| t.sky.save_png(e, std::path::Path::new(&path)).map_or_else(fail, |()| ok("")))
+    });
+
+    c.add(
+        "weather_gallery",
+        "weather_gallery on|off|refresh [filter words]",
+        "the Weather gallery: open or close it (with the Files panel's filter set to the words), or draw it again from the camera",
+        |e, a| {
+            let Some(what) = a.first().cloned() else { return fail("usage: weather_gallery on|off|refresh [filter words]") };
+            let words = a[1..].join(" ");
+            with_weather(e, |t, e| {
+                match what.as_str() {
+                    "on" => t.gallery.open = true,
+                    "off" => t.gallery.open = false,
+                    "refresh" => t.gallery.refresh(e),
+                    _ => return fail("usage: weather_gallery on|off|refresh [filter words]"),
+                }
+
+                if !words.is_empty() {
+                    t.filter = words.clone();
+                    t.listing_dirty = true;
+                }
+
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "weather_without",
+        "weather_without <fog|clouds|precipitation|tone curve|colour grading|depth of field> on|off",
+        "a preview switch: that part of the file left out of the viewport's light (the file keeps it)",
+        |e, a| {
+            let (name, on) = match a.split_last() {
+                Some((last, rest)) if last == "on" || last == "off" => (rest.join(" "), last == "on"),
+                _ => return fail("usage: weather_without <part> on|off"),
+            };
+            let Some(i) = crate::visual::SWITCHES.iter().position(|(n, _)| *n == name) else {
+                return fail(format!("no preview switch '{name}'"));
+            };
+            with_weather(e, |t, _| {
+                t.visual.without[i] = on;
+                ok("")
+            })
+        },
+    );
+
+    c.add(
+        "weather_fog_rings",
+        "weather_fog_rings [on|off]",
+        "draw where the fog over the ground reaches 25, 50 and 75 % (on / off); no argument: log those distances from the camera's spot",
+        |e, a| {
+            let on = match a.first().map(String::as_str) {
+                Some("on") => Some(true),
+                Some("off") => Some(false),
+                None => None,
+                _ => return fail("usage: weather_fog_rings [on|off]"),
+            };
+            with_weather(e, |t, e| {
+                if let Some(on) = on {
+                    t.visual.fog_rings = on;
+                    return ok("");
+                }
+
+                let cam = e.viewport.camera();
+                let ground = cam.target.y;
+                let (rings, strongest) = crate::visual::fog_rings(&t.last_params, (cam.eye.y - ground).max(0.0), ground);
+                let m = |x: Option<f32>| x.map_or_else(|| "-".to_owned(), |x| format!("{x:.0}"));
+                ok(format!("25% {} m, 50% {} m, 75% {} m, strongest {:.0}%", m(rings[0]), m(rings[1]), m(rings[2]), strongest * 100.0))
+            })
+        },
+    );
+
+    c.add("weather_compare", "weather_compare on|off", "light the scene with the file as saved instead of the edits", |e, a| {
+        let on = match a.first().map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return fail("usage: weather_compare on|off"),
+        };
+        with_weather(e, |t, _| {
+            t.visual.compare = on;
+            ok("")
+        })
+    });
+
+    c.add("weather_tone_panel", "weather_tone_panel on|off", "open or close the Weather scene panel's tone curve and histogram", |e, a| {
+        let open = match a.first().map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return fail("usage: weather_tone_panel on|off"),
+        };
+        with_weather(e, |t, _| {
+            t.visual.open_tone = Some(open);
+            ok("")
+        })
+    });
+
     c.add("sample", "sample <seed> <count>", "open a new sample map document (the old one goes)", |e, a| {
         with_weather(e, |t, e| {
             t.scene_seed = a.first().map_or(1, |s| int(s) as u32 as i32);

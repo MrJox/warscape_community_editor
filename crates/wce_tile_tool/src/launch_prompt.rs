@@ -781,6 +781,10 @@ impl TileTool {
             gui::close_current_popup();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Stops the launch; nothing has reached the game's folder yet.");
+        }
+
         gui::end_popup();
     }
 
@@ -817,6 +821,10 @@ impl TileTool {
         if gui::button("Launch anyway") {
             launch = true;
             close = true;
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Launches the tile with those packs left in data\\.");
         }
 
         gui::same_line();

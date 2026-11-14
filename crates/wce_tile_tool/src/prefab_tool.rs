@@ -26,6 +26,7 @@ use wce_tile_editor::terrain_bake::TerrainLook;
 use wce_tile_editor::tile_document::{TileDocument, item_of};
 
 use crate::create_panel::{FolderRows, PROJECT_PREFAB_ICON, PROJECT_PREFAB_TIP, folder_order, folder_tree};
+use crate::settings::{SETTINGS_ID, TileSettings};
 use crate::tool::{Profile, TILE_TOOL_ID, TileTool};
 
 /// The tool's id: the owner of its stages.
@@ -473,9 +474,17 @@ impl PrefabTool {
                 self.report(e, r);
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Saves the stage's prefab, with its ground.");
+            }
+
             gui::same_line();
             if gui::button("Save as...") {
                 ask_now = Some((Ask::SaveAs, key.clone()));
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Saves the stage as a new prefab of the projects and opens it; the old one stays as its file has it.");
             }
 
             gui::same_line();
@@ -484,10 +493,18 @@ impl PrefabTool {
                 self.report(e, r);
             }
 
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Drops the unsaved changes: the prefab as its file has it again.");
+            }
+
             gui::same_line();
             if gui::button("Save for Assembly Kit") {
                 let r = self.save_for_kit(e);
                 self.report(e, r);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Writes the prefab as TEd reads it (no ground) into an Assembly Kit; save it first.");
             }
 
             gui::text_wrapped("Settings in the Inspector: select the prefab (its ground) or the root (the stage)");
@@ -497,9 +514,17 @@ impl PrefabTool {
         // New.
         gui::set_next_item_width(140.0);
         gui::input_text("##new_name", Some("new prefab"), &mut self.new_name, 128, 0);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The new prefab's name (its key and file name).");
+        }
+
         gui::same_line();
         gui::set_next_item_width(100.0);
         gui::input_text("##new_folder", Some("folder"), &mut self.new_folder, 256, 0);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The new prefab's folder below art/prefabs, e.g. global/rocks (optional).");
+        }
+
         gui::same_line();
         if gui::button(&format!("{}##new", icons::PACKAGE_PLUS)) {
             let (name, folder) = (self.new_name.clone(), self.new_folder.clone());
@@ -519,8 +544,32 @@ impl PrefabTool {
             gui::text_wrapped(&self.status);
         }
 
+        // The view: a list, or a grid of pictures (the Create panel's thumbnails), kept in the settings.
+        let grid = e.tool_settings::<TileSettings>(SETTINGS_ID).prefab_grid;
+        for (on, icon, tip) in [
+            (false, icons::LIST_TREE, "A list"),
+            (
+                true,
+                icons::LAYOUT_GRID,
+                "Pictures: each prefab with its thumbnail, made as it comes into view while a prefab is on the stage",
+            ),
+        ] {
+            if gui::selectable_sized(&format!("{icon}##prefabview{on}"), grid == on, 0, gui::v2(gui::frame_height(), 0.0)) && grid != on {
+                e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.prefab_grid = on);
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(tip);
+            }
+
+            gui::same_line();
+        }
+
         gui::set_next_item_width(-1.0);
         gui::input_text("##prefab_filter", Some(&format!("{}  search", icons::SEARCH)), &mut self.filter, 256, 0);
+        if grid && crate::tool::document(e).is_none() {
+            gui::text_disabled("New thumbnails are made while a prefab is on the stage; the ones made before show.");
+        }
 
         // By folder, folders first, as the Create panel lists them; made again for another library or filter.
         let stamp = (Arc::as_ptr(&lib) as usize, self.filter.clone());
@@ -542,6 +591,7 @@ impl PrefabTool {
         let (_, list, folders) = self.list.as_ref().expect("made above");
         let filtering = !self.filter.trim().is_empty();
         let on = self.open_key().map(str::to_owned);
+        let tile = &mut self.tile;
         let mut open = None;
         if gui::begin_child("prefab_list", gui::v2(0.0, 0.0), 0, 0) {
             if list.is_empty() {
@@ -549,6 +599,30 @@ impl PrefabTool {
             }
 
             folder_tree("prefab_lib", folders, filtering, |rows| {
+                if grid {
+                    let spacing = gui::item_spacing().x;
+                    let across = (((gui::content_region_avail().x + spacing) / (GRID_SIDE + spacing)) as usize).max(1);
+                    let lines = rows.len().div_ceil(across);
+                    gui::clipped(lines, |l| {
+                        for (k, &i) in rows[l * across..((l + 1) * across).min(rows.len())].iter().enumerate() {
+                            if k > 0 {
+                                gui::same_line();
+                            }
+
+                            let p = &list[i];
+                            let ours = p.wce && p.path.starts_with(&projects);
+                            let img = tile.prefab_thumbnail(e, &p.key);
+                            if prefab_cell(p, ours, on.as_deref() == Some(p.key.as_str()), img) {
+                                open = Some(p.key.clone());
+                            }
+
+                            prefab_menu(p, ours, &mut open, &mut ask_now);
+                        }
+                    });
+
+                    return;
+                }
+
                 gui::clipped(rows.len(), |r| {
                     let p = &list[rows[r]];
                     let ours = p.wce && p.path.starts_with(&projects);
@@ -574,25 +648,7 @@ impl PrefabTool {
                         gui::set_tooltip(&format!("{}\n{from}\nDouble-click: open it on the stage; right click: more", p.path.display()));
                     }
 
-                    if gui::begin_popup_context_item(&format!("##ctx{}/{}", p.folder, p.key)) {
-                        if gui::menu_item("Open", None, false, true) {
-                            open = Some(p.key.clone());
-                        }
-
-                        if gui::menu_item("Duplicate...", None, false, true) {
-                            ask_now = Some((Ask::Duplicate, p.key.clone()));
-                        }
-
-                        if gui::menu_item("Rename...", None, false, ours) {
-                            ask_now = Some((Ask::Rename, p.key.clone()));
-                        }
-
-                        if gui::menu_item("Delete...", None, false, ours) {
-                            ask_now = Some((Ask::Delete, p.key.clone()));
-                        }
-
-                        gui::end_popup();
-                    }
+                    prefab_menu(p, ours, &mut open, &mut ask_now);
                 });
             });
         }
@@ -649,6 +705,9 @@ impl PrefabTool {
                 if what != Ask::Rename {
                     gui::set_next_item_width(220.0);
                     gui::input_text("folder##ask", Some("below art/prefabs"), folder, 256, 0);
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip("The new prefab's folder below art/prefabs (optional).");
+                    }
                 }
             }
         }
@@ -693,10 +752,18 @@ impl PrefabTool {
             self.stage_draft.cells = cells.clamp(1, 8) as u32;
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The stage's size, in cells of 128 m a side. Takes effect on Apply.");
+        }
+
         let mut height = self.stage_draft.height as f32;
         gui::set_next_item_width(120.0);
         if gui::drag_float("ground height", &mut height, 0.5, -500.0, 2000.0, "%.1f") {
             self.stage_draft.height = f64::from(height);
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("The height of the stage's flat ground (m). Takes effect on Apply.");
         }
 
         let densities = wce_tile::new_tile::DENSITIES;
@@ -726,7 +793,7 @@ impl PrefabTool {
             );
         }
 
-        gui::text_disabled("The climate and season: the ground chip at the viewport's top right.");
+        gui::text_disabled("The climate and season: the climate and season chips at the viewport's top left.");
     }
 
     /// The prefab's own settings, saved in it (with its ground): its height layer's. In the Inspector, under the prefab's group.
@@ -802,6 +869,16 @@ fn with_prefab(e: &mut Editor, f: impl FnOnce(&mut PrefabTool, &mut Editor) -> R
 }
 
 fn register(c: &mut CommandRegistry<Editor>) {
+    c.add("prefab_tool_grid", "prefab_tool_grid on|off", "the Prefabs panel as a grid of pictures (on) or a list (off)", |e, a| {
+        let on = match a.first().map(String::as_str) {
+            Some("on") => true,
+            Some("off") => false,
+            _ => return CommandResult::fail("usage: prefab_tool_grid on|off"),
+        };
+        e.update_tool_settings(SETTINGS_ID, |s: &mut TileSettings| s.prefab_grid = on);
+        CommandResult::success("")
+    });
+
     c.add("prefab_tool_open", "prefab_tool_open <key>", "open a prefab on the Prefab tool's stage", |e, a| {
         let Some(key) = a.first().cloned() else { return CommandResult::fail("usage: prefab_tool_open <key>") };
         with_prefab(e, |p, e| p.open_prefab(e, &key))
@@ -941,7 +1018,6 @@ impl Tool for PrefabTool {
         gui::dock_builder_dock_window("Create", left);
         gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Inspector", right);
-        gui::dock_builder_dock_window("Weather", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
         gui::dock_builder_dock_window("History", bottom);
@@ -952,32 +1028,25 @@ impl Tool for PrefabTool {
         self.tile.draw_panels(e);
     }
 
-    fn draw_menus(&mut self, e: &mut Editor) {
-        if gui::begin_menu("Prefab") {
-            let open = self.open.is_some();
-            let mut r = None;
-            if gui::menu_item("Save", None, false, open) {
-                r = Some(self.save(e));
-            }
-
-            if gui::menu_item("Revert", None, false, open) {
-                r = Some(self.revert(e));
-            }
-
-            gui::separator();
-            if gui::menu_item("Close the stage", None, false, open) {
-                r = Some(self.close_stage(e, false).map(|()| "stage closed".to_owned()));
-            }
-
-            gui::end_menu();
-            if let Some(r) = r {
-                self.report(e, r);
-            }
-        }
+    /// File > Revert > To saved: the prefab as its file has it, read again (File > Save saves the stage, File > Close document closes it).
+    fn revert(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
+        self.open.is_some().then(|| self.revert(e))
     }
 
-    fn toolbar(&mut self, e: &mut Editor) {
-        self.tile.toolbar(e);
+    fn viewport_modes(&mut self, e: &mut Editor) -> bool {
+        self.tile.viewport_modes(e)
+    }
+
+    fn leave_mode(&mut self, e: &mut Editor) {
+        self.tile.leave_mode(e);
+    }
+
+    fn can_centre_drag(&self, e: &Editor) -> bool {
+        self.tile.can_centre_drag(e)
+    }
+
+    fn begin_centre_drag(&mut self, e: &mut Editor) -> bool {
+        self.tile.begin_centre_drag(e)
     }
 
     fn edit_menu(&mut self, e: &mut Editor) {
@@ -1140,4 +1209,92 @@ impl TileTool {
             }
         }
     }
+}
+
+/// A prefab's right-click menu (the list's rows and the grid's cells): Open, Duplicate..., and for the projects' prefabs Rename... and
+/// Delete...; what was picked goes into `open` / `ask_now`.
+fn prefab_menu(p: &prefabs::PrefabEntry, ours: bool, open: &mut Option<String>, ask_now: &mut Option<(Ask, String)>) {
+    if gui::begin_popup_context_item(&format!("##ctx{}/{}", p.folder, p.key)) {
+        if gui::menu_item("Open", None, false, true) {
+            *open = Some(p.key.clone());
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Opens the prefab on the stage.");
+        }
+
+        if gui::menu_item("Duplicate...", None, false, true) {
+            *ask_now = Some((Ask::Duplicate, p.key.clone()));
+        }
+
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Copies the prefab as a new one of the projects, under a name you give.");
+        }
+
+        if gui::menu_item("Rename...", None, false, ours) {
+            *ask_now = Some((Ask::Rename, p.key.clone()));
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(
+                "Renames the projects' prefab; tiles' references to the old name are not changed. Only the projects' prefabs.",
+            );
+        }
+
+        if gui::menu_item("Delete...", None, false, ours) {
+            *ask_now = Some((Ask::Delete, p.key.clone()));
+        }
+
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip("Deletes the projects' prefab file, after asking. Only the projects' prefabs.");
+        }
+
+        gui::end_popup();
+    }
+}
+
+/// The side of a picture in the Prefabs panel's grid (points), as the Create panel's.
+const GRID_SIDE: f32 = 96.0;
+
+/// A prefab's cell in the grid: its thumbnail (its icon until there is one) over its name (green for the projects'), lit while it is on
+/// the stage. True on a double click (open it).
+fn prefab_cell(p: &prefabs::PrefabEntry, ours: bool, on: bool, img: Option<wce_editor::images::ImageRef>) -> bool {
+    let line = gui::text_line_height_with_spacing();
+    let at = gui::cursor_screen_pos();
+    let id = format!("##cell{}/{}", p.folder, p.key);
+    let picked = gui::selectable_sized(&id, on, gui::SELECTABLE_ALLOW_DOUBLE_CLICK, gui::v2(GRID_SIDE, GRID_SIDE + line))
+        && gui::is_mouse_double_clicked(0);
+    let hovered = gui::is_item_hovered();
+    let dl = gui::window_draw_list();
+    let (lo, hi) = (gui::v2(at.x + 2.0, at.y + 2.0), gui::v2(at.x + GRID_SIDE - 2.0, at.y + GRID_SIDE - 2.0));
+    match img {
+        Some(img) => dl.image(img.id, lo, hi, gui::v2(0.0, 0.0), gui::v2(1.0, 1.0), 0xFFFF_FFFF),
+        None => {
+            dl.rect_filled(lo, hi, crate::create_panel::style_u32(gui::COL_FRAME_BG), 4.0);
+            let icon = if ours { PROJECT_PREFAB_ICON } else { icons::COMPONENT };
+            let size = gui::calc_text_size(icon);
+            dl.text(
+                gui::v2(at.x + (GRID_SIDE - size.x) * 0.5, at.y + (GRID_SIDE - size.y) * 0.5),
+                crate::create_panel::style_u32(gui::COL_TEXT_DISABLED),
+                icon,
+            );
+        }
+    }
+
+    // The name, cut to the cell.
+    let mut name = p.key.clone();
+    while name.chars().count() > 3 && gui::calc_text_size(&name).x > GRID_SIDE - 4.0 {
+        name.pop();
+        name.pop();
+        name.push('\u{2026}');
+    }
+
+    let colour = if ours { theme::palette().success } else { theme::text() };
+    dl.text(gui::v2(at.x + 2.0, at.y + GRID_SIDE), theme::u32(colour), &name);
+    if hovered {
+        let from = if ours { PROJECT_PREFAB_TIP } else { "A prefab of an Assembly Kit (TEd's): a save makes the projects' copy." };
+        gui::set_tooltip(&format!("{}\n{}\n{from}\nDouble-click: open it on the stage; right click: more", p.key, p.path.display()));
+    }
+
+    picked
 }

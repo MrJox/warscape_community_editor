@@ -29,7 +29,7 @@ use wce_vfs::{Config, GameProfile, Vfs, normalize};
 use crate::panels::PanelState as PanelData;
 use crate::perf::PerfStats;
 use crate::steam_detect::{detect_game_folder, file_dialog, pick_folder};
-use crate::tool::Tool;
+use crate::tool::{FileMenu, Tool};
 use crate::viewport::{GizmoMode, Viewport};
 use crate::{gui, icons};
 
@@ -511,12 +511,29 @@ impl Editor {
         }
     }
 
+    /// Whether the status line's text is an error.
+    pub fn status_is_error(&self) -> bool {
+        self.status_error
+    }
+
     pub fn status_text(&self) -> &str {
         &self.status
     }
 
     pub fn device(&self) -> &ID3D11Device {
         &self.dev
+    }
+
+    /// The viewport's last image as RGBA8 rows (width, height, pixels; top row first), as shown. Waits for the GPU: for occasional reads (a
+    /// histogram twice a second), not every frame.
+    pub fn read_viewport_rgba8(&self) -> Option<(u32, u32, Vec<u8>)> {
+        let t = self.viewport.target();
+        Some((t.width(), t.height(), t.read_rgba8(&self.dev, &self.ctx)?))
+    }
+
+    /// Starts copying the viewport's last image back without waiting for the GPU (`Readback::take` reads it a frame or more later).
+    pub fn start_viewport_readback(&self, rb: &mut wce_render::image_io::Readback) -> bool {
+        self.viewport.target().texture().is_some_and(|t| rb.start(&self.dev, &self.ctx, t))
     }
 
     pub fn context(&self) -> &ID3D11DeviceContext {
@@ -750,7 +767,7 @@ impl Editor {
         self.game().available_mod_packs(&dir)
     }
 
-    /// The check list of mod packs (first run and File > Mod packs).
+    /// The check list of mod packs (first run and the toolbar's game list > Mod packs...).
     fn mod_pack_checks(&mut self, game: &str) {
         let (profile, chosen) = (self.game(), self.selected_mod_packs());
         self.mod_pack_checks_at(game, profile, &chosen, gui::cursor_pos_x());
@@ -1769,6 +1786,8 @@ impl Editor {
             self.update_lighting();
         }
 
+        // The status bar first: it takes its row off the work area the host window fills.
+        self.draw_status_bar();
         let vp = gui::main_viewport();
         gui::set_next_window_pos(vp.WorkPos, 0, gui::v2(0.0, 0.0));
         gui::set_next_window_size(vp.WorkSize, 0);
@@ -1930,33 +1949,11 @@ impl Editor {
         self.with_tool_at(self.active_tool, |t, e| t.draw_panels(e));
     }
 
+    /// The toolbar: the tools' tabs, then the game list (the game, its mod packs, remount, fixes) at the right. What the left mouse does in the
+    /// viewport is the viewport's mode strip (`chips::draw_mode_strip`); messages are the status bar's (`draw_status_bar`).
     fn draw_toolbar(&mut self) {
         gui::set_cursor_pos_x(gui::cursor_pos_x() + 6.0);
         gui::align_text_to_frame_padding();
-
-        // The game, switched from here (the documents close, asking about unsaved ones).
-        let current = self.game();
-        gui::set_next_item_width(gui::calc_text_size(current.display_name).x + 60.0);
-        if gui::begin_combo("##game", &format!("{}  {}", icons::SWORDS, current.display_name)) {
-            for game in GameProfile::ALL {
-                if gui::selectable(game.display_name, game.key == current.key, 0)
-                    && game.key != current.key
-                    && let Err(m) = self.switch_game(game.key)
-                {
-                    self.status(&m, true);
-                }
-            }
-
-            gui::end_combo();
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("The game the editor works on (switching closes the open documents)");
-        }
-
-        gui::same_line();
-        gui::text_disabled("|");
-        gui::same_line();
         for (k, i) in self.shown_tools().into_iter().enumerate() {
             let active = i == self.active_tool;
             if active {
@@ -1981,62 +1978,121 @@ impl Editor {
             gui::same_line();
         }
 
-        gui::text_disabled("|");
-        gui::same_line();
-        for (g, (icon, name)) in
-            [(icons::MOUSE_POINTER_2, "Select"), (icons::MOVE, "Move"), (icons::ROTATE_3D, "Rotate"), (icons::SCALE_3D, "Scale")]
-                .iter()
-                .enumerate()
-        {
-            let mode = crate::viewport::GizmoMode::from_index(g);
-            let on = self.viewport.gizmo == mode;
-            if on {
-                gui::push_style_color(gui::COL_BUTTON, gui::style_color(gui::COL_BUTTON_ACTIVE));
+        // The game, switched from here (the documents close, asking about unsaved ones).
+        let current = self.game();
+        let width = gui::calc_text_size(current.display_name).x + 60.0;
+        gui::same_line_at(gui::window_width() - width - 8.0);
+        gui::set_next_item_width(width);
+        if gui::begin_combo("##game", &format!("{}  {}", icons::SWORDS, current.display_name)) {
+            for game in GameProfile::ALL {
+                if gui::selectable(game.display_name, game.key == current.key, 0)
+                    && game.key != current.key
+                    && let Err(m) = self.switch_game(game.key)
+                {
+                    self.status(&m, true);
+                }
             }
 
-            if gui::small_button(&format!("{icon}  {name}")) {
-                self.viewport.gizmo = mode;
+            gui::separator();
+            if gui::selectable(&format!("{}  Mod packs...", icons::LAYERS), false, 0) {
+                self.mods_popup = true;
             }
 
             if gui::is_item_hovered() {
-                gui::set_tooltip(&format!("{name} ({})", g + 1));
+                gui::set_tooltip("The mod packs read on top of the game's own packs (also in Settings > Game data).");
             }
 
-            if on {
-                gui::pop_style_color(1);
+            if gui::selectable(&format!("{}  Remount packs", icons::REFRESH_CW), false, 0) {
+                let _ = CommandRegistry::run(self, "remount");
             }
 
-            gui::same_line();
-        }
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Reads the game's and the mod packs again (after one changed outside the editor) and rebuilds the renderer.",
+                );
+            }
 
-        // The coordinate system of the gizmo and the Inspector.
-        let local = self.viewport.local_coordinates;
-        let label = if local { format!("{}  Local##coords", icons::BOX) } else { format!("{}  Global##coords", icons::GLOBE) };
-        if gui::small_button(&label) {
-            self.viewport.local_coordinates = !local;
+            self.draw_fixes_items();
+            gui::end_combo();
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip(if local {
-                "Local coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the parent's (the group, \
-                 prefab or layer the item is in), as the file holds them. Click: global"
-            } else {
-                "Global coordinates (L): the move and rotate gizmo's axes and the Inspector's position and orientation are the world's. Click: local \
-                 (relative to the group, prefab or layer the item is in)"
-            });
+            gui::set_tooltip("The game the editor works on (switching closes the open documents), its mod packs and fixes");
         }
 
-        gui::same_line();
-        self.with_tool_at(self.active_tool, |t, e| t.toolbar(e));
-        gui::text_disabled("|");
-        gui::same_line();
-        gui::push_style_color(
-            gui::COL_TEXT,
-            if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) },
-        );
-        gui::text(&self.status.clone());
-        gui::pop_style_color(1);
         gui::separator();
+    }
+
+    /// The status bar at the window's bottom: the last message (red for an error; a click opens the Log), the active document (amber while
+    /// it has unsaved changes) and the frame rate at the right.
+    fn draw_status_bar(&mut self) {
+        gui::push_style_var_v(gui::VAR_WINDOW_PADDING, gui::v2(0.0, 2.0));
+        let open = gui::begin_bottom_bar("##statusbar", gui::frame_height() + 4.0);
+        gui::pop_style_var(1);
+        if !open {
+            gui::end();
+            return;
+        }
+
+        gui::set_cursor_pos_x(gui::cursor_pos_x() + 8.0);
+        gui::align_text_to_frame_padding();
+        let colour = if self.status_error { crate::theme::v4(crate::theme::error()) } else { gui::style_color(gui::COL_TEXT_DISABLED) };
+        gui::push_style_color(gui::COL_TEXT, colour);
+        let status = if self.status.is_empty() { " ".to_owned() } else { self.status.clone() };
+        gui::text(&status);
+        gui::pop_style_color(1);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(&format!("{status}\nClick: the Log, with every message"));
+        }
+
+        if gui::is_item_clicked() {
+            self.panels.log = true;
+            self.pending_focus = Some("Log".to_owned());
+        }
+
+        // The frame rate (not in scripted runs: their shots must not depend on the machine's speed); the active document left of it.
+        let fps = if self.perf.count() > 10 && !self.clock.fixed_step() {
+            let ms = self.perf.mean_frame_ms(60);
+            format!("{:.0} fps  {ms:.1} ms", if ms > 0.0 { 1000.0 / ms } else { 0.0 })
+        } else {
+            String::new()
+        };
+
+        let fps_w = if fps.is_empty() { 0.0 } else { gui::calc_text_width(&fps) + 24.0 };
+        let label = self.document_label();
+        if !label.is_empty() {
+            gui::same_line();
+            gui::set_cursor_pos_x(gui::window_width() - fps_w - gui::calc_text_width(&label) - 16.0);
+
+            if self.docs.active().is_some_and(|d| d.modified()) {
+                gui::text_colored(crate::theme::modified(), &label);
+            } else {
+                gui::text(&label);
+            }
+        }
+
+        if !fps.is_empty() {
+            gui::same_line();
+            gui::set_cursor_pos_x(gui::window_width() - gui::calc_text_width(&fps) - 16.0);
+            gui::text_disabled(&fps);
+        }
+
+        gui::end();
+    }
+
+    /// File > Revert > To saved: the active tool's own revert, else its document's (`Document::revert`); the outcome in the status line.
+    pub fn revert_active(&mut self) {
+        let id = self.docs.active_id();
+        let by_tool = self.with_tool_at(self.active_tool, |t, e| t.revert(e)).flatten();
+        let result = match by_tool {
+            Some(r) => r,
+            None => self.docs.find_mut(id).map_or_else(|| Err("no document".to_owned()), |d| d.revert()),
+        };
+
+        match result {
+            Ok(m) => self.status(&m, false),
+            Err(m) => self.status(&m, true),
+        }
     }
 
     /// "Files this editor opens" and "All files" for the file dialogs.
@@ -2062,10 +2118,6 @@ impl Editor {
         let (can_save, modified, has_doc) =
             self.docs.active().map_or((false, false, false), |d| (d.can_save(), d.modified() || d.save_wanted(), true));
         if gui::begin_menu("File") {
-            if gui::menu_item(&format!("{}  Open from the game packs...", icons::PACKAGE), None, false, true) {
-                self.panels.assets = true;
-            }
-
             if gui::menu_item(&format!("{}  Open file...", icons::FOLDER_OPEN), None, false, true)
                 && let Some(p) = file_dialog(false, &self.tool_folder(self.active_tool_id()), &self.open_filters())
             {
@@ -2075,29 +2127,38 @@ impl Editor {
                 }
             }
 
-            if gui::menu_item(&format!("{}  Mod packs...", icons::LAYERS), None, false, true) {
-                self.mods_popup = true;
-            }
-
+            self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Open));
+            gui::separator();
             if gui::menu_item(&format!("{}  Save", icons::SAVE), crate::shortcuts::label("save").as_deref(), false, can_save && modified) {
                 let _ = CommandRegistry::run(self, "save");
             }
 
-            if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save) {
+            // The document marks itself saved when the file picked is its own; a copy elsewhere leaves it unsaved.
+            let blocked = self.docs.active().and_then(|d| d.save_as_blocked());
+            if gui::menu_item(&format!("{}  Save as...", icons::FILE), None, false, can_save && blocked.is_none()) {
                 let start = self.save_as_start(active);
                 if let Some(p) = file_dialog(true, &start, &[("All files".to_owned(), "*.*".to_owned())])
                     && let Some(d) = self.docs.find_mut(active)
                 {
-                    let result = d.save(&wce_editor_core::document::SaveTarget { path: p });
-                    if result.is_ok() {
-                        d.history_mut().mark_saved();
-                    }
-
-                    let msg = result.map_or_else(|e| e, |()| "saved".to_owned());
+                    let result = d.save(&wce_editor_core::document::SaveTarget { path: p.clone() });
+                    let msg = match result {
+                        Ok(()) if d.modified() => {
+                            format!("a copy saved to {}; the document's own file does not have the edits yet (Save)", p.display())
+                        }
+                        Ok(()) => "saved".to_owned(),
+                        Err(e) => e,
+                    };
                     self.status(&msg, false);
                 }
             }
 
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(blocked.as_deref().unwrap_or(
+                    "Writes the document to a file you pick. A file on disk goes on as the new file; a game file's copy elsewhere is only a copy (Save still writes the project's).",
+                ));
+            }
+
+            self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Save));
             let unsaved = self.docs.unsaved().len();
             let label =
                 if unsaved != 0 { format!("{}  Save all ({unsaved})", icons::SAVE_ALL) } else { format!("{}  Save all", icons::SAVE_ALL) };
@@ -2105,16 +2166,33 @@ impl Editor {
                 let _ = CommandRegistry::run(self, "save_all");
             }
 
-            let loose = has_doc && self.is_loose_copy(active);
-            if gui::menu_item("Revert to game's version...", None, false, loose) {
-                self.ask_revert(active);
+            if gui::begin_menu_enabled(&format!("{}  Revert", icons::UNDO_2), has_doc) {
+                if gui::menu_item("To saved", None, false, modified) {
+                    self.revert_active();
+                }
+
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip(
+                        "The document as its file has it: the edits since the last save go (the status line says whether Undo or Redo brings them back).",
+                    );
+                }
+
+                let loose = self.is_loose_copy(active);
+                if gui::menu_item("To the game's version...", None, false, loose) {
+                    self.ask_revert(active);
+                }
+
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip(
+                        "Deletes the project's copy of this game file (what Save wrote into the project's loose folder): the packs' file is read again, by every tool.",
+                    );
+                }
+
+                self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Revert));
+                gui::end_menu();
             }
 
-            if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip(
-                    "Deletes the project's copy of this game file (what Save wrote into the project's loose folder): the packs' file is read again, by every tool.",
-                );
-            }
+            gui::separator();
 
             if gui::begin_menu(&format!("{}  Export", icons::PACKAGE)) {
                 let drew = self.with_tool_at(self.active_tool, |t, e| t.export_menu(e)).unwrap_or(false);
@@ -2126,25 +2204,13 @@ impl Editor {
             }
 
             let _ = self.with_tool_at(self.active_tool, |t, e| t.share_menu(e));
+            gui::separator();
             if gui::menu_item(&format!("{}  Close document", icons::X), None, false, has_doc) {
                 self.ask_close(active);
             }
 
             if gui::menu_item("Close all documents", None, false, !self.docs.order().is_empty()) {
                 self.ask_close_all();
-            }
-
-            if gui::menu_item(&format!("{}  Remount packs", icons::REFRESH_CW), None, false, true) {
-                let _ = CommandRegistry::run(self, "remount");
-            }
-
-            gui::separator();
-            if gui::menu_item(&format!("{}  Save layout", icons::LAYOUT_GRID), None, false, true) {
-                self.save_layout();
-            }
-
-            if gui::menu_item("Reset layout", None, false, true) {
-                self.reset_layout();
             }
 
             gui::separator();
@@ -2202,6 +2268,7 @@ impl Editor {
             gui::menu_item_toggle("Assets", &mut self.panels.assets);
             gui::menu_item_toggle("Log", &mut self.panels.log);
             gui::menu_item_toggle("History", &mut self.panels.history);
+            gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
             gui::separator();
             if gui::menu_item(
                 &format!("{}  Focus selection", icons::FOCUS),
@@ -2237,55 +2304,36 @@ impl Editor {
                 );
             }
 
+            self.with_tool_at(self.active_tool, |t, e| t.view_menu(e));
             gui::separator();
-            if gui::begin_menu(&format!("{}  Frame rate cap", icons::GAUGE)) {
-                for (fps, label) in [(30, "30 fps"), (60, "60 fps"), (120, "120 fps"), (144, "144 fps"), (0, "Unlimited")] {
-                    if gui::menu_item(label, None, self.frame_cap == fps, true) {
-                        self.set_frame_cap(fps);
-                    }
-                }
+            if gui::menu_item(&format!("{}  Save layout", icons::LAYOUT_GRID), None, false, true) {
+                self.save_layout();
+            }
 
-                gui::end_menu();
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Keeps where the panels are, for the next start.");
+            }
+
+            if gui::menu_item("Reset layout", None, false, true) {
+                self.reset_layout();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The panels back where they start out.");
             }
 
             gui::end_menu();
         }
 
         self.with_tool_at(self.active_tool, |t, e| t.draw_menus(e));
-        self.draw_fixes_menu();
         if gui::begin_menu("Help") {
-            gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
+            gui::menu_item(&format!("Warscape Community Editor {}", env!("CARGO_PKG_VERSION")), None, false, false);
             gui::separator();
             if gui::menu_item(&self.updates_menu_label(), None, false, true) {
                 self.updates_menu_clicked();
             }
 
             gui::end_menu();
-        }
-
-        // Frame rate readout, right aligned (not in scripted runs: their shots must not depend on the machine's speed); the active tool's
-        // document left of it (amber while it has unsaved changes).
-        let fps = if self.perf.count() > 10 && !self.clock.fixed_step() {
-            let ms = self.perf.mean_frame_ms(60);
-            format!("{:.0} fps  {ms:.1} ms", if ms > 0.0 { 1000.0 / ms } else { 0.0 })
-        } else {
-            String::new()
-        };
-
-        let fps_w = if fps.is_empty() { 0.0 } else { gui::calc_text_width(&fps) + 24.0 };
-        let label = self.document_label();
-        if !label.is_empty() {
-            gui::same_line_at(gui::window_width() - fps_w - gui::calc_text_width(&label) - 16.0);
-            if self.docs.active().is_some_and(|d| d.modified()) {
-                gui::text_colored(crate::theme::modified(), &label);
-            } else {
-                gui::text(&label);
-            }
-        }
-
-        if !fps.is_empty() {
-            gui::same_line_at(gui::window_width() - gui::calc_text_width(&fps) - 16.0);
-            gui::text_disabled(&fps);
         }
 
         gui::end_menu_bar();
@@ -2386,7 +2434,9 @@ impl Editor {
 
         if game_ok {
             gui::spacing();
-            gui::text_wrapped("Mod packs to read besides the game's own (optional; you can change this later in File > Mod packs):");
+            gui::text_wrapped(
+                "Mod packs to read besides the game's own (optional; you can change this later in the game list at the toolbar's left, Mod packs...):",
+            );
             let game = self.first_run_game.clone();
             self.mod_pack_checks(&game);
         }

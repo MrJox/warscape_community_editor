@@ -164,10 +164,57 @@ impl Inspector for ImGuiInspector {
         gui::separator_text(title);
     }
 
+    fn open_section(&mut self, title: &str) -> bool {
+        gui::collapsing_header(title, gui::TREE_DEFAULT_OPEN)
+    }
+
     fn text(&mut self, field: &str, label: &str, value: &str) {
         self.draw_label(field, label, true);
         gui::same_line_at(label_column());
         gui::text(value);
+        self.show_hint();
+    }
+
+    fn images(&mut self, field: &str, label: &str, images: &[(u64, f32, f32, &str)]) {
+        self.draw_label(field, label, true);
+        for (i, (id, w, h, caption)) in images.iter().enumerate() {
+            if i > 0 {
+                gui::same_line();
+            }
+
+            gui::begin_group();
+            gui::image(*id, gui::v2(*w, *h));
+            self.show_hint();
+            gui::text_disabled(caption);
+            gui::end_group();
+        }
+    }
+
+    fn plot(&mut self, field: &str, label: &str, series: &[([f32; 4], Vec<f32>)], x_end: &str) {
+        self.draw_label(field, label, true);
+        let w = gui::content_region_avail().x.max(60.0);
+        let (lo, size) = (gui::cursor_screen_pos(), gui::v2(w, 64.0));
+        let hi = gui::v2(lo.x + size.x, lo.y + size.y);
+        let dl = gui::window_draw_list();
+        dl.rect_filled(lo, hi, gui::col32(18, 18, 20, 255), 2.0);
+        for (colour, values) in series {
+            if values.len() < 2 {
+                continue;
+            }
+
+            let step = size.x / (values.len() - 1) as f32;
+            let pts = values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| gui::v2(lo.x + i as f32 * step, hi.y - 1.0 - v.clamp(0.0, 1.0) * (size.y - 2.0)))
+                .collect::<Vec<_>>();
+            dl.polyline(&pts, crate::theme::u32(*colour), false, 1.5);
+        }
+
+        let dim = crate::theme::u32(crate::theme::dim());
+        dl.text(gui::v2(lo.x + 4.0, hi.y - 16.0), dim, "0");
+        dl.text(gui::v2(hi.x - gui::calc_text_width(x_end) - 4.0, hi.y - 16.0), dim, x_end);
+        gui::dummy(size);
         self.show_hint();
     }
 

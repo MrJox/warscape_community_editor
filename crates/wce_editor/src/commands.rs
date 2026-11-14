@@ -844,6 +844,10 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("gizmo_why", "gizmo_why", "why the selection shows no gizmo (or that it shows one)", |e, _| {
+        ok(crate::viewport::gizmo_blocker(e).unwrap_or_else(|| "the gizmo shows".to_owned()))
+    });
+
     c.add("focus", "focus", "frame the selection in the viewport", |e, _| {
         viewport::focus_selection(e);
         ok("")
@@ -1374,6 +1378,12 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         let want = a.first().is_none_or(|x| x != "0");
         let mounted = e.is_mounted();
         if mounted == want { ok("") } else { fail(if mounted { "mounted" } else { "not mounted" }) }
+    });
+
+    c.add("revert", "revert", "File > Revert > To saved: the active document as its file has it (the status line says how)", |e, _| {
+        e.revert_active();
+        let msg = e.status_text().to_owned();
+        if e.status_is_error() { fail(msg) } else { ok(msg) }
     });
 
     c.add("remount", "remount", "read the packs again (after the team edited one) and rebuild the renderer", |e, _| {

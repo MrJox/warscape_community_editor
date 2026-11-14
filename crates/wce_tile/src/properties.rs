@@ -289,8 +289,8 @@ const WALL: &[Prop] = &[
 pub fn wall_tip(attr: &str) -> Option<&'static str> {
     Some(match attr {
         "flags" => {
-            "visible: drawn in the editor (a hidden wall has no pieces, and a kit wall's ground goes with them); active: in the game; \
-            draggable: moved with the mouse in the viewport"
+            "visible: drawn in the editor (a hidden wall has no pieces, and a kit wall's ground goes with them)\nactive: it can be selected\n\
+            draggable: the gizmo and the grab (G) move it; off, it can be selected without moving it by mistake"
         }
         "position" => "Where the wall's line is (its points are relative to it): moving it moves the whole line",
         crate::new_instances::WALL_PROCEDURAL => {

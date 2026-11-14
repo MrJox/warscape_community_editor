@@ -9,7 +9,7 @@ use wce_vfs::{Config, Vfs};
 const EXPLANATION: &str = "Attila ignores the effects in a standing building's .meta file. That is why the torches on fort walls never burn in \
 game even though their models are there, and why the Carthage lighthouse has no fire. Rome II plays the same files.
 
-This builds a fix from the game and the mods ticked in File > Mod packs, so the walls of those mods are covered too. In it:
+This builds a fix from the game and the mods ticked in the game list's Mod packs (at the toolbar's left), so the walls of those mods are covered too. In it:
 
 - Each wall piece gets the flames of its torches in its logic file, in a list the game does play. They belong to the wall, so they go out as \
 soon as it starts to break.
@@ -20,7 +20,7 @@ soon as it starts to break.
 
 Two packs go into the game's data folder:
 
-wce_lit_buildings.pack, a mod pack with the changed logic files. It is ticked in File > Mod packs for you, which is what the editor's preview \
+wce_lit_buildings.pack, a mod pack with the changed logic files. It is ticked in the game list's Mod packs (at the toolbar's left) for you, which is what the editor's preview \
 and its launches use. To play with it otherwise, enable it in the game's launcher.
 
 wce_lit_buildings_vfx.pack, a movie pack with one copy of the torch effect for each torch on a piece: torches sharing an effect would share \

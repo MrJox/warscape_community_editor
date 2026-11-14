@@ -57,7 +57,7 @@ const CATEGORY_ICONS: [&str; CATEGORIES.len()] = [
 
 /// The rail's width.
 /// A colour of the style, as the draw list takes it.
-fn style_u32(idx: i32) -> u32 {
+pub(crate) fn style_u32(idx: i32) -> u32 {
     let c = gui::style_color(idx);
     theme::u32([c.x, c.y, c.z, c.w])
 }
@@ -579,6 +579,10 @@ impl TileTool {
 
                 if gui::small_button(&format!("{}##preset", kind.label())) {
                     preset = Some((b, kind));
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Makes the capture location's boundary this preset shape (TEd's).");
                 }
 
                 if on {
@@ -1194,6 +1198,10 @@ impl TileTool {
             self.keep_draft();
         }
 
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Puts the settings of what you are making back to their defaults, its turn too.");
+        }
+
         // Where it goes: the holder's own values, as they are now (changed here as when it is selected).
         match holder {
             Some(h) if self.drawing => {
@@ -1287,6 +1295,30 @@ impl TileTool {
         }
 
         None
+    }
+
+    /// A prefab's thumbnail, the Create panel's (one cache, `prefab|<key>`): `Some` once it is on the GPU. A missing one is made only while a
+    /// tile document is open (the stage, or the Tile tool's tile: drawing it needs one); the ones made before show either way.
+    pub(crate) fn prefab_thumbnail(&mut self, e: &mut Editor, key: &str) -> Option<wce_editor::images::ImageRef> {
+        let en = Entry {
+            category: 0,
+            label: key.to_owned(),
+            make: Make::Prefab { key: key.to_owned() },
+            folder: String::new(),
+            project: false,
+            search: String::new(),
+        };
+        if document(e).is_some() {
+            return self.thumbnail(e, &en, false);
+        }
+
+        let dir = crate::thumbnails::cache_dir(e);
+        if self.thumbs.dir != dir {
+            self.thumbs = crate::thumbnails::Thumbnails::default();
+            self.thumbs.dir = dir;
+        }
+
+        self.thumbs.get(e, &en.id())
     }
 
     /// The tooltip of the entry under the mouse: its thumbnail, or why there is none yet.
@@ -1444,6 +1476,10 @@ impl TileTool {
         };
         gui::push_style_color(gui::COL_TEXT, colour);
         let star = gui::small_button(&format!("{}##star{uid}", icons::STAR));
+        if gui::is_item_hovered() {
+            gui::set_tooltip(if favourite { "Takes it out of the favourites." } else { "Adds it to the favourites." });
+        }
+
         gui::pop_style_color(2);
         (clicked, star, hovered)
     }
@@ -1518,8 +1554,14 @@ impl TileTool {
         }
 
         // A set from the selected trees.
-        if self.trees_selected(e) && gui::small_button(&format!("{}  New vegetation set from the selected trees", icons::TREES)) {
-            self.request_new_vegetation_set();
+        if self.trees_selected(e) {
+            if gui::small_button(&format!("{}  New vegetation set from the selected trees", icons::TREES)) {
+                self.request_new_vegetation_set();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Saves the selected trees as a vegetation set, each kind weighted by how many there are.");
+            }
         }
 
         gui::set_next_item_width(-1.0);
@@ -1581,6 +1623,10 @@ impl TileTool {
             gui::same_line();
             if gui::small_button("Cancel##thumbs") {
                 self.thumbs.cancel();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Stops making the thumbnails; the ones made are kept.");
             }
         } else if gui::small_button(&format!("{}  Make thumbnails of the list", icons::IMAGE)) {
             let rows = self
@@ -1777,6 +1823,14 @@ impl TileTool {
 
             if gui::button("Stop (Esc)") {
                 self.stop_making();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(if self.drawing {
+                    "Stops drawing; points not finished are dropped."
+                } else {
+                    "Stops placing; what was placed stays."
+                });
             }
         }
         gui::end();

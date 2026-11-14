@@ -498,6 +498,14 @@ pub fn end_menu_bar() {
     call!(sys::igEndMenuBar())
 }
 
+/// A bar along the main viewport's bottom edge, `height` points tall (`igBeginViewportSideBar`): a window of its own that the docked
+/// windows do not cover, the viewport's work area (what the host window takes) shrunk by it. Pair with [`end`] whatever it returns.
+pub fn begin_bottom_bar(id: &str, height: f32) -> bool {
+    let c = cs(id);
+    let flags = (sys::ImGuiWindowFlags_NoScrollbar | sys::ImGuiWindowFlags_NoSavedSettings | sys::ImGuiWindowFlags_NoTitleBar) as i32;
+    call!(sys::igBeginViewportSideBar(c.as_ptr(), sys::igGetMainViewport(), sys::ImGuiDir_Down, height, flags))
+}
+
 pub fn begin_menu(label: &str) -> bool {
     begin_menu_enabled(label, true)
 }
@@ -965,6 +973,12 @@ pub fn close_current_popup() {
 // ---- item state
 
 /// Hovered, also when the item is disabled (to explain why).
+/// The last item is under the mouse even while a popup (another chip's) blocks it: a click there closes that popup, and the item can take
+/// the same click (`chips::chip`) instead of asking for a second one.
+pub fn is_item_hovered_through_popup() -> bool {
+    call!(sys::igIsItemHovered(sys::ImGuiHoveredFlags_AllowWhenBlockedByPopup))
+}
+
 pub fn is_item_hovered_allow_disabled() -> bool {
     call!(sys::igIsItemHovered(sys::ImGuiHoveredFlags_AllowWhenDisabled))
 }

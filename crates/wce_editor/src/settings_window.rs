@@ -522,7 +522,7 @@ impl Editor {
         );
         if !d.game_profile().features.kit_tiles {
             help(&format!(
-                "{}'s kit has no battle tiles: the tiles come from the game's packs and go into mod packs (Tile > Save to mod pack).",
+                "{}'s kit has no battle tiles: the tiles come from the game's packs and go into mod packs (File > Export > To mod pack).",
                 d.game_profile().display_name
             ));
         }
