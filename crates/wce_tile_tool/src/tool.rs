@@ -661,6 +661,9 @@ pub struct TileTool {
     pub(crate) preview_forced: bool,
     camera_set_for: DocumentId,
 
+    /// The tile the gestures (grab, strokes, handle drags) were last seen on: when another is shown, what is still open is closed on it.
+    gesture_tile: DocumentId,
+
     /// mark_height values for the tests.
     pub(crate) marks: HashMap<String, f32>,
 
@@ -912,6 +915,7 @@ impl Default for TileTool {
             placing_prefab_text: None,
             preview_forced: false,
             camera_set_for: 0,
+            gesture_tile: 0,
             marks: HashMap::new(),
             browse_filter: String::new(),
             browse_focus_frames: 3,
@@ -2347,13 +2351,21 @@ impl TileTool {
     }
 
     pub fn end_grab(&mut self, e: &mut Editor, commit: bool) {
+        let id = document_id(e).unwrap_or(0);
+        self.end_grab_in(e, id, commit);
+    }
+
+    /// [`Self::end_grab`] on tile `id` (the grab's, which may no longer be the one shown).
+    fn end_grab_in(&mut self, e: &mut Editor, id: DocumentId, commit: bool) {
         if !self.grabbing {
             return;
         }
 
         self.grabbing = false;
         self.grab_drag = false;
-        let Some(d) = document(e) else { return };
+        self.grab_elem = None;
+        self.grab_others.clear();
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return };
         let h = d.history_mut();
         h.break_merge();
         if !commit {
@@ -2365,9 +2377,38 @@ impl TileTool {
                 d.join_last(n, "Grab");
             }
         }
+    }
 
-        self.grab_elem = None;
-        self.grab_others.clear();
+    /// Another tile is shown (another tab, a tile opened by a script or a menu): what is still open on the one before is closed there, as
+    /// its release would close it (a G grab as Esc does: it was not confirmed), so that none of it goes on in the new tile with the old one's
+    /// items, points and history.
+    fn follow_tile(&mut self, e: &mut Editor) {
+        let now = document_id(e).unwrap_or(0);
+        let old = std::mem::replace(&mut self.gesture_tile, now);
+        if old == now {
+            return;
+        }
+
+        self.end_grab_in(e, old, false);
+        if self.stroke.is_some() {
+            self.status = self.end_stroke_veg_in(e, old);
+        }
+
+        let stroke = std::mem::take(&mut self.stroke_active);
+        let dragged = std::mem::take(&mut self.point_drag)
+            | self.light_drag.take().is_some()
+            | self.target_drag.take().is_some()
+            | self.alt_rotate.take().is_some();
+        self.spline_handle = None;
+        if let Some(d) = e.docs.find_as_mut::<TileDocument>(old) {
+            if stroke {
+                d.end_stroke();
+            }
+
+            if dragged {
+                d.history_mut().break_merge();
+            }
+        }
     }
 
     /// Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one out of the export; the warnings in the log.
@@ -4051,6 +4092,7 @@ impl Tool for TileTool {
     }
 
     fn update(&mut self, e: &mut Editor) {
+        self.follow_tile(e);
         self.update_launch(e);
 
         // The Inspector's "Open in Prefab tool".
@@ -4115,8 +4157,6 @@ impl Tool for TileTool {
             self.prefabs = None;
             self.poly_point = None;
             self.drawing = false;
-            self.grabbing = false;
-            self.stroke_active = false;
             self.mode = TileMode::Select;
             self.context.tile_changed(e, id);
 
@@ -4517,6 +4557,7 @@ impl Tool for TileTool {
     }
 
     fn viewport_input(&mut self, e: &mut Editor, ev: &ViewportEvent) -> bool {
+        self.follow_tile(e);
         let Some(id) = document_id(e) else { return false };
         if self.box_select_input(e, ev.kind, ev.x, ev.y) {
             return true;
