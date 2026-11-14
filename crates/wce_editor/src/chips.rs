@@ -39,6 +39,11 @@ pub fn chip_separator() {
     gui::same_line_touching();
 }
 
+thread_local! {
+    /// The chip clicked last (its popup is the one open, if any): a click on it while blocked closes the popup rather than opening it again.
+    static LAST_CHIP: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
 /// A chip: an icon that is all of its pill (`gui::begin_pill`), lit while `on`; true when clicked.
 pub fn chip(on: bool, icon: &str, id: &str, tip: &str) -> bool {
     if on {
@@ -48,7 +53,18 @@ pub fn chip(on: bool, icon: &str, id: &str, tip: &str) -> bool {
 
     gui::push_style_var_v(gui::VAR_FRAME_PADDING, CHIP_PADDING);
     gui::push_style_color(gui::COL_BUTTON, gui::v4(0.0, 0.0, 0.0, 0.0));
-    let clicked = gui::button(&format!("{icon}##{id}"));
+    let pressed = gui::button(&format!("{icon}##{id}"));
+
+    // With another chip's popup open, the click that closes it opens this one too (no second click needed); a click on the chip whose popup
+    // is open only closes it, as before.
+    let through = gui::is_mouse_clicked(0) && !gui::is_item_hovered() && gui::is_item_hovered_through_popup();
+    let own = LAST_CHIP.with(|l| *l.borrow() == id);
+    let clicked = pressed || (through && !own);
+    if clicked {
+        LAST_CHIP.with(|l| id.clone_into(&mut l.borrow_mut()));
+    } else if through && own {
+        LAST_CHIP.with(|l| l.borrow_mut().clear());
+    }
     gui::pop_style_color(1);
     gui::pop_style_var(1);
     if on {

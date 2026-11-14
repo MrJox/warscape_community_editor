@@ -965,6 +965,12 @@ pub fn close_current_popup() {
 // ---- item state
 
 /// Hovered, also when the item is disabled (to explain why).
+/// The last item is under the mouse even while a popup (another chip's) blocks it: a click there closes that popup, and the item can take
+/// the same click (`chips::chip`) instead of asking for a second one.
+pub fn is_item_hovered_through_popup() -> bool {
+    call!(sys::igIsItemHovered(sys::ImGuiHoveredFlags_AllowWhenBlockedByPopup))
+}
+
 pub fn is_item_hovered_allow_disabled() -> bool {
     call!(sys::igIsItemHovered(sys::ImGuiHoveredFlags_AllowWhenDisabled))
 }
