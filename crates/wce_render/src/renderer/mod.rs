@@ -1874,12 +1874,46 @@ impl Renderer {
         self.gpu_timer.mark("faded");
         self.pass_faded();
 
+        self.pass_particles(scene, cam.eye, o, view_m, time_s, (width, height));
+        self.ctx.set_viewports(&[main_vp]);
+
+        null_ps_srvs(&self.ctx, 16);
+        let dt = self.clock.dt;
+        self.gpu_timer.mark("tonemap + post");
+        self.pass_tonemap(&env, dt);
+        if self.settings.grain {
+            self.advance_grain(dt);
+        }
+        if self.settings.view == View::Final {
+            self.pass_to_screen(&env);
+            if self.settings.lens_flare {
+                self.pass_lens_flare(&env, (cam.eye - o) * self.camera.units, time_s);
+            }
+
+            if self.settings.aa == 1 {
+                self.pass_mlaa();
+            }
+        }
+
+        self.gpu_timer.mark("display + overlay");
+
+        self.pass_to_target(target, scene, (width, height), (out_w, out_h));
+
+        self.gpu_timer.end_frame();
+        null_ps_srvs(&self.ctx, 16);
+        self.ctx.set_render_targets(&[], None);
+    }
+
+    /// The particles (`gpu_timer`'s "particles"): the weather's precipitation (vfx1 of the WEATHER definition) and the placed effects
+    /// (tile VFX instances, gathered again when the scene changes), in game units; Rome 2's as CPU particles. `eye` and `o` (the
+    /// render origin) in world units, `view_m` the camera's view from the origin, (`width`, `height`) the scene's size.
+    fn pass_particles(&mut self, scene: &RenderScene, eye: Float3, o: Float3, view_m: Float4x4, time_s: f32, (width, height): (u32, u32)) {
         self.gpu_timer.mark("particles");
 
         // The weather precipitation (vfx1 of the WEATHER definition).
         // The particles live in game units (the effects' sizes, speeds and the weather's volumes are the game's).
         let frame = Frame {
-            eye: (cam.eye - o) * self.camera.units,
+            eye: (eye - o) * self.camera.units,
             view: view_m,
             time: time_s,
             dt: self.clock.dt,
@@ -1941,28 +1975,12 @@ impl Renderer {
             wce_prof!("render.particles");
             self.particles.render(&frame, &mut self.lib, read, &mut self.cbs);
         }
-        self.ctx.set_viewports(&[main_vp]);
+    }
 
-        null_ps_srvs(&self.ctx, 16);
-        let dt = self.clock.dt;
-        self.gpu_timer.mark("tonemap + post");
-        self.pass_tonemap(&env, dt);
-        if self.settings.grain {
-            self.advance_grain(dt);
-        }
-        if self.settings.view == View::Final {
-            self.pass_to_screen(&env);
-            if self.settings.lens_flare {
-                self.pass_lens_flare(&env, (cam.eye - o) * self.camera.units, time_s);
-            }
-
-            if self.settings.aa == 1 {
-                self.pass_mlaa();
-            }
-        }
-
-        self.gpu_timer.mark("display + overlay");
-
+    /// The scene shown in `target`: copied with alpha 1 (into a scene-sized texture first when the render scale is under 1: the
+    /// overlays test the scene's depth), the tint, ground overlay, selection outline and overlays over it in the final view, then
+    /// enlarged into `target` by NIS.
+    fn pass_to_target(&mut self, target: &mut RenderTarget, scene: &RenderScene, (width, height): (u32, u32), (out_w, out_h): (u32, u32)) {
         // Final: copies final_ with alpha = 1 for the viewport; scaled, into the scene's size first (the overlays test the scene's depth),
         // enlarged into the target after them.
         let mut scaled = ((width, height) != (out_w, out_h)).then(|| {
@@ -2014,10 +2032,6 @@ impl Renderer {
 
             self.scaled = Some(t);
         }
-
-        self.gpu_timer.end_frame();
-        null_ps_srvs(&self.ctx, 16);
-        self.ctx.set_render_targets(&[], None);
     }
 }
 

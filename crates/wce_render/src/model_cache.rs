@@ -990,213 +990,7 @@ impl ModelInner {
             return Err("no LODs".to_owned());
         }
 
-        let textures = &self.textures;
-        let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| -> Option<GpuMesh> {
-            let (mesh, material) = (block.mesh(), block.material());
-            if ropes || *mesh.material_type() == MaterialType::Rope {
-                return if ropes && *mesh.material_type() == MaterialType::Rope { self.rope_mesh(path, material) } else { None };
-            }
-
-            let weighted = weighted_material(*mesh.material_type());
-            let (dirt, decal) = weighted.map_or((false, false), |(_, dirt, decal)| (dirt, decal));
-            let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
-                (_, f @ (VertexFormat::Weighted | VertexFormat::Cinematic | VertexFormat::Static)) if skinned && weighted.is_some() => {
-                    (weighted?.0, *f)
-                }
-                (MaterialType::DefaultMaterial | MaterialType::Dirtmap, VertexFormat::Static) if skinned => (
-                    if *mesh.material_type() == MaterialType::Dirtmap { MeshKind::Dirtmap } else { MeshKind::Standard },
-                    VertexFormat::Static,
-                ),
-                _ if skinned => return None,
-                (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
-                (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
-                (MaterialType::TerrainBlend, VertexFormat::Static) => (MeshKind::TerrainBlend, VertexFormat::Static),
-                (MaterialType::Dirtmap, VertexFormat::Static) => (MeshKind::Dirtmap, VertexFormat::Static),
-                (MaterialType::ShipAmbientmap, VertexFormat::Static) => (MeshKind::AmbientMap, VertexFormat::Static),
-
-                // Posed on the CPU (pose_first_frame): drawn as a static mesh.
-                (MaterialType::Weighted, VertexFormat::Weighted) => (MeshKind::Standard, VertexFormat::Static),
-                (MaterialType::Tree, VertexFormat::Tree) => (MeshKind::TreeBranch, VertexFormat::Tree),
-                (MaterialType::TreeLeaf, VertexFormat::Tree) => (MeshKind::TreeLeaf, VertexFormat::Tree),
-                (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
-                (MaterialType::Grass, VertexFormat::Grass) => (MeshKind::Grass, VertexFormat::Grass),
-                (MaterialType::Water, VertexFormat::Uk8) => (MeshKind::Water, VertexFormat::Uk8),
-                // A campaign's tree clumps (`rigidcampaignvegetation.hlsl`): drawn as static meshes, see below.
-                (MaterialType::CampaignVegetation, VertexFormat::Uk12) => (MeshKind::Standard, VertexFormat::Static),
-                _ => return None,
-            };
-
-            if mesh.vertices().is_empty() || mesh.indices().is_empty() {
-                return None;
-            }
-
-            let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
-
-            // The static material types share the default layout; trees have theirs. Written back as rpfm_lib reads them: the file's bytes.
-            let stride = match format {
-                VertexFormat::Tree => TREE_STRIDE,
-                VertexFormat::Billboard => BILLBOARD_STRIDE,
-                VertexFormat::Grass => GRASS_STRIDE,
-                VertexFormat::Uk8 => WATER_STRIDE,
-                VertexFormat::Weighted => WEIGHTED_STRIDE,
-                VertexFormat::Cinematic => CINEMATIC_STRIDE,
-                _ => 32,
-            };
-
-            // A campaign tree clump's vertex (version 6 `Uk12`) is (position, u) and (normal, v), f16; its vertex shader draws the
-            // position times 0.4 (`rigidcampaignvegetation.hlsl` vs30_main), turned by the instance's angle and leaning towards the camera
-            // (not done here), and its pixel shader cuts the diffuse's alpha at 0.5 (the material's alpha mode 1).
-            let clump = *mesh.material_type() == MaterialType::CampaignVegetation;
-            let mut vertices = Vec::with_capacity(mesh.vertices().len() * stride as usize);
-            for vertex in mesh.vertices() {
-                let mtype = if format == VertexFormat::Static { MaterialType::DefaultMaterial } else { *mesh.material_type() };
-                if clump {
-                    let mut v = vertex.clone();
-                    let (p, n) = (*vertex.position(), *vertex.normal());
-                    (v.texture_coordinate_mut().x, v.texture_coordinate_mut().y) = (p.w, n.w);
-                    let q = v.position_mut();
-                    (q.x, q.y, q.z, q.w) = (p.x * 0.4, p.y * 0.4, p.z * 0.4, 1.0);
-                    v.normal_mut().w = 0.0;
-                    v.write(&mut vertices, 6, format, mtype).ok()?;
-                    continue;
-                }
-
-                vertex.write(&mut vertices, 6, format, mtype).ok()?;
-            }
-
-            if vertices.len() != mesh.vertices().len() * stride as usize {
-                return None;
-            }
-
-            let indices = mesh.indices().iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
-            let vb = immutable_buffer(self.dev.device(), &vertices, D3D11_BIND_VERTEX_BUFFER)?;
-            let ib = immutable_buffer(self.dev.device(), &indices, D3D11_BIND_INDEX_BUFFER)?;
-
-            // The bounds come from the vertices: the file's are not trusted (a culling sphere that is too small drops visible geometry).
-            // A tree vertex is drawn somewhere between its two positions (f16 at bytes 0 and 8): both count.
-            let (mut lo, mut hi) = ([1e30f32; 3], [-1e30f32; 3]);
-            let half = |v: &[u8], at: usize| half_to_float(u16::from_le_bytes([v[at], v[at + 1]]));
-            let mut grow = |p: [f32; 3]| {
-                for (a, v) in p.into_iter().enumerate() {
-                    lo[a] = lo[a].min(v);
-                    hi[a] = hi[a].max(v);
-                }
-            };
-
-            if format == VertexFormat::Tree {
-                for v in vertices.chunks_exact(stride as usize) {
-                    grow([half(v, 0), half(v, 2), half(v, 4)]);
-                    grow([half(v, 8), half(v, 10), half(v, 12)]);
-                }
-            } else if format == VertexFormat::Billboard {
-                // The quad turns around the vertical axis: as far in z as in x.
-                for v in vertices.chunks_exact(stride as usize) {
-                    let (x, y) = (half(v, 0), half(v, 2));
-                    grow([x, y, x]);
-                    grow([-x, y, -x]);
-                }
-            } else {
-                for vertex in mesh.vertices() {
-                    let p = vertex.position();
-                    grow([p.x, p.y, p.z]);
-                }
-            }
-
-            // A billboard's normal and displacement map is named after its diffuse.
-            let normal = if kind == MeshKind::TreeBillboard {
-                material
-                    .textures()
-                    .iter()
-                    .find(|t| *t.tex_type() == TextureType::Diffuse)
-                    .and_then(|t| {
-                        t.path().strip_suffix("_billboard_diffuse.dds").map(|base| format!("{base}_billboard_normal_and_displacement.dds"))
-                    })
-                    .and_then(|normal| {
-                        textures.get_quiet(&normal, false).or_else(|| {
-                            textures.report_missing(&normal, &format!("{path}, billboard normal"), "a flat normal");
-                            None
-                        })
-                    })
-                    .unwrap_or_else(|| textures.flat_normal())
-            } else {
-                material_texture(textures, path, material, TextureType::Normal, false, textures.flat_normal())
-            };
-
-            Some(GpuMesh {
-                vb: Some(vb),
-                ib: Some(ib),
-                index_count: mesh.indices().len() as u32,
-                alpha_mode: material.params_i32().iter().find(|(id, _)| *id == 0).map_or(0, |(_, v)| *v),
-                stride,
-                kind,
-                dirt,
-                decal,
-                bone: *material.i_matrix_index(),
-                decal_rect: material
-                    .params_vector4df32()
-                    .iter()
-                    .find(|(id, _)| *id == 0)
-                    .map_or([0.0, 0.0, 1.0, 1.0], |(_, v)| [v.x, v.y, v.z, v.w]),
-                uv2_tile: if dirt || matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
-                    [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v))
-                } else {
-                    [0.0; 2]
-                },
-                tint: tree_tint(material),
-                offset: pivot,
-                has_offset: pivot != Float3::default(),
-                tex: [
-                    material_texture(textures, path, material, TextureType::Diffuse, true, textures.white()),
-                    material_texture(textures, path, material, TextureType::Specular, true, textures.black()),
-                    // sRGB, as the game samples it: its G-buffer holds the gloss map's x (channel 1 .w) and y (channel 2 .w) linearised
-                    // (RenderDoc captures of Rome against the editor's, docs/re/renderer.md); read linear they were 5 to 10 x too high.
-                    material_texture(textures, path, material, TextureType::GlossMap, true, textures.black()),
-                    material_texture(textures, path, material, TextureType::Mask, false, textures.black()),
-                    normal,
-                    // TEX_DETAIL / TEX_ALPHA_MASK: the tiled dirt map and its mask, or a Dirtmap mesh's dirt map (linear: a normal offset and
-                    // the dirt amount) and dirt mask.
-                    if kind == MeshKind::Dirtmap || dirt {
-                        material_texture(textures, path, material, TextureType::DecalDirtmap, false, textures.black())
-                    } else {
-                        material_texture(textures, path, material, TextureType::TilingDirtUV2, true, textures.white())
-                    },
-                    if kind == MeshKind::Dirtmap || dirt {
-                        material_texture(textures, path, material, TextureType::DecalDirtmask, false, textures.black())
-                    } else {
-                        material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white())
-                    },
-                    material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
-                    if kind == MeshKind::WeightedSkin {
-                        material_texture(textures, path, material, TextureType::SkinMask, false, textures.black())
-                    } else {
-                        textures.black()
-                    },
-                    if decal {
-                        material_texture(textures, path, material, TextureType::DecalMask, false, textures.black())
-                    } else {
-                        textures.black()
-                    },
-                ],
-                diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
-                normal_path: material
-                    .textures()
-                    .iter()
-                    .find(|t| *t.tex_type() == TextureType::Normal)
-                    .map(|t| t.path().replace('\\', "/"))
-                    .unwrap_or_default(),
-                displacement: material
-                    .textures()
-                    .iter()
-                    .any(|t| *t.tex_type() == TextureType::Displacement)
-                    .then(|| material_texture(textures, path, material, TextureType::Displacement, false, textures.black())),
-                bmin: Float3::new(lo[0], lo[1], lo[2]),
-                bmax: Float3::new(hi[0], hi[1], hi[2]),
-                snow,
-
-                // Its bone count for now: [`palette_bases`] makes it the first bone.
-                palette_base: if kind == MeshKind::WeightedCloth { material.cloth_bones().len() as u32 } else { 0 },
-            })
-        };
+        let make_mesh = |block: &rpfm_lib::files::rigidmodel::MeshBlock| self.mesh_of(path, block, ropes, skinned, snow);
 
         let mut gm = GpuModel {
             path: path.to_owned(),
@@ -1277,6 +1071,222 @@ impl ModelInner {
         }
 
         Ok(Some(gm))
+    }
+
+    /// A mesh block of the model at `path` on the GPU: its vertices and indices, bounds, material and textures. `ropes`: the ropes
+    /// only; `skinned`: the weighted vertices as stored; `snow`: marked for the snow. `None` for a block not drawn that way.
+    fn mesh_of(
+        &self,
+        path: &str,
+        block: &rpfm_lib::files::rigidmodel::MeshBlock,
+        ropes: bool,
+        skinned: bool,
+        snow: bool,
+    ) -> Option<GpuMesh> {
+        let textures = &self.textures;
+        let (mesh, material) = (block.mesh(), block.material());
+        if ropes || *mesh.material_type() == MaterialType::Rope {
+            return if ropes && *mesh.material_type() == MaterialType::Rope { self.rope_mesh(path, material) } else { None };
+        }
+
+        let weighted = weighted_material(*mesh.material_type());
+        let (dirt, decal) = weighted.map_or((false, false), |(_, dirt, decal)| (dirt, decal));
+        let (kind, format) = match (mesh.material_type(), material.vertex_format()) {
+            (_, f @ (VertexFormat::Weighted | VertexFormat::Cinematic | VertexFormat::Static)) if skinned && weighted.is_some() => {
+                (weighted?.0, *f)
+            }
+            (MaterialType::DefaultMaterial | MaterialType::Dirtmap, VertexFormat::Static) if skinned => {
+                (if *mesh.material_type() == MaterialType::Dirtmap { MeshKind::Dirtmap } else { MeshKind::Standard }, VertexFormat::Static)
+            }
+            _ if skinned => return None,
+            (MaterialType::DefaultMaterial, VertexFormat::Static) => (MeshKind::Standard, VertexFormat::Static),
+            (MaterialType::TiledDirtmap, VertexFormat::Static) => (MeshKind::TiledDirtmap, VertexFormat::Static),
+            (MaterialType::TerrainBlend, VertexFormat::Static) => (MeshKind::TerrainBlend, VertexFormat::Static),
+            (MaterialType::Dirtmap, VertexFormat::Static) => (MeshKind::Dirtmap, VertexFormat::Static),
+            (MaterialType::ShipAmbientmap, VertexFormat::Static) => (MeshKind::AmbientMap, VertexFormat::Static),
+
+            // Posed on the CPU (pose_first_frame): drawn as a static mesh.
+            (MaterialType::Weighted, VertexFormat::Weighted) => (MeshKind::Standard, VertexFormat::Static),
+            (MaterialType::Tree, VertexFormat::Tree) => (MeshKind::TreeBranch, VertexFormat::Tree),
+            (MaterialType::TreeLeaf, VertexFormat::Tree) => (MeshKind::TreeLeaf, VertexFormat::Tree),
+            (MaterialType::TreeBillboardMaterial, VertexFormat::Billboard) => (MeshKind::TreeBillboard, VertexFormat::Billboard),
+            (MaterialType::Grass, VertexFormat::Grass) => (MeshKind::Grass, VertexFormat::Grass),
+            (MaterialType::Water, VertexFormat::Uk8) => (MeshKind::Water, VertexFormat::Uk8),
+            // A campaign's tree clumps (`rigidcampaignvegetation.hlsl`): drawn as static meshes, see below.
+            (MaterialType::CampaignVegetation, VertexFormat::Uk12) => (MeshKind::Standard, VertexFormat::Static),
+            _ => return None,
+        };
+
+        if mesh.vertices().is_empty() || mesh.indices().is_empty() {
+            return None;
+        }
+
+        let pivot = Float3::new(material.v_pivot().x, material.v_pivot().y, material.v_pivot().z);
+
+        // The static material types share the default layout; trees have theirs. Written back as rpfm_lib reads them: the file's bytes.
+        let stride = match format {
+            VertexFormat::Tree => TREE_STRIDE,
+            VertexFormat::Billboard => BILLBOARD_STRIDE,
+            VertexFormat::Grass => GRASS_STRIDE,
+            VertexFormat::Uk8 => WATER_STRIDE,
+            VertexFormat::Weighted => WEIGHTED_STRIDE,
+            VertexFormat::Cinematic => CINEMATIC_STRIDE,
+            _ => 32,
+        };
+
+        // A campaign tree clump's vertex (version 6 `Uk12`) is (position, u) and (normal, v), f16; its vertex shader draws the
+        // position times 0.4 (`rigidcampaignvegetation.hlsl` vs30_main), turned by the instance's angle and leaning towards the camera
+        // (not done here), and its pixel shader cuts the diffuse's alpha at 0.5 (the material's alpha mode 1).
+        let clump = *mesh.material_type() == MaterialType::CampaignVegetation;
+        let mut vertices = Vec::with_capacity(mesh.vertices().len() * stride as usize);
+        for vertex in mesh.vertices() {
+            let mtype = if format == VertexFormat::Static { MaterialType::DefaultMaterial } else { *mesh.material_type() };
+            if clump {
+                let mut v = vertex.clone();
+                let (p, n) = (*vertex.position(), *vertex.normal());
+                (v.texture_coordinate_mut().x, v.texture_coordinate_mut().y) = (p.w, n.w);
+                let q = v.position_mut();
+                (q.x, q.y, q.z, q.w) = (p.x * 0.4, p.y * 0.4, p.z * 0.4, 1.0);
+                v.normal_mut().w = 0.0;
+                v.write(&mut vertices, 6, format, mtype).ok()?;
+                continue;
+            }
+
+            vertex.write(&mut vertices, 6, format, mtype).ok()?;
+        }
+
+        if vertices.len() != mesh.vertices().len() * stride as usize {
+            return None;
+        }
+
+        let indices = mesh.indices().iter().flat_map(|i| i.to_le_bytes()).collect::<Vec<_>>();
+        let vb = immutable_buffer(self.dev.device(), &vertices, D3D11_BIND_VERTEX_BUFFER)?;
+        let ib = immutable_buffer(self.dev.device(), &indices, D3D11_BIND_INDEX_BUFFER)?;
+
+        // The bounds come from the vertices: the file's are not trusted (a culling sphere that is too small drops visible geometry).
+        // A tree vertex is drawn somewhere between its two positions (f16 at bytes 0 and 8): both count.
+        let (mut lo, mut hi) = ([1e30f32; 3], [-1e30f32; 3]);
+        let half = |v: &[u8], at: usize| half_to_float(u16::from_le_bytes([v[at], v[at + 1]]));
+        let mut grow = |p: [f32; 3]| {
+            for (a, v) in p.into_iter().enumerate() {
+                lo[a] = lo[a].min(v);
+                hi[a] = hi[a].max(v);
+            }
+        };
+
+        if format == VertexFormat::Tree {
+            for v in vertices.chunks_exact(stride as usize) {
+                grow([half(v, 0), half(v, 2), half(v, 4)]);
+                grow([half(v, 8), half(v, 10), half(v, 12)]);
+            }
+        } else if format == VertexFormat::Billboard {
+            // The quad turns around the vertical axis: as far in z as in x.
+            for v in vertices.chunks_exact(stride as usize) {
+                let (x, y) = (half(v, 0), half(v, 2));
+                grow([x, y, x]);
+                grow([-x, y, -x]);
+            }
+        } else {
+            for vertex in mesh.vertices() {
+                let p = vertex.position();
+                grow([p.x, p.y, p.z]);
+            }
+        }
+
+        // A billboard's normal and displacement map is named after its diffuse.
+        let normal = if kind == MeshKind::TreeBillboard {
+            material
+                .textures()
+                .iter()
+                .find(|t| *t.tex_type() == TextureType::Diffuse)
+                .and_then(|t| {
+                    t.path().strip_suffix("_billboard_diffuse.dds").map(|base| format!("{base}_billboard_normal_and_displacement.dds"))
+                })
+                .and_then(|normal| {
+                    textures.get_quiet(&normal, false).or_else(|| {
+                        textures.report_missing(&normal, &format!("{path}, billboard normal"), "a flat normal");
+                        None
+                    })
+                })
+                .unwrap_or_else(|| textures.flat_normal())
+        } else {
+            material_texture(textures, path, material, TextureType::Normal, false, textures.flat_normal())
+        };
+
+        Some(GpuMesh {
+            vb: Some(vb),
+            ib: Some(ib),
+            index_count: mesh.indices().len() as u32,
+            alpha_mode: material.params_i32().iter().find(|(id, _)| *id == 0).map_or(0, |(_, v)| *v),
+            stride,
+            kind,
+            dirt,
+            decal,
+            bone: *material.i_matrix_index(),
+            decal_rect: material
+                .params_vector4df32()
+                .iter()
+                .find(|(id, _)| *id == 0)
+                .map_or([0.0, 0.0, 1.0, 1.0], |(_, v)| [v.x, v.y, v.z, v.w]),
+            uv2_tile: if dirt || matches!(kind, MeshKind::TiledDirtmap | MeshKind::Dirtmap) {
+                [0, 1].map(|id| material.params_f32().iter().find(|(i, _)| *i == id).map_or(1.0, |(_, v)| *v))
+            } else {
+                [0.0; 2]
+            },
+            tint: tree_tint(material),
+            offset: pivot,
+            has_offset: pivot != Float3::default(),
+            tex: [
+                material_texture(textures, path, material, TextureType::Diffuse, true, textures.white()),
+                material_texture(textures, path, material, TextureType::Specular, true, textures.black()),
+                // sRGB, as the game samples it: its G-buffer holds the gloss map's x (channel 1 .w) and y (channel 2 .w) linearised
+                // (RenderDoc captures of Rome against the editor's, docs/re/renderer.md); read linear they were 5 to 10 x too high.
+                material_texture(textures, path, material, TextureType::GlossMap, true, textures.black()),
+                material_texture(textures, path, material, TextureType::Mask, false, textures.black()),
+                normal,
+                // TEX_DETAIL / TEX_ALPHA_MASK: the tiled dirt map and its mask, or a Dirtmap mesh's dirt map (linear: a normal offset and
+                // the dirt amount) and dirt mask.
+                if kind == MeshKind::Dirtmap || dirt {
+                    material_texture(textures, path, material, TextureType::DecalDirtmap, false, textures.black())
+                } else {
+                    material_texture(textures, path, material, TextureType::TilingDirtUV2, true, textures.white())
+                },
+                if kind == MeshKind::Dirtmap || dirt {
+                    material_texture(textures, path, material, TextureType::DecalDirtmask, false, textures.black())
+                } else {
+                    material_texture(textures, path, material, TextureType::DirtAlphaMask, false, textures.white())
+                },
+                material_texture(textures, path, material, TextureType::AmbientOcclusion, false, textures.white()),
+                if kind == MeshKind::WeightedSkin {
+                    material_texture(textures, path, material, TextureType::SkinMask, false, textures.black())
+                } else {
+                    textures.black()
+                },
+                if decal {
+                    material_texture(textures, path, material, TextureType::DecalMask, false, textures.black())
+                } else {
+                    textures.black()
+                },
+            ],
+            diffuse_path: material_texture_path(textures, path, material, TextureType::Diffuse).unwrap_or_default(),
+            normal_path: material
+                .textures()
+                .iter()
+                .find(|t| *t.tex_type() == TextureType::Normal)
+                .map(|t| t.path().replace('\\', "/"))
+                .unwrap_or_default(),
+            displacement: material
+                .textures()
+                .iter()
+                .any(|t| *t.tex_type() == TextureType::Displacement)
+                .then(|| material_texture(textures, path, material, TextureType::Displacement, false, textures.black())),
+            bmin: Float3::new(lo[0], lo[1], lo[2]),
+            bmax: Float3::new(hi[0], hi[1], hi[2]),
+            snow,
+
+            // Its bone count for now: [`palette_bases`] makes it the first bone.
+            palette_base: if kind == MeshKind::WeightedCloth { material.cloth_bones().len() as u32 } else { 0 },
+        })
     }
 
     /// A Rope material's strip: two vertices per node, across the rope; the material's `uk_1` (about 0.03) its half width, the nodes' `uk_1`
