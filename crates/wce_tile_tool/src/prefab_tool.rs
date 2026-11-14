@@ -1041,6 +1041,14 @@ impl Tool for PrefabTool {
         self.tile.leave_mode(e);
     }
 
+    fn can_centre_drag(&self, e: &Editor) -> bool {
+        self.tile.can_centre_drag(e)
+    }
+
+    fn begin_centre_drag(&mut self, e: &mut Editor) -> bool {
+        self.tile.begin_centre_drag(e)
+    }
+
     fn edit_menu(&mut self, e: &mut Editor) {
         self.tile.edit_menu(e);
     }

@@ -135,6 +135,20 @@ pub trait Tool: Any {
         false
     }
 
+    /// Whether the move gizmo's centre is a handle of the tool's: a drag there moves the selection over the surface under the cursor
+    /// (`begin_centre_drag`). The viewport draws the handle only then.
+    fn can_centre_drag(&self, editor: &Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
+    /// A press on the move gizmo's centre: the tool starts moving the selection with the mouse (the Tile tool's grab); the Drag and
+    /// Release events that follow are the tool's. False when it did not start.
+    fn begin_centre_drag(&mut self, editor: &mut Editor) -> bool {
+        let _ = editor;
+        false
+    }
+
     /// One of the mode strip's Select / Move / Rotate / Scale was clicked: the tool leaves its own mode (a brush).
     fn leave_mode(&mut self, editor: &mut Editor) {
         let _ = editor;
