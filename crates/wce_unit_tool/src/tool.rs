@@ -6,7 +6,7 @@
 //! The scene is shared by every tool: while this one is active, the other tools' layers are hidden, and shown again when another tool is.
 
 use std::any::Any;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
@@ -26,11 +26,12 @@ use wce_formats::xml_doc::XmlDoc;
 use wce_foundation::log;
 use wce_foundation::math::{Float3, Float4x4, translation};
 use wce_foundation::settings::rpfm_schema_path;
+use wce_render::skinned_geometry::{PartGeometry, ray_triangle};
 use wce_render::unit_animation::UnitModel;
 use wce_render::unit_assembly::{Pins, SlotPin, assemble_with, attachment_points, decals};
 use wce_render::unit_catalog::{UnitCatalog, variant_path};
 use wce_scene::environment::{EnvironmentParams, read_environment};
-use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Payload, SourceRef};
+use wce_scene::render_scene::{DocumentId, EntityId, LayerId, Overlay, Payload, SourceRef};
 use wce_vfs::normalize;
 
 #[path = "structure.rs"]
@@ -97,6 +98,18 @@ enum LooksEdit {
 
     /// The project's rows of it taken away.
     Revert,
+}
+
+/// The item of the selection outline's mask in the document's scene (the soldiers and the ground are item 0).
+const MASK_ITEM: u64 = 1;
+
+/// One instance drawn this frame: where, what, and the figure's parts its parts show.
+struct Posed {
+    world: Float4x4,
+    instance: wce_scene::render_scene::SkinnedInstance,
+    sources: Vec<Option<usize>>,
+    mount: bool,
+    soldier: usize,
 }
 
 /// What the panels asked for this frame, done after them.
@@ -172,6 +185,17 @@ pub struct UnitTool {
     entities: Vec<EntityId>,
     layer: Option<(DocumentId, LayerId)>,
 
+    /// What this frame drew, for picking and the outline; whether the mount wears the document (else the man).
+    posed: Vec<Posed>,
+    dressed_mount: bool,
+
+    /// The parts' models as triangles, read when first picked or outlined.
+    geometry: HashMap<String, Option<Arc<PartGeometry>>>,
+
+    /// The selection outline's mask (`MASK_ITEM`), and the selection it shows.
+    mask: Option<EntityId>,
+    mask_for: Option<(Option<NodePath>, u64)>,
+
     /// Other tools' layers this tool hid, and its own layers while another tool is active.
     hidden: Vec<LayerId>,
     own_hidden: Vec<LayerId>,
@@ -241,6 +265,11 @@ impl Default for UnitTool {
             worn_how: String::new(),
             entities: vec![],
             layer: None,
+            posed: vec![],
+            dressed_mount: false,
+            geometry: HashMap::new(),
+            mask: None,
+            mask_for: None,
             hidden: vec![],
             own_hidden: vec![],
             environment: None,
@@ -486,6 +515,12 @@ impl UnitTool {
     fn clear(&mut self, e: &mut Editor) {
         e.scene.remove_ids(&self.entities);
         self.entities.clear();
+        if let Some(m) = self.mask.take() {
+            e.scene.remove_ids(&[m]);
+        }
+
+        self.mask_for = None;
+        self.posed.clear();
     }
 
     /// The stage's light: the chosen weather, else the game's default.
@@ -734,6 +769,7 @@ impl UnitTool {
             }
 
             self.missing.extend(parts.missing.iter().cloned());
+            self.dressed_mount = on_mount && model.mount.is_some();
             match (&mut model.mount, on_mount) {
                 (Some(m), true) => m.parts = parts,
                 _ => model.man.parts = parts,
@@ -766,6 +802,7 @@ impl UnitTool {
         };
 
         let units = e.scene.game_units.max(1e-3);
+        self.posed.clear();
         let n = self.models.len();
         let gap = if self.models.first().is_some_and(|m| m.mount.is_some()) { 2.2 } else { 1.1 };
         let mut placed = vec![];
@@ -783,6 +820,13 @@ impl UnitTool {
                     instance.faction_colours[..3].copy_from_slice(&c);
                 }
 
+                self.posed.push(Posed {
+                    world: world * figure.local,
+                    instance: instance.clone(),
+                    sources: figure.sources.clone(),
+                    mount: figure.mount,
+                    soldier: k,
+                });
                 placed.push((world * figure.local, instance));
             }
         }
@@ -798,6 +842,8 @@ impl UnitTool {
         for (&entity, (world, instance)) in self.entities.iter().zip(placed) {
             e.scene.update_pose(entity, world, instance);
         }
+
+        self.outline(e, id, layer);
     }
 
     fn update_problems(&mut self, e: &mut Editor) {
@@ -813,6 +859,96 @@ impl UnitTool {
         let exists = |p: &str| vfs.owner(p).is_some();
         self.problems = check(&read, &exists, &tree, &path);
         self.problems_for = Some(key);
+    }
+
+    fn geometry_of(&mut self, e: &Editor, model: &str) -> Option<Arc<PartGeometry>> {
+        if !self.geometry.contains_key(model) {
+            let g = e.vfs().and_then(|v| v.read(model).ok()).and_then(|b| PartGeometry::decode(&b)).map(Arc::new);
+            self.geometry.insert(model.to_owned(), g);
+        }
+
+        self.geometry[model].clone()
+    }
+
+    /// The document's node a drawn part shows: none for a prop, or the figure that doesn't wear the document.
+    fn node_of(&self, posed: &Posed, part: usize) -> Option<NodePath> {
+        let model = self.models.get(posed.soldier)?;
+        let figure = if posed.mount { model.mount.as_ref()? } else { &model.man };
+        if posed.mount != self.dressed_mount {
+            return None;
+        }
+
+        figure.parts.parts.get((*posed.sources.get(part)?)?)?.node.clone()
+    }
+
+    /// The node of the part under a pixel of the viewport, the nearest one.
+    fn pick_part(&mut self, e: &Editor, x: i32, y: i32) -> Option<(NodePath, String)> {
+        let (origin, dir) = e.viewport.ray(x, y)?;
+        let mut best: Option<(f32, NodePath, String)> = None;
+        let posed = std::mem::take(&mut self.posed);
+        for p in &posed {
+            for (k, part) in p.instance.parts.iter().enumerate() {
+                let Some(node) = self.node_of(p, k) else { continue };
+                let Some(g) = self.geometry_of(e, &part.model) else { continue };
+                for t in g.triangles(part, &p.world, &p.instance.palette, &p.instance.bones) {
+                    if let Some(d) = ray_triangle(origin, dir, &t)
+                        && best.as_ref().is_none_or(|(b, ..)| d < *b)
+                    {
+                        best = Some((d, node.clone(), part.model.clone()));
+                    }
+                }
+            }
+        }
+
+        self.posed = posed;
+        best.map(|(_, n, m)| (n, m))
+    }
+
+    /// The selected node's parts outlined as a building is: their triangles, as posed this frame, in a mask overlay the editor's selection
+    /// names. Nothing selected, or nothing of it drawn: no mask, and the selection is the editor's again.
+    fn outline(&mut self, e: &mut Editor, id: DocumentId, layer: LayerId) {
+        let mask_ref = SourceRef { doc: id, item: MASK_ITEM };
+        let mut tris = vec![];
+        if let Some(sel) = self.selected.clone() {
+            let posed = std::mem::take(&mut self.posed);
+            for p in &posed {
+                for (k, part) in p.instance.parts.iter().enumerate() {
+                    if self.node_of(p, k).is_some_and(|n| n.starts_with(&sel))
+                        && let Some(g) = self.geometry_of(e, &part.model)
+                    {
+                        tris.extend(g.triangles(part, &p.world, &p.instance.palette, &p.instance.bones));
+                    }
+                }
+            }
+
+            self.posed = posed;
+        }
+
+        if tris.is_empty() {
+            if let Some(m) = self.mask.take() {
+                e.scene.remove_ids(&[m]);
+            }
+
+            if e.selection.contains(mask_ref) {
+                e.selection.clear();
+            }
+
+            return;
+        }
+
+        let mut overlay = Overlay { pickable: false, selection_mask: true, own_buffer: true, ..Default::default() };
+        for t in &tris {
+            overlay.triangle(t[0], t[1], t[2], 0xffff_ffff);
+        }
+
+        match self.mask.filter(|&m| e.scene.find(m).is_some()) {
+            Some(m) => e.scene.update_payload(m, Payload::Overlay(overlay)),
+            None => self.mask = Some(e.scene.add(layer, Float4x4::IDENTITY, Payload::Overlay(overlay), mask_ref)),
+        }
+
+        if e.selection.items() != [mask_ref] {
+            e.selection.set(mask_ref);
+        }
     }
 
     // ---- actions
@@ -1917,6 +2053,28 @@ impl Tool for UnitTool {
         true
     }
 
+    /// A click picks the part under the cursor (its node selected in the tree and outlined), or nothing.
+    fn viewport_input(&mut self, e: &mut Editor, event: &wce_editor::tool::ViewportEvent) -> bool {
+        if event.kind != wce_editor::tool::ViewportEventKind::Click || event.button != 0 || document(e).is_none() {
+            return false;
+        }
+
+        let picked = self.pick_part(e, event.x, event.y);
+        if let Some((path, model)) = &picked {
+            let through = match document(e)
+                .map(|d| d.tree())
+                .and_then(|t| t.node(path).map(|n| matches!(n, wce_formats::variant_mesh::Node::Reference { .. })))
+            {
+                Some(true) => ", through its reference",
+                _ => "",
+            };
+            e.status(&format!("{}{through}", file_name(model)), false);
+        }
+
+        self.selected = picked.map(|(p, _)| p);
+        true
+    }
+
     fn register_commands(&self, commands: &mut CommandRegistry<Editor>) {
         register(commands);
     }
@@ -2266,6 +2424,37 @@ fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add(
+        "unit_click_part",
+        "unit_click_part <path>",
+        "click with the scripted mouse where the first soldier shows a node's parts (the middle of their triangles that face the camera)",
+        |e, a| {
+            let Some(path) = a.first().and_then(|p| parse_path(p)) else { return fail("usage: unit_click_part <path>") };
+            let at = e.with_tool::<UnitTool, _>(|t, e| {
+                let posed = std::mem::take(&mut t.posed);
+                let mut sum = (Float3::new(0.0, 0.0, 0.0), 0.0f32);
+                for p in posed.iter().filter(|p| p.soldier == 0) {
+                    for (k, part) in p.instance.parts.iter().enumerate() {
+                        if t.node_of(p, k).as_ref() == Some(&path)
+                            && let Some(g) = t.geometry_of(e, &part.model)
+                        {
+                            for tri in g.triangles(part, &p.world, &p.instance.palette, &p.instance.bones) {
+                                sum = (sum.0 + (tri[0] + tri[1] + tri[2]) * (1.0 / 3.0), sum.1 + 1.0);
+                            }
+                        }
+                    }
+                }
+
+                t.posed = posed;
+                (sum.1 > 0.0).then(|| sum.0 * (1.0 / sum.1))
+            });
+            let Some(Some(p)) = at else { return fail("the first soldier shows no part of that node") };
+            let Some((x, y)) = e.viewport.project(p) else { return fail("not in view") };
+            let r = CommandRegistry::run_args(e, "mouse", &["click".to_owned(), format!("{x:.1}"), format!("{y:.1}")]);
+            if r.ok { CommandResult { message: format!("clicked {x:.0} {y:.0}"), ..r } } else { r }
+        },
+    );
+
     c.add("unit_isolate", "unit_isolate <0|1>", "only the selected node's parts", |e, a| {
         let on = a.first().is_some_and(|v| v == "1");
         with_unit(e, |t, _| {
@@ -2325,7 +2514,18 @@ fn register(c: &mut CommandRegistry<Editor>) {
             let parts: Vec<String> = t
                 .models
                 .iter()
-                .map(|m| m.man.parts.parts.iter().map(|p| file_name(&p.model).to_owned()).collect::<Vec<_>>().join(","))
+                .map(|m| {
+                    m.man
+                        .parts
+                        .parts
+                        .iter()
+                        .map(|p| {
+                            let at = p.node.as_ref().map(|n| n.iter().map(ToString::to_string).collect::<Vec<_>>().join("/"));
+                            format!("{}@{}", file_name(&p.model), at.unwrap_or_default())
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
                 .collect();
             let problems: Vec<String> = t.problems.iter().map(|p| format!("{:?} {}", p.path, p.text)).collect();
             let colours = t.models.first().map(|m| m.faction_colours[..3].iter().map(|c| format!("{:.3},{:.3},{:.3}", c[0], c[1], c[2])).collect::<Vec<_>>().join(" "));

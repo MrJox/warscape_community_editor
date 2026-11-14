@@ -16,6 +16,7 @@ pub mod renderer;
 pub mod sea_surface;
 pub mod shader_lib;
 pub mod ship_model;
+pub mod skinned_geometry;
 pub mod texture;
 pub mod unit_animation;
 pub mod unit_assembly;
