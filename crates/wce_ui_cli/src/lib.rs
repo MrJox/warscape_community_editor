@@ -259,11 +259,11 @@ impl Session {
         if self.vfs().is_ok() {
             let vfs = self.vfs.as_deref().unwrap();
             for cand in skins::candidates(path, skin) {
-                if let Ok(b) = vfs.read(&cand) {
-                    if let Ok(img) = images::decode(&cand, &b) {
-                        found = Some(Rc::new(img));
-                        break;
-                    }
+                if let Ok(b) = vfs.read(&cand)
+                    && let Ok(img) = images::decode(&cand, &b)
+                {
+                    found = Some(Rc::new(img));
+                    break;
                 }
             }
         }
@@ -295,24 +295,25 @@ impl Session {
         let t = tool.strip_prefix("ui_").unwrap_or(tool);
 
         // Any layout tool accepts `source` (a pack path or a file) in place of `id`: the layout is opened on first use.
-        if !matches!(t, "files" | "open" | "close" | "list_open") && a.get("id").is_none() {
-            if let Some(src) = arg_str(a, "source") {
-                let known = self.docs.iter().find(|(_, d)| match &d.origin {
-                    Origin::Pack(p) => *p == wce_vfs::normalize(src),
-                    Origin::Disk(p) => p == Path::new(src),
-                });
-                let id = match known {
-                    Some((i, _)) => i.clone(),
-                    None => {
-                        let r = self.call("open", &json!({ "source": src }))?;
-                        let v: Value = serde_json::from_str(&r.text).map_err(|e| e.to_string())?;
-                        v["id"].as_str().unwrap_or("").to_string()
-                    }
-                };
-                let mut b = a.clone();
-                b["id"] = json!(id);
-                return self.call(t, &b);
-            }
+        if !matches!(t, "files" | "open" | "close" | "list_open")
+            && a.get("id").is_none()
+            && let Some(src) = arg_str(a, "source")
+        {
+            let known = self.docs.iter().find(|(_, d)| match &d.origin {
+                Origin::Pack(p) => *p == wce_vfs::normalize(src),
+                Origin::Disk(p) => p == Path::new(src),
+            });
+            let id = match known {
+                Some((i, _)) => i.clone(),
+                None => {
+                    let r = self.call("open", &json!({ "source": src }))?;
+                    let v: Value = serde_json::from_str(&r.text).map_err(|e| e.to_string())?;
+                    v["id"].as_str().unwrap_or("").to_string()
+                }
+            };
+            let mut b = a.clone();
+            b["id"] = json!(id);
+            return self.call(t, &b);
         }
 
         match t {

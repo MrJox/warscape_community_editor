@@ -336,18 +336,17 @@ impl UiModel {
                 };
             }
 
-            if let Control::Choice(c) = &control {
-                if c.is_empty() {
-                    let signed = it.tag == "i";
-                    let mut list = if kind == "picture" { self.picture_choices_of_use(path) } else { states() };
-                    if it.label == "default state id" {
-                        list.insert(0, (0, "First state".to_string()));
-                    }
-
-                    // a state id is unsigned; a field that stores it as a signed integer shows it as one
-                    control =
-                        Control::Choice(list.into_iter().map(|(n, s)| (if signed { n as u32 as i32 as i64 } else { n }, s)).collect());
+            if let Control::Choice(c) = &control
+                && c.is_empty()
+            {
+                let signed = it.tag == "i";
+                let mut list = if kind == "picture" { self.picture_choices_of_use(path) } else { states() };
+                if it.label == "default state id" {
+                    list.insert(0, (0, "First state".to_string()));
                 }
+
+                // a state id is unsigned; a field that stores it as a signed integer shows it as one
+                control = Control::Choice(list.into_iter().map(|(n, s)| (if signed { n as u32 as i32 as i64 } else { n }, s)).collect());
             }
 
             // Several check boxes over one word: one prop per bit.
@@ -368,10 +367,11 @@ impl UiModel {
             }
 
             let mut value = it.value.clone();
-            if it.tag == "u" && matches!(control, Control::Int) {
-                if let Ok(n) = value.trim().parse::<i64>() {
-                    value = (n as u32 as i32).to_string();
-                }
+            if it.tag == "u"
+                && matches!(control, Control::Int)
+                && let Ok(n) = value.trim().parse::<i64>()
+            {
+                value = (n as u32 as i32).to_string();
             }
 
             out.push(Prop { idx: it.idx, name, help, group, control, value, label: it.label.clone(), advanced });
@@ -379,29 +379,27 @@ impl UiModel {
 
         // The tint or text colour is a `<color>` element, not a field.
         for (i, n) in el.children.iter().enumerate() {
-            if let Node::Elem(c) = n {
-                if c.name == "color" {
-                    let [r, g, b, a] = color_of(c);
-                    let (name, help, group): (&str, &'static str, &'static str) = match kind {
-                        "state" => ("Text colour", "The colour the state's text is drawn in.", "Font"),
-                        "picture" => (
-                            "Tint colour",
-                            "Multiplied with the picture; white leaves it as it is, the alpha is its opacity.",
-                            "Appearance",
-                        ),
-                        _ => ("Colour", "", groups[0]),
-                    };
-                    out.push(Prop {
-                        idx: i,
-                        name: name.into(),
-                        help,
-                        group,
-                        control: Control::Colour,
-                        value: format!("#{r:02x}{g:02x}{b:02x}{a:02x}"),
-                        label: "color".into(),
-                        advanced: false,
-                    });
-                }
+            if let Node::Elem(c) = n
+                && c.name == "color"
+            {
+                let [r, g, b, a] = color_of(c);
+                let (name, help, group): (&str, &'static str, &'static str) = match kind {
+                    "state" => ("Text colour", "The colour the state's text is drawn in.", "Font"),
+                    "picture" => {
+                        ("Tint colour", "Multiplied with the picture; white leaves it as it is, the alpha is its opacity.", "Appearance")
+                    }
+                    _ => ("Colour", "", groups[0]),
+                };
+                out.push(Prop {
+                    idx: i,
+                    name: name.into(),
+                    help,
+                    group,
+                    control: Control::Colour,
+                    value: format!("#{r:02x}{g:02x}{b:02x}{a:02x}"),
+                    label: "color".into(),
+                    advanced: false,
+                });
             }
         }
 
@@ -525,12 +523,11 @@ impl UiModel {
             }
             PropEdit::Value(s) | PropEdit::Drag(s) => {
                 let tag = self.dom.at(path).and_then(|e| e.elem_at(idx)).map(|c| c.name.clone()).ok_or("no such field")?;
-                if tag == "u" {
-                    if let Ok(n) = s.trim().parse::<i64>() {
-                        if n < 0 {
-                            return self.set_field(path, idx, &(n as i32 as u32).to_string());
-                        }
-                    }
+                if tag == "u"
+                    && let Ok(n) = s.trim().parse::<i64>()
+                    && n < 0
+                {
+                    return self.set_field(path, idx, &(n as i32 as u32).to_string());
                 }
 
                 self.set_field(path, idx, &s)
@@ -570,7 +567,8 @@ impl Prop {
             }
             Control::Bit { mask, byte } => {
                 let w = self.value.trim().parse::<i64>().unwrap_or(0) as u32;
-                (if *byte { w & mask != 0 } else { w & mask == *mask }).then_some("yes").unwrap_or("no").to_string()
+                let on = if *byte { w & mask != 0 } else { w & mask == *mask };
+                if on { "yes" } else { "no" }.to_string()
             }
             _ => self.value.clone(),
         }

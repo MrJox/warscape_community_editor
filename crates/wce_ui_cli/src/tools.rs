@@ -17,13 +17,14 @@ fn tool(name: &str, desc: &str, props: Vec<(&str, Value)>, required: &[&str]) ->
 pub fn list() -> Vec<Value> {
     let mut all = list_plain();
     for t in &mut all {
-        if let Some(p) = t["inputSchema"]["properties"].as_object_mut() {
-            if p.contains_key("id") && !p.contains_key("source") {
-                p.insert(
-                    "source".into(),
-                    prop("string", "Instead of id: a path in the game packs or a file on disk; the layout is opened on first use."),
-                );
-            }
+        if let Some(p) = t["inputSchema"]["properties"].as_object_mut()
+            && p.contains_key("id")
+            && !p.contains_key("source")
+        {
+            p.insert(
+                "source".into(),
+                prop("string", "Instead of id: a path in the game packs or a file on disk; the layout is opened on first use."),
+            );
         }
     }
 

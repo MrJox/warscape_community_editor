@@ -55,7 +55,7 @@ fn triangles(bytes: &[u8]) -> Vec<Triangle> {
             })
         };
 
-        out.extend(indices.chunks_exact(3).filter_map(|t| Some([at(t[0])?, at(t[1])?, at(t[2])?])));
+        out.extend(indices.as_chunks::<3>().0.iter().filter_map(|t| Some([at(t[0])?, at(t[1])?, at(t[2])?])));
     }
 
     out

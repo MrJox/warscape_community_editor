@@ -272,11 +272,11 @@ impl UiModel {
             }
 
             // the root sized to the screen (children keep their sizes)
-            if parent.is_none() {
-                if let Some((sw, sh)) = o.screen {
-                    size = resized(allow, locked, size, (sw as f32, sh as f32));
-                    my_follow = false;
-                }
+            if parent.is_none()
+                && let Some((sw, sh)) = o.screen
+            {
+                size = resized(allow, locked, size, (sw as f32, sh as f32));
+                my_follow = false;
             }
 
             let (dock, mut doff) = dock_of(self, el);
@@ -290,10 +290,10 @@ impl UiModel {
             }
 
             // a parent that was resized with its children also moves what is not docked, in proportion
-            if let (Some(p), true) = (parent_ix, parent_ix.is_some_and(|p| follow[p])) {
-                if dock == 0 {
-                    stored = (stored.0 * factor[p].0, stored.1 * factor[p].1);
-                }
+            if let (Some(p), true) = (parent_ix, parent_ix.is_some_and(|p| follow[p]))
+                && dock == 0
+            {
+                stored = (stored.0 * factor[p].0, stored.1 * factor[p].1);
             }
 
             let screen = o.screen.map(|(a, b)| (a as f32, b as f32)).unwrap_or(size);

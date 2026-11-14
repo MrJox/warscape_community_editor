@@ -206,7 +206,7 @@ impl Tile {
                 [q.x / u, q.z / u]
             };
             let red = {
-                let h = (w.position.x * 7.31).floor() as i64 * 73_856_093 ^ (w.position.z * 3.17).floor() as i64 * 19_349_663;
+                let h = ((w.position.x * 7.31).floor() as i64 * 73_856_093) ^ ((w.position.z * 3.17).floor() as i64 * 19_349_663);
                 (h.rem_euclid(1000) as f64) < RED_ROOFS * 1000.0
             };
 

@@ -71,7 +71,7 @@ impl Preview {
         let time = e.clock.time() as f32;
         for k in 0..frames.max(1) {
             let t = time - step * (frames.max(1) - 1 - k) as f32;
-            r.render(&e.scene, &ViewParams { camera: camera.clone(), time_s: t }, &mut self.target);
+            r.render(&e.scene, &ViewParams { camera, time_s: t }, &mut self.target);
         }
 
         let slot = &mut e.scene.environment;

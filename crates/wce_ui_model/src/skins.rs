@@ -75,10 +75,10 @@ pub fn list(vfs: &Vfs, project: Option<&Path>) -> Vec<Skin> {
 /// each with the other picture extensions.
 pub fn candidates(path: &str, skin: Option<&str>) -> Vec<String> {
     let mut v = Vec::new();
-    if let Some(s) = skin.filter(|s| !s.is_empty() && *s != "default") {
-        if let Some(rest) = path.strip_prefix("ui/skins/default/") {
-            v.extend(images::candidates(&format!("ui/skins/{s}/{rest}")));
-        }
+    if let Some(s) = skin.filter(|s| !s.is_empty() && *s != "default")
+        && let Some(rest) = path.strip_prefix("ui/skins/default/")
+    {
+        v.extend(images::candidates(&format!("ui/skins/{s}/{rest}")));
     }
 
     for c in images::candidates(path) {

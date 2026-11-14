@@ -95,13 +95,16 @@ impl Cuf {
         let bounding_height = r.i16()?;
         let count = r.u16()? as usize;
         let pixel_bytes = r.u32()? as usize;
-        let index: Vec<u16> = r.take(0x20000)?.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let index: Vec<u16> = r.take(0x20000)?.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         let metrics: Vec<Metric> = r
             .take(4 * count)?
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|c| Metric { top: c[0] as i8, advance: c[1] as i8, width: c[2], height: c[3] })
             .collect();
-        let first_pixel: Vec<u32> = r.take(4 * count)?.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let first_pixel: Vec<u32> =
+            r.take(4 * count)?.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
         let pixels = r.take(pixel_bytes)?.to_vec();
         let kerning_count = r.u16()? as usize;
         let kerning_first = r.u16()? as usize;
@@ -171,10 +174,8 @@ impl Cuf {
             c if (c as u32) < 32 => 0,
             c => {
                 let drawn = self.glyph_of(c).is_some_and(|g| self.metrics[g].top != -128);
-                if drawn {
-                    if let Some(k) = self.kerned(c, next) {
-                        return k;
-                    }
+                if drawn && let Some(k) = self.kerned(c, next) {
+                    return k;
                 }
 
                 match self.glyph_of(c) {
@@ -311,7 +312,7 @@ impl Cuf {
 
         let h = (y + row_h + 1).next_power_of_two().max(16);
         let mut rgba = vec![255u8; (W * h * 4) as usize];
-        for px in rgba.chunks_exact_mut(4) {
+        for px in rgba.as_chunks_mut::<4>().0 {
             px[3] = 0;
         }
 

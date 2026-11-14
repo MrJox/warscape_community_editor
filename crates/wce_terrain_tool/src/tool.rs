@@ -156,6 +156,8 @@ struct Painting {
     last: Option<(f64, f64)>,
 }
 
+// Sent once per map opened, moved not copied: boxing the large variant would buy nothing.
+#[allow(clippy::large_enum_variant)]
 enum Job {
     Opened(Result<Loaded, String>),
     Built(DocumentId, Box<Streamer>),
@@ -178,7 +180,7 @@ fn campaign_sea(e: &Editor, id: DocumentId, s: &Streamer) -> Option<wce_scene::r
     let (w, h) = (f64::from(f.map.width), f64::from(f.map.height));
     let (sw, ne) = (f.from_map.apply(0.0, h), f.from_map.apply(w, 0.0));
     let size = [(ne.0 - sw.0) as f32, (ne.1 - sw.1) as f32];
-    (size[0] > 0.0 && size[1] > 0.0).then(|| wce_scene::render_scene::CampaignSea { colour, corner: [sw.0 as f32, sw.1 as f32], size })
+    (size[0] > 0.0 && size[1] > 0.0).then_some(wce_scene::render_scene::CampaignSea { colour, corner: [sw.0 as f32, sw.1 as f32], size })
 }
 
 /// A campaign map's season snow (`terrain/campaigns/<map>/snow_mask_<season><climate stage + 1>.dds`, else `snow_mask_<season>.dds`, in
@@ -1504,7 +1506,7 @@ impl TerrainTool {
         for (i, f) in self.findings.iter().enumerate() {
             let col = if f.severity == crate::validate::Severity::Error { [1.0, 0.45, 0.4, 1.0] } else { [1.0, 0.8, 0.3, 1.0] };
             gui::push_id_int(i as i32);
-            gui::push_style_color(gui::COL_TEXT as i32, gui::v4(col[0], col[1], col[2], col[3]));
+            gui::push_style_color(gui::COL_TEXT, gui::v4(col[0], col[1], col[2], col[3]));
             if gui::selectable(&f.text, false, 0) {
                 go = f.cell;
             }
@@ -2797,7 +2799,7 @@ impl Tool for TerrainTool {
 
                         None => Err(usage.to_owned()),
                     },
-                    (Some("zone"), n) if n >= 7 && nums.len() == n - 1 && nums.len() % 2 == 0 => {
+                    (Some("zone"), n) if n >= 7 && nums.len() == n - 1 && nums.len().is_multiple_of(2) => {
                         let pts: Vec<[f64; 2]> = nums.chunks(2).map(|c| [c[0], c[1]]).collect();
                         crate::terry_view::new_zone(e, doc, &pts)
                     }

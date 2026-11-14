@@ -246,7 +246,7 @@ impl Tile {
         let (w, h) = (size.min(image.w), size.min(image.h));
         let (x0, y0) = ((image.w - w) / 2, (image.h - h) / 2);
         let px = (0..h).flat_map(|y| (0..w).flat_map(move |x| [x0 + x, y0 + y])).collect::<Vec<_>>();
-        let px = px.chunks_exact(2).flat_map(|p| image.at(p[0], p[1]).iter().copied()).collect();
+        let px = px.as_chunks::<2>().0.iter().flat_map(|p| image.at(p[0], p[1]).iter().copied()).collect();
         Some(wce_formats::dds_decode::Rgba8Image { w, h, px })
     }
 

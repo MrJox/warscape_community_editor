@@ -111,16 +111,20 @@ impl GameData {
     pub fn from_vfs(vfs: &Vfs, schema: Option<&Path>) -> Result<Self, String> {
         let mut warnings = vec![];
         let schema = match schema {
-            Some(p) => match {
-                wce_foundation::wce_prof!("game_data.schema");
-                Schema::load(p, None)
-            } {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    warnings.push(format!("{}: {e}", p.display()));
-                    None
+            Some(p) => {
+                let loaded = {
+                    wce_foundation::wce_prof!("game_data.schema");
+                    Schema::load(p, None)
+                };
+                match loaded {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        warnings.push(format!("{}: {e}", p.display()));
+                        None
+                    }
                 }
-            },
+            }
+
             None => None,
         };
         if schema.is_none() {

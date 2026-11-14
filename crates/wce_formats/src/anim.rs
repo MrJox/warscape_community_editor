@@ -65,7 +65,7 @@ impl Reader<'_> {
         let n = self.take(2).map(|s| u16::from_le_bytes([s[0], s[1]]) as usize)?;
         if wide {
             let b = self.take(n * 2)?;
-            Some(String::from_utf16_lossy(&b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>()))
+            Some(String::from_utf16_lossy(&b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>()))
         } else {
             self.take(n).map(|b| String::from_utf8_lossy(b).into_owned())
         }

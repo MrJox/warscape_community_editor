@@ -1032,7 +1032,7 @@ impl Frame {
         let (tw, th) = (((fw - 1) * BLOCK_TEXELS / 2) as usize, ((fh - 1) * BLOCK_TEXELS / 2) as usize);
         let mut colour = vec![255u8; tw * th * 4];
         for (j, row) in colour.chunks_exact_mut(tw * 4).enumerate() {
-            for (i, texel) in row.chunks_exact_mut(4).enumerate() {
+            for (i, texel) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let x = b[0] + (i as f64 + 0.5) / tw as f64 * (b[2] - b[0]);
                 let z = b[1] + (j as f64 + 0.5) / th as f64 * (b[3] - b[1]);
                 let (at, (cx, cy), cell) = cell_at(x, z);

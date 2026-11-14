@@ -11,3 +11,6 @@ wce_ui_format = { path = "../wce_ui_format" }
 wce_formats = { path = "../wce_formats" }
 image = { version = "0.25", default-features = false, features = ["png", "tga"] }
 wce_vfs = { path = "../wce_vfs" }
+
+[lints]
+workspace = true

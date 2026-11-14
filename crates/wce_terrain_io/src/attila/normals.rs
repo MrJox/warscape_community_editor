@@ -39,7 +39,7 @@ impl NormalImage {
 
         let (h, w) = (u(12)?, u(16)?);
         let data = b.get(128..128 + (w * h * 4) as usize)?;
-        Some(Self { w, h, px: data.chunks_exact(4).map(|c| [c[2], c[1], c[0], c[3]]).collect() })
+        Some(Self { w, h, px: data.as_chunks::<4>().0.iter().map(|c| [c[2], c[1], c[0], c[3]]).collect() })
     }
 }
 

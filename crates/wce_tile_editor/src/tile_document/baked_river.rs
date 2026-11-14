@@ -52,11 +52,13 @@ fn river_block(b: &[u8]) -> Option<(Vec<[f32; 8]>, Vec<u16>)> {
         if RIVER_BLOCKS.contains(&kind) {
             let vb = b.get(at + voff..at + voff + vcount * 32)?;
             let verts = vb
-                .chunks_exact(32)
+                .as_chunks::<32>()
+                .0
+                .iter()
                 .map(|c| std::array::from_fn(|k| f32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]])))
                 .collect();
             let ib = b.get(at + ioff..at + ioff + icount * 2)?;
-            let indices = ib.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            let indices = ib.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
             return Some((verts, indices));
         }
 

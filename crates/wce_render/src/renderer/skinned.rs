@@ -254,7 +254,7 @@ impl Renderer {
             } else {
                 *offset_of.entry(Arc::as_ptr(&s.palette) as usize).or_insert_with(|| {
                     let at = texels.len();
-                    texels.extend(s.palette.iter().flat_map(|m| m.chunks_exact(4).map(|r| [r[0], r[1], r[2], r[3]])));
+                    texels.extend(s.palette.iter().flat_map(|m| m.as_chunks::<4>().0.iter().map(|r| [r[0], r[1], r[2], r[3]])));
                     at
                 })
             };
@@ -263,7 +263,7 @@ impl Renderer {
                     let line = lines_in(texels.len(), ROME2_PALETTE_WIDTH);
                     texels.resize(line * ROME2_PALETTE_WIDTH, [0.0; 4]);
                     let bones = s.palette.iter().skip(base).take(ROME2_PALETTE_WIDTH / 3);
-                    texels.extend(bones.flat_map(|m| m.chunks_exact(4).map(|r| [r[0], r[1], r[2], r[3]])));
+                    texels.extend(bones.flat_map(|m| m.as_chunks::<4>().0.iter().map(|r| [r[0], r[1], r[2], r[3]])));
                     line
                 });
                 at as f32 + 0.5

@@ -133,8 +133,7 @@ pub fn warp_logic_framed(
         );
     }
 
-    let mut piece_index = 0;
-    for piece in array_mut(&mut v, "pieces") {
+    for (piece_index, piece) in array_mut(&mut v, "pieces").enumerate() {
         let piece_name = piece["name"].as_str().unwrap_or_default().to_owned();
         for (k, d) in array_mut(piece, "destructs").enumerate() {
             let name = d["name"].as_str().unwrap_or(&piece_name).to_owned();
@@ -324,8 +323,6 @@ pub fn warp_logic_framed(
             pts.extend(d["platforms"].as_array().into_iter().flatten().flat_map(|p| outline(&p["vertices"])));
             grow_box(&mut d["bounding_box"], &pts);
         }
-
-        piece_index += 1;
     }
 
     // Each level's platforms, of all the pieces, welded together (an end cap's platforms are a piece of their own).

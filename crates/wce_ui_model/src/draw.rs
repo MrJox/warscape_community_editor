@@ -323,22 +323,22 @@ impl UiModel {
 
     pub(crate) fn chosen_state<'a>(&self, el: &'a Element, en: &Entry, o: &DrawOptions) -> Option<&'a Element> {
         let states: Vec<&Element> = el.find("states")?.elems().filter(|s| s.name == "state").collect();
-        if let Some(name) = o.pose.as_ref().and_then(|p| p.by_entry.get(&en.path)).and_then(|p| p.state.as_ref()) {
-            if let Some(s) = states.iter().find(|s| state_title(s) == *name) {
-                return Some(s);
-            }
+        if let Some(name) = o.pose.as_ref().and_then(|p| p.by_entry.get(&en.path)).and_then(|p| p.state.as_ref())
+            && let Some(s) = states.iter().find(|s| state_title(s) == *name)
+        {
+            return Some(s);
         }
 
-        if let Some(i) = o.entry_state.get(&en.path) {
-            if let Some(s) = states.get(*i) {
-                return Some(s);
-            }
+        if let Some(i) = o.entry_state.get(&en.path)
+            && let Some(s) = states.get(*i)
+        {
+            return Some(s);
         }
 
-        if let Some(name) = &o.state {
-            if let Some(s) = states.iter().find(|s| state_title(s) == *name) {
-                return Some(s);
-            }
+        if let Some(name) = &o.state
+            && let Some(s) = states.iter().find(|s| state_title(s) == *name)
+        {
+            return Some(s);
         }
 
         self.default_state(el)

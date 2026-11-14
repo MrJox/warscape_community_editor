@@ -568,9 +568,9 @@ impl Tile {
         });
 
         // As it was: its pieces stay where they are.
-        if signature.is_some() && signature == before && !ids.is_empty() {
+        if let Some(sig) = signature.filter(|s| Some(s) == before.as_ref() && !ids.is_empty()) {
             self.wall_preview.entities.insert(elem, ids);
-            self.wall_preview.shown_as.insert(elem, signature.expect("a signature"));
+            self.wall_preview.shown_as.insert(elem, sig);
             return;
         }
 

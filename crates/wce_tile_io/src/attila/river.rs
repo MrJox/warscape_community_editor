@@ -666,12 +666,14 @@ pub fn read_river_block(b: &[u8]) -> Option<RiverMesh> {
         (u32_at(at + 8)? as usize, u32_at(at + 12)? as usize, u32_at(at + 16)? as usize, u32_at(at + 20)? as usize);
     let vb = b.get(at + voff..at + voff + vcount * 32)?;
     let vertices = vb
-        .chunks_exact(32)
+        .as_chunks::<32>()
+        .0
+        .iter()
         .map(|c| std::array::from_fn(|k| f32::from_le_bytes([c[k * 4], c[k * 4 + 1], c[k * 4 + 2], c[k * 4 + 3]])))
         .collect();
     let ib = b.get(at + ioff..at + ioff + icount * 2)?;
-    let indices = ib.chunks_exact(2).map(|c| u32::from(u16::from_le_bytes([c[0], c[1]]))).collect::<Vec<_>>();
-    let triangles = indices.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect();
+    let indices = ib.as_chunks::<2>().0.iter().map(|c| u32::from(u16::from_le_bytes([c[0], c[1]]))).collect::<Vec<_>>();
+    let triangles = indices.as_chunks::<3>().0.iter().map(|t| [t[0], t[1], t[2]]).collect();
     Some(RiverMesh { vertices, triangles, format: RiverFormat::of_block(kind)? })
 }
 

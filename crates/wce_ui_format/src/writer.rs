@@ -193,10 +193,8 @@ pub fn convert(xml: &str) -> Result<Vec<u8>, String> {
                 };
                 match f.kind {
                     Kind::Text(t) => put_text(&mut out, t, &f.text).map_err(ferr)?,
-                    Kind::Events => {
-                        if ver <= 54 {
-                            put_str(&mut out, "events_end").map_err(ferr)?;
-                        }
+                    Kind::Events if ver <= 54 => {
+                        put_str(&mut out, "events_end").map_err(ferr)?;
                     }
                     _ => {}
                 }

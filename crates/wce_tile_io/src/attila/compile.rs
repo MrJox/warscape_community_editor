@@ -417,6 +417,8 @@ fn distinct_model_keys(records: &mut [(MarkerKey, Node)]) {
 }
 
 /// A path with the case of one letter of its file name (not its extension) changed, then of two, from the end.
+// The pairs' closure owns its slice (`to_vec`): clippy's borrowed form does not outlive the FnMut it is returned from.
+#[allow(clippy::unnecessary_to_owned)]
 fn case_variants(path: &str) -> impl Iterator<Item = String> + '_ {
     let chars = path.chars().collect::<Vec<_>>();
     let name = chars.iter().rposition(|&c| c == '/' || c == '\\').map_or(0, |i| i + 1);

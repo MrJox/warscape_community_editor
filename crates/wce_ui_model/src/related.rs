@@ -63,10 +63,10 @@ fn component_names(xml: &str) -> Vec<String> {
     let mut out = Vec::new();
     for line in xml.lines() {
         let l = line.trim_start();
-        if let Some(rest) = l.strip_prefix("<s>") {
-            if let Some(end) = rest.find("</s><!-- title -->") {
-                out.push(rest[..end].to_ascii_lowercase());
-            }
+        if let Some(rest) = l.strip_prefix("<s>")
+            && let Some(end) = rest.find("</s><!-- title -->")
+        {
+            out.push(rest[..end].to_ascii_lowercase());
         }
     }
 

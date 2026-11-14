@@ -113,9 +113,9 @@ impl LfStroke {
                 }
 
                 let (p, k) = field.locate(x, y);
-                if !self.shadow.contains_key(&p) {
+                if let std::collections::btree_map::Entry::Vacant(e) = self.shadow.entry(p) {
                     let page = crate::paged::page_of(&v, fw, fh, pw, p);
-                    self.shadow.insert(p, page.iter().map(|&v| f32::from(v)).collect());
+                    e.insert(page.iter().map(|&v| f32::from(v)).collect());
                     self.before.insert(p, page);
                 }
 
@@ -166,9 +166,9 @@ impl LfStroke {
         }
 
         let (p, k) = field.locate(x, y);
-        if !self.shadow.contains_key(&p) {
+        if let std::collections::btree_map::Entry::Vacant(e) = self.shadow.entry(p) {
             let page = field.page_at(p);
-            self.shadow.insert(p, page.iter().map(|&v| f32::from(v)).collect());
+            e.insert(page.iter().map(|&v| f32::from(v)).collect());
             self.before.insert(p, page);
         }
 

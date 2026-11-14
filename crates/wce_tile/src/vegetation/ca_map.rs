@@ -91,16 +91,16 @@ impl Hasher for FastHasher {
 
     fn write(&mut self, bytes: &[u8]) {
         for &b in bytes {
-            self.0 = (self.0.rotate_left(5) ^ u64::from(b)).wrapping_mul(0x51_7cc1_b727_220a_95);
+            self.0 = (self.0.rotate_left(5) ^ u64::from(b)).wrapping_mul(0x517c_c1b7_2722_0a95);
         }
     }
 
     fn write_u32(&mut self, v: u32) {
-        self.0 = (self.0.rotate_left(5) ^ u64::from(v)).wrapping_mul(0x51_7cc1_b727_220a_95);
+        self.0 = (self.0.rotate_left(5) ^ u64::from(v)).wrapping_mul(0x517c_c1b7_2722_0a95);
     }
 
     fn write_usize(&mut self, v: usize) {
-        self.0 = (self.0.rotate_left(5) ^ v as u64).wrapping_mul(0x51_7cc1_b727_220a_95);
+        self.0 = (self.0.rotate_left(5) ^ v as u64).wrapping_mul(0x517c_c1b7_2722_0a95);
     }
 }
 

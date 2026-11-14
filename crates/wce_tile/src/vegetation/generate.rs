@@ -201,7 +201,7 @@ impl Pixel {
             for c in 0..4 {
                 let v = self.norm[t * 4 + c];
                 if v > 0.0 {
-                    acc = v + acc;
+                    acc += v;
                 }
             }
         }
@@ -354,7 +354,7 @@ pub fn candidates_with(inputs: &TileInputs, density: f32, rand: &mut Rand, disca
                 }
             }
 
-            ypos = cell + ypos;
+            ypos += cell;
         }
 
         xpos += cell;
@@ -616,7 +616,7 @@ pub(super) fn generate_map(
             if bp != 0.0 {
                 let hp = op.height.height_probability(h, op.probability);
                 if hp != 0.0 {
-                    total = (hp + bp) + total;
+                    total += hp + bp;
                     cum.push((total, o));
                 }
             }
@@ -654,7 +654,7 @@ pub(super) fn generate_map(
                 if p1 != 0.0 {
                     let p2 = g.height.height_probability(h, g.probability);
                     if p2 != 0.0 {
-                        total = (p2 + p1) + total;
+                        total += p2 + p1;
                         cum.push((total, i));
                     }
                 }

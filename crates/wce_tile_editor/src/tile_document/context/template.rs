@@ -30,7 +30,7 @@ pub(super) fn mean_of_material(m: &TerrainMaterial, mean: &dyn Fn(&str) -> Optio
     let detail = detail_byte(m);
     let (Some(blend), Some(index)) = (&m.blend.rgba, &m.index.rgba) else { return [128, 128, 128, detail] };
     let n = (blend.len() / 4).min(index.len() / 4).max(1);
-    let sum = blend.chunks_exact(4).zip(index.chunks_exact(4)).fold([0.0f32; 3], |s, (b, i)| {
+    let sum = blend.as_chunks::<4>().0.iter().zip(index.chunks_exact(4)).fold([0.0f32; 3], |s, (b, i)| {
         let c = blended(b, i, &slots);
         std::array::from_fn(|k| s[k] + c[k] / n as f32)
     });

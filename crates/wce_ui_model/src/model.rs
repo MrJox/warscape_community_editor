@@ -122,11 +122,11 @@ fn set_color(e: &mut Element, rgba: [u8; 4]) {
     let bgra = [rgba[2], rgba[1], rgba[0], rgba[3]];
     let mut k = 0;
     for n in e.children.iter_mut() {
-        if let Node::Elem(c) = n {
-            if k < 4 {
-                c.set_text(&bgra[k].to_string());
-                k += 1;
-            }
+        if let Node::Elem(c) = n
+            && k < 4
+        {
+            c.set_text(&bgra[k].to_string());
+            k += 1;
         }
     }
 }
@@ -227,13 +227,13 @@ impl UiModel {
                     if let Some(tc) = c.find_idx("children") {
                         let tch = c.elem_at(tc).unwrap();
                         for (j, n2) in tch.children.iter().enumerate() {
-                            if let Node::Elem(u) = n2 {
-                                if u.name == "uientry" {
-                                    let mut p2 = p.clone();
-                                    p2.push(tc);
-                                    p2.push(j);
-                                    self.walk(u, p2, depth + 2, Some(t), ax, ay, out);
-                                }
+                            if let Node::Elem(u) = n2
+                                && u.name == "uientry"
+                            {
+                                let mut p2 = p.clone();
+                                p2.push(tc);
+                                p2.push(j);
+                                self.walk(u, p2, depth + 2, Some(t), ax, ay, out);
                             }
                         }
                     }
@@ -263,12 +263,11 @@ impl UiModel {
         let all: Vec<&Element> = states.elems().filter(|e| e.name == "state").collect();
         if self.version >= 55 {
             let ds_idx = if self.version >= 77 { 5 } else { 3 };
-            if let Some(ds) = nth_int(el, "i", ds_idx) {
-                if let Some(s) =
+            if let Some(ds) = nth_int(el, "i", ds_idx)
+                && let Some(s) =
                     all.iter().find(|s| leaves(s, "u").first().and_then(|(_, c)| int_of(c)).map(|u| u as u32) == Some(ds as u32))
-                {
-                    return Some(s);
-                }
+            {
+                return Some(s);
             }
         }
         all.first().copied()
@@ -381,11 +380,11 @@ impl UiModel {
         let yi = nth_idx(el, "i", 1).ok_or("entry has no y offset")?;
         el.elem_at_mut(xi).unwrap().set_text(&x.to_string());
         el.elem_at_mut(yi).unwrap().set_text(&y.to_string());
-        if let (Some((ox, oy)), true) = (docked_at, v >= 77) {
-            if let (Some(a), Some(b)) = (nth_idx(el, "i", 3), nth_idx(el, "i", 4)) {
-                set_int(el, a, ox as i64);
-                set_int(el, b, oy as i64);
-            }
+        if let (Some((ox, oy)), true) = (docked_at, v >= 77)
+            && let (Some(a), Some(b)) = (nth_idx(el, "i", 3), nth_idx(el, "i", 4))
+        {
+            set_int(el, a, ox as i64);
+            set_int(el, b, oy as i64);
         }
 
         Ok(())
@@ -419,16 +418,15 @@ impl UiModel {
         st.elem_at_mut(hi).unwrap().set_text(&h.to_string());
         let el = self.dom.at(path).ok_or("no such entry")?;
         let (dock, doff) = crate::layout::dock_of(self, el);
-        if dock > 0 {
-            if let Some((own, parent)) = self.sizes_for_dock(path) {
-                if let Some((fx, fy)) = crate::layout::dock_position(dock, parent, own) {
-                    let (x, y) = (fx as i32 + doff.0, fy as i32 + doff.1);
-                    let el = self.dom_mut().at_mut(path).ok_or("no such entry")?;
-                    if let (Some(xi), Some(yi)) = (nth_idx(el, "i", 0), nth_idx(el, "i", 1)) {
-                        el.elem_at_mut(xi).unwrap().set_text(&x.to_string());
-                        el.elem_at_mut(yi).unwrap().set_text(&y.to_string());
-                    }
-                }
+        if dock > 0
+            && let Some((own, parent)) = self.sizes_for_dock(path)
+            && let Some((fx, fy)) = crate::layout::dock_position(dock, parent, own)
+        {
+            let (x, y) = (fx as i32 + doff.0, fy as i32 + doff.1);
+            let el = self.dom_mut().at_mut(path).ok_or("no such entry")?;
+            if let (Some(xi), Some(yi)) = (nth_idx(el, "i", 0), nth_idx(el, "i", 1)) {
+                el.elem_at_mut(xi).unwrap().set_text(&x.to_string());
+                el.elem_at_mut(yi).unwrap().set_text(&y.to_string());
             }
         }
 
@@ -605,15 +603,12 @@ impl UiModel {
             Some(l) => l.to_vec(),
             None => {
                 let mut p = parent.to_vec();
-                match par.find_idx("children").and_then(|ci| {
+                if let Some((ci, k)) = par.find_idx("children").and_then(|ci| {
                     par.elem_at(ci)
                         .and_then(|c| c.children.iter().position(|n| matches!(n, Node::Elem(e) if e.name == "uientry")).map(|k| (ci, k)))
                 }) {
-                    Some((ci, k)) => {
-                        p.push(ci);
-                        p.push(k);
-                    }
-                    None => {}
+                    p.push(ci);
+                    p.push(k);
                 }
                 p
             }
@@ -691,10 +686,11 @@ fn first_uientry(e: &Element) -> Option<&Element> {
 fn collect_ids(e: &Element, out: &mut Vec<u32>) {
     for (i, n) in e.children.iter().enumerate() {
         if let Node::Elem(c) = n {
-            if c.name == "u" && id_comment(e, i) {
-                if let Ok(v) = c.text().trim().parse::<u32>() {
-                    out.push(v);
-                }
+            if c.name == "u"
+                && id_comment(e, i)
+                && let Ok(v) = c.text().trim().parse::<u32>()
+            {
+                out.push(v);
             }
             collect_ids(c, out);
         }
@@ -728,23 +724,21 @@ fn renew_ids(root: &mut Element, used: &mut Vec<u32>) {
 
 fn apply_ids(e: &mut Element, map: &[(u32, u32)]) {
     let is_i = e.name == "i";
-    if is_i {
-        if let Ok(v) = e.text().trim().parse::<i64>() {
-            if let Some((_, n)) = map.iter().find(|(o, _)| *o == v as u32 && v.unsigned_abs() > 65536) {
-                e.set_text(&(*n as i32).to_string());
-            }
-        }
+    if is_i
+        && let Ok(v) = e.text().trim().parse::<i64>()
+        && let Some((_, n)) = map.iter().find(|(o, _)| *o == v as u32 && v.unsigned_abs() > 65536)
+    {
+        e.set_text(&(*n as i32).to_string());
     }
     let mut renew: Vec<(usize, u32)> = Vec::new();
     for i in 0..e.children.len() {
-        if let Node::Elem(c) = &e.children[i] {
-            if c.name == "u" && id_comment(e, i) {
-                if let Ok(v) = c.text().trim().parse::<u32>() {
-                    if let Some((_, n)) = map.iter().find(|(o, _)| *o == v) {
-                        renew.push((i, *n));
-                    }
-                }
-            }
+        if let Node::Elem(c) = &e.children[i]
+            && c.name == "u"
+            && id_comment(e, i)
+            && let Ok(v) = c.text().trim().parse::<u32>()
+            && let Some((_, n)) = map.iter().find(|(o, _)| *o == v)
+        {
+            renew.push((i, *n));
         }
     }
     for (i, n) in renew {

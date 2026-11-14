@@ -26,8 +26,6 @@ use wce_weather::xml_file_document::{Op, Source, XmlFileDocument};
 
 use crate::picker::WeatherPicker;
 
-/// The environment the sandbox lit the sample map with before an environment document is open: what the gates use.
-
 struct Category {
     label: &'static str,
     prefix: &'static str,

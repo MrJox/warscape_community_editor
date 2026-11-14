@@ -8,6 +8,18 @@ version = "0.0.1"
 edition = "2024"
 license = "MIT"
 
+# Clippy runs in CI with its warnings as errors (`cargo clippy --workspace -- -D warnings`). Allowed here, for the whole workspace:
+# - neg_cmp_op_on_partial_ord: `!(x > 0.0)` is written on purpose where a NaN must count as "not more" (a density, a step);
+# - type_complexity, too_many_arguments: the renderer's and the generators' signatures are what they are;
+# - needless_range_loop: index loops over parallel arrays (rows and columns of a grid) read better than zips.
+[workspace.lints.clippy]
+neg_cmp_op_on_partial_ord = "allow"
+type_complexity = "allow"
+too_many_arguments = "allow"
+needless_range_loop = "allow"
+# - chunks_exact_to_as_chunks: `chunks_exact(3)` over a mesh's indices reads as what it is; as_chunks changes every use's types.
+chunks_exact_to_as_chunks = "allow"
+
 [workspace.dependencies]
 windows-core = "0.100"
 windows-link = "0.100"

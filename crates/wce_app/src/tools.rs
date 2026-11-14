@@ -3,6 +3,7 @@
 use wce_editor::Tool;
 
 /// Every tool built in, in the switcher's order (Ctrl+1 is the first).
+#[allow(clippy::vec_init_then_push, reason = "each push is behind its tool's feature: vec![] can't hold them")]
 pub fn all_tools() -> Vec<Box<dyn Tool>> {
     #[allow(unused_mut, reason = "a build without any editor feature")]
     let mut tools: Vec<Box<dyn Tool>> = vec![];
