@@ -1099,7 +1099,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
     );
 
     c.add(
-        "gizmo_drag", "gizmo_drag <x|y|z> <pixels> [steps]",
+        "gizmo_drag", "gizmo_drag <x|y|z> <pixels> [steps] [hold]",
         "test: drag the translate handle of the first selected item along an axis of the gizmo (the world's, or its parent's in local coordinates)          with the scripted mouse (aimed from the projected axis tip, not guessed)",
         |e, a| {
             let selected = first_selected_transform(e);
@@ -1142,8 +1142,14 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
             let px = atof(&a[1]) as f32;
             let (x0, y0) = (format!("{tx:.1}"), format!("{ty:.1}"));
             let (x1, y1) = (format!("{:.1}", tx + dx / dl * px), format!("{:.1}", ty + dy / dl * px));
-            let steps = a.get(2).cloned().unwrap_or_else(|| "10".to_owned());
+            let steps = a.get(2).filter(|s| *s != "hold").cloned().unwrap_or_else(|| "10".to_owned());
             CommandRegistry::run_args(e, "mouse", &["move".to_owned(), x0.clone(), y0.clone()]);
+            if a.iter().any(|s| s == "hold") {
+                // The button stays down at the end (`mouse up` lets go): a script acts in the middle of the drag.
+                CommandRegistry::run_args(e, "mouse", &["down".to_owned(), x0, y0]);
+                return CommandRegistry::run_args(e, "mouse", &["move".to_owned(), x1, y1]);
+            }
+
             CommandRegistry::run_args(e, "mouse", &["drag".to_owned(), x0, y0, x1, y1, steps])
         },
     );
@@ -1164,7 +1170,7 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
 
     c.add(
         "mouse",
-        "mouse move x y | click x y [left|right|middle] | drag x0 y0 x1 y1 [steps] [button] | wheel n | off",
+        "mouse move x y | click x y [left|right|middle] | drag x0 y0 x1 y1 [steps] [button] | down x y [button] | up [button] | wheel n | off",
         "drive the viewport with a scripted mouse (pixels of the viewport image), as the real one would; every step takes a rendered frame",
         mouse,
     );
@@ -1439,7 +1445,8 @@ fn mouse(e: &mut Editor, a: &[String]) -> CommandResult {
     };
 
     let Some(verb) = a.first() else { return fail("usage: mouse move|click|drag|wheel|off ...") };
-    let mut m = e.mouse_cur;
+    // From the last state queued, not the last one played: a command that queues several (`gizmo_drag ... hold`) goes on from its own.
+    let mut m = e.mouse_queue.back().copied().unwrap_or(e.mouse_cur);
     match verb.as_str() {
         "off" => {
             e.park_mouse();
@@ -1460,6 +1467,25 @@ fn mouse(e: &mut Editor, a: &[String]) -> CommandResult {
                 e.queue_mouse(m);
                 return ok("").wait(2);
             }
+        }
+
+        // A press that stays down until `up`, so a script can act in the middle of a drag (`move` drags with the button held).
+        "down" => {
+            if let Some((x, y)) = xy(1) {
+                let b = button(3);
+                (m.x, m.y) = (x, y);
+                m.down[b] = false;
+                e.queue_mouse(m);
+                m.down[b] = true;
+                e.queue_mouse(m);
+                return ok("").wait(2 + 2);
+            }
+        }
+
+        "up" => {
+            m.down[button(1)] = false;
+            e.queue_mouse(m);
+            return ok("").wait(1 + 2);
         }
 
         "click" => {
@@ -1503,5 +1529,5 @@ fn mouse(e: &mut Editor, a: &[String]) -> CommandResult {
         _ => {}
     }
 
-    fail("usage: mouse move x y | click x y [button] | drag x0 y0 x1 y1 [steps] [button] | wheel n | off")
+    fail("usage: mouse move x y | click x y [button] | drag x0 y0 x1 y1 [steps] [button] | down x y [button] | up [button] | wheel n | off")
 }

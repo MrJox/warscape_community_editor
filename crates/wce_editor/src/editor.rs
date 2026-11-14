@@ -166,7 +166,7 @@ pub struct Editor {
 
     /// A script line is running (`ScriptRunner::step`): what would ask fails instead.
     pub(crate) in_script: bool,
-    mouse_queue: VecDeque<MouseState>,
+    pub(crate) mouse_queue: VecDeque<MouseState>,
     pub(crate) mouse_cur: MouseState,
     mouse_active: bool,
 

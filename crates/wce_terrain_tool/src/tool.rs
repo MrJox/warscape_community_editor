@@ -2334,6 +2334,28 @@ impl Tool for TerrainTool {
             })
         });
 
+        c.add(
+            "terrain_brush",
+            "terrain_brush on|off",
+            "the Terrain tool: the LF brush on the left button (the LF brush panel's paint box), with its settings as they are",
+            |e, a| {
+                let on = match a.first().map(String::as_str) {
+                    Some("on") => true,
+                    Some("off") => false,
+                    _ => return CommandResult::fail("usage: terrain_brush on|off"),
+                };
+
+                with_terrain(e, |t, e| {
+                    if on && !e.docs.find_as::<MapDocument>(t.shown).is_some_and(|d| d.lf_field(LfRole::Land).is_some()) {
+                        return CommandResult::fail("the shown map has no LF to paint (a map of the packs)");
+                    }
+
+                    t.paint.on = on;
+                    CommandResult::success("")
+                })
+            },
+        );
+
         c.add("terrain_stroke", "terrain_stroke <raise|lower|smooth|flatten|noise> <x0> <y0> <x1> <y1> <radius m> <amount m or strength> [events]", "the Terrain tool: a land LF stroke along a line of map cells as the mouse paints it, its moves `events` (default 2) along the line; reports the field's sum", |e, a| {
             let usage = "usage: terrain_stroke <raise|lower|smooth|flatten|noise> <x0> <y0> <x1> <y1> <radius m> <amount m or strength> [events]";
             let Some(op) = a.first().and_then(|o| LF_OPS.iter().position(|n| n == o)) else { return CommandResult::fail(usage) };
