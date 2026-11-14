@@ -675,6 +675,11 @@ impl TileDocument {
 
     /// Scene units / radians, local to the parent.
     pub fn set_local(&mut self, elem: usize, position: Option<Double3>, euler: Option<Double3>, gesture: u64) -> bool {
+        // An element number from before an edit that took elements away (a script's, a stale selection's): nothing to move.
+        if elem >= self.tile().tscene().doc().elements().len() {
+            return false;
+        }
+
         let t = self.tile();
 
         // A layer or a group moves everything below it: TEd's grid has its position (and a group's orientation) too.
@@ -719,6 +724,11 @@ impl TileDocument {
     /// Puts an instance at a world transform (scene units; `Tile::snap_piece`'s): its local position and orientation in one undo entry, the
     /// steps of a drag (one `gesture`) merging.
     pub fn set_world_transform(&mut self, elem: usize, w: &WorldTransform, gesture: u64) -> bool {
+        // An element number from before an edit that took elements away (a script's, a stale selection's): nothing to move.
+        if elem >= self.tile().tscene().doc().elements().len() {
+            return false;
+        }
+
         let pw = parent_transform(self.tile().tscene(), elem);
         let lp = pw.rotation.transpose() * (w.position - pw.position);
         let euler = euler_from_matrix(&(pw.rotation.transpose() * w.rotation));
@@ -1058,6 +1068,11 @@ impl TileDocument {
     /// Tilts an instance so that its up is `normal` (world), keeping its heading (where its +z points on the ground). The steps of one
     /// gesture merge.
     pub fn tilt_to_surface(&mut self, elem: usize, normal: Double3, gesture: u64) -> bool {
+        // An element number from before an edit that took elements away (a script's, a stale selection's): nothing to move.
+        if elem >= self.tile().tscene().doc().elements().len() {
+            return false;
+        }
+
         let sc = self.tile().tscene();
         let Some(euler) = sc.euler(elem) else { return false };
         let world = world_transform(sc, elem).rotation;

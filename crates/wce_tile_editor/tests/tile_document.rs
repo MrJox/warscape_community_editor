@@ -2454,3 +2454,14 @@ fn a_property_whose_twin_the_file_lacks_is_one_undo_entry() {
     d.history_mut().undo();
     assert_eq!(String::from_utf8_lossy(&text(&d)), String::from_utf8_lossy(&before), "one undo: the file's text");
 }
+
+#[test]
+fn an_element_number_past_the_scene_moves_nothing_and_does_not_panic() {
+    let (_dir, mut d) = open();
+    let past = d.tile().tscene().doc().elements().len() + 3;
+    assert!(!d.set_local(past, Some(Double3::new(1.0, 2.0, 3.0)), None, 1));
+    let w = wce_tile::world_transform::WorldTransform::default();
+    assert!(!d.set_world_transform(past, &w, 1));
+    assert!(!d.tilt_to_surface(past, Double3::new(0.0, 1.0, 0.0), 1));
+    assert_eq!(d.history().size(), 0);
+}
