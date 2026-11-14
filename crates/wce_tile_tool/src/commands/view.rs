@@ -741,4 +741,62 @@ pub(super) fn register(c: &mut CommandRegistry<Editor>) {
         Some(p) if Path::new(p).exists() => ok(""),
         other => fail(format!("missing {}", other.map_or("", String::as_str))),
     });
+
+    // ---- reference image and screenshot
+    c.add(
+        "tile_reference",
+        "tile_reference [<file.png>] [ground|screen|off] [opacity] [x,z,width,turn]",
+        "the open tile's reference image: load a PNG (laid over the whole tile at first), show it on the ground, on the screen or not, at an opacity, and where it lies on the ground (metres, degrees clockwise)",
+        |e, a| {
+            with_doc(e, |t, e| {
+                let mut words = a.iter().peekable();
+                if let Some(file) = words.next_if(|w| w.to_lowercase().ends_with(".png"))
+                    && let Err(m) = t.reference.load(e, std::path::Path::new(file))
+                {
+                    return fail(m);
+                }
+
+                let show = match words.next_if(|w| matches!(w.as_str(), "ground" | "screen" | "off")).map(String::as_str) {
+                    Some("ground") => Some(crate::settings::ReferenceShow::Ground),
+                    Some("screen") => Some(crate::settings::ReferenceShow::Screen),
+                    Some(_) => Some(crate::settings::ReferenceShow::Off),
+                    None => None,
+                };
+                let opacity = match words.next_if(|w| !w.contains(',')) {
+                    Some(o) => match o.parse::<f32>() {
+                        Ok(o) => Some(o),
+                        Err(_) => return fail(format!("'{o}' is not an opacity")),
+                    },
+                    None => None,
+                };
+                let placement = match words.next() {
+                    Some(p) => match parse_floats::<4>(p) {
+                        Some(p) => Some(p),
+                        None => return fail("the placement is x,z,width,turn"),
+                    },
+                    None => None,
+                };
+                t.reference.set(e, show, opacity, placement);
+                let s = &t.reference.s;
+                ok(format!(
+                    "{} {:?} opacity {:.2} centre {:.1},{:.1} width {:.1} m turn {:.2}",
+                    s.path, s.show, s.opacity, s.centre[0], s.centre[1], s.width, s.rotation
+                ))
+            })
+        },
+    );
+
+    c.add(
+        "tile_screenshot",
+        "tile_screenshot [file.png]",
+        "save the viewport's last image as a PNG: at the file, or named after the tile in the screenshot folder (Settings > Tile)",
+        |e, a| {
+            if crate::tool::document_id(e).is_none() {
+                return no_tile();
+            }
+
+            crate::reference_image::save_screenshot(e, a.first().map(std::path::Path::new))
+                .map_or_else(fail, |p| ok(p.display().to_string()))
+        },
+    );
 }

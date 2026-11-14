@@ -799,6 +799,12 @@ impl DrawList {
         call!(sys::ImDrawList_AddImage(self.0, tex, min, max, uv0, uv1, tint))
     }
 
+    /// A picture drawn into any four-cornered shape (corners in order, each with its texture coordinate), with a tint (IM_COL32).
+    pub fn image_quad(&self, id: u64, p: [Vec2; 4], uv: [Vec2; 4], tint: u32) {
+        let tex = sys::ImTextureRef_c { _TexData: std::ptr::null_mut(), _TexID: id };
+        call!(sys::ImDrawList_AddImageQuad(self.0, tex, p[0], p[1], p[2], p[3], uv[0], uv[1], uv[2], uv[3], tint))
+    }
+
     /// Text at an explicit size in pixels (the font's own size scaled).
     pub fn text_sized(&self, size: f32, pos: Vec2, col: u32, text: &str) {
         let r = text.as_bytes().as_ptr_range();
