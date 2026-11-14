@@ -6,7 +6,18 @@
 #  - everything undone and saved equals the originals byte for byte;
 #  - save in place keeps a .bak, and undo + save puts the original bytes back;
 #  - procedural walls (scripts/tile_walls.txt): drawn, attached to a fort building's ends, corners, undo, saved.
-#   scripts/tile_check.sh [out dir]        Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME
+#   scripts/tile_check.sh [out dir]
+# Environment: WCE_BIN (default target/release, or $CARGO_TARGET_DIR/release), WCE_GAME, WCE_SETTINGS_DIR, and where the tiles are:
+#   WCE_TILE_KIT     the kit's battle tiles (default: the game's assembly_kit_battle_tilemap, else its assembly_kit)
+#   WCE_TILE_SRC     the main tile (the kit's assembly_kit/khazad_wall_test/battlefield; its database entry WCE_TILE_SRC_ENTRY)
+#   WCE_TILE_LOTH    a custom tile for the ground colours (TDD's tdd_custom_lothlorien/1x1/aa)
+#   WCE_TILE_FORD, WCE_TILE_LAKE   river and lake tiles (river_ford/2x2_lb_rb_ford/aa, lakes/10x10/aa)
+#   WCE_TILE_LINKS   a tile with links (TDD's dunedain_city_osgiliath/minor)
+#   WCE_TILE_DESERT  a plain tile for placement and walls (terrain_rugged_hills_desert/1x1/aa)
+#   WCE_TILE_LAYERS  a tile with many layers (assembly_kit/osgiliath_test/battlefield)
+#   WCE_TILE_ROME    a settlement with escalation layers (settlement_western_cities/western_city_rome/small)
+# A part whose tile is not there is SKIPPED (said, and counted at the end), not failed. The scripts' checks are made for these tiles (the
+# brush stroke's pixels, the moved building's line): another tile in their place runs them, but not all of their checks can hold.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${1:-$ROOT/build/tile_check}"; mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"
@@ -14,10 +25,31 @@ BIN="${WCE_BIN:-${CARGO_TARGET_DIR:-$ROOT/target}/release}"
 SETTINGS_SRC="${WCE_SETTINGS_DIR:-$LOCALAPPDATA/wce/config}"
 export WCE_GPU="${WCE_GPU:-AMD Radeon}"   # the reference pixels come from one GPU (docs/baseline.md)
 GAME="${WCE_GAME:-D:/SteamLibrary/steamapps/common/Total War Attila}"
-KIT="$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle"
-SRC="$KIT/assembly_kit/khazad_wall_test/battlefield"
+KIT="${WCE_TILE_KIT:-$GAME/assembly_kit_battle_tilemap/raw_data/terrain/tiles/battle}"
+[ -d "$KIT" ] || [ -n "${WCE_TILE_KIT:-}" ] || KIT="$GAME/assembly_kit/raw_data/terrain/tiles/battle"
+SRC="${WCE_TILE_SRC:-$KIT/assembly_kit/khazad_wall_test/battlefield}"
+SRC_ENTRY="${WCE_TILE_SRC_ENTRY:-$KIT/_tile_database/TILES/assembly_kit_khazad_wall_test.xml}"
+LOTH="${WCE_TILE_LOTH:-$KIT/tdd_custom_lothlorien/1x1/aa}"
+FORD="${WCE_TILE_FORD:-$KIT/river_ford/2x2_lb_rb_ford/aa}"
+LAKE="${WCE_TILE_LAKE:-$KIT/lakes/10x10/aa}"
+OSG_MIN="${WCE_TILE_LINKS:-$KIT/tdd_settlement_dunedain_cities/dunedain_city_osgiliath/minor}"
+DESERT="${WCE_TILE_DESERT:-$KIT/terrain_rugged_hills_desert/1x1/aa}"
+OSG="${WCE_TILE_LAYERS:-$KIT/assembly_kit/osgiliath_test/battlefield}"
+ROME="${WCE_TILE_ROME:-$KIT/settlement_western_cities/western_city_rome/small}"
 bad=0
+skipped=0
 fail() { echo "FAILED: $*"; bad=1; }
+
+# have <tile dir>...: whether every tile is there; when one is not, the part is SKIPPED (said and counted).
+have() {
+    for t in "$@"; do
+        if [ ! -d "$t" ]; then
+            echo "SKIPPED: no tile at $t (see the WCE_TILE_* variables at the top of this script)"
+            skipped=$((skipped + 1))
+            return 1
+        fi
+    done
+}
 
 run_script() { # run_script <script name> <run> <tile dir> [second tile dir] -> $OUT/<name><run>/
     local name="$1" run="$2" tile="$3" tile2="${4:-}" dir="$OUT/$1$2"
@@ -29,22 +61,25 @@ run_script() { # run_script <script name> <run> <tile dir> [second tile dir] -> 
     [ $rc = 0 ] || { bad=1; grep -E "error|FAILED" "$dir/run.log" | head -5; }
 }
 
-run_script tile_gizmo 1 "$SRC"
+if have "$SRC"; then
+    run_script tile_gizmo 1 "$SRC"
+fi
+
 # the ground colour (Phase 3): blended ground of the lothlorien 1x1 tile, another climate, flat, blended again = the first capture; all different from each other
-LOTH="$KIT/tdd_custom_lothlorien/1x1/aa"
-run_script tile_terrain 1 "$LOTH"
-run_script tile_terrain 2 "$LOTH"
-T1="$OUT/tile_terrain1"; T2="$OUT/tile_terrain2"
-for f in blend.png desert.png flat.png blend2.png groups.png protection.png blend3.png detail.png; do
-    cmp -s "$T1/$f" "$T2/$f" && [ -s "$T1/$f" ] && echo "terrain $f identical between runs" || fail "terrain $f differs between runs (or missing)"
-done
-cmp -s "$T1/blend.png" "$T1/blend3.png" && cmp -s "$T1/blend.png" "$T1/blend2.png" && echo "terrain: blended again = the first capture" || fail "terrain: blended again differs from the first capture"
-for f in desert.png flat.png groups.png protection.png; do
-    cmp -s "$T1/blend.png" "$T1/$f" && fail "terrain: $f equals the blended capture" || echo "terrain: $f differs from the blended capture"
-done
-# the ground shows its textures (the shader reads the layer's uv scale from ps_texture_array_cb[mapping + 1] = array element [mapping]: layer 0 once got scale 0 and was one flat colour):
-# in the close capture no more than 1 % of the lit 8 x 8 pixel blocks may be flat (the broken build: 6 %, the right one: 0 %)
-python - "$T1/detail.png" <<'PY' || bad=1
+if have "$LOTH"; then
+    run_script tile_terrain 1 "$LOTH"
+    run_script tile_terrain 2 "$LOTH"
+    T1="$OUT/tile_terrain1"; T2="$OUT/tile_terrain2"
+    for f in blend.png desert.png flat.png blend2.png groups.png protection.png blend3.png detail.png; do
+        cmp -s "$T1/$f" "$T2/$f" && [ -s "$T1/$f" ] && echo "terrain $f identical between runs" || fail "terrain $f differs between runs (or missing)"
+    done
+    cmp -s "$T1/blend.png" "$T1/blend3.png" && cmp -s "$T1/blend.png" "$T1/blend2.png" && echo "terrain: blended again = the first capture" || fail "terrain: blended again differs from the first capture"
+    for f in desert.png flat.png groups.png protection.png; do
+        cmp -s "$T1/blend.png" "$T1/$f" && fail "terrain: $f equals the blended capture" || echo "terrain: $f differs from the blended capture"
+    done
+    # the ground shows its textures (the shader reads the layer's uv scale from ps_texture_array_cb[mapping + 1] = array element [mapping]: layer 0 once got scale 0 and was one flat colour):
+    # in the close capture no more than 1 % of the lit 8 x 8 pixel blocks may be flat (the broken build: 6 %, the right one: 0 %)
+    python - "$T1/detail.png" <<'PY' || bad=1
 import sys
 import numpy as np
 from PIL import Image
@@ -56,69 +91,85 @@ flat = float((b.std(1)[lit] < 2.5).mean()) if lit.any() else 1.0
 print("terrain detail: %d lit blocks, %.1f %% flat" % (lit.sum(), flat * 100))
 sys.exit(0 if lit.sum() > 1000 and flat <= 0.01 else 1)
 PY
+fi
+
 # water (Phase 4): river ribbons of the ford tile, switched off and on, a stroke, the lake plane; captures identical between two runs, on differs from off
-OSG_MIN="$KIT/tdd_settlement_dunedain_cities/dunedain_city_osgiliath/minor"
-FORD="$KIT/river_ford/2x2_lb_rb_ford/aa"; LAKE="$KIT/lakes/10x10/aa"
-run_script tile_water 1 "$FORD" "$LAKE"
-run_script tile_water 2 "$FORD" "$LAKE"
-for f in water_on.png water_off.png water_on2.png lake.png; do
-    cmp -s "$OUT/tile_water1/$f" "$OUT/tile_water2/$f" && [ -s "$OUT/tile_water1/$f" ] && echo "water $f identical between runs" || fail "water $f differs between runs (or missing)"
-done
-cmp -s "$OUT/tile_water1/water_on.png" "$OUT/tile_water1/water_on2.png" && echo "water: on again = the first capture" || fail "water: on again differs from the first capture"
-cmp -s "$OUT/tile_water1/water_on.png" "$OUT/tile_water1/water_off.png" && fail "water: off equals on" || echo "water: off differs from on"
+if have "$FORD" "$LAKE"; then
+    run_script tile_water 1 "$FORD" "$LAKE"
+    run_script tile_water 2 "$FORD" "$LAKE"
+    for f in water_on.png water_off.png water_on2.png lake.png; do
+        cmp -s "$OUT/tile_water1/$f" "$OUT/tile_water2/$f" && [ -s "$OUT/tile_water1/$f" ] && echo "water $f identical between runs" || fail "water $f differs between runs (or missing)"
+    done
+    cmp -s "$OUT/tile_water1/water_on.png" "$OUT/tile_water1/water_on2.png" && echo "water: on again = the first capture" || fail "water: on again differs from the first capture"
+    cmp -s "$OUT/tile_water1/water_on.png" "$OUT/tile_water1/water_off.png" && fail "water: off equals on" || echo "water: off differs from on"
+fi
+
 # tile links (Phase 6a, read-only): the entry's targets and rules drawn on the cells they name (osgiliath minor: 2 targets, 2 rules)
-run_script tile_links 1 "$OSG_MIN"
-run_script tile_links 2 "$OSG_MIN"
-for f in links_off.png links_on.png links_off2.png; do
-    cmp -s "$OUT/tile_links1/$f" "$OUT/tile_links2/$f" && [ -s "$OUT/tile_links1/$f" ] && echo "links $f identical between runs" || fail "links $f differs between runs (or missing)"
-done
-cmp -s "$OUT/tile_links1/links_off.png" "$OUT/tile_links1/links_off2.png" && echo "links: off again = the first capture" || fail "links: off again differs from the first capture"
-cmp -s "$OUT/tile_links1/links_off.png" "$OUT/tile_links1/links_on.png" && fail "links: on equals off" || echo "links: on differs from off"
-# placement modes (Phase 2): landscape follows the terrain, freeform is free, a height stroke carries the landscape ones; all undone and saved equals the original
-DESERT="$KIT/terrain_rugged_hills_desert/1x1/aa"
-run_script tile_placement 1 "$DESERT"
-for f in tile.ted height_map_0.png; do
-    cmp -s "$DESERT/$f" "$OUT/tile_placement1/restored/$f" && echo "placement: undo all + save: $f equals the original" || fail "placement: undo all + save: $f differs from the original"
-done
-# layers: flags, structure, undo all, and the saved tile.ted equals the original (osgiliath_test: 55 MB)
-OSG="$KIT/assembly_kit/osgiliath_test/battlefield"
-# procedural walls, phase 1: drawn, ends attached, corners, undo; the saved tile.wce keeps the wall and the undone corner mark is gone
-run_script tile_walls 1 "$DESERT"
-W="$OUT/tile_walls1/saved/tile.wce"
-[ "$(grep -c '<WceWallSpline' "$W" 2>/dev/null)" = 1 ] && ! grep -q 'sharp=' "$W" && echo "walls: the saved tile.wce has the wall, without the undone sharp mark" || fail "walls: the saved tile.wce lacks the wall or keeps an undone sharp mark"
-# procedural walls: their preview pieces made again only when what they are made from changes (asserts in the script)
-run_script tile_wall_preview_cache 1 "$DESERT"
-run_script tile_wall_tech 1 "$DESERT"
+if have "$OSG_MIN"; then
+    run_script tile_links 1 "$OSG_MIN"
+    run_script tile_links 2 "$OSG_MIN"
+    for f in links_off.png links_on.png links_off2.png; do
+        cmp -s "$OUT/tile_links1/$f" "$OUT/tile_links2/$f" && [ -s "$OUT/tile_links1/$f" ] && echo "links $f identical between runs" || fail "links $f differs between runs (or missing)"
+    done
+    cmp -s "$OUT/tile_links1/links_off.png" "$OUT/tile_links1/links_off2.png" && echo "links: off again = the first capture" || fail "links: off again differs from the first capture"
+    cmp -s "$OUT/tile_links1/links_off.png" "$OUT/tile_links1/links_on.png" && fail "links: on equals off" || echo "links: on differs from off"
+fi
+
+if have "$DESERT"; then
+    # placement modes (Phase 2): landscape follows the terrain, freeform is free, a height stroke carries the landscape ones; all undone and saved equals the original
+    run_script tile_placement 1 "$DESERT"
+    for f in tile.ted height_map_0.png; do
+        cmp -s "$DESERT/$f" "$OUT/tile_placement1/restored/$f" && echo "placement: undo all + save: $f equals the original" || fail "placement: undo all + save: $f differs from the original"
+    done
+
+    # procedural walls, phase 1: drawn, ends attached, corners, undo; the saved tile.wce keeps its two walls (the drawn one, and the first
+    # door-section wall, whose Procedural switch was undone) and the undone corner mark is gone
+    run_script tile_walls 1 "$DESERT"
+    W="$OUT/tile_walls1/saved/tile.wce"
+    [ "$(grep -c '<WceWallSpline' "$W" 2>/dev/null)" = 2 ] && ! grep -q 'sharp=' "$W" && echo "walls: the saved tile.wce has its two walls, without the undone sharp mark" || fail "walls: the saved tile.wce lacks its two walls or keeps an undone sharp mark"
+    # procedural walls: their preview pieces made again only when what they are made from changes (asserts in the script)
+    run_script tile_wall_preview_cache 1 "$DESERT"
+    run_script tile_wall_tech 1 "$DESERT"
+fi
 
 # building technology overlays (tile_tech.txt): the kinds, the scope, the most destroyed state, the overlapping buildings; identical captures between two runs,
 # and each differs from the plain view
-for run in 1 2; do run_script tile_tech $run "$SRC"; done
-for f in off.png on.png selected.png all.png highest.png collide.png; do
-    cmp -s "$OUT/tile_tech1/$f" "$OUT/tile_tech2/$f" && [ -s "$OUT/tile_tech1/$f" ] && echo "technology $f identical between runs" || fail "technology $f differs between runs (or missing)"
-done
-for f in on.png selected.png all.png collide.png; do
-    cmp -s "$OUT/tile_tech1/off.png" "$OUT/tile_tech1/$f" && fail "technology: $f equals the plain capture" || echo "technology: $f differs from the plain capture"
-done
+if have "$SRC"; then
+    for run in 1 2; do run_script tile_tech $run "$SRC"; done
+    for f in off.png on.png selected.png all.png highest.png collide.png; do
+        cmp -s "$OUT/tile_tech1/$f" "$OUT/tile_tech2/$f" && [ -s "$OUT/tile_tech1/$f" ] && echo "technology $f identical between runs" || fail "technology $f differs between runs (or missing)"
+    done
+    for f in on.png selected.png all.png collide.png; do
+        cmp -s "$OUT/tile_tech1/off.png" "$OUT/tile_tech1/$f" && fail "technology: $f equals the plain capture" || echo "technology: $f differs from the plain capture"
+    done
+fi
 
-run_script tile_layers 1 "$OSG"
+# layers: flags, structure, undo all, and the saved tile.ted equals the original (osgiliath_test: 55 MB); the Scene panel with the scripted
+# mouse: eye, cursor arrow, drag and drop, F2, Del
+if have "$OSG"; then
+    run_script tile_layers 1 "$OSG"
+    run_script tile_scene_ui 1 "$OSG"
+    cmp -s "$OSG/tile.ted" "$OUT/tile_layers1/layers_restored/tile.ted" && echo "layers: undo all + save equals the original tile.ted" || fail "layers: undo all + save differs from the original tile.ted"
+fi
+
 # the Game view leaves out the escalation layers the battle does not load (Rome's "Escalation 2" camp)
-run_script tile_game_layers 1 "$KIT/settlement_western_cities/western_city_rome/small"
-# piece-to-piece snapping on the logic files' end caps: a corner, a stepped bastion (Roman fort pieces)
-run_script tile_piece_snap_roman 1 "$SRC"
-run_script tile_scene_ui 1 "$OSG"   # the Scene panel with the scripted mouse: eye, cursor arrow, drag and drop, F2, Del
-cmp -s "$OSG/tile.ted" "$OUT/tile_layers1/layers_restored/tile.ted" && echo "layers: undo all + save equals the original tile.ted" || fail "layers: undo all + save differs from the original tile.ted"
-for run in 1 2; do run_script tile_smoke $run "$SRC"; done
-for f in saved/tile.ted saved/height_map_0.png capture.png; do
-    cmp -s "$OUT/tile_smoke1/$f" "$OUT/tile_smoke2/$f" && [ -s "$OUT/tile_smoke1/$f" ] && echo "$f identical between runs" || fail "$f differs between runs (or missing)"
-done
-# the mouse and the keys (select, grab, brush, polygon drawing, handle drag)
-run_script tile_mouse 1 "$SRC"
-# undo and redo wait for the gesture under way; another tile opened mid-gesture closes it on the tile before
-run_script tile_gestures 1 "$SRC" "$FORD"
-# minimal edit
-changed=$(diff <(tr -d '\r' < "$SRC/tile.ted") <(tr -d '\r' < "$OUT/tile_smoke1/saved/tile.ted") | grep -c '^>')
-[ "$changed" = 1 ] && echo "saved tile.ted differs from the original in exactly the moved building's line" || fail "saved tile.ted differs in $changed lines (expected 1)"
-python - "$SRC/height_map_0.png" "$OUT/tile_smoke1/saved/height_map_0.png" <<'PY' || bad=1
+if have "$ROME"; then
+    run_script tile_game_layers 1 "$ROME"
+fi
+
+if have "$SRC"; then
+    # piece-to-piece snapping on the logic files' end caps: a corner, a stepped bastion (Roman fort pieces)
+    run_script tile_piece_snap_roman 1 "$SRC"
+    for run in 1 2; do run_script tile_smoke $run "$SRC"; done
+    for f in saved/tile.ted saved/height_map_0.png capture.png; do
+        cmp -s "$OUT/tile_smoke1/$f" "$OUT/tile_smoke2/$f" && [ -s "$OUT/tile_smoke1/$f" ] && echo "$f identical between runs" || fail "$f differs between runs (or missing)"
+    done
+    # the mouse and the keys (select, grab, brush, polygon drawing, handle drag)
+    run_script tile_mouse 1 "$SRC"
+    # minimal edit
+    changed=$(diff <(tr -d '\r' < "$SRC/tile.ted") <(tr -d '\r' < "$OUT/tile_smoke1/saved/tile.ted") | grep -c '^>')
+    [ "$changed" = 1 ] && echo "saved tile.ted differs from the original in exactly the moved building's line" || fail "saved tile.ted differs in $changed lines (expected 1)"
+    python - "$SRC/height_map_0.png" "$OUT/tile_smoke1/saved/height_map_0.png" <<'PY' || bad=1
 import sys
 import numpy as np
 from PIL import Image
@@ -130,20 +181,37 @@ ok = d.any() and xs.min() >= 568 - 13 and xs.max() <= 568 + 13 and ys.min() >= 5
 print("saved height map: %d samples changed, inside the brush: %s" % (d.sum(), "yes" if ok else "NO"))
 sys.exit(0 if ok else 1)
 PY
-# everything undone: the saved files equal the originals
-run_script tile_roundtrip 1 "$SRC"
-for f in tile.ted height_map_0.png; do
-    cmp -s "$SRC/$f" "$OUT/tile_roundtrip1/restored/$f" && echo "undo all + save: $f equals the original" || fail "undo all + save: $f differs from the original"
-done
-[ -s "$OUT/tile_roundtrip1/edited/tile.ted" ] && echo "edited tile written and opened again" || fail "no edited tile"
+    # everything undone: the saved files equal the originals
+    run_script tile_roundtrip 1 "$SRC"
+    for f in tile.ted height_map_0.png; do
+        cmp -s "$SRC/$f" "$OUT/tile_roundtrip1/restored/$f" && echo "undo all + save: $f equals the original" || fail "undo all + save: $f differs from the original"
+    done
+    [ -s "$OUT/tile_roundtrip1/edited/tile.ted" ] && echo "edited tile written and opened again" || fail "no edited tile"
+fi
+
+# undo and redo wait for the gesture under way; another tile opened mid-gesture closes it on the tile before (any tile with a building, and
+# another)
+if have "$SRC" "$FORD"; then
+    run_script tile_gestures 1 "$SRC" "$FORD"
+fi
+
 # save in place on a copy of the kit tile
-COPY="$OUT/kit/terrain/tiles/battle"
-rm -rf "$OUT/kit"; mkdir -p "$COPY/assembly_kit/khazad_wall_test" "$COPY/_tile_database/TILES"
-cp -r "$SRC" "$COPY/assembly_kit/khazad_wall_test/battlefield"
-cp "$KIT/_tile_database/TILES/assembly_kit_khazad_wall_test.xml" "$COPY/_tile_database/TILES/"
-run_script tile_save 1 "$COPY/assembly_kit/khazad_wall_test/battlefield"
-for f in tile.ted height_map_0.png; do
-    cmp -s "$SRC/$f" "$COPY/assembly_kit/khazad_wall_test/battlefield/$f" && echo "save in place, undo, save: $f equals the original" || fail "save in place, undo, save: $f differs from the original"
-    cmp -s "$SRC/$f" "$COPY/assembly_kit/khazad_wall_test/battlefield/$f.bak" && echo "$f.bak is the original" || fail "$f.bak is not the original"
-done
+if have "$SRC"; then
+    if [ -f "$SRC_ENTRY" ]; then
+        COPY="$OUT/kit/terrain/tiles/battle"
+        rm -rf "$OUT/kit"; mkdir -p "$COPY/assembly_kit/khazad_wall_test" "$COPY/_tile_database/TILES"
+        cp -r "$SRC" "$COPY/assembly_kit/khazad_wall_test/battlefield"
+        cp "$SRC_ENTRY" "$COPY/_tile_database/TILES/"
+        run_script tile_save 1 "$COPY/assembly_kit/khazad_wall_test/battlefield"
+        for f in tile.ted height_map_0.png; do
+            cmp -s "$SRC/$f" "$COPY/assembly_kit/khazad_wall_test/battlefield/$f" && echo "save in place, undo, save: $f equals the original" || fail "save in place, undo, save: $f differs from the original"
+            cmp -s "$SRC/$f" "$COPY/assembly_kit/khazad_wall_test/battlefield/$f.bak" && echo "$f.bak is the original" || fail "$f.bak is not the original"
+        done
+    else
+        echo "SKIPPED: save in place: no database entry at $SRC_ENTRY (WCE_TILE_SRC_ENTRY)"
+        skipped=$((skipped + 1))
+    fi
+fi
+
+[ $skipped = 0 ] || echo "$skipped part(s) SKIPPED: their tiles are not on this machine"
 exit $bad
