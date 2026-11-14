@@ -3895,6 +3895,294 @@ fn ground_group_row(name: &str, on: bool, thumb: Option<u64>) -> bool {
     clicked
 }
 
+impl TileTool {
+    /// A press in the viewport (no flip under way): ends a grab, starts a gesture (a stroke, a handle's drag, Alt rotation), places or draws.
+    fn on_press(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
+        self.on_hover(e, ev);
+        if self.grabbing() {
+            self.end_grab(e, true);
+            return true;
+        }
+
+        if self.drawing {
+            // A closed shape closes on its first point: that click finishes it.
+            if self.closes_drawing(e, ev) {
+                self.finish_drawing(e);
+            } else if self.terrain_hit {
+                self.draw_pts.push(self.cursor);
+
+                // An angle finder is done at its third point.
+                if self.draw_pts.len() == 3 && self.draft.as_ref().is_some_and(|d| d.kind == wce_tile_editor::tile_document::ANGLE_FINDER) {
+                    self.finish_drawing(e);
+                }
+            }
+
+            return true;
+        }
+
+        // The vegetation brush paints (Ctrl: takes away) instead of placing one.
+        if self.painting_trees(e) {
+            if self.terrain_hit {
+                self.begin_stroke(e, ev.ctrl);
+            }
+
+            return true;
+        }
+
+        if let Some(placing) = self.placing.clone() {
+            if self.terrain_hit {
+                let _ = placing;
+                self.status = self.place_at(e, self.cursor).unwrap_or_else(|err| err);
+            }
+
+            return true;
+        }
+
+        // Alt + a click on the selected polygon or spline: on a point removes it, near an edge inserts one.
+        if ev.alt && self.mode == TileMode::Select && self.alt_point_edit(e, ray) {
+            return true;
+        }
+
+        // Alt + a left drag on a selection turns it in place (around its centre).
+        if ev.alt && self.mode == TileMode::Select && self.alt_rotate_begin(e, ev.x) {
+            return true;
+        }
+
+        if self.mode.brush().is_some() {
+            self.paint_erase = ev.ctrl;
+            let kind = self.brush_kind().expect("a brush mode");
+            self.turn_image_brush();
+            let dt = e.clock.dt();
+            let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+            if self.terrain_hit && d.project().has_height() {
+                self.gesture = Some(Gesture::TerrainStroke);
+                d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
+
+                // A stamp is one click.
+                if self.mode == TileMode::Stamp {
+                    d.end_stroke();
+                    self.gesture = None;
+                }
+            }
+
+            return true;
+        }
+
+        // Select mode: a point light's radius handle starts a drag of the radius.
+        let sel = primary(e);
+        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+        if let (Some((o, dir)), Some(sel)) = (ray, sel)
+            && let Some((k, r)) = d.tile().light_radius_handle(sel)
+            && handle_under_ray(k, o, dir).is_some()
+        {
+            let c = d.tile().world_position(sel);
+            let grab = light_plane_distance(c, o, dir).map_or(0.0, |at| r - at);
+            self.gesture = Some(Gesture::LightRadius { light: sel, grab, gesture: d.next_gesture() });
+            return true;
+        }
+
+        // A civilian shelter's target handle starts a drag of the target over the ground.
+        if let (Some((o, dir)), Some(sel)) = (ray, sel)
+            && let Some(k) = d.tile().shelter_target(sel)
+            && handle_under_ray(Float3::new(k.x, k.y + 0.3, k.z), o, dir).is_some()
+        {
+            self.gesture = Some(Gesture::ShelterTarget { shelter: sel, gesture: d.next_gesture() });
+            return true;
+        }
+
+        // A polygon point handle starts a drag, shift + click near an edge inserts a point.
+        let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
+        let pts = d.tile().polygon_display_points(sel);
+        let spline = d.is_spline(sel);
+        let near = |c: Float3| handle_under_ray(c, o, dir);
+
+        // A spline's handles (drawn at their point's height) before its points; the procedural roads' and walls' too.
+        if d.has_handles(sel) {
+            let mut best = None;
+            let mut best_t = 1e30f32;
+            for (i, (hin, hout)) in d.tile().spline_world_handles(sel).into_iter().enumerate() {
+                for (h, out) in [(hin, false), (hout, true)] {
+                    let Some(y) = pts.get(i).map(|p| p.y) else { continue };
+                    if let Some(t) = h.and_then(|h| near(Float3::new(h.x, y + 0.4, h.z))).filter(|&t| t < best_t) {
+                        best_t = t;
+                        best = Some((i, out));
+                    }
+                }
+            }
+
+            if let Some((i, out)) = best {
+                self.poly_point = Some(i);
+                self.gesture = Some(Gesture::Point { handle: Some(out), gesture: d.next_gesture() });
+                return true;
+            }
+        }
+
+        let best = nearest_handle(pts.iter().copied(), o, dir);
+        if best.is_some() {
+            self.poly_point = best;
+            self.gesture = Some(Gesture::Point { handle: None, gesture: d.next_gesture() });
+            return true;
+        }
+
+        if ev.shift && self.terrain_hit {
+            let closed = if spline {
+                d.tile().tscene().doc().get(sel, "closed").is_some_and(|v| v == "1")
+            } else {
+                d.tile().tscene().doc().get(sel, "polygon_closed").is_none_or(|v| v != "0")
+            };
+
+            let mut at = 0;
+            let mut at_t = 0.5;
+            let mut bd = 1e30f32;
+            let cur = self.cursor;
+            for i in 0..pts.len() {
+                if i + 1 == pts.len() && !closed {
+                    break;
+                }
+
+                let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
+                let (abx, abz) = (b.x - a.x, b.z - a.z);
+                let l2 = abx * abx + abz * abz;
+                let t = if l2 > 1e-6 { (((cur.x - a.x) * abx + (cur.z - a.z) * abz) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                let (dx, dz) = (a.x + abx * t - cur.x, a.z + abz * t - cur.z);
+                let dd = dx * dx + dz * dz;
+                if dd < bd {
+                    bd = dd;
+                    at = i;
+                    at_t = t;
+                }
+            }
+
+            // Beyond an end of an open spline, it grows there.
+            let (op, index, new_point) = match (spline && !closed, at_t) {
+                (true, t) if t <= 0.0 && at == 0 => ("prepend", 0, 0),
+                (true, t) if t >= 1.0 && at + 2 == pts.len() => ("insert", at + 1, at + 2),
+                _ => ("insert", at, at + 1),
+            };
+
+            if d.polygon_point(sel, op, index, cur, 0).is_ok() {
+                self.poly_point = Some(new_point);
+                self.status = "point inserted".to_owned();
+            }
+
+            return true;
+        }
+
+        false
+    }
+
+    /// A drag in the viewport: the gesture under way goes on; none, the camera's (false).
+    fn on_drag(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
+        match self.gesture {
+            Some(Gesture::AltRotate(_)) => self.alt_rotate_drag(e, ev.x, ev.shift),
+            Some(Gesture::VegStroke(_)) => {
+                self.on_hover(e, ev);
+                if self.terrain_hit {
+                    self.dab(e);
+                }
+            }
+
+            Some(Gesture::TerrainStroke) => {
+                self.on_hover(e, ev);
+                let dt = e.clock.dt();
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                self.turn_image_brush();
+                if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
+                    d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
+                }
+            }
+
+            Some(Gesture::ShelterTarget { shelter, gesture }) => {
+                self.on_hover(e, ev);
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                if self.terrain_hit {
+                    d.set_shelter_target(shelter, self.cursor, gesture);
+                }
+            }
+
+            Some(Gesture::LightRadius { light, grab, gesture }) => {
+                // The radius: how far from the light, across, the mouse ray meets the light's horizontal plane.
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                let c = d.tile().world_position(light);
+                if let Some(at) = ray.and_then(|(o, dir)| light_plane_distance(c, o, dir)) {
+                    d.set_light_radius(light, at + grab, gesture);
+                }
+            }
+
+            Some(Gesture::Point { handle, gesture }) => {
+                self.on_hover(e, ev);
+                let sel = primary(e);
+                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
+                if let (true, Some(sel), Some(pt)) = (self.terrain_hit, sel, self.poly_point) {
+                    let sc = d.tile().tscene();
+                    let pts = sc.polygon_points(sel);
+                    if let Some(out) = handle {
+                        let _ = d.spline_point(sel, if out { "out" } else { "in" }, pt, self.cursor, gesture);
+                    } else if let Some(&point) = pts.get(pt) {
+                        let before = sc.point_position(point).unwrap_or_default();
+                        let after = d.tile().to_local(sel, self.cursor);
+                        if before != after {
+                            let _ = d.polygon_point(sel, "move", pt, self.cursor, gesture);
+                        }
+                    }
+                }
+            }
+
+            // A G grab follows the mouse in `on_hover`; no gesture: the camera's.
+            Some(Gesture::Grab(_)) | None => return false,
+        }
+
+        true
+    }
+
+    /// A click in the viewport: picks what is under the mouse (a model piece, an instance along the ray, a shape on the ground).
+    fn on_click(&mut self, e: &mut Editor, ev: &ViewportEvent, id: DocumentId, ray: Option<(Float3, Float3)>) -> bool {
+        // Placing or drawing: the click was a point placed, not a pick (the new building under the mouse would be selected).
+        if self.placing.is_some() || self.drawing {
+            return true;
+        }
+
+        // Select: the model piece under the cursor (exact), else the nearest instance sphere along the ray.
+        let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
+        let mut hit = (ev.hit_source.doc == id && ev.hit_source.item != TERRAIN).then(|| elem_of(ev.hit_source.item)).flatten();
+        if hit.is_none()
+            && let Some((o, dir)) = ray
+        {
+            hit = d.tile().pick_instance(o, dir, true);
+        }
+
+        // Last: a polygon or line on the ground there (its outline, else the smallest it is inside), so that a holder's shapes are
+        // picked by a click (a building or a marker there wins).
+        if hit.is_none()
+            && let Some((o, dir)) = ray
+            && let Some(at) = d.tile().pick_terrain(o, dir)
+        {
+            hit = d.tile().pick_polygon(at, Self::handle_size(e));
+        }
+
+        let Some(hit) = hit else {
+            if !ev.ctrl {
+                e.selection.clear();
+            }
+
+            self.poly_point = None;
+            return true;
+        };
+
+        let r = d.ref_of(hit);
+        if ev.ctrl {
+            e.selection.toggle(r);
+        } else if ev.shift {
+            e.selection.add(r);
+        } else {
+            e.selection.set(r);
+        }
+
+        self.poly_point = None;
+        true
+    }
+}
+
 impl Tool for TileTool {
     fn id(&self) -> &str {
         TILE_TOOL_ID
@@ -4641,244 +4929,9 @@ impl Tool for TileTool {
             }
 
             ViewportEventKind::Click if self.flip.is_some() => true,
-            ViewportEventKind::Press => {
-                self.on_hover(e, ev);
-                if self.grabbing() {
-                    self.end_grab(e, true);
-                    return true;
-                }
+            ViewportEventKind::Press => self.on_press(e, ev, id, ray),
 
-                if self.drawing {
-                    // A closed shape closes on its first point: that click finishes it.
-                    if self.closes_drawing(e, ev) {
-                        self.finish_drawing(e);
-                    } else if self.terrain_hit {
-                        self.draw_pts.push(self.cursor);
-
-                        // An angle finder is done at its third point.
-                        if self.draw_pts.len() == 3
-                            && self.draft.as_ref().is_some_and(|d| d.kind == wce_tile_editor::tile_document::ANGLE_FINDER)
-                        {
-                            self.finish_drawing(e);
-                        }
-                    }
-
-                    return true;
-                }
-
-                // The vegetation brush paints (Ctrl: takes away) instead of placing one.
-                if self.painting_trees(e) {
-                    if self.terrain_hit {
-                        self.begin_stroke(e, ev.ctrl);
-                    }
-
-                    return true;
-                }
-
-                if let Some(placing) = self.placing.clone() {
-                    if self.terrain_hit {
-                        let _ = placing;
-                        self.status = self.place_at(e, self.cursor).unwrap_or_else(|err| err);
-                    }
-
-                    return true;
-                }
-
-                // Alt + a click on the selected polygon or spline: on a point removes it, near an edge inserts one.
-                if ev.alt && self.mode == TileMode::Select && self.alt_point_edit(e, ray) {
-                    return true;
-                }
-
-                // Alt + a left drag on a selection turns it in place (around its centre).
-                if ev.alt && self.mode == TileMode::Select && self.alt_rotate_begin(e, ev.x) {
-                    return true;
-                }
-
-                if self.mode.brush().is_some() {
-                    self.paint_erase = ev.ctrl;
-                    let kind = self.brush_kind().expect("a brush mode");
-                    self.turn_image_brush();
-                    let dt = e.clock.dt();
-                    let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                    if self.terrain_hit && d.project().has_height() {
-                        self.gesture = Some(Gesture::TerrainStroke);
-                        d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
-
-                        // A stamp is one click.
-                        if self.mode == TileMode::Stamp {
-                            d.end_stroke();
-                            self.gesture = None;
-                        }
-                    }
-
-                    return true;
-                }
-
-                // Select mode: a point light's radius handle starts a drag of the radius.
-                let sel = primary(e);
-                let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                if let (Some((o, dir)), Some(sel)) = (ray, sel)
-                    && let Some((k, r)) = d.tile().light_radius_handle(sel)
-                    && handle_under_ray(k, o, dir).is_some()
-                {
-                    let c = d.tile().world_position(sel);
-                    let grab = light_plane_distance(c, o, dir).map_or(0.0, |at| r - at);
-                    self.gesture = Some(Gesture::LightRadius { light: sel, grab, gesture: d.next_gesture() });
-                    return true;
-                }
-
-                // A civilian shelter's target handle starts a drag of the target over the ground.
-                if let (Some((o, dir)), Some(sel)) = (ray, sel)
-                    && let Some(k) = d.tile().shelter_target(sel)
-                    && handle_under_ray(Float3::new(k.x, k.y + 0.3, k.z), o, dir).is_some()
-                {
-                    self.gesture = Some(Gesture::ShelterTarget { shelter: sel, gesture: d.next_gesture() });
-                    return true;
-                }
-
-                // A polygon point handle starts a drag, shift + click near an edge inserts a point.
-                let (Some((o, dir)), Some(sel)) = (ray, sel.filter(|&s| d.tile().is_polygon(s))) else { return false };
-                let pts = d.tile().polygon_display_points(sel);
-                let spline = d.is_spline(sel);
-                let near = |c: Float3| handle_under_ray(c, o, dir);
-
-                // A spline's handles (drawn at their point's height) before its points; the procedural roads' and walls' too.
-                if d.has_handles(sel) {
-                    let mut best = None;
-                    let mut best_t = 1e30f32;
-                    for (i, (hin, hout)) in d.tile().spline_world_handles(sel).into_iter().enumerate() {
-                        for (h, out) in [(hin, false), (hout, true)] {
-                            let Some(y) = pts.get(i).map(|p| p.y) else { continue };
-                            if let Some(t) = h.and_then(|h| near(Float3::new(h.x, y + 0.4, h.z))).filter(|&t| t < best_t) {
-                                best_t = t;
-                                best = Some((i, out));
-                            }
-                        }
-                    }
-
-                    if let Some((i, out)) = best {
-                        self.poly_point = Some(i);
-                        self.gesture = Some(Gesture::Point { handle: Some(out), gesture: d.next_gesture() });
-                        return true;
-                    }
-                }
-
-                let best = nearest_handle(pts.iter().copied(), o, dir);
-                if best.is_some() {
-                    self.poly_point = best;
-                    self.gesture = Some(Gesture::Point { handle: None, gesture: d.next_gesture() });
-                    return true;
-                }
-
-                if ev.shift && self.terrain_hit {
-                    let closed = if spline {
-                        d.tile().tscene().doc().get(sel, "closed").is_some_and(|v| v == "1")
-                    } else {
-                        d.tile().tscene().doc().get(sel, "polygon_closed").is_none_or(|v| v != "0")
-                    };
-
-                    let mut at = 0;
-                    let mut at_t = 0.5;
-                    let mut bd = 1e30f32;
-                    let cur = self.cursor;
-                    for i in 0..pts.len() {
-                        if i + 1 == pts.len() && !closed {
-                            break;
-                        }
-
-                        let (a, b) = (pts[i], pts[(i + 1) % pts.len()]);
-                        let (abx, abz) = (b.x - a.x, b.z - a.z);
-                        let l2 = abx * abx + abz * abz;
-                        let t = if l2 > 1e-6 { (((cur.x - a.x) * abx + (cur.z - a.z) * abz) / l2).clamp(0.0, 1.0) } else { 0.0 };
-                        let (dx, dz) = (a.x + abx * t - cur.x, a.z + abz * t - cur.z);
-                        let dd = dx * dx + dz * dz;
-                        if dd < bd {
-                            bd = dd;
-                            at = i;
-                            at_t = t;
-                        }
-                    }
-
-                    // Beyond an end of an open spline, it grows there.
-                    let (op, index, new_point) = match (spline && !closed, at_t) {
-                        (true, t) if t <= 0.0 && at == 0 => ("prepend", 0, 0),
-                        (true, t) if t >= 1.0 && at + 2 == pts.len() => ("insert", at + 1, at + 2),
-                        _ => ("insert", at, at + 1),
-                    };
-
-                    if d.polygon_point(sel, op, index, cur, 0).is_ok() {
-                        self.poly_point = Some(new_point);
-                        self.status = "point inserted".to_owned();
-                    }
-
-                    return true;
-                }
-
-                false
-            }
-
-            ViewportEventKind::Drag => {
-                match self.gesture {
-                    Some(Gesture::AltRotate(_)) => self.alt_rotate_drag(e, ev.x, ev.shift),
-                    Some(Gesture::VegStroke(_)) => {
-                        self.on_hover(e, ev);
-                        if self.terrain_hit {
-                            self.dab(e);
-                        }
-                    }
-
-                    Some(Gesture::TerrainStroke) => {
-                        self.on_hover(e, ev);
-                        let dt = e.clock.dt();
-                        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                        self.turn_image_brush();
-                        if let (true, Some(kind)) = (self.terrain_hit, self.brush_kind()) {
-                            d.brush_step(kind, self.cursor.x, self.cursor.z, self.brush.clone(), dt);
-                        }
-                    }
-
-                    Some(Gesture::ShelterTarget { shelter, gesture }) => {
-                        self.on_hover(e, ev);
-                        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                        if self.terrain_hit {
-                            d.set_shelter_target(shelter, self.cursor, gesture);
-                        }
-                    }
-
-                    Some(Gesture::LightRadius { light, grab, gesture }) => {
-                        // The radius: how far from the light, across, the mouse ray meets the light's horizontal plane.
-                        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                        let c = d.tile().world_position(light);
-                        if let Some(at) = ray.and_then(|(o, dir)| light_plane_distance(c, o, dir)) {
-                            d.set_light_radius(light, at + grab, gesture);
-                        }
-                    }
-
-                    Some(Gesture::Point { handle, gesture }) => {
-                        self.on_hover(e, ev);
-                        let sel = primary(e);
-                        let d = e.docs.find_as_mut::<TileDocument>(id).expect("a tile");
-                        if let (true, Some(sel), Some(pt)) = (self.terrain_hit, sel, self.poly_point) {
-                            let sc = d.tile().tscene();
-                            let pts = sc.polygon_points(sel);
-                            if let Some(out) = handle {
-                                let _ = d.spline_point(sel, if out { "out" } else { "in" }, pt, self.cursor, gesture);
-                            } else if let Some(&point) = pts.get(pt) {
-                                let before = sc.point_position(point).unwrap_or_default();
-                                let after = d.tile().to_local(sel, self.cursor);
-                                if before != after {
-                                    let _ = d.polygon_point(sel, "move", pt, self.cursor, gesture);
-                                }
-                            }
-                        }
-                    }
-
-                    // A G grab follows the mouse in `on_hover`; no gesture: the camera's.
-                    Some(Gesture::Grab(_)) | None => return false,
-                }
-
-                true
-            }
+            ViewportEventKind::Drag => self.on_drag(e, ev, id, ray),
 
             // The release ends what the press began (a G grab waits for its click).
             ViewportEventKind::Release => {
@@ -4889,51 +4942,7 @@ impl Tool for TileTool {
                 true
             }
 
-            ViewportEventKind::Click => {
-                // Placing or drawing: the click was a point placed, not a pick (the new building under the mouse would be selected).
-                if self.placing.is_some() || self.drawing {
-                    return true;
-                }
-
-                // Select: the model piece under the cursor (exact), else the nearest instance sphere along the ray.
-                let d = e.docs.find_as::<TileDocument>(id).expect("a tile");
-                let mut hit = (ev.hit_source.doc == id && ev.hit_source.item != TERRAIN).then(|| elem_of(ev.hit_source.item)).flatten();
-                if hit.is_none()
-                    && let Some((o, dir)) = ray
-                {
-                    hit = d.tile().pick_instance(o, dir, true);
-                }
-
-                // Last: a polygon or line on the ground there (its outline, else the smallest it is inside), so that a holder's shapes are
-                // picked by a click (a building or a marker there wins).
-                if hit.is_none()
-                    && let Some((o, dir)) = ray
-                    && let Some(at) = d.tile().pick_terrain(o, dir)
-                {
-                    hit = d.tile().pick_polygon(at, Self::handle_size(e));
-                }
-
-                let Some(hit) = hit else {
-                    if !ev.ctrl {
-                        e.selection.clear();
-                    }
-
-                    self.poly_point = None;
-                    return true;
-                };
-
-                let r = d.ref_of(hit);
-                if ev.ctrl {
-                    e.selection.toggle(r);
-                } else if ev.shift {
-                    e.selection.add(r);
-                } else {
-                    e.selection.set(r);
-                }
-
-                self.poly_point = None;
-                true
-            }
+            ViewportEventKind::Click => self.on_click(e, ev, id, ray),
         }
     }
 
