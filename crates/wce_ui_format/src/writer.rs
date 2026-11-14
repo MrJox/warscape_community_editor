@@ -175,7 +175,7 @@ pub fn convert(xml: &str) -> Result<Vec<u8>, String> {
             }
             Ev::Comment(_) => {}
             Ev::Text(t) => match stack.last_mut() {
-                Some(f) if matches!(f.kind, Kind::Text(_)) => f.text.push_str(&t.replace('\u{e01f}', "\u{1f}")),
+                Some(f) if matches!(f.kind, Kind::Text(_)) => f.text.push_str(&t),
                 _ => {
                     if t.chars().any(|c| !c.is_whitespace()) {
                         return Err(fail(format!("text is not allowed here: {:?}", t.trim())));
