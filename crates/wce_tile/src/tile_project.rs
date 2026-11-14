@@ -1142,13 +1142,17 @@ impl TileProject {
         maps: &[(String, Vec<u8>)],
     ) -> Result<(String, TedReport)> {
         std::fs::create_dir_all(kit_dir).map_err(|error| format!("{}: {error}", kit_dir.display()))?;
-        // A file the kit has the same bytes of is left alone; one it has otherwise keeps a `.bak`.
+        // A file the kit has the same bytes of is left alone; one it has otherwise keeps a `.bak` of the kit's own, the first time only (as
+        // a project's save does): made again at every save it would hold only the save before, and the kit's file would be lost at the second.
         let write = |name: &str, bytes: &[u8]| -> Result<bool> {
             let target = kit_dir.join(name);
             match std::fs::read(&target) {
                 Ok(old) if old == bytes => return Ok(false),
                 Ok(_) => {
-                    std::fs::copy(&target, kit_dir.join(format!("{name}.bak"))).map_err(|error| error.to_string())?;
+                    let bak = kit_dir.join(format!("{name}.bak"));
+                    if !bak.exists() {
+                        std::fs::copy(&target, &bak).map_err(|error| error.to_string())?;
+                    }
                 }
 
                 Err(_) => {}
