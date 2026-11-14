@@ -19,7 +19,9 @@ pub struct Converted {
     pub version: u32,
 }
 
-/// Escape for XML text the way the original does (apostrophes and quotes too, CR and 0x1f as character references).
+/// Escape for XML text the way the original does (apostrophes and quotes too, CR as a character reference). 0x1f, which XML cannot hold
+/// as a character, is the reference `&#x1F;`, and U+E01F is `&#xE01F;`. etwng wrote 0x1f as `&#xE01F;`, so a string holding U+E01F came
+/// back as 0x1f.
 pub fn xml_escape(s: &str) -> String {
     let mut o = String::with_capacity(s.len() + 8);
     for c in s.chars() {
@@ -30,7 +32,8 @@ pub fn xml_escape(s: &str) -> String {
             '"' => o.push_str("&quot;"),
             '\'' => o.push_str("&apos;"),
             '\r' => o.push_str("&#xD;"),
-            '\u{1f}' => o.push_str("&#xE01F;"),
+            '\u{1f}' => o.push_str("&#x1F;"),
+            '\u{e01f}' => o.push_str("&#xE01F;"),
             c => o.push(c),
         }
     }
@@ -1913,7 +1916,7 @@ mod tests {
         assert!(xml.starts_with("<cml version=\"002\">\n"));
         assert!(xml.contains("<key></key>\n  <value></value>"));
         assert!(xml.contains("<key>&lt;a href=&quot;x&quot;&gt;&amp;&apos;&lt;/a&gt;</key>"));
-        assert!(xml.contains("&#xD;cr&#xE01F;us"));
+        assert!(xml.contains("&#xD;cr&#x1F;us"));
         check_prefixes(&b.d, usize::MAX);
 
         // No pairs at all is a file too.
@@ -2170,12 +2173,11 @@ mod tests {
 
     #[test]
     fn xml_escape_escapes_what_the_original_does() {
-        assert_eq!(xml_escape("<>&\"'\r\u{1f}\n\t\u{fc}"), "&lt;&gt;&amp;&quot;&apos;&#xD;&#xE01F;\n\t\u{fc}");
+        assert_eq!(xml_escape("<>&\"'\r\u{1f}\n\t\u{fc}\u{e01f}"), "&lt;&gt;&amp;&quot;&apos;&#xD;&#x1F;\n\t\u{fc}&#xE01F;");
         assert_eq!(xml_escape(""), "");
     }
 
     #[test]
-    #[ignore = "a string holding U+E01F comes back as 0x1f: the writer reads U+E01F as the escape of 0x1f"]
     fn a_private_use_e01f_character_round_trips() {
         let mut b = B::new(2);
         b.s("a\u{e01f}b").s("");

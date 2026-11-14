@@ -143,10 +143,6 @@ pub struct Dom {
     pub root: Element,
 }
 
-fn dom_escape(s: &str) -> String {
-    xml_escape(s).replace('\u{e01f}', "&#xE01F;")
-}
-
 fn tag_end(src: &str, start: usize) -> (usize, bool, bool) {
     // (offset of `>`, self closing, space before the slash)
     let b = src.as_bytes();
@@ -259,7 +255,7 @@ fn open_tag(e: &Element, out: &mut String) {
     out.push('<');
     out.push_str(&e.name);
     for (k, v) in &e.attrs {
-        out.push_str(&format!(" {}=\"{}\"", k, dom_escape(v)));
+        out.push_str(&format!(" {}=\"{}\"", k, xml_escape(v)));
     }
 }
 
@@ -279,7 +275,7 @@ fn write_elem(e: &Element, depth: usize, out: &mut String) {
     } else if e.is_leaf() {
         for n in &e.children {
             if let Node::Text(t) = n {
-                out.push_str(&dom_escape(t));
+                out.push_str(&xml_escape(t));
             }
         }
     } else {
