@@ -135,7 +135,8 @@ pub fn generate(input: &Input) -> Layout {
         .iter()
         .map(|w| {
             let mut m = vec![];
-            for r in w.footprint.iter().chain(&w.platforms) {
+            // A ring of no points (the pieces' fields are public: a caller may give one) has no cells.
+            for r in w.footprint.iter().chain(&w.platforms).filter(|r| !r.is_empty()) {
                 m.extend(g.polygon_cells(r));
                 let mut ring = r.clone();
                 ring.push(r[0]);
@@ -771,6 +772,11 @@ fn flip_short(flags: &mut [bool], value: bool, max: usize) {
 
 /// Points along the line at most `step` apart (its own points kept).
 fn resample(line: &[P], step: f64) -> Vec<P> {
+    // A step of 0 (or not a number) would ask for usize::MAX points a segment: the line's own points then.
+    if !(step > 0.0) {
+        return line.to_vec();
+    }
+
     let mut out = vec![];
     for w in line.windows(2) {
         let (a, b) = (w[0], w[1]);
@@ -2213,6 +2219,14 @@ fn approaches(out: &mut Layout, g: &Grid, attacker: &Mask, nogo: &Mask, bounds: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_step_of_zero_keeps_the_line_and_does_not_ask_for_endless_points() {
+        let line = [[0.0, 0.0], [10.0, 0.0]];
+        assert_eq!(resample(&line, 0.0), line.to_vec());
+        assert_eq!(resample(&line, f64::NAN), line.to_vec());
+        assert_eq!(resample(&line, 5.0).len(), 3);
+    }
     use crate::Capture;
 
     /// A straight wall from p to q: pieces of 20, the walkway on the axis, 6 thick; the `gate_at`th piece a gate.

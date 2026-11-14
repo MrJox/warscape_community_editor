@@ -343,7 +343,7 @@ impl Document for MapDocument {
     }
 
     /// The map's folder into the projects' kit layout: the files made again from the model where they were edited (the others as they
-    /// were: copied the first time, then left when the folder has them at the same size).
+    /// were: copied the first time, then left while the folder's copy has the same size and is not older than the file it came from).
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
         let dir = if target.path.as_os_str().is_empty() {
             self.save_dir.clone().ok_or("no projects folder to save into")?
@@ -357,8 +357,11 @@ impl Document for MapDocument {
         for (rel, blob) in &files.folder {
             let to = dir.join(rel);
             if let wce_tile_model::Blob::File(src) = blob {
-                let same_size = std::fs::metadata(src).ok().zip(std::fs::metadata(&to).ok()).is_some_and(|(a, b)| a.len() == b.len());
-                if *src == to || same_size {
+                // The same size is not the same file (an LF is always as large): one changed since (in TEd) is newer than the copy.
+                let current = std::fs::metadata(src).ok().zip(std::fs::metadata(&to).ok()).is_some_and(|(a, b)| {
+                    a.len() == b.len() && a.modified().ok().zip(b.modified().ok()).is_some_and(|(from, copy)| from <= copy)
+                });
+                if *src == to || current {
                     kept += 1;
                     continue;
                 }

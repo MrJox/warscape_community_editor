@@ -1466,6 +1466,21 @@ fn hull_caps(polys: &[(usize, Vec<[f32; 3]>)], planes: &[[f32; 3]]) -> Vec<(usiz
                 tris.push([p, v, w]);
             }
 
+            // A loop that is not simple (it crosses itself) is not cut whole: the cap has a hole soldiers drop through. Said in the log,
+            // by the area the triangles cover against the loop's own.
+            let area = |q: &[[f32; 2]]| {
+                (0..q.len()).map(|i| q[i][0] * q[(i + 1) % q.len()][1] - q[(i + 1) % q.len()][0] * q[i][1]).sum::<f32>().abs() * 0.5
+            };
+            let covered = tris.iter().map(|t| area(&[flat[t[0]], flat[t[1]], flat[t[2]]])).sum::<f32>();
+            let whole = area(&flat);
+            if whole > 1e-3 && covered < whole * 0.99 {
+                wce_foundation::log::warn(format!(
+                    "procedural walls: a collision cap of {} points is cut only in part ({:.0} % of its area): its loop crosses itself",
+                    flat.len(),
+                    covered / whole * 100.0
+                ));
+            }
+
             for [i, j, k] in tris {
                 out.push((src, vec![lp[i], lp[j], lp[k]]));
             }

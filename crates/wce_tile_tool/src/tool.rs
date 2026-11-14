@@ -732,7 +732,9 @@ pub struct TileTool {
     pub(crate) game_preload_tried: bool,
 
     /// The Tiles panel's "game packs" source: the tile databases in effect as index rows (no entry file), or why they could not load.
-    browse_packs: Option<Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>>,
+    /// The packs' tiles for the Tiles panel and the mount they were read from (`Files::mount_id`): read again for another (a failure
+    /// before the packs were mounted, a list of the mods before).
+    browse_packs: Option<(u64, Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String>)>,
 }
 
 impl Default for TileTool {
@@ -1433,7 +1435,10 @@ impl TileTool {
 
     /// The tiles of the game's packs (the tile databases in effect, battle and campaign) as index rows, read on first use.
     fn pack_entries(&mut self, e: &mut Editor) -> Result<Arc<Vec<wce_formats::tile_index::TileIndexEntry>>, String> {
-        if let Some(r) = &self.browse_packs {
+        let mount = e.vfs().map_or(0, |v| wce_vfs::files::Files::mount_id(v.as_ref()));
+        if let Some((m, r)) = &self.browse_packs
+            && *m == mount
+        {
             return r.clone();
         }
 
@@ -1467,7 +1472,7 @@ impl TileTool {
             rows.sort_by(|a, b| a.key.cmp(&b.key));
             Arc::new(rows)
         });
-        self.browse_packs = Some(r.clone());
+        self.browse_packs = Some((mount, r.clone()));
         r
     }
 
@@ -4730,7 +4735,8 @@ impl Tool for TileTool {
                     let mut best_t = 1e30f32;
                     for (i, (hin, hout)) in d.tile().spline_world_handles(sel).into_iter().enumerate() {
                         for (h, out) in [(hin, false), (hout, true)] {
-                            if let Some(t) = h.and_then(|h| near(Float3::new(h.x, pts[i].y + 0.4, h.z))).filter(|&t| t < best_t) {
+                            let Some(y) = pts.get(i).map(|p| p.y) else { continue };
+                            if let Some(t) = h.and_then(|h| near(Float3::new(h.x, y + 0.4, h.z))).filter(|&t| t < best_t) {
                                 best_t = t;
                                 best = Some((i, out));
                             }
