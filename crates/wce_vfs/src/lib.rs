@@ -117,6 +117,15 @@ pub struct Vfs {
 
     /// Path -> every pack that removes it (an empty file), highest priority first.
     removed_by: HashMap<String, Vec<usize>>,
+
+    /// Which files these are (`Files::mount_id`): new with every mount and every change of the loose folders' index.
+    mount_id: u64,
+}
+
+/// A new [`Files::mount_id`]: unique in the process, never 0.
+pub fn next_mount_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Vfs {
@@ -142,6 +151,7 @@ impl Vfs {
             owners: HashMap::new(),
             spelling: vec![],
             removed_by: HashMap::new(),
+            mount_id: next_mount_id(),
         };
 
         for folder in &config.overlay_folders {
@@ -205,6 +215,7 @@ impl Vfs {
     /// Indexes one path of the loose folders again, after a file was written into one of them or deleted from it since the mount (an
     /// editor's save, a revert): which folders have it now, and which pack it is read from.
     pub fn refresh_loose(&mut self, path: &str) {
+        self.mount_id = next_mount_id();
         let normalized = normalize(path);
         let mut owners = self.owners.remove(&normalized).unwrap_or_default();
         owners.retain(|&i| !self.packs[i].loose);

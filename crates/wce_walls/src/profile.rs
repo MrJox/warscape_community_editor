@@ -329,17 +329,21 @@ pub const BASES: [Profile; 15] = [
 ];
 
 /// The editor's list of bases (`wce_tile::property_enums::WALL_BASE`) that the game's files have whole (every piece's logic file: Rome 2
-/// has the barbarian, roman, greek, egyptian and persian forts; TDD's bases come with its packs), made once per game (the packs mounted
-/// then); every base without the files' game.
+/// has the barbarian, roman, greek, egyptian and persian forts; TDD's bases come with its packs), made once per game and mount (made again
+/// when mods are added or taken away: `Files::mount_id`); every base without the files' game.
 pub fn available_bases(files: &dyn wce_vfs::files::Files) -> &'static [(&'static str, &'static str)] {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static MADE: OnceLock<Mutex<HashMap<String, &'static [(&'static str, &'static str)]>>> = OnceLock::new();
+    type List = &'static [(&'static str, &'static str)];
+    static MADE: OnceLock<Mutex<HashMap<String, (u64, List)>>> = OnceLock::new();
     let all = wce_tile::property_enums::WALL_BASE;
     let Some(game) = files.game() else { return all };
     let made = MADE.get_or_init(Mutex::default);
     let mut made = made.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(list) = made.get(game.key) {
+    let mount = files.mount_id();
+    if let Some(&(m, list)) = made.get(game.key)
+        && m == mount
+    {
         return list;
     }
 
@@ -349,7 +353,8 @@ pub fn available_bases(files: &dyn wce_vfs::files::Files) -> &'static [(&'static
     };
     let list: Vec<(&'static str, &'static str)> = all.iter().copied().filter(|(k, _)| profile(k).is_none_or(whole)).collect();
     let list: &'static [(&'static str, &'static str)] = Box::leak(list.into_boxed_slice());
-    made.insert(game.key.to_owned(), list);
+    // The list a mount before had stays (leaked, a few bytes): the editor's property rows may still hold it.
+    made.insert(game.key.to_owned(), (mount, list));
     list
 }
 
@@ -367,5 +372,48 @@ mod tests {
         let keys = BASES.iter().map(|p| p.key).collect::<Vec<_>>();
         let listed = wce_tile::property_enums::WALL_BASE.iter().map(|(k, _)| *k).collect::<Vec<_>>();
         assert_eq!(keys, listed);
+    }
+
+    #[test]
+    fn the_bases_are_looked_for_again_in_another_mount() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        static ATTILA: wce_vfs::GameProfile = wce_vfs::GameProfile::ATTILA;
+
+        /// Packs that have every base's files or none, as a mount with or without a mod.
+        struct Packs {
+            whole: AtomicBool,
+            mount: AtomicU64,
+        }
+
+        impl wce_vfs::files::Files for Packs {
+            fn read(&self, _: &str) -> Result<Vec<u8>, String> {
+                Err("no such file".to_owned())
+            }
+
+            fn exists(&self, _: &str) -> bool {
+                self.whole.load(Ordering::Relaxed)
+            }
+
+            fn list(&self, _: &str, _: &str) -> Vec<String> {
+                vec![]
+            }
+
+            fn game(&self) -> Option<&wce_vfs::GameProfile> {
+                Some(&ATTILA)
+            }
+
+            fn mount_id(&self) -> u64 {
+                self.mount.load(Ordering::Relaxed)
+            }
+        }
+
+        let all = wce_tile::property_enums::WALL_BASE.len();
+        let packs = Packs { whole: AtomicBool::new(false), mount: AtomicU64::new(u64::MAX - 1) };
+        let few = available_bases(&packs).len();
+        assert!(few < all);
+        packs.whole.store(true, Ordering::Relaxed);
+        assert_eq!(available_bases(&packs).len(), few, "the same mount: the list made for it");
+        packs.mount.store(u64::MAX, Ordering::Relaxed);
+        assert_eq!(available_bases(&packs).len(), all, "another mount: looked for again");
     }
 }
