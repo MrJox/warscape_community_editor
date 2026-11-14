@@ -154,6 +154,11 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// Another tool was switched to: what this one changed in the shared scene for itself (other tools' documents hidden) is put back.
+    fn deactivated(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
     /// Items of the tool in a group of the File menu (`FileMenu`): what the tool opens or makes, saves its own way, or reverts to.
     fn file_menu(&mut self, editor: &mut Editor, part: FileMenu) {
         let _ = (editor, part);

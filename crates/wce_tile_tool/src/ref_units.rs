@@ -817,26 +817,7 @@ impl RefUnits {
 
     /// A list with a filter, for a combo: the item picked.
     fn combo(label: &str, tip: &str, filter: &mut String, value: &str, items: &[&str]) -> Option<String> {
-        let mut picked = None;
-        let open = gui::begin_combo(label, value);
-        if gui::is_item_hovered() {
-            gui::set_tooltip(tip);
-        }
-
-        if open {
-            gui::input_text(&format!("##{label}_filter"), Some("filter"), filter, 64, 0);
-            let words = filter.to_lowercase();
-            let shown: Vec<&&str> = items.iter().filter(|i| i.contains(&words)).collect();
-            gui::clipped(shown.len(), |k| {
-                if gui::selectable(shown[k], *shown[k] == value, 0) {
-                    picked = Some((*shown[k]).to_owned());
-                }
-            });
-
-            gui::end_combo();
-        }
-
-        picked
+        wce_editor::pickers::search_combo(label, tip, filter, value, items)
     }
 
     /// The Inspector's rows of the selected references, below their properties: an edit goes to all of them.
