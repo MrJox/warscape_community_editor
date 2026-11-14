@@ -639,7 +639,7 @@ pub struct TileTool {
     /// The right click ended a grab: its release opens no menu.
     right_used: bool,
 
-    /// The dock node of the Tile panel (where the Weather panel goes the first time).
+    /// The dock node of the Tile panel.
     pub(crate) right_dock: Option<gui::ImGuiID>,
 
     /// The keys of each type, per tile.
@@ -2980,27 +2980,6 @@ impl TileTool {
         }
     }
 
-    /// The Weather panel: which environment the game picks for the tile (every filter and file); the usual filters are chips over the viewport.
-    fn draw_weather_panel(&mut self, e: &mut Editor) {
-        gui::set_next_window_size(gui::v2(420.0, 420.0), gui::COND_FIRST_USE_EVER);
-        if let Some(dock) = self.right_dock.filter(|&d| d != 0) {
-            gui::set_next_window_dock_id(dock, gui::COND_FIRST_USE_EVER);
-        }
-
-        if !gui::begin("Weather", None, 0) {
-            gui::end();
-            return;
-        }
-
-        if document(e).is_some() {
-            self.weather.draw(e);
-        } else {
-            gui::text_disabled("Open a tile first.");
-        }
-
-        gui::end();
-    }
-
     /// The tile browser: the entries of the kit's tile database (an index, not a scan), a swatch of the tile's colour, its size and
     /// variations. A double-click opens the first variation, the buttons under the list open one.
     fn draw_browser_panel(&mut self, e: &mut Editor) {
@@ -4008,7 +3987,6 @@ impl Tool for TileTool {
         gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Tile", right);
         gui::dock_builder_dock_window("Inspector", right);
-        gui::dock_builder_dock_window("Weather", right);
         gui::dock_builder_dock_window("Minimap", right_bottom);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
@@ -4135,6 +4113,7 @@ impl Tool for TileTool {
         // The weather's campaign follows the Map context's map while it shows one.
         let campaign = self.context.loaded.as_ref().filter(|_| self.context.shown).map(|(name, _, _)| name.clone());
         self.weather.follow_campaign(e, campaign.as_deref());
+        self.weather.update(e);
 
         self.sync_brush_curve(e);
         self.sync_image_brush(e);
@@ -4271,7 +4250,6 @@ impl Tool for TileTool {
 
         {
             wce_foundation::wce_prof!("tile.panel.weather");
-            self.draw_weather_panel(e);
         }
 
         if tile {

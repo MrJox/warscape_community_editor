@@ -994,7 +994,6 @@ impl Tool for PrefabTool {
         gui::dock_builder_dock_window("Create", left);
         gui::dock_builder_dock_window("Scene", left);
         gui::dock_builder_dock_window("Inspector", right);
-        gui::dock_builder_dock_window("Weather", right);
         gui::dock_builder_dock_window("Assets", bottom);
         gui::dock_builder_dock_window("Log", bottom);
         gui::dock_builder_dock_window("History", bottom);
