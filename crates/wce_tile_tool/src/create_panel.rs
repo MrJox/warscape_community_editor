@@ -57,7 +57,7 @@ const CATEGORY_ICONS: [&str; CATEGORIES.len()] = [
 
 /// The rail's width.
 /// A colour of the style, as the draw list takes it.
-fn style_u32(idx: i32) -> u32 {
+pub(crate) fn style_u32(idx: i32) -> u32 {
     let c = gui::style_color(idx);
     theme::u32([c.x, c.y, c.z, c.w])
 }
@@ -1290,6 +1290,30 @@ impl TileTool {
         }
 
         None
+    }
+
+    /// A prefab's thumbnail, the Create panel's (one cache, `prefab|<key>`): `Some` once it is on the GPU. A missing one is made only while a
+    /// tile document is open (the stage, or the Tile tool's tile: drawing it needs one); the ones made before show either way.
+    pub(crate) fn prefab_thumbnail(&mut self, e: &mut Editor, key: &str) -> Option<wce_editor::images::ImageRef> {
+        let en = Entry {
+            category: 0,
+            label: key.to_owned(),
+            make: Make::Prefab { key: key.to_owned() },
+            folder: String::new(),
+            project: false,
+            search: String::new(),
+        };
+        if document(e).is_some() {
+            return self.thumbnail(e, &en, false);
+        }
+
+        let dir = crate::thumbnails::cache_dir(e);
+        if self.thumbs.dir != dir {
+            self.thumbs = crate::thumbnails::Thumbnails::default();
+            self.thumbs.dir = dir;
+        }
+
+        self.thumbs.get(e, &en.id())
     }
 
     /// The tooltip of the entry under the mouse: its thumbnail, or why there is none yet.
