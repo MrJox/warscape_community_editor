@@ -197,6 +197,10 @@ pub fn tga_rgba(b: &[u8]) -> Result<(u32, u32, Vec<[u8; 4]>), String> {
         return Err(format!("TGA of type {kind}, {bpp} bits: not supported"));
     }
 
+    if w == 0 || ht == 0 {
+        return Err(format!("TGA of {w} x {ht} pixels"));
+    }
+
     let n = usize::from(w) * usize::from(ht);
     let size = usize::from(bpp / 8);
     let px = |c: &[u8]| if size == 1 { [c[0], c[0], c[0], 255] } else { [c[2], c[1], c[0], if size == 4 { c[3] } else { 255 }] };
@@ -300,6 +304,13 @@ mod tests {
         let rle = tga(10, &[0x81, 0, 0, 255, 0x01, 255, 0, 0, 255, 255, 255]);
         let (_, _, px) = tga_rgba(&rle).unwrap();
         assert_eq!(px, vec![[0, 0, 255, 255], [255, 255, 255, 255], [255, 0, 0, 255], [255, 0, 0, 255]]);
+
+        // No pixels (a width or height of 0): an error, not a panic.
+        for (w, h) in [(0u8, 2u8), (2, 0)] {
+            let mut b = tga(2, &[]);
+            (b[12], b[14]) = (w, h);
+            assert!(tga_rgba(&b).is_err(), "{w} x {h}");
+        }
     }
 
     #[test]
