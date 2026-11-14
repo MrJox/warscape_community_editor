@@ -214,15 +214,19 @@ fn write_chmf(doc: &Document, tile: &Tile, own: bool) -> std::result::Result<(Ve
 
     for (r, m) in regions.iter().zip(&maps) {
         let Samples::U16(samples) = &m.raster.samples else { return Err(format!("{}: the height raster is not 16 bit", doc.name)) };
-        let rect = r.get("rect").and_then(Value::as_ints).ok_or("region without rect")?;
-        let tag = r.get("tag").and_then(Value::as_ints).ok_or("region without tag")?;
+        // A model edited by hand or by a project file may hold fewer numbers than the format: an error, not an index past them.
+        let rect = r
+            .get("rect")
+            .and_then(Value::as_ints)
+            .and_then(|v| <[i64; 4]>::try_from(v.get(..4)?).ok())
+            .ok_or("a region's rect has fewer than 4 numbers")?;
+        let tag = r
+            .get("tag")
+            .and_then(Value::as_ints)
+            .and_then(|v| <[i64; 2]>::try_from(v.get(..2)?).ok())
+            .ok_or("a region's tag has fewer than 2 numbers")?;
         let (_, offsets, data) = encode_region(m.raster.width, m.raster.height, samples);
-        f.regions.push(ChmfRegion {
-            rect: [rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32],
-            tag: [tag[0] as u16, tag[1] as u16],
-            offsets,
-            data,
-        });
+        f.regions.push(ChmfRegion { rect: rect.map(|v| v as u32), tag: tag.map(|v| v as u16), offsets, data });
     }
 
     Ok((f.write(), PartWritten::Encoded))
@@ -344,7 +348,11 @@ fn write_markers(doc: &Document) -> std::result::Result<Vec<u8>, String> {
             use markers::Value as M;
             let (name, v) = match *field {
                 F::IfByte(_) => continue,
-                F::Matrix(n) => (n, rec.get(n).and_then(Value::as_floats).map(|m| M::Matrix(std::array::from_fn(|i| m[i] as f32)))),
+                F::Matrix(n) => match rec.get(n).and_then(Value::as_floats) {
+                    Some(m) if m.len() >= 16 => (n, Some(M::Matrix(std::array::from_fn(|i| m[i] as f32)))),
+                    Some(m) => return Err(format!("{}: {n} has {} numbers, a matrix 16", doc.name, m.len())),
+                    None => (n, None),
+                },
                 F::F32(n) => (n, rec.get(n).and_then(Value::as_f64).map(|x| M::F32(x as f32))),
                 F::U32(n) => (n, rec.get(n).and_then(Value::as_int).map(|x| M::U32(x as u32))),
                 F::U8(n) => (n, rec.get(n).and_then(Value::as_int).map(|x| M::U8(x as u8))),
