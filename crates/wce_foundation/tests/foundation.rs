@@ -226,6 +226,29 @@ fn settings_from_the_old_ini() {
     assert!(dir.path().join("settings.toml").is_file());
 }
 
+#[test]
+fn settings_that_cannot_be_opened_are_not_replaced() {
+    // A settings.toml that is there but does not open (a folder here; a file another program holds is the same to the reader), with an
+    // old wce.ini next to it: neither the defaults nor the old file's settings may replace it.
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::in_dir(dir.path());
+    std::fs::create_dir(paths.settings_file()).unwrap();
+    std::fs::write(dir.path().join("wce.ini"), "frame_cap=30\n").unwrap();
+    let s = Settings::load(paths.clone());
+    assert_eq!(s.frame_cap, 60, "the defaults, not the old wce.ini");
+    assert!(s.save().is_err(), "not written over");
+    assert!(paths.settings_file().is_dir());
+
+    // Not UTF-8: not settings, kept aside as a file that does not parse is.
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::in_dir(dir.path());
+    std::fs::write(paths.settings_file(), b"frame_cap = 30\n\xff\xfe").unwrap();
+    let s = Settings::load(paths.clone());
+    assert_eq!(s.frame_cap, 60);
+    assert!(dir.path().join("settings.toml.bad").exists());
+    s.save().unwrap();
+}
+
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct ToolSettings {
