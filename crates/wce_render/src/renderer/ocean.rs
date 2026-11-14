@@ -431,7 +431,7 @@ impl Renderer {
 
         // Nothing in the scene changed and the sea is where it was: the texture stands, without going over every entity (a map view has
         // 300 000 of them: 1 to 2 ms a frame).
-        let quick = (scene as *const RenderScene as usize, scene.revision(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
+        let quick = (scene.uid(), scene.revision(), o.x.to_bits(), o.y.to_bits(), o.z.to_bits());
         if self.water.ocean.sea_bed.is_some() && self.water.ocean.sea_bed_quick == quick {
             return;
         }
@@ -470,12 +470,7 @@ impl Renderer {
             self.water.ocean.sea_bed_terrains = (scene.structure_revision(), ids);
         }
 
-        let key = (
-            scene as *const RenderScene as usize,
-            self.water.ocean.sea_bed_terrains.1,
-            o.x.to_bits(),
-            o.y.to_bits() ^ o.z.to_bits().rotate_left(16),
-        );
+        let key = (scene.uid(), self.water.ocean.sea_bed_terrains.1, o.x.to_bits(), o.y.to_bits() ^ o.z.to_bits().rotate_left(16));
         let terrains = terrains().collect::<Vec<_>>();
         let ground = terrains.iter().map(|(e, t)| SeaBedGround::of(e, t)).collect::<Vec<_>>();
         let same_ground = ground.len() == self.water.ocean.sea_bed_ground.len()

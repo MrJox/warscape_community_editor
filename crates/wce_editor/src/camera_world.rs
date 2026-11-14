@@ -41,7 +41,7 @@ pub struct ObstacleProbe {
 
 impl ObstacleProbe {
     fn refresh(&mut self, scene: &RenderScene, models: &ModelCache) {
-        let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision());
+        let key = (scene.uid(), scene.structure_revision());
         let moved = scene.moved_since(&mut self.moved);
         let obstacle_moved = moved.is_none_or(|ids| ids.iter().any(|id| self.ids.contains(id)));
         self.frames += 1;

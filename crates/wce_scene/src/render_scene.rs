@@ -1064,9 +1064,29 @@ pub enum StructureChange {
     Other,
 }
 
+/// A scene's identity for the caches made from it (the renderer's draw lists, terrain, decals ...): unique in the process, a clone gets
+/// its own. Its address is not one: a scene made where another was dropped (a thumbnail job's) had the same, and with the same revisions
+/// it was taken for the old one.
+#[derive(Debug)]
+struct SceneUid(u64);
+
+impl SceneUid {
+    fn new() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+impl Clone for SceneUid {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
 /// The scene.
 #[derive(Clone, Debug)]
 pub struct RenderScene {
+    uid: SceneUid,
     layers: Vec<Layer>,
     entities: Vec<Entity>,
 
@@ -1219,6 +1239,7 @@ impl SnowRegions {
 impl Default for RenderScene {
     fn default() -> Self {
         Self {
+            uid: SceneUid::new(),
             layers: vec![],
             entities: vec![],
             index: vec![],
@@ -1610,6 +1631,11 @@ impl RenderScene {
     /// An entity of a visible layer that picking may hit.
     pub fn pickable(&self, e: &Entity) -> bool {
         e.visible && !e.locked && self.layer(e.layer).is_some_and(|l| l.visible && !l.locked)
+    }
+
+    /// The scene's identity for caches made from it (with its revisions): unique in the process, never reused, a clone's its own.
+    pub fn uid(&self) -> usize {
+        self.uid.0 as usize
     }
 
     /// Changes with everything.

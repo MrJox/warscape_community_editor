@@ -86,7 +86,7 @@ pub struct GroundProbe {
 
 impl GroundProbe {
     fn refresh(&mut self, scene: &RenderScene) {
-        let key = (std::ptr::from_ref(scene) as usize, scene.structure_revision(), scene.terrain_revision());
+        let key = (scene.uid(), scene.structure_revision(), scene.terrain_revision());
         if key == self.key {
             return;
         }

@@ -219,7 +219,7 @@ impl Renderer {
     /// Writes the frame's palettes and instances (before the first pass that draws them). `eye` is the view's: `self.camera` may still be the environment
     /// cube's here, every fourth frame, and the LODs picked from it put all the soldiers at their distance from the battle's centre for that frame.
     pub(crate) fn prepare_skinned(&mut self, scene: &RenderScene, eye: Float3) {
-        let scene_id = std::ptr::from_ref(scene) as usize;
+        let scene_id = scene.uid();
         if self.skinned.scene_id != scene_id || self.skinned.revision != scene.structure_revision() {
             self.skinned.scene_id = scene_id;
             self.skinned.revision = scene.structure_revision();

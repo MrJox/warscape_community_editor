@@ -331,7 +331,7 @@ impl Renderer {
 
     /// The scene's drawable decals, sorted by model (see [`DecalGpu::items`]).
     fn collect_decals(&mut self, scene: &RenderScene) {
-        let id = std::ptr::from_ref(scene) as usize;
+        let id = scene.uid();
         let models_revision = self.models.revision();
         let units = self.camera.units;
         // A new render origin moves the instances only (their translations from the absolute positions, as rel_world makes them).

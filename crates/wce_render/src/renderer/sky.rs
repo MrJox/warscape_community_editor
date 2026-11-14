@@ -227,7 +227,7 @@ impl Renderer {
 
         // 50 game metres above the ground at the battle's centre (the sea when no terrain covers it).
         let [cx, cz] = scene.battle_centre;
-        let key = (std::ptr::from_ref(scene) as usize, scene.revision(), cx.to_bits(), cz.to_bits());
+        let key = (scene.uid(), scene.revision(), cx.to_bits(), cz.to_bits());
         let ground = match self.env.ground {
             Some((k, g)) if k == key => g,
             _ => {
