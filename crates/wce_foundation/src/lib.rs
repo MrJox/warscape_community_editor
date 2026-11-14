@@ -2,6 +2,7 @@
 
 pub mod activity;
 pub mod clock;
+pub mod files;
 pub mod game;
 pub mod graphics;
 pub mod heap;

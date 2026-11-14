@@ -198,7 +198,7 @@ pub fn open_exported(game: &Game, files: &TileFiles, folder: &str, workspace: &P
     if !settings.is_file() || game.kit_raw.is_none() {
         let bytes = game.kit_settings(&kind_of(folder))?;
         if std::fs::read(&settings).ok().as_deref() != Some(bytes.as_slice()) {
-            std::fs::write(&settings, bytes).map_err(|e| format!("{}: {e}", settings.display()))?;
+            wce_foundation::files::write_replacing(&settings, bytes).map_err(|e| format!("{}: {e}", settings.display()))?;
         }
     }
 
@@ -448,7 +448,7 @@ pub fn save_exported_with(
             for (name, bytes) in written {
                 let path = out.join(&name);
                 std::fs::create_dir_all(path.parent().unwrap_or(out)).map_err(|e| e.to_string())?;
-                std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+                wce_foundation::files::write_replacing(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
             }
         }
 
@@ -499,7 +499,8 @@ fn provide_linking_tiles(game: &Game, raw: &wce_tile_model::Tile, raw_data: &Pat
         let wce_tile_model::Samples::U16(hs) = &hm.raster.samples else { return Err(format!("{folder}: the height map is not 16 bit")) };
         let (f, w, h) =
             final_heights(hs, hm.raster.width as usize, hm.raster.height as usize, &HeightNumbers::of(&link), &InfluenceLinks::default())?;
-        std::fs::write(dir.join("final_heights.dds"), dds_r32f(&f, w, h)).map_err(|e| format!("{}: {e}", dir.display()))?;
+        wce_foundation::files::write_replacing(dir.join("final_heights.dds"), dds_r32f(&f, w, h))
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
     }
 
     Ok(())
@@ -526,11 +527,12 @@ pub fn neighbour_root(game: &Game, root: &Path) -> Result<PathBuf, String> {
         std::fs::create_dir_all(&tiles).map_err(|e| format!("{}: {e}", tiles.display()))?;
         for (i, t) in db.tiles().iter().enumerate() {
             let path = tiles.join(super::decompile::entry_file_name(t.location()));
-            std::fs::write(&path, super::decompile::entry_xml(db, i)).map_err(|e| format!("{}: {e}", path.display()))?;
+            wce_foundation::files::write_replacing(&path, super::decompile::entry_xml(db, i))
+                .map_err(|e| format!("{}: {e}", path.display()))?;
         }
 
         // Last: the folder is complete once the settings are there.
-        std::fs::write(&settings, game.kit_settings(kind)?).map_err(|e| format!("{}: {e}", settings.display()))?;
+        wce_foundation::files::write_replacing(&settings, game.kit_settings(kind)?).map_err(|e| format!("{}: {e}", settings.display()))?;
     }
 
     Ok(raw)
@@ -568,7 +570,8 @@ pub fn neighbour_tile(game: &Game, raw: &Path, location: &str, variation: &str) 
     if custom {
         // The model, and the blend map the decompile made (its ground); not the scene, which would make it a scene tile.
         let model = game.files.read(&model_path).map_err(|e| format!("{model_path}: {e}"))?;
-        std::fs::write(dir.join(wce_tile::sources::CUSTOM_MESH_MODEL), &model[..]).map_err(|e| format!("{}: {e}", dir.display()))?;
+        wce_foundation::files::write_replacing(dir.join(wce_tile::sources::CUSTOM_MESH_MODEL), &model[..])
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
         for scene in [wce_tile::project_files::TED_FILE, wce_tile::project_files::WCE_FILE] {
             let p = dir.join(scene);
             if p.is_file() {

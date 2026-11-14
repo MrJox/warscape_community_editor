@@ -271,7 +271,7 @@ impl Document for UiDocument {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        std::fs::write(&to, data).map_err(|e| format!("cannot write {}: {e}", to.display()))?;
+        wce_foundation::files::write_replacing(&to, data).map_err(|e| format!("cannot write {}: {e}", to.display()))?;
 
         // A game file's copy elsewhere (Save as): the project's file still lacks the edits, so the document stays unsaved.
         if !self.source.vfs_path.is_empty() && !wce_editor_core::document::same_path(&to, &self.default_save_path()) {

@@ -480,7 +480,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 let _ = std::fs::create_dir_all(p);
             }
 
-            match std::fs::write(&a[1], data) {
+            match wce_foundation::files::write_replacing(&a[1], data) {
                 Ok(()) => ok("copied"),
                 Err(m) => fail(m.to_string()),
             }
@@ -734,7 +734,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     c.add("ui_save_xml", "ui_save_xml <file>", "Writes the layout's XML to a file", |e, a| {
         let Some(p) = a.first() else { return fail("usage: ui_save_xml <file>") };
         let Some((id, _)) = current(e) else { return fail("no UI layout is open") };
-        match tool_doc(e, id).map(|d| std::fs::write(p, d.xml().as_bytes())) {
+        match tool_doc(e, id).map(|d| wce_foundation::files::write_replacing(p, d.xml().as_bytes())) {
             Some(Ok(())) => ok(format!("wrote {p}")),
             Some(Err(m)) => fail(m.to_string()),
             None => fail("no UI layout is open"),

@@ -1574,7 +1574,7 @@ impl TileTool {
             {
                 let v = &new.variations()[n];
                 old.set_height_range(o, v.min_height, v.scale);
-                std::fs::write(&file, old.save()).map_err(|err| format!("{}: {err}", file.display()))?;
+                wce_foundation::files::write_replacing(&file, old.save()).map_err(|err| format!("{}: {err}", file.display()))?;
             }
         }
 
@@ -1584,7 +1584,8 @@ impl TileTool {
         let ted = dir.join(TED_FILE);
         if ted.is_file() {
             let text = std::fs::read(&ted).map_err(|err| format!("{}: {err}", ted.display()))?;
-            std::fs::write(dir.join(WCE_FILE), mark_extracted_text(to_wce(text)?)).map_err(|err| err.to_string())?;
+            wce_foundation::files::write_replacing(dir.join(WCE_FILE), mark_extracted_text(to_wce(text)?))
+                .map_err(|err| err.to_string())?;
             std::fs::remove_file(&ted).map_err(|err| err.to_string())?;
         }
 

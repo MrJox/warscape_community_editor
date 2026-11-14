@@ -125,7 +125,7 @@ impl VegetationSet {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
 
-        std::fs::write(&self.path, self.text()).map_err(|e| format!("{}: {e}", self.path.display()))
+        wce_foundation::files::write_replacing(&self.path, self.text()).map_err(|e| format!("{}: {e}", self.path.display()))
     }
 }
 

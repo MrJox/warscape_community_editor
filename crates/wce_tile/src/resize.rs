@@ -99,7 +99,7 @@ pub fn resize_maps(dir: &Path, old_cells: (u32, u32), density: u32, r: &Resize) 
             out.pixels_edited = true;
             let bytes = if out.has_ancillary { out.encode() } else { out.write() }.map_err(|e| format!("{name}: {e}"))?;
             backup(&path)?;
-            std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            wce_foundation::files::write_replacing(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
             done.push(name);
         } else if name == "blend_map.tif" {
             let tif = TiffFile::parse(&bytes_of()?).map_err(|e| format!("{name}: {e}"))?;
@@ -115,7 +115,7 @@ pub fn resize_maps(dir: &Path, old_cells: (u32, u32), density: u32, r: &Resize) 
             let mut bytes = TiffFile::ted_header(new.0, new.1);
             bytes.extend(place(&tif.pixels, bpp, old, new, shift, &fill, extend));
             backup(&path)?;
-            std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+            wce_foundation::files::write_replacing(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
             done.push(name);
         } else if [".dds", ".tga", ".tif", ".data"].iter().any(|x| name.ends_with(x)) {
             left.push(name);
