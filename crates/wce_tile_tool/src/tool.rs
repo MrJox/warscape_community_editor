@@ -4132,6 +4132,10 @@ impl Tool for TileTool {
             self.weather.follow_look(e, &look.climate, &look.season);
         }
 
+        // The weather's campaign follows the Map context's map while it shows one.
+        let campaign = self.context.loaded.as_ref().filter(|_| self.context.shown).map(|(name, _, _)| name.clone());
+        self.weather.follow_campaign(e, campaign.as_deref());
+
         self.sync_brush_curve(e);
         self.sync_image_brush(e);
         self.update_water_depth(e, id);

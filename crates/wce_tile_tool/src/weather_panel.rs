@@ -31,20 +31,57 @@ use crate::settings::{SETTINGS_ID, TileSettings, TileWeather};
 /// The game's variation database in the packs (what the Weather tool's picker reads too).
 const PACKS_DB: &str = "warscape_asset_variation_db/warscape_asset_variation_db.bin";
 
-/// The filters, as the panel labels them, and their categories in environment_map.xml.
-pub const FILTERS: [(&str, &str); 8] = [
-    ("map", "map"),
-    ("climate", "climate"),
-    ("season", "season"),
-    ("climate change", "climate_change_index"),
-    ("precipitation", "precipitation"),
-    ("time of day", "time_of_day"),
-    ("battle type", "battle_types"),
-    ("snow attrition", "snow_attrition"),
+/// The filters: as the panel labels them, their categories in environment_map.xml, and what the game sends for them when it picks a
+/// battle's weather (docs/re/variation_db.md, "What the engine asks for").
+pub const FILTERS: [(&str, &str, &str); 8] = [
+    (
+        "campaign",
+        "map",
+        "The campaign the battle is fought in (its map's name): each has its own set of weathers. The game asks again with default_map \
+         when its map has none, so default_map is every other campaign (Attila's main one among them) and custom battles. Follows the \
+         Map context's map while it shows one.",
+    ),
+    ("climate", "climate", "The tile's climate, set by the climate chip over the viewport (the ground follows it too)."),
+    ("season", "season", "The tile's season, set by the season chip over the viewport (the ground follows it too)."),
+    (
+        "climate change",
+        "climate_change_index",
+        "The campaign's climate change phase (cc0 at its start; Attila's darkening world raises it with the turns, or with the \
+         leading player's imperium). cc0 outside a campaign.",
+    ),
+    ("precipitation", "precipitation", "Dry, rain, snow or fog: the battle's weather as the campaign rolled it."),
+    ("time of day", "time_of_day", "A day or a night battle."),
+    ("battle type", "battle_types", "Land or sea. A tile is a land battle, so it is always land here."),
+    (
+        "snow attrition",
+        "snow_attrition",
+        "Whether the battle is where the campaign has snow attrition: on picks among the snow weathers (snowfall in any season, dry \
+         winter days), off among the others. (What sets it in the game is not traced; the files say so much.)",
+    ),
 ];
 
 /// The filters that follow the tile's terrain look (set by the climate and season chips), not set on their own.
 const LOOK_FILTERS: [&str; 2] = ["climate", "season"];
+
+/// The filters fixed for a tile: (category, the value it always has).
+const FIXED_FILTERS: [(&str, &str); 1] = [("battle_types", "land")];
+
+/// A filter's value as the panel shows it.
+fn value_name(category: &str, value: &str) -> String {
+    let named = match (category, value) {
+        ("map", "cha_attila_map") => "Age of Charlemagne",
+        ("map", "bel_attila_map") => "The Last Roman",
+        ("map", "default_map") => "any other, custom battles",
+        ("season", "sp") => "spring",
+        ("season", "su") => "summer",
+        ("season", "au") => "autumn",
+        ("season", "wi") => "winter",
+        ("snow_attrition", "snow_attrition_on") => "on",
+        ("snow_attrition", "snow_attrition_off") => "off",
+        _ => return value.to_owned(),
+    };
+    format!("{named} ({value})")
+}
 
 /// The weather's own chips over the viewport (after the climate and season ones): icon, category, what it is.
 const CHIPS: [(&str, &str, &str); 2] =
@@ -68,6 +105,9 @@ pub(crate) struct WeatherUi {
 
     /// The terrain look's climate and season the filters were last set from (`follow_look`).
     look: (String, String),
+
+    /// The Map context's map the campaign filter was last set from (`follow_campaign`).
+    campaign: Option<String>,
 }
 
 /// True when `file` holds every word of `search` (case-insensitive).
@@ -97,6 +137,7 @@ impl WeatherUi {
         self.load_database(e, &dir);
 
         self.look = Default::default();
+        self.campaign = None;
         let remembered = e.tool_settings::<TileSettings>(SETTINGS_ID).weathers.get(&self.tile).cloned();
         self.choice = remembered.unwrap_or_else(|| {
             let mut query = BTreeMap::from([("map".to_owned(), "default_map".to_owned())]);
@@ -108,6 +149,11 @@ impl WeatherUi {
 
             TileWeather { file: String::new(), query }
         });
+
+        for (category, value) in FIXED_FILTERS {
+            let value = self.value_of(category, value).unwrap_or_default();
+            self.choice.query.insert(category.to_owned(), value);
+        }
 
         if self.choice.file.is_empty()
             && let Some(file) = self.first_dry()
@@ -151,6 +197,25 @@ impl WeatherUi {
 
         self.remember(e);
         self.relight(e, &format!("{climate}, {}", crate::ground_views::season_name(season)));
+    }
+
+    /// The Map context's map changed (`None`: it shows none): the campaign filter becomes that map, else `default_map` when the database
+    /// has no such map (as the game asks again with it). Only on a change, so a campaign picked by hand stays until the next map.
+    pub(crate) fn follow_campaign(&mut self, e: &mut Editor, map: Option<&str>) {
+        if self.tile.is_empty() || self.env.is_none() || self.campaign.as_deref() == map {
+            return;
+        }
+
+        self.campaign = map.map(str::to_owned);
+        let Some(map) = map else { return };
+        let value = self.value_of("map", map).or_else(|| self.value_of("map", "default_map")).unwrap_or_default();
+        if self.choice.query.get("map") == Some(&value) {
+            return;
+        }
+
+        self.choice.query.insert("map".to_owned(), value.clone());
+        self.remember(e);
+        self.relight(e, &format!("campaign {value}"));
     }
 
     /// The filters changed: the file lighting the tile stays if they still let it through, else (precipitation any) the first dry one
@@ -229,7 +294,13 @@ impl WeatherUi {
         };
 
         match loaded {
-            Ok(db) => {
+            Ok(mut db) => {
+                // The game's .bin names the category `battle_type`, the kit's environment_map.xml `battle_types`: the panel uses the
+                // latter (the names change nothing in the matching, which goes by the values' bits; this copy is not saved).
+                if db.category("battle_types").is_none() && db.category("battle_type").is_some() {
+                    let _ = db.rename_category("battle_type", "battle_types");
+                }
+
                 let files = db.entry("environment").map_or(0, |entry| entry.variations().len());
                 self.status = format!("{files} environment files ({source})");
                 self.env = Some(db);
@@ -375,6 +446,10 @@ impl WeatherUi {
             ));
         }
 
+        if let Some((_, fixed)) = FIXED_FILTERS.iter().find(|(c, _)| *c == category) {
+            return Err(format!("the {category} of a tile is always {fixed}"));
+        }
+
         let env = self.env.as_ref().ok_or_else(|| self.status.clone())?;
         let values = env.category(category).ok_or_else(|| format!("no filter '{category}'"))?.values().clone();
         let value = if value.is_empty() {
@@ -422,20 +497,21 @@ impl WeatherUi {
         };
 
         let mut filter_changed = None;
-        for (label, category) in FILTERS {
+        for (label, category, tip) in FILTERS {
             let value = self.choice.query.get(category).cloned().unwrap_or_default();
             let vals = env.category(category).map(|m| m.values().clone()).unwrap_or_default();
-            gui::set_next_item_width(220.0);
-            let follows = LOOK_FILTERS.contains(&category);
-            gui::begin_disabled(follows);
-            let open = gui::begin_combo(label, if value.is_empty() { "(any)" } else { &value });
+            gui::set_next_item_width(260.0);
+            let set_elsewhere = LOOK_FILTERS.contains(&category) || FIXED_FILTERS.iter().any(|(c, _)| *c == category);
+            gui::begin_disabled(set_elsewhere);
+            let shown = if value.is_empty() { "(any)".to_owned() } else { value_name(category, &value) };
+            let open = gui::begin_combo(label, &shown);
             if open {
                 if gui::selectable("(any)", value.is_empty(), 0) {
                     filter_changed = Some((category, String::new()));
                 }
 
                 for v in &vals {
-                    if gui::selectable(v, *v == value, 0) {
+                    if gui::selectable(&value_name(category, v), *v == value, 0) {
                         filter_changed = Some((category, v.clone()));
                     }
                 }
@@ -445,13 +521,7 @@ impl WeatherUi {
 
             gui::end_disabled();
             if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip(&if follows {
-                    format!(
-                        "The tile's {label}, set by the {label} chip over the viewport (the ground follows it too). (any): the database has no files for it."
-                    )
-                } else {
-                    format!("Only the files the game picks for this {label} are listed. (any): every {label}.")
-                });
+                gui::set_tooltip(&format!("{tip}\n(any): the files of every {label}."));
             }
         }
 
