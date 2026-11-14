@@ -607,6 +607,9 @@ struct ModelInner {
     pending: AtomicUsize,
     revision: AtomicU64,
     errors: Mutex<Vec<String>>,
+    /// The caches using these models (`ModelCache::new` and every `sharing`); the queued loads are cancelled with the last one. The loads
+    /// themselves hold the `Arc` too, so its count does not tell.
+    owners: AtomicUsize,
 }
 
 // SAFETY: the texture cache only holds free-threaded GPU objects behind locks.
@@ -1347,6 +1350,7 @@ impl ModelInner {
 impl ModelCache {
     /// A cache for another renderer that shares this one's models (and their textures): only the scene's terrain GPU data is its own.
     pub fn sharing(&self) -> Self {
+        self.inner.owners.fetch_add(1, Ordering::AcqRel);
         Self { inner: self.inner.clone(), terrain: BTreeMap::new() }
     }
 
@@ -1361,6 +1365,7 @@ impl ModelCache {
                 pending: AtomicUsize::new(0),
                 revision: AtomicU64::new(1),
                 errors: Mutex::new(vec![]),
+                owners: AtomicUsize::new(1),
             }),
             terrain: BTreeMap::new(),
         }
@@ -1621,7 +1626,13 @@ impl ModelCache {
 }
 
 impl Drop for ModelCache {
+    /// The last cache of these models cancels their queued loads; while another shares them (a preview's renderer dropped, the main one
+    /// kept), the loads it waits for go on.
     fn drop(&mut self) {
+        if self.inner.owners.fetch_sub(1, Ordering::AcqRel) != 1 {
+            return;
+        }
+
         let mut models = lock(&self.inner.models);
         for entry in models.values_mut().filter(|entry| entry.state == State::Queued) {
             if io_pool().cancel(entry.handle) {
