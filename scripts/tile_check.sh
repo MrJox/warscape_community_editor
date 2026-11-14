@@ -113,6 +113,8 @@ for f in saved/tile.ted saved/height_map_0.png capture.png; do
 done
 # the mouse and the keys (select, grab, brush, polygon drawing, handle drag)
 run_script tile_mouse 1 "$SRC"
+# undo and redo wait for the gesture under way; another tile opened mid-gesture closes it on the tile before
+run_script tile_gestures 1 "$SRC" "$FORD"
 # minimal edit
 changed=$(diff <(tr -d '\r' < "$SRC/tile.ted") <(tr -d '\r' < "$OUT/tile_smoke1/saved/tile.ted") | grep -c '^>')
 [ "$changed" = 1 ] && echo "saved tile.ted differs from the original in exactly the moved building's line" || fail "saved tile.ted differs in $changed lines (expected 1)"
