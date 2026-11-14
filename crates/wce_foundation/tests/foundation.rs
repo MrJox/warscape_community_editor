@@ -350,3 +350,29 @@ fn rome_2_graphics_presets() {
     assert_eq!(very_high.get("gfx_shadow_quality").map(String::as_str), Some("3"));
     assert_eq!(ROME_2.matching_preset(&very_high, 8 << 30).map(|p| p.name), Some("Very High"));
 }
+
+#[test]
+fn two_editors_saving_keep_each_others_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = Paths::in_dir(dir.path());
+    Settings::load(paths.clone()).save().unwrap();
+
+    // Both started from the same file; each changes something else and saves, the second after the first.
+    let mut a = Settings::load(paths.clone());
+    let mut b = Settings::load(paths.clone());
+    a.frame_cap = 144;
+    a.save().unwrap();
+    b.game_mut().dir = Some("/games/attila".into());
+    b.save().unwrap();
+
+    let both = Settings::load(paths.clone());
+    assert_eq!(both.frame_cap, 144, "the first editor's change is still there");
+    assert_eq!(both.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
+
+    // Then the first saves again without touching the frame cap: the second's change stays, and its own is still its own.
+    a.set_tool("tile", &ToolSettings { kits: vec!["/kit".to_owned()], show_sea: true });
+    a.save().unwrap();
+    let again = Settings::load(paths);
+    assert_eq!(again.game_dir().as_deref(), Some(std::path::Path::new("/games/attila")));
+    assert_eq!((again.frame_cap, again.tool::<ToolSettings>("tile").kits), (144, vec!["/kit".to_owned()]));
+}
