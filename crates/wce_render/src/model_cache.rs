@@ -486,7 +486,12 @@ impl TextureCache {
             let handle = io_pool().post(
                 move || {
                     wce_prof!("texture.upgrade");
-                    match load_dds(job_inner.dev.device(), &bytes, srgb) {
+                    // Counted down whatever happens: `upgrades_pending` is waited on.
+                    let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        load_dds(job_inner.dev.device(), &bytes, srgb).map_err(|e| e.to_string())
+                    }))
+                    .unwrap_or_else(|panic| Err(format!("panicked: {}", panic_text(panic.as_ref()))));
+                    match loaded {
                         Ok(full) => lock(&job_inner.upgrades).push((target, full)),
                         Err(error) => job_inner.error(LogLevel::Error, format!("{path}: {error} (stays at its small mips)")),
                     }
@@ -1316,8 +1321,12 @@ impl ModelInner {
         self.done.notify_all();
     }
 
+    /// Builds the model and settles its entry, whatever happens: a panic in a decoder (a broken or modded file) fails the model instead of
+    /// leaving it Loading, which `model` and `wait_all` would wait on for ever.
     fn build_and_finish(&self, path: &str) {
-        let model = match self.build(path) {
+        let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.build(path)))
+            .unwrap_or_else(|panic| Err(format!("panicked: {}", panic_text(panic.as_ref()))));
+        let model = match built {
             Ok(model) => model,
             Err(error) => {
                 log::error(format!("model {path}: {error}"));
@@ -1623,6 +1632,11 @@ impl ModelCache {
     pub fn prune_terrain(&mut self, scene: &RenderScene) {
         self.terrain.retain(|id, _| scene.find(*id).is_some_and(|e| matches!(e.payload, Payload::Terrain(_))));
     }
+}
+
+/// What a caught panic said.
+fn panic_text(panic: &(dyn std::any::Any + Send)) -> String {
+    panic.downcast_ref::<&str>().map(|s| (*s).to_owned()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_default()
 }
 
 impl Drop for ModelCache {
