@@ -10,12 +10,12 @@ use wce_editor::editor::Editor;
 use wce_editor_core::inspector::Inspector;
 use wce_foundation::math::{Double3, Float3};
 use wce_render::renderer::SurfaceGrid;
-use wce_scene::render_scene::{EntityId, Kind};
+use wce_scene::render_scene::{DocumentId, EntityId, Kind};
 use wce_tile_editor::tile_document::brush::Footprint;
-use wce_tile_editor::tile_document::{elem_of, turned, with_root_attr};
+use wce_tile_editor::tile_document::{TileDocument, elem_of, turned, with_root_attr};
 
 use crate::settings::{SETTINGS_ID, SurfaceMode, TileSettings, VegBrush};
-use crate::tool::{TileTool, document};
+use crate::tool::{TileTool, document, document_id};
 
 /// A painted tree: where (world metres), its key, scale and turn (degrees), and the normal of what it stands on when that is not the terrain
 /// (Entity: Above).
@@ -195,8 +195,14 @@ impl TileTool {
 
     /// The stroke ends: its trees go into the working layer (one undo entry), or the trees it took away go.
     pub(crate) fn end_stroke_veg(&mut self, e: &mut Editor) -> String {
+        let id = document_id(e).unwrap_or(0);
+        self.end_stroke_veg_in(e, id)
+    }
+
+    /// [`Self::end_stroke_veg`] on tile `id` (the stroke's, which may no longer be the one shown).
+    pub(crate) fn end_stroke_veg_in(&mut self, e: &mut Editor, id: DocumentId) -> String {
         let Some(stroke) = self.stroke.take() else { return String::new() };
-        let Some(d) = document(e) else { return String::new() };
+        let Some(d) = e.docs.find_as_mut::<TileDocument>(id) else { return String::new() };
         if stroke.erase {
             let elems = stroke.erased.into_iter().collect::<Vec<_>>();
             let n = elems.len();
@@ -204,7 +210,9 @@ impl TileTool {
                 d.remove_items(&elems);
 
                 // What was selected may be gone, and the rest moved: nothing is.
-                e.selection.clear();
+                if e.selection.items().iter().any(|s| s.doc == id) {
+                    e.selection.clear();
+                }
             }
 
             return format!("{n} tree(s) taken away");
