@@ -912,9 +912,29 @@ impl Editor {
     pub fn remount_vfs(&mut self) -> Result<(), String> {
         let dir = self.settings.game_dir().ok_or("the game folder is not set")?;
         self.make_project_folders();
-        let vfs = Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())?;
-        self.vfs = Some(Arc::new(vfs));
+        let vfs = Arc::new(Vfs::mount(&self.vfs_config(dir)).map_err(|e| e.to_string())?);
+        self.vfs = Some(vfs.clone());
         self.images.clear();
+
+        // The renderer reads models, textures, shaders and effects from the files it was made with: it is made again on these (with its
+        // settings), else what a mod added or the projects folder changed would show only from the next start, and what they took away
+        // would still be drawn.
+        if let Some(old) = self.renderer.take() {
+            match Renderer::new(&self.dev, &self.ctx, vfs) {
+                Ok(mut r) => {
+                    r.settings = old.settings.clone();
+                    self.renderer = Some(r);
+                }
+
+                Err(e) => {
+                    log::error(format!("the renderer could not be made again on the new files (it reads the old ones): {}", e.0));
+                    self.renderer = Some(old);
+                }
+            }
+
+            self.apply_graphics_settings();
+        }
+
         Ok(())
     }
 
