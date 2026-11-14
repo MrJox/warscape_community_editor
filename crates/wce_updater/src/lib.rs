@@ -279,11 +279,13 @@ pub fn install(zip: &Path, dir: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 /// A list of paths relative to `dir` (`LEFTOVERS`, `INSTALLED`): only plain relative paths below it (not one that would reach outside).
+/// A line with a colon is none: a drive (`C:/x.dll`) is a prefix on Windows but reads as a folder named `C:` elsewhere, and no release
+/// file has one in its name (Windows allows none).
 fn read_list(dir: &Path, name: &str) -> Vec<PathBuf> {
     std::fs::read_to_string(dir.join(name))
         .unwrap_or_default()
         .lines()
-        .filter(|l| !l.is_empty())
+        .filter(|l| !l.is_empty() && !l.contains(':'))
         .map(PathBuf::from)
         .filter(|p| p.components().all(|c| matches!(c, std::path::Component::Normal(_))))
         .collect()
