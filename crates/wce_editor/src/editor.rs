@@ -483,12 +483,17 @@ impl Editor {
         self.tools.push(Some(tool));
     }
 
-    /// Runs `f` on tool `i`, lent out of the editor meanwhile; `None` when it is already lent (a tool calling into itself).
+    /// Runs `f` on tool `i`, lent out of the editor meanwhile; `None` when it is already lent (a tool calling into itself). The tool comes
+    /// back when `f` panics too (the panic goes on, to the command registry's catch): else the tool would be gone for the session, its
+    /// commands and panels with it, and its unsaved work no longer asked about at quit.
     pub fn with_tool_at<R>(&mut self, i: usize, f: impl FnOnce(&mut dyn Tool, &mut Editor) -> R) -> Option<R> {
         let mut tool = self.tools.get_mut(i)?.take()?;
-        let r = f(tool.as_mut(), self);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(tool.as_mut(), &mut *self)));
         self.tools[i] = Some(tool);
-        Some(r)
+        match r {
+            Ok(r) => Some(r),
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
     }
 
     /// Runs `f` on the tool of type `T` (a tool's commands reach their tool this way).
