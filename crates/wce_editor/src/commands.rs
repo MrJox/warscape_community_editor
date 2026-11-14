@@ -844,6 +844,10 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         },
     );
 
+    c.add("gizmo_why", "gizmo_why", "why the selection shows no gizmo (or that it shows one)", |e, _| {
+        ok(crate::viewport::gizmo_blocker(e).unwrap_or_else(|| "the gizmo shows".to_owned()))
+    });
+
     c.add("focus", "focus", "frame the selection in the viewport", |e, _| {
         viewport::focus_selection(e);
         ok("")
