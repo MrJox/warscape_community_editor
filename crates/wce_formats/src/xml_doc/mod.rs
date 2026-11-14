@@ -273,7 +273,8 @@ impl XmlDoc {
         }
     }
 
-    /// Sets an attribute's value, entity-encoded. A missing attribute is added after the others, with the quote of the last one.
+    /// Sets an attribute's value, entity-encoded. A missing attribute is added after the others, with the quote of the last one (an element
+    /// without attributes: the document's first attribute's, else `'`).
     pub fn set(&mut self, elem: usize, name: &str, value: &str) {
         if let Some(attr) = self.find_attr(elem, name) {
             let quote = self.elems[elem].attrs[attr].quote;
@@ -281,8 +282,9 @@ impl XmlDoc {
             return;
         }
 
+        let document_quote = self.elems.iter().find_map(|e| e.attrs.first()).map_or(b'\'', |at| at.quote);
         let element = &mut self.elems[elem];
-        let quote = element.attrs.last().map_or(b'\'', |at| at.quote);
+        let quote = element.attrs.last().map_or(document_quote, |at| at.quote);
         self.appended_values.insert((elem, element.attrs.len()), encode_entities(value.as_bytes(), quote));
         element.attrs.push(XmlAttr { name: name.to_owned(), value_off: element.attrs_end, value_len: 0, quote, appended: true });
     }

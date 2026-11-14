@@ -89,10 +89,15 @@ fn main() {
                     }
                 }
 
-                // Nothing but what isn't XML is changed, and what is has a tree to show for it.
+                // Nothing but what isn't XML is changed, and what is has a tree to show for it. Every node of the tree is found by its path
+                // and back (the Unit tool names nodes so).
                 let walked = f.root.slots.iter().any(|s| !s.alternatives.is_empty()) || f.root.model.is_some();
                 repaired += usize::from(f.repaired);
-                meshes.add(path, if f.repaired { walked } else { f.doc.save() == bytes });
+                let paths = f.doc.elements().iter().enumerate().all(|(e, el)| {
+                    !matches!(el.name.as_str(), "VARIANT_MESH" | "SLOT" | "VARIANT_MESH_REFERENCE")
+                        || f.path_of(e).is_none_or(|p| f.node(&p).is_some_and(|n| n.element() == e))
+                });
+                meshes.add(path, paths && if f.repaired { walked } else { f.doc.save() == bytes });
             }
 
             Err(e) => meshes.add(&format!("{path}: {e}"), false),
