@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+/// More than any schema file is (they are a few MB): a download past it is not one, and is not read on.
+const MAX_SCHEMA: u64 = 128 << 20;
+
 use crate::{Progress, agent};
 
 /// rpfm's schema repository on GitHub, and its branch.
@@ -90,8 +93,12 @@ pub fn download(dir: &Path, commit: &str, files: &[&str], progress: &Progress) -
             .map_err(|e| format!("cannot download {name}: {e}"))?
             .into_body()
             .into_reader()
+            .take(MAX_SCHEMA + 1)
             .read_to_end(&mut bytes)
             .map_err(|e| format!("cannot download {name}: {e}"))?;
+        if bytes.len() as u64 > MAX_SCHEMA {
+            return Err(format!("{name} is larger than a schema is ({MAX_SCHEMA} bytes at most)"));
+        }
 
         let target = dir.join(name);
         let part = dir.join(format!("{name}.part"));
