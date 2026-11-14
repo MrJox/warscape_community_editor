@@ -2,7 +2,8 @@
 //!
 //! The engine's variation (`VARIANT_MESH_VARIATION`, `VARIANT_MESH_PART`, `VARIANT_MESH_PART_SLOT`): per slot a roll against its `probability`,
 //! then one alternative; a `VARIANT_MESH_REFERENCE` stands for the file it names. The picks here use the editor's own generator: the same seed
-//! gives the same soldier in the editor, not the soldier the game would pick. **ASSUMPTION** (by their names and values, not traced): the
+//! gives the same soldier in the editor, not the soldier the game would pick. Each node draws from a generator of its own (the seed and its
+//! place in the tree), so [`Pins`] that force one slot leave the others as they were. **ASSUMPTION** (by their names and values, not traced): the
 //! probability is how often a slot is filled, every alternative is as likely, `maskN` is the faction colour the mask's channel N takes, and a
 //! tint applies to the mask's first channel.
 
@@ -11,7 +12,7 @@ use std::io::Cursor;
 
 use rpfm_lib::files::rigidmodel::RigidModel;
 use rpfm_lib::files::{Decodeable, DecodeableExtraData};
-use wce_formats::variant_mesh::{Alternative, Slot, VariantMesh, VariantMeshFile};
+use wce_formats::variant_mesh::{Alternative, NodePath, Slot, VariantMesh, VariantMeshFile, texture_array};
 use wce_vfs::normalize;
 
 /// The bytes of an in-pack file; `None` when it isn't there.
@@ -43,6 +44,10 @@ pub struct AssembledPart {
     /// rgb and the mask channel it applies to (0: none).
     pub tint: [f32; 4],
     pub attach: Attach,
+
+    /// Where it comes from in the root definition: its mesh, or the reference it was reached through (another file's meshes are that
+    /// reference's).
+    pub node: NodePath,
 }
 
 /// One soldier.
@@ -52,6 +57,29 @@ pub struct AssembledUnit {
 
     /// The definitions named that could not be read: a mod's files, some of them gone.
     pub missing: Vec<String>,
+}
+
+/// What a slot shows whatever the seed says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotPin {
+    /// Empty.
+    Off,
+
+    /// This alternative, even when its probability would leave the slot empty.
+    Alternative(usize),
+}
+
+/// Choices that take the seed's place, by the root definition's [`NodePath`]s: an editor's way to show the part being edited. A choice
+/// leaves the others as the seed has them: each node draws from a generator of its own.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Pins {
+    pub slots: HashMap<NodePath, SlotPin>,
+
+    /// A mesh's tint, by its index.
+    pub tints: HashMap<NodePath, usize>,
+
+    /// A mesh's decal among its `.texture_array`'s.
+    pub decals: HashMap<NodePath, usize>,
 }
 
 /// splitmix64.
@@ -75,6 +103,11 @@ impl Rng {
     }
 }
 
+/// A node's key from its parent's and its place: what its generator is seeded with.
+fn key(parent: u64, place: u64) -> u64 {
+    Rng(parent ^ place.wrapping_mul(0xD6E8_FEB8_6659_FD93)).next()
+}
+
 /// An attachment point of a model.
 fn attachment_point(read: &Reader, model: &str, name: &str) -> Option<(u32, [f32; 12])> {
     let bytes = read(model)?;
@@ -85,21 +118,40 @@ fn attachment_point(read: &Reader, model: &str, name: &str) -> Option<(u32, [f32
     })
 }
 
-/// A decal's file: `name` is a `.texture_array` listing alternatives (`pick` chooses), else a texture.
-fn decal(read: &Reader, name: Option<&str>, pick: usize) -> Option<String> {
-    let name = normalize(name?);
+/// The attachment points of a model (LOD 0), by name: what a slot's `attach_point` can name besides the weapon bones.
+pub fn attachment_points(read: &Reader, model: &str) -> Vec<String> {
+    let Some(bytes) = read(&normalize(model)) else { return vec![] };
+    let Ok(model) = RigidModel::decode(&mut Cursor::new(bytes), &Some(DecodeableExtraData::default())) else { return vec![] };
+    let mut names: Vec<String> = model
+        .lods()
+        .first()
+        .map(|l| l.mesh_blocks().iter().flat_map(|b| b.material().attachment_points()).map(|p| p.name().to_owned()).collect())
+        .unwrap_or_default();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// A decal's alternatives: `name` is a `.texture_array` listing them, else a texture alone.
+pub fn decals(read: &Reader, name: &str) -> Vec<String> {
+    let name = normalize(name);
     if let Some(list) = read(&format!("{name}.texture_array")) {
-        let list = String::from_utf8_lossy(&list).into_owned();
-        let lines: Vec<&str> = list.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-        return lines.get(pick % lines.len().max(1)).map(|l| format!("{}.dds", normalize(l)));
+        return texture_array(&list).iter().map(|l| format!("{}.dds", normalize(l))).collect();
     }
 
-    Some(if name.ends_with(".dds") { name } else { format!("{name}.dds") })
+    vec![if name.ends_with(".dds") { name } else { format!("{name}.dds") }]
+}
+
+/// A decal's file: `name`'s alternatives, `pick` chooses.
+fn decal(read: &Reader, name: Option<&str>, pick: usize) -> Option<String> {
+    let all = decals(read, name?);
+    all.get(pick % all.len().max(1)).cloned()
 }
 
 struct Assembler<'a> {
     read: &'a Reader<'a>,
-    rng: Rng,
+    seed: u64,
+    pins: &'a Pins,
     files: HashMap<String, Option<std::rc::Rc<VariantMeshFile>>>,
     out: AssembledUnit,
 
@@ -110,6 +162,25 @@ struct Assembler<'a> {
 /// A ship's piece in a damaged state: `bow_01_dm2` (`_dm1` is the piece intact).
 fn damaged(slot: &str) -> bool {
     slot.rsplit_once("_dm").is_some_and(|(_, n)| n.parse::<u32>().is_ok_and(|n| n > 1))
+}
+
+/// Where the walk is: the node's key, its path in the root definition, and whether it is still in that file (pins apply there only).
+#[derive(Clone)]
+struct At {
+    key: u64,
+    path: NodePath,
+    root: bool,
+}
+
+impl At {
+    fn child(&self, place: usize) -> Self {
+        let mut path = self.path.clone();
+        if self.root {
+            path.push(place);
+        }
+
+        Self { key: key(self.key, place as u64 + 1), path, root: self.root }
+    }
 }
 
 impl Assembler<'_> {
@@ -127,8 +198,8 @@ impl Assembler<'_> {
         self.files[&path].clone()
     }
 
-    fn slot(&mut self, slot: &Slot, parent: Option<&str>, attach: &Attach, depth: u32) {
-        if slot.alternatives.is_empty() || slot.probability.is_some_and(|p| self.rng.unit() >= p) || (self.ship && damaged(&slot.name)) {
+    fn slot(&mut self, slot: &Slot, at: &At, parent: Option<&str>, attach: &Attach, depth: u32) {
+        if slot.alternatives.is_empty() || (self.ship && damaged(&slot.name)) {
             return;
         }
 
@@ -137,12 +208,25 @@ impl Assembler<'_> {
         if self.ship
             && let Some(points) = slot.attach_point.as_deref().filter(|a| a.contains(','))
         {
-            for point in points.split(',').map(str::trim).filter(|p| !p.is_empty()) {
-                let one = Slot { attach_point: Some(point.to_owned()), probability: None, ..slot.clone() };
-                self.slot(&one, parent, attach, depth);
+            let points: Vec<&str> = points.split(',').map(str::trim).filter(|p| !p.is_empty()).collect();
+            for (k, point) in points.into_iter().enumerate() {
+                let one = Slot { attach_point: Some(point.to_owned()), ..slot.clone() };
+                let at = At { key: key(at.key, k as u64 + 1), ..at.clone() };
+                self.slot(&one, &at, parent, attach, depth);
             }
 
             return;
+        }
+
+        // The roll and the pick are drawn whatever a pin says, so a pin changes nothing else.
+        let mut rng = Rng(key(self.seed, at.key));
+        let roll = rng.unit();
+        let mut pick = rng.below(slot.alternatives.len());
+        match at.root.then(|| self.pins.slots.get(&at.path)).flatten() {
+            Some(SlotPin::Off) => return,
+            Some(SlotPin::Alternative(n)) => pick = (*n).min(slot.alternatives.len() - 1),
+            None if slot.probability.is_some_and(|p| roll >= p) => return,
+            None => {}
         }
 
         // A person's slot names one point.
@@ -155,37 +239,42 @@ impl Assembler<'_> {
             },
         };
 
-        let pick = self.rng.below(slot.alternatives.len());
+        let at = at.child(pick);
         match &slot.alternatives[pick] {
-            Alternative::Mesh(mesh) => self.mesh(mesh, parent, &attach, depth),
+            Alternative::Mesh(mesh) => self.mesh(mesh, &at, parent, &attach, depth),
             Alternative::Reference { definition, .. } => {
                 if depth < 32
                     && let Some(file) = self.file(definition)
                 {
-                    self.mesh(&file.root, parent, &attach, depth + 1);
+                    self.mesh(&file.root, &At { root: false, ..at }, parent, &attach, depth + 1);
                 }
             }
         }
     }
 
-    fn mesh(&mut self, mesh: &VariantMesh, parent: Option<&str>, attach: &Attach, depth: u32) {
+    fn mesh(&mut self, mesh: &VariantMesh, at: &At, parent: Option<&str>, attach: &Attach, depth: u32) {
         let model = mesh.model.as_deref().map(normalize);
         if let Some(model) = &model {
-            let pick = self.rng.next() as usize;
-            let tint = (!mesh.tints.is_empty()).then(|| &mesh.tints[self.rng.below(mesh.tints.len())]);
+            let mut rng = Rng(key(self.seed, at.key ^ 0xDEC4_1000));
+            let pins = |of: &HashMap<NodePath, usize>| at.root.then(|| of.get(&at.path).copied()).flatten();
+            let decal_pick = rng.next() as usize;
+            let decal_pick = pins(&self.pins.decals).unwrap_or(decal_pick);
+            let tint_pick = rng.below(mesh.tints.len());
+            let tint = mesh.tints.get(pins(&self.pins.tints).unwrap_or(tint_pick));
             self.out.parts.push(AssembledPart {
                 model: model.clone(),
-                decal_diffuse: decal(self.read, mesh.decal_diffuse.as_deref(), pick),
-                decal_normal: decal(self.read, mesh.decal_normal.as_deref(), pick),
+                decal_diffuse: decal(self.read, mesh.decal_diffuse.as_deref(), decal_pick),
+                decal_normal: decal(self.read, mesh.decal_normal.as_deref(), decal_pick),
                 masks: std::array::from_fn(|i| mesh.masks[i].filter(|m| *m < 3).unwrap_or(i as u8)),
                 tint: tint.map_or([0.0; 4], |t| [t.red, t.green, t.blue, 1.0]),
                 attach: attach.clone(),
+                node: at.path.clone(),
             });
         }
 
         let parent = model.as_deref().or(parent);
-        for slot in &mesh.slots {
-            self.slot(slot, parent, attach, depth);
+        for (i, slot) in mesh.slots.iter().enumerate() {
+            self.slot(slot, &at.child(i), parent, attach, depth);
         }
     }
 }
@@ -195,6 +284,13 @@ pub fn assemble(read: &Reader, definition: &str, seed: u64) -> Option<AssembledU
     assemble_as(read, definition, seed, false)
 }
 
+/// One soldier of a definition already read (an editor's, with its edits), with `pins` taking the seed's place where they say.
+pub fn assemble_with(read: &Reader, file: &VariantMeshFile, seed: u64, pins: &Pins) -> AssembledUnit {
+    let mut a = Assembler { read, seed, pins, files: HashMap::new(), out: AssembledUnit::default(), ship: false };
+    a.mesh(&file.root, &At { key: 0, path: vec![], root: true }, None, &Attach::None, 0);
+    a.out
+}
+
 /// A ship of a definition (`unit_variants_ships.variant`): its pieces intact (the `_dm2` slots are their damaged states), a part on every point
 /// of a list (the shields along its sides).
 pub fn assemble_ship(read: &Reader, definition: &str, seed: u64) -> Option<AssembledUnit> {
@@ -202,9 +298,10 @@ pub fn assemble_ship(read: &Reader, definition: &str, seed: u64) -> Option<Assem
 }
 
 fn assemble_as(read: &Reader, definition: &str, seed: u64, ship: bool) -> Option<AssembledUnit> {
-    let mut a = Assembler { read, rng: Rng(seed), files: HashMap::new(), out: AssembledUnit::default(), ship };
+    let pins = Pins::default();
+    let mut a = Assembler { read, seed, pins: &pins, files: HashMap::new(), out: AssembledUnit::default(), ship };
     let root = a.file(definition)?;
-    a.mesh(&root.root, None, &Attach::None, 0);
+    a.mesh(&root.root, &At { key: 0, path: vec![], root: true }, None, &Attach::None, 0);
     Some(a.out)
 }
 
@@ -212,7 +309,9 @@ fn assemble_as(read: &Reader, definition: &str, seed: u64, ship: bool) -> Option
 mod tests {
     use std::collections::HashMap;
 
-    use super::{Attach, assemble, assemble_ship, damaged};
+    use wce_formats::variant_mesh::VariantMeshFile;
+
+    use super::{Attach, Pins, SlotPin, assemble, assemble_ship, assemble_with, damaged};
 
     fn files() -> HashMap<String, Vec<u8>> {
         let mut f = HashMap::new();
@@ -272,6 +371,46 @@ mod tests {
             "a unit's slot takes the list's first point"
         );
         assert!(damaged("stern_02_dm2") && !damaged("stern_02_dm1") && !damaged("sails") && !damaged("x_dmz"));
+    }
+
+    #[test]
+    fn pins_change_their_slot_only() {
+        let mut f = files();
+        f.insert(
+            "c.variantmeshdefinition".to_owned(),
+            br#"<VARIANT_MESH>
+            <SLOT name="head"><VARIANT_MESH model="h1"/><VARIANT_MESH model="h2"/><VARIANT_MESH model="h3"/></SLOT>
+            <SLOT name="body"><VARIANT_MESH model="b1"/><VARIANT_MESH model="b2"/><VARIANT_MESH model="b3"/><VARIANT_MESH model="b4"/></SLOT>
+            <SLOT name="cape" probability="0.5"><VARIANT_MESH model="c1"/><VARIANT_MESH model="c2"/></SLOT>
+            <SLOT name="shield"><VARIANT_MESH_REFERENCE definition="b.variantmeshdefinition"/></SLOT>
+        </VARIANT_MESH>"#
+                .to_vec(),
+        );
+        let read = |p: &str| f.get(p).cloned();
+        let file = VariantMeshFile::parse(f["c.variantmeshdefinition"].clone()).expect("parses");
+        let models = |u: &super::AssembledUnit| u.parts.iter().map(|p| p.model.clone()).collect::<Vec<_>>();
+        for seed in 0..64 {
+            let free = assemble_with(&read, &file, seed, &Pins::default());
+            assert_eq!(Some(&free), assemble(&read, "c.variantmeshdefinition", seed).as_ref(), "no pins: the file's soldier");
+            let shield = free.parts.iter().find(|p| p.model == "shield.rigid_model_v2").expect("a shield");
+            assert_eq!(shield.node, [3, 0], "another file's part is its reference's");
+
+            let mut pins = Pins::default();
+            pins.slots.insert(vec![0], SlotPin::Alternative(2));
+            pins.slots.insert(vec![2], SlotPin::Alternative(1));
+            let pinned = assemble_with(&read, &file, seed, &pins);
+            let mut expected = models(&free);
+            expected[0] = "h3".to_owned();
+            if free.parts.iter().any(|p| p.node == [2, 0] || p.node == [2, 1]) {
+                expected[2] = "c2".to_owned();
+            } else {
+                expected.insert(2, "c2".to_owned());
+            }
+
+            assert_eq!(models(&pinned), expected, "seed {seed}");
+            pins.slots.insert(vec![1], SlotPin::Off);
+            assert!(!assemble_with(&read, &file, seed, &pins).parts.iter().any(|p| p.node.first() == Some(&1)));
+        }
     }
 
     #[test]
