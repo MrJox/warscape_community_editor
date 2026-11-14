@@ -449,12 +449,17 @@ impl TileDocument {
 
         let mark = self.begin()?;
         for &l in pieces.iter().rev() {
-            self.tscene_mut().remove(l)?;
+            if let Err(e) = self.tscene_mut().remove(l) {
+                return self.rolled_back(mark, e);
+            }
         }
 
         for (layer, text) in walls {
             let into = self.tile().find_layer(layer).unwrap_or(graph);
-            self.tscene_mut().insert_element_text(into, text)?;
+            if let Err(e) = self.tscene_mut().insert_element_text(into, text) {
+                // Taken back: the pieces too, not the walls lost.
+                return self.rolled_back(mark, e);
+            }
         }
 
         self.push_splice("Restore the procedural walls".to_owned(), mark, vec![], vec![]);

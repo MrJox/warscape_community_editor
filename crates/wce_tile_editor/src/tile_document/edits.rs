@@ -665,6 +665,14 @@ impl TileDocument {
         self.tscene_mut().begin_edit()
     }
 
+    /// An edit opened at `mark` (`begin`) that failed part way: what it changed is taken back (the scene as before, no undo entry, the
+    /// journal's mark closed) and the error comes back.
+    pub(crate) fn rolled_back<T>(&mut self, mark: usize, error: impl ToString) -> Result<T, String> {
+        let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
+        let _ = self.tscene_mut().unapply(&record);
+        Err(error.to_string())
+    }
+
     /// Scene units / radians, local to the parent.
     pub fn set_local(&mut self, elem: usize, position: Option<Double3>, euler: Option<Double3>, gesture: u64) -> bool {
         let t = self.tile();
@@ -778,7 +786,10 @@ impl TileDocument {
         }
 
         let mark = self.begin()?;
-        let copy = self.tscene_mut().duplicate(elem).map_err(|_| "cannot duplicate this element".to_owned())?;
+        let copy = match self.tscene_mut().duplicate(elem) {
+            Ok(c) => c,
+            Err(_) => return self.rolled_back(mark, "cannot duplicate this element"),
+        };
         let t = self.tile();
         if t.is_instance_slow(copy) {
             let w = world_transform(t.tscene(), copy);
@@ -848,11 +859,7 @@ impl TileDocument {
                 Ok(new)
             }
 
-            Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(e)
-            }
+            Err(e) => self.rolled_back(mark, e),
         }
     }
 
@@ -929,14 +936,20 @@ impl TileDocument {
 
         let mark = self.begin()?;
         let before = self.tile().tscene().doc().elements().len();
-        let mut copy = self.tscene_mut().duplicate(tmpl)?;
+        let mut copy = match self.tscene_mut().duplicate(tmpl) {
+            Ok(c) => c,
+            Err(e) => return self.rolled_back(mark, e),
+        };
 
         // The copy went in after the template: a layer from the copy on moved down by as many elements as it has.
         let added = self.tile().tscene().doc().elements().len() - before;
         let into = into.map(|l| if l >= copy { l + added } else { l });
         if let Some(into) = into.filter(|&l| self.tile().layer_of(copy) != Some(l)) {
             let world = world_transform(self.tile().tscene(), copy);
-            copy = self.tscene_mut().move_element(copy, into, None)?;
+            copy = match self.tscene_mut().move_element(copy, into, None) {
+                Ok(c) => c,
+                Err(e) => return self.rolled_back(mark, e),
+            };
             self.keep_worlds(&[copy], &[world]);
         }
 
@@ -1034,7 +1047,10 @@ impl TileDocument {
             wce_tile::new_instances::ANGLE_FINDER => "Angle finder",
             _ => "Polygon",
         };
-        let e = self.tscene_mut().add_polygon(Some(layer), kind, name, &local, &extra)?;
+        let e = match self.tscene_mut().add_polygon(Some(layer), kind, name, &local, &extra) {
+            Ok(e) => e,
+            Err(err) => return self.rolled_back(mark, err),
+        };
         self.push_splice_added(format!("Add {kind}"), mark, vec![], vec![item_of(e)], &[e]);
         Ok(e)
     }
@@ -1097,13 +1113,15 @@ impl TileDocument {
         match op {
             "insert" => {
                 if index >= pts.len() {
-                    return Err("no such point".to_owned());
+                    return self.rolled_back(mark, "no such point");
                 }
 
                 let local = self.tile().to_local(elem, world);
                 let own = self.has_handles(elem);
                 let sc = self.tscene_mut();
-                sc.insert_polygon_point(elem, index, local)?;
+                if let Err(e) = sc.insert_polygon_point(elem, index, local) {
+                    return self.rolled_back(mark, e);
+                }
 
                 // The new point is a copy of the one before it: not its handles (made from its neighbours) nor its corner mark.
                 if own && let Some(&p) = sc.polygon_points(elem).get(index + 1) {
@@ -1265,7 +1283,9 @@ impl TileDocument {
                 positions.insert(index + 1, local);
                 let (cin, cout) = auto_handles(&positions, index + 1);
                 let sc = self.tscene_mut();
-                sc.insert_polygon_point(elem, index, local)?;
+                if let Err(e) = sc.insert_polygon_point(elem, index, local) {
+                    return self.rolled_back(mark, e);
+                }
                 set(sc, index + 1, "controlIn", cin);
                 set(sc, index + 1, "controlOut", cout);
                 if last {
@@ -1286,7 +1306,9 @@ impl TileDocument {
                 let sc = self.tscene_mut();
 
                 // The copy after the first point keeps its values; the first one becomes the new point.
-                sc.insert_polygon_point(elem, 0, p.position)?;
+                if let Err(e) = sc.insert_polygon_point(elem, 0, p.position) {
+                    return self.rolled_back(mark, e);
+                }
                 set(sc, 0, "position", local);
                 set(sc, 0, "controlIn", Double3::ZERO);
                 set(sc, 0, "controlOut", cout);
@@ -1319,11 +1341,7 @@ impl TileDocument {
                 Ok(())
             }
 
-            Err(err) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(err)
-            }
+            Err(err) => self.rolled_back(mark, err),
         }
     }
 
@@ -1413,7 +1431,10 @@ impl TileDocument {
     pub fn add_layer(&mut self, parent: Option<usize>, name: &str) -> Result<usize, String> {
         let parent = parent.ok_or("this tile has no SCENE_GRAPH, so layers cannot be added")?;
         let mark = self.begin()?;
-        let layer = self.tscene_mut().add_layer(Some(parent), if name.is_empty() { "New layer" } else { name })?;
+        let layer = match self.tscene_mut().add_layer(Some(parent), if name.is_empty() { "New layer" } else { name }) {
+            Ok(l) => l,
+            Err(e) => return self.rolled_back(mark, e),
+        };
         self.push_splice_added("Add layer".to_owned(), mark, vec![], vec![item_of(layer)], &[layer]);
         Ok(layer)
     }
@@ -1439,7 +1460,10 @@ impl TileDocument {
         let sc = self.tile().tscene();
         let w = world_transform(sc, elem);
         let has_pos = sc.position(elem).is_some();
-        let moved = self.tscene_mut().move_to_layer(elem, layer)?;
+        let moved = match self.tscene_mut().move_to_layer(elem, layer) {
+            Ok(m) => m,
+            Err(e) => return self.rolled_back(mark, e),
+        };
         let sc = self.tscene_mut();
         if has_pos {
             set_world_position(sc, moved, w.position);
@@ -1809,11 +1833,7 @@ impl TileDocument {
                 Ok(freed)
             }
 
-            Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(e)
-            }
+            Err(e) => self.rolled_back(mark, e),
         }
     }
 
@@ -2033,11 +2053,7 @@ impl TileDocument {
                 Ok(e)
             }
 
-            Err(err) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(err)
-            }
+            Err(err) => self.rolled_back(mark, err),
         }
     }
 
@@ -2310,11 +2326,7 @@ impl TileDocument {
                 Ok(e)
             }
 
-            Err(err) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(err)
-            }
+            Err(err) => self.rolled_back(mark, err),
         }
     }
 
@@ -2706,7 +2718,10 @@ impl TileDocument {
         }
 
         let mark = self.begin()?;
-        let copy = self.tscene_mut().duplicate(layer).map_err(|_| "cannot duplicate this layer".to_owned())?;
+        let copy = match self.tscene_mut().duplicate(layer) {
+            Ok(c) => c,
+            Err(_) => return self.rolled_back(mark, "cannot duplicate this layer"),
+        };
         let name = format!("{} copy", self.tile().tscene().name(layer));
         self.tscene_mut().set_attr(copy, "name", &name);
         self.push_splice_added("Duplicate layer".to_owned(), mark, vec![item_of(layer)], vec![item_of(copy)], &[copy]);

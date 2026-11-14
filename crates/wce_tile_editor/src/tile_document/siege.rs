@@ -928,11 +928,7 @@ impl TileDocument {
                 Ok(())
             }
 
-            Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(e)
-            }
+            Err(e) => self.rolled_back(mark, e),
         }
     }
 
@@ -1006,11 +1002,7 @@ impl TileDocument {
                 self.push_splice("Generate SiegeAI".to_owned(), mark, vec![], vec![item_of(layer)]);
                 Ok(layout)
             }
-            Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(e)
-            }
+            Err(e) => self.rolled_back(mark, e),
         }
     }
 
