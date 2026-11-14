@@ -810,11 +810,27 @@ fn zero_ids(n: &mut Node) {
     }
 }
 
-fn read_serde<T: Decodeable + Serialize>(name: &str, class: &str, b: &[u8], tile: &mut Tile) -> std::result::Result<(), String> {
+/// An rpfm struct's file as a model document. The model is written back through rpfm and serde_json on save, unlike the formats that keep
+/// their original bytes: a file that does not come back byte for byte that way (a NaN, which JSON can't hold; a field rpfm reads one way and
+/// writes another) is refused here, so the caller keeps it as an opaque file, written as it was, instead of saving it changed or failing the
+/// tile's save.
+fn read_serde<T: Decodeable + Encodeable + Serialize + DeserializeOwned>(
+    name: &str,
+    class: &str,
+    b: &[u8],
+    tile: &mut Tile,
+) -> std::result::Result<(), String> {
     let v = T::decode(&mut Cursor::new(b), &None).map_err(|e| e.to_string())?;
     let mut root = serde_node::to_node(class, &v)?;
     zero_ids(&mut root);
-    tile.documents.push(Document { name: name.to_owned(), root });
+    let doc = Document { name: name.to_owned(), root };
+    match write_serde::<T>(&doc) {
+        Ok(again) if again == b => {}
+        Ok(_) => return Err("rpfm does not write it back byte for byte: kept as it is".to_owned()),
+        Err(e) => return Err(format!("does not write back ({e}): kept as it is")),
+    }
+
+    tile.documents.push(doc);
     Ok(())
 }
 
