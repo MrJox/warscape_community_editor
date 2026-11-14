@@ -128,10 +128,11 @@ impl HeightField {
             return Err("height map must be 16-bit grey".to_owned());
         }
 
-        let n = png.width as usize * png.height as usize;
-        if png.pixels.len() < n * 2 {
+        // Checked: a header's width and height can make the byte count wrap past the length check.
+        let bytes = (png.width as usize).checked_mul(png.height as usize).and_then(|n| n.checked_mul(2));
+        let Some(n) = bytes.filter(|&b| png.pixels.len() >= b).map(|b| b / 2) else {
             return Err(format!("height map of {} x {} with {} bytes of pixels", png.width, png.height, png.pixels.len()));
-        }
+        };
 
         let v =
             png.pixels.as_chunks::<2>().0.iter().take(n).map(|p| (f64::from(u16::from_be_bytes(*p)) / 65535.0 * scale) as f32).collect();
@@ -658,6 +659,93 @@ mod tests {
         assert!(HeightField::from_png(&png(31), 0.0, 1.0).is_err());
         let f = HeightField::from_png(&png(32), 0.0, 1.0).unwrap();
         assert_eq!((f.width(), f.height(), f.metres(3, 3)), (4, 4, 0.0));
+    }
+
+    /// A 16-bit grey PNG through the kit encoder, read back as a height field, then truncated, its IHDR's width and height set to hostile
+    /// values, and mutated by a seeded xorshift: every input is an error or a field whose samples are all there, never a panic.
+    #[test]
+    fn a_malformed_height_map_png_is_an_error_not_a_panic() {
+        let mut png = PngFile { width: 6, height: 5, bit_depth: 16, color_type: 0, idat_chunk_size: 24, ..Default::default() };
+        png.pixels = (0..6 * 5 * 2).map(|i| (i * 53 % 256) as u8).collect();
+        let valid = png.encode().unwrap();
+        let read = |b: &[u8]| {
+            let Ok(p) = PngFile::parse(b) else { return };
+            let Ok(f) = HeightField::from_png(&p, -10.0, 100.0) else { return };
+            assert_eq!(f.samples().len(), f.width() as usize * f.height() as usize);
+            if f.width() > 0 && f.height() > 0 {
+                assert!(f.metres(f.width() - 1, f.height() - 1).is_finite());
+            }
+        };
+
+        let f = HeightField::from_png(&PngFile::parse(&valid).unwrap(), -10.0, 100.0).unwrap();
+        assert_eq!((f.width(), f.height(), f.raw(5, 4)), (6, 5, u16::from_be_bytes([png.pixels[58], png.pixels[59]])));
+        for n in 0..valid.len() {
+            read(&valid[..n]);
+        }
+
+        // The IHDR's width at 16, its height at 20 (big endian).
+        for at in [16, 20] {
+            for v in [0, 1, 0xFFFF, 0x8000_0000, u32::MAX] {
+                let mut b = valid.clone();
+                b[at..at + 4].copy_from_slice(&u32::to_be_bytes(v));
+                read(&b);
+            }
+        }
+
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state as usize
+        };
+        for _ in 0..3000 {
+            let mut b = valid.clone();
+            for _ in 0..1 + next() % 4 {
+                let at = next() % b.len();
+                match next() % 3 {
+                    0 => b[at] ^= 1 << (next() % 8),
+                    1 => b[at] = next() as u8,
+                    _ => b.truncate(at.max(1)),
+                }
+            }
+
+            read(&b);
+        }
+    }
+
+    #[test]
+    fn a_height_map_png_struct_of_hostile_size_is_an_error() {
+        let png = |width: u32, height: u32, pixels: usize| PngFile {
+            width,
+            height,
+            bit_depth: 16,
+            color_type: 0,
+            pixels: vec![0; pixels],
+            ..Default::default()
+        };
+        assert!(HeightField::from_png(&png(u32::MAX, u32::MAX, 0), 0.0, 1.0).is_err());
+        assert!(HeightField::from_png(&png(u32::MAX, 2, 64), 0.0, 1.0).is_err());
+        assert!(HeightField::from_png(&png(0x8000_0000, 0x8000_0000, 0), 0.0, 1.0).is_err());
+        assert!(HeightField::from_png(&png(4, 4, 32), 0.0, 1.0).is_ok());
+        let mut eight_bit = png(4, 4, 32);
+        eight_bit.bit_depth = 8;
+        assert!(HeightField::from_png(&eight_bit, 0.0, 1.0).is_err());
+    }
+
+    /// 3,062,868,337 x 3,011,351,133 is 2^63 + 13 samples, whose byte count (`n * 2`) wraps to 26: a `PngFile` built by hand (`PngFile::parse`
+    /// never gives one, its pixels are always the full size) passes the size check with 26 bytes, and `metres` then indexes past the samples.
+    #[test]
+    fn a_height_map_whose_byte_count_wraps_is_an_error() {
+        let png = PngFile {
+            width: 3_062_868_337,
+            height: 3_011_351_133,
+            bit_depth: 16,
+            color_type: 0,
+            pixels: vec![0; 26],
+            ..Default::default()
+        };
+        assert!(HeightField::from_png(&png, 0.0, 1.0).is_err());
     }
 
     #[test]

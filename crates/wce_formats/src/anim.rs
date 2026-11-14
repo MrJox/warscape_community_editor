@@ -110,7 +110,9 @@ impl Animation {
                 return None;
             }
 
-            let frames = (0..count.min(max_frames))
+            // Frames without data (no bones) are all one pose: one is kept, as their count is not bounded by the file's bytes.
+            let keep = if n == 0 { 1 } else { count.min(max_frames) };
+            let frames = (0..keep.min(max_frames))
                 .map(|_| {
                     (0..n)
                         .map(|_| {
@@ -130,8 +132,10 @@ impl Animation {
             return None;
         }
 
-        let mut frames = Vec::with_capacity(count.min(max_frames).min(4096));
-        for _ in 0..count.min(max_frames) {
+        // Frames without data (no tracks) are all one pose: one is kept, as their count is not bounded by the file's bytes.
+        let keep = if nt == 0 && nr == 0 { 1.min(max_frames) } else { count.min(max_frames) };
+        let mut frames = Vec::with_capacity(keep.min(4096));
+        for _ in 0..keep {
             let ts = (0..nt).map(|_| Some([r.f32()?, r.f32()?, r.f32()?])).collect::<Option<Vec<_>>>()?;
             let qs = (0..nr)
                 .map(|_| Some(normalised([r.i16()?, r.i16()?, r.i16()?, r.i16()?].map(|v| f32::from(v) / 32767.0))))
