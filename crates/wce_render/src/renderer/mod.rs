@@ -1006,6 +1006,9 @@ pub struct Renderer {
     pub(crate) grass: grass::GrassGpu,
     pub settings: RenderSettings,
 
+    /// The game shaders whose failure was reported: asked for again (every frame), `None` at once, without a message made and searched for.
+    shaders_reported: std::collections::HashSet<String>,
+
     /// When the caches last gave back what nothing draws (`release_unused`).
     released_at: Option<std::time::Instant>,
 }
@@ -1185,6 +1188,7 @@ impl Renderer {
             grass: grass::GrassGpu::default(),
             settings: RenderSettings::default(),
             released_at: None,
+            shaders_reported: Default::default(),
         })
     }
 
@@ -1318,6 +1322,10 @@ impl Renderer {
 
     /// A game shader, or `None` (reported) when it can't be loaded.
     pub(crate) fn shader(&mut self, name: &str) -> Option<Rc<GameShader>> {
+        if self.shaders_reported.contains(name) {
+            return None;
+        }
+
         let files = self.files.clone();
         let read: &FileReader = &|path: &str| files.read(path);
         match self.lib.get(read, &mut self.cbs, name) {
@@ -1329,6 +1337,7 @@ impl Renderer {
                     self.shader_failures.insert(0, why);
                 }
 
+                self.shaders_reported.insert(name.to_owned());
                 None
             }
         }
@@ -1337,6 +1346,10 @@ impl Renderer {
     /// A game shader some games don't have (Rome 2's packs have no rope shaders): `None`, not reported, when no pack has it; reported as
     /// [`Self::shader`] when it is there but doesn't load.
     pub(crate) fn optional_shader(&mut self, name: &str) -> Option<Rc<GameShader>> {
+        if self.shaders_reported.contains(name) {
+            return None;
+        }
+
         let files = self.files.clone();
         let read: &FileReader = &|path: &str| files.read(path);
         match self.lib.get(read, &mut self.cbs, name) {
