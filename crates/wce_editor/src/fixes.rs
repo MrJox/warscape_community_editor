@@ -154,9 +154,9 @@ impl Editor {
         });
     }
 
-    /// The menu, in the menu bar: this game's fixes.
-    pub(crate) fn draw_fixes_menu(&mut self) {
-        if self.fixes.list.is_empty() || !gui::begin_menu("Fixes") {
+    /// This game's fixes, as entries of the toolbar's game dropdown (each opens its window; ticked when installed).
+    pub(crate) fn draw_fixes_items(&mut self) {
+        if self.fixes.list.is_empty() {
             return;
         }
 
@@ -166,16 +166,20 @@ impl Editor {
         let data = self.fix_data_folder();
         for (id, title) in &items {
             let on = data.as_deref().zip(self.fix_named(id)).is_some_and(|(d, i)| self.fixes.list[i].installed(d));
-            if gui::menu_item(&format!("{title}..."), None, on, data.is_some()) {
+            gui::begin_disabled(data.is_none());
+            if gui::selectable(&format!("{}  Fix: {title}...", if on { crate::icons::CHECK } else { "   " }), false, 0) {
                 self.open_fix(id);
             }
-        }
 
-        if items.is_empty() {
-            gui::menu_item("Nothing for this game", None, false, false);
+            gui::end_disabled();
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(if on {
+                    "Installed. Opens the fix's window (what it does, remove it)."
+                } else {
+                    "Opens the fix's window: what it does, install it."
+                });
+            }
         }
-
-        gui::end_menu();
     }
 
     /// The window of the open fix.

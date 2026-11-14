@@ -33,6 +33,19 @@ pub enum ViewportEventKind {
     ContextMenu,
 }
 
+/// The groups of the File menu a tool adds to (`Tool::file_menu`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileMenu {
+    /// After Open file: what the tool makes or opens its own way (New tile..., Open tile...).
+    Open,
+
+    /// After Save as: the tool's own saves (Save tile as...).
+    Save,
+
+    /// In the Revert submenu, after To saved and To the game's version.
+    Revert,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ViewportEvent {
     pub kind: ViewportEventKind,
@@ -119,6 +132,23 @@ pub trait Tool: Any {
         let _ = editor;
     }
 
+    /// Items of the tool in a group of the File menu (`FileMenu`): what the tool opens or makes, saves its own way, or reverts to.
+    fn file_menu(&mut self, editor: &mut Editor, part: FileMenu) {
+        let _ = (editor, part);
+    }
+
+    /// Items of the tool at the end of the View menu (its windows, what its viewport shows).
+    fn view_menu(&mut self, editor: &mut Editor) {
+        let _ = editor;
+    }
+
+    /// File > Revert > To saved for a tool that reverts its document its own way (the Prefab tool reads its prefab again); `None`: the
+    /// document's own `Document::revert`.
+    fn revert(&mut self, editor: &mut Editor) -> Option<Result<String, String>> {
+        let _ = editor;
+        None
+    }
+
     /// Items of the tool at the end of the Edit menu.
     fn edit_menu(&mut self, editor: &mut Editor) {
         let _ = editor;
@@ -138,14 +168,14 @@ pub trait Tool: Any {
         false
     }
 
-    /// Widgets over the viewport image (inside the viewport window, after the image): `origin` and `size` are the image's, in screen
-    /// pixels. A child window there takes the mouse before the viewport.
     /// Drawn on the viewport's image right after it, under the editor's own overlays (the compass, the coordinates) and the tool's
     /// `viewport_overlay`: a picture that stands in for part of the image (the Weather tool's split compare).
     fn viewport_underlay(&mut self, editor: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
         let _ = (editor, origin, size);
     }
 
+    /// Widgets over the viewport image (inside the viewport window, after the image): `origin` and `size` are the image's, in screen
+    /// pixels. A child window there takes the mouse before the viewport.
     fn viewport_overlay(&mut self, editor: &mut Editor, origin: gui::Vec2, size: gui::Vec2) {
         let _ = (editor, origin, size);
     }

@@ -829,7 +829,7 @@ impl TileProject {
         match own {
             Some((location, variation)) => format!(
                 "no tile database entry points to {} (the tile's entry is {location}, variation {variation}): it opens again without its \
-                 height range, size and colour; {heights}. Tile > Save tile as... makes a new tile with its own entry. ",
+                 height range, size and colour; {heights}. File > Save tile as... makes a new tile with its own entry. ",
                 out_dir.display()
             ),
             None => {

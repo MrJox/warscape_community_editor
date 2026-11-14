@@ -1005,40 +1005,9 @@ impl Tool for PrefabTool {
         self.tile.draw_panels(e);
     }
 
-    fn draw_menus(&mut self, e: &mut Editor) {
-        if gui::begin_menu("Prefab") {
-            let open = self.open.is_some();
-            let mut r = None;
-            if gui::menu_item("Save", None, false, open) {
-                r = Some(self.save(e));
-            }
-
-            if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip("Saves the stage's prefab, with its ground.");
-            }
-
-            if gui::menu_item("Revert", None, false, open) {
-                r = Some(self.revert(e));
-            }
-
-            if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip("Drops the unsaved changes: the prefab as its file has it again.");
-            }
-
-            gui::separator();
-            if gui::menu_item("Close the stage", None, false, open) {
-                r = Some(self.close_stage(e, false).map(|()| "stage closed".to_owned()));
-            }
-
-            if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip("Closes the prefab's stage; refused while it has unsaved changes.");
-            }
-
-            gui::end_menu();
-            if let Some(r) = r {
-                self.report(e, r);
-            }
-        }
+    /// File > Revert > To saved: the prefab as its file has it, read again (File > Save saves the stage, File > Close document closes it).
+    fn revert(&mut self, e: &mut Editor) -> Option<Result<String, String>> {
+        self.open.is_some().then(|| self.revert(e))
     }
 
     fn toolbar(&mut self, e: &mut Editor) {

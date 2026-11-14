@@ -333,13 +333,13 @@ Only the preview: the file is not changed.");
         gui::same_line();
         let changed = active_doc(e).and_then(|id| ui_doc_ref(e, id)).is_some_and(|d| d.modified());
         gui::begin_disabled(!changed);
-        if gui::small_button("Reset all changes") {
-            self.reset_all(e);
+        if gui::small_button("Revert to saved") {
+            e.revert_active();
         }
 
         gui::end_disabled();
         if gui::is_item_hovered_allow_disabled() {
-            gui::set_tooltip("Puts the layout back as it was when opened or last saved. Ctrl+Z brings the changes back.");
+            gui::set_tooltip("File > Revert > To saved: the layout as it was when opened or last saved. Ctrl+Z brings the changes back.");
         }
 
         if self.anim.is_some() {
@@ -1218,16 +1218,6 @@ linked by the component name '{}'",
     }
 
     /// Throws away every change since the layout was opened or saved (one undo step).
-    fn reset_all(&mut self, e: &mut Editor) {
-        let Some(id) = active_doc(e) else { return };
-        let r = ui_doc(e, id).map(|d| d.reset_all());
-        match r {
-            Some(Ok(())) => e.status("all changes undone (Ctrl+Z brings them back)", false),
-            Some(Err(m)) => e.status(&m, true),
-            None => {}
-        }
-    }
-
     // ---- XML pane
 
     fn xml_pane(&mut self, e: &mut Editor) {
@@ -2451,14 +2441,11 @@ impl Tool for UiTool {
         true
     }
 
-    fn draw_menus(&mut self, e: &mut Editor) {
-        if gui::begin_menu("UI") {
+    /// The layout's edits at the end of the Edit menu (File > Revert > To saved resets all changes; File > New skin... makes a skin).
+    fn edit_menu(&mut self, e: &mut Editor) {
+        {
+            gui::separator();
             let has = active_doc(e).is_some();
-            let changed = active_doc(e).and_then(|id| ui_doc_ref(e, id)).is_some_and(|d| d.modified());
-            if gui::menu_item("Reset all changes", None, false, changed) {
-                self.reset_all(e);
-            }
-
             let sel = has && active_doc(e).and_then(|id| selected(e, id)).is_some();
             gui::begin_disabled(!sel);
             if gui::menu_item("Add child", None, false, true) {
@@ -2497,12 +2484,18 @@ impl Tool for UiTool {
             }
 
             gui::end_disabled();
-            gui::separator();
+        }
+    }
+
+    fn file_menu(&mut self, _: &mut Editor, part: wce_editor::tool::FileMenu) {
+        if part == wce_editor::tool::FileMenu::Open {
             if gui::menu_item("New skin...", None, false, true) {
                 self.new_skin_popup = true;
             }
 
-            gui::end_menu();
+            if gui::is_item_hovered() {
+                gui::set_tooltip("A new skin for the UI: a copy of the game's to restyle, in the project.");
+            }
         }
     }
 

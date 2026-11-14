@@ -1,7 +1,7 @@
 //! Tile > Tile database... (Phase 6b of docs/plans/tile_ted_parity.md; TEd's Tile Database Management): the battle tile sets of the
 //! Assembly Kit and of the projects, each with its colour and its tiles (a click opens one), and New tile set (TEd's: a name and a colour)
 //! into the projects' `_settings.xml`; "Save for Assembly Kit" carries a set a tile uses into the kit's. A new tile goes into a set with
-//! Tile > Save tile as.... A game whose kit has no tiles (Rome 2) shows its packs' database instead of the kit's (the map context's copy
+//! File > Save tile as.... A game whose kit has no tiles (Rome 2) shows its packs' database instead of the kit's (the map context's copy
 //! in the kit's format, `workflow::neighbour_root`); its tiles open from the packs.
 
 use std::collections::BTreeMap;

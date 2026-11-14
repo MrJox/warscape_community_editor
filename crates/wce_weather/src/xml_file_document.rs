@@ -299,6 +299,13 @@ impl Document for XmlFileDocument {
         true
     }
 
+    /// The file as saved (or as opened): its text again; not undoable (the history is cleared, as a structural edit's snapshot could not
+    /// be replayed over it).
+    fn revert(&mut self) -> Result<String, String> {
+        self.revert_all();
+        Ok(format!("{} as saved", self.title()))
+    }
+
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
         let to = if target.path.as_os_str().is_empty() { self.default_save_path() } else { target.path.clone() };
         let fail = |error: String| format!("save failed: {error}");

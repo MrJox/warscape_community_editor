@@ -342,6 +342,99 @@ impl WeatherTool {
         }
     }
 
+    /// The Weather scene panel's Weather effects section: precipitation on or off and again, the weather definition and its effects, the
+    /// wind, the battle's season and snow, the particles.
+    fn draw_effects(&mut self, e: &mut Editor) {
+        if !gui::collapsing_header("Weather effects", 0) {
+            return;
+        }
+
+        let e_scene_season = e.scene.vegetation_season.clone();
+        let Some(r) = e.renderer() else { return };
+        let p = r.particles();
+        gui::checkbox("Precipitation", &mut p.enabled);
+        gui::same_line();
+        if gui::button("Restart") {
+            p.restart();
+        }
+
+        let fx = p.effect();
+        let d = fx.definition.clone();
+        let emitters = fx.emitters.iter().map(|em| format!("{} / {} / {}", em.library, em.instance, em.name)).collect::<Vec<_>>();
+        let notes = fx.notes.clone();
+        let (alive, capacity, errors) = (p.alive(), p.capacity(), p.errors().to_vec());
+        gui::separator();
+        gui::text(&format!(
+            "Weather definition: {} ({}, severity {})",
+            if d.name.is_empty() { "(none)" } else { &d.name },
+            d.kind,
+            d.severity
+        ));
+        let mut effects = if d.vfx1.is_empty() { "(none)".to_owned() } else { format!("vfx/{}.xml", d.vfx1) };
+        if !d.vfx2.is_empty() {
+            effects += &format!(", vfx/{}.xml", d.vfx2);
+        }
+
+        gui::text(&format!("Effect: {effects}"));
+        let random = self.last_params.wind_dir_random;
+        gui::text(&format!(
+            "Wind direction {:.1} deg{}",
+            r.wind_direction_degrees(&self.last_params),
+            if random { " (wind_dir_random: random per battle)" } else { "" },
+        ));
+        if random {
+            gui::same_line();
+            if gui::button("New battle direction") {
+                r.settings.wind_dir_seed = r.settings.wind_dir_seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+            }
+        }
+
+        let w = r.wind();
+        gui::text(&format!(
+            "Wind {:.3} (min {}, max {}), last gust {:.3} for {:.2} s, next roll in {:.2} s",
+            w.strength,
+            printf_g_prec(f64::from(d.wind_size_min), 3),
+            printf_g_prec(f64::from(d.wind_size_max), 3),
+            w.gust_size,
+            w.gust_duration,
+            w.cooldown.max(0.0),
+        ));
+        gui::text(&format!(
+            "VFX wind ({:.2}, {:.2}, {:.2}), g_wind ({:.3}, {:.3})",
+            w.vfx_velocity.x, w.vfx_velocity.y, w.vfx_velocity.z, w.smoothed.x, w.smoothed.y,
+        ));
+        gui::separator();
+        gui::text("Battle (not stored in the weather files):");
+        // The battle's season the renderer sends (g_season_type: summer 1 and winter 3 measured, spring 0 and autumn 2 by their order;
+        // no shader reads it). A tile's season (its climate and season chips) sets it while one is open.
+        let from_tile = !e_scene_season.is_empty();
+        gui::begin_disabled(from_tile);
+        gui::set_next_item_width(200.0);
+        gui::combo("Season (g_season_type)", &mut r.settings.season, &["spring", "summer", "autumn", "winter"]);
+        gui::end_disabled();
+        if gui::is_item_hovered_allow_disabled() {
+            gui::set_tooltip(if from_tile {
+                "The open tile's season sets it (the tile's season chip)."
+            } else {
+                "The battle's season the game sends the shaders (no shader reads it: kept as the game has it)."
+            });
+        }
+        gui::checkbox("Snow on the map (g_snow_mask)", &mut r.settings.snow_cover);
+        gui::separator();
+        gui::text(&format!("Particles: {alive} / {capacity}"));
+        for em in &emitters {
+            gui::bullet_text(em);
+        }
+
+        for n in &notes {
+            gui::text_colored(theme::warning(), n);
+        }
+
+        for err in &errors {
+            gui::text_colored(theme::error(), err);
+        }
+    }
+
     fn draw_scene_bar(&mut self, e: &mut Editor) {
         if !gui::begin("Weather scene", None, 0) {
             gui::end();
@@ -388,6 +481,7 @@ impl WeatherTool {
         }
 
         self.reference.draw_panel(e);
+        self.draw_effects(e);
 
         if !errors.is_empty() {
             gui::text_colored(theme::error(), "render errors (hover)");
@@ -418,7 +512,7 @@ impl WeatherTool {
     }
 
     fn draw_document(&mut self, e: &mut Editor, id: DocumentId) {
-        let mut save = false;
+        let (mut save, mut revert) = (false, false);
         {
             let Some(d) = e.docs.find_as_mut::<XmlFileDocument>(id) else { return };
             let src = d.source().clone();
@@ -431,8 +525,12 @@ impl WeatherTool {
 
             gui::same_line();
             gui::begin_disabled(!d.modified());
-            if gui::button("Revert all") {
-                d.revert_all();
+            if gui::button("Revert to saved") {
+                revert = true;
+            }
+
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip("File > Revert > To saved: the file as it was when opened or last saved (not undoable).");
             }
 
             gui::end_disabled();
@@ -470,6 +568,10 @@ impl WeatherTool {
 
         if save {
             let _ = CommandRegistry::run(e, "save");
+        }
+
+        if revert {
+            e.revert_active();
         }
     }
 
@@ -1040,116 +1142,25 @@ impl Tool for WeatherTool {
         }
     }
 
-    fn draw_menus(&mut self, e: &mut Editor) {
-        if gui::begin_menu("Settings") {
-            if let Some(r) = e.renderer() {
-                gui::text("Game graphics options (read from preferences.script.txt):");
-                gui::checkbox("Vignette (gfx_vignette)", &mut r.settings.vignette);
-                gui::checkbox("Depth of field (gfx_depth_of_field)", &mut r.settings.depth_of_field);
-                gui::checkbox("SSAO (gfx_ssao)", &mut r.settings.ssao);
-                gui::checkbox("Distortion (gfx_distortion)", &mut r.settings.distortion);
-                gui::checkbox("Shadows", &mut r.settings.shadows);
-                gui::set_next_item_width(120.0);
-                gui::slider_int("Shadow quality (gfx_shadow_quality)", &mut r.settings.shadow_quality, 0, 3);
-                gui::checkbox("Lens flare", &mut r.settings.lens_flare);
-                gui::drag_float("Gamma (gfx_gamma_setting)", &mut self.output_gamma, 0.01, 1.0, 3.0, "%.3f");
-                gui::drag_float("Brightness (gfx_brightness_setting)", &mut self.output_brightness, 0.01, 0.5, 2.0, "%.3f");
-            }
-
-            gui::end_menu();
-        }
-
-        if gui::begin_menu("Selection") {
-            let game = e.game();
-            if game.features.variation_db {
-                gui::menu_item_toggle("Weather picker (which environment file the game chooses)", &mut self.picker.open);
-            } else {
-                gui::menu_item("Weather picker (which environment file the game chooses)", None, false, false);
-                if gui::is_item_hovered_allow_disabled() {
-                    gui::set_tooltip(&crate::picker::no_database(game));
-                }
-            }
-
-            gui::end_menu();
-        }
-
-        let Some(r) = e.renderer() else { return };
-        if !gui::begin_menu("Weather") {
-            return;
-        }
-
-        let p = r.particles();
-        gui::checkbox("Precipitation", &mut p.enabled);
-        gui::same_line();
-        if gui::button("Restart") {
-            p.restart();
-        }
-
-        let fx = p.effect();
-        let d = fx.definition.clone();
-        let emitters = fx.emitters.iter().map(|em| format!("{} / {} / {}", em.library, em.instance, em.name)).collect::<Vec<_>>();
-        let notes = fx.notes.clone();
-        let (alive, capacity, errors) = (p.alive(), p.capacity(), p.errors().to_vec());
+    fn view_menu(&mut self, e: &mut Editor) {
         gui::separator();
-        gui::text(&format!(
-            "Weather definition: {} ({}, severity {})",
-            if d.name.is_empty() { "(none)" } else { &d.name },
-            d.kind,
-            d.severity
-        ));
-        let mut effects = if d.vfx1.is_empty() { "(none)".to_owned() } else { format!("vfx/{}.xml", d.vfx1) };
-        if !d.vfx2.is_empty() {
-            effects += &format!(", vfx/{}.xml", d.vfx2);
-        }
-
-        gui::text(&format!("Effect: {effects}"));
-        let random = self.last_params.wind_dir_random;
-        gui::text(&format!(
-            "Wind direction {:.1} deg{}",
-            r.wind_direction_degrees(&self.last_params),
-            if random { " (wind_dir_random: random per battle)" } else { "" },
-        ));
-        if random {
-            gui::same_line();
-            if gui::button("New battle direction") {
-                r.settings.wind_dir_seed = r.settings.wind_dir_seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+        let game = e.game();
+        if game.features.variation_db {
+            gui::menu_item_toggle("Weather picker", &mut self.picker.open);
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Which environment file the game chooses for a battle (the weather selection database), and editing it.");
+            }
+        } else {
+            gui::menu_item("Weather picker", None, false, false);
+            if gui::is_item_hovered_allow_disabled() {
+                gui::set_tooltip(&crate::picker::no_database(game));
             }
         }
 
-        let w = r.wind();
-        gui::text(&format!(
-            "Wind {:.3} (min {}, max {}), last gust {:.3} for {:.2} s, next roll in {:.2} s",
-            w.strength,
-            printf_g_prec(f64::from(d.wind_size_min), 3),
-            printf_g_prec(f64::from(d.wind_size_max), 3),
-            w.gust_size,
-            w.gust_duration,
-            w.cooldown.max(0.0),
-        ));
-        gui::text(&format!(
-            "VFX wind ({:.2}, {:.2}, {:.2}), g_wind ({:.3}, {:.3})",
-            w.vfx_velocity.x, w.vfx_velocity.y, w.vfx_velocity.z, w.smoothed.x, w.smoothed.y,
-        ));
-        gui::separator();
-        gui::text("Battle (not stored in the weather files):");
-        gui::set_next_item_width(200.0);
-        gui::combo("Season (g_season_type)", &mut r.settings.season, &["0", "1", "2", "3 (winter in the snow dump)"]);
-        gui::checkbox("Snow on the map (g_snow_mask)", &mut r.settings.snow_cover);
-        gui::separator();
-        gui::text(&format!("Particles: {alive} / {capacity}"));
-        for em in &emitters {
-            gui::bullet_text(em);
+        gui::menu_item_toggle("Weather gallery", &mut self.gallery.open);
+        if gui::is_item_hovered() {
+            gui::set_tooltip("Thumbnails of the files the Files panel lists, each drawn on this scene; click one to open it.");
         }
-
-        for n in &notes {
-            gui::text_colored(theme::warning(), n);
-        }
-
-        for err in &errors {
-            gui::text_colored(theme::error(), err);
-        }
-
-        gui::end_menu();
     }
 
     fn open(&mut self, e: &mut Editor, path: &str, from_packs: bool) -> Result<Box<dyn Document>, String> {

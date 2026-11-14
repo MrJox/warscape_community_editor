@@ -1,4 +1,4 @@
-//! Tile > New tile...: TEd's New Tile dialog (name, size, terrain height, density; `wce_tile::new_tile`), written as a project in the
+//! File > New tile...: TEd's New Tile dialog (name, size, terrain height, density; `wce_tile::new_tile`), written as a project in the
 //! projects folder and opened.
 
 use wce_editor::editor::Editor;

@@ -29,7 +29,7 @@ use wce_vfs::{Config, GameProfile, Vfs, normalize};
 use crate::panels::PanelState as PanelData;
 use crate::perf::PerfStats;
 use crate::steam_detect::{detect_game_folder, file_dialog, pick_folder};
-use crate::tool::Tool;
+use crate::tool::{FileMenu, Tool};
 use crate::viewport::{GizmoMode, Viewport};
 use crate::{gui, icons};
 
@@ -511,6 +511,11 @@ impl Editor {
         }
     }
 
+    /// Whether the status line's text is an error.
+    pub fn status_is_error(&self) -> bool {
+        self.status_error
+    }
+
     pub fn status_text(&self) -> &str {
         &self.status
     }
@@ -762,7 +767,7 @@ impl Editor {
         self.game().available_mod_packs(&dir)
     }
 
-    /// The check list of mod packs (first run and File > Mod packs).
+    /// The check list of mod packs (first run and the toolbar's game list > Mod packs...).
     fn mod_pack_checks(&mut self, game: &str) {
         let (profile, chosen) = (self.game(), self.selected_mod_packs());
         self.mod_pack_checks_at(game, profile, &chosen, gui::cursor_pos_x());
@@ -1959,11 +1964,31 @@ impl Editor {
                 }
             }
 
+            gui::separator();
+            if gui::selectable(&format!("{}  Mod packs...", icons::LAYERS), false, 0) {
+                self.mods_popup = true;
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The mod packs read on top of the game's own packs (also in Settings > Game data).");
+            }
+
+            if gui::selectable(&format!("{}  Remount packs", icons::REFRESH_CW), false, 0) {
+                let _ = CommandRegistry::run(self, "remount");
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip(
+                    "Reads the game's and the mod packs again (after one changed outside the editor) and rebuilds the renderer.",
+                );
+            }
+
+            self.draw_fixes_items();
             gui::end_combo();
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip("The game the editor works on (switching closes the open documents)");
+            gui::set_tooltip("The game the editor works on (switching closes the open documents), its mod packs and fixes");
         }
 
         gui::same_line();
@@ -2051,6 +2076,21 @@ impl Editor {
         gui::separator();
     }
 
+    /// File > Revert > To saved: the active tool's own revert, else its document's (`Document::revert`); the outcome in the status line.
+    pub fn revert_active(&mut self) {
+        let id = self.docs.active_id();
+        let by_tool = self.with_tool_at(self.active_tool, |t, e| t.revert(e)).flatten();
+        let result = match by_tool {
+            Some(r) => r,
+            None => self.docs.find_mut(id).map_or_else(|| Err("no document".to_owned()), |d| d.revert()),
+        };
+
+        match result {
+            Ok(m) => self.status(&m, false),
+            Err(m) => self.status(&m, true),
+        }
+    }
+
     /// "Files this editor opens" and "All files" for the file dialogs.
     fn open_filters(&self) -> Vec<(String, String)> {
         let mut exts: Vec<String> = vec![];
@@ -2074,10 +2114,6 @@ impl Editor {
         let (can_save, modified, has_doc) =
             self.docs.active().map_or((false, false, false), |d| (d.can_save(), d.modified() || d.save_wanted(), true));
         if gui::begin_menu("File") {
-            if gui::menu_item(&format!("{}  Open from the game packs...", icons::PACKAGE), None, false, true) {
-                self.panels.assets = true;
-            }
-
             if gui::menu_item(&format!("{}  Open file...", icons::FOLDER_OPEN), None, false, true)
                 && let Some(p) = file_dialog(false, &self.tool_folder(self.active_tool_id()), &self.open_filters())
             {
@@ -2087,10 +2123,8 @@ impl Editor {
                 }
             }
 
-            if gui::menu_item(&format!("{}  Mod packs...", icons::LAYERS), None, false, true) {
-                self.mods_popup = true;
-            }
-
+            self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Open));
+            gui::separator();
             if gui::menu_item(&format!("{}  Save", icons::SAVE), crate::shortcuts::label("save").as_deref(), false, can_save && modified) {
                 let _ = CommandRegistry::run(self, "save");
             }
@@ -2120,6 +2154,7 @@ impl Editor {
                 ));
             }
 
+            self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Save));
             let unsaved = self.docs.unsaved().len();
             let label =
                 if unsaved != 0 { format!("{}  Save all ({unsaved})", icons::SAVE_ALL) } else { format!("{}  Save all", icons::SAVE_ALL) };
@@ -2127,16 +2162,33 @@ impl Editor {
                 let _ = CommandRegistry::run(self, "save_all");
             }
 
-            let loose = has_doc && self.is_loose_copy(active);
-            if gui::menu_item("Revert to game's version...", None, false, loose) {
-                self.ask_revert(active);
+            if gui::begin_menu_enabled(&format!("{}  Revert", icons::UNDO_2), has_doc) {
+                if gui::menu_item("To saved", None, false, modified) {
+                    self.revert_active();
+                }
+
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip(
+                        "The document as its file has it: the edits since the last save go (the status line says whether Undo or Redo brings them back).",
+                    );
+                }
+
+                let loose = self.is_loose_copy(active);
+                if gui::menu_item("To the game's version...", None, false, loose) {
+                    self.ask_revert(active);
+                }
+
+                if gui::is_item_hovered_allow_disabled() {
+                    gui::set_tooltip(
+                        "Deletes the project's copy of this game file (what Save wrote into the project's loose folder): the packs' file is read again, by every tool.",
+                    );
+                }
+
+                self.with_tool_at(self.active_tool, |t, e| t.file_menu(e, FileMenu::Revert));
+                gui::end_menu();
             }
 
-            if gui::is_item_hovered_allow_disabled() {
-                gui::set_tooltip(
-                    "Deletes the project's copy of this game file (what Save wrote into the project's loose folder): the packs' file is read again, by every tool.",
-                );
-            }
+            gui::separator();
 
             if gui::begin_menu(&format!("{}  Export", icons::PACKAGE)) {
                 let drew = self.with_tool_at(self.active_tool, |t, e| t.export_menu(e)).unwrap_or(false);
@@ -2148,25 +2200,13 @@ impl Editor {
             }
 
             let _ = self.with_tool_at(self.active_tool, |t, e| t.share_menu(e));
+            gui::separator();
             if gui::menu_item(&format!("{}  Close document", icons::X), None, false, has_doc) {
                 self.ask_close(active);
             }
 
             if gui::menu_item("Close all documents", None, false, !self.docs.order().is_empty()) {
                 self.ask_close_all();
-            }
-
-            if gui::menu_item(&format!("{}  Remount packs", icons::REFRESH_CW), None, false, true) {
-                let _ = CommandRegistry::run(self, "remount");
-            }
-
-            gui::separator();
-            if gui::menu_item(&format!("{}  Save layout", icons::LAYOUT_GRID), None, false, true) {
-                self.save_layout();
-            }
-
-            if gui::menu_item("Reset layout", None, false, true) {
-                self.reset_layout();
             }
 
             gui::separator();
@@ -2224,6 +2264,7 @@ impl Editor {
             gui::menu_item_toggle("Assets", &mut self.panels.assets);
             gui::menu_item_toggle("Log", &mut self.panels.log);
             gui::menu_item_toggle("History", &mut self.panels.history);
+            gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
             gui::separator();
             if gui::menu_item(
                 &format!("{}  Focus selection", icons::FOCUS),
@@ -2259,24 +2300,30 @@ impl Editor {
                 );
             }
 
+            self.with_tool_at(self.active_tool, |t, e| t.view_menu(e));
             gui::separator();
-            if gui::begin_menu(&format!("{}  Frame rate cap", icons::GAUGE)) {
-                for (fps, label) in [(30, "30 fps"), (60, "60 fps"), (120, "120 fps"), (144, "144 fps"), (0, "Unlimited")] {
-                    if gui::menu_item(label, None, self.frame_cap == fps, true) {
-                        self.set_frame_cap(fps);
-                    }
-                }
+            if gui::menu_item(&format!("{}  Save layout", icons::LAYOUT_GRID), None, false, true) {
+                self.save_layout();
+            }
 
-                gui::end_menu();
+            if gui::is_item_hovered() {
+                gui::set_tooltip("Keeps where the panels are, for the next start.");
+            }
+
+            if gui::menu_item("Reset layout", None, false, true) {
+                self.reset_layout();
+            }
+
+            if gui::is_item_hovered() {
+                gui::set_tooltip("The panels back where they start out.");
             }
 
             gui::end_menu();
         }
 
         self.with_tool_at(self.active_tool, |t, e| t.draw_menus(e));
-        self.draw_fixes_menu();
         if gui::begin_menu("Help") {
-            gui::menu_item_toggle(&format!("{}  Commands", icons::TERMINAL), &mut self.panels.commands);
+            gui::menu_item(&format!("Warscape Community Editor {}", env!("CARGO_PKG_VERSION")), None, false, false);
             gui::separator();
             if gui::menu_item(&self.updates_menu_label(), None, false, true) {
                 self.updates_menu_clicked();
@@ -2408,7 +2455,9 @@ impl Editor {
 
         if game_ok {
             gui::spacing();
-            gui::text_wrapped("Mod packs to read besides the game's own (optional; you can change this later in File > Mod packs):");
+            gui::text_wrapped(
+                "Mod packs to read besides the game's own (optional; you can change this later in the game list at the toolbar's left, Mod packs...):",
+            );
             let game = self.first_run_game.clone();
             self.mod_pack_checks(&game);
         }

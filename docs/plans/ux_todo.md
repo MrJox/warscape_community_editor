@@ -5,10 +5,15 @@ one scene in [editor_todo.md](editor_todo.md).
 
 ## Top menus
 
-To review (user: later). Found so far: the Tile menu mixes file actions (New tile, Open tile, Open exported tile, Save tile as, Import
-from Assembly Kit), tools (Resize, Import height map, Generate SiegeAI, Launch in game) and display toggles (marker culling, tile border,
-freeform tint, VFX boxes, draw distances, Tile browser); File holds Save layout / Reset layout; "Migrate old extracted projects" is a
-one-off in the Tile menu.
+Done 2026-11-14 (docs/editor.md, "Menus"). Left:
+- **Display toggles** (user: where they go is to decide; listed here): in the Tile menu, *Distance culling of markers*, *Tile border*,
+  *Tint freeform instances*, *VFX boxes* and the *Draw distances* (vegetation, decals, others); in the ground chip (top right of the
+  viewport), *Rivers*, *Sea at 0 m* and its sea state, *Trees*, *Grass*, the automatic no-go areas; in the areas chip, *Show polygons*,
+  *Over buildings* and the outline / fill opacities; in the building technology chip, what of the buildings' logic is drawn; in the Scene panel, each type's visibility (VFX among them: the same as *VFX boxes*, which also keeps the choice for the
+  next tiles); View's Grid, Compass, Coordinates and Fog.
+- **The Weather effects section by chips** (user: see whether the chips can replace it fully): precipitation on/off and Restart, the
+  battle's season (the tile's season chip sets it while a tile is open) and snow on the map, and New battle direction for a random wind;
+  the rest of the section is a read-out (definition, effects, wind numbers, particles).
 
 ## Save as
 

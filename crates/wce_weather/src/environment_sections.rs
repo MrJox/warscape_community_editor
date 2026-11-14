@@ -109,7 +109,7 @@ pub static SECTIONS: &[Section] = &[
                 "sun_flare",
                 "sun_flare",
                 Kind::Number,
-                "Strength of the sun's lens flare. Needs 'Lens flare' on in the Settings menu.",
+                "Strength of the sun's lens flare. Needs Lens flare on (Settings > Graphics).",
             ),
         ],
     },
@@ -330,7 +330,7 @@ pub static SECTIONS: &[Section] = &[
                 "use_DOF",
                 "use_DOF",
                 Kind::Bool,
-                "Blurs what is out of focus. The game only does it when 'Depth of field' is on in its graphics options (Settings menu).",
+                "Blurs what is out of focus. The game only does it when 'Depth of field' is on in its graphics options (Settings > Graphics).",
             ),
             f(
                 "DEPTH_OF_FIELD",

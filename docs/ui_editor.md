@@ -33,7 +33,7 @@ Games: the converter has the layout logic of every version etwng reads (Empire t
 * **UI Canvas**: the layout drawn from its default states: pictures from the game's packs (mod packs over vanilla; a picture that is not found is a
   magenta outline), text with the editor's font. Click selects the topmost component under the cursor, drag moves, the eight handles resize, the
   wheel zooms, middle mouse or Space+drag pans, arrows nudge (Shift: 10), Delete deletes, Ctrl+D duplicates. Outlines / Pictures / Text toggles.
-* **Reset all changes** (UI menu, and the button in the toolbar): puts the layout back as it was when opened or last saved; Ctrl+Z brings the changes back.
+* **Revert to saved** (File > Revert > To saved, and the button in the toolbar): puts the layout back as it was when opened or last saved; Ctrl+Z brings the changes back. The layout's edits (add child, duplicate, delete, order) are in the Edit menu; New skin... is in File.
 * **UI XML**: the XML of the selected component (or the whole file). Typing applies when you pause for a third of a second, if the XML parses and
   converts to a layout; otherwise the message says why and the canvas keeps the last good state. Edits made on the canvas show here at once.
 * **UI Fields**: every primitive of the component (and of its default state) with the name the format gives it; Enter or leaving the field commits.
@@ -142,7 +142,7 @@ the skin has one, else from the default skin.
 ## Which packs are read
 
 Only the game's release packs (the extra packs and those in `manifest.txt`) and the mod packs you choose: at first start, or later in
-*File > Mod packs...*. The launcher's list of enabled mods is not used any more. The choice is the game's `mod_packs` in the settings
+*the toolbar's game list > Mod packs...*. The launcher's list of enabled mods is not used any more. The choice is the game's `mod_packs` in the settings
 (`WCE_MOD_PACKS` for the command line). Advanced: the game's `overlay_folders` in the settings (or `WCE_OVERLAY`) adds more read-only loose folders; scripts use
 `ui_new_skin <name>`, `ui_project <folder>` and `ui_export <pack>`.
 

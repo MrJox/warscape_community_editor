@@ -58,6 +58,9 @@ pub struct CommandStack<M: 'static> {
     position: usize,
     saved_position: usize,
     saved_valid: bool,
+
+    /// The saved state was dropped from the history (a redo tail it was in, a join over it): there is nothing to revert to.
+    saved_lost: bool,
     merge_open: bool,
     version: u64,
     last_dirty: Dirty,
@@ -79,6 +82,7 @@ impl<M: 'static> CommandStack<M> {
             position: 0,
             saved_position: 0,
             saved_valid: false,
+            saved_lost: false,
             merge_open: false,
             version: 0,
             last_dirty: Dirty::default(),
@@ -102,6 +106,7 @@ impl<M: 'static> CommandStack<M> {
             // The redo tail goes; the saved state may have been in it.
             if self.saved_valid && self.saved_position > self.position {
                 self.saved_valid = false;
+                self.saved_lost = true;
             }
 
             self.entries.truncate(self.position);
@@ -137,6 +142,7 @@ impl<M: 'static> CommandStack<M> {
         let from = self.entries.len() - n;
         if self.saved_valid && self.saved_position > from && self.saved_position < self.position {
             self.saved_valid = false;
+            self.saved_lost = true;
         }
 
         let parts = self.entries.split_off(from);
@@ -218,6 +224,9 @@ pub trait History {
     fn mark_saved(&mut self);
     fn modified(&self) -> bool;
 
+    /// Where the document is as saved (as opened when it never was): `None` when that state is no longer in the history.
+    fn saved_position(&self) -> Option<usize>;
+
     /// Changes whenever an entry is pushed, merged, undone or redone (documents re-publish when it moves).
     fn version(&self) -> u64;
 
@@ -278,6 +287,7 @@ impl<M: 'static> History for CommandStack<M> {
 
         if self.saved_valid && self.saved_position > self.position {
             self.saved_valid = false;
+            self.saved_lost = true;
         }
 
         self.entries.truncate(self.position);
@@ -310,6 +320,11 @@ impl<M: 'static> History for CommandStack<M> {
     fn mark_saved(&mut self) {
         self.saved_position = self.position;
         self.saved_valid = true;
+        self.saved_lost = false;
+    }
+
+    fn saved_position(&self) -> Option<usize> {
+        if self.saved_valid { Some(self.saved_position) } else { (!self.saved_lost).then_some(0) }
     }
 
     fn modified(&self) -> bool {
@@ -333,6 +348,7 @@ impl<M: 'static> History for CommandStack<M> {
         self.position = 0;
         self.saved_position = 0;
         self.saved_valid = false;
+        self.saved_lost = false;
         self.merge_open = false;
         self.last_dirty = Dirty::default();
         self.pending = Dirty::default();
@@ -381,5 +397,31 @@ mod tests {
         assert_eq!(*s.model(), 111);
         assert!(s.undo() && s.undo());
         assert_eq!(*s.model(), 0);
+    }
+
+    #[test]
+    fn the_saved_point_is_known_until_it_leaves_the_history() {
+        let mut s = CommandStack::new(0);
+        assert_eq!(s.saved_position(), Some(0), "never saved: as opened");
+        s.push(Box::new(Add(1)));
+        s.push(Box::new(Add(2)));
+        s.mark_saved();
+        s.push(Box::new(Add(4)));
+        assert_eq!(s.saved_position(), Some(2));
+
+        // Revert: back to the saved point, Redo brings the edit back.
+        s.jump_to(s.saved_position().unwrap());
+        assert_eq!((*s.model(), s.modified()), (3, false));
+        assert!(s.redo());
+        assert_eq!(*s.model(), 7);
+
+        // Undone past the save, then a new edit: the saved state is gone from the history.
+        assert!(s.undo() && s.undo() && s.undo());
+        s.push(Box::new(Add(8)));
+        assert_eq!(s.saved_position(), None);
+        s.mark_saved();
+        assert_eq!(s.saved_position(), Some(1));
+        s.clear();
+        assert_eq!(s.saved_position(), Some(0));
     }
 }
