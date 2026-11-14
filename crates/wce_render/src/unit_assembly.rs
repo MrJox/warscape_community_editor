@@ -45,9 +45,9 @@ pub struct AssembledPart {
     pub tint: [f32; 4],
     pub attach: Attach,
 
-    /// Where it comes from in the root definition: its mesh, or the reference it was reached through (another file's meshes are that
-    /// reference's).
-    pub node: NodePath,
+    /// Where it comes from in the focus file ([`Pins::focus`], the root definition by default): its mesh, or the reference it was reached
+    /// through (another file's meshes are that reference's). `None`: not from the focus file.
+    pub node: Option<NodePath>,
 }
 
 /// One soldier.
@@ -69,10 +69,17 @@ pub enum SlotPin {
     Alternative(usize),
 }
 
-/// Choices that take the seed's place, by the root definition's [`NodePath`]s: an editor's way to show the part being edited. A choice
+/// Choices that take the seed's place, by the [`NodePath`]s of the focus file: an editor's way to show the part being edited. A choice
 /// leaves the others as the seed has them: each node draws from a generator of its own.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Pins {
+    /// The file the paths name (normalized): the root definition when `None`, else a file it references, wherever it does.
+    pub focus: Option<String>,
+
+    /// A slot with an alternative that leads to the focus file (it, or a file that references it) takes that one, filled whatever its
+    /// probability: the focus file is worn.
+    pub show_focus: bool,
+
     pub slots: HashMap<NodePath, SlotPin>,
 
     /// A mesh's tint, by its index.
@@ -153,6 +160,9 @@ struct Assembler<'a> {
     seed: u64,
     pins: &'a Pins,
     files: HashMap<String, Option<std::rc::Rc<VariantMeshFile>>>,
+
+    /// Whether a file is the focus file or references it, at any depth.
+    leads: HashMap<String, bool>,
     out: AssembledUnit,
 
     /// A ship's definition: only its intact pieces, and a part on every point of a slot's list.
@@ -164,22 +174,38 @@ fn damaged(slot: &str) -> bool {
     slot.rsplit_once("_dm").is_some_and(|(_, n)| n.parse::<u32>().is_ok_and(|n| n > 1))
 }
 
-/// Where the walk is: the node's key, its path in the root definition, and whether it is still in that file (pins apply there only).
+/// Where the walk is: the node's key, and its path in the focus file (`None` above it). Pins apply in the focus file itself, not in the files
+/// it references, whose parts take their reference's path.
 #[derive(Clone)]
 struct At {
     key: u64,
-    path: NodePath,
-    root: bool,
+    path: Option<NodePath>,
+    pinned: bool,
 }
 
 impl At {
     fn child(&self, place: usize) -> Self {
         let mut path = self.path.clone();
-        if self.root {
-            path.push(place);
+        if self.pinned
+            && let Some(p) = &mut path
+        {
+            p.push(place);
         }
 
-        Self { key: key(self.key, place as u64 + 1), path, root: self.root }
+        Self { key: key(self.key, place as u64 + 1), path, pinned: self.pinned }
+    }
+
+    /// Into a reference's file: the focus file's root, or a file below or above it.
+    fn into(self, file: &str, focus: Option<&str>) -> Self {
+        if self.path.is_none() && focus == Some(file) {
+            Self { path: Some(vec![]), pinned: true, ..self }
+        } else {
+            Self { pinned: false, ..self }
+        }
+    }
+
+    fn pin<'p, T>(&self, of: &'p HashMap<NodePath, T>) -> Option<&'p T> {
+        self.pinned.then(|| of.get(self.path.as_ref()?)).flatten()
     }
 }
 
@@ -196,6 +222,36 @@ impl Assembler<'_> {
         }
 
         self.files[&path].clone()
+    }
+
+    /// Whether `path` is the focus file or a file that references it, at any depth.
+    fn leads(&mut self, path: &str, depth: u32) -> bool {
+        let path = normalize(path);
+        let Some(focus) = self.pins.focus.clone() else { return false };
+        if path == focus {
+            return true;
+        }
+
+        if let Some(&known) = self.leads.get(&path) {
+            return known;
+        }
+
+        // Not known while it is walked: a loop leads nowhere.
+        self.leads.insert(path.clone(), false);
+        let found = depth < 32
+            && self.file(&path).is_some_and(|f| {
+                let refs: Vec<String> = f
+                    .doc
+                    .elements()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| e.name == "VARIANT_MESH_REFERENCE")
+                    .filter_map(|(e, _)| f.doc.get(e, "definition"))
+                    .collect();
+                refs.iter().any(|r| self.leads(r, depth + 1))
+            });
+        self.leads.insert(path, found);
+        found
     }
 
     fn slot(&mut self, slot: &Slot, at: &At, parent: Option<&str>, attach: &Attach, depth: u32) {
@@ -222,11 +278,22 @@ impl Assembler<'_> {
         let mut rng = Rng(key(self.seed, at.key));
         let roll = rng.unit();
         let mut pick = rng.below(slot.alternatives.len());
-        match at.root.then(|| self.pins.slots.get(&at.path)).flatten() {
-            Some(SlotPin::Off) => return,
-            Some(SlotPin::Alternative(n)) => pick = (*n).min(slot.alternatives.len() - 1),
-            None if slot.probability.is_some_and(|p| roll >= p) => return,
-            None => {}
+        // Above the focus file, the way to it.
+        let towards = if self.pins.show_focus && at.path.is_none() {
+            (0..slot.alternatives.len()).find(|&k| match &slot.alternatives[k] {
+                Alternative::Reference { definition, .. } => self.leads(definition, depth),
+                Alternative::Mesh(_) => false,
+            })
+        } else {
+            None
+        };
+
+        match (at.pin(&self.pins.slots), towards) {
+            (Some(SlotPin::Off), _) => return,
+            (Some(SlotPin::Alternative(n)), _) => pick = (*n).min(slot.alternatives.len() - 1),
+            (None, Some(k)) => pick = k,
+            (None, None) if slot.probability.is_some_and(|p| roll >= p) => return,
+            (None, None) => {}
         }
 
         // A person's slot names one point.
@@ -246,7 +313,8 @@ impl Assembler<'_> {
                 if depth < 32
                     && let Some(file) = self.file(definition)
                 {
-                    self.mesh(&file.root, &At { root: false, ..at }, parent, &attach, depth + 1);
+                    let focus = self.pins.focus.clone();
+                    self.mesh(&file.root, &at.into(&normalize(definition), focus.as_deref()), parent, &attach, depth + 1);
                 }
             }
         }
@@ -256,11 +324,10 @@ impl Assembler<'_> {
         let model = mesh.model.as_deref().map(normalize);
         if let Some(model) = &model {
             let mut rng = Rng(key(self.seed, at.key ^ 0xDEC4_1000));
-            let pins = |of: &HashMap<NodePath, usize>| at.root.then(|| of.get(&at.path).copied()).flatten();
             let decal_pick = rng.next() as usize;
-            let decal_pick = pins(&self.pins.decals).unwrap_or(decal_pick);
+            let decal_pick = at.pin(&self.pins.decals).copied().unwrap_or(decal_pick);
             let tint_pick = rng.below(mesh.tints.len());
-            let tint = mesh.tints.get(pins(&self.pins.tints).unwrap_or(tint_pick));
+            let tint = mesh.tints.get(at.pin(&self.pins.tints).copied().unwrap_or(tint_pick));
             self.out.parts.push(AssembledPart {
                 model: model.clone(),
                 decal_diffuse: decal(self.read, mesh.decal_diffuse.as_deref(), decal_pick),
@@ -284,10 +351,13 @@ pub fn assemble(read: &Reader, definition: &str, seed: u64) -> Option<AssembledU
     assemble_as(read, definition, seed, false)
 }
 
-/// One soldier of a definition already read (an editor's, with its edits), with `pins` taking the seed's place where they say.
+/// One soldier of a definition already read (an editor's, with its edits), with `pins` taking the seed's place where they say. To show a
+/// file the definition references with its edits, `read` gives that file's edited text and `pins.focus` names it.
 pub fn assemble_with(read: &Reader, file: &VariantMeshFile, seed: u64, pins: &Pins) -> AssembledUnit {
-    let mut a = Assembler { read, seed, pins, files: HashMap::new(), out: AssembledUnit::default(), ship: false };
-    a.mesh(&file.root, &At { key: 0, path: vec![], root: true }, None, &Attach::None, 0);
+    let mut a = Assembler { read, seed, pins, files: HashMap::new(), leads: HashMap::new(), out: AssembledUnit::default(), ship: false };
+    let root =
+        if pins.focus.is_none() { At { key: 0, path: Some(vec![]), pinned: true } } else { At { key: 0, path: None, pinned: false } };
+    a.mesh(&file.root, &root, None, &Attach::None, 0);
     a.out
 }
 
@@ -299,9 +369,9 @@ pub fn assemble_ship(read: &Reader, definition: &str, seed: u64) -> Option<Assem
 
 fn assemble_as(read: &Reader, definition: &str, seed: u64, ship: bool) -> Option<AssembledUnit> {
     let pins = Pins::default();
-    let mut a = Assembler { read, seed, pins: &pins, files: HashMap::new(), out: AssembledUnit::default(), ship };
+    let mut a = Assembler { read, seed, pins: &pins, files: HashMap::new(), leads: HashMap::new(), out: AssembledUnit::default(), ship };
     let root = a.file(definition)?;
-    a.mesh(&root.root, &At { key: 0, path: vec![], root: true }, None, &Attach::None, 0);
+    a.mesh(&root.root, &At { key: 0, path: Some(vec![]), pinned: true }, None, &Attach::None, 0);
     Some(a.out)
 }
 
@@ -393,7 +463,7 @@ mod tests {
             let free = assemble_with(&read, &file, seed, &Pins::default());
             assert_eq!(Some(&free), assemble(&read, "c.variantmeshdefinition", seed).as_ref(), "no pins: the file's soldier");
             let shield = free.parts.iter().find(|p| p.model == "shield.rigid_model_v2").expect("a shield");
-            assert_eq!(shield.node, [3, 0], "another file's part is its reference's");
+            assert_eq!(shield.node, Some(vec![3, 0]), "another file's part is its reference's");
 
             let mut pins = Pins::default();
             pins.slots.insert(vec![0], SlotPin::Alternative(2));
@@ -401,7 +471,7 @@ mod tests {
             let pinned = assemble_with(&read, &file, seed, &pins);
             let mut expected = models(&free);
             expected[0] = "h3".to_owned();
-            if free.parts.iter().any(|p| p.node == [2, 0] || p.node == [2, 1]) {
+            if free.parts.iter().any(|p| p.node == Some(vec![2, 0]) || p.node == Some(vec![2, 1])) {
                 expected[2] = "c2".to_owned();
             } else {
                 expected.insert(2, "c2".to_owned());
@@ -409,7 +479,39 @@ mod tests {
 
             assert_eq!(models(&pinned), expected, "seed {seed}");
             pins.slots.insert(vec![1], SlotPin::Off);
-            assert!(!assemble_with(&read, &file, seed, &pins).parts.iter().any(|p| p.node.first() == Some(&1)));
+            assert!(!assemble_with(&read, &file, seed, &pins).parts.iter().any(|p| p.node.as_ref().and_then(|n| n.first()) == Some(&1)));
+        }
+    }
+
+    #[test]
+    fn a_focus_file_is_worn_and_pinned_where_it_is_referenced() {
+        let mut f = files();
+        f.insert(
+            "unit.variantmeshdefinition".to_owned(),
+            br#"<VARIANT_MESH>
+            <SLOT name="body"><VARIANT_MESH model="body"/></SLOT>
+            <SLOT name="shield" probability="0.1"><VARIANT_MESH model="other_shield"/><VARIANT_MESH_REFERENCE definition="group.variantmeshdefinition"/></SLOT>
+        </VARIANT_MESH>"#
+                .to_vec(),
+        );
+        f.insert(
+            "group.variantmeshdefinition".to_owned(),
+            br#"<VARIANT_MESH><SLOT name="g"><VARIANT_MESH_REFERENCE definition="shields.variantmeshdefinition"/></SLOT></VARIANT_MESH>"#
+                .to_vec(),
+        );
+        // The file being edited, as the editor has it.
+        f.insert(
+            "shields.variantmeshdefinition".to_owned(),
+            br#"<VARIANT_MESH><SLOT name="s"><VARIANT_MESH model="round"/><VARIANT_MESH model="oval"/></SLOT></VARIANT_MESH>"#.to_vec(),
+        );
+        let read = |p: &str| f.get(p).cloned();
+        let unit = VariantMeshFile::parse(f["unit.variantmeshdefinition"].clone()).expect("parses");
+        let mut pins = Pins { focus: Some("shields.variantmeshdefinition".to_owned()), show_focus: true, ..Pins::default() };
+        pins.slots.insert(vec![0], SlotPin::Alternative(1));
+        for seed in 0..32 {
+            let u = assemble_with(&read, &unit, seed, &pins);
+            let models: Vec<(&str, Option<Vec<usize>>)> = u.parts.iter().map(|p| (p.model.as_str(), p.node.clone())).collect();
+            assert_eq!(models, [("body", None), ("oval", Some(vec![0, 1]))], "seed {seed}");
         }
     }
 

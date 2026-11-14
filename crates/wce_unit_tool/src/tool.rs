@@ -15,7 +15,7 @@ use rpfm_lib::schema::Schema;
 use serde::{Deserialize, Serialize};
 use wce_editor::editor::Editor;
 use wce_editor::gui;
-use wce_editor::pickers::search_combo;
+use wce_editor::pickers::{pick_button, search_combo};
 use wce_editor::theme;
 use wce_editor::tool::Tool;
 use wce_editor_core::command_registry::{CommandRegistry, CommandResult};
@@ -39,7 +39,7 @@ use crate::problems::{Problem, WEAPON_POINTS, check};
 /// The Unit tool's id: the owner of its documents, its settings' table.
 pub const UNIT_TOOL_ID: &str = "unit";
 
-/// Where the definitions are.
+/// Where the units' definitions are; the parts' own (what references name) are in the rest of `variantmeshes/`.
 const DEFINITIONS: &str = "variantmeshes/variantmeshdefinitions/";
 
 /// Each game's default unit and faction, for a definition no unit wears.
@@ -98,8 +98,9 @@ pub struct UnitTool {
     catalog_failed: bool,
     status: String,
 
-    /// The document shown, and the version of it the soldiers wear.
+    /// The document shown, its path in the packs, and the version of it the soldiers wear.
     doc: DocumentId,
+    preview_path: String,
     worn: Option<u64>,
 
     /// Preview as.
@@ -133,6 +134,9 @@ pub struct UnitTool {
     parts_key: Option<u64>,
     missing: Vec<String>,
 
+    /// How the soldiers wear the document.
+    worn_how: String,
+
     entities: Vec<EntityId>,
     layer: Option<(DocumentId, LayerId)>,
 
@@ -147,6 +151,12 @@ pub struct UnitTool {
 
     /// The camera was aimed at this document.
     aimed: DocumentId,
+
+    /// The unit is the game's default because the tables weren't read yet: chosen again once they are.
+    default_pending: bool,
+
+    /// The search for a unit that wears a part file: the file, and the unit and faction found.
+    wearer_rx: Option<Receiver<(String, Option<(String, String)>)>>,
 
     /// A unit asked for with its file (Units panel), applied when that file is open.
     pending_preview: Option<(String, String, String)>,
@@ -166,6 +176,7 @@ impl Default for UnitTool {
             catalog_failed: false,
             status: String::new(),
             doc: 0,
+            preview_path: String::new(),
             worn: None,
             unit: String::new(),
             faction: String::new(),
@@ -186,6 +197,7 @@ impl Default for UnitTool {
             failed: HashSet::new(),
             parts_key: None,
             missing: vec![],
+            worn_how: String::new(),
             entities: vec![],
             layer: None,
             hidden: vec![],
@@ -195,6 +207,8 @@ impl Default for UnitTool {
             problems: vec![],
             problems_for: None,
             aimed: 0,
+            default_pending: false,
+            wearer_rx: None,
             pending_preview: None,
             file_filter: String::new(),
             unit_filter: String::new(),
@@ -277,6 +291,25 @@ impl UnitTool {
             }
         }
 
+        if let Some(rx) = &self.wearer_rx {
+            match rx.try_recv() {
+                Ok((path, found)) => {
+                    self.wearer_rx = None;
+                    if let Some((unit, faction)) = found
+                        && self.preview_path == path
+                    {
+                        (self.unit, self.faction) = (unit, faction);
+                        self.status.clear();
+                    } else if self.preview_path == path {
+                        "no unit wears this file: the game's default unit shows it alone".clone_into(&mut self.status);
+                    }
+                }
+
+                Err(TryRecvError::Disconnected) => self.wearer_rx = None,
+                Err(TryRecvError::Empty) => {}
+            }
+        }
+
         if let Some(rx) = &self.loading {
             match rx.try_recv() {
                 Ok((wanted, Ok(models))) => {
@@ -340,7 +373,7 @@ impl UnitTool {
                 .extend(vfs.list("variantmeshes/", ".texture_array").into_iter().map(|p| p.trim_end_matches(".texture_array").to_owned()));
             textures.sort();
             self.listings = Some(Listings {
-                definitions: owned(vfs.list(DEFINITIONS, ".variantmeshdefinition")),
+                definitions: owned(vfs.list("variantmeshes/", ".variantmeshdefinition")),
                 models: owned(vfs.list("variantmeshes/", ".rigid_model_v2")),
                 textures,
                 weathers: owned(vfs.list("weather/", ".environment")),
@@ -416,6 +449,57 @@ impl UnitTool {
         slot.owner = 0;
     }
 
+    /// A unit that wears `path` somewhere below its own definition (or its mount's), searched on a thread: every definition's references
+    /// read once, then walked up from the file.
+    fn search_wearer(&mut self, e: &Editor, path: &str) {
+        let (Some(vfs), Some(catalog)) = (e.vfs().cloned(), self.catalog.clone()) else { return };
+        let (tx, rx) = channel();
+        self.wearer_rx = Some(rx);
+        "looking for a unit that wears this file...".clone_into(&mut self.status);
+        let (path, default) = (path.to_owned(), default_unit(e.game().key));
+        let default = (default.0.to_owned(), default.1.to_owned());
+        std::thread::spawn(move || {
+            // Who references whom.
+            let mut referenced_by: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+            for file in vfs.list("variantmeshes/", ".variantmeshdefinition") {
+                let Ok(bytes) = vfs.read(file) else { continue };
+                let text = String::from_utf8_lossy(&bytes).to_lowercase();
+                let mut rest = text.as_str();
+                while let Some(at) = rest.find("definition=") {
+                    rest = &rest[at + 11..];
+                    let quote = rest.chars().next().unwrap_or('"');
+                    let Some(end) = rest[1..].find(quote) else { break };
+                    referenced_by.entry(normalize(&rest[1..=end])).or_default().push(file.to_owned());
+                    rest = &rest[end + 1..];
+                }
+            }
+
+            let mut wearing: HashSet<String> = HashSet::from([path.clone()]);
+            let mut pending = vec![path.clone()];
+            while let Some(f) = pending.pop() {
+                for by in referenced_by.get(&f).into_iter().flatten() {
+                    if wearing.insert(by.clone()) {
+                        pending.push(by.clone());
+                    }
+                }
+            }
+
+            let wears = |u: &wce_render::unit_catalog::UnitEntry| {
+                catalog.land_units.get(&u.unit).is_some_and(|land| {
+                    wearing.contains(&variant_path(&u.variant))
+                        || catalog.mounts.get(&land.mount).is_some_and(|m| wearing.contains(&variant_path(&m.variant)))
+                })
+            };
+            let found = catalog
+                .entries
+                .iter()
+                .find(|u| u.unit == default.0 && wears(u))
+                .or_else(|| catalog.entries.iter().find(|u| wears(u)))
+                .map(|u| (u.unit.clone(), u.faction.clone()));
+            let _ = tx.send((path, found));
+        });
+    }
+
     /// A document opened: its unit (remembered, else one that wears it, else the game's default) and the camera on it.
     fn document_opened(&mut self, e: &mut Editor, id: DocumentId) {
         self.doc = id;
@@ -424,6 +508,8 @@ impl UnitTool {
         self.parts_key = None;
         self.problems_for = None;
         let Some(path) = e.docs.find_as::<VmdDocument>(id).map(|d| d.source().vfs_path.clone()) else { return };
+        self.preview_path.clone_from(&path);
+        self.wearer_rx = None;
         if let Some((p, unit, faction)) = self.pending_preview.take()
             && p == path
         {
@@ -443,10 +529,12 @@ impl UnitTool {
         }
     }
 
-    /// The first unit that wears the file (or rides it), else the game's default.
+    /// The first unit that wears the file (or rides it), else the game's default while a unit that wears it below its own definition is
+    /// searched for.
     fn preview_default(&mut self, e: &Editor, path: &str) {
         let (unit, faction) = default_unit(e.game().key);
         (self.unit, self.faction) = (unit.to_owned(), faction.to_owned());
+        self.default_pending = self.catalog.is_none();
         let Some(c) = &self.catalog else { return };
         if let Some(entry) = c.entries.iter().find(|u| variant_path(&u.variant) == path && c.land_units.contains_key(&u.unit)) {
             (self.unit, self.faction) = (entry.unit.clone(), entry.faction.clone());
@@ -458,10 +546,14 @@ impl UnitTool {
             && let Some(entry) = c.entries.iter().find(|u| u.unit == *unit)
         {
             (self.unit, self.faction) = (entry.unit.clone(), entry.faction.clone());
+            return;
         }
+
+        self.search_wearer(e, path);
     }
 
     fn set_preview(&mut self, e: &mut Editor, path: &str, unit: String, faction: String) {
+        self.wearer_rx = None;
         self.unit.clone_from(&unit);
         self.faction.clone_from(&faction);
         self.slot.clear();
@@ -470,14 +562,6 @@ impl UnitTool {
             s.preview.insert(path, (unit, faction));
         });
         self.settings = e.tool_settings(UNIT_TOOL_ID);
-    }
-
-    /// Whether the file is the unit's mount's rather than its own.
-    fn is_mount_file(&self, path: &str) -> bool {
-        let Some(c) = &self.catalog else { return false };
-        let Some(land) = c.land_units.get(&self.unit) else { return false };
-        c.mounts.get(&land.mount).is_some_and(|m| variant_path(&m.variant) == path)
-            && c.entry(&self.unit, &self.faction).is_none_or(|u| variant_path(&u.variant) != path)
     }
 
     /// The pins and the selection's: the slots above the selected node show it.
@@ -496,7 +580,16 @@ impl UnitTool {
         pins
     }
 
-    /// The soldiers wear the document as it is now.
+    /// The definitions of the unit as previewed: its own and its mount's, in the packs.
+    fn unit_files(&self) -> (Option<String>, Option<String>) {
+        let Some(c) = &self.catalog else { return (None, None) };
+        let own = c.entry(&self.unit, &self.faction).map(|u| variant_path(&u.variant));
+        let mount = c.land_units.get(&self.unit).and_then(|l| c.mounts.get(&l.mount)).map(|m| variant_path(&m.variant));
+        (own, mount)
+    }
+
+    /// The soldiers wear the document as it is now: as their own definition (or their mount's) when it is; else their own definitions with
+    /// it where they reference it, at any depth; else it alone, when they never do.
     fn dress(&mut self, e: &mut Editor) {
         let Some(vfs) = e.vfs().cloned() else { return };
         let Some(d) = document(e) else { return };
@@ -515,26 +608,64 @@ impl UnitTool {
             return;
         }
 
+        let edited = d.xml().save();
         self.parts_key = Some(key);
         self.worn = Some(version);
-        let read = |p: &str| vfs.read(p).ok();
-        let mount = self.is_mount_file(&path);
+        let (own, mount_file) = self.unit_files();
+        let read = |p: &str| if p == path { Some(edited.clone()) } else { vfs.read(p).ok() };
+        let parse = |p: &Option<String>| p.as_ref().and_then(|p| vfs.read(p).ok()).and_then(|b| VariantMeshFile::parse(b).ok());
+        let (man_tree, mount_tree) = (parse(&own), parse(&mount_file));
+        let focus = Pins { focus: Some(path.clone()), show_focus: true, ..pins.clone() };
         self.missing.clear();
+        let mut how = "";
         for (k, model) in self.models.iter_mut().enumerate() {
-            let mut parts = assemble_with(&read, &tree, self.seed.wrapping_add(k as u64), &pins);
+            let seed = self.seed.wrapping_add(k as u64);
+            let from_focus = |u: &wce_render::unit_assembly::AssembledUnit| u.parts.iter().any(|p| p.node.is_some());
+            let (mut parts, on_mount) = if own.as_deref() == Some(path.as_str()) {
+                how = "the unit's own definition";
+                (assemble_with(&read, &tree, seed, &pins), false)
+            } else if mount_file.as_deref() == Some(path.as_str()) && model.mount.is_some() {
+                how = "the unit's mount's definition";
+                (assemble_with(&read, &tree, seed, &pins), true)
+            } else {
+                let man = man_tree.as_ref().map(|t| assemble_with(&read, t, seed, &focus)).filter(from_focus);
+                let mount = if man.is_none() && model.mount.is_some() {
+                    mount_tree.as_ref().map(|t| assemble_with(&read, t, seed, &focus)).filter(from_focus)
+                } else {
+                    None
+                };
+                match (man, mount) {
+                    (Some(parts), _) => {
+                        how = "worn where the unit's definition references it";
+                        (parts, false)
+                    }
+
+                    (None, Some(parts)) => {
+                        how = "worn where the mount's definition references it";
+                        (parts, true)
+                    }
+
+                    (None, None) => {
+                        how = "alone: the unit's definitions never reference it";
+                        (assemble_with(&read, &tree, seed, &pins), false)
+                    }
+                }
+            };
+
             if self.isolate
                 && let Some(sel) = &self.selected
             {
-                parts.parts.retain(|p| p.node.starts_with(sel));
+                parts.parts.retain(|p| p.node.as_ref().is_some_and(|n| n.starts_with(sel)));
             }
 
             self.missing.extend(parts.missing.iter().cloned());
-            match (&mut model.mount, mount) {
+            match (&mut model.mount, on_mount) {
                 (Some(m), true) => m.parts = parts,
                 _ => model.man.parts = parts,
             }
         }
 
+        how.clone_into(&mut self.worn_how);
         self.missing.sort();
         self.missing.dedup();
     }
@@ -684,7 +815,7 @@ impl UnitTool {
         if gui::begin_child("##vmd_list", gui::v2(0.0, 0.0), 0, 0) {
             gui::clipped(shown.len(), |k| {
                 let p = &shown[k];
-                let label = p.strip_prefix(DEFINITIONS).unwrap_or(p);
+                let label = p.strip_prefix(DEFINITIONS).or_else(|| p.strip_prefix("variantmeshes/")).unwrap_or(p);
                 let ours = e.loose_copy(p).is_some();
                 let text = if ours { format!("{label}  (project)") } else { label.to_owned() };
                 if gui::selectable(&text, open.as_deref() == Some(p.as_str()), 0) {
@@ -1006,8 +1137,8 @@ impl UnitTool {
                 gui::text_colored(theme::dim(), &format!("mount on {}", mount.rig.skeleton.skeleton));
             }
 
-            if self.is_mount_file(&path) {
-                gui::text_colored(theme::dim(), "This file is the unit's mount's: the mount wears it.");
+            if !self.worn_how.is_empty() {
+                gui::text_colored(theme::dim(), &format!("The file: {}.", self.worn_how));
             }
 
             let parts: usize =
@@ -1052,11 +1183,17 @@ impl UnitTool {
 
     // ---- the Inspector
 
+    /// A file's path: its name above, the text, and a button listing the packs' files.
     fn path_field(&mut self, d: &mut VmdDocument, elem: usize, name: &str, tip: &str, items: &[String], strip: &str) {
         let value = d.xml().get(elem, name).unwrap_or_default();
+        gui::text_colored(theme::dim(), name);
+        if gui::is_item_hovered() {
+            gui::set_tooltip(tip);
+        }
+
         let mut text = value.clone();
-        gui::set_next_item_width(-60.0);
-        if gui::input_text(&format!("{name}##text{elem}"), None, &mut text, 512, 0) {
+        gui::set_next_item_width(-gui::button_width("...") - 8.0);
+        if gui::input_text(&format!("##{name}{elem}"), None, &mut text, 512, 0) {
             d.set_value(elem, name, &text, gesture(elem, name));
         }
 
@@ -1065,13 +1202,12 @@ impl UnitTool {
         }
 
         if gui::is_item_hovered() {
-            gui::set_tooltip(tip);
+            gui::set_tooltip(&format!("{tip}\n{value}"));
         }
 
         gui::same_line();
-        gui::set_next_item_width(-1.0);
         let filter = self.combo_filters.entry(format!("{name}#pick")).or_default();
-        if let Some(p) = search_combo(&format!("##pick{name}{elem}"), "Pick a file of the packs.", filter, &value, items) {
+        if let Some(p) = pick_button(&format!("{name}{elem}"), "Pick a file of the packs.", filter, &value, items) {
             d.set_value(elem, name, p.trim_end_matches(strip), 0);
         }
     }
@@ -1110,8 +1246,8 @@ impl UnitTool {
                 _ => 0,
             };
             let labels = ["channel's own", "primary (0)", "secondary (1)", "uniform (2)"];
-            gui::set_next_item_width(-1.0);
-            if gui::combo(&format!("##{name}"), &mut current, &labels) {
+            gui::set_next_item_width(-60.0);
+            if gui::combo(&name, &mut current, &labels) {
                 if current == 0 {
                     d.remove_value(elem, &name);
                 } else {
@@ -1142,7 +1278,7 @@ impl UnitTool {
             }
 
             let mut range = tint.random_range;
-            gui::set_next_item_width(120.0);
+            gui::set_next_item_width(90.0);
             if gui::drag_float("random range", &mut range, 0.005, 0.0, 1.0, "%.3f") {
                 d.set_value(tint.element, "random_range", &number(range), gesture(tint.element, "random_range"));
             }
@@ -1221,6 +1357,7 @@ impl UnitTool {
         let elem = slot.element;
         gui::separator_text("Slot");
         let mut name = slot.name.clone();
+        gui::set_next_item_width(-100.0);
         if gui::input_text(&format!("name##{elem}"), None, &mut name, 128, 0) {
             d.set_value(elem, "name", &name, gesture(elem, "name"));
         }
@@ -1238,8 +1375,9 @@ impl UnitTool {
         }
 
         let mut point = slot.attach_point.clone().unwrap_or_default();
-        gui::set_next_item_width(-60.0);
-        if gui::input_text(&format!("attach_point##{elem}"), None, &mut point, 128, 0) {
+        gui::text_colored(theme::dim(), "attach_point");
+        gui::set_next_item_width(-gui::button_width("...") - 8.0);
+        if gui::input_text(&format!("##attach_point{elem}"), None, &mut point, 128, 0) {
             if point.is_empty() {
                 d.remove_value(elem, "attach_point");
             } else {
@@ -1260,9 +1398,10 @@ impl UnitTool {
         }
 
         gui::same_line();
-        gui::set_next_item_width(-1.0);
         let filter = self.combo_filters.entry("attach_point#pick".to_owned()).or_default();
-        if let Some(p) = search_combo(&format!("##points{elem}"), "", filter, &point, &points) {
+        if let Some(p) =
+            pick_button(&format!("points{elem}"), "The weapon bones and the points of the model above.", filter, &point, &points)
+        {
             d.set_value(elem, "attach_point", &p, 0);
         }
 
@@ -1547,8 +1686,11 @@ impl Tool for UnitTool {
         };
 
         // The catalog arrived after the document: its unit now.
-        if id != self.doc || (self.unit.is_empty() && self.catalog.is_some()) {
+        if id != self.doc {
             self.document_opened(e, id);
+        } else if self.default_pending && self.catalog.is_some() {
+            let path = self.preview_path.clone();
+            self.preview_default(e, &path);
         }
 
         self.update_problems(e);
