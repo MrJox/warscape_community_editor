@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use wce_editor_core::autosave::AutosaveMeta;
 use wce_editor_core::command::{Command, CommandStack, History};
 use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
 use wce_editor_core::inspector::Inspector;
@@ -171,6 +172,33 @@ impl UiDocument {
         Ok(())
     }
 
+    /// An autosave copy of the layout (`Document::autosave`) taken back, as one undoable step: the document is modified, and Save writes
+    /// the copy's layout where it saves.
+    ///
+    /// # Errors
+    ///
+    /// The copy is not a layout.
+    pub fn restore_from(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let model = if wce_ui_format::looks_like_ui(bytes) {
+            UiModel::from_bytes(bytes)?
+        } else {
+            UiModel::from_xml(std::str::from_utf8(bytes).map_err(|_| "not a UI layout and not UTF-8 XML")?)?
+        };
+
+        self.edit("Restore from autosave", 0, |after| {
+            *after = model;
+            Ok(())
+        })?;
+        self.history.break_merge();
+        Ok(())
+    }
+
+    /// The layout as Save writes it to `to`: XML for a `.xml` / `.uixml` file, else the binary layout.
+    fn bytes_for(&self, to: &std::path::Path) -> Result<Vec<u8>, String> {
+        let ext = to.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        if ext == "xml" || ext == "uixml" { Ok(self.model().to_xml().into_bytes()) } else { self.bytes() }
+    }
+
     /// Replaces the whole layout with the XML, if it parses and converts to a binary layout.
     pub fn set_xml(&mut self, xml: &str, key: u64) -> Result<(), String> {
         let m = UiModel::from_xml(xml)?;
@@ -265,8 +293,7 @@ impl Document for UiDocument {
     /// folder (never into the game's packs).
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {
         let to = if target.path.as_os_str().is_empty() { self.default_save_path() } else { target.path.clone() };
-        let ext = to.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-        let data = if ext == "xml" || ext == "uixml" { self.model().to_xml().into_bytes() } else { self.bytes()? };
+        let data = self.bytes_for(&to)?;
         if let Some(parent) = to.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -285,6 +312,26 @@ impl Document for UiDocument {
         }
 
         Ok(())
+    }
+
+    fn autosave_meta(&self) -> Option<AutosaveMeta> {
+        let from_packs = !self.source.vfs_path.is_empty();
+        let open = if from_packs { self.source.vfs_path.clone() } else { self.source.disk.to_string_lossy().into_owned() };
+        Some(AutosaveMeta {
+            kind: self.kind(),
+            title: self.title(),
+            target: self.default_save_path(),
+            open,
+            from_packs,
+            inner: self.title(),
+            ..AutosaveMeta::default()
+        })
+    }
+
+    fn autosave(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        let to = dir.join(self.title());
+        let data = self.bytes_for(&self.default_save_path())?;
+        std::fs::write(&to, data).map_err(|e| format!("cannot write {}: {e}", to.display()))
     }
 
     fn publish(&mut self, _: &mut RenderScene, _: LayerId) {}

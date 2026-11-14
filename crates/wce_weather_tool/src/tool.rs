@@ -1179,6 +1179,33 @@ impl Tool for WeatherTool {
         Ok(Box::new(XmlFileDocument::new(source, bytes, e.loose_dir())?))
     }
 
+    /// A weather file opened again and the copy's text laid over it; the weather database into the picker.
+    fn restore(
+        &mut self,
+        e: &mut Editor,
+        copy: &std::path::Path,
+        meta: &wce_editor_core::autosave::AutosaveMeta,
+    ) -> Result<Option<Box<dyn Document>>, String> {
+        let file = copy.join(&meta.inner);
+        if meta.kind == crate::picker::AUTOSAVE_KIND {
+            self.picker.restore_autosave(e, &file)?;
+            return Ok(None);
+        }
+
+        let bytes = std::fs::read(&file).map_err(|err| format!("{}: {err}", file.display()))?;
+        let mut doc = self.open(e, &meta.open, meta.from_packs)?;
+        doc.as_any_mut().downcast_mut::<XmlFileDocument>().ok_or("not a weather file")?.restore_from(bytes)?;
+        Ok(Some(doc))
+    }
+
+    fn autosave_work(&self, e: &Editor) -> Option<(wce_editor_core::autosave::AutosaveMeta, bool)> {
+        self.picker.autosave_work(&e.loose_dir())
+    }
+
+    fn write_autosave_work(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        self.picker.write_autosave(dir)
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

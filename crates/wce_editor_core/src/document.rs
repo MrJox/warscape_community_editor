@@ -119,6 +119,28 @@ pub trait Document: Any {
         Err(format!("{} cannot be saved", self.title()))
     }
 
+    /// Autosave (`crate::autosave`): what a copy of the document is of (its Save's target, what reopens it), the tool left for the editor
+    /// to fill in; `None`: the document is not autosaved (it can't be saved, or it can't be taken back from a copy).
+    fn autosave_meta(&self) -> Option<crate::autosave::AutosaveMeta> {
+        None
+    }
+
+    /// Changes whenever what a copy would hold changes: the editor writes a new copy only then. The history's version by default.
+    fn autosave_stamp(&self) -> u64 {
+        self.history().version()
+    }
+
+    /// Writes a copy of the document into `dir` (an empty folder) as its Save would write it, without saving it: its saved state, its
+    /// Save's target and its history stay as they are.
+    ///
+    /// # Errors
+    ///
+    /// Why the copy could not be written.
+    fn autosave(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        let _ = dir;
+        Err(format!("{} is not autosaved", self.title()))
+    }
+
     /// Puts everything the document shows into `layer` (called on open and when the whole document changed).
     fn publish(&mut self, scene: &mut RenderScene, layer: LayerId);
 

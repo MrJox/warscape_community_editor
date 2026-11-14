@@ -25,7 +25,7 @@ the front of its message (docs/editor.md, "Problems").
 
 ## Autosave
 
-Planned 2026-11-14: [autosave.md](autosave.md).
+Built 2026-11-14: [autosave.md](autosave.md).
 
 ## Share / Import shared project: visible errors
 

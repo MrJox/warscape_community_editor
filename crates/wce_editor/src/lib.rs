@@ -1,6 +1,7 @@
 //! The editor shell: dockspace, menus, toolbar, tool switching with a layout per tool, the viewport with gizmos, the shared panels, built-in
 //! commands and scripts, first run.
 
+pub mod autosave;
 pub mod camera_world;
 pub mod chips;
 pub mod commands;

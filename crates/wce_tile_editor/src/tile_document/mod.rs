@@ -499,6 +499,10 @@ pub struct Tile {
 
     /// The project was changed as it opened (`vegetation::convert_whole_tile_exclusion`): modified until saved.
     pub(crate) converted_on_open: bool,
+
+    /// Opened from an autosave copy: the folder its Save writes (the tile's own, or the project a kit tile's first save makes), where
+    /// the first Save puts every file before the document is that folder's. Modified until then.
+    pub(crate) restored_to: Option<std::path::PathBuf>,
     pub(crate) overlay_entity: EntityId,
     pub(crate) terrain_version: u64,
     pub(crate) terrain_stride: i32,
@@ -915,6 +919,7 @@ impl TileDocument {
             layer: 0,
             terrain_entity: 0,
             converted_on_open: false,
+            restored_to: None,
             overlay_entity: 0,
             terrain_version: 1,
             terrain_stride: 1,
@@ -1236,7 +1241,7 @@ impl Document for TileDocument {
     }
 
     fn modified(&self) -> bool {
-        self.history().modified() || self.terrain_layers_dirty() || self.tile().converted_on_open
+        self.history().modified() || self.terrain_layers_dirty() || self.tile().converted_on_open || self.tile().restored_to.is_some()
     }
 
     fn can_save(&self) -> bool {
@@ -1246,6 +1251,10 @@ impl Document for TileDocument {
     /// Back through the history to the saved point; not when the tile has changes the history does not hold (painted terrain layers,
     /// a conversion when it was opened): those only go by opening it again.
     fn revert(&mut self) -> Result<String, String> {
+        if self.tile().restored_to.is_some() {
+            return Err(format!("{} was restored from an autosave: close it without saving and open it again", self.title()));
+        }
+
         if self.terrain_layers_dirty() || self.tile().converted_on_open {
             return Err(format!(
                 "{} has changes outside its undo history (painted terrain layers, or its conversion when opened): close it without \
@@ -1342,6 +1351,32 @@ impl Document for TileDocument {
         Some(self.tile().last_message.clone())
     }
 
+    /// A tile, not a prefab stage (what a stage holds is its prefab's).
+    fn autosave_meta(&self) -> Option<wce_editor_core::autosave::AutosaveMeta> {
+        if self.stage.is_some() {
+            return None;
+        }
+
+        let target = self.save_target();
+        Some(wce_editor_core::autosave::AutosaveMeta {
+            kind: self.kind(),
+            title: self.title(),
+            open: target.to_string_lossy().into_owned(),
+            target,
+            inner: self.autosave_inner(),
+            ..wce_editor_core::autosave::AutosaveMeta::default()
+        })
+    }
+
+    /// Painted terrain layers are not all in the history.
+    fn autosave_stamp(&self) -> u64 {
+        self.history.version().wrapping_mul(2) | u64::from(self.terrain_layers_dirty())
+    }
+
+    fn autosave(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        self.autosave_to(dir)
+    }
+
     fn save_wanted(&self) -> bool {
         !self.is_project()
     }
@@ -1378,7 +1413,9 @@ impl Document for TileDocument {
         let dir = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
         let own = &self.tile().project.dir;
         let project_of = || self.projects_root().zip(kit::tile_folder(dir)).map(|(root, folder)| root.join("raw_data").join(folder));
-        same_folder(dir, own) || project_of().is_some_and(|mirror| same_folder(&mirror, own))
+        same_folder(dir, own)
+            || project_of().is_some_and(|mirror| same_folder(&mirror, own))
+            || self.tile().restored_to.as_deref().is_some_and(|to| same_folder(dir, to))
     }
 
     fn item_transform(&self, item: SourceRef) -> Option<Float4x4> {

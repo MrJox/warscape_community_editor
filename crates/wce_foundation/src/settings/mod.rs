@@ -341,6 +341,40 @@ impl Default for UpdateSettings {
     }
 }
 
+/// Autosave (docs/plans/autosave.md): copies of the modified documents in `<projects>/autosave/`, never over their files.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutosaveSettings {
+    pub enabled: bool,
+
+    /// Minutes between two copies (1 to 60).
+    pub interval_minutes: u32,
+
+    /// Copies kept per document, the oldest dropped (1 to 10).
+    pub keep: u32,
+}
+
+impl Default for AutosaveSettings {
+    fn default() -> Self {
+        Self { enabled: true, interval_minutes: 5, keep: 3 }
+    }
+}
+
+impl AutosaveSettings {
+    pub const MINUTES: std::ops::RangeInclusive<u32> = 1..=60;
+    pub const KEEP: std::ops::RangeInclusive<u32> = 1..=10;
+
+    /// The interval, held to its range.
+    pub fn interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(u64::from(self.interval_minutes.clamp(*Self::MINUTES.start(), *Self::MINUTES.end())) * 60)
+    }
+
+    /// The copies kept, held to their range.
+    pub fn kept(&self) -> usize {
+        self.keep.clamp(*Self::KEEP.start(), *Self::KEEP.end()) as usize
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -369,6 +403,7 @@ pub struct Settings {
     pub appearance: Appearance,
     pub camera: CameraSettings,
     pub updates: UpdateSettings,
+    pub autosave: AutosaveSettings,
 
     /// The keyboard shortcuts the user changed: an action's id and its two keys (`Ctrl+Shift+Z`, empty: none); the others have their
     /// defaults (`wce_editor::shortcuts`).
@@ -469,6 +504,7 @@ impl Default for Settings {
             appearance: Appearance::default(),
             camera: CameraSettings::default(),
             updates: UpdateSettings::default(),
+            autosave: AutosaveSettings::default(),
             shortcuts: BTreeMap::new(),
             games: BTreeMap::new(),
             tools: BTreeMap::new(),

@@ -452,6 +452,12 @@ impl Editor {
             "rpfm's schemas (schema_att.ron, schema_tob.ron...), to read the games' db tables: the buildings' data, the weather's climate phases, the procedural walls' rows. A game whose schema is not in this folder uses the ones the Update Manager downloaded, then rpfm's own.",
         );
 
+        gui::separator_text("Autosave");
+        crate::autosave::draw_settings(&mut d.autosave);
+        help(
+            "Copies of the documents with unsaved changes go into the project's autosave folder (<projects>/autosave), never over their files. When the editor did not close cleanly, the next start offers them back (File > Recover autosaves... too). A clean quit deletes them.",
+        );
+
         gui::separator_text("Updates");
         gui::checkbox("Check for updates at start", &mut d.updates.check_on_start);
         gui::checkbox("Include pre-releases (betas)", &mut d.updates.prereleases);

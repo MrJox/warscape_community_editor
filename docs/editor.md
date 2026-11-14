@@ -258,6 +258,32 @@ Throw-away build files (the launch staging folders, dry runs, the export a terra
 output folder's edits of game files into `loose/` (`project_prompts.rs`: not the build files, `ui_xml/` exports or exports in the game's
 layout; a file the project already has stays).
 
+### Autosave
+
+[plans/autosave.md](plans/autosave.md). Every few minutes (Settings > General: **Autosave**, on by default, every 5 minutes, 3 copies kept
+per document; `[autosave] enabled, interval_minutes, keep`) an interactive session copies each document with unsaved changes into
+`<projects>/autosave/`, never over its files (`wce_editor/src/autosave.rs`; the folder's layout, the rotation and the session lock in
+`wce_editor_core::autosave`). A copy is made only when the document changed since its last one (`Document::autosave_stamp`), and never
+while a gesture, a mouse button, a prompt or a write is under way. What a copy holds is the document's (`Document::autosave_meta`,
+`Document::autosave`), written by the same code as its Save:
+
+| Document | Copy | Taken back (`Tool::restore`) |
+|---|---|---|
+| Weather file | the file as Save writes it | the file opened again, the copy's text over it as one undoable edit (`XmlDoc::parse_over`) |
+| UI layout | the layout as Save writes it | the layout opened again, the copy over it as one undoable edit |
+| Tile | its folder in the kit's layout (`raw_data/terrain/tiles/...`) with its entry and `_settings.xml`, as a Save into another folder writes it | opened from the copy; its first Save writes every file into the tile's own folder (or the project a kit tile's first save makes), so a file that did not change gets a `.bak` too |
+| Battle map | the files its edits made again, and `refs.txt` naming the others (a map's LF is large, most files are not edited) | the copy made whole (`MapDocument::complete_autosave`) and read on a worker as the map; its first Save writes every file into the map's projects folder |
+| Weather database | `warscape_asset_variation_db.xml` (`Tool::autosave_work`: not a document) | the picker's working copy, edited |
+
+A prefab stage is not autosaved. A document saved, or closed with Discard, loses its copies at once; a clean quit deletes the session's
+folder (`Editor::finish_autosave`, from the app's main loop: a lost graphics device keeps them). Each editor process has its own session
+folder, held by a lock on `session.lock` while it runs: a session whose lock can be taken ended without cleaning up. The next interactive
+start (and the first frame after a game switch) looks for such sessions and opens **Recover autosaved work**: per document, its copies
+(the newest by default), a warning when its file was written after the copy, **Restore** (opened modified, Save writes it into the
+project; Undo goes back to the file for a weather file or a layout; File > Revert is refused for a restored tile or map: close it without
+saving) and **Discard**; **Later** keeps them for **File > Recover autosaves...**. Commands: `autosave_now`, `autosave_status`,
+`autosave_found`, `autosave_restore <n> [copy]`, `autosave_discard <n>`, and for tests `autosave_abandon` (leave the copies as a crash would).
+
 ## Layouts
 
 ImGui runs with docking and no ini file. Each tool has its own layout file `<config folder>/layouts/<tool id>.ini` (see the folders below). Switching tools saves the leaving tool's layout and loads the entering one's; without a file the tool's `default_layout`
@@ -290,7 +316,7 @@ A plain interactive start opens the tool the last interactive session was in (`l
 way. `$WCE_CACHE_DIR` moves the caches alone.
 
 `settings.toml` is typed (`Settings`, every field has a default, so a missing key is never an error). Top level: `frame_cap`, `game` (the game being
-edited) and `[appearance]`; `[games.<id>]` holds a game's `dir`, `assembly_kit` (the folder with `raw_data`; none: the kit found in the game folder), `projects` (none: `<data>/projects/<game>`: `assembly_kit/` holds the editor's tiles in the kit's layout, `loose/` the loose files read before every pack, the UI tool's skins, layouts and pictures), `mod_packs`, `overlay_folders` (until the release, an old `project_dir` is moved into them when the settings load) `export_dirs` (each File > Export entry's last destination) and, until the release, the old `output_dir` (an old top-level one becomes Attila's), kept until its files were offered to the project once (`output_dir_offered`); `[tools.<id>]` is a tool's own table, which
+edited), `[appearance]` and `[autosave]` ([Autosave](#autosave)); `[games.<id>]` holds a game's `dir`, `assembly_kit` (the folder with `raw_data`; none: the kit found in the game folder), `projects` (none: `<data>/projects/<game>`: `assembly_kit/` holds the editor's tiles in the kit's layout, `loose/` the loose files read before every pack, the UI tool's skins, layouts and pictures), `mod_packs`, `overlay_folders` (until the release, an old `project_dir` is moved into them when the settings load) `export_dirs` (each File > Export entry's last destination) and, until the release, the old `output_dir` (an old top-level one becomes Attila's), kept until its files were offered to the project once (`output_dir_offered`); `[tools.<id>]` is a tool's own table, which
 the tool reads and writes with its own serde type (`Editor::tool_settings`, `Editor::update_tool_settings`), so the shell knows nothing of it. The fields a tool declares as about the game's files (`Tool::game_settings_fields`: the Tile tool's recent and favourite tiles, weathers, Create lists, sea state and packs written; the UI tool's packs) live in `[games.<id>.tools.<id>]` instead, one set per game (a field written before they were per game is kept by each game once). A game folder that isn't that game's (no `Attila.exe` / `Rome2.exe`: the data folders look alike) is not mounted (`GameProfile::folder_problem`); the first-run dialog then offers the folder found in the Steam libraries. Saves write a temporary
 file and rename it over the old one. A file that does not read is kept as `settings.toml.bad` and the defaults are used. An environment variable wins over the
 file and is never written back:

@@ -7,6 +7,7 @@ use std::any::Any;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use wce_editor_core::autosave::AutosaveMeta;
 use wce_editor_core::command::{CommandStack, History};
 use wce_editor_core::document::{Document, DocumentCore, SaveTarget};
 use wce_scene::render_scene::{LayerId, RenderScene};
@@ -62,7 +63,18 @@ pub struct MapDocument {
 
     /// Whether the view draws the roads at the start's levels (else the kit's tiles).
     pub roads_at_start: bool,
+
+    /// Opened from an autosave copy (the folder it reads its files from: `Editor`'s session keeps it until the session ends): modified
+    /// until saved into `save_dir`.
+    pub restored_from: Option<PathBuf>,
 }
+
+/// An autosave copy of a map: the files its edits made again (under `map/`), and in this file the others, read from where they are
+/// (`<path in the map's folder>\t<file>` a line): a map's files are large, and most of them are not edited.
+pub const AUTOSAVE_REFS: &str = "refs.txt";
+
+/// The map's folder in an autosave copy.
+pub const AUTOSAVE_MAP: &str = "map";
 
 /// How a map's `.terry` coordinates sit on the view's frame (scene units, 128 a cell, the map's centre at 0): `frame = (terry - origin)
 /// / unit` in x and z; `cell`: a map cell in `.terry` units. A battle map's `.terry` is in metres from the map's centre, 256 a cell
@@ -174,7 +186,82 @@ impl MapDocument {
             gesture: None,
             view_roads: None,
             roads_at_start: true,
+            restored_from: None,
         }
+    }
+
+    /// Writes an autosave copy into `dir` (`Document::autosave`): the files the edits made again, and the list of the others.
+    ///
+    /// # Errors
+    ///
+    /// The map is read-only, or a file can't be made or written.
+    pub fn autosave_to(&self, dir: &Path) -> Result<(), String> {
+        let model = self.model().ok_or("a map of the game's packs is read-only")?;
+        let files = if model.built { wce_terrain_io::built::write(model, Some(&self.db)) } else { wce_terrain_io::attila::write(model) }
+            .map_err(|e| e.to_string())?;
+        let map = dir.join(AUTOSAVE_MAP);
+        let mut refs = String::new();
+        for (rel, blob) in &files.folder {
+            let to = map.join(rel);
+            let inside_copy = |src: &Path| self.restored_from.as_deref().is_some_and(|r| src.starts_with(r));
+            match blob {
+                // A file of a restored copy goes when the session ends: copied, not referred to.
+                wce_tile_model::Blob::File(src) if !inside_copy(src) => {
+                    refs += &format!("{rel}\t{}\n", src.display());
+                    continue;
+                }
+
+                _ => {}
+            }
+
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+
+            match blob {
+                wce_tile_model::Blob::File(src) => std::fs::copy(src, &to).map(|_| ()),
+                wce_tile_model::Blob::Bytes(b) => std::fs::write(&to, b),
+            }
+            .map_err(|e| format!("{}: {e}", to.display()))?;
+        }
+
+        std::fs::create_dir_all(&map).map_err(|e| format!("{}: {e}", map.display()))?;
+        std::fs::write(dir.join(AUTOSAVE_REFS), refs).map_err(|e| format!("{}: {e}", dir.join(AUTOSAVE_REFS).display()))
+    }
+
+    /// An autosave copy made whole to be opened (`autosave_to`'s): the files it refers to are copied into its `map/` folder, and every
+    /// file there is dated now, so that the first Save writes them all (it leaves a file that looks as new as the target's). Returns the
+    /// map's folder.
+    ///
+    /// # Errors
+    ///
+    /// A file it refers to is gone, or can't be copied.
+    pub fn complete_autosave(copy: &Path) -> Result<PathBuf, String> {
+        let map = copy.join(AUTOSAVE_MAP);
+        let refs = std::fs::read_to_string(copy.join(AUTOSAVE_REFS)).unwrap_or_default();
+        for line in refs.lines().filter(|l| !l.is_empty()) {
+            let (rel, src) = line.split_once('\t').ok_or_else(|| format!("{AUTOSAVE_REFS}: a bad line: {line}"))?;
+            let to = map.join(rel);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+            }
+
+            std::fs::copy(src, &to).map_err(|e| format!("{src}: {e}"))?;
+        }
+
+        let now = std::time::SystemTime::now();
+        let mut pending = vec![map.clone()];
+        while let Some(d) = pending.pop() {
+            for e in std::fs::read_dir(&d).map_err(|e| format!("{}: {e}", d.display()))?.flatten() {
+                if e.path().is_dir() {
+                    pending.push(e.path());
+                } else if let Ok(f) = std::fs::File::options().write(true).open(e.path()) {
+                    let _ = f.set_modified(now);
+                }
+            }
+        }
+
+        Ok(map)
     }
 
     /// The placements as the view draws them: a campaign's road tiles at its start's levels (`view_roads`), else `placed`.
@@ -338,6 +425,38 @@ impl Document for MapDocument {
         self.model().is_some() && self.save_dir.is_some()
     }
 
+    fn modified(&self) -> bool {
+        self.history.modified() || self.restored_from.is_some()
+    }
+
+    fn revert(&mut self) -> Result<String, String> {
+        if self.restored_from.is_some() {
+            return Err(format!("{} was restored from an autosave: close it without saving and open it again", self.name));
+        }
+
+        let to = self
+            .history
+            .saved_position()
+            .ok_or("the saved state is no longer in the history: close it without saving and open it again")?;
+        self.history.jump_to(to);
+        Ok(format!("{} as saved (Redo brings the edits back)", self.name))
+    }
+
+    fn autosave_meta(&self) -> Option<AutosaveMeta> {
+        Some(AutosaveMeta {
+            kind: self.kind(),
+            title: self.name.clone(),
+            target: self.save_dir.clone().filter(|_| self.model().is_some())?,
+            open: self.name.clone(),
+            inner: AUTOSAVE_MAP.to_owned(),
+            ..AutosaveMeta::default()
+        })
+    }
+
+    fn autosave(&mut self, dir: &Path) -> Result<(), String> {
+        self.autosave_to(dir)
+    }
+
     fn save_message(&self) -> Option<String> {
         self.message.clone()
     }
@@ -397,6 +516,7 @@ impl Document for MapDocument {
         // A copy elsewhere (Save as) leaves the projects' folder without the edits: the map stays unsaved.
         if self.save_dir.as_deref().is_some_and(|own| wce_editor_core::document::same_path(own, &dir)) {
             self.history.mark_saved();
+            self.restored_from = None;
         }
 
         self.message = Some(format!("{}: {written} files written, {kept} already there", dir.display()));

@@ -2531,6 +2531,20 @@ impl Tool for UiTool {
         Ok(Box::new(UiDocument::new(source, model, out)))
     }
 
+    /// The layout opened again and the copy laid over it.
+    fn restore(
+        &mut self,
+        e: &mut Editor,
+        copy: &std::path::Path,
+        meta: &wce_editor_core::autosave::AutosaveMeta,
+    ) -> Result<Option<Box<dyn Document>>, String> {
+        let file = copy.join(&meta.inner);
+        let bytes = std::fs::read(&file).map_err(|err| format!("{}: {err}", file.display()))?;
+        let mut doc = self.open(e, &meta.open, meta.from_packs)?;
+        doc.as_any_mut().downcast_mut::<UiDocument>().ok_or("not a UI layout")?.restore_from(&bytes)?;
+        Ok(Some(doc))
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

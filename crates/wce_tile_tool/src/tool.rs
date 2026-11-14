@@ -564,6 +564,9 @@ pub struct TileTool {
     /// The next open takes a kit's tile as it is in the kit, not its project (Import from Assembly Kit).
     pub(crate) open_kit_copy: bool,
 
+    /// A document is being made from an autosave copy (`restore`): its groups are the tile's as saved, not a kit's to recognise.
+    restoring: bool,
+
     /// The weather chips' width last frame (they go beside the compass when there is room).
     chips_width: f32,
 
@@ -914,6 +917,7 @@ impl Default for TileTool {
             bridge_check: None,
             bridge_overlay: true,
             open_kit_copy: false,
+            restoring: false,
             chips_width: 0.0,
             right_used: false,
             catalogues: HashMap::new(),
@@ -5255,6 +5259,29 @@ impl Tool for TileTool {
         Ok(Box::new(self.make_document(e, project)?))
     }
 
+    /// The tile opened from its copy (in the kit's layout, with its entry), saving where the tile did: its first Save writes every file
+    /// there.
+    fn restore(
+        &mut self,
+        e: &mut Editor,
+        copy: &std::path::Path,
+        meta: &wce_editor_core::autosave::AutosaveMeta,
+    ) -> Result<Option<Box<dyn Document>>, String> {
+        let dir = copy.join(&meta.inner);
+        let project = TileProject::open(&dir).map_err(|err| err.to_string())?;
+        if !project.warning.is_empty() {
+            log::warn(format!("{}: {}", meta.title, project.warning));
+        }
+
+        self.restoring = true;
+        let doc = self.make_document(e, project);
+        self.restoring = false;
+        let mut doc = doc?;
+        doc.set_restored(meta.target.clone());
+        e.pending_focus = Some("Tile".to_owned());
+        Ok(Some(Box::new(doc)))
+    }
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -5283,7 +5310,7 @@ impl TileTool {
         project.game_kit = wce_tile::vegetation::params_kit(&wce_tile::sources::kit_raw_roots(e.settings_ref()));
 
         // From the Assembly Kit: the groups that are exact copies of a prefab become references to it (Tile > Prefabs does it again).
-        if !project.dir.starts_with(&projects) {
+        if !project.dir.starts_with(&projects) && !self.restoring {
             let index = self.content_index(e);
             let found = wce_tile::prefab_refs::recognise(&project.scene, &index, &|n| lib.get(n).is_some());
             if !found.copies.is_empty() || found.named_but_different != 0 {

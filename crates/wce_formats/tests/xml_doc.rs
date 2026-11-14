@@ -219,3 +219,12 @@ fn an_added_attribute_is_taken_away_and_the_others_added_after_it_stay() {
     assert!(doc.remove_added(0, "q"));
     assert_eq!(doc.save(), text, "the text as it was");
 }
+
+#[test]
+fn a_text_read_over_its_file_is_modified_and_saves_as_read() {
+    let copy = SAMPLE.replace("k='v'", "k='copy'");
+    let d = XmlDoc::parse_over(copy.clone().into_bytes(), SAMPLE.as_bytes()).unwrap();
+    assert!(d.modified(), "an autosave copy over its file is an edit of it");
+    assert_eq!(text(&d), copy);
+    assert_eq!(d.origin_bytes(), SAMPLE.as_bytes(), "going back to the file reads the file");
+}
