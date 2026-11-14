@@ -621,6 +621,10 @@ impl Command<Tile> for TedPlacementCommand {
 /// One brush step; the steps of a stroke merge into one entry. The first step runs when pushed; undo and redo use the height field's own
 /// records (`HeightField::end_edit` stores them, so a stroke is closed before it can be undone). The landscape instances under the brush move
 /// with the terrain: the command keeps their local positions before the stroke and after its last step.
+///
+/// A stroke that changed no sample leaves no record in its field (Flatten on flat ground, a channel painted where it is full): the entry
+/// then must not take back or put again the field's record, which is another stroke's. `before_top` is the field's last record before the
+/// stroke; whether the stroke left one of its own is known once the stroke is closed, at the first undo (`recorded`).
 pub(crate) struct BrushStepCommand {
     pub kind: BrushKind,
     pub x: f32,
@@ -631,6 +635,17 @@ pub(crate) struct BrushStepCommand {
     pub first: bool,
     pub moved: Vec<Follow>,
     pub where_: HashMap<usize, usize>,
+    pub before_top: u64,
+    pub recorded: Option<bool>,
+}
+
+/// The serial of the last record of the field a brush edits (`top_id`), 0 with none.
+fn field_top(t: &Tile, kind: BrushKind) -> u64 {
+    match kind {
+        BrushKind::Paint(_) => t.project.blend.as_ref().map_or(0, wce_tile::blend_field::BlendField::top_id),
+        BrushKind::Ground(_) => t.project.ground.as_ref().map_or(0, wce_tile::ground_type_field::GroundTypeField::top_id),
+        _ => t.project.height.as_ref().map_or(0, wce_tile::height_field::HeightField::top_id),
+    }
 }
 
 impl Command<Tile> for BrushStepCommand {
@@ -653,10 +668,12 @@ impl Command<Tile> for BrushStepCommand {
     fn apply(&mut self, t: &mut Tile) {
         if self.first {
             self.first = false;
+            self.before_top = field_top(t, self.kind);
             t.apply_brush_following(self.kind, self.x, self.z, &self.settings, self.dt, &mut self.moved);
         } else {
             t.end_stroke_edit();
             match self.kind {
+                _ if self.recorded != Some(true) => {}
                 BrushKind::Paint(_) => {
                     if let Some(b) = &mut t.project.blend {
                         b.redo();
@@ -682,7 +699,9 @@ impl Command<Tile> for BrushStepCommand {
 
     fn revert(&mut self, t: &mut Tile) {
         t.end_stroke_edit();
+        let recorded = *self.recorded.get_or_insert_with(|| field_top(t, self.kind) != self.before_top);
         match self.kind {
+            _ if !recorded => {}
             BrushKind::Paint(_) => {
                 if let Some(b) = &mut t.project.blend {
                     b.undo();

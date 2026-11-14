@@ -629,14 +629,14 @@ pub struct Tile {
 
     /// The history's version after the stroke's last step.
     pub(crate) stroke_version: u64,
-    pub(crate) saved_height_depth: usize,
+    pub(crate) saved_height_top: u64,
     pub(crate) ted_on_disk_edited: bool,
     pub(crate) png_on_disk_edited: bool,
 
-    /// As `saved_height_depth` / `png_on_disk_edited`, for blend_map.tif and ground_type_map.png.
-    pub(crate) saved_blend_depth: usize,
+    /// As `saved_height_top` / `png_on_disk_edited`, for blend_map.tif and ground_type_map.png.
+    pub(crate) saved_blend_top: u64,
     pub(crate) blend_on_disk_edited: bool,
-    pub(crate) saved_ground_depth: usize,
+    pub(crate) saved_ground_top: u64,
 
     /// The water depth view's raster (`TerrainView::WaterDepth`), given by the tool (stage B's water map, `set_water_depth`).
     pub(crate) water_depth: Option<std::sync::Arc<crate::terrain_bake::WaterDepth>>,
@@ -979,12 +979,12 @@ impl TileDocument {
             stage_snapped: vec![],
             stroke_id: 0x5000,
             stroke_version: 0,
-            saved_height_depth: 0,
+            saved_height_top: 0,
             ted_on_disk_edited: false,
             png_on_disk_edited: false,
-            saved_blend_depth: 0,
+            saved_blend_top: 0,
             blend_on_disk_edited: false,
-            saved_ground_depth: 0,
+            saved_ground_top: 0,
             ground_on_disk_edited: false,
             water_depth: None,
             auto_nogos: None,
@@ -1051,7 +1051,7 @@ impl TileDocument {
         // The markers: everything that is not a building with a model, and the buildings that have none.
         tile.rebuild_items(false);
         if let Some(h) = &tile.project.height {
-            tile.saved_height_depth = h.edit_depth();
+            tile.saved_height_top = h.top_id();
         }
 
         let total = t0.elapsed().as_secs_f64();
