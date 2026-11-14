@@ -391,6 +391,70 @@ pub struct Settings {
     /// never writes over the file, which still holds the user's settings.
     #[serde(skip)]
     unread: bool,
+
+    /// These settings as this editor last read or wrote them: what `save` merges another editor's writes against.
+    #[serde(skip)]
+    base: SavedBase,
+}
+
+/// When this editor last read or wrote the file: its settings then (as TOML: the base of a merge) and the file's content then (another
+/// editor wrote it when it differs now; a file migrated as it was read differs from the settings, not from itself). Shared by clones: the
+/// Settings window's draft is one.
+#[derive(Clone, Default)]
+struct SavedBase(std::sync::Arc<std::sync::Mutex<(Option<toml::Table>, Option<toml::Table>)>>);
+
+impl SavedBase {
+    fn get(&self) -> (Option<toml::Table>, Option<toml::Table>) {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()
+    }
+
+    fn set(&self, mine: Option<toml::Table>, file: Option<toml::Table>) {
+        *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = (mine, file);
+    }
+}
+
+/// Not part of what the settings are.
+impl PartialEq for SavedBase {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for SavedBase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SavedBase")
+    }
+}
+
+/// A three-way merge of TOML tables: per key, `mine` where it changed from `base`, else `disk` (what another editor wrote); tables merged
+/// key by key, anything else whole.
+fn merge3(base: &toml::Table, mine: &toml::Table, disk: &toml::Table) -> toml::Table {
+    let empty = toml::Table::new();
+    let mut out = toml::Table::new();
+    for k in mine.keys().chain(disk.keys()) {
+        if out.contains_key(k) {
+            continue;
+        }
+
+        let (b, m, d) = (base.get(k), mine.get(k), disk.get(k));
+        let v = if m == b {
+            d.cloned()
+        } else if let (Some(toml::Value::Table(mt)), Some(toml::Value::Table(dt))) = (m, d) {
+            let bt = match b {
+                Some(toml::Value::Table(t)) => t,
+                _ => &empty,
+            };
+            Some(toml::Value::Table(merge3(bt, mt, dt)))
+        } else {
+            m.cloned()
+        };
+
+        if let Some(v) = v {
+            out.insert(k.clone(), v);
+        }
+    }
+
+    out
 }
 
 impl Default for Settings {
@@ -411,6 +475,7 @@ impl Default for Settings {
             paths: Paths::default(),
             game_fields: BTreeMap::new(),
             unread: false,
+            base: SavedBase::default(),
         }
     }
 }
@@ -520,6 +585,10 @@ impl Settings {
 
         settings.paths = paths;
         settings.publish_db_schemas();
+        // What this editor's settings and the file are as it starts: another editor's later writes are told from its own changes by them.
+        let seen = std::fs::read_to_string(&file).ok().and_then(|t| t.parse::<toml::Table>().ok());
+        settings.base.set(toml::Table::try_from(&settings).ok(), seen);
+
         settings
     }
 
@@ -542,8 +611,21 @@ impl Settings {
         }
 
         std::fs::create_dir_all(self.paths.config_dir())?;
-        let text = toml::to_string(self).map_err(std::io::Error::other)?;
-        crate::files::write_replacing(&file, text)
+        let mine = toml::Table::try_from(self).map_err(std::io::Error::other)?;
+
+        // Another editor running wrote the file since this one read or wrote it: what this one changed goes over what that one wrote,
+        // the rest of that one's stays (each wrote its whole copy before: the last to save undid the other's changes).
+        let disk = std::fs::read_to_string(&file).ok().and_then(|t| t.parse::<toml::Table>().ok());
+        let (base, seen) = self.base.get();
+        let text = match (base, disk) {
+            (Some(base), Some(disk)) if seen.as_ref() != Some(&disk) => toml::to_string(&merge3(&base, &mine, &disk)),
+            _ => toml::to_string(self),
+        }
+        .map_err(std::io::Error::other)?;
+        let written = text.parse::<toml::Table>().ok();
+        crate::files::write_replacing(&file, text)?;
+        self.base.set(Some(mine), written);
+        Ok(())
     }
 
     pub fn paths(&self) -> &Paths {
