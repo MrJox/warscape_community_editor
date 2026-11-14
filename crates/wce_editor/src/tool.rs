@@ -246,6 +246,12 @@ pub trait Tool: Any {
         false
     }
 
+    /// A write the tool has under way on another thread (an export into a pack), named for the status line: quitting waits for it, as the
+    /// process ending would cut the file short. `None` without one.
+    fn writing(&self) -> Option<String> {
+        None
+    }
+
     /// The edit the tool has under way (a grab, a drag of a handle, a brush stroke), as the status line names it; `None` without one. Undo
     /// and redo are refused meanwhile: the gesture's entries merge and it keeps where it began in the history and which items it moves, which
     /// an undo under it would take apart.

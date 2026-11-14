@@ -207,6 +207,9 @@ pub struct Editor {
     pub(crate) settings_window: crate::settings_window::SettingsWindow,
     pub(crate) updates: crate::updates::Updates,
 
+    /// Quit was asked while something was being written (`writes_in_progress`): it goes on once that is done.
+    quit_waiting: bool,
+
     /// An interactive session: the active tool is kept in the settings (`restore_last_tool`).
     remember_tool: bool,
 
@@ -305,6 +308,7 @@ impl Editor {
             panel_data: PanelData::default(),
             settings_window: Default::default(),
             updates: Default::default(),
+            quit_waiting: false,
             remember_tool: false,
             display_scale: 1.0,
             applied_appearance: None,
@@ -1549,8 +1553,30 @@ impl Editor {
         self.tools.iter().flatten().flat_map(|t| t.unsaved_work()).collect()
     }
 
+    /// What is being written on another thread (an update installing, a fix writing packs, a tool's export): quitting waits for it, as the
+    /// process ending would cut the files short (an update half installed does not start again).
+    pub fn writes_in_progress(&self) -> Vec<String> {
+        let mut w = vec![];
+        w.extend(self.updates.writing().map(str::to_owned));
+        w.extend(self.fix_writing());
+        w.extend(self.tools.iter().flatten().filter_map(|t| t.writing()));
+        w
+    }
+
     /// The `quit` command leaves at once, as scripts expect; this one asks about unsaved changes (and the tools' unsaved work).
     pub fn ask_quit(&mut self) {
+        let writing = self.writes_in_progress();
+        if !writing.is_empty() {
+            self.quit_waiting = true;
+            let verb = if writing.len() == 1 { "is" } else { "are" };
+            self.status(
+                &format!("Quitting once {} {verb} done (quitting now would leave the files half written)", writing.join(", ")),
+                false,
+            );
+            return;
+        }
+
+        self.quit_waiting = false;
         self.prompt_docs = self.docs.unsaved();
         self.prompt_work = self.tools_unsaved_work();
         if self.prompt_docs.is_empty() && self.prompt_work.is_empty() {
@@ -1565,6 +1591,11 @@ impl Editor {
 
     /// The window's close button: true when the prompt took over (there are unsaved changes), false to let the window close.
     pub fn window_close_requested(&mut self) -> bool {
+        if !self.writes_in_progress().is_empty() {
+            self.ask_quit();
+            return true;
+        }
+
         if self.docs.unsaved().is_empty() && self.tools_unsaved_work().is_empty() {
             return false;
         }
@@ -1841,6 +1872,10 @@ impl Editor {
         self.draw_fix_window();
         self.draw_settings_window();
         self.draw_updates();
+        if self.quit_waiting && self.writes_in_progress().is_empty() {
+            self.ask_quit();
+        }
+
         if self.first_run {
             self.draw_first_run();
             return;

@@ -5193,6 +5193,10 @@ impl Tool for TileTool {
         self.flip_gizmo_moved(frame);
     }
 
+    fn writing(&self) -> Option<String> {
+        self.launch_worker.as_ref().is_some_and(|w| !w.is_finished()).then(|| "the launch's pack".to_owned())
+    }
+
     fn open_gesture(&self) -> Option<&'static str> {
         if self.grabbing {
             Some("the grab")

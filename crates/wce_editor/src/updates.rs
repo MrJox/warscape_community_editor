@@ -83,6 +83,17 @@ pub(crate) struct Updates {
 }
 
 impl Updates {
+    /// What is being written (the new build over the old one, the schema files), named for the status line: quitting waits for it.
+    pub(crate) fn writing(&self) -> Option<&'static str> {
+        if matches!(self.state, State::Downloading { .. }) {
+            Some("the update")
+        } else if matches!(self.schemas, SchemaState::Downloading { .. }) {
+            Some("the schemas' download")
+        } else {
+            None
+        }
+    }
+
     fn busy(&self) -> bool {
         matches!(self.state, State::Checking { .. } | State::Downloading { .. })
             || matches!(self.schemas, SchemaState::Checking { .. } | SchemaState::Downloading { .. })

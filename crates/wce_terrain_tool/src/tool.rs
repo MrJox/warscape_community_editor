@@ -2119,6 +2119,10 @@ impl Tool for TerrainTool {
         }
     }
 
+    fn writing(&self) -> Option<String> {
+        self.export.as_ref().map(|j| format!("the export of {}", j.map))
+    }
+
     fn open_gesture(&self) -> Option<&'static str> {
         (self.painting.is_some() || self.cells.stroke_open()).then_some("the brush stroke")
     }
