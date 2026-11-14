@@ -9,6 +9,8 @@ pub mod jobs;
 pub mod log;
 pub mod math;
 pub mod profile;
+pub mod publication;
 pub mod samples;
+pub mod save_path;
 pub mod settings;
 pub mod std_random;
