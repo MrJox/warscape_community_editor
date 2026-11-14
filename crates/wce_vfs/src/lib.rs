@@ -25,6 +25,7 @@ pub use wce_foundation::game::{GameFeatures, GameProfile, LaunchFacts, PackOrder
 pub mod files;
 pub mod generated;
 pub mod mod_pack;
+pub mod steam_detect;
 
 /// Errors of the file system.
 #[derive(Debug, thiserror::Error)]

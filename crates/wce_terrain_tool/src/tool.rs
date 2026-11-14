@@ -411,7 +411,7 @@ pub struct TerrainTool {
 
     /// A launch waiting for its export (the BCA, dry run, ignore movie packs), and the game launched.
     launch_after_export: Option<(crate::launch::Spot, bool, bool)>,
-    launched: Option<wce_tile_tool::launch::Running>,
+    launched: Option<wce_launch::launch::Running>,
 }
 
 impl Default for TerrainTool {
@@ -2160,7 +2160,7 @@ impl Tool for TerrainTool {
         self.follow_cell_edits(e);
         self.follow_refill(e);
         self.follow_export(e);
-        if let Some(m) = self.launched.as_mut().and_then(wce_tile_tool::launch::Running::poll) {
+        if let Some(m) = self.launched.as_mut().and_then(wce_launch::launch::Running::poll) {
             self.launched = None;
             e.status(&format!("Launch in game: {m}"), false);
         }

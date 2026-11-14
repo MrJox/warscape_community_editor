@@ -16,7 +16,7 @@ use std::process::Child;
 
 use wce_vfs::{LaunchFacts, Vfs, normalize};
 
-use crate::settings::{LaunchArmy, TileWeather};
+use crate::{LaunchArmy, TileWeather};
 
 /// The launch pack, in the game's data folder.
 pub const LAUNCH_PACK: &str = "wce_launch.pack";

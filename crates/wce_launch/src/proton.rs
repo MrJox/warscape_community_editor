@@ -238,10 +238,10 @@ impl Steam {
             .ok_or_else(|| {
                 format!("{} is not in a Steam library (<library>/steamapps/common/<game>): Proton needs Steam's", game_dir.display())
             })?;
-        let roots = wce_editor::steam_detect::steam_roots();
+        let roots = wce_vfs::steam_detect::steam_roots();
         let root = roots.first().cloned().ok_or("Steam's folder was not found (~/.local/share/Steam, ~/.steam/steam)")?;
         let mut libraries = vec![library.to_path_buf()];
-        for lib in wce_editor::steam_detect::steam_library_folders() {
+        for lib in wce_vfs::steam_detect::steam_library_folders() {
             if !libraries.iter().any(|l| same(l, &lib)) {
                 libraries.push(lib);
             }

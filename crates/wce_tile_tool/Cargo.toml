@@ -14,6 +14,7 @@ wce_editor_core = { path = "../wce_editor_core" }
 wce_map_view = { path = "../wce_map_view" }
 wce_formats = { path = "../wce_formats" }
 wce_foundation = { path = "../wce_foundation" }
+wce_launch = { path = "../wce_launch" }
 wce_render = { path = "../wce_render" }
 wce_scene = { path = "../wce_scene" }
 wce_tile = { path = "../wce_tile" }

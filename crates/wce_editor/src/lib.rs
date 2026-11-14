@@ -16,7 +16,7 @@ pub mod perf;
 pub mod project_prompts;
 pub mod settings_window;
 pub mod shortcuts;
-pub mod steam_detect;
+pub use wce_vfs::steam_detect;
 pub mod theme;
 pub mod tool;
 pub mod updates;

@@ -1,0 +1,20 @@
+[package]
+name = "wce_launch"
+description = "The game launched on a tile or a battle map: the battle XML, the launch pack and what it ships, the game started (Proton on Linux) and watched."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+wce_foundation = { path = "../wce_foundation" }
+wce_siege = { path = "../wce_siege" }
+wce_tile_editor = { path = "../wce_tile_editor" }
+wce_vfs = { path = "../wce_vfs" }
+wce_walls = { path = "../wce_walls" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
