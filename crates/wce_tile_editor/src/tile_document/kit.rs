@@ -41,7 +41,7 @@ fn copy_entry(entry_xml: &Path, from_raw: &Path, to_raw: &Path, kind: &str) -> R
         let _ = std::fs::copy(&target, target.with_extension("xml.bak"));
     }
 
-    std::fs::write(&target, text).map_err(|e| format!("{}: {e}", target.display()))?;
+    wce_foundation::files::write_replacing(&target, text).map_err(|e| format!("{}: {e}", target.display()))?;
     let settings = database(to_raw).join("_settings.xml");
     let kit_settings = database(from_raw).join("_settings.xml");
     if !settings.exists() && kit_settings.is_file() {
@@ -227,7 +227,8 @@ impl TileDocument {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
 
-        std::fs::write(&entry_path, there.save()).map_err(|_| format!("could not write {}", entry_path.display()))?;
+        wce_foundation::files::write_replacing(&entry_path, there.save())
+            .map_err(|_| format!("could not write {}", entry_path.display()))?;
         there = TileEntry::load(&entry_path).map_err(|e| e.to_string())?;
         wce_formats::tile_index::TileIndex::forget_shared();
 
@@ -309,7 +310,7 @@ impl TileDocument {
         let mut there = wce_formats::tile_entry::TileEntry::load(&file).map_err(|e| e.to_string())?;
         there.set_tile_attr("width", &r.cells.0.to_string());
         there.set_tile_attr("height", &r.cells.1.to_string());
-        std::fs::write(&file, there.save()).map_err(|_| format!("could not write {}", file.display()))?;
+        wce_foundation::files::write_replacing(&file, there.save()).map_err(|_| format!("could not write {}", file.display()))?;
         wce_formats::tile_index::TileIndex::forget_shared();
 
         let msg = wce_tile::resize::resize_maps(&dir, old, density, r)?;

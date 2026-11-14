@@ -1131,7 +1131,10 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         |e, a| {
             let Some(path) = a.first().cloned() else { return fail("usage: tile_export_text <file>") };
             let Some(d) = document(e) else { return no_tile() };
-            match d.text_for_export(false).and_then(|t| std::fs::write(&path, t).map_err(|err| format!("{path}: {err}"))) {
+            match d
+                .text_for_export(false)
+                .and_then(|t| wce_foundation::files::write_replacing(&path, t).map_err(|err| format!("{path}: {err}")))
+            {
                 Ok(()) => ok(format!("written to {path}")),
                 Err(why) => fail(why),
             }
@@ -1983,7 +1986,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
             let Some(id) = crate::tool::document_id(e) else { return no_tile() };
             let Some(path) = a.first() else { return fail("usage: tile_diagnostics <file.txt>") };
             let text = e.docs.find_as::<TileDocument>(id).expect("a tile").tile().diagnostics(Some(&e.scene));
-            match std::fs::write(path, text) {
+            match wce_foundation::files::write_replacing(path, text) {
                 Ok(()) => ok(""),
                 Err(_) => fail(format!("cannot write {path}")),
             }
@@ -3855,7 +3858,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
                 );
             }
 
-            match std::fs::write(path, out) {
+            match wce_foundation::files::write_replacing(path, out) {
                 Ok(()) => ok(format!("{} instances written", t.instances().len())),
                 Err(_) => fail(format!("cannot write {path}")),
             }

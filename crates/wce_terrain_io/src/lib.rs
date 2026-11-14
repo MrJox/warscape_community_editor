@@ -83,7 +83,7 @@ impl MapFiles {
                     std::fs::copy(src, &target)?;
                 }
 
-                Blob::Bytes(b) => std::fs::write(&target, b)?,
+                Blob::Bytes(b) => wce_foundation::files::write_replacing(&target, b)?,
             }
         }
 

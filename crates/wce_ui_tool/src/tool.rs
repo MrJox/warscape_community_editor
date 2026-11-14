@@ -2435,7 +2435,7 @@ impl Tool for UiTool {
             let filters = [("UI layout XML".to_owned(), "*.uixml *.xml".to_owned()), ("All files".to_owned(), "*.*".to_owned())];
             if let Some(path) = e.pick_export_file(UI_XML_KEY, &name, &filters) {
                 let xml = ui_doc_ref(e, id).map(|d| d.xml()).unwrap_or_default();
-                match std::fs::write(&path, xml.as_bytes()) {
+                match wce_foundation::files::write_replacing(&path, xml.as_bytes()) {
                     Ok(()) => e.status(&format!("wrote {}", path.display()), false),
                     Err(err) => e.status(&format!("cannot write {}: {err}", path.display()), true),
                 }

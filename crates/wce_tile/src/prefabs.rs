@@ -240,7 +240,7 @@ impl PrefabLibrary {
             text = crate::prefab_terrain::with_terrain(text, terrain).map_err(|e| format!("{}: {e}", target.display()))?;
         }
 
-        std::fs::write(&target, text).map_err(|e| format!("{}: {e}", target.display()))?;
+        wce_foundation::files::write_replacing(&target, text).map_err(|e| format!("{}: {e}", target.display()))?;
         Ok(target)
     }
 
@@ -272,7 +272,8 @@ impl PrefabLibrary {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
 
-        std::fs::write(&target, crate::project_files::mark_wce_text(scene.save())).map_err(|e| format!("{}: {e}", target.display()))?;
+        wce_foundation::files::write_replacing(&target, crate::project_files::mark_wce_text(scene.save()))
+            .map_err(|e| format!("{}: {e}", target.display()))?;
         Ok(target)
     }
 
@@ -340,7 +341,7 @@ impl PrefabLibrary {
             Err(_) => {}
         }
 
-        std::fs::write(&target, ted).map_err(|e| format!("{}: {e}", target.display()))?;
+        wce_foundation::files::write_replacing(&target, ted).map_err(|e| format!("{}: {e}", target.display()))?;
         Ok((target, report))
     }
 }
@@ -413,7 +414,7 @@ pub fn write(path: &Path, group_text: &[u8], base: Option<crate::project_files::
 
     let text = file_text(group_text);
     let text = if path.extension().is_some_and(|x| x == "wce") { wce_file_text(text, base) } else { text };
-    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+    wce_foundation::files::write_replacing(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Replaces the contents of a prefab file's group, keeping the rest of the file as it is.
@@ -426,7 +427,7 @@ pub fn update_children(path: &Path, children_text: &[u8]) -> Result<(), String> 
         .map_err(|e| format!("{}: {e}", path.display()))?;
     let group = *scene.find_all("UserInstanceGroup").first().ok_or_else(|| format!("{}: no UserInstanceGroup", path.display()))?;
     scene.set_children_text(group, children_text)?;
-    std::fs::write(path, scene.save()).map_err(|e| format!("{}: {e}", path.display()))
+    wce_foundation::files::write_replacing(path, scene.save()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[cfg(test)]

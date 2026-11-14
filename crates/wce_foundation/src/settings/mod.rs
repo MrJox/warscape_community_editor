@@ -543,9 +543,7 @@ impl Settings {
 
         std::fs::create_dir_all(self.paths.config_dir())?;
         let text = toml::to_string(self).map_err(std::io::Error::other)?;
-        let tmp = file.with_extension("toml.tmp");
-        std::fs::write(&tmp, text)?;
-        std::fs::rename(&tmp, &file)
+        crate::files::write_replacing(&file, text)
     }
 
     pub fn paths(&self) -> &Paths {

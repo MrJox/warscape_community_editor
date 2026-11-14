@@ -5,7 +5,6 @@
 //! TEd's is not reverse-engineered, its files are what is kept). The file's bytes before and after the samples are kept as read, so a map that
 //! was not painted is written back byte for byte, and a painted one differs only in the painted samples. Undo: `PixelLayer`'s block records.
 
-use std::io::Write;
 use std::path::Path;
 
 use wce_formats::image_containers::TiffFile;
@@ -231,17 +230,8 @@ impl BlendField {
     ///
     /// The file could not be written.
     pub fn write(&self, path: &Path) -> Result<()> {
-        let fail = |e: std::io::Error| format!("{}: {e}", path.display());
-        let file = std::fs::File::create(path).map_err(fail)?;
-        let mut out = std::io::BufWriter::with_capacity(1 << 20, file);
-        out.write_all(&self.header).map_err(fail)?;
-        for row in self.layer.values().chunks(self.width() as usize * 16) {
-            let bytes = row.iter().flat_map(|s| s.to_le_bytes()).collect::<Vec<_>>();
-            out.write_all(&bytes).map_err(fail)?;
-        }
-
-        out.write_all(&self.tail).map_err(fail)?;
-        out.flush().map_err(fail)
+        // Whole or not at all: the user's only copy of the paint.
+        wce_foundation::files::write_replacing(path, self.to_bytes()).map_err(|e| format!("{}: {e}", path.display()))
     }
 
     /// The file's bytes (as [`Self::write`] writes them).

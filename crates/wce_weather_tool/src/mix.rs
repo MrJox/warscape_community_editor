@@ -117,7 +117,7 @@ impl Mix {
             std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
         }
 
-        std::fs::write(&path, out.xml().save()).map_err(|err| format!("{}: {err}", path.display()))?;
+        wce_foundation::files::write_replacing(&path, out.xml().save()).map_err(|err| format!("{}: {err}", path.display()))?;
         e.loose_changed(&name);
         Ok(name)
     }

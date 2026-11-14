@@ -657,7 +657,7 @@ impl Session {
                     if missing > 0 { format!("; {missing} picture(s) not found (drawn as magenta outlines)") } else { String::new() }
                 );
                 if let Some(path) = arg_str(a, "out") {
-                    std::fs::write(path, &png).map_err(|e| e.to_string())?;
+                    wce_foundation::files::write_replacing(path, &png).map_err(|e| e.to_string())?;
                     return Ok(Reply { text: format!("{text}; written to {path}"), png: Some(png) });
                 }
                 Ok(Reply { text, png: Some(png) })
@@ -824,7 +824,7 @@ impl Session {
                         }
                     },
                 };
-                std::fs::write(&out, &data).map_err(|e| format!("{}: {e}", out.display()))?;
+                wce_foundation::files::write_replacing(&out, &data).map_err(|e| format!("{}: {e}", out.display()))?;
                 self.doc_mut(&id)?.dirty = false;
                 Ok(Reply::text(format!("saved {} bytes to {}", data.len(), out.display())))
             }

@@ -93,7 +93,7 @@ pub fn add(path: &Path, set: &TileSetInfo) -> Result<(), String> {
         set.colour[1]
     );
     doc.splice(line_start, 0, line.as_bytes()).map_err(|e| e.to_string())?;
-    std::fs::write(path, doc.save()).map_err(|e| format!("{}: {e}", path.display()))
+    wce_foundation::files::write_replacing(path, doc.save()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Carries tile sets of `from` (a projects' `_settings.xml`) named in `names` that `into` (a kit's) lacks into it; `into` gets a `.bak` when

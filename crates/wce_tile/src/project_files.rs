@@ -126,14 +126,20 @@ fn migrate_one(
         return Err("it is open in the editor".to_owned());
     }
 
-    std::fs::rename(&old, &new).map_err(|e| format!("{} -> {}: {e}", old.display(), new.display()))?;
-    std::fs::write(&new_entry, entry_with_location_mark(&text, false)).map_err(|e| e.to_string())?;
+    // The new entry first, then the folder, then the old entry: a step that fails leaves the tile as it was (its entry naming its folder),
+    // not a folder moved away from an entry that still names it.
+    wce_foundation::files::write_replacing(&new_entry, entry_with_location_mark(&text, false)).map_err(|e| e.to_string())?;
+    if let Err(e) = std::fs::rename(&old, &new) {
+        let _ = std::fs::remove_file(&new_entry);
+        return Err(format!("{} -> {}: {e}", old.display(), new.display()));
+    }
+
     std::fs::remove_file(entry).map_err(|e| e.to_string())?;
     let mut marked = 0;
     for variation in std::fs::read_dir(&new).map_err(|e| e.to_string())?.flatten().map(|v| v.path()) {
         let wce = variation.join(WCE_FILE);
         if let Ok(t) = std::fs::read(&wce) {
-            std::fs::write(&wce, mark_extracted_text(t)).map_err(|e| e.to_string())?;
+            wce_foundation::files::write_replacing(&wce, mark_extracted_text(t)).map_err(|e| e.to_string())?;
             marked += 1;
         }
     }

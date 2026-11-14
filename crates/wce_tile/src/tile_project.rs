@@ -601,7 +601,7 @@ impl TileProject {
                 std::fs::copy(&target, &bak).map_err(|error| error.to_string())?;
             }
 
-            std::fs::write(&target, bytes).map_err(|_| format!("could not write {}", target.display()))
+            wce_foundation::files::write_replacing(&target, bytes).map_err(|_| format!("could not write {}", target.display()))
         };
 
         std::fs::create_dir_all(out_dir).map_err(|error| error.to_string())?;
@@ -634,13 +634,15 @@ impl TileProject {
             for (n, (name, text)) in files.iter().enumerate() {
                 let changed = elsewhere || self.river_texts.get(n) != rivers.get(n);
                 if changed || !out_dir.join(name).exists() {
-                    std::fs::write(out_dir.join(name), text).map_err(|_| format!("could not write {}", out_dir.join(name).display()))?;
+                    wce_foundation::files::write_replacing(out_dir.join(name), text)
+                        .map_err(|_| format!("could not write {}", out_dir.join(name).display()))?;
                 }
             }
 
             let mut n = files.len();
             while out_dir.join(format!("river_spline{n}.xml")).exists() {
-                std::fs::write(out_dir.join(format!("river_spline{n}.xml")), b"<SEGMENTED_SPLINE/>\r\n").map_err(|e| e.to_string())?;
+                wce_foundation::files::write_replacing(out_dir.join(format!("river_spline{n}.xml")), b"<SEGMENTED_SPLINE/>\r\n")
+                    .map_err(|e| e.to_string())?;
                 n += 1;
             }
 
@@ -710,7 +712,8 @@ impl TileProject {
                 std::fs::copy(&target, &bak).map_err(|error| error.to_string())?;
             }
 
-            std::fs::write(&target, ground.to_bytes()?).map_err(|_| format!("could not write {}", target.display()))?;
+            wce_foundation::files::write_replacing(&target, ground.to_bytes()?)
+                .map_err(|_| format!("could not write {}", target.display()))?;
             msg += &format!("{} saved. ", self.ground_file);
             wrote = true;
         }
@@ -719,7 +722,8 @@ impl TileProject {
         let layers_file = out_dir.join(crate::terrain_layers::FILE);
         match &mut self.layers {
             Some(layers) if !layers.is_empty() && (layers.dirty || elsewhere) => {
-                std::fs::write(&layers_file, layers.to_bytes()?).map_err(|_| format!("could not write {}", layers_file.display()))?;
+                wce_foundation::files::write_replacing(&layers_file, layers.to_bytes()?)
+                    .map_err(|_| format!("could not write {}", layers_file.display()))?;
                 layers.dirty = false;
                 msg += "terrain layers saved. ";
                 wrote = true;
@@ -860,7 +864,7 @@ impl TileProject {
             std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
         }
 
-        std::fs::write(&target, &bytes).map_err(|_| format!("could not write {}", target.display()))?;
+        wce_foundation::files::write_replacing(&target, &bytes).map_err(|_| format!("could not write {}", target.display()))?;
         TileIndex::forget_shared();
         Ok(format!("{} saved. ", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
     }
@@ -884,7 +888,7 @@ impl TileProject {
             return Ok(String::new());
         }
 
-        std::fs::write(&target, there.save()).map_err(|_| format!("could not write {}", target.display()))?;
+        wce_foundation::files::write_replacing(&target, there.save()).map_err(|_| format!("could not write {}", target.display()))?;
         TileIndex::forget_shared();
         Ok(format!("{} saved (texture groups). ", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
     }
@@ -918,7 +922,7 @@ impl TileProject {
             return Ok(String::new());
         }
 
-        std::fs::write(&target, there.save()).map_err(|_| format!("could not write {}", target.display()))?;
+        wce_foundation::files::write_replacing(&target, there.save()).map_err(|_| format!("could not write {}", target.display()))?;
         TileIndex::forget_shared();
         Ok(format!("{} saved (tile properties). ", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
     }
@@ -936,7 +940,7 @@ impl TileProject {
             return Ok(String::new());
         }
 
-        std::fs::write(&target, there.save()).map_err(|_| format!("could not write {}", target.display()))?;
+        wce_foundation::files::write_replacing(&target, there.save()).map_err(|_| format!("could not write {}", target.display()))?;
         TileIndex::forget_shared();
         Ok(format!("{} saved (links). ", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()))
     }
@@ -1150,7 +1154,7 @@ impl TileProject {
                 Err(_) => {}
             }
 
-            std::fs::write(&target, bytes).map_err(|_| format!("could not write {}", target.display()))?;
+            wce_foundation::files::write_replacing(&target, bytes).map_err(|_| format!("could not write {}", target.display()))?;
             Ok(true)
         };
 

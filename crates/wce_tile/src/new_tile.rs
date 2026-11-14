@@ -293,7 +293,7 @@ pub fn create(t: &NewTile, projects_raw: &Path, kit: Option<&Path>) -> Result<Pa
     let dir = t.folder(projects_raw);
     let entry = t.entry_file(projects_raw);
     let mkdir = |d: &Path| std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()));
-    let write = |p: &Path, bytes: &[u8]| std::fs::write(p, bytes).map_err(|e| format!("{}: {e}", p.display()));
+    let write = |p: &Path, bytes: &[u8]| wce_foundation::files::write_replacing(p, bytes).map_err(|e| format!("{}: {e}", p.display()));
     mkdir(&dir)?;
     mkdir(entry.parent().expect("TILES"))?;
 

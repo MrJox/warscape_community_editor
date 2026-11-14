@@ -116,13 +116,13 @@ impl TileFiles {
                     std::fs::copy(src, &target)?;
                 }
 
-                Blob::Bytes(b) => std::fs::write(&target, b)?,
+                Blob::Bytes(b) => wce_foundation::files::write_replacing(&target, b)?,
             }
         }
 
         if let (Some((name, blob)), Some(entry_dir)) = (&self.entry, entry_dir) {
             std::fs::create_dir_all(entry_dir)?;
-            std::fs::write(entry_dir.join(name), blob.bytes()?)?;
+            wce_foundation::files::write_replacing(entry_dir.join(name), blob.bytes()?)?;
         }
 
         Ok(())

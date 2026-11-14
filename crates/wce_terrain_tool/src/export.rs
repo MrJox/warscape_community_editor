@@ -81,7 +81,7 @@ fn write(out: &Path, map: &str, files: &[(String, Vec<u8>)], profile: &wce_vfs::
             std::fs::create_dir_all(p).map_err(|err| format!("{}: {err}", p.display()))?;
         }
 
-        std::fs::write(&path, bytes).map_err(|err| format!("{}: {err}", path.display()))?;
+        wce_foundation::files::write_replacing(&path, bytes).map_err(|err| format!("{}: {err}", path.display()))?;
     }
 
     let pack = out.join(format!("terrain_{name}.pack"));
