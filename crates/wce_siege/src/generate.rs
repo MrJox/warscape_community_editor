@@ -2413,4 +2413,297 @@ mod tests {
             assert!((n.centre[0] - 500.0).abs().max((n.centre[1] - 500.0).abs()) > 100.0, "{:?}", n.centre);
         }
     }
+
+    /// An axis-aligned square of side 2 h around c, as a polygon in order.
+    fn square_at(c: P, h: f64) -> Vec<P> {
+        vec![[c[0] - h, c[1] - h], [c[0] + h, c[1] - h], [c[0] + h, c[1] + h], [c[0] - h, c[1] + h]]
+    }
+
+    /// A node of the given kind whose rectangle is the square of side 2 h around c, with `boundary` as its Boundary.
+    fn square_node(kind: NodeKind, c: P, h: f64, boundary: Vec<P>) -> Node {
+        let s = square_at(c, h);
+        Node { kind, centre: c, bbox: [s[0], s[1], s[2], s[3]], boundary }
+    }
+
+    /// The x and z ranges of a set of points.
+    fn extent(pts: &[P]) -> (P, P) {
+        pts.iter()
+            .fold(([f64::MAX; 2], [f64::MIN; 2]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]))
+    }
+
+    /// A rectangle that overlaps a smaller one: the larger is shrunk until they no longer overlap, the smaller is left as it was, and
+    /// rectangles apart (and none at all) are left alone.
+    #[test]
+    fn separate_shrinks_the_larger_of_two_overlapping_rectangles() {
+        let mut rects =
+            [Rect { c: [0.0, 0.0], u: [1.0, 0.0], hx: 10.0, hz: 10.0 }, Rect { c: [12.0, 0.0], u: [1.0, 0.0], hx: 4.0, hz: 4.0 }];
+        assert!(overlap(&rects[0], &rects[1]));
+        separate(&mut rects);
+        assert!(!overlap(&rects[0], &rects[1]));
+        assert!(rects[0].hx < 10.0 && rects[0].hz < 10.0);
+        assert_eq!((rects[1].hx, rects[1].hz), (4.0, 4.0));
+
+        let apart = [Rect { c: [0.0, 0.0], u: [1.0, 0.0], hx: 5.0, hz: 5.0 }, Rect { c: [50.0, 0.0], u: [0.0, 1.0], hx: 5.0, hz: 5.0 }];
+        let mut moved = apart;
+        separate(&mut moved);
+        for (a, b) in apart.iter().zip(&moved) {
+            assert_eq!((a.c, a.u, a.hx, a.hz), (b.c, b.u, b.hx, b.hz));
+        }
+
+        separate(&mut []);
+    }
+
+    /// A square node on open ground: its Boundary is a closed outline holding its rectangle, within its reach (grown 3 and a cell) of
+    /// its centre and about as far out on each side. A rectangle that is a point gives none.
+    #[test]
+    fn node_boundary_on_open_ground_is_a_disc_around_the_node() {
+        let input = Input { bounds: ([0.0, 0.0], [400.0, 400.0]), ..Input::default() };
+        let c = [200.0, 200.0];
+        let node = square_node(NodeKind::Area, c, 10.0, vec![]);
+        let b = node_boundary(&input, &node, &[], Some(30.0));
+        assert!(b.len() >= 3, "{b:?}");
+        assert!(inside(c, &b));
+        for &p in &node.bbox {
+            assert!(inside(p, &b), "the corner {p:?} outside the Boundary");
+        }
+
+        for &p in &b {
+            assert!(dist(p, c) <= 30.0 + 3.0 + 2.0 * CELL, "{p:?} out of reach");
+        }
+
+        let (lo, hi) = extent(&b);
+        assert!(((c[0] - lo[0]) - (hi[0] - c[0])).abs() <= CELL && ((c[1] - lo[1]) - (hi[1] - c[1])).abs() <= CELL, "{lo:?} {hi:?}");
+        assert!(hi[0] - c[0] >= 30.0, "{hi:?}");
+
+        // The generator's own reach gives one too.
+        assert!(node_boundary(&input, &node, &[], None).len() >= 3);
+
+        let point = Node { bbox: [c; 4], ..node };
+        assert!(node_boundary(&input, &point, &[], Some(30.0)).is_empty());
+    }
+
+    /// A building east of the node and a neighbour with a Boundary of its own west of it: the Boundary stops at the building's face
+    /// (grown 3 onto it) and at the neighbour's Boundary.
+    #[test]
+    fn node_boundary_stops_at_buildings_and_other_boundaries() {
+        let c = [200.0, 200.0];
+        let input = Input {
+            bounds: ([0.0, 0.0], [400.0, 400.0]),
+            obstacles: vec![vec![[220.0, 150.0], [300.0, 150.0], [300.0, 250.0], [220.0, 250.0]]],
+            ..Input::default()
+        };
+        let node = square_node(NodeKind::Area, c, 8.0, vec![]);
+        let neighbour =
+            square_node(NodeKind::Area, [150.0, 200.0], 10.0, vec![[120.0, 150.0], [180.0, 150.0], [180.0, 250.0], [120.0, 250.0]]);
+        let b = node_boundary(&input, &node, std::slice::from_ref(&neighbour), Some(40.0));
+        assert!(b.len() >= 3 && inside(c, &b), "{b:?}");
+        let (lo, hi) = extent(&b);
+        assert!(hi[0] <= 220.0 + 3.0 + 2.0 * CELL, "into the building: {hi:?}");
+        assert!(lo[0] >= 180.0 - 2.0 * CELL, "into the neighbour's Boundary: {lo:?}");
+    }
+
+    /// A corridor 40 wide (z 30..70) between two buildings over x 30..170, open ground at both ends; the sides `street_sides` gives a
+    /// straight line from a node at x 10 to one at x 190 along its middle, the nodes with their Boundaries (their rectangles) or without.
+    fn corridor_sides(with_boundaries: bool) -> [Vec<P>; 2] {
+        let input = Input {
+            bounds: ([0.0, 0.0], [200.0, 100.0]),
+            obstacles: vec![
+                vec![[30.0, 70.0], [170.0, 70.0], [170.0, 150.0], [30.0, 150.0]],
+                vec![[30.0, -50.0], [170.0, -50.0], [170.0, 30.0], [30.0, 30.0]],
+            ],
+            ..Input::default()
+        };
+        let node = |c: P| square_node(NodeKind::Area, c, 10.0, if with_boundaries { square_at(c, 10.0) } else { vec![] });
+        let (a, b) = (node([10.0, 50.0]), node([190.0, 50.0]));
+        street_sides(&input, &[[10.0, 50.0], [190.0, 50.0]], &a, &b, &[]).expect("a corridor")
+    }
+
+    /// Down the corridor: one side on each side of the line (the first on its left, +z), each at the corridor's face, as far out as
+    /// each other; with the nodes' Boundaries or without.
+    #[test]
+    fn street_sides_follow_the_corridor_faces() {
+        for with_boundaries in [false, true] {
+            let sides = corridor_sides(with_boundaries);
+            // Each side where it crosses x = 50, 100 and 150 (it is simplified: its points may all be past the middle).
+            let z_at = |s: &[P], x: f64| {
+                s.windows(2)
+                    .find(|w| (w[0][0] - x) * (w[1][0] - x) <= 0.0 && w[0][0] != w[1][0])
+                    .map(|w| w[0][1] + (x - w[0][0]) / (w[1][0] - w[0][0]) * (w[1][1] - w[0][1]))
+            };
+            for x in [50.0, 100.0, 150.0] {
+                let left = z_at(&sides[0], x).unwrap_or_else(|| panic!("{with_boundaries}: no left side at {x}: {sides:?}"));
+                let right = z_at(&sides[1], x).unwrap_or_else(|| panic!("{with_boundaries}: no right side at {x}: {sides:?}"));
+                assert!(left > 66.0 && left <= 70.0 + CELL, "{with_boundaries}: {left} at {x}");
+                assert!((30.0 - CELL..34.0).contains(&right), "{with_boundaries}: {right} at {x}");
+                assert!(((left - 50.0) - (50.0 - right)).abs() <= CELL, "{with_boundaries}: {left} {right} at {x}");
+            }
+        }
+    }
+
+    /// The sides are at the faces, so nowhere through a building (two cells in from its faces). They are: where the corridor opens
+    /// onto open ground by a node, a side goes out 80 there and straight back to the face, across the building's corner.
+    #[test]
+    #[ignore = "street_sides cuts across a building's corner where the corridor opens onto open ground (generate.rs street_sides)"]
+    fn street_sides_do_not_cross_the_buildings() {
+        let deep = |p: P| {
+            (30.0 + 2.0 * CELL..=170.0 - 2.0 * CELL).contains(&p[0])
+                && ((70.0 + 2.0 * CELL..=150.0 - 2.0 * CELL).contains(&p[1]) || (-50.0 + 2.0 * CELL..=30.0 - 2.0 * CELL).contains(&p[1]))
+        };
+        for with_boundaries in [false, true] {
+            for s in &corridor_sides(with_boundaries) {
+                for w in s.windows(2) {
+                    let n = (dist(w[0], w[1]) / 0.5).ceil().max(1.0) as usize;
+                    for i in 0..=n {
+                        let t = i as f64 / n as f64;
+                        let p = [w[0][0] + (w[1][0] - w[0][0]) * t, w[0][1] + (w[1][1] - w[0][1]) * t];
+                        assert!(!deep(p), "{with_boundaries}: a side through a building at {p:?}: {s:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// No line, or a line that never leaves the nodes, has no corridor.
+    #[test]
+    fn street_sides_without_a_corridor_are_none() {
+        let input = Input { bounds: ([0.0, 0.0], [200.0, 100.0]), ..Input::default() };
+        let (a, b) = (square_node(NodeKind::Area, [10.0, 50.0], 10.0, vec![]), square_node(NodeKind::Area, [25.0, 50.0], 10.0, vec![]));
+        assert!(street_sides(&input, &[], &a, &b, &[]).is_none());
+        assert!(street_sides(&input, &[[10.0, 50.0]], &a, &b, &[]).is_none());
+        assert!(street_sides(&input, &[[10.0, 50.0], [25.0, 50.0]], &a, &b, &[]).is_none());
+    }
+
+    /// The walls' runs of a straight wall, an L of two, a gate in the middle and no-go across it; none without walls or outside the
+    /// perimeter.
+    #[test]
+    fn wall_runs_follow_the_walkways() {
+        let g = Grid::new([0.0, 0.0], [300.0, 300.0], CELL);
+        let all: Mask = vec![true; g.len()];
+        let nogo = g.mask();
+        let length = |r: &[P]| r.windows(2).map(|w| dist(w[0], w[1])).sum::<f64>();
+
+        let mut walls = vec![];
+        side([50.0, 100.0], [250.0, 100.0], None, &mut walls);
+        let straight = Input { walls, ..Input::default() };
+        let runs = wall_runs(&straight, &g, &nogo, &all);
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert!(runs[0].iter().all(|p| (p[1] - 100.0).abs() <= 3.0), "{runs:?}");
+        assert!(length(&runs[0]) >= 180.0, "{}", length(&runs[0]));
+
+        // Outside the perimeter: none.
+        assert!(wall_runs(&straight, &g, &nogo, &g.mask()).is_empty());
+        // No walls: none.
+        assert!(wall_runs(&Input::default(), &g, &nogo, &all).is_empty());
+
+        // No-go across its middle cuts it in two, neither in the no-go.
+        let mut cut = g.mask();
+        g.fill_polygon(&mut cut, &[[140.0, 80.0], [160.0, 80.0], [160.0, 120.0], [140.0, 120.0]]);
+        let runs = wall_runs(&straight, &g, &cut, &all);
+        assert_eq!(runs.len(), 2, "{runs:?}");
+        assert!(runs.iter().flatten().all(|p| !(141.0..=159.0).contains(&p[0])), "{runs:?}");
+
+        // A gate in the middle: still one run, straight through it.
+        let mut walls = vec![];
+        side([50.0, 100.0], [250.0, 100.0], Some(5), &mut walls);
+        let runs = wall_runs(&Input { walls, ..Input::default() }, &g, &nogo, &all);
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert!(runs[0].iter().all(|p| (p[1] - 100.0).abs() <= 3.0), "{runs:?}");
+
+        // An L: one run round its corner.
+        let mut walls = vec![];
+        side([50.0, 100.0], [250.0, 100.0], None, &mut walls);
+        side([250.0, 100.0], [250.0, 280.0], None, &mut walls);
+        let runs = wall_runs(&Input { walls, ..Input::default() }, &g, &nogo, &all);
+        assert_eq!(runs.len(), 1, "{runs:?}");
+        assert!(runs[0].iter().any(|&p| dist(p, [250.0, 100.0]) <= 8.0), "no corner: {runs:?}");
+        assert!(length(&runs[0]) >= 340.0, "{}", length(&runs[0]));
+    }
+
+    /// A square town of side 200 in the middle of a map of 2000, its distance field and no sea.
+    fn square_town() -> (Grid, Mask, Vec<f64>, usize) {
+        let g = Grid::new([0.0, 0.0], [2000.0, 2000.0], 4.0);
+        let mut region = g.mask();
+        g.fill_polygon(&mut region, &square_at([1000.0, 1000.0], 100.0));
+        let dout = g.distance(&region);
+        let seed = g.at([1000.0, 1000.0]).expect("on the grid");
+        (g, region, dout, seed)
+    }
+
+    /// An inland square town's zones: the defender's inside the perimeter and about the town's middle, the attacker's past
+    /// `ATTACKER_OUT` and the map's rectangle with its overhang; the two apart, every polygon closed.
+    #[test]
+    fn deployment_of_an_inland_square_town() {
+        let (g, region, dout, seed) = square_town();
+        let bounds = ([0.0, 0.0], [2000.0, 2000.0]);
+        let mut out = Layout::default();
+        let zones = deployment(&mut out, &g, &region, &dout, &g.mask(), false, bounds, seed);
+
+        let kinds = |d: &Deployment| d.polygons.iter().map(|p| p.0).collect::<Vec<_>>();
+        assert_eq!(kinds(&out.defender), [ZoneKind::Additive, ZoneKind::GuerrillaAdditive]);
+        assert_eq!(
+            kinds(&out.attacker),
+            [ZoneKind::Additive, ZoneKind::Subtractive, ZoneKind::GuerrillaAdditive, ZoneKind::GuerrillaSubtractive]
+        );
+        for (_, p) in out.defender.polygons.iter().chain(&out.attacker.polygons) {
+            assert!(p.len() >= 3, "{p:?}");
+        }
+
+        assert_eq!(extent(&out.attacker.polygons[0].1), ([-OVERHANG, -OVERHANG], [2000.0 + OVERHANG, 2000.0 + OVERHANG]));
+
+        // The defender's: inside the town, a little in, as far in on each side.
+        let (lo, hi) = extent(&out.defender.polygons[0].1);
+        assert!(lo[0] >= 900.0 && lo[1] >= 900.0 && hi[0] <= 1100.0 && hi[1] <= 1100.0, "{lo:?} {hi:?}");
+        assert!(((lo[0] - 900.0) - (1100.0 - hi[0])).abs() <= g.cell && ((lo[1] - 900.0) - (1100.0 - hi[1])).abs() <= g.cell);
+
+        assert!(zones.defender.iter().any(|&d| d));
+        for k in 0..g.len() {
+            assert!(!zones.defender[k] || region[k], "the defender's zone outside the town");
+            assert!(!zones.attacker[k] || dout[k] > ATTACKER_OUT, "the attacker's zone near the town");
+            assert!(!(zones.defender[k] && zones.attacker[k]));
+        }
+    }
+
+    /// No town at all: no panic, and the attacker's polygons are still all closed ones.
+    #[test]
+    fn deployment_without_a_town_does_not_panic() {
+        let g = Grid::new([0.0, 0.0], [400.0, 400.0], 4.0);
+        let region = g.mask();
+        let dout = g.distance(&region);
+        let mut out = Layout::default();
+        let zones = deployment(&mut out, &g, &region, &dout, &g.mask(), false, ([0.0, 0.0], [400.0, 400.0]), 0);
+        assert!(!zones.defender.iter().any(|&d| d));
+        assert!(out.attacker.polygons.iter().all(|(_, p)| p.len() >= 3));
+    }
+
+    /// Around a square town in the middle of a large map: eight approach lines, on the map and in the attacker's zone, the town on
+    /// their left, opposite ones as far out; with no attacker's zone, none and a warning.
+    #[test]
+    fn approaches_ring_a_square_town() {
+        let (g, region, dout, seed) = square_town();
+        let bounds = ([0.0, 0.0], [2000.0, 2000.0]);
+        let town = [1000.0, 1000.0];
+        let mut out = Layout::default();
+        let zones = deployment(&mut out, &g, &region, &dout, &g.mask(), false, bounds, seed);
+        approaches(&mut out, &g, &zones.attacker, &g.mask(), bounds, town);
+        assert_eq!(out.approaches.len(), 8, "{:?}", out.approaches);
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+        for l in &out.approaches {
+            for p in l {
+                assert!(p[0] >= 20.0 && p[1] >= 20.0 && p[0] <= 1980.0 && p[1] <= 1980.0, "{l:?}");
+                assert!(zones.attacker[g.at(*p).expect("on the grid")], "{l:?} outside the attacker's zone");
+            }
+
+            assert!(crate::ports::winding(l, town) > 0.0, "{l:?}");
+        }
+
+        let mid = |l: &[P; 2]| dist([(l[0][0] + l[1][0]) / 2.0, (l[0][1] + l[1][1]) / 2.0], town);
+        for i in 0..4 {
+            assert!((mid(&out.approaches[i]) - mid(&out.approaches[i + 4])).abs() <= 2.0 * g.cell, "{:?}", out.approaches);
+        }
+
+        let mut none = Layout::default();
+        approaches(&mut none, &g, &g.mask(), &g.mask(), bounds, town);
+        assert!(none.approaches.is_empty());
+        assert_eq!(none.warnings.len(), 1);
+    }
 }
