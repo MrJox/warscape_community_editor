@@ -301,19 +301,32 @@ impl MapView {
 
     /// The streamer's changes: the chunks it removed go now (with what was waiting of them), the ones it built wait for their terrains.
     fn take(&mut self, changes: Vec<ChunkChange>) {
+        // What waits of the chunks the changes touch goes in one pass (one per change was quadratic in a burst as the camera moves).
+        let touched = changes
+            .iter()
+            .map(|c| match c {
+                ChunkChange::Set(k, ..) | ChunkChange::Remove(k) => *k,
+            })
+            .collect::<std::collections::HashSet<_>>();
+        self.waiting.retain(|(w, _)| !touched.contains(w));
+
+        // The batch's own last word per chunk, in its order.
+        let mut set: Vec<(ChunkKey, Vec<(Float4x4, Payload)>)> = vec![];
         for c in changes {
             match c {
                 ChunkChange::Set(k, _, entities) => {
-                    self.waiting.retain(|(w, _)| *w != k);
-                    self.waiting.push((k, entities));
+                    set.retain(|(w, _)| *w != k);
+                    set.push((k, entities));
                 }
 
                 ChunkChange::Remove(k) => {
-                    self.waiting.retain(|(w, _)| *w != k);
+                    set.retain(|(w, _)| *w != k);
                     self.gone.push(k);
                 }
             }
         }
+
+        self.waiting.extend(set);
     }
 
     /// Puts on the layer the waiting chunks whose terrains the renderer has ready (the version each replaces stays until then), in the
@@ -323,28 +336,30 @@ impl MapView {
         let t0 = std::time::Instant::now();
         let mut gone: Vec<std::ops::Range<EntityId>> =
             std::mem::take(&mut self.gone).into_iter().filter_map(|k| self.chunks.remove(&k)).collect();
+        // One pass, the order kept: the ready ones out (until the budget is spent), the rest waiting (taking each out of the middle of the
+        // list was quadratic).
         let mut ready = vec![];
-        let mut k = 0;
-        while k < self.waiting.len() {
-            let terrains_ready = e.renderer.as_mut().is_none_or(|r| {
-                self.waiting[k].1.iter().all(|(_, p)| match p {
-                    Payload::Terrain(t) => r.terrain_ready(t),
-                    _ => true,
-                })
-            });
+        let mut kept = Vec::with_capacity(self.waiting.len());
+        let mut spent = false;
+        for (key, entities) in std::mem::take(&mut self.waiting) {
+            let terrains_ready = !spent
+                && e.renderer.as_mut().is_none_or(|r| {
+                    entities.iter().all(|(_, p)| match p {
+                        Payload::Terrain(t) => r.terrain_ready(t),
+                        _ => true,
+                    })
+                });
 
             if terrains_ready {
-                let (key, entities) = self.waiting.remove(k);
                 gone.extend(self.chunks.remove(&key));
                 ready.push((key, entities));
-                if budget.is_some_and(|b| t0.elapsed() > b) {
-                    break;
-                }
+                spent = budget.is_some_and(|b| t0.elapsed() > b);
             } else {
-                k += 1;
+                kept.push((key, entities));
             }
         }
 
+        self.waiting = kept;
         if gone.is_empty() && ready.is_empty() {
             return false;
         }

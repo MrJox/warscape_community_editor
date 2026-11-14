@@ -58,9 +58,10 @@ impl ConstantBuffers {
     /// so a pass can set everything it knows about.
     pub fn set(&mut self, cb: &str, var: &str, data: &[u8]) {
         let Some((b, v)) = self.buffers.get_mut(cb).and_then(|b| b.vars.get(var).copied().map(|v| (b, v))) else {
-            let key = format!("{cb}.{var}");
-            if !self.missing.contains(&key) {
-                self.missing.push(key);
+            // Compared in place: a pass sets the names it knows on every frame, and a name a shader lacks made a string each time.
+            let known = self.missing.iter().any(|k| k.len() == cb.len() + 1 + var.len() && k.starts_with(cb) && k.ends_with(var));
+            if !known {
+                self.missing.push(format!("{cb}.{var}"));
             }
 
             return;
@@ -86,7 +87,8 @@ impl ConstantBuffers {
     }
 
     pub fn set_f(&mut self, cb: &str, var: &str, v: &[f32]) {
-        self.set(cb, var, &v.iter().flat_map(|f| f.to_le_bytes()).collect::<Vec<_>>());
+        // The floats' own bytes (little endian on every platform the editor runs on), without a copy each call.
+        self.set(cb, var, bytemuck::cast_slice(v));
     }
 
     pub fn set_i(&mut self, cb: &str, var: &str, v: i32) {

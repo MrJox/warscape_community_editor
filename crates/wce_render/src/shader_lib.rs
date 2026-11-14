@@ -65,11 +65,15 @@ pub struct ShaderLibrary {
     dev: ID3D11Device,
     cache: BTreeMap<String, Rc<GameShader>>,
     layouts: BTreeMap<String, ID3D11InputLayout>,
+
+    /// The shaders that could not be made, and why: not looked for again (an optional one missing from a game's packs was read and failed
+    /// on every frame). A new library (a remount makes the renderer again) tries them again.
+    failed: BTreeMap<String, RenderError>,
 }
 
 impl ShaderLibrary {
     pub fn new(dev: &ID3D11Device) -> Self {
-        Self { dev: dev.clone(), cache: BTreeMap::new(), layouts: BTreeMap::new() }
+        Self { dev: dev.clone(), cache: BTreeMap::new(), layouts: BTreeMap::new(), failed: BTreeMap::new() }
     }
 
     /// A shader by fxc file name without folder and extension (`dx11_sm_3_0_skydome.hlsl_ps_ps30_skygen`), declaring its constant
@@ -83,9 +87,19 @@ impl ShaderLibrary {
             return Ok(shader.clone());
         }
 
-        let bytes = read(&format!("fxc/{name}.fxc")).map_err(RenderError)?;
-        let fxc = Fxc::decode(&mut Cursor::new(&bytes), &None).map_err(|error| RenderError(format!("{name}: {error}")))?;
-        self.create(cbs, name, fxc.shader().clone())
+        if let Some(error) = self.failed.get(name) {
+            return Err(error.clone());
+        }
+
+        let made = read(&format!("fxc/{name}.fxc"))
+            .map_err(RenderError)
+            .and_then(|bytes| Fxc::decode(&mut Cursor::new(&bytes), &None).map_err(|error| RenderError(format!("{name}: {error}"))))
+            .and_then(|fxc| self.create(cbs, name, fxc.shader().clone()));
+        if let Err(error) = &made {
+            self.failed.insert(name.to_owned(), error.clone());
+        }
+
+        made
     }
 
     /// A shader of the editor's own, compiled by `compile` on first use, bound by its reflected names as the game's are.

@@ -649,6 +649,10 @@ unsafe impl Sync for TextureCache {}
 pub struct ModelCache {
     inner: Arc<ModelInner>,
     terrain: BTreeMap<EntityId, TerrainGpu>,
+
+    /// Which entity's patches are made from a heights buffer, layout, version and skin (`terrain`'s placements of one tile share them):
+    /// found at once instead of by a walk over every slot for each entity (quadratic as a map context's tiles come in).
+    terrain_by_source: HashMap<(usize, u64, u64, u64), EntityId>,
 }
 
 /// The texture a material gives a slot, or a fallback.
@@ -1383,7 +1387,7 @@ impl ModelCache {
     /// A cache for another renderer that shares this one's models (and their textures): only the scene's terrain GPU data is its own.
     pub fn sharing(&self) -> Self {
         self.inner.owners.fetch_add(1, Ordering::AcqRel);
-        Self { inner: self.inner.clone(), terrain: BTreeMap::new() }
+        Self { inner: self.inner.clone(), terrain: BTreeMap::new(), terrain_by_source: HashMap::new() }
     }
 
     pub fn new(dev: &ID3D11Device, read: SharedReader, textures: Arc<TextureCache>) -> Self {
@@ -1400,6 +1404,7 @@ impl ModelCache {
                 owners: AtomicUsize::new(1),
             }),
             terrain: BTreeMap::new(),
+            terrain_by_source: HashMap::new(),
         }
     }
 
@@ -1536,10 +1541,12 @@ impl ModelCache {
         }
 
         // Another entity with the same heights buffer (the placements of one tile in a map context): its patches.
+        let source = (Arc::as_ptr(&t.heights) as usize, layout, t.version, skin_id);
         if let Some(same) = self
-            .terrain
-            .values()
-            .find(|slot| {
+            .terrain_by_source
+            .get(&source)
+            .and_then(|other| self.terrain.get(other))
+            .filter(|slot| {
                 Arc::ptr_eq(&slot.heights, &t.heights) && slot.layout == layout && slot.version == t.version && slot.skin_id == skin_id
             })
             .cloned()
@@ -1660,6 +1667,7 @@ impl ModelCache {
         tg.layout = layout;
         tg.version = t.version;
         tg.skin_id = skin_id;
+        self.terrain_by_source.insert(source, id);
         if failed {
             log::error("terrain: a patch could not be created");
             lock(&self.inner.errors).push("terrain: a patch could not be created".to_owned());
@@ -1671,6 +1679,8 @@ impl ModelCache {
     /// Drops the terrain meshes of entities that no longer exist.
     pub fn prune_terrain(&mut self, scene: &RenderScene) {
         self.terrain.retain(|id, _| scene.find(*id).is_some_and(|e| matches!(e.payload, Payload::Terrain(_))));
+        let terrain = &self.terrain;
+        self.terrain_by_source.retain(|_, id| terrain.contains_key(id));
     }
 }
 
