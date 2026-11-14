@@ -587,7 +587,7 @@ impl UnitModel {
         let scale = entry.height_scale.max(0.01) * (1.0 + entry.height_variation * spread);
         let white = [[1.0; 3], [1.0; 3], [1.0; 3], [0.0; 3]];
         let mut model =
-            Self { man, mount: figure, scale, faction_colours: catalog.colours.get(faction).copied().unwrap_or(white), phase: 0.0, seed };
+            Self { man, mount: figure, scale, faction_colours: catalog.colours_of(entry, faction).unwrap_or(white), phase: 0.0, seed };
         let slots: &[&str] = if model.mount.is_some() { &["RIDER_STAND", "STAND", "MISSING_ANIM"] } else { &["STAND", "MISSING_ANIM"] };
         if !slots.iter().any(|s| model.play(read, s)) {
             return Err(format!("none of the slots {slots:?} in table '{}'", land.man_animation));
