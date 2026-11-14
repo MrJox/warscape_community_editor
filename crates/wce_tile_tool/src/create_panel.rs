@@ -400,7 +400,7 @@ impl TileTool {
     /// The entries of the open tile (with the prefab library).
     fn create_entries(&mut self, e: &mut Editor) -> Arc<Vec<Entry>> {
         let Some(id) = document(e).map(|d| d.id()) else { return Arc::default() };
-        let stamp = (id, self.prefab_version, self.veg_sets_version);
+        let stamp = (id, self.prefab_version, self.veg_sets.version);
         if let Some((s, entries)) = &self.create.entries
             && *s == stamp
         {
@@ -743,7 +743,7 @@ impl TileTool {
         self.drawing = false;
         self.draw_pts.clear();
         self.placing = None;
-        self.veg_set = None;
+        self.veg_sets.current = None;
         self.making = Some(en.label.clone());
         match &en.make {
             Make::VegSet { name } => {
@@ -763,7 +763,7 @@ impl TileTool {
                 let mut d = self.create.drafts.get(kind).cloned().unwrap_or_else(|| Draft::new(kind, ""));
                 d.key = set.pick(self.random.unit()).map(|en| en.key.clone()).unwrap_or_default();
                 self.draft = Some(d);
-                self.veg_set = Some(if name.is_empty() { SetInUse::New } else { SetInUse::Saved(name.clone()) });
+                self.veg_sets.current = Some(if name.is_empty() { SetInUse::New } else { SetInUse::Saved(name.clone()) });
                 self.placing = Some(crate::tool::Placing::Draft);
             }
 
@@ -853,7 +853,7 @@ impl TileTool {
 
     /// Stops placing or drawing.
     pub fn stop_making(&mut self) {
-        self.veg_set = None;
+        self.veg_sets.current = None;
         self.placing = None;
         self.drawing = false;
         self.draw_pts.clear();

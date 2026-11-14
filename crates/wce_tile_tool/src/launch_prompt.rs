@@ -331,11 +331,11 @@ impl TileTool {
     /// No tile or game folder, a campaign tile, the game already running or Steam not running, stray movie-type packs (unless
     /// `ignore_movie_packs`), a launch pack the editor did not write, a cancelled launch still finishing, or the work or the start fails.
     pub fn launch_in_game(&mut self, e: &mut Editor, dry_run: bool, ignore_movie_packs: bool, ask: bool) -> Result<String, String> {
-        if self.launch_job.is_some() {
+        if self.launch.job.is_some() {
             return Err("a launch is being prepared".to_owned());
         }
 
-        if self.launch_worker.as_ref().is_some_and(|w| !w.is_finished()) {
+        if self.launch.worker.as_ref().is_some_and(|w| !w.is_finished()) {
             return Err("the cancelled launch is still finishing its work: try again in a moment".to_owned());
         }
 
@@ -357,7 +357,7 @@ impl TileTool {
         let tile = format!("{}/{}", &location[at + BATTLE.len()..], info.variation);
 
         if !dry_run {
-            if self.launched.is_some() {
+            if self.launch.launched.is_some() {
                 return Err("the game launched before is still running".to_owned());
             }
 
@@ -381,8 +381,8 @@ impl TileTool {
             let stray = launch::stray_movie_packs(&data, &profile.release_pack_names(&game_dir));
             if !stray.is_empty() && !ignore_movie_packs {
                 if ask {
-                    self.launch_prompt = Some(stray.clone());
-                    self.launch_prompt_open = true;
+                    self.launch.prompt = Some(stray.clone());
+                    self.launch.prompt_open = true;
                 }
 
                 return Err(format!(
@@ -496,15 +496,15 @@ impl TileTool {
 
         let (tx, rx) = channel();
         job.rx = rx;
-        self.launch_worker = Some(std::thread::spawn(move || {
+        self.launch.worker = Some(std::thread::spawn(move || {
             let r = prepare(plan, &|m| {
                 let _ = tx.send(m);
             });
             let _ = tx.send(Msg::Done(r));
         }));
 
-        self.launch_job = Some(job);
-        self.launch_progress_open = true;
+        self.launch.job = Some(job);
+        self.launch.progress_open = true;
         Ok(format!("preparing the launch of {tile}..."))
     }
 
@@ -544,7 +544,7 @@ impl TileTool {
         };
 
         log::info(format!("launch in game: started {started}"));
-        self.launched = Some(Running { child, game: profile.key, data, staging: job.staging.clone() });
+        self.launch.launched = Some(Running { child, game: profile.key, data, staging: job.staging.clone() });
         Ok(format!(
             "launched {} into a battle on {} ({how}, {} mod pack(s)) in {:.0} s; its files are removed when the game exits",
             profile.exe,
@@ -588,8 +588,8 @@ impl TileTool {
     /// Each frame: once, what an editor closed while its game ran left (the launch pack, the launch folders) is removed when the game is
     /// not running; the launch being prepared moves on; a launched game that exited has its files removed.
     pub(crate) fn update_launch(&mut self, e: &mut Editor) {
-        if !self.launch_swept {
-            self.launch_swept = true;
+        if !self.launch.swept {
+            self.launch.swept = true;
             if let Some(dir) = e.settings_ref().game_dir() {
                 let game = e.game();
                 let data = dir.join(game.data_dir);
@@ -608,8 +608,8 @@ impl TileTool {
 
         self.preload_game(e);
         self.poll_launch_job(e);
-        if let Some(msg) = self.launched.as_mut().and_then(Running::poll) {
-            self.launched = None;
+        if let Some(msg) = self.launch.launched.as_mut().and_then(Running::poll) {
+            self.launch.launched = None;
             log::info(format!("launch in game: {msg}"));
             e.status(&format!("Launch in game: {msg}"), false);
         }
@@ -659,7 +659,7 @@ impl TileTool {
 
     /// Takes the work's messages: the steps (their times), the game's data (kept), the end (the game started, the times kept).
     fn poll_launch_job(&mut self, e: &mut Editor) {
-        let Some(mut job) = self.launch_job.take() else { return };
+        let Some(mut job) = self.launch.job.take() else { return };
         let mut done = None;
         while let Ok(m) = job.rx.try_recv() {
             match m {
@@ -676,7 +676,7 @@ impl TileTool {
         }
 
         let Some(r) = done else {
-            self.launch_job = Some(job);
+            self.launch.job = Some(job);
             return;
         };
 
@@ -711,7 +711,7 @@ impl TileTool {
     /// going on, the last ones done), the time taken and left, Cancel.
     pub(crate) fn draw_launch_progress(&mut self, _e: &mut Editor) {
         const TITLE: &str = "Launching in game";
-        if std::mem::take(&mut self.launch_progress_open) {
+        if std::mem::take(&mut self.launch.progress_open) {
             gui::open_popup(TITLE);
         }
 
@@ -719,7 +719,7 @@ impl TileTool {
             return;
         }
 
-        let Some(job) = &self.launch_job else {
+        let Some(job) = &self.launch.job else {
             gui::close_current_popup();
             gui::end_popup();
             return;
@@ -777,7 +777,7 @@ impl TileTool {
         if gui::button("Cancel") {
             // The work ends on its own in its staging folder; nothing is in the game's folder yet.
             log::info("launch in game: cancelled");
-            self.launch_job = None;
+            self.launch.job = None;
             gui::close_current_popup();
         }
 
@@ -791,7 +791,7 @@ impl TileTool {
     /// The question when stray movie-type packs are in `data\`: launch anyway, or not.
     pub(crate) fn draw_launch_prompt(&mut self, e: &mut Editor) {
         const TITLE: &str = "Launch in game";
-        if std::mem::take(&mut self.launch_prompt_open) {
+        if std::mem::take(&mut self.launch.prompt_open) {
             gui::open_popup(TITLE);
         }
 
@@ -799,7 +799,7 @@ impl TileTool {
             return;
         }
 
-        let Some(packs) = self.launch_prompt.clone() else {
+        let Some(packs) = self.launch.prompt.clone() else {
             gui::close_current_popup();
             gui::end_popup();
             return;
@@ -833,7 +833,7 @@ impl TileTool {
         }
 
         if close {
-            self.launch_prompt = None;
+            self.launch.prompt = None;
             gui::close_current_popup();
         }
 
