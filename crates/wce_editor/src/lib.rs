@@ -15,6 +15,7 @@ pub mod icons;
 pub mod images;
 pub mod panels;
 pub mod perf;
+pub mod pickers;
 pub mod project_prompts;
 pub mod settings_window;
 pub mod shortcuts;

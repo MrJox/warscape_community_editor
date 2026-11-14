@@ -12,7 +12,7 @@ path = "src/main.rs"
 # One feature per editor, so that a release builds only the editors that work. The default set is the release's; scripts and gates build with
 # --all-features.
 [features]
-default = ["weather", "prefab", "tile", "terrain", "ui", "audio"]
+default = ["weather", "prefab", "tile", "terrain", "ui", "audio", "unit"]
 weather = ["dep:wce_weather_tool"]
 tile = ["dep:wce_tile_tool"]
 # The Prefab tool (docs/plans/prefab_tool.md): a Tile tool on a stage of its own.
@@ -21,8 +21,10 @@ ui = ["dep:wce_ui_tool"]
 # The Audio tool (docs/plans/audio.md): sound banks, names, search, playback.
 audio = ["dep:wce_audio_tool"]
 terrain = ["dep:wce_terrain_tool"]
+# The Unit tool (docs/plans/unit_editor.md): variant mesh definitions worn by a unit.
+unit = ["dep:wce_unit_tool"]
 
-# The tabs of the editors still to come (unit, VFX, cinematic): only their plans, no features.
+# The tabs of the editors still to come (VFX, cinematic): only their plans, no features.
 placeholders = []
 
 [dependencies]
@@ -36,6 +38,7 @@ wce_terrain_tool = { path = "../wce_terrain_tool", optional = true }
 wce_tile_tool = { path = "../wce_tile_tool", optional = true }
 wce_ui_tool = { path = "../wce_ui_tool", optional = true }
 wce_audio_tool = { path = "../wce_audio_tool", optional = true }
+wce_unit_tool = { path = "../wce_unit_tool", optional = true }
 wce_weather_tool = { path = "../wce_weather_tool", optional = true }
 
 [target.'cfg(windows)'.dependencies]

@@ -1222,6 +1222,11 @@ impl Editor {
                     self.save_layout();
                 }
 
+                let was = self.active_tool;
+                if self.tool_supported(was) {
+                    self.with_tool_at(was, |t, e| t.deactivated(e));
+                }
+
                 self.active_tool = i;
                 self.layout_loaded = false;
                 if self.remember_tool && self.settings.last_tool != self.tool_info[i].id {

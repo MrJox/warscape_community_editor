@@ -1,0 +1,20 @@
+[package]
+name = "wce_unit_tool"
+description = "The Unit tool: variant mesh definitions as documents, a unit wearing them in the renderer, and the DB rows that decide a unit's looks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rpfm_lib.workspace = true
+serde = { version = "1", features = ["derive"] }
+wce_editor = { path = "../wce_editor" }
+wce_editor_core = { path = "../wce_editor_core" }
+wce_formats = { path = "../wce_formats" }
+wce_foundation = { path = "../wce_foundation" }
+wce_render = { path = "../wce_render" }
+wce_scene = { path = "../wce_scene" }
+wce_vfs = { path = "../wce_vfs" }
+
+[lints]
+workspace = true

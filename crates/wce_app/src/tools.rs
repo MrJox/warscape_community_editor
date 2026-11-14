@@ -26,25 +26,22 @@ pub fn all_tools() -> Vec<Box<dyn Tool>> {
     #[cfg(feature = "audio")]
     tools.push(Box::new(wce_audio_tool::AudioTool::default()));
 
+    #[cfg(feature = "unit")]
+    tools.push(Box::new(wce_unit_tool::UnitTool::default()));
+
     #[cfg(feature = "placeholders")]
     tools.extend(placeholders());
 
     tools
 }
 
-/// The future tools: no features yet (the Terrain tool is a feature of its own).
+/// The future tools: no features yet.
 #[cfg(feature = "placeholders")]
 fn placeholders() -> Vec<Box<dyn Tool>> {
     use wce_editor::icons;
     use wce_editor::tool::PlaceholderTool;
 
     vec![
-        Box::new(PlaceholderTool::new(
-            "unit",
-            "Unit",
-            icons::USER,
-            "Unit editor: skinned models, animations, variant mesh definition (VMD) assembly. Needs the SkinnedInstance render kind, bone palette and the anim/skeleton formats.",
-        )),
         Box::new(PlaceholderTool::new(
             "vfx",
             "VFX",
