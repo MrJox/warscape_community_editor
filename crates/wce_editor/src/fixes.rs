@@ -140,6 +140,11 @@ impl Editor {
         }
     }
 
+    /// The fix being applied or taken back (it writes packs into the game's data folder), named for the status line.
+    pub(crate) fn fix_writing(&self) -> Option<String> {
+        self.fixes.job.as_ref().map(|j| format!("the fix {}", self.fixes.list.get(j.fix).map_or("", |f| f.id())))
+    }
+
     fn poll_fix(&mut self) {
         if !self.fixes.job.as_ref().is_some_and(|j| j.worker.is_finished()) {
             return;
