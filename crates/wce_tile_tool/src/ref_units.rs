@@ -904,9 +904,13 @@ impl RefUnits {
             gui::set_tooltip("Shows the next soldier of the unit.");
         }
 
-        // The faction's colours, or the user's.
+        // The unit's or the faction's colours, or the user's.
         let white = [[1.0; 3], [1.0; 3], [1.0; 3], [0.0; 3]];
-        let of_faction = catalog.colours.get(&wanted.faction).copied().unwrap_or(white);
+        let of_faction = catalog
+            .entry(&wanted.unit, &wanted.faction)
+            .and_then(|e| catalog.colours_of(e, &wanted.faction))
+            .or_else(|| catalog.colours.get(&wanted.faction).copied())
+            .unwrap_or(white);
         let mut colours = stored.unwrap_or([of_faction[0], of_faction[1], of_faction[2]]);
         let mut changed = false;
         for (k, name) in ["Primary", "Secondary", "Uniform"].iter().enumerate() {

@@ -26,6 +26,8 @@ use wce_vfs::{Vfs, normalize};
 /// One `unit_variants` row.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UnitEntry {
+    /// The row's key (`name`): what `unit_variants_colours` names.
+    pub name: String,
     pub unit: String,
 
     /// Empty: any faction.
@@ -110,6 +112,11 @@ pub struct UnitCatalog {
 
     /// By faction: primary, secondary and uniform colours, linear, as the shaders multiply them (**ASSUMPTION**: the tables' 0..255 are sRGB).
     pub colours: HashMap<String, [[f32; 3]; 4]>,
+
+    /// `unit_variants_colours`: a unit's own colours, by (`unit_variants` row's name, faction, soldier type: `soldier`, `officer`,
+    /// `standard_bearer`, `musician`), as [`Self::colours`]. They take the faction's place for that unit (**ASSUMPTION**: not compared
+    /// with the game; vanilla Attila has 2 rows, TDD 57).
+    pub unit_colours: HashMap<(String, String, String), [[f32; 3]; 4]>,
     pub tables: HashMap<String, AnimationTable>,
 
     /// By main unit.
@@ -177,11 +184,12 @@ impl UnitCatalog {
     /// Returns what could not be read: a table, or a column the schema doesn't have.
     pub fn load(vfs: &Vfs, schema: &Schema) -> Result<Self, String> {
         let mut c = Self::default();
-        for r in rows(vfs, schema, "unit_variants", &["unit", "faction", "variant", "height_scale", "height_variation"])? {
+        for r in rows_with(vfs, schema, "unit_variants", &["unit", "faction", "variant", "height_scale", "height_variation"], &["name"])? {
             let number = |s: &String| s.trim().parse().unwrap_or(0.0);
             c.entries.push(UnitEntry {
                 height_scale: number(&r[3]),
                 height_variation: number(&r[4]),
+                name: r[5].clone(),
                 unit: r[0].clone(),
                 faction: r[1].clone(),
                 variant: r[2].clone(),
@@ -299,6 +307,19 @@ impl UnitCatalog {
             c.colours.entry(r[0].clone()).or_insert([hex_colour(&r[1]), hex_colour(&r[2]), hex_colour(&r[3]), [0.0; 3]]);
         }
 
+        // Optional: a version of the table without the merged hex columns (rpfm's) is left out.
+        let columns = ["unit_variant", "faction", "soldier_type", "primary_colour_hex", "secondary_colour_hex", "tertiary_colour_hex"];
+        if let Ok(own) = rows(vfs, schema, "unit_variants_colours", &columns) {
+            for r in own {
+                c.unit_colours.entry((r[0].clone(), r[1].clone(), r[2].clone())).or_insert([
+                    hex_colour(&r[3]),
+                    hex_colour(&r[4]),
+                    hex_colour(&r[5]),
+                    [0.0; 3],
+                ]);
+            }
+        }
+
         for path in vfs.list("animations/animation_tables/", ".txt") {
             let text = String::from_utf8_lossy(&vfs.read(path).map_err(|e| e.to_string())?).into_owned();
             for table in parse_tables(&text).ok_or_else(|| format!("{path}: not an animation table"))? {
@@ -313,6 +334,12 @@ impl UnitCatalog {
     pub fn entry(&self, unit: &str, faction: &str) -> Option<&UnitEntry> {
         let of_unit = || self.entries.iter().filter(|e| e.unit == unit);
         of_unit().find(|e| e.faction == faction).or_else(|| of_unit().find(|e| e.faction.is_empty())).or_else(|| of_unit().next())
+    }
+
+    /// The colours a unit's soldier wears for `faction`: the unit's own (`unit_variants_colours`), else the faction's.
+    pub fn colours_of(&self, entry: &UnitEntry, faction: &str) -> Option<[[f32; 3]; 4]> {
+        let own = |f: &str| self.unit_colours.get(&(entry.name.clone(), f.to_owned(), "soldier".to_owned())).copied();
+        own(faction).or_else(|| own(&entry.faction)).or_else(|| self.colours.get(faction).copied())
     }
 
     /// A naval unit's ship (`naval_unit` is `naval_units`' key): the faction's row when it has one, else the row of any faction, else the first.
