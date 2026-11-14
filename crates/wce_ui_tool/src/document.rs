@@ -255,6 +255,12 @@ impl Document for UiDocument {
         true
     }
 
+    /// The layout as saved, as one undoable edit (Undo brings the changes back).
+    fn revert(&mut self) -> Result<String, String> {
+        self.reset_all()?;
+        Ok(format!("{} as saved (Undo brings the changes back)", self.title()))
+    }
+
     /// An empty target saves where the file came from: a file on disk in place, a layout from the packs as a loose file under the output
     /// folder (never into the game's packs).
     fn save(&mut self, target: &SaveTarget) -> Result<(), String> {

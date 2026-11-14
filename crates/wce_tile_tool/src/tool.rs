@@ -2580,7 +2580,7 @@ impl TileTool {
         self.right_dock = Some(gui::window_dock_id());
 
         let Some(id) = document_id(e) else {
-            gui::text_wrapped("No tile open. File > Open file... (a tile.ted), Tile > Open tile..., or --tile <folder>.");
+            gui::text_wrapped("No tile open. File > Open file... (a tile.ted), File > Open tile..., or --tile <folder>.");
             gui::end();
             return;
         };
@@ -4303,24 +4303,6 @@ impl Tool for TileTool {
             return;
         }
 
-        if gui::menu_item("New tile...", None, false, true) {
-            self.open_new_tile_dialog();
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("A new battle tile, flat, as a project in the projects folder (as TEd's New Tile, named at once).");
-        }
-
-        if gui::menu_item("Save tile as...", None, false, document(e).is_some()) {
-            self.open_save_tile_as(e);
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(
-                "TEd's Save Tile As: the tile as another battle tile (tile set, name, variation) in the projects folder, with its own database entry; the document goes on as it.",
-            );
-        }
-
         if gui::menu_item("Tile database...", None, false, true) {
             self.open_tile_database(e);
         }
@@ -4351,46 +4333,6 @@ impl Tool for TileTool {
             );
         }
 
-        if gui::menu_item("Open tile...", None, false, true) {
-            let filters = [
-                ("Tile database entry, tile.wce or tile.ted".to_owned(), "*.xml tile.wce tile.ted *.ted".to_owned()),
-                ("Tile (tile.wce, tile.ted)".to_owned(), "tile.wce tile.ted *.ted".to_owned()),
-                ("All files".to_owned(), "*.*".to_owned()),
-            ];
-            if let Some(p) = file_dialog(false, Path::new(""), &filters) {
-                let msg = self.open_tile(e, &p.display().to_string(), "").unwrap_or_else(|m| format!("open failed: {m}"));
-                e.status(&msg, false);
-            }
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Opens a tile from a file: its tile database entry (.xml), a tile.wce or a tile.ted.");
-        }
-
-        if gui::menu_item("Migrate old extracted projects", None, false, true) {
-            let msg = self.migrate_extracted(e).unwrap_or_else(|m| format!("migration failed: {m}"));
-            e.status(&msg, false);
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(
-                "Moves the projects of tiles extracted by older versions (<tile>_extracted folders) to their own names, marked as extracted tiles; one whose place has a project, or that is open, stays (see the log).",
-            );
-        }
-
-        if gui::menu_item("Open exported tile...", None, false, true)
-            && let Some(dir) = wce_editor::steam_detect::pick_folder("Exported tile folder (terrain/tiles/.../<variation>)")
-        {
-            let msg = self.extract_or_ask(e, &dir.display().to_string());
-            e.status(&msg, false);
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip(
-                "Extracts a tile exported by BOB (a terrain/tiles/.../<variation> folder) into a project and opens it; asks before replacing a project.",
-            );
-        }
-
         let label = if self.launch_job.is_some() {
             "Launch in game (preparing)"
         } else if self.launched.is_some() {
@@ -4409,22 +4351,6 @@ impl Tool for TileTool {
             );
         }
 
-        // A game without the tiles in its kit (Rome 2) saves into mod packs only.
-        if e.game().features.kit_tiles {
-            gui::separator();
-            let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
-            if gui::menu_item("Import from Assembly Kit", None, false, project.is_some_and(|p| p.0)) {
-                let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
-                e.status(&msg, false);
-            }
-
-            if gui::is_item_hovered() {
-                gui::set_tooltip(
-                    "Opens the kit's copy of this tile (an extracted tile: the game's, extracted again); saving it replaces the project.",
-                );
-            }
-        }
-
         gui::separator();
         if gui::menu_item("Generate SiegeAI", None, false, document(e).is_some()) {
             self.generate_siege_ai(e);
@@ -4437,14 +4363,6 @@ impl Tool for TileTool {
         }
 
         gui::separator();
-        if gui::menu_item("Tile browser", None, false, true) {
-            gui::set_window_focus("Tiles");
-        }
-
-        if gui::is_item_hovered() {
-            gui::set_tooltip("Brings up the Tiles panel: the kits', the projects' and the packs' tiles, searchable.");
-        }
-
         if let Some(d) = document(e) {
             let t = d.tile_mut();
             let mut changed = false;
@@ -4501,6 +4419,79 @@ impl Tool for TileTool {
         }
 
         gui::end_menu();
+    }
+
+    fn file_menu(&mut self, e: &mut Editor, part: wce_editor::tool::FileMenu) {
+        use wce_editor::tool::FileMenu;
+        match part {
+            FileMenu::Open => {
+                if gui::menu_item("New tile...", None, false, true) {
+                    self.open_new_tile_dialog();
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("A new battle tile, flat, as a project in the projects folder (as TEd's New Tile, named at once).");
+                }
+
+                if gui::menu_item("Open tile...", None, false, true) {
+                    let filters = [
+                        ("Tile database entry, tile.wce or tile.ted".to_owned(), "*.xml tile.wce tile.ted *.ted".to_owned()),
+                        ("Tile (tile.wce, tile.ted)".to_owned(), "tile.wce tile.ted *.ted".to_owned()),
+                        ("All files".to_owned(), "*.*".to_owned()),
+                    ];
+                    if let Some(p) = file_dialog(false, Path::new(""), &filters) {
+                        let msg = self.open_tile(e, &p.display().to_string(), "").unwrap_or_else(|m| format!("open failed: {m}"));
+                        e.status(&msg, false);
+                    }
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip("Opens a tile from a file: its tile database entry (.xml), a tile.wce or a tile.ted.");
+                }
+
+                if gui::menu_item("Open exported tile...", None, false, true)
+                    && let Some(dir) = wce_editor::steam_detect::pick_folder("Exported tile folder (terrain/tiles/.../<variation>)")
+                {
+                    let msg = self.extract_or_ask(e, &dir.display().to_string());
+                    e.status(&msg, false);
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "Extracts a tile exported by BOB (a terrain/tiles/.../<variation> folder) into a project and opens it; asks before replacing a project.",
+                    );
+                }
+            }
+
+            FileMenu::Save => {
+                if gui::menu_item("Save tile as...", None, false, document(e).is_some()) {
+                    self.open_save_tile_as(e);
+                }
+
+                if gui::is_item_hovered() {
+                    gui::set_tooltip(
+                        "TEd's Save Tile As: the tile as another battle tile (tile set, name, variation) in the projects folder, with its own database entry; the document goes on as it.",
+                    );
+                }
+            }
+
+            FileMenu::Revert => {
+                // A game without the tiles in its kit (Rome 2) saves into mod packs only.
+                if e.game().features.kit_tiles {
+                    let project = document(e).map(|d| (d.is_project(), wce_tile::project_files::is_extracted_dir(&d.project().dir)));
+                    if gui::menu_item("To the Assembly Kit's version", None, false, project.is_some_and(|p| p.0)) {
+                        let msg = self.import_from_kit(e).unwrap_or_else(|m| format!("import failed: {m}"));
+                        e.status(&msg, false);
+                    }
+
+                    if gui::is_item_hovered() {
+                        gui::set_tooltip(
+                            "Opens the Assembly Kit's copy of this tile in place of the project (an extracted tile: the game's, extracted again); saving it replaces the project, closing it without saving keeps the project as it was.",
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn viewport_input(&mut self, e: &mut Editor, ev: &ViewportEvent) -> bool {
@@ -5139,8 +5130,9 @@ impl Tool for TileTool {
             let mirror = projects.join("raw_data").join(&folder);
             if wce_tile::tile_project::has_tile(&mirror) {
                 project = TileProject::open(&mirror).map_err(|err| err.to_string())?;
-                self.status =
-                    format!("opened the project of {folder} (its tile.wce); Tile > Import from Assembly Kit takes the kit's copy again");
+                self.status = format!(
+                    "opened the project of {folder} (its tile.wce); File > Revert > To the Assembly Kit's version takes the kit's copy again"
+                );
                 log::info(self.status.clone());
             }
         }

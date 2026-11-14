@@ -86,6 +86,22 @@ pub trait Document: Any {
         false
     }
 
+    /// File > Revert > To saved: the document as its file has it, without asking (the caller asks). By default the history goes back to
+    /// the saved point, so Redo brings the edits back; a document whose state is not all in its history says how it reverts, or why it
+    /// cannot. The message says what happened.
+    ///
+    /// # Errors
+    ///
+    /// Why it can't be reverted.
+    fn revert(&mut self) -> Result<String, String> {
+        let to = self
+            .history()
+            .saved_position()
+            .ok_or("the saved state is no longer in the history: close it without saving and open it again")?;
+        self.history_mut().jump_to(to);
+        Ok(format!("{} as saved (Redo brings the edits back)", self.title()))
+    }
+
     /// Why File > Save as does not apply to the document (it is off, with this as its tooltip); `None`: it does. Save as writes a copy
     /// wherever the user picks, which is no use when the document is more than its files (a tile is its tile database entry too).
     fn save_as_blocked(&self) -> Option<String> {

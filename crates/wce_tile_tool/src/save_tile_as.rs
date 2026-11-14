@@ -1,4 +1,4 @@
-//! Tile > Save tile as... (Phase 6b of docs/plans/tile_ted_parity.md): TEd's Save Tile As, the open tile as a battle tile of another tile
+//! File > Save tile as... (Phase 6b of docs/plans/tile_ted_parity.md): TEd's Save Tile As, the open tile as a battle tile of another tile
 //! set, name and variation in the projects folder (`TileDocument::save_tile_as`).
 
 use wce_editor::editor::Editor;

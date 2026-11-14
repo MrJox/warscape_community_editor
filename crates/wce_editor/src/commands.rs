@@ -1376,6 +1376,12 @@ pub fn register_builtin(c: &mut CommandRegistry<Editor>) {
         if mounted == want { ok("") } else { fail(if mounted { "mounted" } else { "not mounted" }) }
     });
 
+    c.add("revert", "revert", "File > Revert > To saved: the active document as its file has it (the status line says how)", |e, _| {
+        e.revert_active();
+        let msg = e.status_text().to_owned();
+        if e.status_is_error() { fail(msg) } else { ok(msg) }
+    });
+
     c.add("remount", "remount", "read the packs again (after the team edited one) and rebuild the renderer", |e, _| {
         if !e.start() {
             return fail("mount failed");

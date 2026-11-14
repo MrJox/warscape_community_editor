@@ -1858,7 +1858,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         with_tile(e, |tool, e| tool.create_tile(e, &t).map_or_else(fail, ok))
     });
 
-    c.add("extract", "extract <exported tile folder | terrain/tiles/... in the packs>", "extract a tile as the Tiles panel's packs and Tile > Open exported tile... do: asked first when a project is there (open it, overwrite, cancel)", |e, a| {
+    c.add("extract", "extract <exported tile folder | terrain/tiles/... in the packs>", "extract a tile as the Tiles panel's packs and File > Open exported tile... do: asked first when a project is there (open it, overwrite, cancel)", |e, a| {
         let Some(target) = a.first().cloned() else { return fail("usage: extract <exported tile folder | terrain/tiles/...>") };
         with_tile(e, |t, e| ok(t.extract_or_ask(e, &target)))
     });
@@ -1870,7 +1870,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
     c.add(
         "save_tile_as",
         "save_tile_as <tile set> <name> <variation>",
-        "TEd's Save Tile As (Tile > Save tile as...): the open tile as another battle tile in the projects folder",
+        "TEd's Save Tile As (File > Save tile as...): the open tile as another battle tile in the projects folder",
         |e, a| {
             let (Some(set), Some(name), Some(v)) = (a.first().cloned(), a.get(1).cloned(), a.get(2).cloned()) else {
                 return fail("usage: save_tile_as <tile set> <name> <variation>");
@@ -1930,7 +1930,7 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         },
     );
 
-    c.add("new_tile_dialog", "new_tile_dialog", "open the New tile dialog (Tile > New tile...)", |e, _| {
+    c.add("new_tile_dialog", "new_tile_dialog", "open the New tile dialog (File > New tile...)", |e, _| {
         with_tile(e, |t, _| {
             t.open_new_tile_dialog();
             ok("the New tile dialog opens")

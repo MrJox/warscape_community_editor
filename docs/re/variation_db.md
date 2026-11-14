@@ -2,7 +2,7 @@
 
 Which `.environment` file a battle uses is data, in `warscape_asset_variation_db/warscape_asset_variation_db.bin`
 (TDD overrides it in `tdd_pack6_weather`). Implemented in `src/formats/variation_db.*`, shown in the editor's
-Selection > Weather picker, checked by `tools/variation_check.cpp`.
+View > Weather picker, checked by `tools/variation_check.cpp`.
 
 ## File format (FASTBIN0, little endian)
 `"FASTBIN0"`, u16 version 1, u32 meta count; per meta: u16 serialise 1, str name, u32 value count, str values;
