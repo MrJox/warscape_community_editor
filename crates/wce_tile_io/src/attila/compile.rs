@@ -1438,10 +1438,16 @@ fn record_flag(r: &Node, k: &str) -> bool {
     }
 }
 
+/// A record's transform (16 numbers, row by row): an error without one (a building collapsed onto the origin otherwise).
+fn record_transform<'a>(r: &'a Node, what: &str) -> Result<&'a [f64], String> {
+    r.get("transform").and_then(Value::as_floats).filter(|m| m.len() >= 16).ok_or_else(|| format!("{what} without a transform"))
+}
+
 /// A BMD building (`Building`, version 3) from a building list record.
-fn bmd_building(b: &Node) -> Json {
-    let p = b.get("position").and_then(Value::as_vec3).unwrap_or_default().map(|v| v as f32);
-    let q = b.get("orientation").and_then(Value::as_floats).unwrap_or_default();
+fn bmd_building(b: &Node) -> Result<Json, String> {
+    let key = b.get("key").and_then(Value::as_str).unwrap_or_default();
+    let p = b.get("position").and_then(Value::as_vec3).ok_or_else(|| format!("building {key} without a position"))?.map(|v| v as f32);
+    let q = b.get("orientation").and_then(Value::as_floats).ok_or_else(|| format!("building {key} without an orientation"))?;
     let q = |i: usize| jf(q.get(i).copied().unwrap_or(0.0) as f32);
     let mut t = serde_json::Map::new();
     for r in 0..4 {
@@ -1451,8 +1457,8 @@ fn bmd_building(b: &Node) -> Json {
     }
 
     let flag = |k: &str| record_flag(b, k);
-    serde_json::json!({
-        "serialise_version": 3, "building_id": "", "parent_id": 0, "building_key": b.get("key").and_then(Value::as_str).unwrap_or_default(),
+    Ok(serde_json::json!({
+        "serialise_version": 3, "building_id": "", "parent_id": 0, "building_key": key,
         "position_type": "BBPT_LF_RELATIVE", "transform": t, "position": { "x": jf(p[0]), "y": jf(p[1]), "z": jf(p[2]) },
         "orientation": { "i": q(0), "j": q(1), "k": q(2), "w": q(3) }, "scale": { "x": jf(1.0), "y": jf(1.0), "z": jf(1.0) },
         "properties": {
@@ -1464,34 +1470,34 @@ fn bmd_building(b: &Node) -> Json {
             "tint_inherit_from_parent": false,
         },
         "height_mode": "", "uid": 0,
-    })
+    }))
 }
 
 /// A BMD prop (`PropMarker`, version 1 or 2) from a prop marker record of version 9. TEd's serialiser (`FUN_004d38e0`) writes the flags
 /// word's bits (clamp 2, outfield = the water plane 3, fauna 4); `snow` and `destruction` come from locals it never sets, and a model's
 /// decal fields from members its export never sets: those bytes are TEd's stack and heap garbage, written here as 0.
-fn bmd_prop(key: &str, r: &Node, version: i64) -> Json {
+fn bmd_prop(key: &str, r: &Node, version: i64) -> Result<Json, String> {
     let decal = record_flag(r, "is_decal");
-    let m = r.get("transform").and_then(Value::as_floats).unwrap_or_default();
+    let m = record_transform(r, &format!("prop {key}"))?;
     let d = |k: &str| jf(if decal { record_f32(r, k) } else { 0.0 });
-    serde_json::json!({
+    Ok(serde_json::json!({
         "key": key, "serialise_version": version, "transform": json_matrix(m), "clamp_to_surface": false, "prop_type": u32::from(decal),
         "allow_in_outfield": record_flag(r, "unknown_69"), "decal_parallax": d("parallax_scale"),
         "decal_scale": { "x": d("scale_x"), "y": d("scale_y"), "z": d("scale_z") }, "decal_tiled": u8::from(decal && record_flag(r, "tiled")),
         "is_fauna": 0, "snow": 0, "destruction": 0,
-    })
+    }))
 }
 
 /// A BMD particle emitter (`ParticleEmitterMarker`) from a particle emitter marker record of version 9.
-fn bmd_emitter(key: &str, r: &Node) -> Json {
-    let m = r.get("transform").and_then(Value::as_floats).unwrap_or_default();
+fn bmd_emitter(key: &str, r: &Node) -> Result<Json, String> {
+    let m = record_transform(r, &format!("particle emitter {key}"))?;
     let flag = |k: &str| record_flag(r, k);
-    serde_json::json!({
+    Ok(serde_json::json!({
         "key": key, "transform": json_matrix(m), "emission_rate": jf(0.0), "instance_name": "", "autoplay": flag("autoplay"),
         "scale": jf(record_f32(r, "scale")), "use_in_outfield": flag("use_in_outfield"), "snow_inside": flag("visible_inside_snow_zone"),
         "snow_outside": flag("visible_outside_snow_zone"), "destruction_inside": flag("visible_inside_destruction_zone"),
         "destruction_outside": flag("visible_outside_destruction_zone"),
-    })
+    }))
 }
 
 /// A BMD capture location (`CaptureLocation`); the links index the BMD's own buildings.
@@ -1672,9 +1678,10 @@ fn escalation_bmds(
             v[section]["serialise_version"] = Json::from(1);
         }
 
-        v["battlefield_building_list"]["buildings"] = Json::Array(buildings.iter().map(bmd_building).collect());
-        v["prop_list"]["markers"] = Json::Array(props.iter().map(|(k, r)| bmd_prop(&text(k), r, prop_version)).collect());
-        v["particle_emitter_list"]["markers"] = Json::Array(emitters.iter().map(|(k, r)| bmd_emitter(&text(k), r)).collect());
+        v["battlefield_building_list"]["buildings"] = Json::Array(buildings.iter().map(bmd_building).collect::<Result<_, _>>()?);
+        v["prop_list"]["markers"] = Json::Array(props.iter().map(|(k, r)| bmd_prop(&text(k), r, prop_version)).collect::<Result<_, _>>()?);
+        v["particle_emitter_list"]["markers"] =
+            Json::Array(emitters.iter().map(|(k, r)| bmd_emitter(&text(k), r)).collect::<Result<_, _>>()?);
         if !captures.is_empty() {
             v["capture_location_set"]["capture_location_sets"] = serde_json::json!([{ "capture_locations": captures }]);
         }

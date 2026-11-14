@@ -303,10 +303,14 @@ impl PackIndex {
     pub fn folder(&self, folder: &str) -> Vec<(String, Vec<u8>)> {
         use rpfm_lib::files::pack::Pack;
         let prefix = format!("{}/", Self::key(folder).trim_end_matches('/'));
+        // The path below the folder as the pack spells it: by its parts, not by the lower-cased key's length in bytes (lower case can
+        // change it in other alphabets, which cut the name wrong or inside a character).
+        let parts = prefix.split('/').filter(|p| !p.is_empty()).count();
         let mut by_pack: std::collections::BTreeMap<&std::path::PathBuf, Vec<(&String, String)>> = std::collections::BTreeMap::new();
         for (key, (pack, name)) in self.index() {
-            if let Some(rel) = key.strip_prefix(&prefix) {
-                by_pack.entry(pack).or_default().push((name, name[name.len() - rel.len()..].to_owned()));
+            if key.starts_with(&prefix) {
+                let rel = name.replace('\\', "/").split('/').skip(parts).collect::<Vec<_>>().join("/");
+                by_pack.entry(pack).or_default().push((name, rel));
             }
         }
 
