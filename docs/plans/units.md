@@ -169,7 +169,8 @@ Each step ends with something visible and a gate (a Cargo example) or a shot.
    slots by `probability`, references, tints, mask remaps, decals (`.texture_array`s pick one). Static parts (shields, weapons, crests) are in the
    `SkinnedInstance` too, on a bone (`SkinnedInstance::bones`) or an attachment point of their parent's model, and `renderer/skinned.rs` draws
    them through the rigid shaders with their own decal and colours: `rigidwithdecalmesh`, `rigidwithdecaldirtmesh` are drawn nowhere else.
-   The picks use the editor's generator, so a seed is not the game's soldier. `unit_catalog` reads `unit_variants`, `main_units`, `land_units`,
+   The picks use the editor's generator, so a seed is not the game's soldier (since 2026-11-14 a generator per node, for the Unit tool's pins).
+   `unit_catalog` reads `unit_variants`, `unit_variants_colours` (a unit's own colours, 2026-11-14), `main_units`, `land_units`,
    `mounts`, `factions` and the animation tables, mods included; a unit's mount is a second figure at the same origin. Left: the whole model in
    a tile (metres in game, `1 / unit_scale` in the tile scene), weighted weapons other than bows.
 6. **Animator.** `unit_animation::UnitModel`: `instances(t)` is a pure function of the time, so a timeline can scrub it. Done: slots from
