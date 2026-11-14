@@ -1186,6 +1186,13 @@ impl TileDocument {
     }
 }
 
+impl TileDocument {
+    /// The last `n` edits as one undo entry named `name` (a grab that moved several items).
+    pub fn join_last(&mut self, n: usize, name: &str) {
+        self.history.join_last(n, name);
+    }
+}
+
 impl Document for TileDocument {
     fn core(&self) -> &DocumentCore {
         &self.core

@@ -2151,6 +2151,15 @@ pub fn register(c: &mut CommandRegistry<Editor>) {
         })
     });
 
+    c.add("tile_selected_px", "tile_selected_px", "the viewport pixel of the selected instance (its gizmo's centre): x y", |e, _| {
+        let Some(el) = crate::tool::primary(e) else { return fail("nothing selected") };
+        let Some(p) = document(e).map(|d| d.tile().world_position(el)) else { return no_tile() };
+        match e.viewport.project(p) {
+            Some((x, y)) => ok(format!("{x:.0} {y:.0}")),
+            None => fail("not in view"),
+        }
+    });
+
     c.add("assert_grabbing", "assert_grabbing 0|1", "test: whether a G grab is in progress", |e, a| {
         with_tile(e, |t, _| {
             if a.first().is_some_and(|x| (x == "1") == t.grabbing) {

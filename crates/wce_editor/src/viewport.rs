@@ -739,6 +739,33 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let mut using_gizmo = false;
     let mut over_gizmo_handle = false;
     let vp_gizmo = e.viewport.gizmo;
+
+    // The move gizmo's centre is the tool's (`Tool::can_centre_drag`): a drag there moves the selection over the surface under the cursor,
+    // as the Tile tool's G does. Taken before ImGuizmo, whose centre would move it in the screen's plane.
+    let mut centre_taken = false;
+    if let Some((_, world)) = gizmo_target.filter(|_| !tools && vp_gizmo == GizmoMode::Translate)
+        && e.with_active_tool(|t, e| t.can_centre_drag(e)).unwrap_or(false)
+        && let Some((x, y)) = e.viewport.camera().project(Float3::new(world.m[0][3], world.m[1][3], world.m[2][3]), w as f32 / h as f32)
+    {
+        const CENTRE_GRAB: f32 = 9.0;
+        let at = gui::v2(origin.x + (x * 0.5 + 0.5) * size.x, origin.y + (0.5 - y * 0.5) * size.y);
+        let mouse = gui::io().MousePos;
+        let near = hovered && (mouse.x - at.x).hypot(mouse.y - at.y) <= CENTRE_GRAB;
+        let dl = gui::window_draw_list();
+        dl.circle_filled(at, 6.0, gui::col32(10, 10, 12, 200));
+        dl.circle_filled(at, 4.5, if near { gui::col32(255, 230, 120, 255) } else { gui::col32(235, 235, 235, 230) });
+        if near {
+            gui::set_tooltip(
+                "Drag: move the selection over the surface under the cursor (as G): on the ground, onto what is under it, wall pieces joining",
+            );
+            if gui::is_mouse_clicked(0) && e.with_active_tool(|t, e| t.begin_centre_drag(e)).unwrap_or(false) {
+                e.viewport.tool_drag = true;
+                centre_taken = true;
+                gizmo_target = None;
+            }
+        }
+    }
+
     if let Some((primary, world)) = gizmo_target {
         let vp = &e.viewport;
         let cam = vp.camera();
@@ -912,7 +939,7 @@ pub fn draw(e: &mut Editor, textures: &mut D3D11Renderer) {
     let has_tool = e.has_active_tool();
     if has_tool && hovered && !over_gizmo {
         e.tool_viewport_input(&event(ViewportEventKind::Hover));
-        if gui::is_mouse_clicked(0) {
+        if gui::is_mouse_clicked(0) && !centre_taken {
             let taken = e.tool_viewport_input(&event(ViewportEventKind::Press));
             if taken || claims {
                 e.viewport.tool_drag = true;

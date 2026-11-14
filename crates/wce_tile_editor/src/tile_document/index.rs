@@ -583,12 +583,11 @@ impl Tile {
         self.tscene().doc().get(elem, "flags").is_none_or(|f| f.contains(flag))
     }
 
-    /// Draggable (TEd's OIF_DRAGGABLE) itself and in every ancestor: the gizmo and the grab move it. Off, it can be selected without the
-    /// risk of moving it by mouse (the Inspector's numbers still do).
+    /// Draggable (TEd's OIF_DRAGGABLE on the item itself): the gizmo and the grab move it. Off, it can be selected without the risk of
+    /// moving it by mouse (the Inspector's numbers still do). Not inherited: TEd saves its layers without the flag (` OIF_VISIBLE|OIF_ACTIVE`)
+    /// and their items move all the same.
     pub fn draggable(&self, elem: usize) -> bool {
-        elem >= self.elements().len()
-            || std::iter::successors(Some(elem), |&e| self.elements().get(e).and_then(|x| x.parent))
-                .all(|e| self.own_flag(e, "OIF_DRAGGABLE"))
+        elem >= self.elements().len() || self.own_flag(elem, "OIF_DRAGGABLE")
     }
 
     /// Visible itself and in every ancestor. A road piece's guide shows in the Prefab tool's stage only (the index has it too).

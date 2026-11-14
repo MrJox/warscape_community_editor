@@ -512,6 +512,14 @@ pub struct TileTool {
     pub(crate) grab_y_offset: f64,
     grab_history: usize,
     pub(crate) grab_gesture: u64,
+
+    /// The grab started by a drag of the move gizmo's centre: its release confirms it (a G grab waits for a click).
+    grab_drag: bool,
+
+    /// The other selected items a grab carries (their offset from the grabbed one kept on the ground), and where the grabbed one was
+    /// last (metres): they move by its steps.
+    grab_others: Vec<SourceRef>,
+    grab_last: Float3,
     pub(crate) poly_point: Option<usize>,
 
     /// A spline's handle of `poly_point` is dragged, not the point: its controlOut (true) or controlIn.
@@ -828,6 +836,9 @@ impl Default for TileTool {
             grab_y_offset: 0.0,
             grab_history: 0,
             grab_gesture: 0,
+            grab_drag: false,
+            grab_others: vec![],
+            grab_last: Float3::new(0.0, 0.0, 0.0),
             poly_point: None,
             spline_handle: None,
             spline_all: false,
@@ -2127,6 +2138,17 @@ impl TileTool {
                 }
             }
 
+            // The rest of the selection by the grabbed one's step.
+            let now = d.tile().world_position(g);
+            let (dx, dz) = (now.x - self.grab_last.x, now.z - self.grab_last.z);
+            if !self.grab_others.is_empty() && (dx != 0.0 || dz != 0.0) {
+                let mut step = Float4x4::IDENTITY;
+                (step.m[0][3], step.m[2][3]) = (dx, dz);
+                d.transform_items(&self.grab_others, &step, self.grab_gesture ^ 0x6f74_6865_7273);
+            }
+
+            self.grab_last = now;
+
             // An item that follows its surface is tilted to the one it is moved onto.
             if d.tile().tscene().doc().get(g, wce_tile::project_files::ROTATION_ATTR).is_some_and(|v| v == "surface") {
                 let n = match (self.modes.unwrap_or_default().0, self.surface_hit) {
@@ -2158,6 +2180,14 @@ impl TileTool {
         self.grab_normal_offset = 0.0;
         self.grab_history = d.history().position();
         self.grab_gesture = d.next_gesture();
+        self.grab_last = p;
+        let doc = d.id();
+        self.grab_others = selected(e)
+            .into_iter()
+            .filter(|&o| o != el)
+            .filter(|&o| document(e).is_some_and(|d| d.tile().draggable(o)))
+            .map(|o| SourceRef { doc, item: wce_tile_editor::tile_document::item_of(o) })
+            .collect();
         self.grabbing = true;
         self.status = "grab: move the mouse over the ground, click to confirm, Esc / right click to cancel; PageUp / PageDown: along the ground's normal (freeform)".to_owned();
         true
@@ -2319,15 +2349,22 @@ impl TileTool {
         }
 
         self.grabbing = false;
+        self.grab_drag = false;
         let Some(d) = document(e) else { return };
         let h = d.history_mut();
         h.break_merge();
         if !commit {
             h.jump_to(self.grab_history);
             h.drop_redo();
+        } else {
+            let n = d.history().position().saturating_sub(self.grab_history);
+            if n > 1 {
+                d.join_last(n, "Grab");
+            }
         }
 
         self.grab_elem = None;
+        self.grab_others.clear();
     }
 
     /// Generate SiegeAI (docs/plans/siege_ai.md): the layout into its own layer, the old one out of the export; the warnings in the log.
@@ -4489,6 +4526,17 @@ impl Tool for TileTool {
                 false
             }
 
+            // A grab of the move gizmo's centre: the release confirms it.
+            ViewportEventKind::Release if self.grabbing && self.grab_drag => {
+                self.end_grab(e, true);
+                true
+            }
+
+            ViewportEventKind::Drag if self.grabbing && self.grab_drag => {
+                self.on_hover(e, ev);
+                true
+            }
+
             // The menu of the selection; not while placing or drawing (only Esc stops them), nor for the click that cancelled a grab.
             ViewportEventKind::ContextMenu => {
                 if !std::mem::take(&mut self.right_used) && self.placing.is_none() && !self.drawing {
@@ -4944,6 +4992,20 @@ impl Tool for TileTool {
 
     fn leave_mode(&mut self, _: &mut Editor) {
         self.set_mode(TileMode::Select);
+    }
+
+    fn can_centre_drag(&self, e: &Editor) -> bool {
+        self.mode == TileMode::Select
+            && !self.grabbing
+            && !self.drawing
+            && self.placing.is_none()
+            && self.flip.is_none()
+            && primary(e).is_some()
+    }
+
+    fn begin_centre_drag(&mut self, e: &mut Editor) -> bool {
+        self.grab_drag = self.begin_grab(e);
+        self.grab_drag
     }
 
     fn camera_chip(&mut self, e: &mut Editor) {
