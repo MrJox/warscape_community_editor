@@ -4329,16 +4329,26 @@ impl TileDocument {
 
         // An empty optional text that is not in the file stays out of it (TEd writes `capture_location` only when it has one).
         missing.retain(|_| !(value.is_empty() && matches!(prop.kind, Kind::Text)));
-        for attr in missing {
-            self.set_attribute(elem, attr, value);
+        let n = self.tile().tscene().name(elem);
+        let name = format!("Set {} of {}", prop.attr, if n.is_empty() { tag.clone() } else { n });
+
+        // One the file lacks (a twin): added, with the others, in one edit, so one undo takes the whole value back (two entries left the
+        // pair half set). Once it is there, the next steps of the gesture are attribute edits that merge.
+        if !missing.is_empty() {
+            let Ok(mark) = self.begin() else { return false };
+            for attr in missing.iter().copied().chain(steps.iter().map(|(a, ..)| a.as_str())) {
+                self.tscene_mut().set_attr(elem, attr, value);
+            }
+
+            let attrs = missing.iter().copied().chain(steps.iter().map(|(a, ..)| a.as_str())).collect::<Vec<_>>();
+            self.push_splice_attrs(name, mark, vec![item_of(elem)], vec![item_of(elem)], vec![elem], &attrs);
+            return true;
         }
 
         if steps.is_empty() {
             return true;
         }
 
-        let n = self.tile().tscene().name(elem);
-        let name = format!("Set {} of {}", prop.attr, if n.is_empty() { tag.clone() } else { n });
         let rebuild = tag == "BUILDING_INSTANCE" && prop.attr == "key";
         self.history.push(Box::new(TedAttrCommand { name, elem, steps, gesture, rebuild }));
         true

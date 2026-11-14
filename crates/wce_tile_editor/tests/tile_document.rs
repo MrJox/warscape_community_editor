@@ -2435,3 +2435,22 @@ fn undoing_an_entry_attribute_the_entry_did_not_have_takes_it_away() {
     d.history_mut().redo();
     assert!(String::from_utf8_lossy(&entry(&d)).contains("wce_test_attr"));
 }
+
+#[test]
+fn a_property_whose_twin_the_file_lacks_is_one_undo_entry() {
+    use wce_tile::properties::{Kind, Prop, Rule};
+    // The polygon keeps `generated` but not its twin `is_generated`.
+    let dir = tempfile::tempdir().unwrap();
+    let ted = TED.replace(" is_generated=\"false\"", "");
+    std::fs::write(dir.path().join("tile.ted"), &ted).unwrap();
+    let mut d = TileDocument::new(TileProject::open(dir.path()).unwrap(), None);
+    let before = text(&d);
+    let p = d.tile().tscene().find_all("AI_HINT_POLYGON_INSTANCE")[0];
+    let prop = Prop { attr: "generated", kind: Kind::Bool, rule: Rule::Normal, twin: Some("is_generated") };
+    assert!(d.set_property(p, &prop, "true", 1));
+    assert_eq!(d.history().size(), 1, "one entry for the pair");
+    let doc = d.tile().tscene().doc();
+    assert_eq!((doc.get(p, "generated").as_deref(), doc.get(p, "is_generated").as_deref()), (Some("true"), Some("true")));
+    d.history_mut().undo();
+    assert_eq!(String::from_utf8_lossy(&text(&d)), String::from_utf8_lossy(&before), "one undo: the file's text");
+}
