@@ -24,6 +24,12 @@ pub trait Files: Send + Sync {
     fn game(&self) -> Option<&GameProfile> {
         None
     }
+
+    /// Which set of files these are, for caches of what was found in them: another mount (mods added or taken away, a loose file written)
+    /// has another id. 0: the files do not say (a cache keyed by it is never made again).
+    fn mount_id(&self) -> u64 {
+        0
+    }
 }
 
 impl Files for Vfs {
@@ -45,6 +51,10 @@ impl Files for Vfs {
 
     fn game(&self) -> Option<&GameProfile> {
         Some(self.profile())
+    }
+
+    fn mount_id(&self) -> u64 {
+        self.mount_id
     }
 }
 
