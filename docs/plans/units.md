@@ -1,8 +1,8 @@
 # Units: rendering and animation
 
 Draws units through the game's own weighted shaders, animated. It serves three consumers: the tile editor's scale reference (and later
-historical battle scripting), the Cinematic tool (the most pressing, after the terrain editor) and a possible unit / VMD editor (not
-decided). This is the renderer and data work they share, not any of those tools. Formats already specified:
+historical battle scripting), the Cinematic tool (the most pressing, after the terrain editor) and the Unit tool, a VMD editor
+([unit_editor.md](unit_editor.md), planned 2026-11-14). This is the renderer and data work they share, not any of those tools. Formats already specified:
 `attila-toolkit/skills/attila-file-formats/references/{anim,bone_inv_trans_mats,rigid_model_v2}_spec.md`.
 
 State: investigated and decided 2026-11-06 (decisions at the end). Steps 1 to 3, 5 and 7's references are done, step 4's code, and step 6's idle: the Tile tool shows any unit of the DB
@@ -269,5 +269,5 @@ Out of scope: battle simulation, formations, pathing, sounds and blood, dismembe
 - **Oracle:** screenshots of the game, taken by the user; RenderDoc does not work here. The skin lighting is the riskiest part to match
   this way.
 - **Faction colours, tints and variation seed** are exposed directly, in `ref_human`'s Inspector too, not only as renderer inputs.
-- **Unit tool viewer:** dev-only.
+- **Unit tool viewer:** dev-only. Replaced 2026-11-14: the Unit tool is a release tool ([unit_editor.md](unit_editor.md)).
 - **Parsers** live in `wce_formats`.
