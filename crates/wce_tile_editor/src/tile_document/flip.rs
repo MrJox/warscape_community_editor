@@ -263,11 +263,7 @@ impl TileDocument {
                 Ok(went)
             }
 
-            Err(e) => {
-                let record = self.tscene_mut().end_edit(mark).unwrap_or_default();
-                let _ = self.tscene_mut().unapply(&record);
-                Err(e)
-            }
+            Err(e) => self.rolled_back(mark, e),
         }
     }
 }
