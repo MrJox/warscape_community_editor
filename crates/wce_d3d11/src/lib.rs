@@ -8,6 +8,8 @@
 mod bindings;
 
 pub use bindings::*;
+/// The result code D3D and DXGI calls return (a lost device's reason, `Present`'s).
+pub use windows_core::HRESULT;
 
 pub mod safe;
 

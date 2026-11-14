@@ -1573,6 +1573,22 @@ impl Editor {
         self.tools.iter().flatten().flat_map(|t| t.unsaved_work()).collect()
     }
 
+    /// What has unsaved changes, one line each: the documents (by title) and the tools' work. For a question asked outside the UI (the graphics
+    /// device lost: no frame to draw a prompt in).
+    pub fn unsaved_summary(&self) -> Vec<String> {
+        let docs = self.docs.unsaved().into_iter().filter_map(|id| self.docs.find(id).map(|d| d.title()));
+        docs.chain(self.tools_unsaved_work()).collect()
+    }
+
+    /// Saves every modified document, as Save All does; needs no frame (the documents' data is in memory, not on the GPU). True when all
+    /// were saved; the messages say what was and what failed.
+    pub fn save_all_documents(&mut self) -> (bool, Vec<String>) {
+        let mut messages = vec![];
+        let all = self.docs.save_all(&mut messages);
+        self.follow_saves();
+        (all, messages)
+    }
+
     /// What is being written on another thread (an update installing, a fix writing packs, a tool's export): quitting waits for it, as the
     /// process ending would cut the files short (an update half installed does not start again).
     pub fn writes_in_progress(&self) -> Vec<String> {

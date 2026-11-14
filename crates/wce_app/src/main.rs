@@ -29,7 +29,10 @@ use dear_imgui_rs::{ConfigFlags, Context};
 use sdl3_sys::events::*;
 use sdl3_sys::hints::{SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, SDL_SetHint};
 use sdl3_sys::init::{SDL_INIT_VIDEO, SDL_Init, SDL_Quit};
-use sdl3_sys::messagebox::{SDL_MESSAGEBOX_ERROR, SDL_ShowSimpleMessageBox};
+use sdl3_sys::messagebox::{
+    SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, SDL_MESSAGEBOX_ERROR, SDL_MessageBoxButtonData,
+    SDL_MessageBoxData, SDL_ShowMessageBox, SDL_ShowSimpleMessageBox,
+};
 use sdl3_sys::video::*;
 use wce_d3d11::*;
 use wce_editor::Editor;
@@ -483,7 +486,15 @@ unsafe fn run_editor(
             }
 
             let cpu_end = Instant::now();
-            let _ = swap.Present(if batch || !editor.vsync { 0 } else { 1 }, 0);
+            let presented = swap.Present(if batch || !editor.vsync { 0 } else { 1 }, 0);
+
+            // The device lost (a driver reset or crash, a GPU removed): nothing draws any more. Said, with the driver's reason, and the
+            // unsaved documents saved if the user wants (they are in memory, not on the GPU), then the editor closes.
+            let removed = dev.GetDeviceRemovedReason();
+            if removed.is_err() || DEVICE_LOST.contains(&(presented.0 as u32)) {
+                exit_code = device_lost(&mut editor, window, if removed.is_err() { removed } else { presented }, batch);
+                break;
+            }
 
             // Interactive frames wait out the rest of their share of the cap; shots, captures and frames of a running script (the startup
             // commands, perf measurements) run free.
@@ -516,6 +527,64 @@ unsafe fn run_editor(
     drop(renderer);
     drop(platform);
     (exit_code, restart)
+}
+
+/// `Present`'s results that mean the device is gone (DXGI_ERROR_DEVICE_REMOVED, _HUNG, _RESET, _DRIVER_INTERNAL_ERROR); any other
+/// failure (a minimised window on some drivers) is not a reason to close.
+const DEVICE_LOST: [u32; 4] = [0x887A_0005, 0x887A_0006, 0x887A_0007, 0x887A_0020];
+
+/// The graphics device was lost: logged with its reason; an interactive session offers to save the unsaved documents (a native dialog: the
+/// editor's own UI can't draw any more). Returns the exit code.
+///
+/// # Safety
+///
+/// `window` is the live SDL window.
+unsafe fn device_lost(editor: &mut Editor, window: *mut SDL_Window, reason: HRESULT, batch: bool) -> i32 {
+    let why = format!("{reason:?} ({})", reason.message());
+    log::error(format!("the graphics device was lost: {why}; the editor closes"));
+    let unsaved = editor.unsaved_summary();
+    let mut text = format!("The graphics driver stopped (the device was lost: {why}). The editor has to close.");
+    if unsaved.is_empty() || batch || !editor.script().done() {
+        text += if unsaved.is_empty() { "\n\nNothing was left unsaved." } else { "" };
+        let msg = std::ffi::CString::new(text).unwrap_or_default();
+        if !batch {
+            // SAFETY: live window, NUL-terminated strings.
+            unsafe { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, c"Warscape Community Editor".as_ptr(), msg.as_ptr(), window) };
+        }
+
+        return 3;
+    }
+
+    text += &format!("\n\nUnsaved:\n{}\n\nSave them before closing?", unsaved.join("\n"));
+    let msg = std::ffi::CString::new(text).unwrap_or_default();
+    let buttons = [
+        SDL_MessageBoxButtonData { flags: SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, buttonID: 1, text: c"Save".as_ptr() },
+        SDL_MessageBoxButtonData { flags: SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, buttonID: 0, text: c"Close without saving".as_ptr() },
+    ];
+    let data = SDL_MessageBoxData {
+        flags: SDL_MESSAGEBOX_ERROR,
+        window,
+        title: c"Warscape Community Editor".as_ptr(),
+        message: msg.as_ptr(),
+        numbuttons: buttons.len() as i32,
+        buttons: buttons.as_ptr(),
+        colorScheme: std::ptr::null(),
+    };
+    let mut pressed = 0;
+    // SAFETY: the data and the strings it points to outlive the call.
+    if unsafe { SDL_ShowMessageBox(&data, &mut pressed) } && pressed == 1 {
+        let (all, messages) = editor.save_all_documents();
+        for m in &messages {
+            log::info(m);
+        }
+
+        let done = if all { "Saved:".to_owned() } else { "Not everything could be saved:".to_owned() };
+        let msg = std::ffi::CString::new(format!("{done}\n{}", messages.join("\n"))).unwrap_or_default();
+        // SAFETY: live window, NUL-terminated strings.
+        unsafe { SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, c"Warscape Community Editor".as_ptr(), msg.as_ptr(), window) };
+    }
+
+    3
 }
 
 /// Waits until `due`: a sleep that ends a little early (it wakes up late by up to about that much), the rest yielded away.
